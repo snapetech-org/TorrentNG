@@ -71,7 +71,7 @@ pub struct TransferInfo {
 }
 
 /// `GET /api/v1/sidebar-facets` (only the status counts are used).
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 pub struct Facets {
     #[serde(default)]
     pub status: HashMap<String, u64>,
@@ -225,7 +225,7 @@ impl ViewSpec {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     pub fn summary(state: &str, total: i64, left: i64) -> TorrentSummary {

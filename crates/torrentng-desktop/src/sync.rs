@@ -12,7 +12,7 @@
 //! * `/torrents/live` supplies rates for the visible rows only;
 //! * if SSE is unavailable the controller falls back to a slow page refetch.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
@@ -170,11 +170,23 @@ struct Window {
     limit: usize,
 }
 
+/// Last value pushed to the UI for each stream. Unchanged data is not resent:
+/// every event wakes the UI for a repaint, so an idle library must be silent.
+#[derive(Default)]
+struct Seen {
+    transfer: Option<TransferInfo>,
+    live: Vec<LiveRow>,
+    facets: Option<Facets>,
+    page: Option<(u64, usize, usize, Vec<TorrentSummary>)>,
+}
+
 struct Controller {
     client: Client,
     out: Out,
     window: Option<Window>,
-    window_hashes: HashSet<String>,
+    /// Last known summary of each row in the window, so deltas that change
+    /// nothing visible are dropped instead of waking the UI.
+    window_rows: HashMap<String, TorrentSummary>,
     visible: Vec<String>,
     online: bool,
     active: bool,
@@ -184,6 +196,7 @@ struct Controller {
     sse_up: bool,
     refetch_at: Option<Instant>,
     ticks: u32,
+    seen: Seen,
 }
 
 impl Controller {
@@ -216,24 +229,47 @@ impl Controller {
         self.fetch_side().await;
     }
 
+    /// Always deliver a page (the UI is waiting for the answer).
     async fn fetch_page(&mut self) {
+        self.fetch_page_inner(true).await;
+    }
+
+    /// Periodic/debounced refresh: deliver only if something changed.
+    async fn fetch_page_if_changed(&mut self) {
+        self.fetch_page_inner(false).await;
+    }
+
+    async fn fetch_page_inner(&mut self, force: bool) {
         self.refetch_at = None;
         let Some(w) = self.window.clone() else { return };
         match self.client.list(&w.spec, w.offset, w.limit, None).await {
             Ok(r) => {
-                self.window_hashes = r.torrents.iter().map(|t| t.info_hash.clone()).collect();
+                self.window_rows = r
+                    .torrents
+                    .iter()
+                    .map(|t| (t.info_hash.clone(), t.clone()))
+                    .collect();
                 if self.sse.is_none() {
                     let (tx, rx) = unbounded_channel();
                     self.sse = Some(spawn_sse(self.client.clone(), r.snapshot, tx));
                     self.sse_rx = Some(rx);
                 }
-                self.out.send(Event::Page {
-                    epoch: w.epoch,
-                    offset: w.offset,
-                    total: r.total,
-                    revision: r.snapshot,
-                    rows: r.torrents,
-                });
+                let key = (w.epoch, w.offset, r.total);
+                let unchanged = self
+                    .seen
+                    .page
+                    .as_ref()
+                    .is_some_and(|(e, o, t, rows)| (*e, *o, *t) == key && *rows == r.torrents);
+                if force || !unchanged {
+                    self.seen.page = Some((key.0, key.1, key.2, r.torrents.clone()));
+                    self.out.send(Event::Page {
+                        epoch: w.epoch,
+                        offset: w.offset,
+                        total: r.total,
+                        revision: r.snapshot,
+                        rows: r.torrents,
+                    });
+                }
             }
             Err(e) => self.handle_err(e),
         }
@@ -241,12 +277,26 @@ impl Controller {
 
     async fn fetch_side(&mut self) {
         match self.client.transfer_info().await {
-            Ok(t) => self.out.send(Event::Transfer(t)),
+            Ok(t) => self.send_transfer(t),
             Err(e) => return self.handle_err(e),
         }
         match self.client.facets().await {
-            Ok(f) => self.out.send(Event::Facets(f)),
+            Ok(f) => self.send_facets(f),
             Err(e) => self.handle_err(e),
+        }
+    }
+
+    fn send_transfer(&mut self, t: TransferInfo) {
+        if self.seen.transfer.as_ref() != Some(&t) {
+            self.seen.transfer = Some(t.clone());
+            self.out.send(Event::Transfer(t));
+        }
+    }
+
+    fn send_facets(&mut self, f: Facets) {
+        if self.seen.facets.as_ref() != Some(&f) {
+            self.seen.facets = Some(f.clone());
+            self.out.send(Event::Facets(f));
         }
     }
 
@@ -255,7 +305,12 @@ impl Controller {
             return;
         }
         match self.client.live(&self.visible).await {
-            Ok(rows) => self.out.send(Event::Live(rows)),
+            Ok(rows) => {
+                if rows != self.seen.live {
+                    self.seen.live = rows.clone();
+                    self.out.send(Event::Live(rows));
+                }
+            }
             Err(e) => self.handle_err(e),
         }
     }
@@ -283,15 +338,23 @@ impl Controller {
                     crate::model::SortKey::Progress | crate::model::SortKey::Ratio
                 )
         });
-        let (inside, outside): (Vec<_>, Vec<_>) = d
-            .torrents
-            .into_iter()
-            .partition(|t| self.window_hashes.contains(&t.info_hash));
-        if !outside.is_empty() || (!inside.is_empty() && spec_sensitive) {
+        let mut changed = Vec::new();
+        let mut outside = false;
+        for t in d.torrents {
+            match self.window_rows.get_mut(&t.info_hash) {
+                Some(known) if *known == t => {}
+                Some(known) => {
+                    *known = t.clone();
+                    changed.push(t);
+                }
+                None => outside = true,
+            }
+        }
+        if outside || (!changed.is_empty() && spec_sensitive) {
             self.request_refetch(REFETCH_SLOW);
         }
-        if !inside.is_empty() {
-            self.out.send(Event::Patch(inside));
+        if !changed.is_empty() {
+            self.out.send(Event::Patch(changed));
         }
     }
 
@@ -416,16 +479,16 @@ impl Controller {
         self.ticks = self.ticks.wrapping_add(1);
         if !self.sse_up {
             // No delta stream: slow full-page refresh instead.
-            self.fetch_page().await;
+            self.fetch_page_if_changed().await;
         }
         self.fetch_live().await;
         match self.client.transfer_info().await {
-            Ok(t) => self.out.send(Event::Transfer(t)),
+            Ok(t) => self.send_transfer(t),
             Err(e) => return self.handle_err(e),
         }
         if self.ticks.is_multiple_of(FACET_EVERY_TICKS) {
             match self.client.facets().await {
-                Ok(f) => self.out.send(Event::Facets(f)),
+                Ok(f) => self.send_facets(f),
                 Err(e) => self.handle_err(e),
             }
         }
@@ -439,7 +502,7 @@ pub async fn run(client: Client, mut cmds: UnboundedReceiver<Command>, out: Out)
         client,
         out,
         window: None,
-        window_hashes: HashSet::new(),
+        window_rows: HashMap::new(),
         visible: Vec::new(),
         online: false,
         active: true,
@@ -448,6 +511,7 @@ pub async fn run(client: Client, mut cmds: UnboundedReceiver<Command>, out: Out)
         sse_up: false,
         refetch_at: None,
         ticks: 0,
+        seen: Seen::default(),
         sse_rx: None,
     };
     let mut tick = interval(TICK);
@@ -481,12 +545,132 @@ pub async fn run(client: Client, mut cmds: UnboundedReceiver<Command>, out: Out)
                     None => std::future::pending().await,
                 }
             } => {
-                if c.online && c.active { c.fetch_page().await } else { c.refetch_at = None }
+                if c.online && c.active { c.fetch_page_if_changed().await } else { c.refetch_at = None }
                 if c.dead { break }
             }
         }
     }
     if let Some(h) = c.sse.take() {
         h.abort();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc::{channel, Receiver};
+
+    use super::*;
+    use crate::model::tests::summary;
+
+    fn controller() -> (Controller, Receiver<Event>) {
+        let (tx, rx) = channel();
+        let c = Controller {
+            client: Client::new("http://127.0.0.1:9", "t").unwrap(),
+            out: Out::new(tx, egui::Context::default()),
+            window: Some(Window {
+                epoch: 1,
+                spec: ViewSpec::default(),
+                offset: 0,
+                limit: 200,
+            }),
+            window_rows: HashMap::new(),
+            visible: Vec::new(),
+            online: true,
+            active: true,
+            dead: false,
+            sse: None,
+            sse_rx: None,
+            sse_up: true,
+            refetch_at: None,
+            ticks: 0,
+            seen: Seen::default(),
+        };
+        (c, rx)
+    }
+
+    fn delta(torrents: Vec<TorrentSummary>, removed: Vec<String>) -> Delta {
+        Delta {
+            cursor: 2,
+            torrents,
+            removed,
+            ..Delta::default()
+        }
+    }
+
+    #[test]
+    fn unchanged_delta_for_a_visible_row_is_silent() {
+        let (mut c, rx) = controller();
+        let t = summary("seeding", 10, 0);
+        c.window_rows.insert(t.info_hash.clone(), t.clone());
+        c.on_delta(delta(vec![t.clone()], vec![]));
+        assert!(rx.try_recv().is_err(), "no event, so no repaint");
+        assert!(c.refetch_at.is_none());
+
+        let mut changed = t;
+        changed.state = "stopped".into();
+        c.on_delta(delta(vec![changed.clone()], vec![]));
+        match rx.try_recv() {
+            Ok(Event::Patch(p)) => assert_eq!(p, vec![changed]),
+            other => panic!("expected a patch, got {other:?}"),
+        }
+        // Re-sending the same change is now a no-op too.
+        c.on_delta(delta(
+            vec![c.window_rows.values().next().unwrap().clone()],
+            vec![],
+        ));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn rows_outside_the_window_and_removals_schedule_one_refetch() {
+        let (mut c, rx) = controller();
+        c.on_delta(delta(vec![summary("seeding", 10, 0)], vec![]));
+        assert!(
+            rx.try_recv().is_err(),
+            "outside the window: nothing to patch"
+        );
+        assert!(c.refetch_at.is_some());
+
+        c.refetch_at = None;
+        c.on_delta(delta(vec![], vec!["a".repeat(40)]));
+        assert!(c.refetch_at.is_some(), "removal reloads the window");
+    }
+
+    #[test]
+    fn snapshot_resync_is_not_ingested() {
+        let (mut c, rx) = controller();
+        let mut d = delta(vec![summary("seeding", 10, 0)], vec![]);
+        d.snapshot = true;
+        c.on_delta(d);
+        assert!(rx.try_recv().is_err());
+        assert!(c.refetch_at.is_some());
+    }
+
+    #[test]
+    fn minimized_window_ignores_deltas() {
+        let (mut c, rx) = controller();
+        c.active = false;
+        c.on_delta(delta(vec![summary("seeding", 10, 0)], vec!["x".into()]));
+        assert!(rx.try_recv().is_err());
+        assert!(c.refetch_at.is_none());
+    }
+
+    #[test]
+    fn transfer_and_facets_resend_only_on_change() {
+        let (mut c, rx) = controller();
+        let t = TransferInfo::default();
+        c.send_transfer(t.clone());
+        c.send_transfer(t.clone());
+        assert!(matches!(rx.try_recv(), Ok(Event::Transfer(_))));
+        assert!(rx.try_recv().is_err());
+        let mut t2 = t;
+        t2.dl_info_speed = 5;
+        c.send_transfer(t2);
+        assert!(matches!(rx.try_recv(), Ok(Event::Transfer(_))));
+
+        c.send_facets(Facets::default());
+        c.send_facets(Facets::default());
+        assert!(matches!(rx.try_recv(), Ok(Event::Facets(_))));
+        assert!(rx.try_recv().is_err());
     }
 }

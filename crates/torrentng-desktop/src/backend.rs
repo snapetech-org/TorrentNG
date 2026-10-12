@@ -103,9 +103,14 @@ pub fn render_config(
         Value::String(download_dir.display().to_string()),
     );
     let mut memory = toml::Table::new();
+    let total = local.memory_cap_mb.max(64);
+    memory.insert("total_cap_mb".into(), Value::Integer(total as i64));
+    // The engine's per-torrent metadata cap is fixed and small by default
+    // (32 MB: a few hundred torrents with small files). Scale it with the
+    // user's budget so raising the memory setting really raises capacity.
     memory.insert(
-        "total_cap_mb".into(),
-        Value::Integer(local.memory_cap_mb.max(64) as i64),
+        "metadata_cap_mb".into(),
+        Value::Integer((total / 8).max(32) as i64),
     );
     let mut auth = toml::Table::new();
     auth.insert(
@@ -282,6 +287,18 @@ mod tests {
         let text = render_config(&local, 1, Path::new("/s"), Path::new("/d"), "t");
         let v: toml::Table = toml::from_str(&text).unwrap();
         assert_eq!(v["memory"]["total_cap_mb"].as_integer(), Some(64));
+        assert_eq!(v["memory"]["metadata_cap_mb"].as_integer(), Some(32));
+    }
+
+    #[test]
+    fn metadata_cap_scales_with_memory_budget() {
+        let local = LocalConfig {
+            memory_cap_mb: 4096,
+            ..Default::default()
+        };
+        let text = render_config(&local, 1, Path::new("/s"), Path::new("/d"), "t");
+        let v: toml::Table = toml::from_str(&text).unwrap();
+        assert_eq!(v["memory"]["metadata_cap_mb"].as_integer(), Some(512));
     }
 
     #[test]
