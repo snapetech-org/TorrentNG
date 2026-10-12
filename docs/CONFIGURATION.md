@@ -613,6 +613,11 @@ Runtime changes persist in `auth-settings.json` under the service data directory
 with mode `0600`. Public binds require API tokens and a WebUI password of at
 least 16 bytes. API tokens can be entered in either login field.
 
+On Unraid, open **Docker**, click the `torrentng-webui` container icon, and
+choose **Console**; run `torrentng auth-token` at the prompt. This prints the
+active TorrentNG WebUI credentials. The backend client's credentials are
+separate. See the [Unraid login steps](../deploy/unraid/README.md#webui-login).
+
 When API tokens are configured, unauthenticated login submissions are limited
 to 10 per TCP peer per 60 seconds. Further attempts receive `429 Too Many
 Requests` with `Retry-After`; a successful token login clears that peer's
