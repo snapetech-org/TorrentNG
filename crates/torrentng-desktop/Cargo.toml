@@ -1,0 +1,46 @@
+[package]
+name = "torrentng-desktop"
+description = "TorrentNG Desktop: native low-footprint desktop client for torrentngd"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "AGPL-3.0-or-later"
+publish = false
+
+# Standalone workspace (like sidecar/): the GUI stack must not inflate the
+# engine's lockfile, MSRV gate or CI build graph.
+[workspace]
+
+[lib]
+name = "torrentng_desktop"
+path = "src/lib.rs"
+
+[[bin]]
+name = "torrentng-desktop"
+path = "src/main.rs"
+
+[dependencies]
+rt-api-model = { path = "../rt-api-model" }
+eframe = { version = "=0.33.3", default-features = false, features = ["glow", "default_fonts", "x11", "wayland", "accesskit"] }
+egui_extras = "=0.33.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "process", "macros", "io-util", "fs"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "multipart"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+rand = "0.8"
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
