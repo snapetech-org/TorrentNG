@@ -1514,6 +1514,17 @@ function LoginScreen({ message, onLogin }: {
           <div style={{ color: 'var(--faint)', fontSize: 12, marginTop: 4, lineHeight: 1.5 }}>
             Fresh installs generate a unique WebUI password. Run <code>torrentngd auth-token</code> for the native daemon or <code>torrentng auth-token</code> for the WebUI service in its console to retrieve it. An API token also works in either field. On Unraid, find it in the native template’s <strong>API Token</strong> setting or the WebUI template’s <strong>API Tokens</strong> setting. Native config uses <code>[auth].api_tokens</code> or <code>[auth].api_tokens_file</code>; the WebUI service also accepts <code>TNG_API_TOKENS</code> or <code>RTNG_API_TOKENS</code>.
           </div>
+          <a
+            href="https://github.com/snapetech/TorrentNG/blob/main/deploy/unraid/README.md#webui-login"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: 'inline-block', marginTop: 8, color: 'var(--accent)',
+              fontSize: 12, textUnderlineOffset: 3,
+            }}
+          >
+            Using Unraid? Open the login instructions.
+          </a>
         </div>
         <label className="tng-form-card" style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12, color: 'var(--muted)' }}>
           Username or API token
