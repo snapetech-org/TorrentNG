@@ -15,11 +15,10 @@ infringement, or evading lawful access controls.
 Before submitting changes, run the relevant checks:
 
 ```sh
-cd sidecar && cargo test  # compatible-client WebUI/API service
-cd ../                   # return to the repository root
-cargo test --workspace --all-targets --locked  # TorrentNG client and libraries
-cd webui
-npm run build
-npm test
-npm run lint
+python3 scripts/validate_development.py --plan
+python3 scripts/validate_development.py --tests-only
+python3 scripts/validate_development.py
 ```
+
+The validation runner and its task-selection options are documented in
+[`docs/development/validation-engine.md`](docs/development/validation-engine.md).
