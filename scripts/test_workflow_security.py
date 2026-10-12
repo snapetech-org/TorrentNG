@@ -84,6 +84,7 @@ class WorkflowSecurityTests(unittest.TestCase):
     def test_public_pull_requests_never_select_persistent_runners(self) -> None:
         ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
         self.assertRegex(ci, r"(?m)^\s*pull_request:")
+        self.assertIn('branches: ["**"]', ci)
         self.assertNotRegex(ci, r"(?m)^\s*runs-on:\s*\[self-hosted")
         self.assertEqual(ci.count("github.event_name == 'push' && fromJSON"), 6)
         self.assertNotRegex(ci, r"(?m)^\s*pull_request_target:")
