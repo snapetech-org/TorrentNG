@@ -17,6 +17,26 @@ documentation scopes capacity, memory, and comparative claims to their actual
 evidence. A fresh local physical-device qualification has run, and a current-tree
 idle-daemon soak is in progress; neither changes the scope of historical results.
 
+## Benchmark evidence update — 2026-10-12
+
+A source-bound release build completed a capped public Debian 13.7 transfer on
+`kspls0`; the ISO matched Debian's published SHA-256. The isolated daemon's
+sampled peak RSS was 71.91 MiB, with 7.22% mean and 13.47% peak CPU use of one
+core during the 422-second transfer. The run also repeated the 128 MiB HDD
+shuffled-read matrix: its three baseline/elevator pairs measured a 2.97x
+median elapsed-time ratio, while the previous 2026-09-10 report measured
+5.11x. Host load ranged from 170 to 214 on a 32-logical-CPU host, so the new
+throughput and HDD elapsed-time numbers are low-confidence point estimates.
+An additional O_DIRECT random-read probe recorded p99 completion latency from
+115 to 353 ms across three trials, with a large p50 shift in the third trial.
+That spread reflects shared host and device contention; it is not a clean
+seek-latency baseline. These runs do not establish quiet-host throughput or
+multi-torrent resource limits.
+See the [resource report](../certification/reports/backend-engine-benchmark-20261012T174337Z.md),
+[storage report](../certification/reports/storage-hardware-20261012T174336Z.md),
+[random-read latency report](../certification/reports/storage-random-latency-20261012T175749Z.md),
+and [benchmark plan](BACKEND_PERFORMANCE_BENCHMARKS.md).
+
 ## Verdict
 
 TorrentNG has real performance work and several useful measured outcomes. The
@@ -44,7 +64,8 @@ the separate many-client API run, and the single-torrent soak into one
 | 1,000 hot memory check | The test builds 1,000 synthetic `TorrentRuntimeStats` rows, then sums only the ten rows retained in `hot_torrent_memory_top` and checks that estimate is below 64 MiB. | A regression for top-ten attribution. It does not measure actual allocations, the governor total, or total memory across 1,000 hot torrents. |
 | “RAM is O(active transfer)” | `STORAGE_NG.md` says the global frame pool makes RAM `O(active transfer)`. That statement describes frame-pool buffers only; registry rows, metadata, piece indexes, runtime tasks, database state, and other allocations also consume memory. | Say that frame-pool memory is capped and follows in-flight I/O. It does not describe the total process memory curve. |
 | Process memory and FD/thread soak | The historical public 24-hour run completed 1,437 samples and retained the exact completed Debian torrent, but its sampler read `/proc/1` (Tini), not `torrentngd`. | Continuity, health, sync, metrics, completed-torrent, and disk-free observations remain useful. The run does not establish daemon resource ceilings; the current sampler fix requires a new artifact-bound run. |
-| HDD peer-read elevator | The 2026-09-10 b393 report targets an ext4 filesystem on a rotational LVM device. Across three 128 MiB shuffled-read trials, the median was 5.11x wall-clock improvement; 8,192 peer reads were coalesced to one backend read. | A strong result for this code, host, filesystem, and access pattern. It is not a general torrent throughput claim or deterministic per-drive placement control. |
+| HDD peer-read elevator | The 2026-09-10 b393 report measured a 5.11x median for three 128 MiB shuffled-read trials on ext4 over rotational LVM. The 2026-10-12 current-source run measured 2.97x on the same target and pattern under heavy host load. Both runs coalesced 8,192 peer reads to one backend read per elevator trial. | The backend-read reduction is reproducible for this harness case. Elapsed-time ratios vary between runs and need quiet-host repeats; neither result is a general torrent-throughput claim or deterministic per-drive placement control. |
+| Random-read latency | The 2026-10-12 probe issued 2,000 synchronous 4 KiB `O_DIRECT` reads per trial on ext4 over rotational LVM. p99 completion latency ranged from 115 to 353 ms across three trials; the third trial's p50 rose to 22.8 ms. | This measures end-to-end stack completion under a busy host, not physical head travel. The spread is too large for a stable latency baseline and needs quiet-host repeats. |
 | `io_uring` storage | The 2026-09-10 HDD stream measured 209.79 MiB/s read for `pread` and 210.70 MiB/s for `io_uring`; throughput ratios were informational, not a required gate. A later report titled “hardware matrix” ran against tmpfs and inferred `Unknown`; its `io_uring` stream was only 4 MiB and sub-millisecond. | The HDD result shows comparable throughput on one host, not a material `io_uring` speedup. The later tmpfs PASS is capability/smoke evidence only, not hardware or disk-throughput evidence. |
 | Public swarm | The public Debian v1 matrix at b393 completed a 791,674,880-byte torrent and recorded 142 Rust peers in a five-client matrix. The 24-hour run tracked one completed public torrent. | Real public-v1 transfer and continuity evidence. It does not qualify multiple swarms, a large public peer population over time, pure-v2 public interop, or 100,000 torrents. The default global peer connection limit is 200. |
 | WebUI and torrent count | The browser scale test mocks 15,000 rows, checks fewer than 120 rendered rows, and exercises page loading. The live hook fetches 200 rows at a time; direct row-range navigation starts from a requested server-side offset. | Good evidence for bounded DOM rendering and direct navigation over mocked data. It does not establish real-library capacity or throughput. |
@@ -68,6 +89,16 @@ The API documentation already states this tradeoff.
 - A dated real-HDD test showed a 5.11x median speedup for one shuffled peer-read
   pattern, and a 32x reduction in backend reads for adjacent reads on the same
   target.
+- A current-source, capped public Debian transfer completed with a matching
+  official checksum; the isolated daemon peaked at 71.91 MiB RSS and averaged
+  7.22% of one CPU core during transfer. This is a single-torrent observation,
+  not a memory ceiling or a quiet-host CPU baseline.
+- The current HDD shuffled-read rerun measured a 2.97x median elevator ratio
+  and again coalesced 8,192 reads to one backend read. Severe host load makes
+  its elapsed-time ratio directional only.
+- A first O_DIRECT random-read sample recorded p99 latency from 115 to 353 ms
+  with substantial trial-to-trial variation. It measures end-to-end storage
+  completion, not actuator-only seek time, and needs a quiet-host repeat.
 - A real public Debian v1 transfer completed and observed 142 TorrentNG peers
   in the five-client matrix.
 
