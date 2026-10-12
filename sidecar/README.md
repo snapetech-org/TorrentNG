@@ -45,6 +45,21 @@ configured API token in either login field. See the
 [Unraid deployment guide](../deploy/unraid/README.md#webui-login) for both
 Unraid templates.
 
+For the Docker Compose deployment, run this from the repository directory
+while the TorrentNG service is running. For an optional backend, add its
+matching `deploy/docker/compose.<backend>.yml` file and `--profile <backend>`;
+use `torrentng-qbittorrent`, `torrentng-transmission`, or `torrentng-deluge`
+as the service name for the corresponding profile.
+
+```sh
+docker compose --env-file .env -f deploy/docker/compose.yml \
+  exec torrentng torrentng auth-token
+```
+
+The command needs an interactive terminal. You can also sign in with one of
+the `TNG_API_TOKENS` values from the protected `.env` file in either login
+field.
+
 Use this when you:
 
 - already have a supported torrent client and want a modern WebUI/API without

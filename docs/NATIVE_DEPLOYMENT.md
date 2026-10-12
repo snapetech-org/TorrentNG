@@ -8,6 +8,40 @@ For the larger product overview and TorrentNG-client versus compatible-client
 comparison, see
 [ENGINE_REWRITE.md](ENGINE_REWRITE.md).
 
+## WebUI login
+
+Use the username and password set in `[auth]` if you configured them. API
+tokens from `auth.api_tokens` or `auth.api_tokens_file` can also be entered in
+either login field. On a fresh install without a configured password, run
+`torrentngd auth-token` in an interactive terminal to display the generated
+WebUI username and password. The command writes credentials only to the
+terminal and refuses non-interactive use.
+
+For the native Docker Compose stack, run this from the repository directory
+while the service is running:
+
+```sh
+docker compose --env-file .env -f deploy/native/compose.yml exec torrentngd torrentngd auth-token
+```
+
+For the Ubuntu PPA package, run this on the server from an interactive
+terminal:
+
+```sh
+sudo -u torrentngd env TORRENTNGD_CONFIG=/etc/torrentngd/config.toml \
+  /usr/bin/torrentngd auth-token
+```
+
+For another systemd or direct-binary installation, run the command as the
+daemon account with the same `TORRENTNGD_CONFIG` value as the service. The PPA
+package's default WebUI address is `http://127.0.0.1:8080`.
+
+For the Kubernetes example, retrieve credentials interactively from its pod:
+
+```sh
+kubectl exec -n torrentng -it statefulset/torrentngd -c torrentngd -- torrentngd auth-token
+```
+
 ## Historical local release evidence — 2026-09-03
 
 On 2026-09-03 local time, `cargo build --release --locked -p torrentngd`
