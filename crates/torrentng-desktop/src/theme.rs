@@ -137,7 +137,8 @@ fn visuals(p: &Palette, dark: bool) -> egui::Visuals {
     v.warn_fg_color = p.warning;
     v.error_fg_color = p.danger;
     v.selection.bg_fill = p.selected;
-    v.selection.stroke = Stroke::new(1.0_f32, p.accent);
+    // Selected rows keep normal text; egui paints selected text with this stroke.
+    v.selection.stroke = Stroke::new(1.0_f32, p.text);
 
     let w = &mut v.widgets;
     w.noninteractive.bg_fill = p.panel;
@@ -179,6 +180,9 @@ pub fn apply(ctx: &egui::Context, choice: ThemeChoice) {
         style.spacing.button_padding = egui::vec2(10.0, 4.0);
         style.spacing.interact_size.y = 24.0;
         style.spacing.scroll.bar_width = 8.0;
+        // Labels must not capture clicks: table rows select on click. The detail
+        // dock turns this back on so hashes and paths can be copied.
+        style.interaction.selectable_labels = false;
         style
             .text_styles
             .insert(TextStyle::Body, FontId::proportional(13.0));

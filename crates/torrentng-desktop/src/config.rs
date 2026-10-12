@@ -70,8 +70,6 @@ pub struct Config {
     pub theme: ThemeChoice,
     pub local: LocalConfig,
     pub remote: RemoteConfig,
-    /// Detail pane height in points (0 = default).
-    pub detail_height: f32,
     pub show_sidebar: bool,
     pub show_detail: bool,
     /// Set once the first-run connection step has been completed.

@@ -95,7 +95,7 @@ fn toolbar(app: &mut App, ctx: &egui::Context, p: &Palette) {
                 if ui
                     .add_enabled(
                         online,
-                        egui::Button::new(RichText::new("＋ Add").color(p.accent_text))
+                        egui::Button::new(RichText::new("+ Add").color(p.accent_text))
                             .fill(p.accent_soft),
                     )
                     .clicked()
@@ -236,26 +236,27 @@ fn header_cell(
     key: Option<SortKey>,
     spec: &model::ViewSpec,
     out: &mut Option<SortKey>,
+    accent: Color32,
 ) {
     let Some(k) = key else {
         ui.label(RichText::new(label).strong());
         return;
     };
-    let arrow = if spec.sort == k {
-        if spec.descending {
-            " ▼"
-        } else {
-            " ▲"
-        }
-    } else {
-        ""
-    };
     let resp = ui
-        .add(
-            egui::Label::new(RichText::new(format!("{label}{arrow}")).strong())
-                .sense(Sense::click()),
-        )
+        .add(egui::Label::new(RichText::new(label).strong()).sense(Sense::click()))
         .on_hover_cursor(egui::CursorIcon::PointingHand);
+    if spec.sort == k {
+        // Drawn, not a glyph: egui's bundled fonts have no sort arrows.
+        let c = egui::pos2(resp.rect.right() + 9.0, resp.rect.center().y);
+        let d = if spec.descending { 1.0 } else { -1.0 };
+        let pts = vec![
+            c + egui::vec2(-4.0, -2.5 * d),
+            c + egui::vec2(4.0, -2.5 * d),
+            c + egui::vec2(0.0, 3.0 * d),
+        ];
+        ui.painter()
+            .add(egui::Shape::convex_polygon(pts, accent, Stroke::NONE));
+    }
     if resp.clicked() {
         *out = Some(k);
     }
@@ -292,21 +293,39 @@ fn table(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
             .cell_layout(Layout::left_to_right(Align::Center))
             .column(Column::exact(26.0))
             .column(Column::remainder().at_least(180.0).clip(true))
-            .column(Column::initial(96.0).at_least(70.0))
+            .column(Column::initial(84.0).at_least(64.0))
+            .column(Column::initial(76.0).at_least(56.0))
+            .column(Column::initial(112.0).at_least(80.0))
             .column(Column::initial(84.0).at_least(60.0))
-            .column(Column::initial(130.0).at_least(80.0))
-            .column(Column::initial(92.0).at_least(60.0))
-            .column(Column::initial(92.0).at_least(60.0))
-            .column(Column::initial(76.0).at_least(50.0))
+            .column(Column::initial(84.0).at_least(60.0))
+            .column(Column::initial(66.0).at_least(50.0))
+            .column(Column::initial(50.0).at_least(40.0))
+            .column(Column::initial(50.0).at_least(40.0))
             .column(Column::initial(56.0).at_least(40.0))
-            .column(Column::initial(56.0).at_least(40.0))
-            .column(Column::initial(60.0).at_least(40.0))
-            .column(Column::initial(92.0).at_least(70.0))
+            .column(Column::initial(88.0).at_least(70.0))
             .header(28.0, |mut h| {
                 h.col(|_| {});
-                h.col(|ui| header_cell(ui, "Name", Some(SortKey::Name), spec, &mut sort_click));
-                h.col(|ui| header_cell(ui, "Status", None, spec, &mut sort_click));
-                h.col(|ui| header_cell(ui, "Size", Some(SortKey::Size), spec, &mut sort_click));
+                h.col(|ui| {
+                    header_cell(
+                        ui,
+                        "Name",
+                        Some(SortKey::Name),
+                        spec,
+                        &mut sort_click,
+                        p.accent,
+                    )
+                });
+                h.col(|ui| header_cell(ui, "Status", None, spec, &mut sort_click, p.accent));
+                h.col(|ui| {
+                    header_cell(
+                        ui,
+                        "Size",
+                        Some(SortKey::Size),
+                        spec,
+                        &mut sort_click,
+                        p.accent,
+                    )
+                });
                 h.col(|ui| {
                     header_cell(
                         ui,
@@ -314,15 +333,34 @@ fn table(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
                         Some(SortKey::Progress),
                         spec,
                         &mut sort_click,
+                        p.accent,
                     )
                 });
-                h.col(|ui| header_cell(ui, "↓", None, spec, &mut sort_click));
-                h.col(|ui| header_cell(ui, "↑", None, spec, &mut sort_click));
-                h.col(|ui| header_cell(ui, "ETA", None, spec, &mut sort_click));
-                h.col(|ui| header_cell(ui, "Seeds", None, spec, &mut sort_click));
-                h.col(|ui| header_cell(ui, "Peers", None, spec, &mut sort_click));
-                h.col(|ui| header_cell(ui, "Ratio", Some(SortKey::Ratio), spec, &mut sort_click));
-                h.col(|ui| header_cell(ui, "Added", Some(SortKey::Added), spec, &mut sort_click));
+                h.col(|ui| header_cell(ui, "Down", None, spec, &mut sort_click, p.accent));
+                h.col(|ui| header_cell(ui, "Up", None, spec, &mut sort_click, p.accent));
+                h.col(|ui| header_cell(ui, "ETA", None, spec, &mut sort_click, p.accent));
+                h.col(|ui| header_cell(ui, "Seeds", None, spec, &mut sort_click, p.accent));
+                h.col(|ui| header_cell(ui, "Peers", None, spec, &mut sort_click, p.accent));
+                h.col(|ui| {
+                    header_cell(
+                        ui,
+                        "Ratio",
+                        Some(SortKey::Ratio),
+                        spec,
+                        &mut sort_click,
+                        p.accent,
+                    )
+                });
+                h.col(|ui| {
+                    header_cell(
+                        ui,
+                        "Added",
+                        Some(SortKey::Added),
+                        spec,
+                        &mut sort_click,
+                        p.accent,
+                    )
+                });
             })
             .body(|body| {
                 body.rows(ROW_HEIGHT, total, |mut row| {
@@ -486,17 +524,14 @@ fn row_cells(
 // ---- detail dock --------------------------------------------------------
 
 fn detail_dock(app: &mut App, ctx: &egui::Context, p: &Palette) {
-    let default_h = if app.cfg.detail_height >= 100.0 {
-        app.cfg.detail_height
-    } else {
-        220.0
-    };
-    let resp = egui::TopBottomPanel::bottom("detail")
+    egui::TopBottomPanel::bottom("detail")
         .resizable(true)
-        .default_height(default_h)
+        .default_height(240.0)
         .height_range(110.0..=600.0)
         .frame(panel_frame(p.panel, p))
         .show(ctx, |ui| {
+            // Panels size to content; keep the dock usable when it only says "select a torrent".
+            ui.set_min_height(200.0);
             ui.horizontal(|ui| {
                 for (tab, label) in [
                     (DetailTab::General, "General"),
@@ -507,6 +542,7 @@ fn detail_dock(app: &mut App, ctx: &egui::Context, p: &Palette) {
                 }
             });
             ui.separator();
+            ui.style_mut().interaction.selectable_labels = true;
             if app.selected.len() != 1 {
                 ui.label(
                     RichText::new(if app.selected.is_empty() {
@@ -531,11 +567,6 @@ fn detail_dock(app: &mut App, ctx: &egui::Context, p: &Palette) {
                 DetailTab::Trackers => detail_trackers(ui, &d, p),
             }
         });
-    let h = resp.response.rect.height();
-    if (h - app.cfg.detail_height).abs() > 8.0 && !ctx.input(|i| i.pointer.any_down()) {
-        app.cfg.detail_height = h;
-        app.save_config();
-    }
 }
 
 fn kv(ui: &mut egui::Ui, p: &Palette, k: &str, v: impl Into<String>) {
@@ -717,12 +748,15 @@ fn status_bar(app: &mut App, ctx: &egui::Context, p: &Palette) {
                         );
                         ui.separator();
                         ui.label(
-                            RichText::new(format!("↑ {}", fmt::speed(app.transfer.up_info_speed)))
+                            RichText::new(format!("Up {}", fmt::speed(app.transfer.up_info_speed)))
                                 .color(p.success),
                         );
                         ui.label(
-                            RichText::new(format!("↓ {}", fmt::speed(app.transfer.dl_info_speed)))
-                                .color(p.accent),
+                            RichText::new(format!(
+                                "Down {}",
+                                fmt::speed(app.transfer.dl_info_speed)
+                            ))
+                            .color(p.accent),
                         );
                     }
                 });
