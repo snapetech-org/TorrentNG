@@ -20,6 +20,14 @@ jobs:
     timeout-minutes: 60
     runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","Linux","X64"]') || fromJSON('["ubuntu-latest"]') }}
     steps:
+      - name: Route temporary files to runner temp
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
+          mkdir -p "$RUNNER_TEMP"
+          test -w "$RUNNER_TEMP"
+          printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -148,6 +156,14 @@ jobs:
     timeout-minutes: 60
     runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","Linux","X64"]') || fromJSON('["ubuntu-latest"]') }}
     steps:
+      - name: Route temporary files to runner temp
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
+          mkdir -p "$RUNNER_TEMP"
+          test -w "$RUNNER_TEMP"
+          printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -171,6 +187,14 @@ jobs:
     timeout-minutes: 30
     runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","Linux","X64"]') || fromJSON('["ubuntu-latest"]') }}
     steps:
+      - name: Route temporary files to runner temp
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
+          mkdir -p "$RUNNER_TEMP"
+          test -w "$RUNNER_TEMP"
+          printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -190,6 +214,14 @@ jobs:
     timeout-minutes: 30
     runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","Linux","X64"]') || fromJSON('["ubuntu-latest"]') }}
     steps:
+      - name: Route temporary files to runner temp
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
+          mkdir -p "$RUNNER_TEMP"
+          test -w "$RUNNER_TEMP"
+          printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -270,6 +302,14 @@ jobs:
     timeout-minutes: 30
     runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","Linux","X64"]') || fromJSON('["ubuntu-latest"]') }}
     steps:
+      - name: Route temporary files to runner temp
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
+          mkdir -p "$RUNNER_TEMP"
+          test -w "$RUNNER_TEMP"
+          printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -289,6 +329,14 @@ jobs:
     timeout-minutes: 20
     runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","Linux","X64"]') || fromJSON('["ubuntu-latest"]') }}
     steps:
+      - name: Route temporary files to runner temp
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
+          mkdir -p "$RUNNER_TEMP"
+          test -w "$RUNNER_TEMP"
+          printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
