@@ -24,6 +24,9 @@ certification/reports/*
 !certification/reports/storage-hardware-release-20261002T211623Z.md
 !certification/reports/storage-uring-graduation-release-20261002T211623Z.md
 !certification/reports/storage-move-import-release-20261002T211623Z.md
+!certification/reports/backend-engine-benchmark-20261012T174337Z.md
+!certification/reports/storage-hardware-20261012T174336Z.md
+!certification/reports/storage-random-latency-20261012T175749Z.md
 certification/bundles/
 certification/interop/
 
