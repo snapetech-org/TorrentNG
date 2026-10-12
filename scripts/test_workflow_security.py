@@ -92,6 +92,83 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertRegex(windows, r"(?m)^\s*runs-on:\s*windows-latest\s*$")
         self.assertNotRegex(windows, r"(?m)^\s*runs-on:.*self-hosted")
 
+    def test_self_hosted_jobs_use_runner_temp_for_temporary_files(self) -> None:
+        missing: list[str] = []
+        observed = 0
+        setup_name = "      - name: Route temporary files to runner temp"
+        for workflow_path in sorted(WORKFLOWS.glob("*.yml")):
+            lines = workflow_path.read_text(encoding="utf-8").splitlines()
+            jobs_start = next(
+                (index for index, line in enumerate(lines) if line == "jobs:"),
+                None,
+            )
+            if jobs_start is None:
+                continue
+
+            jobs: list[tuple[str, str]] = []
+            current_name: str | None = None
+            current_body: list[str] = []
+            for line in lines[jobs_start + 1 :]:
+                if line and not line.startswith(" "):
+                    break
+                match = re.fullmatch(r"  ([A-Za-z0-9_-]+):", line)
+                if match is not None:
+                    if current_name is not None:
+                        jobs.append((current_name, chr(10).join(current_body)))
+                    current_name = match.group(1)
+                    current_body = []
+                elif current_name is not None:
+                    current_body.append(line)
+            if current_name is not None:
+                jobs.append((current_name, chr(10).join(current_body)))
+
+            for job_name, body in jobs:
+                if re.search(r"(?m)^    runs-on:.*self-hosted", body) is None:
+                    continue
+                observed += 1
+                steps_start = body.find("    steps:" + chr(10))
+                if steps_start < 0:
+                    missing.append(f"{workflow_path.name}:{job_name}:steps are missing")
+                    continue
+                steps_body = body[steps_start:]
+                first_step = next(
+                    (
+                        line
+                        for line in steps_body.splitlines()
+                        if line.startswith("      - ")
+                    ),
+                    None,
+                )
+                if first_step != setup_name:
+                    missing.append(
+                        f"{workflow_path.name}:{job_name}:setup step is not first"
+                    )
+                    continue
+                setup = steps_body.split(setup_name, 1)[1].split(
+                    chr(10) + "      - ", 1
+                )[0]
+                required = (
+                    "RUNNER_TEMP:?RUNNER_TEMP is required",
+                    'mkdir -p "$RUNNER_TEMP"',
+                    'test -w "$RUNNER_TEMP"',
+                    "TMPDIR=%s",
+                    "$RUNNER_TEMP",
+                    "$GITHUB_ENV",
+                    '>> "$GITHUB_ENV"',
+                )
+                if any(item not in setup for item in required):
+                    missing.append(
+                        f"{workflow_path.name}:{job_name}:incomplete temp setup"
+                    )
+
+        self.assertGreater(observed, 0, "no self-hosted workflow jobs were found")
+        self.assertEqual(
+            [],
+            missing,
+            "every self-hosted job must export RUNNER_TEMP as TMPDIR "
+            "before other steps",
+        )
+
     def test_checkout_credentials_are_not_persisted(self) -> None:
         for workflow_name in CHECKOUT_WORKFLOWS:
             source = (WORKFLOWS / workflow_name).read_text(encoding="utf-8")
