@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -74,14 +75,35 @@ class ValidationEngineTests(unittest.TestCase):
         if node is None:
             self.skipTest("Node.js is unavailable for the trusted-launcher canary")
         canary = engine.ROOT / "scripts/validation_engine/trusted-test-launcher.contract.mjs"
-        result = subprocess.run(
-            [node, "--test", str(canary)],
-            cwd=engine.ROOT,
-            capture_output=True,
-            check=False,
-            text=True,
-            timeout=30,
-        )
+        command = [node, "--test", str(canary)]
+        environment = os.environ.copy()
+        if os.name == "posix":
+            # Keep Unix socket names short while storing fixture data in the task-private temp directory.
+            with tempfile.TemporaryDirectory(prefix="tng-", dir="/var/tmp") as alias_root:
+                short_tmp = Path(alias_root) / "tmp"
+                short_tmp.symlink_to(Path(tempfile.gettempdir()), target_is_directory=True)
+                environment.update(
+                    {"TMPDIR": str(short_tmp), "TMP": str(short_tmp), "TEMP": str(short_tmp)}
+                )
+                result = subprocess.run(
+                    command,
+                    cwd=engine.ROOT,
+                    capture_output=True,
+                    check=False,
+                    text=True,
+                    timeout=30,
+                    env=environment,
+                )
+        else:
+            result = subprocess.run(
+                command,
+                cwd=engine.ROOT,
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=30,
+                env=environment,
+            )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_child_environment_uses_allowlist_and_run_owned_paths(self) -> None:
