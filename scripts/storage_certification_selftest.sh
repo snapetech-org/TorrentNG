@@ -2,8 +2,46 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/storage_target_qualification.sh"
+source "$ROOT/scripts/storage_matrix_release_status.sh"
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
+trap 'status=$?; echo "storage certification self-test failed at line ${LINENO} (exit $status)" >&2; exit "$status"' ERR
+
+"$ROOT/scripts/soak_process_sample_selftest.sh"
+
+storage_target_is_hardware_qualified /dev/mapper/test ext4 disk
+if storage_target_is_hardware_qualified '' ext4 disk; then
+  echo "storage hardware classifier accepted a target without a block device" >&2
+  exit 1
+fi
+if storage_target_is_hardware_qualified /dev/mapper/test tmpfs disk; then
+  echo "storage hardware classifier accepted tmpfs as physical-device evidence" >&2
+  exit 1
+fi
+if storage_target_is_hardware_qualified /dev/mapper/test nfs4 disk; then
+  echo "storage hardware classifier accepted a network filesystem" >&2
+  exit 1
+fi
+if storage_target_is_hardware_qualified /dev/loop0 ext4 loop; then
+  echo "storage hardware classifier accepted a loop device" >&2
+  exit 1
+fi
+cat > "$tmpdir/matrix-smoke-only.md" <<'REPORT'
+| hardware qualification | SKIP |
+Overall status: PASS_WITH_SKIPS
+REPORT
+[[ "$(storage_matrix_release_status "$tmpdir/matrix-smoke-only.md")" == SKIP ]]
+cat > "$tmpdir/matrix-device-pass.md" <<'REPORT'
+| hardware qualification | PASS |
+Overall status: PASS_WITH_WARNINGS
+REPORT
+[[ "$(storage_matrix_release_status "$tmpdir/matrix-device-pass.md")" == PASS ]]
+cat > "$tmpdir/matrix-fail.md" <<'REPORT'
+| hardware qualification | PASS |
+Overall status: FAIL
+REPORT
+[[ "$(storage_matrix_release_status "$tmpdir/matrix-fail.md")" == FAIL ]]
 
 report_dir="$tmpdir/reports"
 benchmark_dir="$tmpdir/benchmarks"
@@ -264,12 +302,35 @@ if TNG_STORAGE_REPORT_DIR="$report_dir" \
   exit 1
 fi
 
-TNG_STORAGE_REPORT_DIR="$report_dir" \
+release_report="$report_dir/storage-release-certification-run-selftest.md"
+release_log="$tmpdir/storage-release-certification-run-selftest.log"
+source_changes="$(git -C "$ROOT" status --porcelain --untracked-files=all -- . \
+  ':(exclude)certification/reports/**' \
+  ':(exclude)certification/bundles/**' \
+  ':(exclude).run/**')"
+if [[ -n "$source_changes" ]]; then
+  printf 'source changes before storage release self-test:\n%s\n' "$source_changes" >&2
+fi
+if ! TNG_STORAGE_REPORT_DIR="$report_dir" \
+  TNG_STORAGE_RELEASE_REPORT="$release_report" \
   TNG_STORAGE_RELEASE_SELFTEST=1 \
   TNG_STORAGE_SKIP_URING=1 \
   TNG_STORAGE_SKIP_MOVE_IMPORT=1 \
   TNG_STORAGE_ALLOW_RELEASE_SKIP=1 \
-  "$ROOT/scripts/storage_release_certification.sh" "$tmpdir/storage-root" >/dev/null
+  "$ROOT/scripts/storage_release_certification.sh" "$tmpdir/storage-root" >"$release_log" 2>&1; then
+  cat "$release_log" >&2
+  if [[ -f "$release_report" ]]; then
+    cat "$release_report" >&2
+  fi
+  echo "storage release self-test run should finish with an explicitly skipped, passing report" >&2
+  exit 1
+fi
+if ! grep -q '^Overall status: PASS$' "$release_report" ||
+  ! grep -Fq '| source provenance | PASS | clean source commit ' "$release_report"; then
+  cat "$release_report" >&2
+  echo "storage release self-test report must pass and identify its source" >&2
+  exit 1
+fi
 
 mkdir -p "$tmpdir/migration-corpus/qbittorrent"
 printf 'fixture' >"$tmpdir/migration-corpus/qbittorrent/sample.fastresume"

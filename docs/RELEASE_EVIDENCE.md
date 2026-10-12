@@ -1,28 +1,66 @@
 # TorrentNG Release Evidence Runbook
 
-This is the operator sequence for turning the current certification state into a
-strict release-ready state.
+This runbook records older qualification results and the operator sequence for
+establishing release readiness on an exact source revision.
 
-The current worktree qualification is at `1dea3ea`; older runtime product and
-LVM evidence remains tied to the commit recorded by each report. GitHub
-Actions evidence cited below is historical hosted-run evidence; CI success does
-not configure branch protection or certify broader public-network, target-device,
-or scale behavior.
+The previously published worktree qualification snapshot is at `1dea3ea`; older runtime product and
+LVM evidence remains tied to the commit recorded by each report. GitHub Actions
+evidence cited below is historical hosted-run evidence. A `main` ruleset was
+added on 2026-10-06 to require pull requests and named CI checks; it has not yet
+been exercised by a PR from this checkout. Neither CI nor branch protection
+certifies broader public-network, target-device, or scale behavior.
 
-## Current qualification scope — 2026-09-16
+## Current checkout status — 2026-10-06
+
+The changes on `codex/credibility-and-release-prep` have not been tested or
+certified. The reports below are historical records and do not qualify this
+checkout. The 2026-10-02 physical-storage report records source commit
+`db4e333c` and a dirty worktree. The 24-hour soak report records its container
+and image IDs but no source commit; its final report also contains a machine-
+specific absolute path. Treat that soak as a historical idle-service
+observation, not source-bound release evidence. Run the exact-SHA checks in the
+[at-home validation plan](AT_HOME_VALIDATION.md) before considering a release.
+
+## Source safeguards recorded — 2026-10-02
+
+The soak sampler now validates the `torrentngd` process and records its
+container/image identity. Storage hardware rollups now require a block-backed,
+non-pseudo, non-network target; a tmpfs-only run is smoke evidence and yields a
+hardware-gate SKIP. These source changes did not create soak or physical-device
+evidence by themselves. The historical local reports below remain tied to their
+recorded environments; exact-source follow-up is pending.
+
+## Historical local qualification — 2026-10-02
+
+These results belong to the named reports and their recorded environments. They
+are not evidence for the current checkout.
+
+| Gate | Result | Evidence and scope |
+| --- | --- | --- |
+| Physical storage release certification | PASS | [`storage-release-certification-local-ssd-20261002.md`](../certification/reports/storage-release-certification-local-ssd-20261002.md); `/dev/sdb`, Btrfs, physical SSD. Hardware qualification, `io_uring` graduation, real-root move/import, and storage index passed. The matrix exercised 256 MiB backend streams and a 16 MiB recheck; HDD-only elevator evidence is not applicable to this target. |
+| Named WebUI certification | PASS | [`webui-certification-tng147-local-20261002.md`](../certification/reports/webui-certification-tng147-local-20261002.md); worktree state is recorded as dirty; production build, lint, and browser matrix pass (28 passed, 10 skipped). |
+| One-sample daemon sampler smoke | PASS | Authenticated smoke against the daemon recorded `torrentngd` RSS/FD/thread data and healthy API/dependency checks. It is not 24-hour evidence. |
+| Named 24-hour idle-daemon run | PASS | [soak-24h-tng145-current-20261002.md](../certification/reports/soak-24h-tng145-current-20261002.md) and [soak-final-tng145-current-20261003.md](../certification/reports/soak-final-tng145-current-20261003.md); PASS (1439 samples; 2026-10-02T21:11:04Z through 2026-10-03T21:17:37Z). The raw report has no source commit. Empty state, DHT disabled, no torrent workload; idle-daemon observation only, not evidence for this checkout, a loaded swarm, or public-network behavior. |
+
+The daemon image is identified by its recorded Docker image ID, but the raw
+soak report does not record a source revision. The idle soak can establish idle
+process ceilings and continuity only; it does not replace a loaded
+public-torrent soak.
+
+## Qualification scope decision — 2026-09-16
 
 Numeric torrent-count capacity proofs, including 10k/100k synthetic or
 hot-set runs, are removed from the required release scope. Existing reports and
 tests remain historical or diagnostic evidence and must not be summarized as a
-capacity certificate. The current qualification also defers the 24-hour soak;
-run the non-soak gates with `TNG_DEFER_24H_SOAK=1` and record the deferral
-explicitly. A later soak must target the then-current artifact before making a
-stability claim.
+capacity certificate. A later named idle-daemon run is recorded above and in
+[soak-final-tng145-current-20261003.md](../certification/reports/soak-final-tng145-current-20261003.md).
+Its source revision is not recorded, and its scope is limited to an idle daemon;
+it does not establish loaded-swarm stability or qualify this checkout.
 
 The concrete failure history and fixes for recent hosted regressions are
 tracked in [`CI_FAILURE_BURN_DOWN.md`](CI_FAILURE_BURN_DOWN.md).
 
-## Current qualification update — 2026-09-16
+## Qualification snapshot — 2026-09-16 (historical)
 
 The current qualification is intentionally narrower than a production-scale
 certificate. Numeric torrent-count proofs are out of scope, and the 24-hour
@@ -35,7 +73,7 @@ soak is explicitly deferred with `TNG_DEFER_24H_SOAK=1`.
 | Public Ubuntu transfer | FAIL/UNQUALIFIED | [`interop-matrix-current-public-ubuntu-bounded-20260916.md`](../certification/reports/interop-matrix-current-public-ubuntu-bounded-20260916.md); official Ubuntu 26.04.1, bounded at 120 seconds, no completed payload |
 | Public Fedora transfer | FAIL/UNQUALIFIED | [`interop-matrix-current-public-fedora-bounded-20260916.md`](../certification/reports/interop-matrix-current-public-fedora-bounded-20260916.md); official Fedora Server 45 Beta, bounded at 120 seconds, no completed payload |
 | Live fault-containment matrix | PASS | [`backend-burndown-fault-matrix-current-20260916.md`](../certification/reports/backend-burndown-fault-matrix-current-20260916.md); live crash/restart, SQLite failure/recovery, cancellation, and filesystem isolation pass |
-| Storage lab certification | PASS | [`storage-release-certification-lab-current-20260916.md`](../certification/reports/storage-release-certification-lab-current-20260916.md); temporary tmpfs root only, not physical-device evidence |
+| Storage lab certification | SMOKE_ONLY | [`storage-release-certification-lab-current-20260916.md`](../certification/reports/storage-release-certification-lab-current-20260916.md); raw child PASS was on tmpfs and does not qualify physical storage |
 | External evidence preflight | PASS_WITH_WARNINGS | [`external-evidence-preflight-current-20260916.md`](../certification/reports/external-evidence-preflight-current-20260916.md); real-device target unavailable, soak informationally deferred |
 | Local release readiness | PASS | [`release-readiness-local-current-20260916.md`](../certification/reports/release-readiness-local-current-20260916.md) |
 | Strict release readiness | FAIL | [`release-readiness-current-20260916.md`](../certification/reports/release-readiness-current-20260916.md); external policy rows remain non-clean |
