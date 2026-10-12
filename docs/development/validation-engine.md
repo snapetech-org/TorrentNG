@@ -15,6 +15,18 @@ python3 scripts/validate_development.py --task workspace-tests
 python3 scripts/validate_development.py
 ```
 
+Local execution of test tasks requires the trusted Linux bubblewrap launcher.
+When evaluating an unreviewed branch, copy `trusted-test-launcher.mjs` from a
+reviewed revision to a location outside the checkout and run:
+
+```sh
+node /path/to/trusted-test-launcher.mjs "$PWD" -- python3 scripts/validate_development.py --tests-only
+```
+
+Run planning for an unreviewed candidate through that launcher too, because
+planning imports its validation code. GitHub Actions remains responsible for
+hosted validation.
+
 The plan is read-only. Execution checks the plan against the current Git
 candidate, runs each selected native command, records its output in a private
 temporary evidence directory, and writes a JSON receipt there. Rust, Python,
