@@ -76,6 +76,7 @@ for what was exercised and where.
 
 - [Connect an existing client](docs/DEPLOYMENT.md)
 - [Run the TorrentNG Engine](docs/NATIVE_DEPLOYMENT.md)
+- [Install on Unraid](deploy/unraid/README.md)
 - [Configuration](docs/CONFIGURATION.md)
 - [Migration and export](docs/MIGRATION.md)
 - [API and compatibility limits](docs/API.md) · [client matrices](docs/CLIENT_COMPATIBILITY_MATRICES.md)

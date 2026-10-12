@@ -20,16 +20,35 @@ shows on the Add Container page.
 
 ## WebUI login
 
-Each install generates a unique WebUI password in its state directory. The
-templates publish on a public container bind, so first sign in with the
-template's **API Token** or **API Tokens** value; the same token can be entered
-in either login field. Retrieve the generated login from the container console
-with `torrentngd auth-token` (native) or `torrentng auth-token` (WebUI service).
-Run either command from an interactive container console; credentials are
-written to the controlling terminal and not stdout.
-Then open **Settings -> Security** to choose a username and password of at
-least 16 characters. API tokens remain available for automation. Runtime
-changes persist in the profile's state directory.
+TorrentNG has its own WebUI login. The qBittorrent, rTorrent, Transmission, or
+Deluge credentials entered in the template are only for TorrentNG to connect
+to that backend; they do not log you in to TorrentNG.
+
+For the first sign-in, you can enter the template's **API Token** or **API
+Tokens** value in either TorrentNG login field. These tokens are separate from
+the backend client's username and password.
+
+To display the active TorrentNG WebUI username and password:
+
+1. In Unraid's web interface, open the **Docker** tab.
+2. Find the TorrentNG container. Click its container icon and choose
+   **Console** from the menu. This opens a terminal inside the running
+   container.
+3. At the prompt, run the command for the template you installed:
+   - **torrentng-webui** (connects to an existing client): `torrentng auth-token`
+   - **torrentng** (TorrentNG engine): `torrentngd auth-token`
+
+4. Use the printed **WebUI username** and **WebUI password** on the TorrentNG
+   login page. Run the command in TorrentNG's interactive Console, not in the
+   existing torrent client's console. It reports the active credentials,
+   including values changed earlier in **Settings -> Security**.
+
+Each install generates a unique WebUI password. After signing in, open
+**Settings -> Security** to choose a username and password of at least 16
+characters. API tokens remain available for automation, and runtime changes
+persist in the profile's state directory. See the
+[compatible-client README](../../sidecar/README.md#webui-login) for the
+service-specific instructions.
 
 ## Native torrentng behind Gluetun
 

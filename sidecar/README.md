@@ -21,6 +21,8 @@ The selected client owns peer traffic, payload storage, and session state;
 TorrentNG supplies the shared WebUI/API, authentication, cache, workflows,
 metrics, and compatibility projections.
 
+### WebUI login
+
 When API-token authentication is enabled, use the configured token in either
 the WebUI username or password field. Tokens come from `[auth].api_tokens` in
 the service config or `TNG_API_TOKENS` / `RTNG_API_TOKENS` in the environment.
@@ -32,6 +34,16 @@ username/password in `[auth]`, `TNG_USERNAME` / `TNG_PASSWORD`, or
 **Settings -> Security**. Public binds require an API token and a WebUI password
 of at least 16 characters. Runtime changes persist in the service data
 directory; API tokens remain enabled for automation.
+
+On Unraid, open the **Docker** tab, click the icon for the
+`torrentng-webui` container, and choose **Console**. At the prompt, run
+`torrentng auth-token`; it prints the current TorrentNG WebUI username and
+password in that interactive console. The qBittorrent (or other backend)
+credentials configured in the template are used by TorrentNG to connect to the
+backend and are not the TorrentNG WebUI login. You can instead sign in with a
+configured API token in either login field. See the
+[Unraid deployment guide](../deploy/unraid/README.md#webui-login) for both
+Unraid templates.
 
 Use this when you:
 
