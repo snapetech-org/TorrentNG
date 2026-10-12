@@ -20,6 +20,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+if __package__:
+    from scripts.validation_engine.trusted_sandbox import require_trusted_local_test_sandbox
+else:
+    from validation_engine.trusted_sandbox import require_trusted_local_test_sandbox
+
 
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = "torrentng"
@@ -798,6 +803,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{REPOSITORY}: {test_count} inventoried test sources; {selected_count} planned tasks; "
                       f"{available}/{len(plan['prerequisites'])} prerequisites available.")
             return 0
+        if any(task["selected"] and task["kind"] == "test" for task in plan["tasks"]):
+            require_trusted_local_test_sandbox()
         result = execute_plan(ROOT, plan)
         summary = {key: result[key] for key in ("repository", "status", "plan_sha256", "totals", "evidence_directory", "exit_code")}
         print(json.dumps(summary, indent=2))

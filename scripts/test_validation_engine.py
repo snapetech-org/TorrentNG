@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from scripts import validate_development as engine
+from scripts.validation_engine.trusted_sandbox import require_trusted_local_test_sandbox
 
 
 def make_repository() -> Path:
@@ -55,6 +56,33 @@ class ValidationEngineTests(unittest.TestCase):
     def setUp(self) -> None:
         self.root = make_repository()
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+
+    def test_local_test_execution_requires_matching_outer_sandbox_marker(self) -> None:
+        marker = self.root / "sandbox-marker"
+        token = "a" * 64
+        with self.assertRaisesRegex(RuntimeError, "trusted bubblewrap launcher"):
+            require_trusted_local_test_sandbox({}, marker)
+        marker.write_text("b" * 64, encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "trusted bubblewrap launcher"):
+            require_trusted_local_test_sandbox({"VALIDATION_OUTER_SANDBOX_TOKEN": token}, marker)
+        marker.write_text(token, encoding="utf-8")
+        require_trusted_local_test_sandbox({"VALIDATION_OUTER_SANDBOX_TOKEN": token}, marker)
+        require_trusted_local_test_sandbox({"GITHUB_ACTIONS": "true"}, marker)
+
+    def test_trusted_launcher_host_resource_canary(self) -> None:
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node.js is unavailable for the trusted-launcher canary")
+        canary = engine.ROOT / "scripts/validation_engine/trusted-test-launcher.contract.mjs"
+        result = subprocess.run(
+            [node, "--test", str(canary)],
+            cwd=engine.ROOT,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_child_environment_uses_allowlist_and_run_owned_paths(self) -> None:
         run_root = self.root / "evidence"
