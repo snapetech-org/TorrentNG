@@ -1344,7 +1344,10 @@ mod circuit_breaker_tests {
 
     #[tokio::test]
     async fn background_timeout_opens_circuit_before_returning() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = tempfile::Builder::new()
+            .prefix("tng-")
+            .tempdir_in("/tmp")
+            .unwrap();
         let socket_path = directory.path().join("rpc.sock");
         let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
         let server = tokio::spawn(async move {
