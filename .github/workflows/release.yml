@@ -130,28 +130,28 @@ jobs:
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
 
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: python3 scripts/validate_development.py --task workspace-format
 
       - name: Validate TorrentNG API contract
-        run: python3 scripts/validate_openapi.py
+        run: python3 scripts/validate_development.py --task api-contract
 
       - name: Test protected API target and load-runner boundaries
-        run: python3 -m unittest scripts.test_protected_target scripts.test_backend_burndown_api_load scripts.test_workflow_security
+        run: python3 scripts/validate_development.py --task python-contract-tests
 
       - name: Test TorrentNG client workspace
-        run: cargo test --workspace --all-targets --locked -- --test-threads=1
+        run: python3 scripts/validate_development.py --task workspace-tests
 
       - name: Lint TorrentNG client workspace
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: python3 scripts/validate_development.py --task workspace-clippy
 
       - name: Check compatible-client service formatting
-        run: cargo fmt --manifest-path sidecar/Cargo.toml -- --check
+        run: python3 scripts/validate_development.py --task sidecar-format
 
       - name: Test compatible-client service
-        run: cargo test --locked --manifest-path sidecar/Cargo.toml
+        run: python3 scripts/validate_development.py --task sidecar-tests
 
       - name: Lint compatible-client service
-        run: cargo clippy --all-targets --locked --manifest-path sidecar/Cargo.toml -- -D warnings
+        run: python3 scripts/validate_development.py --task sidecar-clippy
 
   msrv-check:
     name: Main workspace MSRV gate
@@ -171,7 +171,7 @@ jobs:
         run: cargo build --workspace --all-targets --locked
 
       - name: Test TorrentNG client workspace at declared MSRV
-        run: cargo test --workspace --all-targets --locked -- --test-threads=1
+        run: python3 scripts/validate_development.py --task workspace-tests
 
   msrv-check-sidecar:
     name: Compatible-client service MSRV gate
@@ -191,7 +191,7 @@ jobs:
         run: cargo build --locked --manifest-path sidecar/Cargo.toml
 
       - name: Test compatible-client service at declared MSRV
-        run: cargo test --locked --manifest-path sidecar/Cargo.toml
+        run: python3 scripts/validate_development.py --task sidecar-tests
 
   security-audit:
     name: Release dependency security gate
@@ -230,7 +230,7 @@ jobs:
         working-directory: webui
         run: |
           npm ci
-          npm test
+          python3 ../scripts/validate_development.py --task webui-tests
           npm audit --audit-level=high
 
   native-release-smoke:
@@ -392,7 +392,7 @@ jobs:
         run: cargo build --release --locked --manifest-path sidecar/Cargo.toml
 
       - name: Run compatible-client service tests
-        run: cargo test --locked --manifest-path sidecar/Cargo.toml
+        run: python3 scripts/validate_development.py --task sidecar-tests
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7

@@ -30,25 +30,25 @@ jobs:
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
 
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: python3 scripts/validate_development.py --task workspace-format
 
       - name: Validate TorrentNG API contract
-        run: python3 scripts/validate_openapi.py
+        run: python3 scripts/validate_development.py --task api-contract
 
       - name: Test protected API target and load-runner boundaries
-        run: python3 -m unittest scripts.test_protected_target scripts.test_backend_burndown_api_load scripts.test_workflow_security
+        run: python3 scripts/validate_development.py --task python-contract-tests
 
       - name: Test TorrentNG client workspace
-        run: cargo test --workspace --all-targets --locked -- --test-threads=1
+        run: python3 scripts/validate_development.py --task workspace-tests
 
       - name: Lint TorrentNG client workspace
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: python3 scripts/validate_development.py --task workspace-clippy
 
       - name: Run certification script self-tests
         run: |
-          scripts/certification_policy_selftest.sh
-          scripts/certification_bundle_selftest.sh
-          scripts/storage_certification_selftest.sh
+          python3 scripts/validate_development.py --task certification-policy-selftest
+          python3 scripts/validate_development.py --task certification-bundle-selftest
+          python3 scripts/validate_development.py --task storage-certification-selftest
 
   backend-fault-matrix:
     name: Backend fault-containment matrix
@@ -164,7 +164,7 @@ jobs:
         # The scale targets contain wall-clock assertions. Run the MSRV
         # suite serially so unrelated 15k/50k fixtures cannot steal CPU from
         # the endpoint being measured and turn the gate into scheduler noise.
-        run: cargo test --workspace --all-targets --locked -- --test-threads=1
+        run: python3 scripts/validate_development.py --task workspace-tests
 
   msrv-check-sidecar:
     name: Compatible-client service MSRV gate
@@ -184,7 +184,7 @@ jobs:
         run: cargo build --locked --manifest-path sidecar/Cargo.toml
 
       - name: Test compatible-client service at declared MSRV
-        run: cargo test --locked --manifest-path sidecar/Cargo.toml
+        run: python3 scripts/validate_development.py --task sidecar-tests
 
   fuzz-smoke:
     timeout-minutes: 30
@@ -283,7 +283,7 @@ jobs:
         run: cargo build --locked --manifest-path sidecar/Cargo.toml
 
       - name: Test compatible-client service
-        run: cargo test --locked --manifest-path sidecar/Cargo.toml
+        run: python3 scripts/validate_development.py --task sidecar-tests
 
   webui:
     timeout-minutes: 20
@@ -306,7 +306,7 @@ jobs:
 
       - name: Run WebUI unit tests
         working-directory: webui
-        run: npm test
+        run: python3 ../scripts/validate_development.py --task webui-tests
 
       - name: Install Playwright Chromium
         working-directory: webui
