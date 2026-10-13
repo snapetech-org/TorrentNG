@@ -1,6 +1,10 @@
 #!/bin/sh
 set -e
 
+# Apply jemalloc options before the daemon starts. Operators can provide
+# MALLOC_CONF to replace this container default.
+export MALLOC_CONF="${MALLOC_CONF-thp:never}"
+
 TNG_INIT="$(command -v tini || true)"
 if [ -z "$TNG_INIT" ]; then
   echo "torrentngd init wrapper is not installed: tini" >&2

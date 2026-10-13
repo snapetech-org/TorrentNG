@@ -202,12 +202,24 @@ class Benchmark:
         self.storage_peer_read_cache_entries = optional_nonnegative_int(
             "TNG_CLIENT_BENCH_STORAGE_PEER_READ_CACHE_ENTRIES",
         )
+        self.piece_assembly_cap_mb = optional_nonnegative_int(
+            "TNG_CLIENT_BENCH_PIECE_ASSEMBLY_CAP_MB",
+        )
+        self.peer_buffer_cap_mb = optional_nonnegative_int(
+            "TNG_CLIENT_BENCH_PEER_BUFFER_CAP_MB",
+        )
         for name, value in (
             ("TNG_CLIENT_BENCH_STORAGE_IO_WORKER_THREADS", self.storage_io_worker_threads),
             ("TNG_CLIENT_BENCH_STORAGE_HASH_WORKER_THREADS", self.storage_hash_worker_threads),
         ):
             if value is not None and value > 64:
                 raise RuntimeError(f"{name} must be <= 64")
+        for name, value in (
+            ("TNG_CLIENT_BENCH_PIECE_ASSEMBLY_CAP_MB", self.piece_assembly_cap_mb),
+            ("TNG_CLIENT_BENCH_PEER_BUFFER_CAP_MB", self.peer_buffer_cap_mb),
+        ):
+            if value is not None and value > 512:
+                raise RuntimeError(f"{name} must be <= 512")
         if (self.storage_peer_read_readahead_bytes is not None
                 and self.storage_peer_read_readahead_bytes > 64 * 1024 * 1024):
             raise RuntimeError(
@@ -250,7 +262,10 @@ class Benchmark:
             ))
         self.project = "tngbench" + re.sub(r"[^a-z0-9]", "", self.stamp.lower())
         self.image = f"torrentng/torrentngd:benchmark-{self.stamp.lower()}"
-        self.malloc_conf_override = os.environ.get("TNG_CLIENT_BENCH_MALLOC_CONF", "").strip()
+        malloc_conf_override = os.environ.get("TNG_CLIENT_BENCH_MALLOC_CONF")
+        self.malloc_conf = (
+            malloc_conf_override.strip() if malloc_conf_override is not None else "thp:never"
+        )
         self.compose_override_path = None
         self.env = os.environ.copy()
         self.ports = {}
@@ -390,9 +405,7 @@ class Benchmark:
                 (directory / "public").mkdir(exist_ok=True)
             directory.chmod(0o777)
         (self.workdir / "downloads").chmod(0o777)
-        compose_environment = {}
-        if self.malloc_conf_override:
-            compose_environment["MALLOC_CONF"] = self.malloc_conf_override
+        compose_environment = {"MALLOC_CONF": self.malloc_conf}
         if self.tokio_worker_threads is not None:
             compose_environment["TOKIO_WORKER_THREADS"] = str(self.tokio_worker_threads)
         if compose_environment:
@@ -487,6 +500,31 @@ class Benchmark:
                 text,
                 count=1,
             )
+        memory_overrides = []
+        if self.piece_assembly_cap_mb is not None:
+            memory_overrides.append(
+                f"piece_assembly_cap_mb = {self.piece_assembly_cap_mb}"
+            )
+        if self.peer_buffer_cap_mb is not None:
+            memory_overrides.append(f"peer_buffer_cap_mb = {self.peer_buffer_cap_mb}")
+        if memory_overrides:
+            section = re.search(r"(?ms)^\[memory\]\s*\n(.*?)(?=^\[|\Z)", text)
+            if section:
+                body = section.group(1)
+                for key, value in (
+                    ("piece_assembly_cap_mb", self.piece_assembly_cap_mb),
+                    ("peer_buffer_cap_mb", self.peer_buffer_cap_mb),
+                ):
+                    if value is None:
+                        continue
+                    setting = re.compile(rf"(?m)^{key}\s*=\s*\d+\s*$")
+                    if setting.search(body):
+                        body = setting.sub(f"{key} = {value}", body, count=1)
+                    else:
+                        body = body.rstrip() + f"\n{key} = {value}\n"
+                text = text[:section.start(1)] + body + text[section.end(1):]
+            else:
+                text = text.rstrip() + "\n\n[memory]\n" + "\n".join(memory_overrides) + "\n"
         path = self.workdir / "config/torrentngd.config.toml"
         path.write_text(text)
         path.chmod(0o600)
@@ -1720,6 +1758,14 @@ class Benchmark:
             if self.storage_peer_read_cache_entries is not None else "",
         ]
         runtime_overrides = ", ".join(value for value in runtime_overrides if value) or "defaults"
+        memory_cap_overrides = ", ".join(
+            value for value in (
+                f"piece assembly={self.piece_assembly_cap_mb} MiB"
+                if self.piece_assembly_cap_mb is not None else "",
+                f"peer buffer={self.peer_buffer_cap_mb} MiB"
+                if self.peer_buffer_cap_mb is not None else "",
+            ) if value
+        ) or "config defaults"
         observed_tokio_named_threads = {}
         for snapshot in self.process_memory_snapshots:
             count = snapshot.get("thread_names", {}).get("tokio-rt-worker", 0)
@@ -1750,9 +1796,10 @@ class Benchmark:
             f"Linux {self.kernel} ({self.machine})",
             f"- Docker: {self.docker_version}; {self.compose_version}",
             f"- Scratch filesystem: {self.scratch_device} ({self.scratch_type})",
-            f"- TorrentNG MALLOC_CONF: {self.malloc_conf_override or 'jemalloc defaults'}",
+            f"- TorrentNG MALLOC_CONF: {self.malloc_conf or 'jemalloc defaults'}",
             f"- TorrentNG build mode: {'prebuilt ' + self.prebuilt_image + ' (revision verified)' if self.skip_build else 'built from this checkout'}",
             f"- Requested TorrentNG runtime/storage worker overrides: {runtime_overrides}",
+            f"- Requested TorrentNG memory-cap overrides: {memory_cap_overrides}",
             "- Peak `tokio-rt-worker`-named threads by phase (async + blocking): "
             f"{observed_thread_summary}",
             f"- Host load average (1/5/15m): "
@@ -2070,6 +2117,8 @@ Environment:
   TNG_CLIENT_BENCH_STORAGE_HASH_WORKER_THREADS=1
   TNG_CLIENT_BENCH_STORAGE_PEER_READ_READAHEAD_BYTES=131072
   TNG_CLIENT_BENCH_STORAGE_PEER_READ_CACHE_ENTRIES=16
+  TNG_CLIENT_BENCH_PIECE_ASSEMBLY_CAP_MB=0
+  TNG_CLIENT_BENCH_PEER_BUFFER_CAP_MB=16
 
 The report and raw CSV remain in the repository; task scratch, the isolated
 Compose project, its volumes, and benchmark-tagged images are removed on exit.""")
