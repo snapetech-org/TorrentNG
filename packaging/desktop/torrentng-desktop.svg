@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="TorrentNG">
+  <rect width="128" height="128" rx="26" fill="#0b1220"/>
+  <rect x="6" y="6" width="116" height="116" rx="21" fill="none" stroke="#22324d" stroke-width="2"/>
+  <path d="M64 24v52" stroke="#4f8cff" stroke-width="12" stroke-linecap="round"/>
+  <path d="M40 58l24 24 24-24" fill="none" stroke="#4f8cff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M34 98h60" stroke="#dbe8ff" stroke-width="10" stroke-linecap="round"/>
+</svg>

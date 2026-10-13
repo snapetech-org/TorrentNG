@@ -128,6 +128,30 @@ TASKS: tuple[dict[str, Any], ...] = (
         "timeout": 2400,
     },
     {
+        "id": "desktop-tests",
+        "name": "Test TorrentNG Desktop",
+        "kind": "test",
+        "command": [
+            "cargo", "test", "--locked", "--manifest-path",
+            "crates/torrentng-desktop/Cargo.toml", "--", "--test-threads=1",
+        ],
+        "case_parser": "cargo-test",
+        "minimum_cases": 1,
+        "lanes": ["rust-workspace-tests"],
+        "timeout": 2400,
+    },
+    {
+        "id": "desktop-clippy",
+        "name": "Lint TorrentNG Desktop",
+        "kind": "check",
+        "command": [
+            "cargo", "clippy", "--all-targets", "--locked", "--manifest-path",
+            "crates/torrentng-desktop/Cargo.toml", "--", "-D", "warnings",
+        ],
+        "lanes": [],
+        "timeout": 2400,
+    },
+    {
         "id": "webui-tests",
         "name": "Test TorrentNG WebUI",
         "kind": "test",

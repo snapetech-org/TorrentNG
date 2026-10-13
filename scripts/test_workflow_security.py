@@ -85,7 +85,7 @@ class WorkflowSecurityTests(unittest.TestCase):
         ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
         self.assertRegex(ci, r"(?m)^\s*pull_request:")
         self.assertNotRegex(ci, r"(?m)^\s*runs-on:\s*\[self-hosted")
-        self.assertEqual(ci.count("github.event_name == 'push' && fromJSON"), 6)
+        self.assertEqual(ci.count("github.event_name == 'push' && fromJSON"), 7)
         self.assertNotRegex(ci, r"(?m)^\s*pull_request_target:")
 
         windows = (WORKFLOWS / "windows-smoke.yml").read_text(encoding="utf-8")

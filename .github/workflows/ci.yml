@@ -325,6 +325,44 @@ jobs:
       - name: Test compatible-client service
         run: python3 scripts/validate_development.py --task sidecar-tests
 
+  desktop:
+    name: Desktop client quality
+    timeout-minutes: 40
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","Linux","X64"]') || fromJSON('["ubuntu-latest"]') }}
+    steps:
+      - name: Route temporary files to runner temp
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
+          mkdir -p "$RUNNER_TEMP"
+          test -w "$RUNNER_TEMP"
+          printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Check desktop formatting
+        run: cargo fmt --manifest-path crates/torrentng-desktop/Cargo.toml -- --check
+
+      - name: Lint desktop client
+        run: python3 scripts/validate_development.py --task desktop-clippy
+
+      - name: Build engine for the end-to-end test
+        run: cargo build --locked -p torrentngd
+
+      - name: Test desktop client (unit + local-engine end-to-end)
+        env:
+          TORRENTNGD_BIN: ${{ github.workspace }}/target/debug/torrentngd
+        run: python3 scripts/validate_development.py --task desktop-tests
+
   webui:
     timeout-minutes: 20
     runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","Linux","X64"]') || fromJSON('["ubuntu-latest"]') }}
@@ -437,6 +475,7 @@ jobs:
           cargo audit --file Cargo.lock
           cargo audit --file sidecar/Cargo.lock
           cargo audit --file fuzz/Cargo.lock
+          cargo audit --file crates/torrentng-desktop/Cargo.lock
 
       - name: Audit compatible-client service Rust dependencies
         working-directory: sidecar
