@@ -417,7 +417,7 @@ jobs:
 
       # Bundle the exact daemon binary published as the Server download.
       - name: Download matching engine binary
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: native-${{ matrix.suffix }}
           path: engine
@@ -692,7 +692,7 @@ jobs:
           test -w "$RUNNER_TEMP"
           printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Download release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: dist
           merge-multiple: true
