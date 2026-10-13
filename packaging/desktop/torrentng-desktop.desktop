@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=TorrentNG
+GenericName=Torrent Client
+Comment=Manage and seed torrents with the TorrentNG engine
+Exec=torrentng-desktop
+Icon=torrentng-desktop
+Terminal=false
+Categories=Network;FileTransfer;P2P;
+Keywords=torrent;bittorrent;seeding;
+StartupWMClass=torrentng-desktop

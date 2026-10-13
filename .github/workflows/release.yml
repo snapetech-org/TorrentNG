@@ -216,6 +216,7 @@ jobs:
           cargo audit --file Cargo.lock
           cargo audit --file sidecar/Cargo.lock
           cargo audit --file fuzz/Cargo.lock
+          cargo audit --file crates/torrentng-desktop/Cargo.lock
 
       - name: Audit compatible-client service Rust dependencies
         working-directory: sidecar
@@ -367,6 +368,80 @@ jobs:
         with:
           name: native-${{ matrix.suffix }}
           path: dist/*
+
+  desktop-bundles:
+    name: Desktop app (${{ matrix.suffix }})
+    needs: [validate-release-tag, native-quality, security-audit, native-binaries]
+    env:
+      RELEASE_TAG: ${{ needs.validate-release-tag.outputs.tag }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            suffix: linux-x86_64
+            kind: linux
+            desktop_bin: torrentng-desktop
+            engine_bin: torrentngd-linux-x86_64
+          - os: ubuntu-24.04-arm
+            suffix: linux-aarch64
+            kind: linux
+            desktop_bin: torrentng-desktop
+            engine_bin: torrentngd-linux-aarch64
+          - os: macos-14
+            suffix: macos-aarch64
+            kind: macos
+            desktop_bin: torrentng-desktop
+            engine_bin: torrentngd-macos-aarch64
+          - os: windows-latest
+            suffix: windows-x86_64
+            kind: windows
+            desktop_bin: torrentng-desktop.exe
+            engine_bin: torrentngd-windows-x86_64.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.validate-release-tag.outputs.tag }}
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+
+      - name: Build desktop client
+        shell: bash
+        run: cargo build --release --locked --manifest-path crates/torrentng-desktop/Cargo.toml
+
+      # Bundle the exact daemon binary published as the Server download.
+      - name: Download matching engine binary
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: native-${{ matrix.suffix }}
+          path: engine
+
+      - name: Package desktop bundles
+        shell: bash
+        env:
+          BUNDLE_KIND: ${{ matrix.kind }}
+          BUNDLE_SUFFIX: ${{ matrix.suffix }}
+          DESKTOP_BIN: ${{ matrix.desktop_bin }}
+          ENGINE_BIN: ${{ matrix.engine_bin }}
+        run: |
+          set -euo pipefail
+          packaging/desktop/package.sh \
+            "$BUNDLE_KIND" "$BUNDLE_SUFFIX" "${RELEASE_TAG:?}" \
+            "crates/torrentng-desktop/target/release/$DESKTOP_BIN" \
+            "engine/$ENGINE_BIN" dist
+
+      - name: Upload desktop artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: desktop-${{ matrix.suffix }}
+          path: dist/*
+          if-no-files-found: error
 
   linux-release-assets:
     name: Linux containers and shared assets
@@ -600,6 +675,7 @@ jobs:
       - validate-release-tag
       - release-notes
       - native-binaries
+      - desktop-bundles
       - linux-release-assets
     env:
       RELEASE_TAG: ${{ needs.validate-release-tag.outputs.tag }}

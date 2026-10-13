@@ -15,7 +15,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             for line in source.splitlines()
             if line.lstrip().startswith("runs-on:") and "self-hosted" in line
         ]
-        self.assertEqual(len(runners), 6)
+        self.assertEqual(len(runners), 7)
         for runner in runners:
             self.assertNotIn("github.event_name == 'pull_request'", runner)
             self.assertIn(

@@ -1,8 +1,9 @@
 # TorrentNG
 
-TorrentNG gives you one browser interface for supported torrent clients. You
-can connect it to a client you already run, or use its own built-in BitTorrent
-engine.
+TorrentNG is a torrent manager for people who seed a lot. It ships as a native
+desktop app, a headless server with a browser interface, and a bridge that puts
+the same interface in front of a client you already run. All three use one
+BitTorrent engine and one API.
 
 It runs on your computer or server. There is no hosted TorrentNG account. The
 files stay on the storage you configure.
@@ -16,21 +17,28 @@ self-hosted machine and want to control them from one browser page. It can also
 provide familiar automation APIs for supported clients.
 
 If you already have a client and are happy with its interface, TorrentNG adds
-another service to set up and maintain. If you want a simple desktop app that
-works out of the box, this project is not that.
+something new to set up and maintain. If you just want a torrent app on your
+own computer, install **TorrentNG Desktop**: it bundles the engine and needs no
+server, Docker, or configuration.
 
-## Choose how to run it
+## Choose what to install
 
-| Your situation | Choose | What stays in charge of downloads? |
+TorrentNG has three parts. You normally need only one of them.
+
+| You want to... | Install | What it is |
 |---|---|---|
-| You already use qBittorrent, rTorrent, Transmission, or Deluge and want a shared interface | **Connect an existing client** | Your existing client keeps its files and runs transfers. TorrentNG provides the WebUI and API. |
-| You are starting fresh or want TorrentNG to run transfers itself | **TorrentNG Engine** | `torrentngd` manages transfers, storage, and saved state. |
+| Run torrents on this computer, with a normal app | **TorrentNG Desktop** | A native app (Linux, macOS, Windows) with the engine included. Low memory and CPU; no browser or server. It can also connect to a TorrentNG Server. |
+| Run torrents on a home server, NAS, or seedbox and use it from a browser | **TorrentNG Server** (`torrentngd` + WebUI) | The headless engine with the browser interface and APIs. Available as Docker images, release binaries, and packages. |
+| Keep qBittorrent, rTorrent, Transmission, or Deluge and add the TorrentNG interface | **TorrentNG WebUI Bridge** (`torrentng`) | A web interface and API for the client you already run. It replaces ruTorrent or the client's own WebUI and adds automation APIs, while your client keeps its files and runs transfers. |
 
-The Engine quick start is below. To connect an existing client, start with the
-[compatible-client deployment guide](docs/DEPLOYMENT.md). The two modes use
-different services and configuration.
+Downloads are on the [releases page](https://github.com/snapetech/TorrentNG/releases):
+`torrentng-desktop-*` for the Desktop app, `torrentngd-native-*` for the Server.
+See the [Desktop guide](docs/DESKTOP.md) for install steps and what each file is.
+The Server quick start is below. To connect an existing client, start with the
+[WebUI Bridge deployment guide](docs/DEPLOYMENT.md). The parts use different services
+and configuration.
 
-## Try the TorrentNG Engine
+## Try TorrentNG Server
 
 You need Docker with Docker Compose v2 and OpenSSL. This starts the Engine on
 your own machine and keeps its state and downloads in Docker volumes.
@@ -76,6 +84,7 @@ for what was exercised and where.
 
 ## Learn more
 
+- [Install TorrentNG Desktop](docs/DESKTOP.md)
 - [Connect an existing client](docs/DEPLOYMENT.md)
 - [Run the TorrentNG Engine](docs/NATIVE_DEPLOYMENT.md)
 - [Install on Unraid](deploy/unraid/README.md)
