@@ -103,6 +103,8 @@ Ask for setup help or report a problem on
 [Discord](https://discord.gg/5PyXBfvS6T). For a security issue, follow
 [SECURITY.md](SECURITY.md) and do not post it publicly.
 
+If TorrentNG is useful to you, [support its development on Ko-fi](https://ko-fi.com/snapetech).
+
 ## Legal use
 
 Users are responsible for the content they download, seed, or manage and for
