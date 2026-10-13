@@ -8442,6 +8442,13 @@ fn render_metrics_with_health(
     );
     metric(
         &mut out,
+        "torrentng_storage_frame_bytes_retained",
+        "gauge",
+        "Frame-pool bytes retained in idle buffers for reuse",
+        storage.frame_retained_bytes(),
+    );
+    metric(
+        &mut out,
         "torrentng_storage_frame_bytes_cap",
         "gauge",
         "Frame-pool byte cap for storage I/O",
@@ -10769,6 +10776,7 @@ mod tests {
         assert!(rendered.contains("torrentng_storage_descriptor_leases_active "));
         assert!(rendered.contains("torrentng_storage_descriptor_leases_capacity "));
         assert!(rendered.contains("torrentng_storage_descriptor_budget_waits_total "));
+        assert!(rendered.contains("torrentng_storage_frame_bytes_retained "));
         assert!(rendered.contains("torrentng_storage_frame_bytes_cap "));
         assert!(rendered.contains("torrentng_utp_connects_total "));
         assert!(rendered.contains("torrentng_utp_accepts_total "));
