@@ -24,9 +24,11 @@ data roots, and runs candidate code offline. Dotted and extensionless credential
 names, private/API keys, access/refresh-token names, client-secret names, and
 credential material with source-like extensions are excluded. Source modules
 under credential-named folders remain available unless their own names identify
-credential material. It opens each workspace, run-data, dependency, cache, and
-marker source before masking host paths, then binds those pinned sources through
-inherited file descriptors. Stage new candidate files first.
+credential material. Suffixed dotenv credentials such as tokens.env.local are
+excluded, while example templates such as tokens.env.example remain available.
+It opens each workspace, run-data, dependency, cache, and marker source before
+masking host paths, then binds those pinned sources through inherited file
+descriptors. Stage new candidate files first.
 
 ```sh
 node /path/to/trusted-test-launcher.mjs "$PWD" -- python3 scripts/validate_development.py --tests-only
