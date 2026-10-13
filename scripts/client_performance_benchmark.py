@@ -50,6 +50,7 @@ DOWNLOAD_TIMEOUT = int(os.environ.get("TNG_CLIENT_BENCH_TIMEOUT_SECS", "1800"))
 SEED_TIMEOUT = int(os.environ.get("TNG_CLIENT_BENCH_SEED_TIMEOUT_SECS", "900"))
 SEED_NO_PEER_TIMEOUT = int(os.environ.get("TNG_CLIENT_BENCH_NO_PEER_TIMEOUT_SECS", "90"))
 INTERVAL = float(os.environ.get("TNG_CLIENT_BENCH_SAMPLE_SECS", "2"))
+ALLOCATOR_METRIC_INTERVAL = float(os.environ.get("TNG_CLIENT_BENCH_ALLOCATOR_SAMPLE_SECS", "5"))
 IDLE_SAMPLE_SECONDS = float(os.environ.get("TNG_CLIENT_BENCH_IDLE_SAMPLE_SECS", "8"))
 TORRENT_INDEX = "https://cdimage.debian.org/debian-cd/current/amd64/bt-cd/"
 SHA256SUMS_URL = "https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/SHA256SUMS"
@@ -197,6 +198,7 @@ class Benchmark:
         self.torrentng_pids = {}
         self.cgroup_paths = {}
         self.engine_memory_metrics = []
+        self.last_engine_memory_metrics_at = 0.0
         self.partial_download_rows = {}
         self.partial_seed_rows = {}
         self.partial_seed_elapsed = {}
@@ -868,7 +870,13 @@ class Benchmark:
                         or metric_name.startswith("torrentng_memory_class_")
                         or metric_name.startswith("torrentng_storage_peer_read_cache_")
                         or metric_name.startswith("torrentng_storage_frame_bytes_")
-                        or metric_name == "torrentng_storage_file_pool_memory_bytes"
+                        or metric_name.startswith("torrentng_jemalloc_")
+                        or metric_name in {
+                            "torrentng_peer_rx_buffer_bytes",
+                            "torrentng_peer_tx_buffer_bytes",
+                            "torrentng_piece_assembly_bytes",
+                            "torrentng_storage_file_pool_memory_bytes",
+                        }
                         or metric_name.startswith("torrentng_hot_torrent_storage_cache_bytes")
                         or metric_name.startswith("torrentng_hot_torrent_peer_buffer_bytes")):
                     try:
@@ -878,6 +886,7 @@ class Benchmark:
         except (OSError, urllib.error.URLError, urllib.error.HTTPError, ValueError) as error:
             profile["error"] = f"{type(error).__name__}: {error}"
         self.engine_memory_metrics.append(profile)
+        self.last_engine_memory_metrics_at = time.monotonic()
 
     def _write_memory_profile(self):
         samples = []
@@ -907,7 +916,8 @@ class Benchmark:
                 "cgroup_memory_current": "Container cgroup total, including anon and file cache.",
                 "cgroup_memory_anon": "Container anonymous memory from memory.stat.",
                 "torrentng_process_rss": "Host /proc RSS for torrentngd when available; zero means unavailable.",
-                "engine_metrics": "TorrentNG resource-governor and storage-pool metrics scraped at phase boundaries.",
+                "engine_metrics": "TorrentNG resource-governor, peer-buffer, storage-pool and jemalloc metrics sampled during transfer and at phase boundaries.",
+                "jemalloc_metrics": "jemalloc allocated/active/resident/mapped/retained gauges sampled during TorrentNG phases; metrics are unavailable if jemalloc statistics are not compiled or supported.",
             },
         }, indent=2) + "\n")
 
@@ -944,6 +954,10 @@ class Benchmark:
         self.samples.append(row)
         with self.csv_path.open("a", newline="") as handle:
             csv.writer(handle).writerow(row)
+        now = time.monotonic()
+        if (client == "torrentngd"
+                and now - self.last_engine_memory_metrics_at >= ALLOCATOR_METRIC_INTERVAL):
+            self._capture_engine_memory_metrics(client, phase)
         return row
 
     def _sample_idle(self, client):

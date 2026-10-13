@@ -30,7 +30,7 @@ rt-db         = { path = "../rt-db" }
 rt-storage    = { path = "../rt-storage" }
 rt-migrate    = { path = "../rt-migrate" }
 rt-fastresume = { path = "../rt-fastresume" }
-rt-api-native = { path = "../rt-api-native" }
+rt-api-native = { path = "../rt-api-native", features = ["jemalloc-stats"] }
 rt-api-qbit   = { path = "../rt-api-qbit" }
 rt-api-model  = { path = "../rt-api-model" }
 rt-api-transmission = { path = "../rt-api-transmission" }
@@ -38,7 +38,7 @@ rt-api-deluge = { path = "../rt-api-deluge" }
 uuid.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-tikv-jemallocator = { version = "0.7.0", features = ["background_threads"] }
+tikv-jemallocator = { version = "0.7.0", features = ["background_threads", "stats"] }
 
 [dev-dependencies]
 libc.workspace = true

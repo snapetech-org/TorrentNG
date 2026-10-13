@@ -34,12 +34,10 @@ use rt_session::SessionRegistry;
 mod export;
 mod migrate;
 
-// jemalloc handles the daemon's real allocation shape — many concurrent
-// per-torrent tasks doing small, high-churn allocations (peer buffers,
-// piece-map/picker state, DB rows) over long uptimes — better than glibc's
-// allocator, which fragments and grows RSS under sustained small-object
-// churn. Background threads purge freed arenas back to the OS instead of
-// holding them, which is what actually keeps long-run memory flat.
+// jemalloc is the Linux daemon's global allocator. Runtime purge behavior is
+// configurable; compiling background-thread support alone does not enable a
+// purge worker. The authenticated /metrics endpoint exposes allocator stats
+// so live allocations and allocator residency can be measured separately.
 #[cfg(target_os = "linux")]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;

@@ -6715,6 +6715,8 @@ pub async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
                     if let Ok(view) = engine.crash_safety().await {
                         text.push_str(&render_crash_safety_metrics(&view));
                     }
+                    #[cfg(all(target_os = "linux", feature = "jemalloc-stats"))]
+                    append_jemalloc_metrics(&mut text);
                     text
                 },
             )
@@ -8712,6 +8714,46 @@ fn metric_value(out: &mut String, name: &str, kind: &str, help: &str, value: &st
     out.push('\n');
 }
 
+#[cfg(all(target_os = "linux", feature = "jemalloc-stats"))]
+fn append_jemalloc_metrics(out: &mut String) {
+    use tikv_jemalloc_ctl::{epoch, stats};
+
+    if epoch::advance().is_err() {
+        return;
+    }
+    for (name, help, value) in [
+        (
+            "torrentng_jemalloc_allocated_bytes",
+            "Bytes in live allocations tracked by jemalloc, excluding allocator metadata",
+            stats::allocated::read(),
+        ),
+        (
+            "torrentng_jemalloc_active_bytes",
+            "Bytes in jemalloc active pages that contain application allocations",
+            stats::active::read(),
+        ),
+        (
+            "torrentng_jemalloc_resident_bytes",
+            "Bytes in jemalloc pages currently resident in physical memory",
+            stats::resident::read(),
+        ),
+        (
+            "torrentng_jemalloc_mapped_bytes",
+            "Bytes in active extents mapped by jemalloc",
+            stats::mapped::read(),
+        ),
+        (
+            "torrentng_jemalloc_retained_bytes",
+            "Bytes in virtual mappings retained by jemalloc instead of unmapped",
+            stats::retained::read(),
+        ),
+    ] {
+        if let Ok(value) = value {
+            metric(out, name, "gauge", help, value as u64);
+        }
+    }
+}
+
 fn metric_by_class(out: &mut String, name: &str, kind: &str, help: &str, values: &[u64; 6]) {
     const IO_CLASSES: [&str; 6] = [
         "metadata",
@@ -10459,6 +10501,23 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[cfg(all(target_os = "linux", feature = "jemalloc-stats"))]
+    #[test]
+    fn jemalloc_metrics_export_allocator_bytes() {
+        let mut rendered = String::new();
+        append_jemalloc_metrics(&mut rendered);
+
+        for name in [
+            "torrentng_jemalloc_allocated_bytes",
+            "torrentng_jemalloc_active_bytes",
+            "torrentng_jemalloc_resident_bytes",
+            "torrentng_jemalloc_mapped_bytes",
+            "torrentng_jemalloc_retained_bytes",
+        ] {
+            assert!(rendered.contains(name), "missing {name}: {rendered}");
+        }
     }
 
     #[tokio::test]
