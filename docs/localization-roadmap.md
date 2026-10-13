@@ -43,4 +43,4 @@ Regional formatting now updates open screens and applies localized digits and se
 
 ## Remaining work
 
-Translate high-use torrent workflows, empty states, validation, and errors in screen-sized batches, preserving API values and user-provided torrent metadata. Complete Arabic layout review across dialogs, filters, tables, and settings before claiming app-wide RTL support.
+The Add Torrent dialog now translates its file staging, URL, category, save-path, start/pause, validation, and submit controls in the first-wave catalogs. Torrent names, URLs, and paths remain unchanged; English fallback remains available and Arabic labels receive local direction metadata. Translate the remaining list/detail workflows, broader errors, and help copy in later screen-sized batches. Complete Arabic layout review across dialogs, filters, tables, and settings before claiming app-wide RTL support.

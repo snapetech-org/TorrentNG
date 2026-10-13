@@ -1,4 +1,5 @@
 import { formatRegionalNumber, getRegionalLocale } from '../lib/localeFormat'
+import { useInterfaceLanguage } from '../lib/interfaceLocale'
 import { useState, useRef, useCallback } from 'react'
 import { useQueryClient, useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -26,6 +27,7 @@ export function AddTorrentDialog({ onClose }: Props) {
   const [error, setError] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const dialogRef = useDialogFocus(onClose)
+  const { t, textProps } = useInterfaceLanguage()
 
   const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: api.categories.list })
   const urlCount = url.split('\n').map(line => line.trim()).filter(Boolean).length
@@ -37,7 +39,7 @@ export function AddTorrentDialog({ onClose }: Props) {
     const all = Array.from(incoming)
     const valid = all.filter(f => f.name.toLowerCase().endsWith('.torrent'))
     if (valid.length !== all.length) {
-      setError('Only .torrent files can be added from the file picker.')
+      setError(t('Only .torrent files can be added from the file picker.'))
     } else {
       setError(null)
     }
@@ -55,7 +57,7 @@ export function AddTorrentDialog({ onClose }: Props) {
 
   async function submit() {
     if (!url.trim() && files.length === 0) {
-      setError('Enter a URL or drag a .torrent file.')
+      setError(t('Enter a URL or drag a .torrent file.'))
       return
     }
     setBusy(true)
@@ -95,14 +97,15 @@ export function AddTorrentDialog({ onClose }: Props) {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <div>
-              <h2 id="add-torrent-title" style={{ margin: 0, fontWeight: 800, fontSize: 15, color: 'var(--text)' }}>Add torrent</h2>
-            <div id="add-torrent-description" style={{ color: 'var(--faint)', fontSize: 12, marginTop: 2 }}>Stage files, magnets, or HTTP torrent URLs</div>
+              <h2 id="add-torrent-title" {...textProps('Add torrent')} style={{ margin: 0, fontWeight: 800, fontSize: 15, color: 'var(--text)' }}>{t('Add torrent')}</h2>
+            <div id="add-torrent-description" {...textProps('Stage files, magnets, or HTTP torrent URLs')} style={{ color: 'var(--faint)', fontSize: 12, marginTop: 2 }}>{t('Stage files, magnets, or HTTP torrent URLs')}</div>
           </div>
           <button
             type="button"
             onClick={onClose}
             disabled={busy}
-            aria-label="Close add torrent dialog"
+            aria-label={t('Close add torrent dialog')}
+            {...textProps('Close add torrent dialog')}
             style={{
               background: 'none', border: 'none', color: 'var(--faint)', fontSize: 18,
               cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.55 : 1,
@@ -117,7 +120,8 @@ export function AddTorrentDialog({ onClose }: Props) {
           data-filled={files.length > 0 ? 'true' : 'false'}
           role={files.length > 0 ? 'group' : 'button'}
           tabIndex={files.length > 0 ? undefined : 0}
-          aria-label={files.length > 0 ? 'Staged torrent files' : 'Choose or drop torrent files'}
+          aria-label={files.length > 0 ? t('Staged torrent files') : t('Choose or drop torrent files')}
+          {...textProps(files.length > 0 ? 'Staged torrent files' : 'Choose or drop torrent files')}
           aria-keyshortcuts={files.length > 0 ? undefined : 'Enter Space'}
           data-dialog-initial-focus
           onDragOver={e => { e.preventDefault(); setDragOver(true) }}
@@ -149,11 +153,11 @@ export function AddTorrentDialog({ onClose }: Props) {
           />
           {files.length === 0 ? (
             <div style={{ display: 'grid', gap: 5 }}>
-              <span style={{ fontSize: 14, color: dragOver ? 'var(--accent-text)' : 'var(--muted)', fontWeight: 700 }}>
-                {dragOver ? 'Drop to stage torrents' : 'Drop .torrent files here'}
+              <span {...textProps(dragOver ? 'Drop to stage torrents' : 'Drop .torrent files here')} style={{ fontSize: 14, color: dragOver ? 'var(--accent-text)' : 'var(--muted)', fontWeight: 700 }}>
+                {t(dragOver ? 'Drop to stage torrents' : 'Drop .torrent files here')}
               </span>
-              <span style={{ fontSize: 12, color: 'var(--faint)' }}>
-                or <span style={{ color: 'var(--accent)' }}>browse</span>
+              <span {...textProps('or')} style={{ fontSize: 12, color: 'var(--faint)' }}>
+                {t('or')} <span {...textProps('browse')} style={{ color: 'var(--accent)' }}>{t('browse')}</span>
               </span>
             </div>
           ) : (
@@ -171,18 +175,19 @@ export function AddTorrentDialog({ onClose }: Props) {
                 </div>
               ))}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
-                <span style={{ fontSize: 11, color: 'var(--success)' }}>
-                  {files.length.toLocaleString(getRegionalLocale())} file{files.length === 1 ? '' : 's'} staged
+                <span {...textProps(files.length === 1 ? 'file staged' : 'files staged')} style={{ fontSize: 11, color: 'var(--success)' }}>
+                  {files.length.toLocaleString(getRegionalLocale())} {t(files.length === 1 ? 'file staged' : 'files staged')}
                 </span>
                 <button
                   type="button"
-                  aria-label="Add more torrent files"
+                  aria-label={t('Add more torrent files')}
+                  {...textProps('Add more torrent files')}
                   onClick={e => { e.stopPropagation(); fileRef.current?.click() }}
                   style={{
                     background: 'var(--surface-2)', border: '1px solid var(--border-strong)', borderRadius: 4,
                     color: 'var(--accent-text)', padding: '2px 7px', fontSize: 10, cursor: 'pointer',
                   }}
-                >Browse more</button>
+                >{t('Browse more')}</button>
               </div>
             </div>
           )}
@@ -193,8 +198,8 @@ export function AddTorrentDialog({ onClose }: Props) {
           border: '1px solid var(--border)', borderRadius: 7, background: 'var(--surface)',
           padding: '9px 10px',
         }}>
-          <label htmlFor="add-torrent-urls" style={{ fontSize: 11, color: 'var(--faint)', display: 'block', marginBottom: 4 }}>
-            Magnet links or URLs (one per line)
+          <label htmlFor="add-torrent-urls" {...textProps('Magnet links or URLs (one per line)')} style={{ fontSize: 11, color: 'var(--faint)', display: 'block', marginBottom: 4 }}>
+            {t('Magnet links or URLs (one per line)')}
           </label>
           <textarea
             id="add-torrent-urls"
@@ -206,7 +211,7 @@ export function AddTorrentDialog({ onClose }: Props) {
           />
           {urlCount > 0 && (
             <div style={{ marginTop: 5, color: 'var(--accent-text)', fontSize: 11 }}>
-              {urlCount.toLocaleString(getRegionalLocale())} URL{urlCount === 1 ? '' : 's'} staged
+              {urlCount.toLocaleString(getRegionalLocale())} {t(urlCount === 1 ? 'URL staged' : 'URLs staged')}
             </div>
           )}
         </div>
@@ -216,7 +221,7 @@ export function AddTorrentDialog({ onClose }: Props) {
           border: '1px solid var(--border)', borderRadius: 7, background: 'var(--surface)',
           padding: '9px 10px',
         }}>
-          <label htmlFor="add-torrent-save-path" style={{ fontSize: 11, color: 'var(--faint)', display: 'block', marginBottom: 4 }}>Save path</label>
+          <label htmlFor="add-torrent-save-path" {...textProps('Save path')} style={{ fontSize: 11, color: 'var(--faint)', display: 'block', marginBottom: 4 }}>{t('Save path')}</label>
           <input
             id="add-torrent-save-path"
             value={savePath}
@@ -232,7 +237,7 @@ export function AddTorrentDialog({ onClose }: Props) {
             border: '1px solid var(--border)', borderRadius: 7, background: 'var(--surface)',
             padding: '9px 10px',
           }}>
-            <label htmlFor="add-torrent-category" style={{ fontSize: 11, color: 'var(--faint)', display: 'block', marginBottom: 4 }}>Category</label>
+            <label htmlFor="add-torrent-category" {...textProps('Category')} style={{ fontSize: 11, color: 'var(--faint)', display: 'block', marginBottom: 4 }}>{t('Category')}</label>
             <select
               id="add-torrent-category"
               value={category}
@@ -243,12 +248,12 @@ export function AddTorrentDialog({ onClose }: Props) {
               }}
               style={{ ...INPUT, cursor: 'pointer' }}
             >
-              <option value="">None</option>
+              <option value="">{t('None')}</option>
               {categories.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
             </select>
             {selectedCategory?.save_path && (
               <div style={{ marginTop: 5, color: 'var(--faint)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                Category path: <span style={{ color: 'var(--muted)' }}>{selectedCategory.save_path}</span>
+                <span {...textProps('Category path:')}>{t('Category path:')}</span> <span style={{ color: 'var(--muted)' }}>{selectedCategory.save_path}</span>
               </div>
             )}
           </div>
@@ -261,7 +266,7 @@ export function AddTorrentDialog({ onClose }: Props) {
           background: 'var(--surface)', padding: '8px 10px',
         }}>
           <input type="checkbox" checked={start} disabled={busy} onChange={e => setStart(e.target.checked)} style={{ accentColor: 'var(--accent)' }} />
-          Start immediately
+          <span {...textProps('Start immediately')}>{t('Start immediately')}</span>
         </label>
 
         <div className="tng-add-summary" data-ready={canSubmit ? 'true' : 'false'} data-start={start ? 'true' : 'false'} style={{
@@ -269,12 +274,12 @@ export function AddTorrentDialog({ onClose }: Props) {
           padding: '7px 9px', border: '1px solid var(--border)', borderRadius: 6,
           background: 'var(--surface)', color: 'var(--faint)', fontSize: 12,
         }}>
-          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {files.length.toLocaleString(getRegionalLocale())} file{files.length === 1 ? '' : 's'} · {urlCount.toLocaleString(getRegionalLocale())} URL{urlCount === 1 ? '' : 's'}
+          <span {...textProps('file staged')} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {files.length.toLocaleString(getRegionalLocale())} {t(files.length === 1 ? 'file staged' : 'files staged')} · {urlCount.toLocaleString(getRegionalLocale())} {t(urlCount === 1 ? 'URL staged' : 'URLs staged')}
             {effectiveSavePath ? ` · ${effectiveSavePath}` : ''}
           </span>
           <span style={{ color: start ? 'var(--success)' : 'var(--warning)' }}>
-            {start ? 'will start' : 'paused on add'}
+            {t(start ? 'will start' : 'paused on add')}
           </span>
         </div>
 
@@ -285,13 +290,13 @@ export function AddTorrentDialog({ onClose }: Props) {
             background: 'none', border: '1px solid var(--border-strong)', borderRadius: 5,
             color: 'var(--faint)', padding: '6px 16px', fontSize: 13, cursor: 'pointer',
             opacity: busy ? 0.5 : 1,
-          }}>Cancel</button>
-          <button type="button" onClick={submit} disabled={!canSubmit} style={{
+          }} {...textProps('Cancel')}>{t('Cancel')}</button>
+          <button type="button" onClick={submit} disabled={!canSubmit} {...textProps(busy ? 'Adding…' : 'Add')} style={{
             background: 'var(--accent-soft)', border: '1px solid var(--accent)', borderRadius: 5,
             color: 'var(--accent-text)', padding: '6px 20px', fontSize: 13,
             cursor: canSubmit ? 'pointer' : 'not-allowed', opacity: canSubmit ? 1 : 0.55,
           }}>
-            {busy ? 'Adding…' : 'Add'}
+            {t(busy ? 'Adding…' : 'Add')}
           </button>
         </div>
       </div>

@@ -94,5 +94,10 @@ export function useInterfaceLanguage() {
     const entry = (UI_LABELS as Record<string, Partial<Record<InterfaceLanguage, string>>>)[source]
     return entry?.[language] ?? source
   }
-  return { language, setLanguage, t }
+  const textProps = (source: string): { lang: string; dir: 'ltr' | 'rtl' } => {
+    const entry = (UI_LABELS as Record<string, Partial<Record<InterfaceLanguage, string>>>)[source]
+    const translated = language !== 'en' && Boolean(entry?.[language])
+    return { lang: translated ? language : 'en', dir: translated && language === 'ar' ? 'rtl' : 'ltr' }
+  }
+  return { language, setLanguage, t, textProps }
 }
