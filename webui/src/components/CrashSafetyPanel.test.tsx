@@ -220,8 +220,8 @@ describe('CrashSafetyPanel', () => {
     view = makeView({}, 'host_crash')
     renderPanel()
     const summary = await screen.findByTestId('crash-recovery-summary')
-    expect(summary.textContent).toContain('3 torrents rechecked')
-    expect(summary.textContent).toContain('12 pieces re-verified')
+    expect(summary.textContent).toContain('torrents checked again: 3')
+    expect(summary.textContent).toContain('pieces re-verified by the allocation audit: 12')
     expect(screen.getByText('Power loss or system crash')).toBeTruthy()
   })
 
@@ -430,7 +430,9 @@ describe('CrashSafetyPanel', () => {
 
     pathReport = new Response('bad', { status: 400 })
     await user.click(within(form).getByRole('button', { name: 'Check' }))
-    expect((await within(form).findByRole('alert')).textContent).toMatch(/Could not check that folder: API 400/)
+    expect((await within(form).findByRole('alert')).textContent).toContain(
+      'Could not check that folder: API request failed (HTTP 400):',
+    )
   })
 
   it('discards an answer that described settings that have since changed', async () => {
