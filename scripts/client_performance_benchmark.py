@@ -376,12 +376,6 @@ class Benchmark:
         rtorrent_config = self.workdir / "config/rtorrent"
         rtorrent_config.mkdir(parents=True, exist_ok=True)
         (rtorrent_config / "session").mkdir(exist_ok=True)
-        socket_alias = rtorrent_config / "scgi.sock"
-        if socket_alias.is_symlink():
-            socket_alias.unlink()
-        elif socket_alias.exists():
-            raise RuntimeError(f"refusing to replace existing rTorrent SCGI path: {socket_alias}")
-        socket_alias.symlink_to("rtorrent.sock")
 
     def _qbit_json(self, client, path, *, data=None, headers=None):
         request_headers = {"Host": "localhost:8080"}
