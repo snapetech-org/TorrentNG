@@ -303,7 +303,6 @@ class Benchmark:
             directory.chmod(0o777)
         (self.workdir / "downloads").chmod(0o777)
         self._prepare_qbit_config()
-        self._prepare_seed_qbit_config()
         self._prepare_torrentng_config()
         self._prepare_rtorrent_config()
         self.csv_path.parent.mkdir(parents=True, exist_ok=True)
@@ -330,8 +329,8 @@ class Benchmark:
             "WebUI\\Port=8080\n"
         )
 
-    def _prepare_seed_qbit_config(self):
-        path = self.workdir / "config/qbittorrent-seed/qBittorrent/qBittorrent.conf"
+    def _prepare_seed_qbit_config(self, client):
+        path = self.workdir / "config/qbittorrent-seed" / client / "qBittorrent/qBittorrent.conf"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             "[BitTorrent]\n"
@@ -858,8 +857,12 @@ class Benchmark:
                 digest.update(chunk)
         return digest.hexdigest()
 
-    def _start_seed_leecher(self, torrent_path):
+    def _start_seed_leecher(self, torrent_path, seeder):
         client = "seed_leecher"
+        # Reuse the same controlled infohash with a fresh helper state for each seeder.
+        client_config = self.workdir / "config/qbittorrent-seed" / seeder
+        self._env("INTEROP_SEED_QBIT_CONFIG", client_config)
+        self._prepare_seed_qbit_config(seeder)
         self.sessions[client] = HttpClient(self.api_url(client))
         self.compose("up", "-d", client, quiet=True, timeout=900)
         container_id = self.service_id(client)
@@ -976,7 +979,7 @@ class Benchmark:
         self.partial_seed_setup[client] = 0.0
         next_log = 0
         try:
-            self._start_seed_leecher(torrent_path)
+            self._start_seed_leecher(torrent_path, client)
             self._wait_seed_leecher_tracker(info_hash)
             self._reannounce(client, info_hash)
             started = time.monotonic()
