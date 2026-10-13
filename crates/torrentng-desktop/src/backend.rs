@@ -21,8 +21,13 @@ const BIN_NAME: &str = if cfg!(windows) {
     "torrentngd"
 };
 
+/// Record of the running engine (`pid`, `url`, launch token; mode 0600) so a
+/// later launch can clean up after a UI that crashed or was killed.
+const PID_FILE: &str = "engine.pid";
+
 pub struct LocalEngine {
     child: Child,
+    pid_file: PathBuf,
     pub url: String,
     pub token: String,
     pub log_path: PathBuf,
@@ -127,6 +132,62 @@ pub fn render_config(
     toml::to_string_pretty(&root).expect("config serializes")
 }
 
+async fn terminate(pid: u32, force: bool) {
+    #[cfg(unix)]
+    let _ = Command::new("kill")
+        .arg(if force { "-KILL" } else { "-TERM" })
+        .arg(pid.to_string())
+        .status()
+        .await;
+    #[cfg(windows)]
+    {
+        let mut c = Command::new("taskkill");
+        c.args(["/PID", &pid.to_string()]);
+        if force {
+            c.arg("/F");
+        }
+        let _ = c.status().await;
+    }
+}
+
+/// Stop an engine left over from a previous run (the UI crashed or was
+/// killed, so its child was never reaped). The record holds that launch's
+/// token and the process is only stopped if it still answers on the recorded
+/// URL *with that token*, so an unrelated process that reused the pid, or a
+/// user's own `torrentngd`, is never touched.
+async fn reap_stale(data: &Path, grace: Duration) {
+    let path = data.join(PID_FILE);
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&path);
+    let mut lines = text.lines();
+    let (Some(pid), Some(url), Some(token)) = (
+        lines.next().and_then(|l| l.trim().parse::<u32>().ok()),
+        lines.next(),
+        lines.next(),
+    ) else {
+        return;
+    };
+    let Ok(client) = Client::new(url, token) else {
+        return;
+    };
+    if client.verify().await.is_err() {
+        return;
+    }
+    tracing::warn!(pid, "stopping engine left over from a previous run");
+    terminate(pid, false).await;
+    let deadline = tokio::time::Instant::now() + grace;
+    while client.health().await.is_ok() {
+        if tokio::time::Instant::now() >= deadline {
+            terminate(pid, true).await;
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
 fn tail(path: &Path, lines: usize) -> String {
     let text = std::fs::read_to_string(path).unwrap_or_default();
     let all: Vec<&str> = text.lines().collect();
@@ -171,6 +232,7 @@ pub async fn start(local: &LocalConfig) -> Result<LocalEngine, String> {
     for d in [&session, &download] {
         std::fs::create_dir_all(d).map_err(|e| format!("cannot create {}: {e}", d.display()))?;
     }
+    reap_stale(&data, Duration::from_secs(15)).await;
     let port = free_port().map_err(|e| format!("no free loopback port: {e}"))?;
     let token = new_token();
     let cfg_path = data.join("engine-config.toml");
@@ -194,10 +256,15 @@ pub async fn start(local: &LocalConfig) -> Result<LocalEngine, String> {
         .map_err(|e| format!("cannot start {}: {e}", bin.display()))?;
 
     let url = format!("http://127.0.0.1:{port}");
+    let pid_file = data.join(PID_FILE);
+    if let Some(pid) = child.id() {
+        let _ = write_private(&pid_file, format!("{pid}\n{url}\n{token}\n").as_bytes());
+    }
     let client = Client::new(&url, &token).map_err(|e| e.to_string())?;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     loop {
         if let Ok(Some(status)) = child.try_wait() {
+            let _ = std::fs::remove_file(&pid_file);
             return Err(format!(
                 "engine exited early ({status}):\n{}",
                 tail(&log_path, 12)
@@ -208,6 +275,7 @@ pub async fn start(local: &LocalConfig) -> Result<LocalEngine, String> {
         }
         if tokio::time::Instant::now() >= deadline {
             let _ = child.kill().await;
+            let _ = std::fs::remove_file(&pid_file);
             return Err(format!(
                 "engine did not become ready in 30s:\n{}",
                 tail(&log_path, 12)
@@ -217,6 +285,7 @@ pub async fn start(local: &LocalConfig) -> Result<LocalEngine, String> {
     }
     Ok(LocalEngine {
         child,
+        pid_file,
         url,
         token,
         log_path,
@@ -244,6 +313,7 @@ impl LocalEngine {
             tracing::warn!("engine ignored shutdown; killing");
             let _ = self.child.kill().await;
         }
+        let _ = std::fs::remove_file(&self.pid_file);
     }
 }
 
@@ -308,6 +378,104 @@ mod tests {
         let p = dir.path().join("fake-torrentngd");
         std::fs::write(&p, b"").unwrap();
         assert_eq!(find_binary(p.to_str().unwrap()), Some(p));
+    }
+
+    /// Minimal HTTP server standing in for an orphaned engine: it answers
+    /// `status` while the process `pid` is alive and drops connections after.
+    #[cfg(unix)]
+    async fn fake_engine(pid: u32, status: &'static str) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                let alive = std::process::Command::new("kill")
+                    .args(["-0", &pid.to_string()])
+                    .stderr(Stdio::null())
+                    .status()
+                    .is_ok_and(|s| s.success());
+                let mut buf = [0u8; 1024];
+                let _ = sock.read(&mut buf).await;
+                if alive {
+                    let body = "{}";
+                    let reply = format!(
+                        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = sock.write_all(reply.as_bytes()).await;
+                }
+            }
+        });
+        url
+    }
+
+    #[cfg(unix)]
+    fn spawn_sleeper() -> std::process::Child {
+        std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .unwrap()
+    }
+
+    #[cfg(unix)]
+    fn alive(child: &mut std::process::Child) -> bool {
+        child.try_wait().unwrap().is_none()
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn orphaned_engine_is_stopped_when_it_proves_it_is_ours() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut child = spawn_sleeper();
+        let url = fake_engine(child.id(), "200 OK").await;
+        std::fs::write(
+            dir.path().join(PID_FILE),
+            format!("{}\n{url}\ntoken\n", child.id()),
+        )
+        .unwrap();
+        reap_stale(dir.path(), Duration::from_secs(5)).await;
+        assert!(!alive(&mut child), "orphan must be terminated");
+        assert!(!dir.path().join(PID_FILE).exists(), "record is consumed");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn process_that_rejects_the_token_is_never_touched() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut child = spawn_sleeper();
+        let url = fake_engine(child.id(), "401 Unauthorized").await;
+        std::fs::write(
+            dir.path().join(PID_FILE),
+            format!("{}\n{url}\ntoken\n", child.id()),
+        )
+        .unwrap();
+        reap_stale(dir.path(), Duration::from_secs(1)).await;
+        assert!(alive(&mut child), "unrelated process must survive");
+        assert!(!dir.path().join(PID_FILE).exists());
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unreachable_or_garbled_records_are_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut child = spawn_sleeper();
+        for record in [
+            format!("{}\nhttp://127.0.0.1:9\ntoken\n", child.id()),
+            "not-a-pid\nhttp://x\nt\n".to_owned(),
+            "12".to_owned(),
+        ] {
+            std::fs::write(dir.path().join(PID_FILE), record).unwrap();
+            reap_stale(dir.path(), Duration::from_secs(1)).await;
+            assert!(alive(&mut child));
+            assert!(!dir.path().join(PID_FILE).exists());
+        }
+        child.kill().unwrap();
+        child.wait().unwrap();
     }
 
     #[test]
