@@ -50,6 +50,7 @@ DOWNLOAD_TIMEOUT = int(os.environ.get("TNG_CLIENT_BENCH_TIMEOUT_SECS", "1800"))
 SEED_TIMEOUT = int(os.environ.get("TNG_CLIENT_BENCH_SEED_TIMEOUT_SECS", "900"))
 SEED_NO_PEER_TIMEOUT = int(os.environ.get("TNG_CLIENT_BENCH_NO_PEER_TIMEOUT_SECS", "90"))
 INTERVAL = float(os.environ.get("TNG_CLIENT_BENCH_SAMPLE_SECS", "2"))
+IDLE_SAMPLE_SECONDS = float(os.environ.get("TNG_CLIENT_BENCH_IDLE_SAMPLE_SECS", "8"))
 TORRENT_INDEX = "https://cdimage.debian.org/debian-cd/current/amd64/bt-cd/"
 SHA256SUMS_URL = "https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/SHA256SUMS"
 
@@ -159,10 +160,11 @@ class Benchmark:
             ROOT / f"certification/reports/client-performance-benchmark-{self.stamp}.md",
         )).expanduser().resolve()
         self.csv_path = self.report.with_name(self.report.stem + "-samples.csv")
+        self.memory_profile = self.report.with_name(self.report.stem + "-memory-profile.json")
         artifact_dir = os.environ.get("TNG_CLIENT_BENCH_ARTIFACT_DIR")
         self.artifact_dir = Path(artifact_dir).expanduser().resolve() if artifact_dir else None
         self.artifact_status = "not requested"
-        if self.report.exists() or self.csv_path.exists():
+        if self.report.exists() or self.csv_path.exists() or self.memory_profile.exists():
             raise RuntimeError(f"refusing to overwrite an existing benchmark report: {self.report}")
         scratch = Path(os.environ.get("TNG_CLIENT_BENCH_SCRATCH_ROOT", "/var/tmp")).resolve()
         if not scratch.is_dir() or not os.access(scratch, os.W_OK | os.X_OK):
@@ -188,6 +190,11 @@ class Benchmark:
         self.sessions = {}
         self.results = []
         self.samples = []
+        self.container_ids = {}
+        self.container_pids = {}
+        self.torrentng_pids = {}
+        self.cgroup_paths = {}
+        self.engine_memory_metrics = []
         self.partial_download_rows = {}
         self.partial_seed_rows = {}
         self.partial_seed_elapsed = {}
@@ -318,7 +325,10 @@ class Benchmark:
                 "utc", "client", "phase", "elapsed_seconds", "progress",
                 "download_bytes_per_second", "upload_bytes_per_second",
                 "connected_peers", "container_cpu_percent", "container_memory_bytes",
-                "host_load_1m",
+                "host_load_1m", "cgroup_memory_current_bytes",
+                "cgroup_memory_peak_bytes", "cgroup_memory_anon_bytes",
+                "cgroup_memory_file_bytes", "cgroup_memory_slab_bytes",
+                "torrentng_process_rss_bytes", "torrentng_process_hwm_bytes",
             ])
 
     def _prepare_qbit_config(self):
@@ -727,8 +737,170 @@ class Benchmark:
         else:
             self._scgi("d.stop", info_hash)
 
-    def _stats(self, client):
+    def _remember_container(self, client):
         cid = self.service_id(client)
+        if not cid:
+            return
+        self.container_ids[client] = cid
+        output, code = run_command(
+            ["docker", "inspect", "--format", "{{.State.Pid}}", cid],
+            env=self.env, check=False, quiet=True, timeout=10,
+        )
+        try:
+            pid = int(output.strip()) if code == 0 else 0
+        except ValueError:
+            pid = 0
+        if pid <= 0:
+            return
+        self.container_pids[client] = pid
+        try:
+            cgroup_lines = Path(f"/proc/{pid}/cgroup").read_text().splitlines()
+        except OSError:
+            cgroup_lines = []
+        for line in cgroup_lines:
+            parts = line.split(":", 2)
+            if len(parts) != 3:
+                continue
+            hierarchy, controllers, relative = parts
+            if hierarchy == "0" and not controllers:
+                candidate = Path("/sys/fs/cgroup") / relative.lstrip("/")
+                if (candidate / "memory.current").is_file():
+                    self.cgroup_paths[client] = candidate
+                    break
+            elif "memory" in controllers.split(","):
+                candidate = Path("/sys/fs/cgroup/memory") / relative.lstrip("/")
+                if (candidate / "memory.usage_in_bytes").is_file():
+                    self.cgroup_paths[client] = candidate
+                    break
+        if client == "torrentngd":
+            output, code = run_command(
+                ["docker", "top", cid, "-eo", "pid,args"],
+                env=self.env, check=False, quiet=True, timeout=10,
+            )
+            if code == 0:
+                for line in output.splitlines()[1:]:
+                    fields = line.strip().split(None, 1)
+                    if len(fields) != 2:
+                        continue
+                    executable_tokens = [token.strip("'\"") for token in fields[1].split()]
+                    if any(Path(token).name == "torrentngd" for token in executable_tokens):
+                        try:
+                            self.torrentng_pids[client] = int(fields[0])
+                        except ValueError:
+                            pass
+                        break
+
+    @staticmethod
+    def _read_cgroup_memory(path):
+        result = {
+            "current": 0, "peak": 0, "anon": 0, "file": 0, "slab": 0,
+        }
+        if path is None:
+            return result
+        files = {
+            "current": ("memory.current", "memory.usage_in_bytes"),
+            "peak": ("memory.peak", "memory.max_usage_in_bytes"),
+        }
+        for key, candidates in files.items():
+            for candidate in candidates:
+                try:
+                    result[key] = int((path / candidate).read_text().strip())
+                    break
+                except (OSError, ValueError):
+                    continue
+        try:
+            stat = {}
+            for line in (path / "memory.stat").read_text().splitlines():
+                fields = line.split()
+                if len(fields) == 2:
+                    stat[fields[0]] = int(fields[1])
+            result["anon"] = stat.get("anon", stat.get("total_rss", stat.get("rss", 0)))
+            result["file"] = stat.get("file", stat.get("total_cache", stat.get("cache", 0)))
+            result["slab"] = stat.get("slab", stat.get("total_slab", 0))
+        except (OSError, ValueError):
+            pass
+        return result
+
+    @staticmethod
+    def _read_process_memory(pid):
+        result = {"rss": 0, "hwm": 0}
+        if not pid:
+            return result
+        try:
+            for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+                fields = line.split()
+                if len(fields) >= 2 and fields[0] in ("VmRSS:", "VmHWM:"):
+                    result["rss" if fields[0] == "VmRSS:" else "hwm"] = int(fields[1]) * 1024
+        except (OSError, ValueError):
+            pass
+        return result
+
+    def _memory_components(self, client):
+        cgroup = self._read_cgroup_memory(self.cgroup_paths.get(client))
+        process = self._read_process_memory(self.torrentng_pids.get(client))
+        return cgroup, process
+
+    def _capture_engine_memory_metrics(self, client, phase):
+        if client != "torrentngd":
+            return
+        profile = {"utc": dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds"),
+                   "client": client, "phase": phase, "metrics": {}}
+        try:
+            text = self._torrentng_request("/metrics").decode("utf-8", "replace")
+            for line in text.splitlines():
+                if not line or line.startswith("#") or " " not in line:
+                    continue
+                name, value = line.rsplit(" ", 1)
+                metric_name = name.split("{", 1)[0]
+                if (metric_name == "torrentng_memory_used_bytes"
+                        or metric_name.startswith("torrentng_memory_class_")
+                        or metric_name.startswith("torrentng_storage_peer_read_cache_")
+                        or metric_name.startswith("torrentng_storage_frame_bytes_")
+                        or metric_name == "torrentng_storage_file_pool_memory_bytes"
+                        or metric_name.startswith("torrentng_hot_torrent_storage_cache_bytes")
+                        or metric_name.startswith("torrentng_hot_torrent_peer_buffer_bytes")):
+                    try:
+                        profile["metrics"][name] = float(value)
+                    except ValueError:
+                        continue
+        except (OSError, urllib.error.URLError, urllib.error.HTTPError, ValueError) as error:
+            profile["error"] = f"{type(error).__name__}: {error}"
+        self.engine_memory_metrics.append(profile)
+
+    def _write_memory_profile(self):
+        samples = []
+        for row in self.samples:
+            if len(row) < 18:
+                continue
+            samples.append({
+                "utc": row[0], "client": row[1], "phase": row[2],
+                "container_working_set_bytes": int(row[9]),
+                "cgroup_memory_current_bytes": int(row[11]),
+                "cgroup_memory_peak_bytes": int(row[12]),
+                "cgroup_memory_anon_bytes": int(row[13]),
+                "cgroup_memory_file_bytes": int(row[14]),
+                "cgroup_memory_slab_bytes": int(row[15]),
+                "torrentng_process_rss_bytes": int(row[16]),
+                "torrentng_process_hwm_bytes": int(row[17]),
+            })
+        self.memory_profile.parent.mkdir(parents=True, exist_ok=True)
+        self.memory_profile.write_text(json.dumps({
+            "schema_version": 1,
+            "source_commit": self.source_commit,
+            "host": self.host,
+            "memory_samples": samples,
+            "engine_metrics_snapshots": self.engine_memory_metrics,
+            "notes": {
+                "docker_stats": "Docker-reported container working set, sampled at the configured interval.",
+                "cgroup_memory_current": "Container cgroup total, including anon and file cache.",
+                "cgroup_memory_anon": "Container anonymous memory from memory.stat.",
+                "torrentng_process_rss": "Host /proc RSS for torrentngd when available; zero means unavailable.",
+                "engine_metrics": "TorrentNG resource-governor and storage-pool metrics scraped at phase boundaries.",
+            },
+        }, indent=2) + "\n")
+
+    def _stats(self, client):
+        cid = self.container_ids.get(client) or self.service_id(client)
         if not cid:
             return 0.0, 0
         output, code = run_command(
@@ -747,17 +919,32 @@ class Benchmark:
 
     def _sample(self, client, phase, elapsed, status, down_override=None):
         cpu, memory = self._stats(client)
+        cgroup, process = self._memory_components(client)
         row = [
             dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds"),
             client, phase, f"{elapsed:.3f}", f"{status.get('progress', 0):.6f}",
             int(status.get("down", 0) if down_override is None else down_override),
             int(status.get("up", 0)), int(status.get("peers", 0)),
             f"{cpu:.2f}", memory, f"{os.getloadavg()[0]:.2f}",
+            cgroup["current"], cgroup["peak"], cgroup["anon"],
+            cgroup["file"], cgroup["slab"], process["rss"], process["hwm"],
         ]
         self.samples.append(row)
         with self.csv_path.open("a", newline="") as handle:
             csv.writer(handle).writerow(row)
         return row
+
+    def _sample_idle(self, client):
+        started = time.monotonic()
+        while True:
+            elapsed = time.monotonic() - started
+            self._sample(client, "idle", elapsed, {
+                "progress": 0.0, "down": 0, "up": 0, "peers": 0,
+            })
+            remaining = IDLE_SAMPLE_SECONDS - (time.monotonic() - started)
+            if remaining <= 0:
+                break
+            time.sleep(min(INTERVAL, remaining))
 
     def _wait_complete(self, client, info_hash, name, expected_size, timeout, phase):
         start = time.monotonic()
@@ -1096,12 +1283,21 @@ class Benchmark:
     def _summary(rows, phase):
         records = [row for row in rows if row[2] == phase]
         if not records:
-            return {"mean_cpu": 0.0, "peak_cpu": 0.0, "peak_rss": 0,
+            return {"mean_cpu": 0.0, "peak_cpu": 0.0, "peak_memory": 0,
+                    "peak_cgroup_current": 0, "peak_cgroup_anon": 0,
+                    "peak_cgroup_file": 0, "peak_process_rss": 0,
+                    "mean_memory": 0, "mean_cgroup_anon": 0,
                     "peak_rate": 0, "peak_peers": 0}
         return {
             "mean_cpu": sum(float(row[8]) for row in records) / len(records),
             "peak_cpu": max(float(row[8]) for row in records),
-            "peak_rss": max(int(row[9]) for row in records),
+            "peak_memory": max(int(row[9]) for row in records),
+            "peak_cgroup_current": max(int(row[11]) for row in records),
+            "peak_cgroup_anon": max(int(row[13]) for row in records),
+            "peak_cgroup_file": max(int(row[14]) for row in records),
+            "peak_process_rss": max(int(row[16]) for row in records),
+            "mean_memory": sum(int(row[9]) for row in records) / len(records),
+            "mean_cgroup_anon": sum(int(row[13]) for row in records) / len(records),
             "peak_rate": max(int(row[5]) for row in records),
             "peak_peers": max(int(row[7]) for row in records),
         }
@@ -1112,6 +1308,9 @@ class Benchmark:
         self.sessions[client] = HttpClient(self.api_url(client)) if client != "rtorrent" else None
         self._wait_ready(client)
         self._configure(client)
+        self._remember_container(client)
+        self._sample_idle(client)
+        self._capture_engine_memory_metrics(client, "idle")
         version = self._version(client)
         torrent = meta["torrent_path"]
         save_path = "/downloads/rtorrent" if client == "rtorrent" else f"/downloads/{client}/public"
@@ -1154,6 +1353,7 @@ class Benchmark:
                 self._pause(client, meta["info_hash"])
             except Exception:
                 pass
+            self._capture_engine_memory_metrics(client, "after_public_download")
 
         seed_result = "NOT RUN"
         seed_error = ""
@@ -1196,7 +1396,11 @@ class Benchmark:
                     self._pause(client, local_hash)
                 except Exception:
                     pass
+                self._capture_engine_memory_metrics(client, "after_controlled_seed")
 
+        idle = self._summary(
+            [row for row in self.samples if row[1] == client], "idle",
+        )
         down = self._summary(public_rows, "public_download")
         seed = self._summary(seed_rows, "controlled_seed")
         seed_bytes = int(meta["size"] * float(seed_rows[-1][4])) if seed_rows else 0
@@ -1208,7 +1412,14 @@ class Benchmark:
             "download_mib_s": download_bytes / download_elapsed / 1048576 if download_elapsed else 0,
             "download_peak_mib_s": down["peak_rate"] / 1048576,
             "download_mean_cpu": down["mean_cpu"], "download_peak_cpu": down["peak_cpu"],
-            "download_peak_rss": down["peak_rss"], "download_peak_peers": down["peak_peers"],
+            "download_peak_memory": down["peak_memory"],
+            "download_peak_cgroup_current": down["peak_cgroup_current"],
+            "download_peak_cgroup_anon": down["peak_cgroup_anon"],
+            "download_peak_cgroup_file": down["peak_cgroup_file"],
+            "download_peak_process_rss": down["peak_process_rss"],
+            "idle_mean_memory": idle["mean_memory"],
+            "idle_mean_cgroup_anon": idle["mean_cgroup_anon"],
+            "download_peak_peers": down["peak_peers"],
             "download_sha": download_sha,
             "seed_seconds": seed_elapsed,
             "seed_setup_seconds": seed_setup,
@@ -1216,7 +1427,12 @@ class Benchmark:
             "seed_mib_s": seed_bytes / seed_elapsed / 1048576 if seed_elapsed else 0,
             "seed_peak_mib_s": seed["peak_rate"] / 1048576,
             "seed_mean_cpu": seed["mean_cpu"], "seed_peak_cpu": seed["peak_cpu"],
-            "seed_peak_rss": seed["peak_rss"], "seed_peak_peers": seed["peak_peers"],
+            "seed_peak_memory": seed["peak_memory"],
+            "seed_peak_cgroup_current": seed["peak_cgroup_current"],
+            "seed_peak_cgroup_anon": seed["peak_cgroup_anon"],
+            "seed_peak_cgroup_file": seed["peak_cgroup_file"],
+            "seed_peak_process_rss": seed["peak_process_rss"],
+            "seed_peak_peers": seed["peak_peers"],
             "seed_sha": seed_sha, "seed_error": seed_error,
         })
         if public_result == "PASS" and seed_result == "PASS":
@@ -1234,8 +1450,12 @@ class Benchmark:
             )
 
     def _write_report(self, meta, client_images):
+        self._write_memory_profile()
         load_end = os.getloadavg()
         load_peak = max((float(row[10]) for row in self.samples), default=self.load_start[0])
+        def mib(value):
+            return f"{value / 1048576:.1f}" if value else "n/a"
+
         lines = [
             f"# TorrentNG and reference client performance: {meta['iso_name']}",
             "",
@@ -1276,8 +1496,8 @@ class Benchmark:
             "",
             "## Public download",
             "",
-            "| Client | Version | Result | Progress (%) | Time (s) | Average (MiB/s) | Peak sampled (MiB/s) | Mean CPU (%) | Peak CPU (%) | Peak RSS (MiB) | Peak peers | SHA-256 / failure |",
-            "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+            "| Client | Version | Result | Progress (%) | Time (s) | Average (MiB/s) | Peak sampled (MiB/s) | Mean CPU (%) | Peak CPU (%) | Peak peers | SHA-256 / failure |",
+            "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
         ]
         by_client = {row["client"]: row for row in self.results}
         for client in CLIENTS:
@@ -1288,7 +1508,6 @@ class Benchmark:
                 f"{row.get('download_seconds', 0):.1f} | "
                 f"{row.get('download_mib_s', 0):.2f} | {row.get('download_peak_mib_s', 0):.2f} | "
                 f"{row.get('download_mean_cpu', 0):.2f} | {row.get('download_peak_cpu', 0):.2f} | "
-                f"{row.get('download_peak_rss', 0) / 1048576:.1f} | "
                 f"{row.get('download_peak_peers', 0)} | "
                 f"{row.get('download_sha') or row.get('download_error') or row.get('error', 'n/a')} |"
             )
@@ -1305,8 +1524,8 @@ class Benchmark:
             "public download or the explicitly verified seed-source file, and can run "
             "even if that client's public-swarm download stalls.",
             "",
-            "| Client | Result | Leecher setup (s) | Transfer (s) | Average upload (MiB/s) | Peak sampled (MiB/s) | Mean CPU (%) | Peak CPU (%) | Peak RSS (MiB) | Peak peers | Leecher SHA-256 / failure |",
-            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+            "| Client | Result | Leecher setup (s) | Transfer (s) | Average upload (MiB/s) | Peak sampled (MiB/s) | Mean CPU (%) | Peak CPU (%) | Peak peers | Leecher SHA-256 / failure |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---|",
         ])
         for client in CLIENTS:
             row = by_client.get(client, {})
@@ -1315,9 +1534,28 @@ class Benchmark:
                 f"{row.get('seed_setup_seconds', 0):.1f} | {row.get('seed_seconds', 0):.1f} | "
                 f"{row.get('seed_mib_s', 0):.2f} | "
                 f"{row.get('seed_peak_mib_s', 0):.2f} | {row.get('seed_mean_cpu', 0):.2f} | "
-                f"{row.get('seed_peak_cpu', 0):.2f} | {row.get('seed_peak_rss', 0) / 1048576:.1f} | "
+                f"{row.get('seed_peak_cpu', 0):.2f} | "
                 f"{row.get('seed_peak_peers', 0)} | "
                 f"{row.get('seed_sha') or row.get('seed_error') or row.get('error', 'not verified')} |"
+            )
+        lines.extend([
+            "",
+            "## Memory profile",
+            "",
+            "Memory uses the container cgroup and Docker working-set counter, sampled at the transfer interval. Anonymous memory excludes charged file cache, so these columns help separate process/runtime growth from data caching. TorrentNG process RSS and its engine allocation counters are in the linked profile. `n/a` means the runtime did not expose that counter.",
+            "",
+            "| Client | Idle container mean (MiB) | Idle anonymous mean (MiB) | Download peak container (MiB) | Download peak anonymous (MiB) | Seed peak container (MiB) | Seed peak anonymous (MiB) |",
+            "|---|---:|---:|---:|---:|---:|---:|",
+        ])
+        for client in CLIENTS:
+            row = by_client.get(client, {})
+            lines.append(
+                f"| {LABELS[client]} | {mib(row.get('idle_mean_memory', 0))} | "
+                f"{mib(row.get('idle_mean_cgroup_anon', 0))} | "
+                f"{mib(row.get('download_peak_memory', 0))} | "
+                f"{mib(row.get('download_peak_cgroup_anon', 0))} | "
+                f"{mib(row.get('seed_peak_memory', 0))} | "
+                f"{mib(row.get('seed_peak_cgroup_anon', 0))} |"
             )
         lines.extend([
             "",
@@ -1340,8 +1578,10 @@ class Benchmark:
             "registered, and the seeder has reannounced; leecher setup time is listed "
             "separately. Peak rates come "
             "from client payload counters. CPU is Docker CPU percent, where "
-            "100% represents one logical core. Memory is container usage rather than "
-            "process-only RSS.",
+            "100% represents one logical core. Each client has an idle baseline "
+            f"sampled for {IDLE_SAMPLE_SECONDS:g} seconds before adding a torrent. "
+            "Cgroup anonymous/file memory and TorrentNG engine allocation metrics help "
+            "attribute the sampled container footprint.",
             f"- Public download uses the current public Debian swarm with a {DOWNLOAD_TIMEOUT}s "
             "completion timeout. Controlled seeding "
             "uses a private task-local tracker and one qBittorrent leecher on the same "
@@ -1363,6 +1603,7 @@ class Benchmark:
             "## Artifacts and cleanup",
             "",
             f"- Raw time-series samples: [{self.csv_path.name}]({self.csv_path.name})",
+            f"- Cgroup and TorrentNG allocator profile: [{self.memory_profile.name}]({self.memory_profile.name})",
             f"- Preserved source artifacts: {self.artifact_status}",
             f"- Temporary benchmark directory: {self.workdir}",
             f"- Compose cleanup status: **{self.cleanup_status}**",
@@ -1377,6 +1618,8 @@ class Benchmark:
             raise RuntimeError("rate ceiling, peer ceiling, and sample interval must be positive")
         if DOWNLOAD_TIMEOUT < 60 or SEED_TIMEOUT < 60:
             raise RuntimeError("download and seed timeouts must be at least 60 seconds")
+        if IDLE_SAMPLE_SECONDS < 0:
+            raise RuntimeError("idle memory sample duration cannot be negative")
         if SEED_NO_PEER_TIMEOUT < 10:
             raise RuntimeError("no-peer timeout must be at least 10 seconds")
         for required in ("docker", "aria2c", "findmnt", "git"):
@@ -1433,6 +1676,11 @@ class Benchmark:
         ))
 
     def cleanup(self):
+        if not self.memory_profile.exists():
+            try:
+                self._write_memory_profile()
+            except Exception as error:
+                self.cleanup_status += f"; memory profile error: {type(error).__name__}: {error}"
         try:
             self.compose("down", "--volumes", "--remove-orphans",
                          check=False, quiet=True, timeout=180)
@@ -1496,6 +1744,7 @@ Environment:
   TNG_CLIENT_BENCH_SEED_TIMEOUT_SECS=900
   TNG_CLIENT_BENCH_NO_PEER_TIMEOUT_SECS=90
   TNG_CLIENT_BENCH_SAMPLE_SECS=2
+  TNG_CLIENT_BENCH_IDLE_SAMPLE_SECS=8
   TNG_CLIENT_BENCH_PEER_BIND=0.0.0.0
 
 The report and raw CSV remain in the repository; task scratch, the isolated
