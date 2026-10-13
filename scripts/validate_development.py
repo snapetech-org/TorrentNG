@@ -31,6 +31,8 @@ REPOSITORY = "torrentng"
 ENGINE_VERSION = 1
 PROGRESS_INTERVAL_SECONDS = 60
 MAX_OUTPUT_BYTES = 8 * 1024 * 1024
+MAX_LOG_BYTES = 16 * 1024 * 1024
+LOG_TRUNCATION_MARKER = b"\n[validation log truncated after 16 MiB]\n"
 IGNORED_PARTS = {".git", "target", "node_modules", "dist", "coverage"}
 INHERITED_ENVIRONMENT_KEYS = {
     "ASDF_DATA_DIR", "ASDF_DIR", "COMSPEC", "LANG", "LC_ALL", "LC_CTYPE",
@@ -546,48 +548,80 @@ def run_command(
     cwd = (root / task.get("cwd", ".")).resolve()
     if cwd != root and root not in cwd.parents:
         raise ValidationError(f"Task working directory escapes the repository: {task['id']}")
-    output_queue: queue.Queue[bytes | None] = queue.Queue()
-    output_digest = hashlib.sha256()
+    output_queue: queue.Queue[bytes | None] = queue.Queue(maxsize=16)
+    log_digest = hashlib.sha256()
     output_bytes = 0
     output_tail = bytearray()
+    log_bytes_written = 0
+    log_truncated = False
+    log_error: str | None = None
     timed_out = False
     launch_error: str | None = None
+    reader_error: str | None = None
+    orphaned_processes_stopped = False
+    exit_group_checked = False
+    cleanup_sent_at: float | None = None
 
-    try:
-        process = subprocess.Popen(
-            task["command"],
-            cwd=cwd,
-            env=_safe_environment(task, log_path.parent),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            bufsize=8192,
-            start_new_session=os.name != "nt",
-        )
-    except OSError as error:
-        process = None
-        launch_error = str(error)
+    log_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with log_path.open("xb") as log:
+        os.chmod(log_path, 0o600)
+        log_content_limit = MAX_LOG_BYTES - len(LOG_TRUNCATION_MARKER)
 
-    if process is not None:
-        assert process.stdout is not None
-
-        def pump_output() -> None:
+        def persist(chunk: bytes) -> None:
+            nonlocal log_bytes_written, log_truncated, log_error
+            if log_error:
+                return
+            length = min(len(chunk), max(0, log_content_limit - log_bytes_written))
+            view = memoryview(chunk)[:length]
             try:
-                while True:
-                    chunk = process.stdout.read1(64 * 1024)
-                    if not chunk:
-                        break
-                    output_queue.put(chunk)
-            finally:
-                output_queue.put(None)
+                while view:
+                    written = log.write(view)
+                    if not written:
+                        raise OSError("short write while recording validation output")
+                    log_digest.update(view[:written])
+                    log_bytes_written += written
+                    view = view[written:]
+            except OSError as error:
+                log_error = str(error)
+                log_truncated = True
+            if length < len(chunk):
+                log_truncated = True
 
-        reader = threading.Thread(target=pump_output, daemon=True)
-        reader.start()
-        next_heartbeat = started + heartbeat_seconds
-        deadline = started + task.get("timeout", 3600)
-        log_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        with log_path.open("wb") as log:
-            os.chmod(log_path, 0o600)
+        try:
+            process = subprocess.Popen(
+                task["command"],
+                cwd=cwd,
+                env=_safe_environment(task, log_path.parent),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=8192,
+                start_new_session=os.name != "nt",
+            )
+        except OSError as error:
+            process = None
+            launch_error = str(error)
+
+        if process is not None:
+            assert process.stdout is not None
+
+            def pump_output() -> None:
+                nonlocal reader_error
+                try:
+                    while True:
+                        chunk = process.stdout.read1(64 * 1024)
+                        if not chunk:
+                            break
+                        output_queue.put(chunk)
+                except OSError as error:
+                    reader_error = str(error)
+                finally:
+                    output_queue.put(None)
+
+            reader = threading.Thread(target=pump_output, daemon=True)
+            reader.start()
+            next_heartbeat = started + heartbeat_seconds
+            deadline = started + task.get("timeout", 3600)
             ended = False
             while not ended:
                 now = time.monotonic()
@@ -601,35 +635,84 @@ def run_command(
                     chunk = b""
                 if chunk is None:
                     ended = True
+                    if process.poll() is None:
+                        _stop_process(process)
                 elif chunk:
                     output_bytes += len(chunk)
-                    output_digest.update(chunk)
                     output_tail.extend(chunk)
                     if len(output_tail) > MAX_OUTPUT_BYTES:
                         del output_tail[: len(output_tail) - MAX_OUTPUT_BYTES]
-                    log.write(chunk)
-                    log.flush()
+                    persist(chunk)
+                    try:
+                        log.flush()
+                    except OSError as error:
+                        log_error = log_error or str(error)
+                        log_truncated = True
                     sys.stderr.write(chunk.decode("utf-8", "replace"))
                     sys.stderr.flush()
                 now = time.monotonic()
+                if process.poll() is not None and os.name != "nt":
+                    if not exit_group_checked:
+                        exit_group_checked = True
+                        try:
+                            os.killpg(process.pid, 0)
+                        except ProcessLookupError:
+                            pass
+                        else:
+                            orphaned_processes_stopped = True
+                            try:
+                                os.killpg(process.pid, signal.SIGTERM)
+                            except OSError:
+                                pass
+                            cleanup_sent_at = now
+                    elif cleanup_sent_at is not None and now - cleanup_sent_at >= 2 and reader.is_alive():
+                        try:
+                            os.killpg(process.pid, signal.SIGKILL)
+                        except OSError:
+                            pass
+                        cleanup_sent_at = now
                 if now >= next_heartbeat and process.poll() is None:
                     elapsed_progress(now - started)
                     next_heartbeat = now + heartbeat_seconds
-        process.wait()
-        reader.join(timeout=2)
-        process.stdout.close()
-        exit_code = process.returncode
-    else:
-        log_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        log_path.write_text(launch_error or "command failed to start", encoding="utf-8")
-        os.chmod(log_path, 0o600)
-        output_tail.extend((launch_error or "command failed to start").encode())
-        output_digest.update(output_tail)
-        output_bytes = len(output_tail)
-        exit_code = None
+            process.wait()
+            reader.join(timeout=2)
+            if reader.is_alive() and os.name != "nt":
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                reader.join(timeout=2)
+                if reader.is_alive():
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+            reader.join()
+            process.stdout.close()
+            exit_code = process.returncode
+        else:
+            message = (launch_error or "command failed to start").encode()
+            output_tail.extend(message[-MAX_OUTPUT_BYTES:])
+            output_bytes = len(message)
+            persist(message)
+            try:
+                log.flush()
+            except OSError as error:
+                log_error = log_error or str(error)
+                log_truncated = True
+            exit_code = None
+
+        try:
+            if log_truncated and not log_error:
+                log.write(LOG_TRUNCATION_MARKER)
+                log_digest.update(LOG_TRUNCATION_MARKER)
+            log.flush()
+            os.fsync(log.fileno())
+        except OSError as error:
+            log_error = log_error or str(error)
 
     active_cases = _count_cases(task.get("case_parser"), bytes(output_tail))
-    status = "failed" if timed_out or launch_error or exit_code != 0 else "passed"
+    status = "failed" if timed_out or launch_error or log_error or reader_error or orphaned_processes_stopped or exit_code != 0 else "passed"
     if status == "passed" and task["kind"] == "test" and task.get("case_parser"):
         if active_cases is None or active_cases < task.get("minimum_cases", 1):
             status = "incomplete"
@@ -640,9 +723,9 @@ def run_command(
         "duration_ms": int((time.monotonic() - started) * 1000),
         "exit_code": exit_code,
         "timed_out": timed_out,
-        "error": launch_error,
+        "error": launch_error or log_error or reader_error or ("task left subprocesses running" if orphaned_processes_stopped else None),
         "output_bytes": output_bytes,
-        "log_sha256": output_digest.hexdigest(),
+        "log_sha256": log_digest.hexdigest(),
         "log_file": log_path.name,
         "active_cases": active_cases,
     }

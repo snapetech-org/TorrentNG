@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import os
 import shutil
 import subprocess
@@ -293,6 +295,76 @@ class ValidationEngineTests(unittest.TestCase):
         self.assertIn("1/1 selected tasks complete (1 passed", messages[-1])
         self.assertEqual((evidence / "fixture-test.log").stat().st_mode & 0o777, 0o600)
         self.assertTrue((evidence / "receipt.json").is_file())
+
+    def test_task_log_is_bounded_marked_and_hashed_from_persisted_bytes(self) -> None:
+        output_size = 16 * 1024 * 1024 + 1
+        log = self.root / "bounded.log"
+        with open(os.devnull, "w", encoding="utf-8") as sink:
+            with contextlib.redirect_stderr(sink):
+                result = engine.run_command(
+                    {
+                        "id": "bounded-output",
+                        "kind": "check",
+                        "command": [
+                            sys.executable,
+                            "-c",
+                            "import sys; sys.stdout.buffer.write(b'x' * " + str(output_size) + "); "
+                            "sys.stdout.write('VALIDATION_OUTPUT_COMPLETE')",
+                        ],
+                        "timeout": 30,
+                    },
+                    self.root,
+                    log,
+                    elapsed_progress=lambda _elapsed: None,
+                    heartbeat_seconds=1,
+                )
+        contents = log.read_bytes()
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["output_bytes"], output_size + len("VALIDATION_OUTPUT_COMPLETE"))
+        self.assertEqual(len(contents), 16 * 1024 * 1024)
+        self.assertTrue(contents.endswith(b"\n[validation log truncated after 16 MiB]\n"))
+        self.assertEqual(result["log_sha256"], hashlib.sha256(contents).hexdigest())
+
+    def test_task_log_creation_refuses_a_preexisting_symlink(self) -> None:
+        outside = self.root / "outside.log"
+        outside.write_text("preserve this file", encoding="utf-8")
+        log = self.root / "symlink.log"
+        log.symlink_to(outside)
+        with self.assertRaises(FileExistsError):
+            engine.run_command(
+                {
+                    "id": "symlink-log",
+                    "kind": "check",
+                    "command": [sys.executable, "-c", "print('should not run')"],
+                    "timeout": 10,
+                },
+                self.root,
+                log,
+                elapsed_progress=lambda _elapsed: None,
+                heartbeat_seconds=1,
+            )
+        self.assertEqual(outside.read_text(encoding="utf-8"), "preserve this file")
+
+    def test_task_executor_reaps_orphaned_descendants(self) -> None:
+        log = self.root / "orphan.log"
+        result = engine.run_command(
+            {
+                "id": "orphan-process",
+                "kind": "check",
+                "command": [
+                    sys.executable,
+                    "-c",
+                    "import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])",
+                ],
+                "timeout": 10,
+            },
+            self.root,
+            log,
+            elapsed_progress=lambda _elapsed: None,
+            heartbeat_seconds=1,
+        )
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"], "task left subprocesses running")
 
     def test_executor_blocks_later_tasks_after_candidate_changes(self) -> None:
         first = {
