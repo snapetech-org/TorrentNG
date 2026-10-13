@@ -20,7 +20,7 @@ payload work and owns authoritative transfer state.
   a remote one. See [DESKTOP.md](DESKTOP.md).
 
 User-facing names: **TorrentNG Desktop** (`torrentng-desktop`), **TorrentNG
-Server** (`torrentngd` + WebUI, the "Engine" above), and **TorrentNG Bridge**
+Server** (`torrentngd` + WebUI, the "Engine" above), and **TorrentNG WebUI Bridge**
 (`torrentng`, the compatible-client service).
 
 The compatibility promise is capability-aware rather than a claim of identical

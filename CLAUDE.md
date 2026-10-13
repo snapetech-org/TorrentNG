@@ -31,7 +31,7 @@ Important layers:
    connects to a remote one. Packaging: `packaging/desktop/`. See `docs/DESKTOP.md`.
 
 User-facing product names: **TorrentNG Desktop** (`torrentng-desktop`),
-**TorrentNG Server** (`torrentngd` + WebUI), **TorrentNG Bridge**
+**TorrentNG Server** (`torrentngd` + WebUI), **TorrentNG WebUI Bridge**
 (`torrentng`, source in `sidecar/`).
 
 ## Core architectural decisions

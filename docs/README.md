@@ -11,7 +11,7 @@ Supported features vary by client; the compatibility guides list the limits.
 ## Product arrangements
 
 - [DESKTOP.md](DESKTOP.md) - TorrentNG Desktop native app: install, Local vs
-  remote mode, resource design, and the Desktop / Server / Bridge naming table.
+  remote mode, resource design, and the Desktop / Server / WebUI Bridge naming table.
 - [ENGINE_REWRITE.md](ENGINE_REWRITE.md) - practical guide to compatible-client
   integrations, the TorrentNG client, and migration/comparison behavior.
 - [ENGINE.md](ENGINE.md) - deeper TorrentNG client design and crate layout.

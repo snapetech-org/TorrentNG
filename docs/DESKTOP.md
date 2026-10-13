@@ -17,7 +17,7 @@ The light theme uses the same palette as the WebUI's light mode:
 |---|---|---|---|
 | **TorrentNG Desktop** | `torrentng-desktop` · `crates/torrentng-desktop` | Native app. Bundles the engine for local use and can connect to a server. | You want a torrent app on this computer. |
 | **TorrentNG Server** | `torrentngd` · `crates/torrentngd` + `webui/` | Headless engine with the browser WebUI and REST/SSE/qBittorrent-compatible APIs. Also called "the Engine" or "the native client" in older docs. | You run torrents on a NAS, home server, or seedbox. |
-| **TorrentNG Bridge** | `torrentng` · `sidecar/` | Puts the WebUI and APIs in front of qBittorrent, rTorrent, Transmission, or Deluge. Also called "the compatible-client service" or "sidecar". | You keep an existing client. |
+| **TorrentNG WebUI Bridge** | `torrentng` · `sidecar/` | A browser WebUI and API for qBittorrent, rTorrent, Transmission, or Deluge. It replaces ruTorrent or the client's own web interface and adds the qBittorrent-compatible API for *arr tools, while your client keeps running transfers. Also called "the compatible-client service" or "sidecar". | You keep an existing client. |
 
 Directory and crate names are unchanged for compatibility; only the
 user-facing names are unified. The Desktop app and the Server are the same
@@ -133,8 +133,8 @@ Desktop v1 covers the day-to-day loop: add, start/stop, recheck, reannounce,
 remove (optionally with data), search, status filters, sorting, and a detail
 dock with General / Files / Trackers. Not in v1:
 
-- Connecting to a **Bridge** (`torrentng`): the app speaks the native
-  `torrentngd` API only. Use the WebUI for Bridge deployments.
+- Connecting to a **WebUI Bridge** (`torrentng`): the app speaks the native
+  `torrentngd` API only. Use the browser WebUI that the bridge serves.
 - Categories, tags, RSS, workflows, ratio groups, storage tools, and crash-safety
   settings: use the WebUI on a Server, or tune the engine through its config.
 - System tray, start-at-login, and `.torrent`/`magnet:` file association.
