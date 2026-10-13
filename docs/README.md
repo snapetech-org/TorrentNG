@@ -78,6 +78,15 @@ Supported features vary by client; the compatibility guides list the limits.
 - [ENGINE_REWRITE_BURNDOWN.md](ENGINE_REWRITE_BURNDOWN.md) - implementation
   checklist for the TorrentNG client rewrite.
 
+## Performance And Test Evidence
+
+- [Client performance benchmark](CLIENT_PERFORMANCE_BENCHMARK.md) - how to
+  compare real Debian ISO downloads and controlled seeding across TorrentNG,
+  qBittorrent, Transmission, Deluge, and rTorrent, including storage options
+  and KPI definitions.
+- [Dated client performance results](../certification/reports/client-performance-benchmark-20261013T033428Z.md) -
+  measurements and raw CSV for the current run.
+
 ## Security And Review
 
 - [SECURITY_REVIEW.md](SECURITY_REVIEW.md) - script workflow and WebUI/API

@@ -159,6 +159,9 @@ class Benchmark:
             ROOT / f"certification/reports/client-performance-benchmark-{self.stamp}.md",
         )).expanduser().resolve()
         self.csv_path = self.report.with_name(self.report.stem + "-samples.csv")
+        artifact_dir = os.environ.get("TNG_CLIENT_BENCH_ARTIFACT_DIR")
+        self.artifact_dir = Path(artifact_dir).expanduser().resolve() if artifact_dir else None
+        self.artifact_status = "not requested"
         if self.report.exists() or self.csv_path.exists():
             raise RuntimeError(f"refusing to overwrite an existing benchmark report: {self.report}")
         scratch = Path(os.environ.get("TNG_CLIENT_BENCH_SCRATCH_ROOT", "/var/tmp")).resolve()
@@ -190,6 +193,8 @@ class Benchmark:
         self.partial_seed_elapsed = {}
         self.partial_seed_setup = {}
         self.seed_source = None
+        seed_source = os.environ.get("TNG_CLIENT_BENCH_SEED_SOURCE")
+        self.seed_source_override = Path(seed_source).expanduser().resolve() if seed_source else None
         self.seed_leecher_version = "unknown"
         self.seed_leecher_image = "not started"
         self.cleanup_status = "pending"
@@ -364,12 +369,19 @@ class Benchmark:
             f"throttle.max_peers.seed.set = {MAX_PEERS}",
             f"throttle.global_down.max_rate.set_kb = {RATE_BPS // 1024}",
             f"throttle.global_up.max_rate.set_kb = {RATE_BPS // 1024}",
-            "network.scgi.open_local = /config/scgi.sock",
         ]
         path = self.workdir / "config/rtorrent-benchmark.rc"
         path.write_text(base + "\n" + "\n".join(additions) + "\n")
         path.chmod(0o644)
-        (self.workdir / "config/rtorrent").mkdir(parents=True, exist_ok=True)
+        rtorrent_config = self.workdir / "config/rtorrent"
+        rtorrent_config.mkdir(parents=True, exist_ok=True)
+        (rtorrent_config / "session").mkdir(exist_ok=True)
+        socket_alias = rtorrent_config / "scgi.sock"
+        if socket_alias.is_symlink():
+            socket_alias.unlink()
+        elif socket_alias.exists():
+            raise RuntimeError(f"refusing to replace existing rTorrent SCGI path: {socket_alias}")
+        socket_alias.symlink_to("rtorrent.sock")
 
     def _qbit_json(self, client, path, *, data=None, headers=None):
         request_headers = {"Host": "localhost:8080"}
@@ -503,9 +515,6 @@ class Benchmark:
                 else:
                     path = self.workdir / "config/rtorrent/scgi.sock"
                     if path.exists():
-                        run_command(["docker", "exec", self.service_id(client),
-                                     "chmod", "666", "/config/scgi.sock"],
-                                    env=self.env, check=False, quiet=True)
                         self._scgi("system.client_version")
                         return
             except (OSError, urllib.error.URLError, urllib.error.HTTPError,
@@ -602,8 +611,15 @@ class Benchmark:
                 "num_peers", "total_size",
             ], {}]) or {}
             torrents = response.get("torrents") or {}
-            values = torrents.values() if isinstance(torrents, dict) else torrents
-            row = next((r for r in values if r.get("hash", "").lower() == info_hash.lower()), None)
+            if isinstance(torrents, dict):
+                row = next((value for key, value in torrents.items()
+                            if key.lower() == info_hash.lower()
+                            or value.get("hash", "").lower() == info_hash.lower()), None)
+                values = torrents.values()
+            else:
+                values = torrents
+                row = next((r for r in values
+                            if r.get("hash", "").lower() == info_hash.lower()), None)
             if row is None and allow_name_fallback:
                 row = next((r for r in values if r.get("name") == name), None)
             return {
@@ -760,7 +776,7 @@ class Benchmark:
             elapsed = time.monotonic() - start
             rows.append(self._sample(client, phase, elapsed, status))
             self.partial_download_rows[client] = rows
-            if status["progress"] >= 0.999:
+            if status["progress"] >= 1.0:
                 payload = self._data_path(client, name)
                 try:
                     actual = payload.stat().st_size if payload.is_file() else 0
@@ -844,11 +860,7 @@ class Benchmark:
     def _version(self, client):
         try:
             if client == "torrentngd":
-                output, _ = run_command(
-                    ["docker", "exec", self.service_id(client), "torrentngd", "--version"],
-                    env=self.env, check=False, quiet=True, timeout=10,
-                )
-                return output.strip().splitlines()[0] if output.strip() else "unavailable"
+                return f"build {self.source_commit[:12]}"
             if client == "qbittorrent":
                 with self.http(client, "/api/v2/app/version",
                                headers={"Host": "localhost:8080"}) as response:
@@ -879,6 +891,44 @@ class Benchmark:
             while chunk := handle.read(4 * 1024 * 1024):
                 digest.update(chunk)
         return digest.hexdigest()
+
+    def _preserve_source_artifacts(self, meta):
+        if self.artifact_dir is None:
+            return
+        if self.seed_source is None:
+            self.artifact_status = "not saved: no SHA-256-verified ISO was available"
+            return
+        self.artifact_dir.mkdir(parents=True, exist_ok=True)
+        torrent_path = Path(meta["torrent_path"])
+        sources = (
+            (self.seed_source, meta["iso_name"], meta["size"], meta["sha256"]),
+            (torrent_path, torrent_path.name, torrent_path.stat().st_size,
+             self._sha256(torrent_path)),
+        )
+        for source, filename, expected_size, expected_sha256 in sources:
+            destination = self.artifact_dir / filename
+            if destination.is_symlink():
+                raise RuntimeError(f"refusing symlink artifact destination: {destination}")
+            if destination.exists():
+                if (not destination.is_file()
+                        or destination.stat().st_size != expected_size
+                        or self._sha256(destination) != expected_sha256):
+                    raise RuntimeError(f"refusing to overwrite different artifact: {destination}")
+                continue
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{filename}.", suffix=".partial", dir=self.artifact_dir,
+            )
+            os.close(descriptor)
+            temporary = Path(temporary_name)
+            try:
+                shutil.copy2(source, temporary)
+                if (temporary.stat().st_size != expected_size
+                        or self._sha256(temporary) != expected_sha256):
+                    raise RuntimeError(f"copied artifact failed verification: {filename}")
+                os.replace(temporary, destination)
+            finally:
+                temporary.unlink(missing_ok=True)
+        self.artifact_status = f"verified ISO and torrent saved under {self.artifact_dir}"
 
     def _start_seed_leecher(self, torrent_path, seeder):
         client = "seed_leecher"
@@ -986,7 +1036,7 @@ class Benchmark:
         deadline = time.monotonic() + 300
         while time.monotonic() < deadline:
             state = self._status(client, info_hash, payload.name, allow_name_fallback=False)
-            if state["progress"] >= 0.999:
+            if state["progress"] >= 1.0:
                 break
             time.sleep(2)
         else:
@@ -1213,6 +1263,7 @@ class Benchmark:
             f"- ISO: {meta['iso_name']}; {meta['size']:,} bytes; "
             f"torrent infohash {meta['info_hash']}",
             f"- Official SHA-256: {meta['sha256']}",
+            "- Clients selected for this run: " + ", ".join(LABELS[c] for c in CLIENTS),
             f"- Client download and upload limits: {RATE_BPS:,} B/s "
             f"({RATE_BPS / 1048576:.1f} MiB/s); max peers {MAX_PEERS}",
             f"- Controlled seed leecher receive limit: {SEED_LEECHER_RATE_BPS:,} B/s "
@@ -1257,7 +1308,8 @@ class Benchmark:
             "downloaded and checked Debian's published SHA-256. This measures a "
             "controlled one-seeder/one-leecher transfer, not public swarm demand. "
             "Seed tests use a separate per-client copy of the first SHA-256-verified "
-            "public download and can run even if that client's public-swarm download stalls.",
+            "public download or the explicitly verified seed-source file, and can run "
+            "even if that client's public-swarm download stalls.",
             "",
             "| Client | Result | Leecher setup (s) | Transfer (s) | Average upload (MiB/s) | Peak sampled (MiB/s) | Mean CPU (%) | Peak CPU (%) | Peak RSS (MiB) | Peak peers | Leecher SHA-256 / failure |",
             "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
@@ -1307,7 +1359,7 @@ class Benchmark:
             "",
             "- Hash validation gives high confidence that successful runs transferred "
             "the same ISO.",
-            "- Throughput and resource comparisons have low-to-moderate confidence: "
+            "- Throughput and resource comparisons have low confidence: "
             "one sequential public-swarm pass and one seed pass per client, on a shared "
             "host with the load reported above. Public peer availability changes over time.",
             "- Results apply to this host, storage, build, image digests, peer ceiling, "
@@ -1317,6 +1369,7 @@ class Benchmark:
             "## Artifacts and cleanup",
             "",
             f"- Raw time-series samples: [{self.csv_path.name}]({self.csv_path.name})",
+            f"- Preserved source artifacts: {self.artifact_status}",
             f"- Temporary benchmark directory: {self.workdir}",
             f"- Compose cleanup status: **{self.cleanup_status}**",
             f"- Official [Debian netinst page](https://www.debian.org/CD/netinst/)",
@@ -1338,9 +1391,17 @@ class Benchmark:
         print(f"Scratch: {self.workdir}", flush=True)
         print(f"Compose project: {self.project}", flush=True)
         self.prepare()
-        self.compose("build", "torrentngd", timeout=3600)
+        if "torrentngd" in CLIENTS:
+            self.compose("build", "torrentngd", timeout=3600)
         tracker_ip = self._start_tracker()
         meta = self._torrent_metadata()
+        if self.seed_source_override is not None:
+            source = self.seed_source_override
+            if not source.is_file() or source.stat().st_size != meta["size"]:
+                raise RuntimeError(f"seed source is absent or has the wrong size: {source}")
+            if self._sha256(source) != meta["sha256"]:
+                raise RuntimeError(f"seed source failed Debian SHA-256 verification: {source}")
+            self.seed_source = source
         client_images = {}
         for client in CLIENTS:
             private_path = self.workdir / "torrents" / f"private-seed-{client}.torrent"
@@ -1365,6 +1426,12 @@ class Benchmark:
                 self.compose("stop", client, check=False, quiet=True, timeout=60)
                 self.compose("restart", "opentracker", check=False, quiet=True, timeout=60)
         client_images["seed_leecher"] = self.seed_leecher_image
+        if self.artifact_dir is not None:
+            try:
+                self._preserve_source_artifacts(meta)
+            except Exception as error:
+                self.artifact_status = f"save failed: {type(error).__name__}: {error}"
+                print(f"[artifacts] {self.artifact_status}", file=sys.stderr, flush=True)
         self._write_report(meta, client_images)
         return int(not (
             len(self.results) == len(CLIENTS)
@@ -1423,7 +1490,9 @@ deploy/interop/compose.yml.
 
 Environment:
   TNG_CLIENT_BENCH_CLIENTS=torrentngd,qbittorrent,... (default: all five)
+  TNG_CLIENT_BENCH_SEED_SOURCE=/path/to/verified/debian.iso
   TNG_CLIENT_BENCH_REPORT=/path/to/report.md
+  TNG_CLIENT_BENCH_ARTIFACT_DIR=/persistent/path (verified ISO and .torrent)
   TNG_CLIENT_BENCH_SCRATCH_ROOT=/existing/writable/path (default: /var/tmp)
   TNG_CLIENT_BENCH_WORKDIR=/new/path (must not already exist)
   TNG_CLIENT_BENCH_RATE_BPS=33554432 (download and upload ceiling)

@@ -114,12 +114,14 @@ services:
     image: jesec/rtorrent@sha256:994728c59953e5f19c643827024dd06e9ffaf62b8d903a3f1468794415e72e03
     restart: unless-stopped
     command: ["-o", "system.daemon.set=true", "-o", "import=/rtorrent.rc"]
+    user: "${PUID:-1000}:${PGID:-1000}"
     ports:
       - "${INTEROP_RTORRENT_BIND_ADDR:-${INTEROP_BIND_ADDR:-127.0.0.1}}:${INTEROP_RTORRENT_PEER_PORT:-29185}:6885"
       - "${INTEROP_RTORRENT_BIND_ADDR:-${INTEROP_BIND_ADDR:-127.0.0.1}}:${INTEROP_RTORRENT_PEER_PORT:-29185}:6885/udp"
     volumes:
       - ${INTEROP_RTORRENT_CONFIG:-./rtorrent.rc}:/rtorrent.rc:ro
       - ${INTEROP_WORKDIR:-../../certification/interop}/config/rtorrent:/config
+      - ${INTEROP_WORKDIR:-../../certification/interop}/config/rtorrent:/home/download/.local/share/rtorrent
       - ${INTEROP_WORKDIR:-../../certification/interop}/watch/rtorrent:/watch
       - ${INTEROP_WORKDIR:-../../certification/interop}/downloads:/downloads
       - ${INTEROP_WORKDIR:-../../certification/interop}/artifacts:/artifacts
