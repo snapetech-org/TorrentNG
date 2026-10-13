@@ -15,6 +15,13 @@ payload work and owns authoritative transfer state.
   client daemon. It owns torrent state, SQLite session persistence, tracker
   state, peer-wire tasks, storage, rechecks, jobs, metrics, and the API
   projections, and serves the shared WebUI/API directly.
+- **Desktop app:** `torrentng-desktop` is a native egui client for the
+  TorrentNG client API. It runs a bundled `torrentngd` on loopback or connects to
+  a remote one. See [DESKTOP.md](DESKTOP.md).
+
+User-facing names: **TorrentNG Desktop** (`torrentng-desktop`), **TorrentNG
+Server** (`torrentngd` + WebUI, the "Engine" above), and **TorrentNG Bridge**
+(`torrentng`, the compatible-client service).
 
 The compatibility promise is capability-aware rather than a claim of identical
 feature parity: TorrentNG REST/SSE, qBittorrent Web API shapes, Transmission RPC,
@@ -182,6 +189,19 @@ It is built around large libraries: virtualized rows, server-side
 filter/sort/page, delta events, bulk dry-run previews, storage/tracker views,
 saved views, and diagnostic actions. Backend capabilities are surfaced to the
 UI so unsupported operations can be disabled or reported explicitly.
+
+## Desktop App
+
+**Location:** `crates/torrentng-desktop/` (standalone Cargo workspace)
+**Stack:** egui/eframe (`glow` backend), tokio, reqwest (rustls).
+
+The Desktop app never embeds the WebUI. Its logic layer (`api`, `sync`, `view`,
+`backend`, `config`, `model`) is display-free and unit-tested; `app`/`ui` are a
+thin egui shell. It reads one page of the library at a time over
+`GET /api/v1/torrents`, resumes `GET /api/v1/events` from that page's revision,
+and polls `/torrents/live` only for visible rows. In Local mode it supervises
+`torrentngd` as a child process (loopback bind, random token), so engine
+crash-safety is unaffected by UI crashes. Wire types come from `rt-api-model`.
 
 ## Deployment
 

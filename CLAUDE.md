@@ -26,6 +26,13 @@ Important layers:
 3. **crates/** — TorrentNG client crates and `torrentngd`
 4. **webui/** — React+Vite frontend, virtualized table, talks to TorrentNG or compatible-client APIs
 5. **deploy/** — Docker, Compose, systemd, nginx, Kubernetes examples
+6. **crates/torrentng-desktop/** — native egui desktop client (standalone Cargo
+   workspace, like `sidecar/`); bundles/supervises `torrentngd` in Local mode or
+   connects to a remote one. Packaging: `packaging/desktop/`. See `docs/DESKTOP.md`.
+
+User-facing product names: **TorrentNG Desktop** (`torrentng-desktop`),
+**TorrentNG Server** (`torrentngd` + WebUI), **TorrentNG Bridge**
+(`torrentng`, source in `sidecar/`).
 
 ## Core architectural decisions
 
