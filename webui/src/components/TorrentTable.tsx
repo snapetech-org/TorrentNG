@@ -1,4 +1,4 @@
-import { getRegionalLocale } from '../lib/localeFormat'
+import { formatRegionalNumber, getRegionalLocale } from '../lib/localeFormat'
 import { useRef, useEffect, useMemo, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { isFinalizing, type TorrentSummary, type ListParams } from '../api/client'
@@ -35,10 +35,10 @@ const TABLE_CELL_GAP = 8
 const TABLE_HORIZONTAL_PADDING = 12
 
 function fmtSize(bytes: number): string {
-  if (bytes >= 1e12) return (bytes / 1e12).toFixed(1) + ' TB'
-  if (bytes >= 1e9)  return (bytes / 1e9).toFixed(1) + ' GB'
-  if (bytes >= 1e6)  return (bytes / 1e6).toFixed(1) + ' MB'
-  return (bytes / 1e3).toFixed(0) + ' KB'
+  if (bytes >= 1e12) return formatRegionalNumber(bytes / 1e12, { maximumFractionDigits: 1 }) + ' TB'
+  if (bytes >= 1e9) return formatRegionalNumber(bytes / 1e9, { maximumFractionDigits: 1 }) + ' GB'
+  if (bytes >= 1e6) return formatRegionalNumber(bytes / 1e6, { maximumFractionDigits: 1 }) + ' MB'
+  return formatRegionalNumber(bytes / 1e3, { maximumFractionDigits: 0 }) + ' KB'
 }
 
 function fmtSpeed(bps: number): string {
@@ -720,7 +720,7 @@ export function TorrentTable({
           }}>
             {/* Select-all checkbox */}
             <span role="columnheader" aria-colindex={1} aria-label="Select all" style={STICKY_KEYS.includes('check') ? {
-              position: 'sticky', left: stickyLeft.check ?? 0, zIndex: 3,
+              position: 'sticky', insetInlineStart: stickyLeft.check ?? 0, zIndex: 3,
               background: 'var(--table-head)', display: 'flex', alignItems: 'center',
             } : undefined}>
               <input
@@ -805,7 +805,7 @@ export function TorrentTable({
                     opacity: dragKey === col.key ? 0.4 : 1,
                     outline: dragKey && dragKey !== col.key ? '1px dashed var(--border-strong)' : undefined,
                     ...(isSticky ? {
-                      position: 'sticky', left: stickyLeft[col.key] ?? 0, zIndex: 3,
+                      position: 'sticky', insetInlineStart: stickyLeft[col.key] ?? 0, zIndex: 3,
                       background: 'var(--table-head)',
                       boxShadow: isLastSticky ? '2px 0 0 var(--border-strong)' : undefined,
                     } : null),
@@ -1001,7 +1001,7 @@ export function TorrentTable({
               up_rate: <span style={{ color: upRate ? 'var(--success)' : 'var(--faint)' }}>{fmtSpeed(upRate)}</span>,
               seeds: <span style={{ color: t.peers_complete ? 'var(--success)' : 'var(--faint)' }} title="Connected seeds">{t.peers_complete}</span>,
               peers: <span style={{ color: t.peers_connected ? 'var(--muted)' : 'var(--faint)' }} title="Connected peers">{t.peers_connected}</span>,
-              ratio: <span style={{ color: t.ratio >= 1000 ? 'var(--success)' : 'var(--muted)' }}>{(t.ratio / 1000).toFixed(2)}</span>,
+              ratio: <span style={{ color: t.ratio >= 1000 ? 'var(--success)' : 'var(--muted)' }}>{formatRegionalNumber(t.ratio / 1000, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>,
               added: <span style={{ color: 'var(--faint)' }}>{fmtDate(t.creation_date)}</span>,
               completed: <span style={{ color: 'var(--faint)' }}>{fmtDate(t.timestamp_finished)}</span>,
               downloaded: <span style={{ color: 'var(--muted)' }}>{fmtSize(t.down_total)}</span>,
@@ -1056,7 +1056,7 @@ export function TorrentTable({
                     <span key={col.key} role="gridcell" aria-colindex={visibleIndex + 1} style={{
                       minWidth: 0, overflow: 'hidden',
                       ...(isSticky ? {
-                        position: 'sticky', left: stickyLeft[col.key] ?? 0, zIndex: 2,
+                        position: 'sticky', insetInlineStart: stickyLeft[col.key] ?? 0, zIndex: 2,
                         background: rowBg,
                         boxShadow: isLastSticky ? '2px 0 0 var(--border-strong)' : undefined,
                       } : null),
@@ -1104,11 +1104,11 @@ function ProgressCell({ value }: { value: number | null }) {
     return <span aria-label="Progress unavailable" style={{ color: 'var(--faint)' }}>—</span>
   }
   return (
-    <span role="progressbar" aria-label="Torrent progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={value} title={`${value.toFixed(1)}%`} style={{
+    <span role="progressbar" aria-label="Torrent progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={value} title={`${formatRegionalNumber(value, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`} style={{
       display: 'grid', gap: 3, width: '100%', minWidth: 0,
     }}>
       <span style={{ color: value >= 100 ? 'var(--success)' : 'var(--muted)', fontSize: 11, lineHeight: 1 }}>
-        {value.toFixed(1)}%
+        {formatRegionalNumber(value, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%
       </span>
       <span style={{
         display: 'block', height: 3, borderRadius: 99, overflow: 'hidden',

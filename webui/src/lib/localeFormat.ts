@@ -1,3 +1,5 @@
+import { useSyncExternalStore } from 'react'
+
 export const REGIONAL_FORMAT_KEY = 'tng.regionalFormat'
 
 export const REGIONAL_FORMAT_OPTIONS = [
@@ -17,12 +19,61 @@ export const REGIONAL_FORMAT_OPTIONS = [
 ] as const
 
 const supportedRegionalFormats = new Set<string>(REGIONAL_FORMAT_OPTIONS.map(option => option.value))
+const listeners = new Set<() => void>()
 
-export function getRegionalLocale(): string | undefined {
+function readRegionalFormat(): string {
   try {
     const value = localStorage.getItem(REGIONAL_FORMAT_KEY)
-    return value && supportedRegionalFormats.has(value) && value !== 'system' ? value : undefined
+    return value && supportedRegionalFormats.has(value) ? value : 'system'
   } catch {
-    return undefined
+    return 'system'
   }
+}
+
+let activeRegionalFormat = readRegionalFormat()
+
+function notifyRegionalFormatChange() {
+  listeners.forEach(listener => listener())
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', event => {
+    if (event.key !== REGIONAL_FORMAT_KEY && event.key !== null) return
+    activeRegionalFormat = readRegionalFormat()
+    notifyRegionalFormatChange()
+  })
+}
+
+export function setRegionalFormatPreference(value: string) {
+  if (!supportedRegionalFormats.has(value)) return
+  activeRegionalFormat = value
+  try {
+    localStorage.setItem(REGIONAL_FORMAT_KEY, value)
+  } catch {
+    // Keep the selected format active for this tab without browser storage.
+  }
+  notifyRegionalFormatChange()
+}
+
+export function useRegionalFormat(): string {
+  return useSyncExternalStore(
+    listener => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    () => activeRegionalFormat,
+    () => 'system',
+  )
+}
+
+export function getRegionalFormat(): string {
+  return activeRegionalFormat
+}
+
+export function getRegionalLocale(): string | undefined {
+  return activeRegionalFormat === 'system' ? undefined : activeRegionalFormat
+}
+
+export function formatRegionalNumber(value: number, options?: Intl.NumberFormatOptions): string {
+  return new Intl.NumberFormat(getRegionalLocale(), options).format(value)
 }

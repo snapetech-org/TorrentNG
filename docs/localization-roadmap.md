@@ -33,8 +33,14 @@ The World Bank's 2025 report estimates Mandarin Chinese, Hindi, and Spanish at 1
 
 ## Translation boundaries and acceptance
 
-Translate interface labels, help, empty states, validation, notifications, and errors. Keep media titles, user names, filenames and paths, commands, API identifiers, protocol values, and other user-supplied content unchanged. Use the selected UI language for date, time, number, and plural formatting. Every locale must fall back to English for a missing key; CI should check placeholder parity and report missing strings. Arabic ships only after the app sets `lang` and `dir`, uses logical layout properties, and verifies the core workflows in RTL at narrow and desktop widths.
+Translate interface labels, help, empty states, validation, notifications, and errors. Keep media titles, user names, filenames and paths, commands, API identifiers, protocol values, and other user-supplied content unchanged. Use the selected UI language for date, time, number, and plural formatting. Every locale must fall back to English for a missing key; CI should check placeholder parity and report missing strings. Arabic translated labels use local `lang` and `dir` metadata. App-wide RTL still requires logical layout properties and review of core workflows at narrow and desktop widths.
 
 ## Implemented in this PR
 
-Settings > Support > Appearance now offers a browser-local interface-language selector for twelve locales. The app tabs and settings navigation use translated labels with English fallback; most torrent workflows remain English. Arabic sets the document language and direction, with full RTL review still needed.
+Settings > Support > Appearance offers a browser-local interface-language selector for twelve locales. The app tabs, settings navigation, and language-control help use translated labels with English fallback. Arabic translated controls carry local language and direction metadata; untranslated workflows and the document remain English and left-to-right.
+
+Regional formatting now updates open screens and applies localized digits and separators to torrent sizes, ratios, progress, storage usage, speeds, and counts across the main list, details, selection, storage, and status surfaces. The preference remains active in the current tab if browser storage is unavailable and follows changes from other tabs. Sticky table columns use logical inline positioning.
+
+## Remaining work
+
+Translate high-use torrent workflows, empty states, validation, and errors in screen-sized batches, preserving API values and user-provided torrent metadata. Complete Arabic layout review across dialogs, filters, tables, and settings before claiming app-wide RTL support.

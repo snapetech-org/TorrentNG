@@ -1,4 +1,4 @@
-import { getRegionalLocale } from '../lib/localeFormat'
+import { formatRegionalNumber, getRegionalLocale } from '../lib/localeFormat'
 import { useState } from 'react'
 import type { LiveStats, StorageRoot } from '../api/client'
 
@@ -24,18 +24,18 @@ interface Props {
 
 function fmtSpeed(bps: number): string {
   if (!bps) return '0 B/s'
-  if (bps >= 1e9) return (bps / 1e9).toFixed(1) + ' GB/s'
-  if (bps >= 1e6) return (bps / 1e6).toFixed(1) + ' MB/s'
-  if (bps >= 1e3) return (bps / 1e3).toFixed(0) + ' KB/s'
-  return bps + ' B/s'
+  if (bps >= 1e9) return formatRegionalNumber(bps / 1e9, { maximumFractionDigits: 1 }) + ' GB/s'
+  if (bps >= 1e6) return formatRegionalNumber(bps / 1e6, { maximumFractionDigits: 1 }) + ' MB/s'
+  if (bps >= 1e3) return formatRegionalNumber(bps / 1e3, { maximumFractionDigits: 0 }) + ' KB/s'
+  return formatRegionalNumber(bps) + ' B/s'
 }
 
 function fmtBytes(bytes?: number): string {
   if (bytes === undefined || !Number.isFinite(bytes)) return 'unknown'
-  if (bytes >= 1e12) return (bytes / 1e12).toFixed(1) + ' TB'
-  if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + ' GB'
-  if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + ' MB'
-  return Math.max(0, bytes).toLocaleString(getRegionalLocale()) + ' B'
+  if (bytes >= 1e12) return formatRegionalNumber(bytes / 1e12, { maximumFractionDigits: 1 }) + ' TB'
+  if (bytes >= 1e9) return formatRegionalNumber(bytes / 1e9, { maximumFractionDigits: 1 }) + ' GB'
+  if (bytes >= 1e6) return formatRegionalNumber(bytes / 1e6, { maximumFractionDigits: 1 }) + ' MB'
+  return formatRegionalNumber(Math.max(0, bytes)) + ' B'
 }
 
 function tone(value?: string): { color: string; bg: string; border: string } {

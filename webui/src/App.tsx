@@ -22,7 +22,7 @@ import { BulkEditDialog } from './components/BulkEditDialog'
 import { useDialogFocus } from './hooks/useDialogFocus'
 import { api, AuthError, type ListParams, type LiveStats, type TorrentSummary } from './api/client'
 import { PALETTES, applyTheme, findPalette, THEME_MODE_STORAGE_KEY, THEME_STORAGE_KEY, type ThemeMode } from './themes'
-import { REGIONAL_FORMAT_KEY, REGIONAL_FORMAT_OPTIONS, getRegionalLocale } from './lib/localeFormat'
+import { getRegionalLocale, setRegionalFormatPreference, useRegionalFormat } from './lib/localeFormat'
 import { useInterfaceLanguage } from './lib/interfaceLocale'
 
 const EnginePanel = lazy(() => import('./components/EnginePanel').then(module => ({ default: module.EnginePanel })))
@@ -129,15 +129,6 @@ function preloadSettingsSection(section: SettingsSection) {
 
 function preloadAllSettingsPanels() {
   ;(Object.keys(preloadSettingsPanels) as SettingsSection[]).forEach(preloadSettingsSection)
-}
-
-function loadRegionalFormat(): string {
-  try {
-    const value = localStorage.getItem(REGIONAL_FORMAT_KEY)
-    return value && REGIONAL_FORMAT_OPTIONS.some(option => option.value === value) ? value : 'system'
-  } catch {
-    return 'system'
-  }
 }
 
 function loadThemeId(): string {
@@ -274,7 +265,7 @@ function useSingleActiveTab() {
 }
 
 export function App() {
-  const { t } = useInterfaceLanguage()
+  const { language, t } = useInterfaceLanguage()
   const qc = useQueryClient()
   const activeTab = useSingleActiveTab()
   const [authState, setAuthState] = useState<AuthState>('checking')
@@ -304,19 +295,13 @@ export function App() {
   const [mediaInference, setMediaInference] = useState<MediaInferenceMode>(loadMediaInference)
   const [themeId, setThemeId] = useState(loadThemeId)
   const [themeMode, setThemeMode] = useState<ThemeMode>(loadThemeMode)
-  const [regionalFormat, setRegionalFormat] = useState(loadRegionalFormat)
+  const regionalFormat = useRegionalFormat()
   const [detailAutoDisplay, setDetailAutoDisplay] = useState(loadDetailAutoDisplay)
   const [detailPosition, setDetailPosition] = useState<DetailPosition>(loadDetailPosition)
   const activeTheme = findPalette(themeId)[themeMode]
 
   const changeRegionalFormat = useCallback((value: string) => {
-    if (!REGIONAL_FORMAT_OPTIONS.some(option => option.value === value)) return
-    try {
-      localStorage.setItem(REGIONAL_FORMAT_KEY, value)
-    } catch {
-      // The selection still applies for the current render when storage is unavailable.
-    }
-    setRegionalFormat(value)
+    setRegionalFormatPreference(value)
   }, [])
 
   const updateParams = useCallback((p: Partial<typeof params>) => {
@@ -841,7 +826,7 @@ export function App() {
           }} />
           TorrentNG</h1>
 
-        <nav aria-label="Primary" style={{ display: 'flex', gap: 4, marginLeft: 4, flex: '0 0 auto' }}>
+        <nav aria-label="Primary" lang={language} dir={language === 'ar' ? 'rtl' : 'ltr'} style={{ display: 'flex', gap: 4, marginInlineStart: 4, flex: '0 0 auto' }}>
           {(['torrents', 'settings'] as View[]).map(v => (
             <button
               key={v}
@@ -1215,7 +1200,7 @@ function SettingsView({ section, onSection, mediaInference, onMediaInference, th
   regionalFormat: string
   onRegionalFormat: (value: string) => void
 }) {
-  const { t } = useInterfaceLanguage()
+  const { language, t } = useInterfaceLanguage()
   const sections: Array<[SettingsSection, string, string]> = [
     ['library', 'Library', '▦'],
     ['engine', 'Backend', '⚙'],
@@ -1232,7 +1217,7 @@ function SettingsView({ section, onSection, mediaInference, onMediaInference, th
   }
   return (
     <>
-      <aside className="tng-settings-sidebar" aria-label={t("Settings")} style={{
+      <aside className="tng-settings-sidebar" aria-label={t("Settings")} lang={language} dir={language === 'ar' ? 'rtl' : 'ltr'} style={{
         width: 220, flexShrink: 0, background: 'var(--panel)', borderRight: '1px solid var(--border)',
         padding: 12,
       }}>

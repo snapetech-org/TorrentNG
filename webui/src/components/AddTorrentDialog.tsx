@@ -1,4 +1,4 @@
-import { getRegionalLocale } from '../lib/localeFormat'
+import { formatRegionalNumber, getRegionalLocale } from '../lib/localeFormat'
 import { useState, useRef, useCallback } from 'react'
 import { useQueryClient, useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -300,10 +300,10 @@ export function AddTorrentDialog({ onClose }: Props) {
 }
 
 function fmtSize(bytes: number): string {
-  if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + ' GB'
-  if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + ' MB'
-  if (bytes >= 1e3) return (bytes / 1e3).toFixed(0) + ' KB'
-  return bytes.toLocaleString(getRegionalLocale()) + ' B'
+  if (bytes >= 1e9) return formatRegionalNumber(bytes / 1e9, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' GB'
+  if (bytes >= 1e6) return formatRegionalNumber(bytes / 1e6, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' MB'
+  if (bytes >= 1e3) return formatRegionalNumber(bytes / 1e3, { maximumFractionDigits: 0 }) + ' KB'
+  return formatRegionalNumber(bytes) + ' B'
 }
 
 const noticeStyle: React.CSSProperties = {

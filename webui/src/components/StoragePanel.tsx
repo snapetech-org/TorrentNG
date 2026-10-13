@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
+import { formatRegionalNumber } from '../lib/localeFormat'
 import { api, type Job, type StoragePlanRequest, type StoragePlanResponse } from '../api/client'
 
 function fmtBytes(bytes: number): string {
-  if (bytes >= 1e12) return (bytes / 1e12).toFixed(2) + ' TB'
-  if (bytes >= 1e9) return (bytes / 1e9).toFixed(2) + ' GB'
-  if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + ' MB'
-  if (bytes >= 1e3) return (bytes / 1e3).toFixed(0) + ' KB'
-  return bytes + ' B'
+  if (bytes >= 1e12) return formatRegionalNumber(bytes / 1e12, { maximumFractionDigits: 2 }) + ' TB'
+  if (bytes >= 1e9) return formatRegionalNumber(bytes / 1e9, { maximumFractionDigits: 2 }) + ' GB'
+  if (bytes >= 1e6) return formatRegionalNumber(bytes / 1e6, { maximumFractionDigits: 1 }) + ' MB'
+  if (bytes >= 1e3) return formatRegionalNumber(bytes / 1e3, { maximumFractionDigits: 0 }) + ' KB'
+  return formatRegionalNumber(bytes) + ' B'
 }
 
 function parseLines(value: string): string[] {
@@ -440,7 +441,7 @@ function StorageRootCard({ root }: { root: NonNullable<Awaited<ReturnType<typeof
           }}>read-only</span>
         )}
         <span style={{ color: tone, fontSize: 12, fontWeight: 700 }}>
-          {root.ok ? `${root.used_percent.toFixed(1)}% used` : 'unavailable'}
+          {root.ok ? `${formatRegionalNumber(root.used_percent, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}% used` : 'unavailable'}
         </span>
       </div>
 

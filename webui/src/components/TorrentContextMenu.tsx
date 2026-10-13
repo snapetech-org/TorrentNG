@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { formatRegionalNumber } from '../lib/localeFormat'
 import { isFinalizing, type TorrentSummary } from '../api/client'
 import { useDialogFocus } from '../hooks/useDialogFocus'
 
@@ -119,7 +120,7 @@ export function TorrentContextMenu({
             boxShadow: `0 0 12px color-mix(in srgb, ${status.color} 45%, transparent)`,
           }} />
           <span style={{ color: status.color, fontWeight: 700 }}>{status.label}</span>
-          <span style={{ marginLeft: 'auto' }}>{(menu.torrent.ratio / 1000).toFixed(2)} ratio</span>
+          <span style={{ marginInlineStart: 'auto' }}>{formatRegionalNumber(menu.torrent.ratio / 1000, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ratio</span>
         </span>
       </div>
       {items.map((item, index) => item.separator ? (

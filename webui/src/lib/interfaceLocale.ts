@@ -48,10 +48,10 @@ function readLanguage(): InterfaceLanguage {
   }
 }
 
-function applyDocumentLanguage(language: InterfaceLanguage) {
+function applyDocumentLanguage(_language: InterfaceLanguage) {
   if (typeof document === 'undefined') return
-  document.documentElement.lang = language
-  document.documentElement.dir = language === 'ar' ? 'rtl' : 'ltr'
+  document.documentElement.lang = 'en'
+  document.documentElement.dir = 'ltr'
 }
 
 let activeLanguage = readLanguage()

@@ -35,13 +35,13 @@ export function AppearancePanel({ mediaInference, onMediaInference, themes = [],
       </div>
 
       <div className="tng-card tng-appearance-panel" style={{ ...panelStyle, marginBottom: 12 }}>
-        <label htmlFor="interface-language" style={{ display: 'grid', gap: 6, color: 'var(--text)', fontSize: 12, fontWeight: 700, marginBottom: 12 }}>
+        <label htmlFor="interface-language" lang={language} dir={language === 'ar' ? 'rtl' : 'ltr'} style={{ display: 'grid', gap: 6, color: 'var(--text)', fontSize: 12, fontWeight: 700, marginBottom: 12 }}>
           {t("Interface language")}
           <select id="interface-language" value={language} onChange={event => setLanguage(event.currentTarget.value as InterfaceLanguage)} style={{ color: 'var(--text)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 5, padding: '8px 9px', font: 'inherit' }}>
             {INTERFACE_LANGUAGE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
         </label>
-        <div style={{ fontSize: 11, color: 'var(--faint)', marginTop: -8, marginBottom: 10 }}>{t("Translations currently cover navigation and language settings; most other screens are still in English.")}</div>
+        <div lang={language} dir={language === 'ar' ? 'rtl' : 'ltr'} style={{ fontSize: 11, color: 'var(--faint)', marginTop: -8, marginBottom: 10 }}>{t("Translations currently cover navigation and language settings; most other screens are still in English.")}</div>
         <label htmlFor="regional-format" style={{ display: 'grid', gap: 6, color: 'var(--text)', fontSize: 12, fontWeight: 700 }}>
           {t("Date, time, and number format")}
           <select
