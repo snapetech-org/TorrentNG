@@ -88,7 +88,7 @@ jobs:
 
       - name: Upload deterministic evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: backend-deterministic-fault-${{ github.run_id }}
           path: |
@@ -132,7 +132,7 @@ jobs:
 
       - name: Upload live fault evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: backend-live-fault-${{ github.run_id }}
           path: certification/reports/backend-burndown-native-fault-*
@@ -178,7 +178,7 @@ jobs:
 
       - name: Upload API/SSE evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: backend-api-load-${{ github.run_id }}
           path: certification/reports/backend-api-load-*
@@ -214,7 +214,7 @@ jobs:
 
       - name: Upload public compatibility evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: backend-public-compat-${{ github.run_id }}
           path: certification/reports/universal-compat-backend-*
@@ -254,7 +254,7 @@ jobs:
 
       - name: Upload storage evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: backend-real-device-${{ github.run_id }}
           path: certification/reports/storage-*
@@ -299,7 +299,7 @@ jobs:
 
       - name: Upload soak evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: backend-24h-soak-${{ github.run_id }}
           path: certification/reports/soak-24h-backend-*

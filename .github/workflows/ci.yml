@@ -90,7 +90,7 @@ jobs:
 
       - name: Upload fault matrix evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: backend-fault-matrix-${{ github.run_id }}
           path: |
@@ -151,7 +151,7 @@ jobs:
 
       - name: Upload API load evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: backend-api-load-${{ github.run_id }}
           path: |
@@ -313,7 +313,7 @@ jobs:
 
       - name: Upload crash artifacts
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fuzz-crash-artifacts
           path: fuzz/artifacts/
@@ -441,7 +441,7 @@ jobs:
 
       - name: Upload WebUI browser failure evidence
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: webui-browser-failure-${{ github.run_id }}
           path: webui/test-results/
@@ -473,7 +473,7 @@ jobs:
 
       - name: Upload backup and restore evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: backup-restore-${{ github.run_id }}
           path: certification/reports/backup-restore-ci-*

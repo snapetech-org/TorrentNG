@@ -266,7 +266,7 @@ jobs:
 
       - name: Upload native release smoke evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: native-release-smoke-${{ github.run_id }}
           path: |
@@ -364,7 +364,7 @@ jobs:
           fi
 
       - name: Upload TorrentNG client artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: native-${{ matrix.suffix }}
           path: dist/*
@@ -437,7 +437,7 @@ jobs:
             "engine/$ENGINE_BIN" dist
 
       - name: Upload desktop artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: desktop-${{ matrix.suffix }}
           path: dist/*
@@ -663,7 +663,7 @@ jobs:
           tar -czf "dist/torrentng-deploy-${tag}.tar.gz" deploy docs README.md LICENSE
 
       - name: Upload shared artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: shared-linux-assets
           path: dist/*
