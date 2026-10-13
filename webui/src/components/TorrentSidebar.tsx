@@ -206,7 +206,7 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
               border: '1px solid ' + (activeFilterCount ? 'var(--accent)' : 'var(--border)'),
               borderRadius: 999, padding: '1px 7px', fontSize: 10, fontWeight: 700,
             }}>
-              {activeFilterCount ? <LocalizedText source="{count} active" parameters={{ count: activeFilterCount.toLocaleString(getRegionalLocale()) }} /> : <LocalizedText source="All" />}
+              {activeFilterCount ? <LocalizedText source="{count} active" parameters={{ count: activeFilterCount.toLocaleString(getRegionalLocale()) }} /> : <LocalizedText source="all" />}
             </span>
             <button
               type="button"

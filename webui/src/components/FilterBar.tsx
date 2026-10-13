@@ -26,17 +26,21 @@ interface Props {
 }
 
 export function FilterBar({ params, onChange }: Props) {
-  const { t, textProps } = useInterfaceLanguage()
+  const { language, t, textProps } = useInterfaceLanguage()
   const localized = (source: string, parameters?: Record<string, string | number>) => (
     <span {...textProps(source)}>{t(source, parameters)}</span>
   )
   const [search, setSearch] = useState(params.filter ?? '')
   const hasSidebarFilters = Boolean(params.status || params.category || params.tag || params.tracker || params.media_type)
   const activeCount = [params.filter || search, params.status, params.category, params.tag, params.tracker, params.media_type].filter(Boolean).length
+  const sortColumnSource = params.sort ?? 'name'
   const sortColumn = params.sort ? SORT_COLUMNS[params.sort] : 'Name'
   const sortColumnText = sortColumn ? t(sortColumn) : params.sort ?? t('Name')
   const sortDirection = params.dir === 'desc' ? 'Descending' : 'Ascending'
-  const sortLabel = t('Sort: {column} ({direction})', { column: sortColumnText, direction: t(sortDirection) })
+  const sortLabel = t('Sort {column} {direction}', {
+    column: language === 'en' ? sortColumnSource : sortColumnText,
+    direction: language === 'en' ? (params.dir === 'desc' ? 'desc' : 'asc') : t(sortDirection),
+  })
   const sortDescription = t('Sorted by {column}, {direction}', { column: sortColumnText, direction: t(sortDirection) })
   const chips = [
     (params.filter || search) && ['Search', params.filter || search, 'filter'],
@@ -169,8 +173,7 @@ export function FilterBar({ params, onChange }: Props) {
             background: 'var(--surface)', color: 'var(--muted)', padding: '2px 7px',
             fontSize: 11,
           }}>
-            <span style={{ color: 'var(--faint)' }}>{localized('Sort')}</span>
-            <span {...textProps('Sort: {column} ({direction})')} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sortLabel}</span>
+            <span {...textProps('Sort {column} {direction}')} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sortLabel}</span>
           </span>
           {chips.map(([label, value, key]) => (
             <span key={`${label}:${value}`} className="tng-filter-chip" title={key === 'tracker' ? maskAnnounceUrl(value) : value} style={{

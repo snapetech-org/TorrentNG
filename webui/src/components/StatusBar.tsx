@@ -69,13 +69,15 @@ function Badge({
   disabled?: boolean
   meter?: number
 }) {
-  const { t, textProps } = useInterfaceLanguage()
+  const { language, t, textProps } = useInterfaceLanguage()
   const colors = tone(state)
   const Element = onClick && !disabled ? 'button' : 'span'
   const handleClick = disabled ? undefined : onClick
   const localizedLabel = t(label)
   const stateLabels = new Set(['connected', 'connecting', 'starting', 'disconnected', 'unknown', 'on', 'off', 'open', 'closed', 'listening'])
-  const localizedValue = stateLabels.has(value) ? t(value[0].toUpperCase() + value.slice(1)) : value
+  const localizedValue = stateLabels.has(value)
+    ? language === 'en' ? value : t(value[0].toUpperCase() + value.slice(1))
+    : value
   return (
     <Element
       className="tng-status-badge"
@@ -174,7 +176,7 @@ export function StatusBar({
       color: 'var(--faint)', fontSize: 11, overflowX: 'auto',
     }} {...interfaceTextProps("Application status")}>
       <div className="tng-statusbar-summary" style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 'max-content' }}>
-        <Badge label={backendType === 'torrentng' ? 'TorrentNG client' : backendType === 'backend' ? 'Backend' : backendType} value={connected ? 'connected' : 'disconnected'} state={connected ? 'on' : 'closed'} />
+        <Badge label={backendType === 'torrentng' ? 'TorrentNG client' : backendType === 'backend' ? 'backend' : backendType} value={connected ? 'connected' : 'disconnected'} state={connected ? 'on' : 'closed'} />
       </div>
       <div className="tng-statusbar-counts" style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 'max-content' }}>
         <Badge label="Torrents" value={total.toLocaleString(getRegionalLocale())} state="idle" />
@@ -195,8 +197,8 @@ export function StatusBar({
       </nav>
       <span className="tng-statusbar-spacer" style={{ flex: 1 }} />
       <div className="tng-statusbar-live" style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 'max-content' }}>
-        <Badge label="Download" value={fmtSpeed(stats.download_speed)} state={(stats.download_speed ?? 0) > 0 ? 'on' : 'unknown'} />
-        <Badge label="Upload" value={fmtSpeed(stats.upload_speed)} state={(stats.upload_speed ?? 0) > 0 ? 'on' : 'unknown'} />
+        <Badge label="DL" value={fmtSpeed(stats.download_speed)} state={(stats.download_speed ?? 0) > 0 ? 'on' : 'unknown'} />
+        <Badge label="UL" value={fmtSpeed(stats.upload_speed)} state={(stats.upload_speed ?? 0) > 0 ? 'on' : 'unknown'} />
       </div>
       <button
         type="button"

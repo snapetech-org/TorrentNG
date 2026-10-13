@@ -82,17 +82,22 @@ function utpStatus(capabilities: NonNullable<Awaited<ReturnType<typeof api.healt
   return { label, title, titleSource, titleParameters, enabled: networking.utp_transport === true }
 }
 
-function backendHealthLabel(health: Awaited<ReturnType<typeof api.health>> | undefined, t: typeof translateInterface) {
+function backendHealthLabel(
+  health: Awaited<ReturnType<typeof api.health>> | undefined,
+  t: typeof translateInterface,
+  language: ReturnType<typeof useInterfaceLanguage>['language'],
+) {
   const statusText = (status: string) => {
     const normalized = status.toLowerCase()
     const labels: Record<string, string> = {
       connected: 'Connected', connecting: 'Connecting', starting: 'Starting',
       disconnected: 'Disconnected', unavailable: 'Unavailable', error: 'Error',
     }
-    return labels[normalized] ? t(labels[normalized]) : status
+    if (!labels[normalized]) return status
+    return language === 'en' ? normalized : t(labels[normalized])
   }
   if (health?.backend) {
-    const source = health.backend.type === 'torrentng' ? 'TorrentNG client: {status}' : 'Backend: {status}'
+    const source = health.backend.type === 'torrentng' ? 'TorrentNG client: {status}' : 'backend: {status}'
     return {
       type: health.backend.type,
       status: health.backend.status,
@@ -102,14 +107,14 @@ function backendHealthLabel(health: Awaited<ReturnType<typeof api.health>> | und
     }
   }
   if (health?.native_engine) {
-    const status = health.ready === false ? t('Starting') : t('Connected')
+    const status = health.ready === false ? 'starting' : 'connected'
     const source = 'TorrentNG client: {status}'
     return {
       type: 'torrentng',
       status: health.ready === false ? 'starting' : 'connected',
       connected: health.ready !== false,
       source,
-      label: t(source, { status }),
+      label: t(source, { status: statusText(status) }),
     }
   }
   const status = health?.rtorrent
@@ -117,8 +122,8 @@ function backendHealthLabel(health: Awaited<ReturnType<typeof api.health>> | und
     type: 'backend',
     status: status ?? 'connecting',
     connected: status === 'connected',
-    source: status ? 'Backend: {status}' : 'Connecting…',
-    label: status ? t('Backend: {status}', { status: statusText(status) }) : t('Connecting…'),
+    source: status ? 'backend: {status}' : 'Connecting…',
+    label: status ? t('backend: {status}', { status: statusText(status) }) : t('Connecting…'),
   }
 }
 const SETTINGS_SECTION_KEY = 'tng.settingsSection'
@@ -347,7 +352,7 @@ export function App() {
   }, [selected, torrents])
   const { data: health } = useHealth(activeTab.isActive && authState === 'authenticated')
   const healthUtp = utpStatus(health?.engine?.capabilities, t)
-  const backendHealth = backendHealthLabel(health, t)
+  const backendHealth = backendHealthLabel(health, t, language)
   const { data: storage } = useQuery({
     queryKey: ['storage', 'status-bar'],
     queryFn: api.storage,
@@ -888,12 +893,12 @@ export function App() {
         </nav>
 
         {view === 'torrents' && (
-          <span className="tng-topbar-pill" data-tone="neutral" role="status" aria-label={t('Total torrents: {count}', { count: total.toLocaleString(getRegionalLocale()) })} {...textProps('Total torrents: {count}')} style={{
+          <span className="tng-topbar-pill" data-tone="neutral" role="status" aria-label={t('{count} torrents', { count: total.toLocaleString(getRegionalLocale()) })} {...textProps('{count} torrents')} style={{
             color: 'var(--muted)', background: 'var(--surface)', border: '1px solid var(--border)',
             borderRadius: 999, padding: '2px 8px', fontSize: 11, fontWeight: 700,
             whiteSpace: 'nowrap', flex: '0 0 auto',
           }}>
-            {t('Total torrents: {count}', { count: total.toLocaleString(getRegionalLocale()) })}
+            {t('{count} torrents', { count: total.toLocaleString(getRegionalLocale()) })}
           </span>
         )}
         {selected.size > 0 && view === 'torrents' && (
