@@ -747,16 +747,32 @@ class Benchmark:
             csv.writer(handle).writerow(row)
         return row
 
-    def _wait_complete(self, client, info_hash, name, timeout, phase):
+    def _wait_complete(self, client, info_hash, name, expected_size, timeout, phase):
         start = time.monotonic()
         next_log = 0
+        completion_observed = None
         rows = []
         while time.monotonic() - start < timeout:
             status = self._status(client, info_hash, name)
             elapsed = time.monotonic() - start
             rows.append(self._sample(client, phase, elapsed, status))
             if status["progress"] >= 0.999:
-                return elapsed, status, rows
+                if completion_observed is None:
+                    completion_observed = time.monotonic()
+                payload = self._data_path(client, name)
+                try:
+                    actual = payload.stat().st_size if payload.is_file() else 0
+                except OSError:
+                    actual = 0
+                if actual == expected_size:
+                    return elapsed, status, rows
+                if time.monotonic() - completion_observed >= 60:
+                    raise RuntimeError(
+                        f"{LABELS[client]} reported completion but its file is "
+                        f"{actual} bytes after 60s (expected {expected_size})"
+                    )
+            else:
+                completion_observed = None
             if elapsed > next_log:
                 print(
                     f"[{LABELS[client]} {phase}] {status['progress']:.1%}, "
@@ -1050,7 +1066,8 @@ class Benchmark:
         save_path = "/downloads/rtorrent" if client == "rtorrent" else f"/downloads/{client}/public"
         self._add_torrent(client, torrent, save_path)
         elapsed, status, public_rows = self._wait_complete(
-            client, meta["info_hash"], meta["iso_name"], DOWNLOAD_TIMEOUT, "public_download",
+            client, meta["info_hash"], meta["iso_name"], meta["size"],
+            DOWNLOAD_TIMEOUT, "public_download",
         )
         payload = self._data_path(client, meta["iso_name"])
         if not payload.is_file() or payload.stat().st_size != meta["size"]:
