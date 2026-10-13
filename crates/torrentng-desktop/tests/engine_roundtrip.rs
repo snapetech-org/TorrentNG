@@ -1,8 +1,11 @@
 //! End-to-end: launch a real `torrentngd` the way the app does (Local mode),
 //! then drive the same client + SSE path the UI uses.
 //!
-//! Needs a built daemon, so it is opt-in: set `TORRENTNGD_BIN=/path/to/torrentngd`.
-//! CI builds the daemon and sets it; locally it is skipped when unset.
+//! Needs a built daemon. It is found via `TORRENTNGD_BIN`, else at the
+//! workspace's `target/debug/torrentngd` (where `cargo build -p torrentngd`
+//! puts it; the repo's sandboxed task runner does not pass custom variables
+//! through). Locally the test skips when no daemon exists; under `CI` a
+//! missing daemon is a failure so the test can never pass vacuously.
 
 use std::time::Duration;
 
@@ -34,10 +37,29 @@ async fn eventually(
     }
 }
 
+fn daemon_path() -> Option<String> {
+    if let Ok(p) = std::env::var("TORRENTNGD_BIN") {
+        return Some(p);
+    }
+    let name = if cfg!(windows) {
+        "torrentngd.exe"
+    } else {
+        "torrentngd"
+    };
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/debug")
+        .join(name);
+    p.is_file().then(|| p.display().to_string())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn local_engine_lifecycle_and_delta_stream() {
-    let Ok(bin) = std::env::var("TORRENTNGD_BIN") else {
-        eprintln!("skipped: TORRENTNGD_BIN not set");
+    let Some(bin) = daemon_path() else {
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "CI must run `cargo build -p torrentngd` before this test"
+        );
+        eprintln!("skipped: no torrentngd (set TORRENTNGD_BIN or build it)");
         return;
     };
     let dir = tempfile::tempdir().unwrap();

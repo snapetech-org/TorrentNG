@@ -384,9 +384,9 @@ jobs:
       - name: Build engine for the end-to-end test
         run: cargo build --locked -p torrentngd
 
+      # The test finds the daemon at target/debug/torrentngd (built above) and
+      # fails, rather than skips, under CI if it is missing.
       - name: Test desktop client (unit + local-engine end-to-end)
-        env:
-          TORRENTNGD_BIN: ${{ github.workspace }}/target/debug/torrentngd
         run: python3 scripts/validate_development.py --task desktop-tests
 
   webui:
