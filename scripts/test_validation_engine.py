@@ -79,7 +79,7 @@ class ValidationEngineTests(unittest.TestCase):
         environment = os.environ.copy()
         if os.name == "posix":
             # Keep Unix socket names short while storing fixture data in the task-private temp directory.
-            with tempfile.TemporaryDirectory(prefix="tng-", dir="/var/tmp") as alias_root:
+            with tempfile.TemporaryDirectory(prefix="tng-", dir="/tmp") as alias_root:
                 short_tmp = Path(alias_root) / "tmp"
                 short_tmp.symlink_to(Path(tempfile.gettempdir()), target_is_directory=True)
                 environment.update(
