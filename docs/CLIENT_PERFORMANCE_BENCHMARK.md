@@ -4,8 +4,11 @@ This benchmark compares TorrentNG's native engine with qBittorrent,
 Transmission, Deluge, and rTorrent using an official Debian amd64 netinst
 torrent. It records public download behavior and a separate controlled seed
 transfer for each client. The current dated results are in
-[`certification/reports/client-performance-benchmark-20261013T033428Z.md`](../certification/reports/client-performance-benchmark-20261013T033428Z.md),
-with the time-series CSV beside the report.
+[`certification/reports/client-performance-benchmark-20261013.md`](../certification/reports/client-performance-benchmark-20261013.md),
+with the combined time-series CSV beside the report. In this run, all four
+clients that started completed and verified the ISO; the rTorrent image failed
+at startup. The report includes both public download and controlled seeding
+KPIs, client versions, the fixed test limits, and the run's confidence limits.
 
 ## Run a comparison
 
@@ -69,7 +72,9 @@ Useful environment variables:
 The common leecher limit applies to the receiver, not the client being tested.
 The default is below TorrentNG's per-peer request-window guard; seed results
 therefore measure service under a defined receiver load, not maximum upload
-capacity. The report records the configured ceilings so capped runs are clear.
+capacity. The 32-peer ceiling is applied equally as a reproducible fixture
+condition; it is not a KPI or a claim that 32 is an ideal peer count. The report
+records configured ceilings so capped runs are clear.
 
 ## What the report measures
 
