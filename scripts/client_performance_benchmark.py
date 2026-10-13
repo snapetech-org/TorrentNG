@@ -1296,7 +1296,8 @@ class Benchmark:
             "from client payload counters. CPU is Docker CPU percent, where "
             "100% represents one logical core. Memory is container usage rather than "
             "process-only RSS.",
-            "- Public download uses the current public Debian swarm. Controlled seeding "
+            f"- Public download uses the current public Debian swarm with a {DOWNLOAD_TIMEOUT}s "
+            "completion timeout. Controlled seeding "
             "uses a private task-local tracker and one qBittorrent leecher on the same "
             "Compose network. The tracker is reset between clients. The no-peer "
             f"startup limit is {SEED_NO_PEER_TIMEOUT}s; full transfer limit is "
