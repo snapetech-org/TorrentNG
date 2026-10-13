@@ -13,7 +13,6 @@ import {
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -48,7 +47,7 @@ const sandboxAvailable = (() => {
         '--',
         '/bin/true',
       ],
-      { stdio: 'ignore' }
+      { stdio: 'ignore', timeout: 5_000 }
     ).status === 0
   );
 })();
