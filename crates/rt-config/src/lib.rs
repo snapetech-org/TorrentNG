@@ -581,7 +581,7 @@ impl Default for MemoryConfig {
             total_cap_mb: 512,
             storage_frame_cap_mb: 128,
             queued_disk_cap_mb: 64,
-            piece_assembly_cap_mb: 128,
+            piece_assembly_cap_mb: 0,
             piece_index_cap_mb: 128,
             peer_buffer_cap_mb: 128,
             metadata_cap_mb: 32,
@@ -1095,6 +1095,7 @@ mod tests {
         assert_eq!(c.memory.total_cap_mb, 512);
         assert_eq!(c.memory.storage_frame_cap_mb, 128);
         assert_eq!(c.memory.queued_disk_cap_mb, 64);
+        assert_eq!(c.memory.piece_assembly_cap_mb, 0);
         assert_eq!(c.memory.piece_index_cap_mb, 128);
         assert!(c.runtime.torrent_tiers_enabled);
         assert_eq!(c.runtime.tier_hot_idle_secs, 120);

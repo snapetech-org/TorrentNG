@@ -3,12 +3,21 @@
 This benchmark compares TorrentNG's native engine with qBittorrent,
 Transmission, Deluge, and rTorrent using an official Debian amd64 netinst
 torrent. It records public download behavior and a separate controlled seed
-transfer for each client. The current dated results are in
-[`certification/reports/client-performance-benchmark-20261013.md`](../certification/reports/client-performance-benchmark-20261013.md),
-with the combined time-series CSV beside the report. In this run, all four
-clients that started completed and verified the ISO; the rTorrent image failed
-at startup. The report includes both public download and controlled seeding
-KPIs, client versions, the fixed test limits, and the run's confidence limits.
+transfer for each client. The latest comparison and memory investigation are in
+[`certification/reports/native-memory-optimization-20261013-agentvm.md`](../certification/reports/native-memory-optimization-20261013-agentvm.md),
+with raw time-series and allocator/process profiles beside the report. It
+includes public download and controlled seed results, client versions, fixed
+test limits, measured memory, and confidence limits. The previous
+[unoptimized baseline](../certification/reports/client-performance-benchmark-20261013.md)
+is retained to show the before measurements.
+
+The native daemon defaults to direct block writes with
+`memory.piece_assembly_cap_mb = 0`, avoiding a second in-memory copy of each
+incomplete piece. The native container entrypoint also defaults jemalloc to
+`MALLOC_CONF=thp:never`, while allowing an operator override. The measured
+effects and the limits of those changes are reported with the comparison; the
+result is not a claim that TorrentNG uses less memory in every phase or by
+orders of magnitude.
 
 ## Run a comparison
 

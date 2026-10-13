@@ -129,7 +129,7 @@ crash instead of trusted, and the final save when a torrent exits always syncs. 
 | `total_cap_mb` | `512` | Process-owned memory cap for governor-managed buffers |
 | `storage_frame_cap_mb` | `128` | Storage frame memory class cap |
 | `queued_disk_cap_mb` | `64` | Queued disk/hash/elevator memory class cap |
-| `piece_assembly_cap_mb` | `128` | Incomplete piece assembly memory class cap; `0` disables in-memory assembly and keeps direct block writes enabled |
+| `piece_assembly_cap_mb` | `0` | Incomplete piece assembly memory class cap; `0` disables in-memory assembly and writes verified blocks directly to storage |
 | `piece_index_cap_mb` | `128` | Persistent piece-picker, availability-index, and v1 piece-hash memory class cap |
 | `peer_buffer_cap_mb` | `128` | Peer state, rx/tx, upload, and webseed buffer memory class cap |
 | `metadata_cap_mb` | `32` | Metadata, tracker peer cache, DHT table, and API snapshot class baseline cap |
