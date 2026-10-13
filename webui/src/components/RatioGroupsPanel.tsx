@@ -1,3 +1,4 @@
+import { getRegionalLocale } from '../lib/localeFormat'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -84,7 +85,7 @@ export function RatioGroupsPanel() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
         <div>
           <h2 id="ratio-groups-title" style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>Ratio Groups</h2>
-          <div style={{ fontSize: 12, color: 'var(--faint)', marginTop: 2 }}>{groups.length.toLocaleString()} configured</div>
+          <div style={{ fontSize: 12, color: 'var(--faint)', marginTop: 2 }}>{groups.length.toLocaleString(getRegionalLocale())} configured</div>
         </div>
         {pending && <Busy label={pending === '__save__' ? 'Saving' : 'Working'} />}
       </div>
@@ -108,7 +109,7 @@ export function RatioGroupsPanel() {
       {error && <Notice tone="error">{error}</Notice>}
       {preview && (
         <Notice tone="ok">
-          {preview.name}: {preview.count.toLocaleString()} matching torrent{preview.count === 1 ? '' : 's'}
+          {preview.name}: {preview.count.toLocaleString(getRegionalLocale())} matching torrent{preview.count === 1 ? '' : 's'}
         </Notice>
       )}
 

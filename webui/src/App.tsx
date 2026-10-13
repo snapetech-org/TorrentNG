@@ -22,6 +22,8 @@ import { BulkEditDialog } from './components/BulkEditDialog'
 import { useDialogFocus } from './hooks/useDialogFocus'
 import { api, AuthError, type ListParams, type LiveStats, type TorrentSummary } from './api/client'
 import { PALETTES, applyTheme, findPalette, THEME_MODE_STORAGE_KEY, THEME_STORAGE_KEY, type ThemeMode } from './themes'
+import { getRegionalLocale, setRegionalFormatPreference, useRegionalFormat } from './lib/localeFormat'
+import { useInterfaceLanguage } from './lib/interfaceLocale'
 
 const EnginePanel = lazy(() => import('./components/EnginePanel').then(module => ({ default: module.EnginePanel })))
 const StoragePanel = lazy(() => import('./components/StoragePanel').then(module => ({ default: module.StoragePanel })))
@@ -263,6 +265,7 @@ function useSingleActiveTab() {
 }
 
 export function App() {
+  const { language, t } = useInterfaceLanguage()
   const qc = useQueryClient()
   const activeTab = useSingleActiveTab()
   const [authState, setAuthState] = useState<AuthState>('checking')
@@ -292,9 +295,14 @@ export function App() {
   const [mediaInference, setMediaInference] = useState<MediaInferenceMode>(loadMediaInference)
   const [themeId, setThemeId] = useState(loadThemeId)
   const [themeMode, setThemeMode] = useState<ThemeMode>(loadThemeMode)
+  const regionalFormat = useRegionalFormat()
   const [detailAutoDisplay, setDetailAutoDisplay] = useState(loadDetailAutoDisplay)
   const [detailPosition, setDetailPosition] = useState<DetailPosition>(loadDetailPosition)
   const activeTheme = findPalette(themeId)[themeMode]
+
+  const changeRegionalFormat = useCallback((value: string) => {
+    setRegionalFormatPreference(value)
+  }, [])
 
   const updateParams = useCallback((p: Partial<typeof params>) => {
     setPageOffset(0)
@@ -655,7 +663,7 @@ export function App() {
     try {
       await api.bulk(action, hashes, false)
       qc.invalidateQueries({ queryKey: ['torrents'], exact: false })
-      setActionNotice({ text: `${action} queued for ${hashes.length.toLocaleString()} torrent${hashes.length === 1 ? '' : 's'}`, tone: 'ok' })
+      setActionNotice({ text: `${action} queued for ${hashes.length.toLocaleString(getRegionalLocale())} torrent${hashes.length === 1 ? '' : 's'}`, tone: 'ok' })
     } catch {
       setActionNotice({ text: `Failed to ${action} selected torrents`, tone: 'error' })
     } finally {
@@ -670,7 +678,7 @@ export function App() {
     try {
       await api.torrents.toggleSequential(hashes)
       qc.invalidateQueries({ queryKey: ['torrents'], exact: false })
-      setActionNotice({ text: `Sequential toggled for ${hashes.length.toLocaleString()} torrent${hashes.length === 1 ? '' : 's'}`, tone: 'ok' })
+      setActionNotice({ text: `Sequential toggled for ${hashes.length.toLocaleString(getRegionalLocale())} torrent${hashes.length === 1 ? '' : 's'}`, tone: 'ok' })
     } catch {
       setActionNotice({ text: 'Failed to toggle sequential download', tone: 'error' })
     } finally {
@@ -818,7 +826,7 @@ export function App() {
           }} />
           TorrentNG</h1>
 
-        <nav aria-label="Primary" style={{ display: 'flex', gap: 4, marginLeft: 4, flex: '0 0 auto' }}>
+        <nav aria-label="Primary" lang={language} dir={language === 'ar' ? 'rtl' : 'ltr'} style={{ display: 'flex', gap: 4, marginInlineStart: 4, flex: '0 0 auto' }}>
           {(['torrents', 'settings'] as View[]).map(v => (
             <button
               key={v}
@@ -830,6 +838,7 @@ export function App() {
                 setView(v)
               }}
               aria-current={view === v ? 'page' : undefined}
+              aria-label={t(v === 'torrents' ? 'Torrents' : 'Settings')}
               style={{
               background: view === v ? 'var(--accent-soft)' : 'transparent',
               border: '1px solid ' + (view === v ? 'var(--accent)' : 'transparent'),
@@ -839,27 +848,27 @@ export function App() {
               fontWeight: view === v ? 800 : 600,
             }}>
               <span aria-hidden="true" style={{ color: view === v ? 'var(--accent-text)' : 'var(--accent)' }}>{v === 'torrents' ? '▤' : '⚙'}</span>
-              {v}
+              {t(v === 'torrents' ? 'Torrents' : 'Settings')}
             </button>
           ))}
         </nav>
 
         {view === 'torrents' && (
-          <span className="tng-topbar-pill" data-tone="neutral" role="status" aria-label={`${total.toLocaleString()} torrents`} style={{
+          <span className="tng-topbar-pill" data-tone="neutral" role="status" aria-label={`${total.toLocaleString(getRegionalLocale())} torrents`} style={{
             color: 'var(--muted)', background: 'var(--surface)', border: '1px solid var(--border)',
             borderRadius: 999, padding: '2px 8px', fontSize: 11, fontWeight: 700,
             whiteSpace: 'nowrap', flex: '0 0 auto',
           }}>
-            {total.toLocaleString()} torrents
+            {total.toLocaleString(getRegionalLocale())} torrents
           </span>
         )}
         {selected.size > 0 && view === 'torrents' && (
-          <span className="tng-topbar-pill" data-tone="accent" role="status" aria-label={`${selected.size.toLocaleString()} selected`} style={{
+          <span className="tng-topbar-pill" data-tone="accent" role="status" aria-label={`${selected.size.toLocaleString(getRegionalLocale())} selected`} style={{
             color: 'var(--accent-text)', background: 'var(--accent-soft)', border: '1px solid var(--accent)',
             borderRadius: 999, padding: '2px 8px', fontSize: 11, fontWeight: 800,
             whiteSpace: 'nowrap', flex: '0 0 auto',
           }}>
-            {selected.size.toLocaleString()} selected
+            {selected.size.toLocaleString(getRegionalLocale())} selected
           </span>
         )}
         <button type="button" onClick={() => setHelpOpen(true)} title="Help and links" style={{
@@ -973,6 +982,8 @@ export function App() {
             themeMode={themeMode}
             onTheme={setThemeId}
             onThemeMode={setThemeMode}
+            regionalFormat={regionalFormat}
+            onRegionalFormat={changeRegionalFormat}
             onSelectTracker={goToTrackerTorrents}
           />
         )}
@@ -1176,7 +1187,7 @@ function StandbyScreen({ onTakeOver }: { onTakeOver: () => void }) {
   )
 }
 
-function SettingsView({ section, onSection, mediaInference, onMediaInference, themeId, themeMode, onTheme, onThemeMode, onSelectTracker }: {
+function SettingsView({ section, onSection, mediaInference, onMediaInference, themeId, themeMode, onTheme, onThemeMode, regionalFormat, onRegionalFormat, onSelectTracker }: {
   section: SettingsSection
   onSection: (section: SettingsSection) => void
   mediaInference: MediaInferenceMode
@@ -1186,7 +1197,10 @@ function SettingsView({ section, onSection, mediaInference, onMediaInference, th
   onTheme: (id: string) => void
   onSelectTracker: (tracker: string) => void
   onThemeMode: (mode: ThemeMode) => void
+  regionalFormat: string
+  onRegionalFormat: (value: string) => void
 }) {
+  const { language, t } = useInterfaceLanguage()
   const sections: Array<[SettingsSection, string, string]> = [
     ['library', 'Library', '▦'],
     ['engine', 'Backend', '⚙'],
@@ -1203,15 +1217,15 @@ function SettingsView({ section, onSection, mediaInference, onMediaInference, th
   }
   return (
     <>
-      <aside className="tng-settings-sidebar" aria-label="Settings sections" style={{
+      <aside className="tng-settings-sidebar" aria-label={t("Settings")} lang={language} dir={language === 'ar' ? 'rtl' : 'ltr'} style={{
         width: 220, flexShrink: 0, background: 'var(--panel)', borderRight: '1px solid var(--border)',
         padding: 12,
       }}>
         <div style={{ margin: '4px 4px 12px' }}>
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: 'var(--text)' }}>Settings</h2>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: 'var(--text)' }}>{t("Settings")}</h2>
           <div style={{ fontSize: 11, color: 'var(--faint)', marginTop: 3 }}>Daemon, library, and browser controls</div>
         </div>
-        <div role="tablist" aria-label="Settings sections" aria-orientation="vertical">
+        <div role="tablist" aria-label={t("Settings")} aria-orientation="vertical">
         {sections.map(([key, label, icon]) => (
           <button
             key={key}
@@ -1261,7 +1275,7 @@ function SettingsView({ section, onSection, mediaInference, onMediaInference, th
             padding: '7px 9px', fontSize: 13, cursor: 'pointer',
           }}>
             <span style={{ color: section === key ? 'var(--accent-text)' : 'var(--accent)', textAlign: 'center' }}>{icon}</span>
-            <span>{label}</span>
+            <span>{t(label)}</span>
             {section === key && <span style={{ color: 'var(--accent-text)', fontSize: 10 }}>●</span>}
           </button>
         ))}
@@ -1303,6 +1317,8 @@ function SettingsView({ section, onSection, mediaInference, onMediaInference, th
               themeMode={themeMode}
               onTheme={onTheme}
               onThemeMode={onThemeMode}
+              regionalFormat={regionalFormat}
+              onRegionalFormat={onRegionalFormat}
             />
           </PanelFrame>
           <div style={{

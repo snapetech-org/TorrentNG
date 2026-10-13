@@ -1,3 +1,4 @@
+import { formatRegionalNumber, getRegionalLocale } from '../lib/localeFormat'
 import { isFinalizing, type TorrentSummary } from '../api/client'
 import { DetailDockControls, type DetailPosition } from './DetailDockControls'
 
@@ -20,11 +21,11 @@ interface Props {
 type Status = { label: string; color: string }
 
 function fmtSize(bytes: number): string {
-  if (bytes >= 1e12) return `${(bytes / 1e12).toFixed(2)} TB`
-  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(2)} GB`
-  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`
-  if (bytes >= 1e3) return `${(bytes / 1e3).toFixed(0)} KB`
-  return `${Math.max(0, Math.round(bytes))} B`
+  if (bytes >= 1e12) return formatRegionalNumber(bytes / 1e12, { maximumFractionDigits: 2 }) + ' TB'
+  if (bytes >= 1e9) return formatRegionalNumber(bytes / 1e9, { maximumFractionDigits: 2 }) + ' GB'
+  if (bytes >= 1e6) return formatRegionalNumber(bytes / 1e6, { maximumFractionDigits: 1 }) + ' MB'
+  if (bytes >= 1e3) return formatRegionalNumber(bytes / 1e3, { maximumFractionDigits: 0 }) + ' KB'
+  return formatRegionalNumber(Math.max(0, Math.round(bytes))) + ' B'
 }
 
 function fmtSpeed(bps: number): string {
@@ -109,7 +110,7 @@ export function TorrentSelectionPanel({
             Selection workspace
           </h2>
           <span style={{ display: 'block', color: 'var(--accent-text)', fontSize: 11, marginTop: 3, fontWeight: 700 }}>
-            {selectedCount.toLocaleString()} torrents selected
+            {selectedCount.toLocaleString(getRegionalLocale())} torrents selected
           </span>
         </div>
         <DetailDockControls position={position} onChange={onPositionChange} />
@@ -126,7 +127,7 @@ export function TorrentSelectionPanel({
             background: 'color-mix(in srgb, var(--warning) 8%, var(--surface))',
             color: 'var(--warning)', borderRadius: 6, padding: '8px 9px', marginBottom: 12, fontSize: 11,
           }}>
-            Summary data is available for {knownCount.toLocaleString()} of {selectedCount.toLocaleString()} selected torrents.
+            Summary data is available for {knownCount.toLocaleString(getRegionalLocale())} of {selectedCount.toLocaleString(getRegionalLocale())} selected torrents.
           </div>
         )}
 
@@ -135,13 +136,13 @@ export function TorrentSelectionPanel({
           <div className="tng-selection-stats">
             <Stat label="Total size" value={knownCount ? fmtSize(totalSize) : '—'} />
             <Stat label="Downloaded" value={knownCount ? fmtSize(totalDownloaded) : '—'} />
-            <Stat label="Progress" value={knownCount ? `${progress.toFixed(1)}%` : '—'} />
+            <Stat label="Progress" value={knownCount ? `${formatRegionalNumber(progress, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%` : '—'} />
             <Stat label="Down speed" value={knownCount ? fmtSpeed(totalDown) : '—'} tone="accent" />
             <Stat label="Up speed" value={knownCount ? fmtSpeed(totalUp) : '—'} tone="success" />
-            <Stat label="Ratio" value={knownCount ? ratio.toFixed(3) : '—'} />
+            <Stat label="Ratio" value={knownCount ? formatRegionalNumber(ratio, { minimumFractionDigits: 3, maximumFractionDigits: 3 }) : '—'} />
             <Stat label="Uploaded" value={knownCount ? fmtSize(totalUploaded) : '—'} />
           </div>
-          <div className="tng-selection-progress" role="progressbar" aria-label={knownCount ? `${progress.toFixed(1)} percent complete` : 'Progress unavailable'} aria-valuemin={0} aria-valuemax={100} aria-valuenow={knownCount ? progress : 0}>
+          <div className="tng-selection-progress" role="progressbar" aria-label={knownCount ? `${formatRegionalNumber(progress, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} percent complete` : 'Progress unavailable'} aria-valuemin={0} aria-valuemax={100} aria-valuenow={knownCount ? progress : 0}>
             <span style={{ width: `${progress}%` }} />
           </div>
         </section>
@@ -154,7 +155,7 @@ export function TorrentSelectionPanel({
                 color: status.color, borderColor: `color-mix(in srgb, ${status.color} 40%, var(--border))`,
                 background: `color-mix(in srgb, ${status.color} 10%, transparent)`,
               }}>
-                {status.label} <strong>{count.toLocaleString()}</strong>
+                {status.label} <strong>{count.toLocaleString(getRegionalLocale())}</strong>
               </span>
             )) : <span style={{ color: 'var(--faint)', fontSize: 11 }}>No summary data loaded.</span>}
           </div>
@@ -190,7 +191,7 @@ export function TorrentSelectionPanel({
             <h3 id="selection-included-heading" className="tng-selection-section-title">Included</h3>
             <div className="tng-selection-names">
               {names.map(name => <span key={name} title={name}>{name}</span>)}
-              {selectedCount > names.length && <span className="tng-selection-more">+ {(selectedCount - names.length).toLocaleString()} more</span>}
+              {selectedCount > names.length && <span className="tng-selection-more">+ {(selectedCount - names.length).toLocaleString(getRegionalLocale())} more</span>}
             </div>
           </section>
         )}

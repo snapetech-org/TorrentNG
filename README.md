@@ -85,6 +85,7 @@ for what was exercised and where.
 - [API and compatibility limits](docs/API.md) · [client matrices](docs/CLIENT_COMPATIBILITY_MATRICES.md)
 - [Backup and restore](docs/BACKUP_RESTORE.md)
 - [Documentation index](docs/README.md)
+- [Localization roadmap](docs/localization-roadmap.md) — language coverage, regional number behavior, and remaining translation work
 
 ## Development
 

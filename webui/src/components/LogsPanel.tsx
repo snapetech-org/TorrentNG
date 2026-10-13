@@ -1,3 +1,4 @@
+import { getRegionalLocale } from '../lib/localeFormat'
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type AppLogEvent } from '../api/client'
@@ -155,7 +156,7 @@ function normalizeLevel(level: string): 'info' | 'warn' | 'error' {
 
 function formatTime(timestamp: number): string {
   if (!timestamp) return 'unknown'
-  return new Date(timestamp * 1000).toLocaleString()
+  return new Date(timestamp * 1000).toLocaleString(getRegionalLocale())
 }
 
 function parsePayload(payload: string): string | null {

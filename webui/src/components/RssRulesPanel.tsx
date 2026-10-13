@@ -1,3 +1,4 @@
+import { getRegionalLocale } from '../lib/localeFormat'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -111,7 +112,7 @@ export function RssRulesPanel() {
         <div>
           <h2 id="rss-rules-title" style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>RSS Rules</h2>
           <div style={{ fontSize: 12, color: 'var(--faint)', marginTop: 2 }}>
-            {rules.length.toLocaleString()} configured · {matches.length.toLocaleString()} match results
+            {rules.length.toLocaleString(getRegionalLocale())} configured · {matches.length.toLocaleString(getRegionalLocale())} match results
           </div>
         </div>
         {pending && <Busy label={pending.replace(/^__|__$/g, '') || 'Working'} />}
