@@ -185,9 +185,11 @@ class Benchmark:
         self.sessions = {}
         self.results = []
         self.samples = []
+        self.partial_download_rows = {}
         self.partial_seed_rows = {}
         self.partial_seed_elapsed = {}
         self.partial_seed_setup = {}
+        self.seed_source = None
         self.seed_leecher_version = "unknown"
         self.seed_leecher_image = "not started"
         self.cleanup_status = "pending"
@@ -752,13 +754,13 @@ class Benchmark:
         next_log = 0
         completion_observed = None
         rows = []
+        self.partial_download_rows[client] = rows
         while time.monotonic() - start < timeout:
             status = self._status(client, info_hash, name)
             elapsed = time.monotonic() - start
             rows.append(self._sample(client, phase, elapsed, status))
+            self.partial_download_rows[client] = rows
             if status["progress"] >= 0.999:
-                if completion_observed is None:
-                    completion_observed = time.monotonic()
                 payload = self._data_path(client, name)
                 try:
                     actual = payload.stat().st_size if payload.is_file() else 0
@@ -766,11 +768,16 @@ class Benchmark:
                     actual = 0
                 if actual == expected_size:
                     return elapsed, status, rows
-                if time.monotonic() - completion_observed >= 60:
-                    raise RuntimeError(
-                        f"{LABELS[client]} reported completion but its file is "
-                        f"{actual} bytes after 60s (expected {expected_size})"
-                    )
+                if status["progress"] >= 1.0:
+                    if completion_observed is None:
+                        completion_observed = time.monotonic()
+                    if time.monotonic() - completion_observed >= 60:
+                        raise RuntimeError(
+                            f"{LABELS[client]} reported completion but its file is "
+                            f"{actual} bytes after 60s (expected {expected_size})"
+                        )
+                else:
+                    completion_observed = None
             else:
                 completion_observed = None
             if elapsed > next_log:
@@ -974,7 +981,7 @@ class Benchmark:
             self._scgi("d.tracker_announce", info_hash)
 
     def _seed_test(self, client, payload, torrent_path, info_hash, size, checksum):
-        save_path = "/downloads/rtorrent" if client == "rtorrent" else f"/downloads/{client}/public"
+        save_path = "/downloads/rtorrent" if client == "rtorrent" else f"/downloads/{client}/seed"
         self._add_torrent(client, torrent_path, save_path, skip_check=True)
         deadline = time.monotonic() + 300
         while time.monotonic() < deadline:
@@ -1064,52 +1071,103 @@ class Benchmark:
         version = self._version(client)
         torrent = meta["torrent_path"]
         save_path = "/downloads/rtorrent" if client == "rtorrent" else f"/downloads/{client}/public"
-        self._add_torrent(client, torrent, save_path)
-        elapsed, status, public_rows = self._wait_complete(
-            client, meta["info_hash"], meta["iso_name"], meta["size"],
-            DOWNLOAD_TIMEOUT, "public_download",
-        )
-        payload = self._data_path(client, meta["iso_name"])
-        if not payload.is_file() or payload.stat().st_size != meta["size"]:
-            raise RuntimeError(f"completed file missing or short: {payload}")
-        actual = self._sha256(payload)
-        if actual != meta["sha256"]:
-            raise RuntimeError(f"Debian SHA-256 mismatch: {actual}")
-        self._pause(client, meta["info_hash"])
-
-        local_hash = make_private_torrent(
-            payload, f"http://{tracker_ip}:6969/announce", private_path,
-        )
-        seed_error = ""
+        public_result = "FAIL"
+        download_error = ""
+        download_elapsed = 0.0
+        download_progress = 0.0
+        download_bytes = 0
+        download_sha = ""
+        public_rows = []
         try:
-            seed_elapsed, seed_rows, seed_sha = self._seed_test(
-                client, payload, private_path, local_hash, meta["size"], meta["sha256"],
+            self._add_torrent(client, torrent, save_path)
+            elapsed, status, public_rows = self._wait_complete(
+                client, meta["info_hash"], meta["iso_name"], meta["size"],
+                DOWNLOAD_TIMEOUT, "public_download",
             )
-            seed_result = "PASS"
+            payload = self._data_path(client, meta["iso_name"])
+            if not payload.is_file() or payload.stat().st_size != meta["size"]:
+                raise RuntimeError(f"completed file missing or short: {payload}")
+            actual = self._sha256(payload)
+            if actual != meta["sha256"]:
+                raise RuntimeError(f"Debian SHA-256 mismatch: {actual}")
+            public_result = "PASS"
+            download_elapsed = elapsed
+            download_progress = status["progress"]
+            download_bytes = meta["size"]
+            download_sha = actual
+            if self.seed_source is None:
+                self.seed_source = payload
         except Exception as error:
-            seed_elapsed = self.partial_seed_elapsed.get(client, 0.0)
-            seed_rows = self.partial_seed_rows.get(client, [])
-            seed_sha = ""
-            seed_result = "FAIL"
-            seed_error = f"{type(error).__name__}: {error}"
+            download_error = f"{type(error).__name__}: {error}"
+            public_rows = self.partial_download_rows.get(client, public_rows)
+            if public_rows:
+                latest = public_rows[-1]
+                download_elapsed = float(latest[3])
+                download_progress = float(latest[4])
+                download_bytes = int(meta["size"] * download_progress)
         finally:
             try:
-                self._pause(client, local_hash)
+                self._pause(client, meta["info_hash"])
             except Exception:
                 pass
+
+        seed_result = "NOT RUN"
+        seed_error = ""
+        seed_elapsed = 0.0
+        seed_rows = []
+        seed_sha = ""
+        seed_setup = 0.0
+        if self.seed_source is None:
+            seed_error = "no SHA-256-verified ISO source is available"
+        else:
+            seed_dir = self.workdir / "downloads" / client / "seed"
+            if client == "rtorrent":
+                seed_dir = self.workdir / "downloads/rtorrent"
+            seed_dir.mkdir(parents=True, exist_ok=True)
+            if client == "transmission":
+                partial = self.workdir / "downloads/incomplete" / f"{meta['iso_name']}.part"
+                if partial.is_file() and not partial.is_symlink():
+                    partial.unlink()
+            seed_payload = seed_dir / meta["iso_name"]
+            if seed_payload.resolve() != self.seed_source.resolve():
+                shutil.copyfile(self.seed_source, seed_payload)
+            local_hash = make_private_torrent(
+                seed_payload, f"http://{tracker_ip}:6969/announce", private_path,
+            )
+            try:
+                seed_elapsed, seed_rows, seed_sha = self._seed_test(
+                    client, seed_payload, private_path, local_hash,
+                    meta["size"], meta["sha256"],
+                )
+                seed_result = "PASS"
+            except Exception as error:
+                seed_elapsed = self.partial_seed_elapsed.get(client, 0.0)
+                seed_rows = self.partial_seed_rows.get(client, [])
+                seed_sha = ""
+                seed_result = "FAIL"
+                seed_error = f"{type(error).__name__}: {error}"
+            finally:
+                seed_setup = self.partial_seed_setup.get(client, 0.0)
+                try:
+                    self._pause(client, local_hash)
+                except Exception:
+                    pass
+
         down = self._summary(public_rows, "public_download")
         seed = self._summary(seed_rows, "controlled_seed")
         seed_bytes = int(meta["size"] * float(seed_rows[-1][4])) if seed_rows else 0
         self.results.append({
-            "client": client, "version": version, "public": "PASS", "seed": seed_result,
-            "download_seconds": elapsed,
-            "download_mib_s": meta["size"] / elapsed / 1048576,
+            "client": client, "version": version, "public": public_result, "seed": seed_result,
+            "download_progress": download_progress,
+            "download_error": download_error,
+            "download_seconds": download_elapsed,
+            "download_mib_s": download_bytes / download_elapsed / 1048576 if download_elapsed else 0,
             "download_peak_mib_s": down["peak_rate"] / 1048576,
             "download_mean_cpu": down["mean_cpu"], "download_peak_cpu": down["peak_cpu"],
             "download_peak_rss": down["peak_rss"], "download_peak_peers": down["peak_peers"],
-            "download_sha": actual,
+            "download_sha": download_sha,
             "seed_seconds": seed_elapsed,
-            "seed_setup_seconds": self.partial_seed_setup.get(client, 0.0),
+            "seed_setup_seconds": seed_setup,
             "seed_bytes": seed_bytes,
             "seed_mib_s": seed_bytes / seed_elapsed / 1048576 if seed_elapsed else 0,
             "seed_peak_mib_s": seed["peak_rate"] / 1048576,
@@ -1117,16 +1175,17 @@ class Benchmark:
             "seed_peak_rss": seed["peak_rss"], "seed_peak_peers": seed["peak_peers"],
             "seed_sha": seed_sha, "seed_error": seed_error,
         })
-        if seed_result == "PASS":
+        if public_result == "PASS" and seed_result == "PASS":
             print(
-                f"[{LABELS[client]}] download {meta['size'] / elapsed / 1048576:.2f} MiB/s; "
+                f"[{LABELS[client]}] download {download_bytes / download_elapsed / 1048576:.2f} MiB/s; "
                 f"seed {seed_bytes / seed_elapsed / 1048576:.2f} MiB/s; both hashes verified",
                 flush=True,
             )
         else:
             print(
-                f"[{LABELS[client]}] download {meta['size'] / elapsed / 1048576:.2f} MiB/s; "
-                f"seed incomplete after {seed_elapsed:.1f}s ({seed_error})",
+                f"[{LABELS[client]}] public {public_result} at {download_progress:.2%}; "
+                f"seed {seed_result} after {seed_elapsed:.1f}s "
+                f"({download_error or seed_error})",
                 flush=True,
             )
 
@@ -1157,9 +1216,10 @@ class Benchmark:
             f"- Client download and upload limits: {RATE_BPS:,} B/s "
             f"({RATE_BPS / 1048576:.1f} MiB/s); max peers {MAX_PEERS}",
             f"- Controlled seed leecher receive limit: {SEED_LEECHER_RATE_BPS:,} B/s "
-            f"({SEED_LEECHER_RATE_BPS / 1048576:.1f} MiB/s). The shared receiver cap "
-            "keeps its normal 16 KiB block-request rate below TorrentNG's bounded "
-            "per-peer request window, so seed results are receiver-limited at this setting.",
+            f"({SEED_LEECHER_RATE_BPS / 1048576:.1f} MiB/s), shared across all seeders. "
+            "This stays below TorrentNG's peer-upload guard of 4,096 16 KiB requests "
+            "per 10 seconds (about 6.4 MiB/s), with 37.5% headroom. Seed rates are "
+            "therefore measured under a controlled receiver load, not as maximum upload capacity.",
             "- Each public download ran alone, in this order: " +
             ", ".join(LABELS[c] for c in CLIENTS),
             "- Container image references: " + "; ".join(
@@ -1171,29 +1231,33 @@ class Benchmark:
             "",
             "## Public download",
             "",
-            "| Client | Version | Result | Completion (s) | Average (MiB/s) | Peak sampled (MiB/s) | Mean CPU (%) | Peak CPU (%) | Peak RSS (MiB) | Peak peers | SHA-256 |",
-            "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+            "| Client | Version | Result | Progress (%) | Time (s) | Average (MiB/s) | Peak sampled (MiB/s) | Mean CPU (%) | Peak CPU (%) | Peak RSS (MiB) | Peak peers | SHA-256 / failure |",
+            "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
         ]
         by_client = {row["client"]: row for row in self.results}
         for client in CLIENTS:
             row = by_client.get(client, {})
             lines.append(
                 f"| {LABELS[client]} | {row.get('version', 'n/a')} | "
-                f"{row.get('public', 'FAIL')} | {row.get('download_seconds', 0):.1f} | "
+                f"{row.get('public', 'FAIL')} | {row.get('download_progress', 0):.2%} | "
+                f"{row.get('download_seconds', 0):.1f} | "
                 f"{row.get('download_mib_s', 0):.2f} | {row.get('download_peak_mib_s', 0):.2f} | "
                 f"{row.get('download_mean_cpu', 0):.2f} | {row.get('download_peak_cpu', 0):.2f} | "
                 f"{row.get('download_peak_rss', 0) / 1048576:.1f} | "
-                f"{row.get('download_peak_peers', 0)} | {row.get('download_sha', row.get('error', 'n/a'))} |"
+                f"{row.get('download_peak_peers', 0)} | "
+                f"{row.get('download_sha') or row.get('download_error') or row.get('error', 'n/a')} |"
             )
         lines.extend([
             "",
             "## Controlled seeding",
             "",
-            "Each client seeded the same verified ISO through a private single-file "
+            "Each client seeded the same SHA-256-verified ISO through a private single-file "
             "torrent on the isolated Compose OpenTracker. A separate qBittorrent "
             "container with BitTorrent encryption disabled and TCP enabled "
             "downloaded and checked Debian's published SHA-256. This measures a "
-            "controlled one-seeder/one-leecher transfer, not public swarm demand.",
+            "controlled one-seeder/one-leecher transfer, not public swarm demand. "
+            "Seed tests use a separate per-client copy of the first SHA-256-verified "
+            "public download and can run even if that client's public-swarm download stalls.",
             "",
             "| Client | Result | Leecher setup (s) | Transfer (s) | Average upload (MiB/s) | Peak sampled (MiB/s) | Mean CPU (%) | Peak CPU (%) | Peak RSS (MiB) | Peak peers | Leecher SHA-256 / failure |",
             "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
@@ -1217,10 +1281,15 @@ class Benchmark:
             "",
             "- One current official Debian amd64 netinst v1 torrent per client; clients "
             "ran sequentially on the same host and local scratch filesystem.",
+            "- Public downloads used the live Debian swarm. All seed tests used the same "
+            "first SHA-256-verified public download, copied into a separate seed path for each client, so "
+            "seed performance is measured independently of public-swarm completion.",
             f"- Each client was configured for a {RATE_BPS / 1048576:.1f} MiB/s global "
             f"download and upload ceiling and {MAX_PEERS} global/per-torrent peer ceiling.",
-            f"- Sampling interval: {INTERVAL:g} seconds. Average transfer rate is the "
-            "verified ISO byte count divided by completion wall time. The seed "
+            f"- Sampling interval: {INTERVAL:g} seconds. A successful download average is "
+            "verified ISO bytes divided by elapsed wall time; for an incomplete download, "
+            "the reported average uses client completed-byte progress and is paired with "
+            "the final percentage. The seed "
             "transfer timer starts after both clients are ready, the leecher is "
             "registered, and the seeder has reannounced; leecher setup time is listed "
             "separately. Peak rates come "
