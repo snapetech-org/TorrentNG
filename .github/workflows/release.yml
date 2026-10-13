@@ -376,7 +376,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, host]
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -651,7 +651,7 @@ jobs:
 
   publish:
     name: Publish release
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, host]
     needs:
       - validate-release-tag
       - release-notes
