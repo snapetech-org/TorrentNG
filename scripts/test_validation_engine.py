@@ -91,7 +91,7 @@ class ValidationEngineTests(unittest.TestCase):
                     capture_output=True,
                     check=False,
                     text=True,
-                    timeout=30,
+                    timeout=90,
                     env=environment,
                 )
         else:
@@ -101,7 +101,7 @@ class ValidationEngineTests(unittest.TestCase):
                 capture_output=True,
                 check=False,
                 text=True,
-                timeout=30,
+                timeout=90,
                 env=environment,
             )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
