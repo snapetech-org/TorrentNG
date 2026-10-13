@@ -404,9 +404,9 @@ describe('CrashSafetyPanel', () => {
     expect(pathQueries).toEqual(['/mnt/nas/tv'])
     expect(within(report).getByText('/mnt/nas')).toBeTruthy()
     expect(within(report).getByText('Weak')).toBeTruthy()
-    expect(report.textContent).toContain('Recovery setting was raised from {value}. Use only the sync checkpoint because this location is rated Weak')
+    expect(report.textContent).toContain('Recovery setting was raised from Use only the sync checkpoint because this location is rated Weak')
     expect(report.textContent).toContain('Sample (10%)')
-    expect(report.textContent).toContain('Recovery setting was raised from {value}. Off because this location is rated Weak')
+    expect(report.textContent).toContain('Read-back verification was raised from Off because this location is rated weak.')
   })
 
   it('says so when no folder policy matches and reports a failed check', async () => {
@@ -426,7 +426,7 @@ describe('CrashSafetyPanel', () => {
     await user.click(within(form).getByRole('button', { name: 'Check' }))
     const report = await screen.findByTestId('path-report')
     expect(report.textContent).toContain('None. The global settings apply.')
-    expect(report.textContent).not.toContain('Recovery setting was raised from {value}.')
+    expect(report.textContent).not.toContain('Recovery setting was raised from')
 
     pathReport = new Response('bad', { status: 400 })
     await user.click(within(form).getByRole('button', { name: 'Check' }))
