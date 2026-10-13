@@ -26,9 +26,11 @@ const GUEST_MARKER = '/run/validation-engine-sandbox';
 const GIT = ['/usr/bin/git', '/bin/git'].find(existsSync);
 const sensitiveName =
   /^(?:\.env(?:$|\.(?!example$)[^/]+)|\.ssh|\.aws|\.gnupg|id_(?:rsa|ed25519)|auth(?:entication)?(?:\.[^/]+)?|tokens?(?:\.[^/]+)?|credentials?(?:\.[^/]+)?|secrets?(?:\.[^/]+)?|\.git-credentials|\.npmrc|\.pypirc|\.netrc|[^/]+\.(?:pem|key))$/iu;
+const sourceCodeFile =
+  /\.(?:c|cc|cpp|cxx|cs|css|go|h|hh|hpp|hxx|java|js|jsx|mjs|cjs|mts|cts|php|py|pyi|pyx|rb|rs|sql|swift|ts|tsx|kt|kts|scala|sc|m|mm|sh|bash|zsh|fish|ps1|psm1|psd1|pl|pm|lua|dart|ex|exs|erl|hrl|clj|cljs|cljc|hs|lhs|ml|mli|fs|fsi|fsx|vb|r|jl|html|vue|svelte|astro|scss|sass|less)$/iu;
 
 function isSensitive(relativePath, tracked) {
-  const segments = relativePath.split('/');
+  const segments = relativePath.replaceAll(String.fromCharCode(92), '/').split('/');
   if (segments.includes('.git') || segments.includes('node_modules'))
     return true;
   if (
@@ -36,7 +38,9 @@ function isSensitive(relativePath, tracked) {
     (segments.includes('config') || /^config\.[^/]+$/iu.test(segments[0]))
   )
     return true;
-  return segments.some((segment) => sensitiveName.test(segment));
+  const filename = segments.at(-1) ?? '';
+  return !sourceCodeFile.test(filename) &&
+    segments.some((segment) => sensitiveName.test(segment));
 }
 
 function gitEnvironment(home, template) {
