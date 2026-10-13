@@ -92,7 +92,7 @@ class WorkflowSecurityTests(unittest.TestCase):
             6,
         )
         self.assertEqual(
-            ci.count("fromJSON('[\"self-hosted\",\"Linux\",\"X64\",\"kspls0\"]')"),
+            ci.count("fromJSON('[\"self-hosted\",\"Linux\",\"X64\",\"rtorrentng\"]')"),
             6,
         )
         self.assertNotRegex(ci, r"(?m)^\s*pull_request_target:")
