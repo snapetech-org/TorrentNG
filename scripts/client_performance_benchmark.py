@@ -184,6 +184,8 @@ class Benchmark:
             ))
         self.project = "tngbench" + re.sub(r"[^a-z0-9]", "", self.stamp.lower())
         self.image = f"torrentng/torrentngd:benchmark-{self.stamp.lower()}"
+        self.malloc_conf_override = os.environ.get("TNG_CLIENT_BENCH_MALLOC_CONF", "").strip()
+        self.compose_override_path = None
         self.env = os.environ.copy()
         self.ports = {}
         used_ports = set()
@@ -244,7 +246,7 @@ class Benchmark:
         self.cpu_count = os.cpu_count() or 0
         self.mem_total = self._meminfo("MemTotal")
         self.mem_available = self._meminfo("MemAvailable")
-        self.scratch_device, self.scratch_type = self._findmnt(scratch)
+        self.scratch_device, self.scratch_type = self._findmnt(self.workdir)
         self.source_commit = self._git("rev-parse", "HEAD")
         self.source_tree = self._git("rev-parse", "HEAD^{tree}")
         self.host = socket.gethostname()
@@ -285,8 +287,12 @@ class Benchmark:
         return run_command(["git", *args], quiet=True)[0].strip()
 
     def compose(self, *args, check=True, quiet=False, timeout=None):
+        command = ["docker", "compose", "-p", self.project, "-f", str(COMPOSE_FILE)]
+        if self.compose_override_path is not None:
+            command.extend(["-f", str(self.compose_override_path)])
+        command.extend(args)
         return run_command(
-            ["docker", "compose", "-p", self.project, "-f", str(COMPOSE_FILE), *args],
+            command,
             env=self.env, check=check, quiet=quiet, timeout=timeout,
         )
 
@@ -316,6 +322,12 @@ class Benchmark:
                 (directory / "public").mkdir(exist_ok=True)
             directory.chmod(0o777)
         (self.workdir / "downloads").chmod(0o777)
+        if self.malloc_conf_override:
+            self.compose_override_path = self.workdir / "compose.memory-profile.yml"
+            self.compose_override_path.write_text(
+                "services:\n  torrentngd:\n    environment:\n      MALLOC_CONF: "
+                + json.dumps(self.malloc_conf_override) + "\n"
+            )
         self._prepare_qbit_config()
         self._prepare_torrentng_config()
         self._prepare_rtorrent_config()
@@ -1302,6 +1314,23 @@ class Benchmark:
             "peak_peers": max(int(row[7]) for row in records),
         }
 
+    def _release_client_payloads(self, client, iso_name):
+        download_root = self.workdir / "downloads" / client
+        payloads = [download_root / iso_name] if client == "rtorrent" else [
+            download_root / "public" / iso_name,
+            download_root / "seed" / iso_name,
+        ]
+        retained_source = self.seed_source.resolve() if self.seed_source is not None else None
+        for path in payloads:
+            if not path.is_file() or path.is_symlink():
+                continue
+            if retained_source is not None and path.resolve() == retained_source:
+                continue
+            path.unlink()
+        leecher_dir = self.workdir / "leecher" / client
+        if leecher_dir.exists() and not leecher_dir.is_symlink():
+            shutil.rmtree(leecher_dir)
+
     def _run_one(self, client, meta, tracker_ip, private_path):
         print(f"\n==> {LABELS[client]}: public download", flush=True)
         self.compose("up", "-d", client, quiet=True, timeout=900)
@@ -1374,7 +1403,10 @@ class Benchmark:
                     partial.unlink()
             seed_payload = seed_dir / meta["iso_name"]
             if seed_payload.resolve() != self.seed_source.resolve():
-                shutil.copyfile(self.seed_source, seed_payload)
+                try:
+                    os.link(self.seed_source, seed_payload)
+                except OSError:
+                    shutil.copyfile(self.seed_source, seed_payload)
             local_hash = make_private_torrent(
                 seed_payload, f"http://{tracker_ip}:6969/announce", private_path,
             )
@@ -1468,6 +1500,7 @@ class Benchmark:
             f"Linux {self.kernel} ({self.machine})",
             f"- Docker: {self.docker_version}; {self.compose_version}",
             f"- Scratch filesystem: {self.scratch_device} ({self.scratch_type})",
+            f"- TorrentNG MALLOC_CONF: {self.malloc_conf_override or 'jemalloc defaults'}",
             f"- Host load average (1/5/15m): "
             f"{self.load_start[0]:.2f}/{self.load_start[1]:.2f}/{self.load_start[2]:.2f} "
             f"at start; {load_end[0]:.2f}/{load_end[1]:.2f}/{load_end[2]:.2f} at end; "
@@ -1660,7 +1693,11 @@ class Benchmark:
                         env=self.env, check=False, quiet=True,
                     )
                     client_images[client] = image.strip()
-                self.compose("stop", client, check=False, quiet=True, timeout=60)
+                _, stop_code = self.compose(
+                    "stop", client, check=False, quiet=True, timeout=60,
+                )
+                if stop_code == 0:
+                    self._release_client_payloads(client, meta["iso_name"])
                 self.compose("restart", "opentracker", check=False, quiet=True, timeout=60)
         client_images["seed_leecher"] = self.seed_leecher_image
         if self.artifact_dir is not None:
