@@ -37,7 +37,14 @@ INHERITED_ENVIRONMENT_KEYS = {
     "MISE_DATA_DIR", "MISE_HOME", "PATH", "PATHEXT", "PYENV_ROOT",
     "RUSTUP_HOME", "SYSTEMROOT", "TZ", "WINDIR",
 }
-APPROVED_TASK_PASS_ENVIRONMENT: dict[str, frozenset[str]] = {}
+APPROVED_TASK_PASS_ENVIRONMENT: dict[str, frozenset[str]] = {
+    "workspace-format": frozenset({"RUSTUP_TOOLCHAIN"}),
+    "sidecar-format": frozenset({"RUSTUP_TOOLCHAIN"}),
+    "workspace-tests": frozenset({"RUSTUP_TOOLCHAIN"}),
+    "workspace-clippy": frozenset({"RUSTUP_TOOLCHAIN"}),
+    "sidecar-tests": frozenset({"RUSTUP_TOOLCHAIN"}),
+    "sidecar-clippy": frozenset({"RUSTUP_TOOLCHAIN"}),
+}
 
 
 TASKS: tuple[dict[str, Any], ...] = (
@@ -46,6 +53,7 @@ TASKS: tuple[dict[str, Any], ...] = (
         "name": "Format TorrentNG workspace",
         "kind": "check",
         "command": ["cargo", "fmt", "--all", "--", "--check"],
+        "pass_env": ["RUSTUP_TOOLCHAIN"],
         "lanes": [],
         "timeout": 300,
     },
@@ -54,6 +62,7 @@ TASKS: tuple[dict[str, Any], ...] = (
         "name": "Format compatible-client service",
         "kind": "check",
         "command": ["cargo", "fmt", "--manifest-path", "sidecar/Cargo.toml", "--", "--check"],
+        "pass_env": ["RUSTUP_TOOLCHAIN"],
         "lanes": [],
         "timeout": 300,
     },
@@ -90,6 +99,7 @@ TASKS: tuple[dict[str, Any], ...] = (
             "cargo", "test", "--workspace", "--all-targets", "--locked",
             "--", "--test-threads=1",
         ],
+        "pass_env": ["RUSTUP_TOOLCHAIN"],
         "case_parser": "cargo-test",
         "minimum_cases": 1,
         "lanes": ["rust-workspace-tests"],
@@ -100,6 +110,7 @@ TASKS: tuple[dict[str, Any], ...] = (
         "name": "Lint TorrentNG client workspace",
         "kind": "check",
         "command": ["cargo", "clippy", "--workspace", "--all-targets", "--locked", "--", "-D", "warnings"],
+        "pass_env": ["RUSTUP_TOOLCHAIN"],
         "lanes": [],
         "timeout": 3600,
     },
@@ -111,6 +122,7 @@ TASKS: tuple[dict[str, Any], ...] = (
             "cargo", "test", "--locked", "--manifest-path", "sidecar/Cargo.toml",
             "--", "--test-threads=1",
         ],
+        "pass_env": ["RUSTUP_TOOLCHAIN"],
         "case_parser": "cargo-test",
         "minimum_cases": 1,
         "lanes": ["rust-workspace-tests"],
@@ -124,6 +136,7 @@ TASKS: tuple[dict[str, Any], ...] = (
             "cargo", "clippy", "--all-targets", "--locked", "--manifest-path",
             "sidecar/Cargo.toml", "--", "-D", "warnings",
         ],
+        "pass_env": ["RUSTUP_TOOLCHAIN"],
         "lanes": [],
         "timeout": 2400,
     },

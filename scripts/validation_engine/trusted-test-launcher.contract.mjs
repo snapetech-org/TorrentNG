@@ -11,6 +11,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { once } from 'node:events';
+import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
 import path from 'node:path';
 import test from 'node:test';
@@ -47,7 +48,7 @@ test(
   { skip: !sandboxAvailable && 'bubblewrap user namespaces are unavailable' },
   async (t) => {
     const parent = mkdtempSync(
-      path.join('/tmp', 'tng-launcher-')
+      path.join(tmpdir(), 'tng-launcher-')
     );
     const canaryEnv = { ...process.env, TMPDIR: parent };
     const source = path.join(parent, 'candidate');

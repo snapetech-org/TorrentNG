@@ -119,6 +119,7 @@ class ValidationEngineTests(unittest.TestCase):
             {
                 "PATH": "/toolchain/bin",
                 "RUSTUP_HOME": "/toolchain/rustup",
+                "RUSTUP_TOOLCHAIN": "1.97.0",
                 "HOME": "/operator/home",
                 "TMPDIR": "/operator/tmp",
                 "CARGO_HOME": "/operator/cargo",
@@ -143,7 +144,7 @@ class ValidationEngineTests(unittest.TestCase):
         self.assertEqual(environment["NODE_ENV"], "test")
         self.assertEqual(environment["CI"], "true")
         self.assertEqual(environment["FIXTURE_SETTING"], "expected")
-        for key in ("PYTHONPATH", "NODE_OPTIONS", "GITHUB_TOKEN", "HTTPS_PROXY", "RANDOM_PRIVATE_VALUE"):
+        for key in ("PYTHONPATH", "NODE_OPTIONS", "GITHUB_TOKEN", "HTTPS_PROXY", "RANDOM_PRIVATE_VALUE", "RUSTUP_TOOLCHAIN"):
             self.assertNotIn(key, environment)
         with self.assertRaisesRegex(engine.ValidationError, "unapproved inherited environment variable"):
             engine._safe_environment(
@@ -160,6 +161,28 @@ class ValidationEngineTests(unittest.TestCase):
             {"PATH": "/toolchain/bin", "HOME": "/operator/home"},
         )
         self.assertEqual(fallback_environment["RUSTUP_HOME"], "/operator/home/.rustup")
+
+    def test_cargo_tasks_preserve_the_workflow_selected_rust_toolchain(self) -> None:
+        run_root = self.root / "toolchain-evidence"
+        run_root.mkdir(mode=0o700)
+        inherited = {
+            "PATH": "/toolchain/bin",
+            "RUSTUP_HOME": "/toolchain/rustup",
+            "RUSTUP_TOOLCHAIN": "1.97.0",
+        }
+        task_ids = (
+            "workspace-format",
+            "sidecar-format",
+            "workspace-tests",
+            "workspace-clippy",
+            "sidecar-tests",
+            "sidecar-clippy",
+        )
+        for task_id in task_ids:
+            with self.subTest(task_id=task_id):
+                task = next(task for task in engine.TASKS if task["id"] == task_id)
+                environment = engine._safe_environment(task, run_root, inherited)
+                self.assertEqual(environment["RUSTUP_TOOLCHAIN"], "1.97.0")
 
     def test_plan_rejects_unapproved_inherited_environment_names(self) -> None:
         tasks = tuple(dict(task) for task in engine.TASKS)

@@ -38,6 +38,8 @@ jobs:
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
 
       - name: Check formatting
+        env:
+          RUSTUP_TOOLCHAIN: stable
         run: python3 scripts/validate_development.py --task workspace-format
 
       - name: Validate TorrentNG API contract
@@ -47,9 +49,13 @@ jobs:
         run: python3 scripts/validate_development.py --task python-contract-tests
 
       - name: Test TorrentNG client workspace
+        env:
+          RUSTUP_TOOLCHAIN: stable
         run: python3 scripts/validate_development.py --task workspace-tests
 
       - name: Lint TorrentNG client workspace
+        env:
+          RUSTUP_TOOLCHAIN: stable
         run: python3 scripts/validate_development.py --task workspace-clippy
 
       - name: Run certification script self-tests
@@ -174,9 +180,13 @@ jobs:
         uses: dtolnay/rust-toolchain@688313b0823df1393bcebb1b4add0438a6d36884 # 1.88.0
 
       - name: Build TorrentNG client workspace at declared MSRV
+        env:
+          RUSTUP_TOOLCHAIN: "1.88.0"
         run: cargo build --workspace --all-targets --locked
 
       - name: Test TorrentNG client workspace at declared MSRV
+        env:
+          RUSTUP_TOOLCHAIN: "1.88.0"
         # The scale targets contain wall-clock assertions. Run the MSRV
         # suite serially so unrelated 15k/50k fixtures cannot steal CPU from
         # the endpoint being measured and turn the gate into scheduler noise.
@@ -205,9 +215,13 @@ jobs:
         uses: dtolnay/rust-toolchain@86e7197484018ef6aaa9255d186f6ce1754276dd # 1.97.0
 
       - name: Build compatible-client service at declared MSRV
+        env:
+          RUSTUP_TOOLCHAIN: "1.97.0"
         run: cargo build --locked --manifest-path sidecar/Cargo.toml
 
       - name: Test compatible-client service at declared MSRV
+        env:
+          RUSTUP_TOOLCHAIN: "1.97.0"
         run: python3 scripts/validate_development.py --task sidecar-tests
 
   fuzz-smoke:
@@ -320,9 +334,13 @@ jobs:
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
 
       - name: Build compatible-client service
+        env:
+          RUSTUP_TOOLCHAIN: stable
         run: cargo build --locked --manifest-path sidecar/Cargo.toml
 
       - name: Test compatible-client service
+        env:
+          RUSTUP_TOOLCHAIN: stable
         run: python3 scripts/validate_development.py --task sidecar-tests
 
   webui:

@@ -93,6 +93,31 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertRegex(windows, r"(?m)^\s*runs-on:\s*windows-latest\s*$")
         self.assertNotRegex(windows, r"(?m)^\s*runs-on:.*self-hosted")
 
+    def test_cargo_validation_steps_keep_the_selected_rust_toolchain(self) -> None:
+        ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        steps = (
+            ("Check formatting", "stable"),
+            ("Test TorrentNG client workspace", "stable"),
+            ("Lint TorrentNG client workspace", "stable"),
+            ("Build TorrentNG client workspace at declared MSRV", "1.88.0"),
+            ("Test TorrentNG client workspace at declared MSRV", "1.88.0"),
+            ("Build compatible-client service at declared MSRV", "1.97.0"),
+            ("Test compatible-client service at declared MSRV", "1.97.0"),
+            ("Build compatible-client service", "stable"),
+            ("Test compatible-client service", "stable"),
+        )
+        for name, toolchain in steps:
+            with self.subTest(step=name):
+                toolchain_value = toolchain
+                if toolchain != "stable":
+                    toolchain_value = chr(34) + toolchain + chr(34)
+                expected = chr(10).join((
+                    f"      - name: {name}",
+                    "        env:",
+                    f"          RUSTUP_TOOLCHAIN: {toolchain_value}",
+                    "",
+                ))
+                self.assertIn(expected, ci)
     def test_self_hosted_jobs_use_runner_temp_for_temporary_files(self) -> None:
         missing: list[str] = []
         observed = 0
