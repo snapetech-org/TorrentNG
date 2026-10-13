@@ -562,9 +562,9 @@ impl Default for StorageConfig {
             device_elevator_enabled: true,
             file_pool_size: 512,
             idle_file_ttl_secs: 300,
-            io_worker_threads: 4,
+            io_worker_threads: 2,
             io_queue_depth: 256,
-            hash_worker_threads: 2,
+            hash_worker_threads: 1,
             hash_queue_depth: 256,
             preallocation_mode: StoragePreallocationMode::Auto,
             durability_mode: StorageDurabilityMode::Checkpoint,
@@ -1102,9 +1102,9 @@ mod tests {
         assert!(c.storage.device_elevator_enabled);
         assert_eq!(c.storage.file_pool_size, 512);
         assert_eq!(c.storage.idle_file_ttl_secs, 300);
-        assert_eq!(c.storage.io_worker_threads, 4);
+        assert_eq!(c.storage.io_worker_threads, 2);
         assert_eq!(c.storage.io_queue_depth, 256);
-        assert_eq!(c.storage.hash_worker_threads, 2);
+        assert_eq!(c.storage.hash_worker_threads, 1);
         assert_eq!(c.storage.hash_queue_depth, 256);
         assert_eq!(c.storage.preallocation_mode, StoragePreallocationMode::Auto);
         assert_eq!(c.storage.durability_mode, StorageDurabilityMode::Checkpoint);

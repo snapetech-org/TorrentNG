@@ -60,6 +60,8 @@ Useful environment variables:
 | Variable | Default | Purpose |
 |---|---:|---|
 | `TNG_CLIENT_BENCH_CLIENTS` | all five | Select client IDs for a focused run. |
+| `TNG_CLIENT_BENCH_SKIP_BUILD` | `0` | Reuse a local TorrentNG image only when its revision label exactly matches the checked-out source commit. |
+| `TNG_CLIENT_BENCH_PREBUILT_IMAGE` | `torrentng/torrentngd:interop` | Image checked and aliased for a run when skip-build is enabled. |
 | `TNG_CLIENT_BENCH_SEED_SOURCE` | none | Use a local ISO for controlled seeding after checking its published Debian SHA-256. |
 | `TNG_CLIENT_BENCH_REPORT` | dated report in `certification/reports/` | Choose the Markdown report path; the CSV uses the same basename. |
 | `TNG_CLIENT_BENCH_RATE_BPS` | 33,554,432 B/s | Shared per-client global download and upload ceiling. |
@@ -68,6 +70,12 @@ Useful environment variables:
 | `TNG_CLIENT_BENCH_TIMEOUT_SECS` | 1,800 s | Public download completion window. |
 | `TNG_CLIENT_BENCH_SEED_TIMEOUT_SECS` | 900 s | Controlled seed completion window. |
 | `TNG_CLIENT_BENCH_SAMPLE_SECS` | 2 s | Sampling interval for rates and resource use. |
+| `TNG_CLIENT_BENCH_MALLOC_CONF` | jemalloc defaults | Pass a temporary `MALLOC_CONF` value to TorrentNG for allocator experiments. |
+| `TNG_CLIENT_BENCH_TOKIO_WORKER_THREADS` | Tokio default | Set Tokio worker count for a measured TorrentNG run. |
+| `TNG_CLIENT_BENCH_STORAGE_IO_WORKER_THREADS` | config default | Override TorrentNG storage I/O workers for the measured run. |
+| `TNG_CLIENT_BENCH_STORAGE_HASH_WORKER_THREADS` | config default | Override TorrentNG storage hash workers for the measured run. |
+| `TNG_CLIENT_BENCH_STORAGE_PEER_READ_READAHEAD_BYTES` | config default | Override the peer-upload read-ahead size in bytes for a measured run. |
+| `TNG_CLIENT_BENCH_STORAGE_PEER_READ_CACHE_ENTRIES` | config default | Override the peer-upload read-ahead cache entry limit; set `0` to disable the cache. |
 
 The common leecher limit applies to the receiver, not the client being tested.
 The default is below TorrentNG's per-peer request-window guard; seed results

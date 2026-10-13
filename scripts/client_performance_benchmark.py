@@ -88,6 +88,36 @@ def available_port(used=()):
     raise RuntimeError("could not allocate an unused TCP/UDP port")
 
 
+def optional_positive_int(name):
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise RuntimeError(f"{name} must be a positive integer") from error
+    if parsed < 1:
+        raise RuntimeError(f"{name} must be a positive integer")
+    return parsed
+
+
+def optional_nonnegative_int(name):
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise RuntimeError(f"{name} must be a non-negative integer") from error
+    if parsed < 0:
+        raise RuntimeError(f"{name} must be a non-negative integer")
+    return parsed
+
+
+def env_enabled(name):
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def to_bytes(value):
     match = re.fullmatch(r"\s*([\d.]+)\s*([KMGT]?i?B)?\s*", value, re.I)
     if not match:
@@ -153,6 +183,41 @@ class HttpClient:
 
 class Benchmark:
     def __init__(self):
+        self.skip_build = env_enabled("TNG_CLIENT_BENCH_SKIP_BUILD")
+        self.prebuilt_image = os.environ.get(
+            "TNG_CLIENT_BENCH_PREBUILT_IMAGE", "torrentng/torrentngd:interop",
+        ).strip()
+        self.tokio_worker_threads = optional_positive_int(
+            "TNG_CLIENT_BENCH_TOKIO_WORKER_THREADS",
+        )
+        self.storage_io_worker_threads = optional_positive_int(
+            "TNG_CLIENT_BENCH_STORAGE_IO_WORKER_THREADS",
+        )
+        self.storage_hash_worker_threads = optional_positive_int(
+            "TNG_CLIENT_BENCH_STORAGE_HASH_WORKER_THREADS",
+        )
+        self.storage_peer_read_readahead_bytes = optional_nonnegative_int(
+            "TNG_CLIENT_BENCH_STORAGE_PEER_READ_READAHEAD_BYTES",
+        )
+        self.storage_peer_read_cache_entries = optional_nonnegative_int(
+            "TNG_CLIENT_BENCH_STORAGE_PEER_READ_CACHE_ENTRIES",
+        )
+        for name, value in (
+            ("TNG_CLIENT_BENCH_STORAGE_IO_WORKER_THREADS", self.storage_io_worker_threads),
+            ("TNG_CLIENT_BENCH_STORAGE_HASH_WORKER_THREADS", self.storage_hash_worker_threads),
+        ):
+            if value is not None and value > 64:
+                raise RuntimeError(f"{name} must be <= 64")
+        if (self.storage_peer_read_readahead_bytes is not None
+                and self.storage_peer_read_readahead_bytes > 64 * 1024 * 1024):
+            raise RuntimeError(
+                "TNG_CLIENT_BENCH_STORAGE_PEER_READ_READAHEAD_BYTES must be <= 67108864"
+            )
+        if (self.storage_peer_read_cache_entries is not None
+                and self.storage_peer_read_cache_entries > 65_536):
+            raise RuntimeError(
+                "TNG_CLIENT_BENCH_STORAGE_PEER_READ_CACHE_ENTRIES must be <= 65536"
+            )
         now = dt.datetime.now(dt.timezone.utc)
         self.stamp = now.strftime("%Y%m%dT%H%M%SZ")
         self.started = now.isoformat(timespec="seconds")
@@ -325,11 +390,19 @@ class Benchmark:
                 (directory / "public").mkdir(exist_ok=True)
             directory.chmod(0o777)
         (self.workdir / "downloads").chmod(0o777)
+        compose_environment = {}
         if self.malloc_conf_override:
+            compose_environment["MALLOC_CONF"] = self.malloc_conf_override
+        if self.tokio_worker_threads is not None:
+            compose_environment["TOKIO_WORKER_THREADS"] = str(self.tokio_worker_threads)
+        if compose_environment:
             self.compose_override_path = self.workdir / "compose.memory-profile.yml"
+            env_lines = "".join(
+                f"      {key}: {json.dumps(value)}\n"
+                for key, value in compose_environment.items()
+            )
             self.compose_override_path.write_text(
-                "services:\n  torrentngd:\n    environment:\n      MALLOC_CONF: "
-                + json.dumps(self.malloc_conf_override) + "\n"
+                "services:\n  torrentngd:\n    environment:\n" + env_lines
             )
         self._prepare_qbit_config()
         self._prepare_torrentng_config()
@@ -388,6 +461,32 @@ class Benchmark:
                       f"upload_rate_limit = {RATE_BPS}", text)
         text = re.sub(r"(?m)^download_rate_limit\s*=\s*\d+\s*$",
                       f"download_rate_limit = {RATE_BPS}", text)
+        storage_overrides = []
+        if self.storage_io_worker_threads is not None:
+            storage_overrides.append(
+                f"io_worker_threads = {self.storage_io_worker_threads}"
+            )
+        if self.storage_hash_worker_threads is not None:
+            storage_overrides.append(
+                f"hash_worker_threads = {self.storage_hash_worker_threads}"
+            )
+        if self.storage_peer_read_readahead_bytes is not None:
+            storage_overrides.append(
+                "peer_read_readahead_bytes = "
+                f"{self.storage_peer_read_readahead_bytes}"
+            )
+        if self.storage_peer_read_cache_entries is not None:
+            storage_overrides.append(
+                "peer_read_cache_entries = "
+                f"{self.storage_peer_read_cache_entries}"
+            )
+        if storage_overrides:
+            text = re.sub(
+                r'(?m)^(download_dir\s*=\s*"[^"]+"\s*)$',
+                lambda match: match.group(1) + "\n" + "\n".join(storage_overrides),
+                text,
+                count=1,
+            )
         path = self.workdir / "config/torrentngd.config.toml"
         path.write_text(text)
         path.chmod(0o600)
@@ -1605,9 +1704,40 @@ class Benchmark:
         self._write_memory_profile()
         load_end = os.getloadavg()
         load_peak = max((float(row[10]) for row in self.samples), default=self.load_start[0])
+
         def mib(value):
             return f"{value / 1048576:.1f}" if value else "n/a"
 
+        runtime_overrides = [
+            f"Tokio={self.tokio_worker_threads}" if self.tokio_worker_threads else "",
+            f"storage I/O={self.storage_io_worker_threads}"
+            if self.storage_io_worker_threads else "",
+            f"storage hash={self.storage_hash_worker_threads}"
+            if self.storage_hash_worker_threads else "",
+            f"peer-read readahead={self.storage_peer_read_readahead_bytes}B"
+            if self.storage_peer_read_readahead_bytes is not None else "",
+            f"peer-read cache={self.storage_peer_read_cache_entries} entries"
+            if self.storage_peer_read_cache_entries is not None else "",
+        ]
+        runtime_overrides = ", ".join(value for value in runtime_overrides if value) or "defaults"
+        observed_tokio_named_threads = {}
+        for snapshot in self.process_memory_snapshots:
+            count = snapshot.get("thread_names", {}).get("tokio-rt-worker", 0)
+            phase = snapshot.get("phase", "unknown")
+            observed_tokio_named_threads[phase] = max(
+                observed_tokio_named_threads.get(phase, 0), count
+            )
+        observed_thread_summary = ", ".join(
+            f"{phase}={count}"
+            for phase, count in sorted(observed_tokio_named_threads.items())
+        ) or "no TorrentNG process snapshots"
+        image_description = (
+            "- The TorrentNG image was built from the recorded checkout. Reference "
+            "images are pinned by digest in deploy/interop/compose.yml."
+            if not self.skip_build else
+            f"- The TorrentNG image {self.prebuilt_image} carries the recorded source revision label. "
+            "Reference images are pinned by digest in deploy/interop/compose.yml."
+        )
         lines = [
             f"# TorrentNG and reference client performance: {meta['iso_name']}",
             "",
@@ -1621,6 +1751,10 @@ class Benchmark:
             f"- Docker: {self.docker_version}; {self.compose_version}",
             f"- Scratch filesystem: {self.scratch_device} ({self.scratch_type})",
             f"- TorrentNG MALLOC_CONF: {self.malloc_conf_override or 'jemalloc defaults'}",
+            f"- TorrentNG build mode: {'prebuilt ' + self.prebuilt_image + ' (revision verified)' if self.skip_build else 'built from this checkout'}",
+            f"- Requested TorrentNG runtime/storage worker overrides: {runtime_overrides}",
+            "- Peak `tokio-rt-worker`-named threads by phase (async + blocking): "
+            f"{observed_thread_summary}",
             f"- Host load average (1/5/15m): "
             f"{self.load_start[0]:.2f}/{self.load_start[1]:.2f}/{self.load_start[2]:.2f} "
             f"at start; {load_end[0]:.2f}/{load_end[1]:.2f}/{load_end[2]:.2f} at end; "
@@ -1644,8 +1778,7 @@ class Benchmark:
                 f"{LABELS[c]}: {client_images.get(c, 'not started')}" for c in CLIENTS
             ) + f"; seed leecher: {client_images.get('seed_leecher', self.seed_leecher_image)}",
             f"- Seed leecher: qBittorrent {self.seed_leecher_version}",
-            "- The TorrentNG image was built from the recorded checkout. Reference "
-            "images are pinned by digest in deploy/interop/compose.yml.",
+            image_description,
             "",
             "## Public download",
             "",
@@ -1766,6 +1899,29 @@ class Benchmark:
         self.report.parent.mkdir(parents=True, exist_ok=True)
         self.report.write_text("\n".join(lines))
 
+    def _use_prebuilt_image(self):
+        image_revision, code = run_command(
+            [
+                "docker", "image", "inspect", "--format",
+                '{{index .Config.Labels "org.opencontainers.image.revision"}}',
+                self.prebuilt_image,
+            ],
+            env=self.env, check=False, quiet=True,
+        )
+        if code != 0:
+            raise RuntimeError(f"prebuilt image is not available: {self.prebuilt_image}")
+        image_revision = image_revision.strip()
+        if image_revision != self.source_commit:
+            raise RuntimeError(
+                "prebuilt image source revision does not match the checkout: "
+                f"{image_revision or 'unlabeled'} != {self.source_commit}"
+            )
+        run_command(["docker", "image", "tag", self.prebuilt_image, self.image], env=self.env)
+        print(
+            f"Using prebuilt image {self.prebuilt_image} verified at {self.source_commit}",
+            flush=True,
+        )
+
     def run(self):
         if RATE_BPS < 1 or SEED_LEECHER_RATE_BPS < 1 or MAX_PEERS < 1 or INTERVAL < 1:
             raise RuntimeError("rate ceiling, peer ceiling, and sample interval must be positive")
@@ -1782,7 +1938,10 @@ class Benchmark:
         print(f"Compose project: {self.project}", flush=True)
         self.prepare()
         if "torrentngd" in CLIENTS:
-            self.compose("build", "torrentngd", timeout=3600)
+            if self.skip_build:
+                self._use_prebuilt_image()
+            else:
+                self.compose("build", "torrentngd", timeout=3600)
         tracker_ip = self._start_tracker()
         meta = self._torrent_metadata()
         if self.seed_source_override is not None:
@@ -1883,12 +2042,15 @@ def main():
 
 Runs one current Debian amd64 netinst public download and one controlled
 private seed transfer for TorrentNG, qBittorrent, Transmission, Deluge, and
-rTorrent. Docker Compose builds the current TorrentNG checkout. Reference
+rTorrent. Docker Compose builds the current TorrentNG checkout unless a
+revision-matched prebuilt image is selected. Reference
 client images, including the qBittorrent seed leecher, are pinned by digest in
 deploy/interop/compose.yml.
 
 Environment:
   TNG_CLIENT_BENCH_CLIENTS=torrentngd,qbittorrent,... (default: all five)
+  TNG_CLIENT_BENCH_SKIP_BUILD=1 (use a prebuilt image with the exact source revision)
+  TNG_CLIENT_BENCH_PREBUILT_IMAGE=torrentng/torrentngd:interop
   TNG_CLIENT_BENCH_SEED_SOURCE=/path/to/verified/debian.iso
   TNG_CLIENT_BENCH_REPORT=/path/to/report.md
   TNG_CLIENT_BENCH_ARTIFACT_DIR=/persistent/path (verified ISO and .torrent)
@@ -1903,6 +2065,11 @@ Environment:
   TNG_CLIENT_BENCH_SAMPLE_SECS=2
   TNG_CLIENT_BENCH_IDLE_SAMPLE_SECS=8
   TNG_CLIENT_BENCH_PEER_BIND=0.0.0.0
+  TNG_CLIENT_BENCH_TOKIO_WORKER_THREADS=2
+  TNG_CLIENT_BENCH_STORAGE_IO_WORKER_THREADS=2
+  TNG_CLIENT_BENCH_STORAGE_HASH_WORKER_THREADS=1
+  TNG_CLIENT_BENCH_STORAGE_PEER_READ_READAHEAD_BYTES=131072
+  TNG_CLIENT_BENCH_STORAGE_PEER_READ_CACHE_ENTRIES=16
 
 The report and raw CSV remain in the repository; task scratch, the isolated
 Compose project, its volumes, and benchmark-tagged images are removed on exit.""")

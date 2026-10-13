@@ -34,14 +34,69 @@ use rt_session::SessionRegistry;
 mod export;
 mod migrate;
 
-// jemalloc is the Linux daemon's global allocator. Keep background purge
-// workers disabled by default; the crate's runtime-support feature remains
-// available for deployments that explicitly enable them with MALLOC_CONF.
+// `tikv-jemalloc-sys` reads this compile-time config before main(). Disabling
+// transparent huge-page extents avoids charging whole 2 MiB pages for the
+// daemon's small allocator arenas. MALLOC_CONF remains a later, operator-level
+// override. Keep background purge workers disabled by default; the crate's
+// runtime-support feature remains available to deployments that enable them.
 // The authenticated /metrics endpoint exposes allocator stats so live
 // allocations and allocator residency can be measured separately.
 #[cfg(target_os = "linux")]
+#[allow(non_upper_case_globals)]
+#[export_name = "_rjem_malloc_conf"]
+static malloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
+    union CCharRef {
+        byte: &'static u8,
+        c_char: &'static std::ffi::c_char,
+    }
+
+    CCharRef {
+        byte: &b"thp:never\0"[0],
+    }
+    .c_char
+});
+
+// jemalloc is the Linux daemon's global allocator.
+#[cfg(target_os = "linux")]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+const DEFAULT_MAX_TOKIO_WORKER_THREADS: usize = 4;
+
+fn tokio_worker_threads_for(
+    override_value: Option<&str>,
+    available_parallelism: Option<usize>,
+) -> anyhow::Result<usize> {
+    if let Some(value) = override_value {
+        let workers = value
+            .parse::<usize>()
+            .context("TOKIO_WORKER_THREADS must be a positive integer")?;
+        anyhow::ensure!(
+            workers > 0,
+            "TOKIO_WORKER_THREADS must be greater than zero"
+        );
+        return Ok(workers);
+    }
+
+    Ok(available_parallelism
+        .unwrap_or(1)
+        .max(1)
+        .min(DEFAULT_MAX_TOKIO_WORKER_THREADS))
+}
+
+fn configured_tokio_worker_threads() -> anyhow::Result<usize> {
+    let override_value = match std::env::var("TOKIO_WORKER_THREADS") {
+        Ok(value) => Some(value),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            anyhow::bail!("TOKIO_WORKER_THREADS must be valid Unicode")
+        }
+    };
+    let available_parallelism = std::thread::available_parallelism()
+        .ok()
+        .map(std::num::NonZeroUsize::get);
+    tokio_worker_threads_for(override_value.as_deref(), available_parallelism)
+}
 
 /// Bound request handlers that can fan out into engine/database work. The
 /// limit is deliberately enforced at the daemon boundary so all mounted API
@@ -74,9 +129,18 @@ fn install_panic_payload_redacting_hook() {
     }));
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     install_panic_payload_redacting_hook();
+    let worker_threads = configured_tokio_worker_threads()?;
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(worker_threads)
+        .enable_all()
+        .build()
+        .context("failed to build Tokio runtime")?
+        .block_on(torrentngd_main())
+}
+
+async fn torrentngd_main() -> anyhow::Result<()> {
     let argv: Vec<String> = std::env::args().collect();
     match argv.get(1).map(String::as_str) {
         Some("-h" | "--help" | "help") => {
@@ -830,8 +894,8 @@ mod tests {
     use super::{
         bearer_token, daemon_auth_guard, daemon_public_auth_path, daemon_public_path,
         install_panic_payload_redacting_hook, load_or_create_bootstrap_password, request_id,
-        request_uri_is_bounded, skip_request_log, static_dir, DaemonAuthGate,
-        MAX_REQUEST_URI_BYTES,
+        request_uri_is_bounded, skip_request_log, static_dir, tokio_worker_threads_for,
+        DaemonAuthGate, MAX_REQUEST_URI_BYTES,
     };
     use axum::{
         body::Body,
@@ -843,6 +907,20 @@ mod tests {
     use std::process::Command;
     use std::sync::Arc;
     use tower::ServiceExt;
+
+    #[test]
+    fn tokio_worker_default_is_capped_but_scales_down_for_small_hosts() {
+        assert_eq!(tokio_worker_threads_for(None, Some(64)).unwrap(), 4);
+        assert_eq!(tokio_worker_threads_for(None, Some(2)).unwrap(), 2);
+        assert_eq!(tokio_worker_threads_for(None, None).unwrap(), 1);
+    }
+
+    #[test]
+    fn tokio_worker_environment_override_is_respected_and_validated() {
+        assert_eq!(tokio_worker_threads_for(Some("2"), Some(64)).unwrap(), 2);
+        assert!(tokio_worker_threads_for(Some("0"), Some(64)).is_err());
+        assert!(tokio_worker_threads_for(Some("many"), Some(64)).is_err());
+    }
 
     #[test]
     fn bootstrap_password_is_unique_persistent_and_private() {
