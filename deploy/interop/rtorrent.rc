@@ -10,3 +10,4 @@ pieces.hash.on_completion.set = yes
 schedule2 = watch_start, 5, 5, ((load.start, "/watch/*.torrent"))
 schedule2 = untied_directory, 5, 5, ((close_untied))
 encoding.add = UTF-8
+network.scgi.open_local = /config/scgi.sock

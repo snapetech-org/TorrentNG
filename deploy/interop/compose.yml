@@ -8,10 +8,12 @@ x-interop-dns: &interop-dns
 services:
   torrentngd:
     <<: *interop-dns
-    image: torrentng/torrentngd:interop
+    image: ${INTEROP_TORRENTNG_IMAGE:-torrentng/torrentngd:interop}
     build:
       context: ../..
       dockerfile: deploy/native/Dockerfile
+      args:
+        TORRENTNG_SOURCE_REVISION: ${INTEROP_SOURCE_REVISION:-unknown}
     restart: unless-stopped
     cap_drop:
       - ALL
@@ -25,10 +27,10 @@ services:
       - no-new-privileges:true
     ports:
       - "127.0.0.1:${INTEROP_RUST_HOST_PORT:-28180}:8080"
-      - "${INTEROP_RUST_PEER_PORT:-29181}:6881"
-      - "${INTEROP_RUST_PEER_PORT:-29181}:6881/udp"
+      - "${INTEROP_CLIENT_BIND_ADDR:-0.0.0.0}:${INTEROP_RUST_PEER_PORT:-29181}:6881"
+      - "${INTEROP_CLIENT_BIND_ADDR:-0.0.0.0}:${INTEROP_RUST_PEER_PORT:-29181}:6881/udp"
     volumes:
-      - ./torrentngd.config.toml:/etc/torrentngd/config.toml:ro
+      - ${INTEROP_TORRENTNG_CONFIG:-./torrentngd.config.toml}:/etc/torrentngd/config.toml:ro
       - torrentngd-state:/var/lib/torrentngd
       - ${INTEROP_WORKDIR:-../../certification/interop}/downloads:/downloads
       - ${INTEROP_WORKDIR:-../../certification/interop}/artifacts:/artifacts
@@ -51,8 +53,8 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:${INTEROP_QBIT_HOST_PORT:-28181}:8080"
-      - "${INTEROP_QBIT_PEER_PORT:-29182}:6882"
-      - "${INTEROP_QBIT_PEER_PORT:-29182}:6882/udp"
+      - "${INTEROP_CLIENT_BIND_ADDR:-0.0.0.0}:${INTEROP_QBIT_PEER_PORT:-29182}:6882"
+      - "${INTEROP_CLIENT_BIND_ADDR:-0.0.0.0}:${INTEROP_QBIT_PEER_PORT:-29182}:6882/udp"
     volumes:
       - ${INTEROP_WORKDIR:-../../certification/interop}/config/qbittorrent:/config
       - ${INTEROP_WORKDIR:-../../certification/interop}/downloads:/downloads
@@ -72,8 +74,8 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:${INTEROP_TRANSMISSION_HOST_PORT:-28191}:9091"
-      - "${INTEROP_TRANSMISSION_PEER_PORT:-29183}:51413"
-      - "${INTEROP_TRANSMISSION_PEER_PORT:-29183}:51413/udp"
+      - "${INTEROP_CLIENT_BIND_ADDR:-0.0.0.0}:${INTEROP_TRANSMISSION_PEER_PORT:-29183}:51413"
+      - "${INTEROP_CLIENT_BIND_ADDR:-0.0.0.0}:${INTEROP_TRANSMISSION_PEER_PORT:-29183}:51413/udp"
     volumes:
       - ${INTEROP_WORKDIR:-../../certification/interop}/config/transmission:/config
       - ${INTEROP_WORKDIR:-../../certification/interop}/downloads:/downloads
@@ -94,8 +96,8 @@ services:
     ports:
       - "127.0.0.1:${INTEROP_DELUGE_HOST_PORT:-28212}:8112"
       - "127.0.0.1:${INTEROP_DELUGE_DAEMON_PORT:-25889}:58846"
-      - "${INTEROP_DELUGE_PEER_PORT:-29184}:6884"
-      - "${INTEROP_DELUGE_PEER_PORT:-29184}:6884/udp"
+      - "${INTEROP_CLIENT_BIND_ADDR:-0.0.0.0}:${INTEROP_DELUGE_PEER_PORT:-29184}:6884"
+      - "${INTEROP_CLIENT_BIND_ADDR:-0.0.0.0}:${INTEROP_DELUGE_PEER_PORT:-29184}:6884/udp"
     volumes:
       - ${INTEROP_WORKDIR:-../../certification/interop}/config/deluge:/config
       - ${INTEROP_WORKDIR:-../../certification/interop}/downloads:/downloads
@@ -111,12 +113,13 @@ services:
     <<: *interop-dns
     image: jesec/rtorrent@sha256:994728c59953e5f19c643827024dd06e9ffaf62b8d903a3f1468794415e72e03
     restart: unless-stopped
-    command: ["-o", "system.daemon.set=true", "-o", "import=/config/rtorrent.rc"]
+    command: ["-o", "system.daemon.set=true"]
+    user: "${PUID:-1000}:${PGID:-1000}"
     ports:
-      - "${INTEROP_BIND_ADDR:-127.0.0.1}:${INTEROP_RTORRENT_PEER_PORT:-29185}:6885"
-      - "${INTEROP_BIND_ADDR:-127.0.0.1}:${INTEROP_RTORRENT_PEER_PORT:-29185}:6885/udp"
+      - "${INTEROP_RTORRENT_BIND_ADDR:-${INTEROP_BIND_ADDR:-127.0.0.1}}:${INTEROP_RTORRENT_PEER_PORT:-29185}:6885"
+      - "${INTEROP_RTORRENT_BIND_ADDR:-${INTEROP_BIND_ADDR:-127.0.0.1}}:${INTEROP_RTORRENT_PEER_PORT:-29185}:6885/udp"
     volumes:
-      - ./rtorrent.rc:/config/rtorrent.rc:ro
+      - ${INTEROP_RTORRENT_CONFIG:-./rtorrent.rc}:/etc/rtorrent/rtorrent.rc:ro
       - ${INTEROP_WORKDIR:-../../certification/interop}/config/rtorrent:/config
       - ${INTEROP_WORKDIR:-../../certification/interop}/watch/rtorrent:/watch
       - ${INTEROP_WORKDIR:-../../certification/interop}/downloads:/downloads
@@ -130,8 +133,28 @@ services:
     restart: unless-stopped
     command: ["opentracker", "-p", "6969", "-P", "6969"]
     ports:
-      - "127.0.0.1:${INTEROP_TRACKER_HOST_PORT:-26969}:6969"
-      - "127.0.0.1:${INTEROP_TRACKER_HOST_PORT:-26969}:6969/udp"
+      - "${INTEROP_TRACKER_BIND_ADDR:-127.0.0.1}:${INTEROP_TRACKER_HOST_PORT:-26969}:6969"
+      - "${INTEROP_TRACKER_BIND_ADDR:-127.0.0.1}:${INTEROP_TRACKER_HOST_PORT:-26969}:6969/udp"
+    networks: [interop]
+
+  seed_leecher:
+    <<: *interop-dns
+    image: lscr.io/linuxserver/qbittorrent@sha256:2be038f3421f60f62e8e4bf201f66f385b68e4fbc9ed3ab79051069ea22e2650
+    restart: "no"
+    ports:
+      - "127.0.0.1:${INTEROP_SEED_QBIT_HOST_PORT:-26801}:8080"
+      - "${INTEROP_CLIENT_BIND_ADDR:-0.0.0.0}:${INTEROP_SEED_QBIT_PEER_PORT:-29186}:6886"
+      - "${INTEROP_CLIENT_BIND_ADDR:-0.0.0.0}:${INTEROP_SEED_QBIT_PEER_PORT:-29186}:6886/udp"
+    volumes:
+      - ${INTEROP_SEED_QBIT_CONFIG:-../../certification/interop/config/qbittorrent-seed}:/config
+      - ${INTEROP_SEED_QBIT_DOWNLOAD_DIR:-../../certification/interop/leecher}:/downloads
+    environment:
+      PUID: "${PUID:-1000}"
+      PGID: "${PGID:-1000}"
+      TZ: "${TZ:-Etc/UTC}"
+      WEBUI_PORT: "8080"
+      TORRENTING_PORT: "6886"
+      QBT_WEBUI_PORT: "8080"
     networks: [interop]
 
   fixture-http:

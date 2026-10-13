@@ -16,8 +16,19 @@ python3 scripts/validate_development.py
 ```
 
 Local execution of test tasks requires the trusted Linux bubblewrap launcher.
-When evaluating an unreviewed branch, copy `trusted-test-launcher.mjs` from a
-reviewed revision to a location outside the checkout and run:
+When evaluating an unreviewed branch, copy `trusted-test-launcher.mjs` and
+`trusted-test-sandbox-policy.mjs` from the same reviewed revision to a location
+outside the checkout, keeping them together. The launcher snapshots only paths
+in the Git index, hides the original checkout and common host configuration and
+data roots, and runs candidate code offline. Dotted and extensionless credential
+names, private/API keys, access/refresh-token names, client-secret names, and
+credential material with source-like extensions are excluded. Source modules
+under credential-named folders remain available unless their own names identify
+credential material. Suffixed dotenv credentials such as tokens.env.local are
+excluded, while example templates such as tokens.env.example remain available.
+It opens each workspace, run-data, dependency, cache, and marker source before
+masking host paths, then binds those pinned sources through inherited file
+descriptors. Stage new candidate files first.
 
 ```sh
 node /path/to/trusted-test-launcher.mjs "$PWD" -- python3 scripts/validate_development.py --tests-only
@@ -35,6 +46,9 @@ finishes. During long commands, the runner prints a task-level status at start,
 completion, and once per minute to stderr; task output is streamed there too.
 These messages appear in a terminal or live GitHub Actions log while the run is
 in progress. The final machine-readable summary is written to stdout.
+The pump queue is bounded to 16 output chunks, and each private task log is
+capped at 16 MiB with a visible truncation marker. The receipt hashes the bytes
+actually persisted to that log; case parsing retains only the final 8 MiB.
 
 WebUI tasks require `webui/node_modules` to exist. The runner does not install
 dependencies or start hardware, network, live-transfer, soak, or release

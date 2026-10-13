@@ -81,16 +81,80 @@ def run_interop_preflight(
 
 
 class WorkflowSecurityTests(unittest.TestCase):
-    def test_public_pull_requests_never_select_persistent_runners(self) -> None:
+    def test_pull_requests_never_select_persistent_runners(self) -> None:
         ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
         self.assertRegex(ci, r"(?m)^\s*pull_request:")
+        self.assertRegex(ci, r'(?m)^  push:\n    branches: \["main"\]$')
+        self.assertNotIn('branches: ["**"]', ci)
         self.assertNotRegex(ci, r"(?m)^\s*runs-on:\s*\[self-hosted")
-        self.assertEqual(ci.count("github.event_name == 'push' && fromJSON"), 7)
+        runner_lines = [
+            line.strip()
+            for line in ci.splitlines()
+            if line.lstrip().startswith("runs-on:") and "self-hosted" in line
+        ]
+        self.assertEqual(len(runner_lines), 7)
+        for runner in runner_lines:
+            self.assertNotIn("github.event_name == 'pull_request'", runner)
+            self.assertIn(
+                "github.event_name == 'push' && github.ref == 'refs/heads/main'",
+                runner,
+            )
+            self.assertIn(
+                "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
+                runner,
+            )
+            self.assertIn(
+                "fromJSON('[\"self-hosted\",\"Linux\",\"X64\",\"host\"]')",
+                runner,
+            )
+            self.assertIn("fromJSON('[\"ubuntu-latest\"]')", runner)
         self.assertNotRegex(ci, r"(?m)^\s*pull_request_target:")
 
         windows = (WORKFLOWS / "windows-smoke.yml").read_text(encoding="utf-8")
         self.assertRegex(windows, r"(?m)^\s*runs-on:\s*windows-latest\s*$")
         self.assertNotRegex(windows, r"(?m)^\s*runs-on:.*self-hosted")
+
+    def test_cargo_validation_steps_keep_the_selected_rust_toolchain(self) -> None:
+        ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        steps = (
+            ("Check formatting", "stable"),
+            ("Test TorrentNG client workspace", "stable"),
+            ("Lint TorrentNG client workspace", "stable"),
+            ("Build TorrentNG client workspace at declared MSRV", "1.88.0"),
+            ("Test TorrentNG client workspace at declared MSRV", "1.88.0"),
+            ("Build compatible-client service at declared MSRV", "1.97.0"),
+            ("Test compatible-client service at declared MSRV", "1.97.0"),
+            ("Build compatible-client service", "stable"),
+            ("Test compatible-client service", "stable"),
+        )
+        for name, toolchain in steps:
+            with self.subTest(step=name):
+                toolchain_value = toolchain
+                if toolchain != "stable":
+                    toolchain_value = chr(34) + toolchain + chr(34)
+                expected = chr(10).join((
+                    f"      - name: {name}",
+                    "        env:",
+                    f"          RUSTUP_TOOLCHAIN: {toolchain_value}",
+                    "",
+                ))
+                self.assertIn(expected, ci)
+
+    def test_fuzz_smoke_installs_cargo_fuzz_in_run_owned_storage(self) -> None:
+        ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        job = ci.split("  fuzz-smoke:" + chr(10), 1)[1].split(
+            chr(10) + "  sidecar:", 1
+        )[0]
+        self.assertIn(
+            'cargo_fuzz_root="$(mktemp -d -- "$RUNNER_TEMP/cargo-fuzz.XXXXXX")"',
+            job,
+        )
+        self.assertIn(
+            'cargo install cargo-fuzz --locked --root "$cargo_fuzz_root" --force',
+            job,
+        )
+        self.assertIn("printf", job)
+        self.assertIn('"$cargo_fuzz_root/bin" >> "$GITHUB_PATH"', job)
 
     def test_self_hosted_jobs_use_runner_temp_for_temporary_files(self) -> None:
         missing: list[str] = []

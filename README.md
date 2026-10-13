@@ -74,10 +74,12 @@ may need a full data check before another client can resume it.
 
 The latest named 24-hour report covers an idle daemon with no torrents
 transferring, but it does not record the source commit. It is not proof for the
-code in this checkout. One public Debian torrent transfer is documented. These
-results do not establish performance under a busy swarm or compatibility with
-every client, tracker, disk, or network. The project does not claim a tested
-maximum torrent count. See the dated [release evidence](docs/RELEASE_EVIDENCE.md)
+code in this checkout. A separate [Debian ISO client comparison](certification/reports/client-performance-benchmark-20261013.md)
+measures public downloads and controlled seeding for TorrentNG, qBittorrent,
+Transmission, and Deluge; rTorrent could not start in the test environment.
+It is one low-confidence pass per client, not a general ranking or proof of
+performance on other swarms, disks, or networks. The project does not claim a
+tested maximum torrent count. See the dated [release evidence](docs/RELEASE_EVIDENCE.md)
 for what was exercised and where.
 
 ## Learn more
@@ -88,6 +90,7 @@ for what was exercised and where.
 - [Install on Unraid](deploy/unraid/README.md)
 - [Configuration](docs/CONFIGURATION.md)
 - [Migration and export](docs/MIGRATION.md)
+- [Client performance benchmark](docs/CLIENT_PERFORMANCE_BENCHMARK.md) · [dated comparison and measurements](certification/reports/client-performance-benchmark-20261013.md)
 - [API and compatibility limits](docs/API.md) · [client matrices](docs/CLIENT_COMPATIBILITY_MATRICES.md)
 - [Backup and restore](docs/BACKUP_RESTORE.md)
 - [Documentation index](docs/README.md)
@@ -111,6 +114,8 @@ are in the [at-home validation plan](docs/AT_HOME_VALIDATION.md).
 Ask for setup help or report a problem on
 [Discord](https://discord.gg/5PyXBfvS6T). For a security issue, follow
 [SECURITY.md](SECURITY.md) and do not post it publicly.
+
+If TorrentNG is useful to you, [support its development on Ko-fi](https://ko-fi.com/snapetech).
 
 ## Legal use
 

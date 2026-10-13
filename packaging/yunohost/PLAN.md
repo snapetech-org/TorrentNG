@@ -1,5 +1,8 @@
 # YunoHost packaging and publication plan
 
+> Retired: TorrentNG no longer builds or publishes YunoHost bundles. This plan
+> is retained as historical design context for the package sources.
+
 ## Package shape
 
 Maintain one YunoHost package with a required install-time mode:

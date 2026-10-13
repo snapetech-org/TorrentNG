@@ -18,7 +18,7 @@ jobs:
   native-quality:
     name: TorrentNG client quality
     timeout-minutes: 60
-    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","Linux","X64"]') || fromJSON('["ubuntu-latest"]') }}
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && fromJSON('["self-hosted","Linux","X64","host"]') || fromJSON('["ubuntu-latest"]') }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -38,7 +38,12 @@ jobs:
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
 
       - name: Check formatting
+        env:
+          RUSTUP_TOOLCHAIN: stable
         run: python3 scripts/validate_development.py --task workspace-format
+
+      - name: Test self-hosted runner trust boundary
+        run: python3 scripts/test_workflow_runner_policy.py
 
       - name: Validate TorrentNG API contract
         run: python3 scripts/validate_development.py --task api-contract
@@ -47,9 +52,13 @@ jobs:
         run: python3 scripts/validate_development.py --task python-contract-tests
 
       - name: Test TorrentNG client workspace
+        env:
+          RUSTUP_TOOLCHAIN: stable
         run: python3 scripts/validate_development.py --task workspace-tests
 
       - name: Lint TorrentNG client workspace
+        env:
+          RUSTUP_TOOLCHAIN: stable
         run: python3 scripts/validate_development.py --task workspace-clippy
 
       - name: Run certification script self-tests
@@ -154,7 +163,7 @@ jobs:
   # tests the locked workspace at the declared Rust 1.88 MSRV.
   msrv-check:
     timeout-minutes: 60
-    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","Linux","X64"]') || fromJSON('["ubuntu-latest"]') }}
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && fromJSON('["self-hosted","Linux","X64","host"]') || fromJSON('["ubuntu-latest"]') }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -174,9 +183,13 @@ jobs:
         uses: dtolnay/rust-toolchain@688313b0823df1393bcebb1b4add0438a6d36884 # 1.88.0
 
       - name: Build TorrentNG client workspace at declared MSRV
+        env:
+          RUSTUP_TOOLCHAIN: "1.88.0"
         run: cargo build --workspace --all-targets --locked
 
       - name: Test TorrentNG client workspace at declared MSRV
+        env:
+          RUSTUP_TOOLCHAIN: "1.88.0"
         # The scale targets contain wall-clock assertions. Run the MSRV
         # suite serially so unrelated 15k/50k fixtures cannot steal CPU from
         # the endpoint being measured and turn the gate into scheduler noise.
@@ -185,7 +198,7 @@ jobs:
   msrv-check-sidecar:
     name: Compatible-client service MSRV gate
     timeout-minutes: 30
-    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","Linux","X64"]') || fromJSON('["ubuntu-latest"]') }}
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && fromJSON('["self-hosted","Linux","X64","host"]') || fromJSON('["ubuntu-latest"]') }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -205,14 +218,18 @@ jobs:
         uses: dtolnay/rust-toolchain@86e7197484018ef6aaa9255d186f6ce1754276dd # 1.97.0
 
       - name: Build compatible-client service at declared MSRV
+        env:
+          RUSTUP_TOOLCHAIN: "1.97.0"
         run: cargo build --locked --manifest-path sidecar/Cargo.toml
 
       - name: Test compatible-client service at declared MSRV
+        env:
+          RUSTUP_TOOLCHAIN: "1.97.0"
         run: python3 scripts/validate_development.py --task sidecar-tests
 
   fuzz-smoke:
     timeout-minutes: 30
-    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","Linux","X64"]') || fromJSON('["ubuntu-latest"]') }}
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && fromJSON('["self-hosted","Linux","X64","host"]') || fromJSON('["ubuntu-latest"]') }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -231,8 +248,13 @@ jobs:
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@be39649afda95dbf70f87cce95f68b8d5797b296 # nightly
 
-      - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
+      - name: Install cargo-fuzz into job-private storage
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo_fuzz_root="$(mktemp -d -- "$RUNNER_TEMP/cargo-fuzz.XXXXXX")"
+          cargo install cargo-fuzz --locked --root "$cargo_fuzz_root" --force
+          printf '%s\n' "$cargo_fuzz_root/bin" >> "$GITHUB_PATH"
 
       # TNG-027: bounded smoke run, not a real fuzzing campaign -- this
       # exists to catch a target that's gone stale (no longer builds
@@ -300,7 +322,7 @@ jobs:
   sidecar:
     name: Compatible-client service quality
     timeout-minutes: 30
-    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","Linux","X64"]') || fromJSON('["ubuntu-latest"]') }}
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && fromJSON('["self-hosted","Linux","X64","host"]') || fromJSON('["ubuntu-latest"]') }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -320,15 +342,19 @@ jobs:
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
 
       - name: Build compatible-client service
+        env:
+          RUSTUP_TOOLCHAIN: stable
         run: cargo build --locked --manifest-path sidecar/Cargo.toml
 
       - name: Test compatible-client service
+        env:
+          RUSTUP_TOOLCHAIN: stable
         run: python3 scripts/validate_development.py --task sidecar-tests
 
   desktop:
     name: Desktop client quality
     timeout-minutes: 40
-    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","Linux","X64"]') || fromJSON('["ubuntu-latest"]') }}
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && fromJSON('["self-hosted","Linux","X64","host"]') || fromJSON('["ubuntu-latest"]') }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -365,7 +391,7 @@ jobs:
 
   webui:
     timeout-minutes: 20
-    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","Linux","X64"]') || fromJSON('["ubuntu-latest"]') }}
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && fromJSON('["self-hosted","Linux","X64","host"]') || fromJSON('["ubuntu-latest"]') }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -410,7 +436,7 @@ jobs:
         working-directory: webui
         env:
           DBUS_SESSION_BUS_ADDRESS: unix:path=/dev/null
-          TNG_WEBUI_SNAPSHOT_PROFILE: ${{ github.event_name == 'pull_request' && 'hosted' || 'self-hosted' }}
+          TNG_WEBUI_SNAPSHOT_PROFILE: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && 'self-hosted' || 'hosted' }}
         run: npm run test:e2e -- --reporter=line
 
       - name: Upload WebUI browser failure evidence

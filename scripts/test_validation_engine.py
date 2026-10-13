@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import contextlib
+import hashlib
+import os
 import shutil
 import subprocess
 import sys
@@ -74,14 +77,35 @@ class ValidationEngineTests(unittest.TestCase):
         if node is None:
             self.skipTest("Node.js is unavailable for the trusted-launcher canary")
         canary = engine.ROOT / "scripts/validation_engine/trusted-test-launcher.contract.mjs"
-        result = subprocess.run(
-            [node, "--test", str(canary)],
-            cwd=engine.ROOT,
-            capture_output=True,
-            check=False,
-            text=True,
-            timeout=30,
-        )
+        command = [node, "--test", str(canary)]
+        environment = os.environ.copy()
+        if os.name == "posix":
+            # Keep Unix socket names short while storing fixture data in the task-private temp directory.
+            with tempfile.TemporaryDirectory(prefix="tng-", dir="/tmp") as alias_root:
+                short_tmp = Path(alias_root) / "tmp"
+                short_tmp.symlink_to(Path(tempfile.gettempdir()), target_is_directory=True)
+                environment.update(
+                    {"TMPDIR": str(short_tmp), "TMP": str(short_tmp), "TEMP": str(short_tmp)}
+                )
+                result = subprocess.run(
+                    command,
+                    cwd=engine.ROOT,
+                    capture_output=True,
+                    check=False,
+                    text=True,
+                    timeout=90,
+                    env=environment,
+                )
+        else:
+            result = subprocess.run(
+                command,
+                cwd=engine.ROOT,
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=90,
+                env=environment,
+            )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_child_environment_uses_allowlist_and_run_owned_paths(self) -> None:
@@ -97,6 +121,7 @@ class ValidationEngineTests(unittest.TestCase):
             {
                 "PATH": "/toolchain/bin",
                 "RUSTUP_HOME": "/toolchain/rustup",
+                "RUSTUP_TOOLCHAIN": "1.97.0",
                 "HOME": "/operator/home",
                 "TMPDIR": "/operator/tmp",
                 "CARGO_HOME": "/operator/cargo",
@@ -121,7 +146,7 @@ class ValidationEngineTests(unittest.TestCase):
         self.assertEqual(environment["NODE_ENV"], "test")
         self.assertEqual(environment["CI"], "true")
         self.assertEqual(environment["FIXTURE_SETTING"], "expected")
-        for key in ("PYTHONPATH", "NODE_OPTIONS", "GITHUB_TOKEN", "HTTPS_PROXY", "RANDOM_PRIVATE_VALUE"):
+        for key in ("PYTHONPATH", "NODE_OPTIONS", "GITHUB_TOKEN", "HTTPS_PROXY", "RANDOM_PRIVATE_VALUE", "RUSTUP_TOOLCHAIN"):
             self.assertNotIn(key, environment)
         with self.assertRaisesRegex(engine.ValidationError, "unapproved inherited environment variable"):
             engine._safe_environment(
@@ -138,6 +163,28 @@ class ValidationEngineTests(unittest.TestCase):
             {"PATH": "/toolchain/bin", "HOME": "/operator/home"},
         )
         self.assertEqual(fallback_environment["RUSTUP_HOME"], "/operator/home/.rustup")
+
+    def test_cargo_tasks_preserve_the_workflow_selected_rust_toolchain(self) -> None:
+        run_root = self.root / "toolchain-evidence"
+        run_root.mkdir(mode=0o700)
+        inherited = {
+            "PATH": "/toolchain/bin",
+            "RUSTUP_HOME": "/toolchain/rustup",
+            "RUSTUP_TOOLCHAIN": "1.97.0",
+        }
+        task_ids = (
+            "workspace-format",
+            "sidecar-format",
+            "workspace-tests",
+            "workspace-clippy",
+            "sidecar-tests",
+            "sidecar-clippy",
+        )
+        for task_id in task_ids:
+            with self.subTest(task_id=task_id):
+                task = next(task for task in engine.TASKS if task["id"] == task_id)
+                environment = engine._safe_environment(task, run_root, inherited)
+                self.assertEqual(environment["RUSTUP_TOOLCHAIN"], "1.97.0")
 
     def test_plan_rejects_unapproved_inherited_environment_names(self) -> None:
         tasks = tuple(dict(task) for task in engine.TASKS)
@@ -248,6 +295,76 @@ class ValidationEngineTests(unittest.TestCase):
         self.assertIn("1/1 selected tasks complete (1 passed", messages[-1])
         self.assertEqual((evidence / "fixture-test.log").stat().st_mode & 0o777, 0o600)
         self.assertTrue((evidence / "receipt.json").is_file())
+
+    def test_task_log_is_bounded_marked_and_hashed_from_persisted_bytes(self) -> None:
+        output_size = 16 * 1024 * 1024 + 1
+        log = self.root / "bounded.log"
+        with open(os.devnull, "w", encoding="utf-8") as sink:
+            with contextlib.redirect_stderr(sink):
+                result = engine.run_command(
+                    {
+                        "id": "bounded-output",
+                        "kind": "check",
+                        "command": [
+                            sys.executable,
+                            "-c",
+                            "import sys; sys.stdout.buffer.write(b'x' * " + str(output_size) + "); "
+                            "sys.stdout.write('VALIDATION_OUTPUT_COMPLETE')",
+                        ],
+                        "timeout": 30,
+                    },
+                    self.root,
+                    log,
+                    elapsed_progress=lambda _elapsed: None,
+                    heartbeat_seconds=1,
+                )
+        contents = log.read_bytes()
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["output_bytes"], output_size + len("VALIDATION_OUTPUT_COMPLETE"))
+        self.assertEqual(len(contents), 16 * 1024 * 1024)
+        self.assertTrue(contents.endswith(b"\n[validation log truncated after 16 MiB]\n"))
+        self.assertEqual(result["log_sha256"], hashlib.sha256(contents).hexdigest())
+
+    def test_task_log_creation_refuses_a_preexisting_symlink(self) -> None:
+        outside = self.root / "outside.log"
+        outside.write_text("preserve this file", encoding="utf-8")
+        log = self.root / "symlink.log"
+        log.symlink_to(outside)
+        with self.assertRaises(FileExistsError):
+            engine.run_command(
+                {
+                    "id": "symlink-log",
+                    "kind": "check",
+                    "command": [sys.executable, "-c", "print('should not run')"],
+                    "timeout": 10,
+                },
+                self.root,
+                log,
+                elapsed_progress=lambda _elapsed: None,
+                heartbeat_seconds=1,
+            )
+        self.assertEqual(outside.read_text(encoding="utf-8"), "preserve this file")
+
+    def test_task_executor_reaps_orphaned_descendants(self) -> None:
+        log = self.root / "orphan.log"
+        result = engine.run_command(
+            {
+                "id": "orphan-process",
+                "kind": "check",
+                "command": [
+                    sys.executable,
+                    "-c",
+                    "import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])",
+                ],
+                "timeout": 10,
+            },
+            self.root,
+            log,
+            elapsed_progress=lambda _elapsed: None,
+            heartbeat_seconds=1,
+        )
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"], "task left subprocesses running")
 
     def test_executor_blocks_later_tasks_after_candidate_changes(self) -> None:
         first = {
