@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -74,14 +75,35 @@ class ValidationEngineTests(unittest.TestCase):
         if node is None:
             self.skipTest("Node.js is unavailable for the trusted-launcher canary")
         canary = engine.ROOT / "scripts/validation_engine/trusted-test-launcher.contract.mjs"
-        result = subprocess.run(
-            [node, "--test", str(canary)],
-            cwd=engine.ROOT,
-            capture_output=True,
-            check=False,
-            text=True,
-            timeout=30,
-        )
+        command = [node, "--test", str(canary)]
+        environment = os.environ.copy()
+        if os.name == "posix":
+            # Keep Unix socket names short while storing fixture data in the task-private temp directory.
+            with tempfile.TemporaryDirectory(prefix="tng-", dir="/tmp") as alias_root:
+                short_tmp = Path(alias_root) / "tmp"
+                short_tmp.symlink_to(Path(tempfile.gettempdir()), target_is_directory=True)
+                environment.update(
+                    {"TMPDIR": str(short_tmp), "TMP": str(short_tmp), "TEMP": str(short_tmp)}
+                )
+                result = subprocess.run(
+                    command,
+                    cwd=engine.ROOT,
+                    capture_output=True,
+                    check=False,
+                    text=True,
+                    timeout=30,
+                    env=environment,
+                )
+        else:
+            result = subprocess.run(
+                command,
+                cwd=engine.ROOT,
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=30,
+                env=environment,
+            )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_child_environment_uses_allowlist_and_run_owned_paths(self) -> None:
@@ -97,6 +119,7 @@ class ValidationEngineTests(unittest.TestCase):
             {
                 "PATH": "/toolchain/bin",
                 "RUSTUP_HOME": "/toolchain/rustup",
+                "RUSTUP_TOOLCHAIN": "1.97.0",
                 "HOME": "/operator/home",
                 "TMPDIR": "/operator/tmp",
                 "CARGO_HOME": "/operator/cargo",
@@ -121,7 +144,7 @@ class ValidationEngineTests(unittest.TestCase):
         self.assertEqual(environment["NODE_ENV"], "test")
         self.assertEqual(environment["CI"], "true")
         self.assertEqual(environment["FIXTURE_SETTING"], "expected")
-        for key in ("PYTHONPATH", "NODE_OPTIONS", "GITHUB_TOKEN", "HTTPS_PROXY", "RANDOM_PRIVATE_VALUE"):
+        for key in ("PYTHONPATH", "NODE_OPTIONS", "GITHUB_TOKEN", "HTTPS_PROXY", "RANDOM_PRIVATE_VALUE", "RUSTUP_TOOLCHAIN"):
             self.assertNotIn(key, environment)
         with self.assertRaisesRegex(engine.ValidationError, "unapproved inherited environment variable"):
             engine._safe_environment(
@@ -138,6 +161,28 @@ class ValidationEngineTests(unittest.TestCase):
             {"PATH": "/toolchain/bin", "HOME": "/operator/home"},
         )
         self.assertEqual(fallback_environment["RUSTUP_HOME"], "/operator/home/.rustup")
+
+    def test_cargo_tasks_preserve_the_workflow_selected_rust_toolchain(self) -> None:
+        run_root = self.root / "toolchain-evidence"
+        run_root.mkdir(mode=0o700)
+        inherited = {
+            "PATH": "/toolchain/bin",
+            "RUSTUP_HOME": "/toolchain/rustup",
+            "RUSTUP_TOOLCHAIN": "1.97.0",
+        }
+        task_ids = (
+            "workspace-format",
+            "sidecar-format",
+            "workspace-tests",
+            "workspace-clippy",
+            "sidecar-tests",
+            "sidecar-clippy",
+        )
+        for task_id in task_ids:
+            with self.subTest(task_id=task_id):
+                task = next(task for task in engine.TASKS if task["id"] == task_id)
+                environment = engine._safe_environment(task, run_root, inherited)
+                self.assertEqual(environment["RUSTUP_TOOLCHAIN"], "1.97.0")
 
     def test_plan_rejects_unapproved_inherited_environment_names(self) -> None:
         tasks = tuple(dict(task) for task in engine.TASKS)
