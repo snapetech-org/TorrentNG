@@ -183,6 +183,7 @@ class Benchmark:
         self._env("INTEROP_SOURCE_REVISION", self._git("rev-parse", "HEAD"))
         self._env("INTEROP_TORRENTNG_CONFIG", self.workdir / "config/torrentngd.config.toml")
         self._env("INTEROP_RTORRENT_CONFIG", self.workdir / "config/rtorrent-benchmark.rc")
+        self._env("TMPDIR", self.workdir / "tmp")
         self._env("INTEROP_CLIENT_BIND_ADDR", os.environ.get("TNG_CLIENT_BENCH_PEER_BIND", "0.0.0.0"))
         self._env("INTEROP_RTORRENT_BIND_ADDR", os.environ.get("TNG_CLIENT_BENCH_PEER_BIND", "0.0.0.0"))
         self._env("PUID", os.getuid())
@@ -272,7 +273,7 @@ class Benchmark:
         return json.loads(body) if body else None
 
     def prepare(self):
-        for rel in ("artifacts", "config", "downloads", "logs", "torrents", "watch/rtorrent"):
+        for rel in ("artifacts", "config", "downloads", "logs", "tmp", "torrents", "watch/rtorrent"):
             (self.workdir / rel).mkdir(parents=True, exist_ok=True)
         for client in CLIENTS:
             directory = self.workdir / "downloads" / client
