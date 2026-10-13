@@ -47,6 +47,27 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         for runner in runners:
             self.assertIn("host", runner)
 
+    def test_webui_snapshot_profile_matches_runner_selection(self) -> None:
+        source = CI_WORKFLOW.read_text(encoding="utf-8")
+        local_runner = next(
+            line.strip()
+            for line in source.splitlines()
+            if line.lstrip().startswith("runs-on:") and "self-hosted" in line
+        )
+        snapshot_profile = next(
+            line.strip()
+            for line in source.splitlines()
+            if "TNG_WEBUI_SNAPSHOT_PROFILE:" in line
+        )
+        for condition in (
+            "github.event_name == 'pull_request' && github.event.pull_request.user.login == 'snapetech'",
+            "github.event_name == 'push' && github.ref == 'refs/heads/main'",
+            "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
+        ):
+            self.assertIn(condition, local_runner)
+            self.assertIn(condition, snapshot_profile)
+        self.assertIn("&& 'self-hosted' || 'hosted'", snapshot_profile)
+
 
 if __name__ == "__main__":
     unittest.main()
