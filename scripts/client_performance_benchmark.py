@@ -13,7 +13,6 @@ import os
 import platform
 import re
 import shutil
-import signal
 import socket
 import subprocess
 import sys
@@ -27,7 +26,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_FILE = ROOT / "deploy/interop/compose.yml"
-CLIENTS = ("torrentngd", "qbittorrent", "transmission", "deluge", "rtorrent")
+ALL_CLIENTS = ("torrentngd", "qbittorrent", "transmission", "deluge", "rtorrent")
+CLIENTS = tuple(
+    item.strip() for item in os.environ.get("TNG_CLIENT_BENCH_CLIENTS", ",".join(ALL_CLIENTS)).split(",")
+    if item.strip()
+)
+if not CLIENTS or set(CLIENTS) - set(ALL_CLIENTS):
+    raise SystemExit("TNG_CLIENT_BENCH_CLIENTS must list one or more supported client IDs")
 LABELS = {
     "torrentngd": "TorrentNG",
     "qbittorrent": "qBittorrent",
@@ -40,6 +45,7 @@ RATE_BPS = int(os.environ.get("TNG_CLIENT_BENCH_RATE_BPS", 32 * 1024 * 1024))
 MAX_PEERS = int(os.environ.get("TNG_CLIENT_BENCH_MAX_PEERS", "32"))
 DOWNLOAD_TIMEOUT = int(os.environ.get("TNG_CLIENT_BENCH_TIMEOUT_SECS", "1800"))
 SEED_TIMEOUT = int(os.environ.get("TNG_CLIENT_BENCH_SEED_TIMEOUT_SECS", "900"))
+SEED_NO_PEER_TIMEOUT = int(os.environ.get("TNG_CLIENT_BENCH_NO_PEER_TIMEOUT_SECS", "90"))
 INTERVAL = float(os.environ.get("TNG_CLIENT_BENCH_SAMPLE_SECS", "2"))
 TORRENT_INDEX = "https://cdimage.debian.org/debian-cd/current/amd64/bt-cd/"
 SHA256SUMS_URL = "https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/SHA256SUMS"
@@ -170,16 +176,23 @@ class Benchmark:
             ))
         self.project = "tngbench" + re.sub(r"[^a-z0-9]", "", self.stamp.lower())
         self.image = f"torrentng/torrentngd:benchmark-{self.stamp.lower()}"
+        self.aria2_image = f"torrentng/interop-aria2:benchmark-{self.stamp.lower()}"
         self.env = os.environ.copy()
         self.ports = {}
         used_ports = set()
         self.sessions = {}
         self.results = []
         self.samples = []
+        self.partial_seed_rows = {}
+        self.partial_seed_elapsed = {}
+        self.aria2_version = "unknown"
         self.cleanup_status = "pending"
         self.failure = ""
         self._env("INTEROP_WORKDIR", self.workdir)
         self._env("INTEROP_TORRENTNG_IMAGE", self.image)
+        self._env("INTEROP_ARIA2_IMAGE", self.aria2_image)
+        self._env("INTEROP_MAX_PEERS", MAX_PEERS)
+        self._env("INTEROP_RATE_BPS", RATE_BPS)
         self._env("INTEROP_SOURCE_REVISION", self._git("rev-parse", "HEAD"))
         self._env("INTEROP_TORRENTNG_CONFIG", self.workdir / "config/torrentngd.config.toml")
         self._env("INTEROP_RTORRENT_CONFIG", self.workdir / "config/rtorrent-benchmark.rc")
@@ -196,6 +209,7 @@ class Benchmark:
             ("deluge", "INTEROP_DELUGE_HOST_PORT"),
             ("deluge_daemon", "INTEROP_DELUGE_DAEMON_PORT"),
             ("tracker", "INTEROP_TRACKER_HOST_PORT"),
+            ("aria2_rpc", "INTEROP_ARIA2_RPC_HOST_PORT"),
             ("peer_torrentngd", "INTEROP_RUST_PEER_PORT"),
             ("peer_qbittorrent", "INTEROP_QBIT_PEER_PORT"),
             ("peer_transmission", "INTEROP_TRANSMISSION_PEER_PORT"),
@@ -273,7 +287,7 @@ class Benchmark:
         return json.loads(body) if body else None
 
     def prepare(self):
-        for rel in ("artifacts", "config", "downloads", "logs", "tmp", "torrents", "watch/rtorrent"):
+        for rel in ("artifacts", "config", "downloads", "leecher", "logs", "tmp", "torrents", "watch/rtorrent"):
             (self.workdir / rel).mkdir(parents=True, exist_ok=True)
         for client in CLIENTS:
             directory = self.workdir / "downloads" / client
@@ -531,18 +545,18 @@ class Benchmark:
             self._scgi("throttle.global_down.max_rate.set_kb", RATE_BPS // 1024)
             self._scgi("throttle.global_up.max_rate.set_kb", RATE_BPS // 1024)
 
-    def _status(self, client, info_hash, name):
+    def _status(self, client, info_hash, name, *, allow_name_fallback=True):
         if client == "torrentngd":
             rows = json.loads(self._torrentng_request("/api/qb/v2/torrents/info")) or []
             row = next((r for r in rows if r.get("hash", "").lower() == info_hash.lower()), None)
-            if row is None:
+            if row is None and allow_name_fallback:
                 row = next((r for r in rows if r.get("name") == name), None)
             return self._qbit_shape(row)
         if client == "qbittorrent":
             rows = self.json(client, "/api/v2/torrents/info",
                              headers={"Host": "localhost:8080"}) or []
             row = next((r for r in rows if r.get("hash", "").lower() == info_hash.lower()), None)
-            if row is None:
+            if row is None and allow_name_fallback:
                 row = next((r for r in rows if r.get("name") == name), None)
             return self._qbit_shape(row)
         if client == "transmission":
@@ -554,7 +568,7 @@ class Benchmark:
             style = self.sessions[client].transmission_style
             hash_key = "hash_string" if style == "snake" else "hashString"
             row = next((r for r in rows if r.get(hash_key, "").lower() == info_hash.lower()), None)
-            if row is None:
+            if row is None and allow_name_fallback:
                 row = next((r for r in rows if r.get("name") == name), None)
             progress_key = "percent_done" if style == "snake" else "percentDone"
             down_key = "rate_download" if style == "snake" else "rateDownload"
@@ -576,7 +590,7 @@ class Benchmark:
             torrents = response.get("torrents") or {}
             values = torrents.values() if isinstance(torrents, dict) else torrents
             row = next((r for r in values if r.get("hash", "").lower() == info_hash.lower()), None)
-            if row is None:
+            if row is None and allow_name_fallback:
                 row = next((r for r in values if r.get("name") == name), None)
             return {
                 "progress": float(row.get("progress", 0)) / 100 if row else 0.0,
@@ -591,7 +605,7 @@ class Benchmark:
             "d.peers_connected=",
         ) or []
         row = next((r for r in rows if str(r[0]).lower() == info_hash.lower()), None)
-        if row is None:
+        if row is None and allow_name_fallback:
             row = next((r for r in rows if r[1] == name), None)
         if row is None:
             return self._empty_status()
@@ -852,7 +866,7 @@ class Benchmark:
         self._add_torrent(client, torrent_path, save_path, skip_check=True)
         deadline = time.monotonic() + 300
         while time.monotonic() < deadline:
-            state = self._status(client, info_hash, payload.name)
+            state = self._status(client, info_hash, payload.name, allow_name_fallback=False)
             if state["progress"] >= 0.999:
                 break
             time.sleep(2)
@@ -861,37 +875,29 @@ class Benchmark:
 
         leecher_dir = self.workdir / "leecher" / client
         leecher_dir.mkdir(parents=True, exist_ok=True)
-        port = available_port()
+        port = self.ports["aria2_rpc"]
         secret = hashlib.sha256(f"{self.project}-{client}".encode()).hexdigest()[:32]
-        log_path = self.workdir / "logs" / f"aria2-{client}.log"
-        log_file = log_path.open("w")
-        proc = subprocess.Popen([
-            "aria2c", "--no-conf=true", "--enable-rpc=true", "--rpc-listen-all=false",
-            f"--rpc-listen-port={port}", f"--rpc-secret={secret}",
-            "--enable-dht=false", "--bt-enable-lpd=false", f"--bt-max-peers={MAX_PEERS}",
-            f"--max-overall-download-limit={RATE_BPS}",
-            "--check-integrity=true", "--continue=false", "--summary-interval=0",
-            "--console-log-level=warn",
-            f"--dir={leecher_dir}", str(torrent_path),
-        ], cwd=self.workdir, stdout=log_file, stderr=subprocess.STDOUT, start_new_session=True)
+        self._env("INTEROP_ARIA2_RPC_HOST_PORT", port)
+        self._env("INTEROP_ARIA2_RPC_SECRET", secret)
+        self._env("INTEROP_ARIA2_DOWNLOAD_DIR", leecher_dir)
+        self._env("INTEROP_SEED_TORRENT", torrent_path)
+        started = time.monotonic()
+        deadline = started + SEED_TIMEOUT
+        rows = []
+        self.partial_seed_rows[client] = rows
+        self.partial_seed_elapsed[client] = 0.0
+        next_log = 0
+        last_peer = started
         try:
-            started = time.monotonic()
-            deadline = started + SEED_TIMEOUT
-            rows = []
-            gid = ""
-            next_log = 0
+            self.compose("up", "-d", "seed_leecher", quiet=True, timeout=180)
             while time.monotonic() < deadline:
-                if proc.poll() is not None:
-                    raise RuntimeError(f"aria2 leecher exited; see {log_path}")
                 try:
                     active = self._aria2(port, secret, "tellActive", [[
                         "gid", "status", "completedLength", "totalLength", "downloadSpeed",
                         "uploadSpeed", "connections",
                     ]])
                 except urllib.error.URLError:
-                    if proc.poll() is not None:
-                        raise RuntimeError(f"aria2 leecher exited; see {log_path}")
-                    if time.monotonic() - started < 20:
+                    if time.monotonic() - started < 30:
                         time.sleep(0.25)
                         continue
                     raise
@@ -901,10 +907,11 @@ class Benchmark:
                         "uploadSpeed", "connections",
                     ]]) or []
                 if not active:
+                    if time.monotonic() - started >= 30:
+                        raise RuntimeError("aria2 leecher did not load the private torrent")
                     time.sleep(1)
                     continue
                 item = active[0]
-                gid = item.get("gid", gid)
                 total = int(item.get("totalLength", 0))
                 completed = int(item.get("completedLength", 0))
                 state = {
@@ -915,6 +922,8 @@ class Benchmark:
                 }
                 elapsed = time.monotonic() - started
                 rows.append(self._sample(client, "controlled_seed", elapsed, state))
+                self.partial_seed_rows[client] = rows
+                self.partial_seed_elapsed[client] = elapsed
                 if elapsed >= next_log:
                     print(
                         f"[{LABELS[client]} seed] {state['progress']:.1%}, "
@@ -923,6 +932,13 @@ class Benchmark:
                         flush=True,
                     )
                     next_log = elapsed + 20
+                if state["peers"]:
+                    last_peer = time.monotonic()
+                elif time.monotonic() - last_peer >= SEED_NO_PEER_TIMEOUT:
+                    raise TimeoutError(
+                        f"{LABELS[client]} controlled seed had no connected leecher peers "
+                        f"after {SEED_NO_PEER_TIMEOUT}s"
+                    )
                 if total >= size and completed >= size:
                     candidate = leecher_dir / payload.name
                     if not candidate.is_file():
@@ -938,20 +954,10 @@ class Benchmark:
             raise TimeoutError(f"controlled seed transfer exceeded {SEED_TIMEOUT}s")
         finally:
             try:
-                if proc.poll() is None:
-                    self._aria2(port, secret, "shutdown")
+                self._aria2(port, secret, "shutdown")
             except Exception:
                 pass
-            try:
-                proc.wait(timeout=8)
-            except subprocess.TimeoutExpired:
-                proc.send_signal(signal.SIGTERM)
-                try:
-                    proc.wait(timeout=8)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait(timeout=5)
-            log_file.close()
+            self.compose("stop", "seed_leecher", check=False, quiet=True, timeout=30)
 
     @staticmethod
     def _summary(rows, phase):
@@ -988,20 +994,31 @@ class Benchmark:
             raise RuntimeError(f"Debian SHA-256 mismatch: {actual}")
         self._pause(client, meta["info_hash"])
 
-        if not private_path.exists():
-            local_hash = make_private_torrent(
-                payload, f"http://{tracker_ip}:6969/announce", private_path,
-            )
-            meta["local_info_hash"] = local_hash
-        seed_elapsed, seed_rows, seed_sha = self._seed_test(
-            client, payload, private_path, meta["local_info_hash"],
-            meta["size"], meta["sha256"],
+        local_hash = make_private_torrent(
+            payload, f"http://{tracker_ip}:6969/announce", private_path,
         )
-        self._pause(client, meta["local_info_hash"])
+        seed_error = ""
+        try:
+            seed_elapsed, seed_rows, seed_sha = self._seed_test(
+                client, payload, private_path, local_hash, meta["size"], meta["sha256"],
+            )
+            seed_result = "PASS"
+        except Exception as error:
+            seed_elapsed = self.partial_seed_elapsed.get(client, 0.0)
+            seed_rows = self.partial_seed_rows.get(client, [])
+            seed_sha = ""
+            seed_result = "FAIL"
+            seed_error = f"{type(error).__name__}: {error}"
+        finally:
+            try:
+                self._pause(client, local_hash)
+            except Exception:
+                pass
         down = self._summary(public_rows, "public_download")
         seed = self._summary(seed_rows, "controlled_seed")
+        seed_bytes = int(meta["size"] * float(seed_rows[-1][4])) if seed_rows else 0
         self.results.append({
-            "client": client, "version": version, "public": "PASS", "seed": "PASS",
+            "client": client, "version": version, "public": "PASS", "seed": seed_result,
             "download_seconds": elapsed,
             "download_mib_s": meta["size"] / elapsed / 1048576,
             "download_peak_mib_s": down["peak_rate"] / 1048576,
@@ -1009,17 +1026,25 @@ class Benchmark:
             "download_peak_rss": down["peak_rss"], "download_peak_peers": down["peak_peers"],
             "download_sha": actual,
             "seed_seconds": seed_elapsed,
-            "seed_mib_s": meta["size"] / seed_elapsed / 1048576,
+            "seed_bytes": seed_bytes,
+            "seed_mib_s": seed_bytes / seed_elapsed / 1048576 if seed_elapsed else 0,
             "seed_peak_mib_s": seed["peak_rate"] / 1048576,
             "seed_mean_cpu": seed["mean_cpu"], "seed_peak_cpu": seed["peak_cpu"],
             "seed_peak_rss": seed["peak_rss"], "seed_peak_peers": seed["peak_peers"],
-            "seed_sha": seed_sha,
+            "seed_sha": seed_sha, "seed_error": seed_error,
         })
-        print(
-            f"[{LABELS[client]}] download {meta['size'] / elapsed / 1048576:.2f} MiB/s; "
-            f"seed {meta['size'] / seed_elapsed / 1048576:.2f} MiB/s; both hashes verified",
-            flush=True,
-        )
+        if seed_result == "PASS":
+            print(
+                f"[{LABELS[client]}] download {meta['size'] / elapsed / 1048576:.2f} MiB/s; "
+                f"seed {seed_bytes / seed_elapsed / 1048576:.2f} MiB/s; both hashes verified",
+                flush=True,
+            )
+        else:
+            print(
+                f"[{LABELS[client]}] download {meta['size'] / elapsed / 1048576:.2f} MiB/s; "
+                f"seed incomplete after {seed_elapsed:.1f}s ({seed_error})",
+                flush=True,
+            )
 
     def _write_report(self, meta, client_images):
         load_end = os.getloadavg()
@@ -1051,7 +1076,8 @@ class Benchmark:
             ", ".join(LABELS[c] for c in CLIENTS),
             "- Container image references: " + "; ".join(
                 f"{LABELS[c]}: {client_images.get(c, 'not started')}" for c in CLIENTS
-            ),
+            ) + f"; aria2 leecher: {client_images.get('seed_leecher', self.aria2_image)}",
+            f"- aria2 leecher version: {self.aria2_version}",
             "- The TorrentNG image was built from the recorded checkout. Reference "
             "images are pinned by digest in deploy/interop/compose.yml.",
             "",
@@ -1076,11 +1102,11 @@ class Benchmark:
             "## Controlled seeding",
             "",
             "Each client seeded the same verified ISO through a private single-file "
-            "torrent on the isolated Compose OpenTracker. One host aria2c leecher "
+            "torrent on the isolated Compose OpenTracker. One aria2c container "
             "downloaded and checked Debian's published SHA-256. This measures a "
             "controlled one-seeder/one-leecher transfer, not public swarm demand.",
             "",
-            "| Client | Result | Leecher completion (s) | Average upload (MiB/s) | Peak sampled (MiB/s) | Mean CPU (%) | Peak CPU (%) | Peak RSS (MiB) | Peak peers | Leecher SHA-256 |",
+            "| Client | Result | Leecher time (s) | Average upload (MiB/s) | Peak sampled (MiB/s) | Mean CPU (%) | Peak CPU (%) | Peak RSS (MiB) | Peak peers | Leecher SHA-256 / failure |",
             "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
         ])
         for client in CLIENTS:
@@ -1090,9 +1116,12 @@ class Benchmark:
                 f"{row.get('seed_seconds', 0):.1f} | {row.get('seed_mib_s', 0):.2f} | "
                 f"{row.get('seed_peak_mib_s', 0):.2f} | {row.get('seed_mean_cpu', 0):.2f} | "
                 f"{row.get('seed_peak_cpu', 0):.2f} | {row.get('seed_peak_rss', 0) / 1048576:.1f} | "
-                f"{row.get('seed_peak_peers', 0)} | {row.get('seed_sha', row.get('error', 'n/a'))} |"
+                f"{row.get('seed_peak_peers', 0)} | "
+                f"{row.get('seed_sha') or row.get('seed_error') or row.get('error', 'not verified')} |"
             )
         lines.extend([
+            "",
+            "The tracker is restarted between clients to discard stale peer records.",
             "",
             "## Method and scope",
             "",
@@ -1106,8 +1135,10 @@ class Benchmark:
             "100% represents one logical core. Memory is container usage rather than "
             "process-only RSS.",
             "- Public download uses the current public Debian swarm. Controlled seeding "
-            "uses a private task-local tracker and one aria2c leecher, which isolates "
-            "each client's payload from unrelated swarm peers.",
+            "uses a private task-local tracker and one aria2c container on the same "
+            "Compose network. The tracker is reset between clients. The no-peer "
+            f"startup limit is {SEED_NO_PEER_TIMEOUT}s; full transfer limit is "
+            f"{SEED_TIMEOUT}s.",
             "",
             "## Confidence and limitations",
             "",
@@ -1136,18 +1167,23 @@ class Benchmark:
             raise RuntimeError("rate ceiling, peer ceiling, and sample interval must be positive")
         if DOWNLOAD_TIMEOUT < 60 or SEED_TIMEOUT < 60:
             raise RuntimeError("download and seed timeouts must be at least 60 seconds")
+        if SEED_NO_PEER_TIMEOUT < 10:
+            raise RuntimeError("no-peer timeout must be at least 10 seconds")
         for required in ("docker", "aria2c", "findmnt", "git"):
             if shutil.which(required) is None:
                 raise RuntimeError(f"missing required command: {required}")
         print(f"Scratch: {self.workdir}", flush=True)
         print(f"Compose project: {self.project}", flush=True)
         self.prepare()
-        self.compose("build", "torrentngd", timeout=3600)
+        self.compose("build", "torrentngd", "seed_leecher", timeout=3600)
+        self.aria2_version = run_command(
+            ["docker", "run", "--rm", self.aria2_image, "--version"], quiet=True,
+        )[0].splitlines()[0]
         tracker_ip = self._start_tracker()
         meta = self._torrent_metadata()
-        private_path = self.workdir / "torrents/private-seed.torrent"
-        client_images = {}
+        client_images = {"seed_leecher": self.aria2_image}
         for client in CLIENTS:
+            private_path = self.workdir / "torrents" / f"private-seed-{client}.torrent"
             try:
                 self._run_one(client, meta, tracker_ip, private_path)
             except Exception as error:
@@ -1155,7 +1191,7 @@ class Benchmark:
                       file=sys.stderr, flush=True)
                 self.results.append({
                     "client": client, "version": "unavailable",
-                    "public": "FAIL", "seed": "FAIL",
+                    "public": "FAIL", "seed": "NOT RUN",
                     "error": f"{type(error).__name__}: {error}",
                 })
             finally:
@@ -1167,6 +1203,7 @@ class Benchmark:
                     )
                     client_images[client] = image.strip()
                 self.compose("stop", client, check=False, quiet=True, timeout=60)
+                self.compose("restart", "opentracker", check=False, quiet=True, timeout=60)
         self._write_report(meta, client_images)
         return int(not (
             len(self.results) == len(CLIENTS)
@@ -1179,6 +1216,8 @@ class Benchmark:
                          check=False, quiet=True, timeout=180)
             self.cleanup_status = "isolated Compose project, containers, and named volumes removed"
             run_command(["docker", "image", "rm", self.image], env=self.env,
+                        check=False, quiet=True, timeout=60)
+            run_command(["docker", "image", "rm", self.aria2_image], env=self.env,
                         check=False, quiet=True, timeout=60)
         except Exception as error:
             self.cleanup_status = f"cleanup error: {type(error).__name__}: {error}"
@@ -1219,10 +1258,11 @@ def main():
 
 Runs one current Debian amd64 netinst public download and one controlled
 private seed transfer for TorrentNG, qBittorrent, Transmission, Deluge, and
-rTorrent. Docker Compose builds the current TorrentNG checkout and uses the
-reference images pinned in deploy/interop/compose.yml.
+rTorrent. Docker Compose builds the current TorrentNG checkout and a local
+aria2 leecher image; reference client images are pinned in deploy/interop/compose.yml.
 
 Environment:
+  TNG_CLIENT_BENCH_CLIENTS=torrentngd,qbittorrent,... (default: all five)
   TNG_CLIENT_BENCH_REPORT=/path/to/report.md
   TNG_CLIENT_BENCH_SCRATCH_ROOT=/existing/writable/path (default: /var/tmp)
   TNG_CLIENT_BENCH_WORKDIR=/new/path (must not already exist)
@@ -1230,12 +1270,12 @@ Environment:
   TNG_CLIENT_BENCH_MAX_PEERS=32
   TNG_CLIENT_BENCH_TIMEOUT_SECS=1800
   TNG_CLIENT_BENCH_SEED_TIMEOUT_SECS=900
+  TNG_CLIENT_BENCH_NO_PEER_TIMEOUT_SECS=90
   TNG_CLIENT_BENCH_SAMPLE_SECS=2
   TNG_CLIENT_BENCH_PEER_BIND=0.0.0.0
 
 The report and raw CSV remain in the repository; task scratch, the isolated
-Compose project, its volumes, and the benchmark-tagged TorrentNG image are
-removed on exit.""")
+Compose project, its volumes, and benchmark-tagged images are removed on exit.""")
         return 0
     bench = Benchmark()
     status = 1
