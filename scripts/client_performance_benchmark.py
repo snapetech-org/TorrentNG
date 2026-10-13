@@ -871,7 +871,7 @@ class Benchmark:
             "--enable-dht=false", "--bt-enable-lpd=false", f"--bt-max-peers={MAX_PEERS}",
             f"--max-overall-download-limit={RATE_BPS}",
             "--check-integrity=true", "--continue=false", "--summary-interval=0",
-            "--console-readout=false", "--console-log-level=warn",
+            "--console-log-level=warn",
             f"--dir={leecher_dir}", str(torrent_path),
         ], cwd=self.workdir, stdout=log_file, stderr=subprocess.STDOUT, start_new_session=True)
         try:
@@ -883,10 +883,18 @@ class Benchmark:
             while time.monotonic() < deadline:
                 if proc.poll() is not None:
                     raise RuntimeError(f"aria2 leecher exited; see {log_path}")
-                active = self._aria2(port, secret, "tellActive", [[
-                    "gid", "status", "completedLength", "totalLength", "downloadSpeed",
-                    "uploadSpeed", "connections",
-                ]])
+                try:
+                    active = self._aria2(port, secret, "tellActive", [[
+                        "gid", "status", "completedLength", "totalLength", "downloadSpeed",
+                        "uploadSpeed", "connections",
+                    ]])
+                except urllib.error.URLError:
+                    if proc.poll() is not None:
+                        raise RuntimeError(f"aria2 leecher exited; see {log_path}")
+                    if time.monotonic() - started < 20:
+                        time.sleep(0.25)
+                        continue
+                    raise
                 if not active:
                     active = self._aria2(port, secret, "tellWaiting", [0, 10, [
                         "gid", "status", "completedLength", "totalLength", "downloadSpeed",
