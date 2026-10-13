@@ -16,7 +16,7 @@
   "dependencies": {
     "@tanstack/react-query": "^5.104.1",
     "@tanstack/react-table": "^9.2.8",
-    "@tanstack/react-virtual": "^3.14.13",
+    "@tanstack/react-virtual": "^3.14.14",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },
