@@ -34,10 +34,11 @@ use rt_session::SessionRegistry;
 mod export;
 mod migrate;
 
-// jemalloc is the Linux daemon's global allocator. Runtime purge behavior is
-// configurable; compiling background-thread support alone does not enable a
-// purge worker. The authenticated /metrics endpoint exposes allocator stats
-// so live allocations and allocator residency can be measured separately.
+// jemalloc is the Linux daemon's global allocator. Keep background purge
+// workers disabled by default; the crate's runtime-support feature remains
+// available for deployments that explicitly enable them with MALLOC_CONF.
+// The authenticated /metrics endpoint exposes allocator stats so live
+// allocations and allocator residency can be measured separately.
 #[cfg(target_os = "linux")]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
