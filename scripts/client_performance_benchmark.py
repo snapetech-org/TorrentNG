@@ -73,13 +73,13 @@ def available_port(used=()):
     reserved = set(used)
     for _ in range(50):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as tcp:
-            tcp.bind(("0.0.0.0", 0))
+            tcp.bind(("127.0.0.1", 0))
             port = tcp.getsockname()[1]
         if port in reserved:
             continue
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
-                udp.bind(("0.0.0.0", port))
+                udp.bind(("127.0.0.1", port))
         except OSError:
             continue
         return port
