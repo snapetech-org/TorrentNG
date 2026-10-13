@@ -12,7 +12,6 @@ import {
 } from 'node:fs';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -48,8 +47,9 @@ test(
   { skip: !sandboxAvailable && 'bubblewrap user namespaces are unavailable' },
   async (t) => {
     const parent = mkdtempSync(
-      path.join(tmpdir(), 'trusted-validation-launcher-')
+      path.join('/tmp', 'tng-launcher-')
     );
+    const canaryEnv = { ...process.env, TMPDIR: parent };
     const source = path.join(parent, 'candidate');
     const hostFile = path.join(parent, 'host-canary.txt');
     const browserCache = path.join(parent, 'playwright-cache');
@@ -162,7 +162,7 @@ assert.throws(() => writeFileSync('/mnt/workspace/node_modules/marker.txt', 'cha
       ],
       {
         encoding: 'utf8',
-        env: { ...process.env, SECRET_CANARY: 'must-not-be-inherited' },
+        env: { ...canaryEnv, SECRET_CANARY: 'must-not-be-inherited' },
         timeout: 30_000,
       }
     );
@@ -180,7 +180,7 @@ assert.throws(() => writeFileSync('/mnt/workspace/node_modules/marker.txt', 'cha
     const linkedDependencyResult = spawnSync(
       process.execPath,
       [launcher, source, '--', process.execPath, '-e', 'process.exit(99)'],
-      { encoding: 'utf8', timeout: 30_000 }
+      { encoding: 'utf8', env: canaryEnv, timeout: 30_000 }
     );
     assert.equal(linkedDependencyResult.error, undefined);
     assert.equal(linkedDependencyResult.status, 1);

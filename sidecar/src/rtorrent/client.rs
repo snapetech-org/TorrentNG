@@ -1340,21 +1340,13 @@ mod multicall_tests {
 #[cfg(all(test, unix))]
 mod circuit_breaker_tests {
     use super::*;
-    use std::os::unix::fs::symlink;
     use tokio::io::AsyncReadExt;
 
     #[tokio::test]
     async fn background_timeout_opens_circuit_before_returning() {
-        // Keep the socket pathname short while its files remain in task-private temp storage.
-        let alias_root = tempfile::Builder::new()
-            .prefix("tng-")
-            .tempdir_in("/var/tmp")
-            .unwrap();
-        let short_tmp = alias_root.path().join("tmp");
-        symlink(std::env::temp_dir(), &short_tmp).unwrap();
         let directory = tempfile::Builder::new()
-            .prefix("rpc-")
-            .tempdir_in(&short_tmp)
+            .prefix("tng-")
+            .tempdir_in("/tmp")
             .unwrap();
         let socket_path = directory.path().join("rpc.sock");
         let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
