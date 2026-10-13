@@ -1,4 +1,5 @@
 import type { ThemeMode } from '../themes'
+import { REGIONAL_FORMAT_OPTIONS } from '../lib/localeFormat'
 
 export type MediaInferenceMode = 'full' | 'suffix' | 'hints' | 'off'
 
@@ -10,6 +11,8 @@ interface Props {
   themeMode?: ThemeMode
   onTheme?: (id: string) => void
   onThemeMode?: (mode: ThemeMode) => void
+  regionalFormat: string
+  onRegionalFormat: (value: string) => void
 }
 
 const MODES: Array<{ value: MediaInferenceMode; label: string; description: string }> = [
@@ -19,7 +22,7 @@ const MODES: Array<{ value: MediaInferenceMode; label: string; description: stri
   { value: 'off', label: 'Disabled', description: 'Show a neutral type icon for every torrent.' },
 ]
 
-export function AppearancePanel({ mediaInference, onMediaInference, themes = [], themeId, themeMode = 'dark', onTheme, onThemeMode }: Props) {
+export function AppearancePanel({ mediaInference, onMediaInference, themes = [], themeId, themeMode = 'dark', onTheme, onThemeMode, regionalFormat, onRegionalFormat }: Props) {
   const alternateMode: ThemeMode = themeMode === 'dark' ? 'light' : 'dark'
 
   return (
@@ -31,6 +34,23 @@ export function AppearancePanel({ mediaInference, onMediaInference, themes = [],
 
       {themes.length > 0 && (
         <div className="tng-card tng-appearance-panel" style={{ ...panelStyle, marginBottom: 12 }}>
+        <label htmlFor="regional-format" style={{ display: 'grid', gap: 6, color: 'var(--text)', fontSize: 12, fontWeight: 700 }}>
+          Date, time, and number format
+          <select
+            id="regional-format"
+            value={regionalFormat}
+            onChange={event => onRegionalFormat(event.currentTarget.value)}
+            style={{ color: 'var(--text)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 5, padding: '8px 9px', font: 'inherit' }}
+          >
+            {REGIONAL_FORMAT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </label>
+        <div style={{ fontSize: 11, color: 'var(--faint)', marginTop: 5 }}>
+          Changes date, time, and number formatting. Interface text remains English.
+        </div>
+      </div>
+
+      <div className="tng-card tng-appearance-panel" style={{ ...panelStyle, marginBottom: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
             <div>
               <h3 style={{ margin: 0, fontSize: 12, color: 'var(--text)', fontWeight: 800 }}>Theme palette</h3>

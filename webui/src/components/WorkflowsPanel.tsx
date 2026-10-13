@@ -1,3 +1,4 @@
+import { getRegionalLocale } from '../lib/localeFormat'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -100,7 +101,7 @@ export function WorkflowsPanel() {
         <div>
           <h2 id="workflow-rules-title" style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>Workflow Rules</h2>
           <div style={{ fontSize: 12, color: 'var(--faint)', marginTop: 2 }}>
-            {rules.length.toLocaleString()} rules · {runs.length.toLocaleString()} runs
+            {rules.length.toLocaleString(getRegionalLocale())} rules · {runs.length.toLocaleString(getRegionalLocale())} runs
           </div>
         </div>
         {pending && <Busy label={pending === '__save__' ? 'Saving' : 'Working'} />}
@@ -132,7 +133,7 @@ export function WorkflowsPanel() {
       {error && <Notice tone="error">{error}</Notice>}
       {preview && (
         <Notice tone="ok">
-          {preview.name}: {preview.count.toLocaleString()} matching torrent{preview.count === 1 ? '' : 's'}
+          {preview.name}: {preview.count.toLocaleString(getRegionalLocale())} matching torrent{preview.count === 1 ? '' : 's'}
         </Notice>
       )}
       <div style={{ ...scrollX, display: 'grid', gap: 8, maxWidth: 1080 }}>
@@ -232,11 +233,11 @@ function WorkflowRunRow({ run }: { run: WorkflowRun }) {
         {run.rule_name}
       </strong>
       <span style={{ color: 'var(--muted)' }}>{run.action}</span>
-      <span style={{ color: 'var(--faint)' }}>{matchedCount.toLocaleString()} matched</span>
-      <span style={{ color: 'var(--faint)' }}>{appliedCount.toLocaleString()} applied</span>
+      <span style={{ color: 'var(--faint)' }}>{matchedCount.toLocaleString(getRegionalLocale())} matched</span>
+      <span style={{ color: 'var(--faint)' }}>{appliedCount.toLocaleString(getRegionalLocale())} applied</span>
       <Pill tone={tone}>{status}</Pill>
       <span style={{ color: 'var(--faint)', textAlign: 'right' }}>
-        {new Date(run.started_at * 1000).toLocaleString()}
+        {new Date(run.started_at * 1000).toLocaleString(getRegionalLocale())}
       </span>
     </div>
   )

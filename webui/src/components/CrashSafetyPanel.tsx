@@ -1,3 +1,4 @@
+import { getRegionalLocale } from '../lib/localeFormat'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -202,7 +203,7 @@ function sameSettings(a: CrashSafetySettings, b: CrashSafetySettings): boolean {
 
 function formatWhen(unix: number | null): string {
   if (!unix) return 'unknown'
-  return new Date(unix * 1000).toLocaleString()
+  return new Date(unix * 1000).toLocaleString(getRegionalLocale())
 }
 
 export function CrashSafetyPanel() {
@@ -930,7 +931,7 @@ function Stat({ label, value, hint }: { label: string; value: number; hint: stri
   return (
     <div title={hint}>
       <dt style={{ ...cardTitleStyle, marginBottom: 2 }}>{label}</dt>
-      <dd style={{ margin: 0, fontSize: 18, fontWeight: 800, color: 'var(--text)' }}>{value.toLocaleString()}</dd>
+      <dd style={{ margin: 0, fontSize: 18, fontWeight: 800, color: 'var(--text)' }}>{value.toLocaleString(getRegionalLocale())}</dd>
     </div>
   )
 }

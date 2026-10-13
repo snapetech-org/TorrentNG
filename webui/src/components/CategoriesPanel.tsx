@@ -1,3 +1,4 @@
+import { getRegionalLocale } from '../lib/localeFormat'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -68,7 +69,7 @@ export function CategoriesPanel() {
         <div>
           <h2 id="categories-title" style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>Categories</h2>
           <div style={{ fontSize: 12, color: 'var(--faint)', marginTop: 2 }}>
-            {categories.length.toLocaleString()} configured
+            {categories.length.toLocaleString(getRegionalLocale())} configured
           </div>
         </div>
         {(save.isPending || del.isPending) && (

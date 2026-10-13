@@ -1,3 +1,4 @@
+import { getRegionalLocale } from '../lib/localeFormat'
 import { useState } from 'react'
 import type { LiveStats, StorageRoot } from '../api/client'
 
@@ -34,7 +35,7 @@ function fmtBytes(bytes?: number): string {
   if (bytes >= 1e12) return (bytes / 1e12).toFixed(1) + ' TB'
   if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + ' GB'
   if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + ' MB'
-  return Math.max(0, bytes).toLocaleString() + ' B'
+  return Math.max(0, bytes).toLocaleString(getRegionalLocale()) + ' B'
 }
 
 function tone(value?: string): { color: string; bg: string; border: string } {
@@ -166,10 +167,10 @@ export function StatusBar({
         <Badge label={backendType} value={connected ? 'connected' : 'disconnected'} state={connected ? 'on' : 'closed'} />
       </div>
       <div className="tng-statusbar-counts" style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 'max-content' }}>
-        <Badge label="Torrents" value={total.toLocaleString()} state="idle" />
-        {rendered !== total && <Badge label="Rendered" value={rendered.toLocaleString()} state="idle" />}
-        {cached !== undefined && <Badge label="Cached" value={cached.toLocaleString()} state="idle" />}
-        {selected > 0 && <Badge label="Selected" value={selected.toLocaleString()} state="on" />}
+        <Badge label="Torrents" value={total.toLocaleString(getRegionalLocale())} state="idle" />
+        {rendered !== total && <Badge label="Rendered" value={rendered.toLocaleString(getRegionalLocale())} state="idle" />}
+        {cached !== undefined && <Badge label="Cached" value={cached.toLocaleString(getRegionalLocale())} state="idle" />}
+        {selected > 0 && <Badge label="Selected" value={selected.toLocaleString(getRegionalLocale())} state="on" />}
         {featureError && <Notice tone="error">{featureError}</Notice>}
         {actionMessage && <Notice tone={actionTone}>{actionMessage}</Notice>}
       </div>
@@ -211,7 +212,7 @@ export function StatusBar({
         />
         <Badge
           label="Conn"
-          value={`${(stats.connections ?? 0).toLocaleString()}${stats.pending_connections ? ` +${stats.pending_connections}` : ''}`}
+          value={`${(stats.connections ?? 0).toLocaleString(getRegionalLocale())}${stats.pending_connections ? ` +${stats.pending_connections}` : ''}`}
           title="Established and pending peer sockets on the incoming port"
           state={(stats.connections ?? 0) > 0 ? 'on' : 'unknown'}
         />

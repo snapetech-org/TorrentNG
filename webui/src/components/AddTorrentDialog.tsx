@@ -1,3 +1,4 @@
+import { getRegionalLocale } from '../lib/localeFormat'
 import { useState, useRef, useCallback } from 'react'
 import { useQueryClient, useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -171,7 +172,7 @@ export function AddTorrentDialog({ onClose }: Props) {
               ))}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
                 <span style={{ fontSize: 11, color: 'var(--success)' }}>
-                  {files.length.toLocaleString()} file{files.length === 1 ? '' : 's'} staged
+                  {files.length.toLocaleString(getRegionalLocale())} file{files.length === 1 ? '' : 's'} staged
                 </span>
                 <button
                   type="button"
@@ -205,7 +206,7 @@ export function AddTorrentDialog({ onClose }: Props) {
           />
           {urlCount > 0 && (
             <div style={{ marginTop: 5, color: 'var(--accent-text)', fontSize: 11 }}>
-              {urlCount.toLocaleString()} URL{urlCount === 1 ? '' : 's'} staged
+              {urlCount.toLocaleString(getRegionalLocale())} URL{urlCount === 1 ? '' : 's'} staged
             </div>
           )}
         </div>
@@ -269,7 +270,7 @@ export function AddTorrentDialog({ onClose }: Props) {
           background: 'var(--surface)', color: 'var(--faint)', fontSize: 12,
         }}>
           <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {files.length.toLocaleString()} file{files.length === 1 ? '' : 's'} · {urlCount.toLocaleString()} URL{urlCount === 1 ? '' : 's'}
+            {files.length.toLocaleString(getRegionalLocale())} file{files.length === 1 ? '' : 's'} · {urlCount.toLocaleString(getRegionalLocale())} URL{urlCount === 1 ? '' : 's'}
             {effectiveSavePath ? ` · ${effectiveSavePath}` : ''}
           </span>
           <span style={{ color: start ? 'var(--success)' : 'var(--warning)' }}>
@@ -302,7 +303,7 @@ function fmtSize(bytes: number): string {
   if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + ' GB'
   if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + ' MB'
   if (bytes >= 1e3) return (bytes / 1e3).toFixed(0) + ' KB'
-  return bytes.toLocaleString() + ' B'
+  return bytes.toLocaleString(getRegionalLocale()) + ' B'
 }
 
 const noticeStyle: React.CSSProperties = {

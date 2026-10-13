@@ -1,3 +1,4 @@
+import { getRegionalLocale } from '../lib/localeFormat'
 import { useRef, useEffect, useMemo, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { isFinalizing, type TorrentSummary, type ListParams } from '../api/client'
@@ -107,7 +108,7 @@ function fmtEta(t: TorrentSummary, live?: SmoothedLiveRate): EtaDisplay {
   if (rate > 0) {
     return {
       label: fmtDuration(remaining / rate),
-      title: `${remaining.toLocaleString()} bytes at ${fmtSpeed(rate)}`,
+      title: `${remaining.toLocaleString(getRegionalLocale())} bytes at ${fmtSpeed(rate)}`,
       color: 'var(--accent)',
     }
   }
@@ -243,7 +244,7 @@ const COLUMN_STORAGE_KEY = 'tng.visibleColumns.v2'
 
 function fmtDate(ts: number): string {
   if (!ts) return '—'
-  return new Date(ts * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' })
+  return new Date(ts * 1000).toLocaleDateString(getRegionalLocale(), { month: 'short', day: 'numeric', year: '2-digit' })
 }
 
 function trackerHost(url: string): string {
@@ -679,7 +680,7 @@ export function TorrentTable({
           }}>Jump</button>
         </form>
         <span aria-live="polite" style={{ color: 'var(--faint)', fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>
-          {total === 0 ? 'No rows' : `Rows ${(pageOffset + 1).toLocaleString()}–${Math.min(total, pageOffset + torrents.length).toLocaleString()} of ${total.toLocaleString()}`}
+          {total === 0 ? 'No rows' : `Rows ${(pageOffset + 1).toLocaleString(getRegionalLocale())}–${Math.min(total, pageOffset + torrents.length).toLocaleString(getRegionalLocale())} of ${total.toLocaleString(getRegionalLocale())}`}
         </span>
       </div>
       <div
@@ -727,12 +728,12 @@ export function TorrentTable({
                 aria-label={
                   allVisible ? 'Clear selection'
                     : isSelectingAllMatching ? 'Selecting all matching torrents…'
-                      : `Select all ${total.toLocaleString()} torrents matching the current filter`
+                      : `Select all ${total.toLocaleString(getRegionalLocale())} torrents matching the current filter`
                 }
                 title={
                   allVisible ? 'Clear selection'
                     : total > torrents.length
-                      ? `Select all ${total.toLocaleString()} torrents matching the current filter (not just the ${torrents.length.toLocaleString()} loaded so far)`
+                      ? `Select all ${total.toLocaleString(getRegionalLocale())} torrents matching the current filter (not just the ${torrents.length.toLocaleString(getRegionalLocale())} loaded so far)`
                       : 'Select all visible torrents'
                 }
                 checked={allVisible}
@@ -867,7 +868,7 @@ export function TorrentTable({
                 color: 'var(--accent-text)', borderRadius: 999, padding: '0 7px',
                 fontSize: 10, fontWeight: 800, textTransform: 'none', letterSpacing: 0,
               }}>
-                {isSelectingAllMatching ? 'Selecting…' : `${selected.size.toLocaleString()} selected`}
+                {isSelectingAllMatching ? 'Selecting…' : `${selected.size.toLocaleString(getRegionalLocale())} selected`}
               </span>
             )}
             {columnsOpen && (
@@ -1091,7 +1092,7 @@ export function TorrentTable({
           fontSize: 11, color: 'var(--accent-text)', flexShrink: 0, cursor: 'pointer', gap: 6,
         }}>
           <span>Load more torrents</span>
-          <span style={{ color: 'var(--faint)' }}>{torrents.length.toLocaleString()} / {total.toLocaleString()}</span>
+          <span style={{ color: 'var(--faint)' }}>{torrents.length.toLocaleString(getRegionalLocale())} / {total.toLocaleString(getRegionalLocale())}</span>
         </button>
       )}
     </div>

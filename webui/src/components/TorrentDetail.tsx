@@ -1,3 +1,4 @@
+import { getRegionalLocale } from '../lib/localeFormat'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, isFinalizing } from '../api/client'
@@ -14,7 +15,7 @@ function fmtSize(bytes: number): string {
 
 function fmtDate(ts: number): string {
   if (!ts) return '—'
-  return new Date(ts * 1000).toLocaleString()
+  return new Date(ts * 1000).toLocaleString(getRegionalLocale())
 }
 
 function fmtSpeed(bps: number): string {

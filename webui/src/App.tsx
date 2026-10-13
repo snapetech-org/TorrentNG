@@ -22,6 +22,7 @@ import { BulkEditDialog } from './components/BulkEditDialog'
 import { useDialogFocus } from './hooks/useDialogFocus'
 import { api, AuthError, type ListParams, type LiveStats, type TorrentSummary } from './api/client'
 import { PALETTES, applyTheme, findPalette, THEME_MODE_STORAGE_KEY, THEME_STORAGE_KEY, type ThemeMode } from './themes'
+import { REGIONAL_FORMAT_KEY, REGIONAL_FORMAT_OPTIONS, getRegionalLocale } from './lib/localeFormat'
 
 const EnginePanel = lazy(() => import('./components/EnginePanel').then(module => ({ default: module.EnginePanel })))
 const StoragePanel = lazy(() => import('./components/StoragePanel').then(module => ({ default: module.StoragePanel })))
@@ -127,6 +128,15 @@ function preloadSettingsSection(section: SettingsSection) {
 
 function preloadAllSettingsPanels() {
   ;(Object.keys(preloadSettingsPanels) as SettingsSection[]).forEach(preloadSettingsSection)
+}
+
+function loadRegionalFormat(): string {
+  try {
+    const value = localStorage.getItem(REGIONAL_FORMAT_KEY)
+    return value && REGIONAL_FORMAT_OPTIONS.some(option => option.value === value) ? value : 'system'
+  } catch {
+    return 'system'
+  }
 }
 
 function loadThemeId(): string {
@@ -292,9 +302,20 @@ export function App() {
   const [mediaInference, setMediaInference] = useState<MediaInferenceMode>(loadMediaInference)
   const [themeId, setThemeId] = useState(loadThemeId)
   const [themeMode, setThemeMode] = useState<ThemeMode>(loadThemeMode)
+  const [regionalFormat, setRegionalFormat] = useState(loadRegionalFormat)
   const [detailAutoDisplay, setDetailAutoDisplay] = useState(loadDetailAutoDisplay)
   const [detailPosition, setDetailPosition] = useState<DetailPosition>(loadDetailPosition)
   const activeTheme = findPalette(themeId)[themeMode]
+
+  const changeRegionalFormat = useCallback((value: string) => {
+    if (!REGIONAL_FORMAT_OPTIONS.some(option => option.value === value)) return
+    try {
+      localStorage.setItem(REGIONAL_FORMAT_KEY, value)
+    } catch {
+      // The selection still applies for the current render when storage is unavailable.
+    }
+    setRegionalFormat(value)
+  }, [])
 
   const updateParams = useCallback((p: Partial<typeof params>) => {
     setPageOffset(0)
@@ -655,7 +676,7 @@ export function App() {
     try {
       await api.bulk(action, hashes, false)
       qc.invalidateQueries({ queryKey: ['torrents'], exact: false })
-      setActionNotice({ text: `${action} queued for ${hashes.length.toLocaleString()} torrent${hashes.length === 1 ? '' : 's'}`, tone: 'ok' })
+      setActionNotice({ text: `${action} queued for ${hashes.length.toLocaleString(getRegionalLocale())} torrent${hashes.length === 1 ? '' : 's'}`, tone: 'ok' })
     } catch {
       setActionNotice({ text: `Failed to ${action} selected torrents`, tone: 'error' })
     } finally {
@@ -670,7 +691,7 @@ export function App() {
     try {
       await api.torrents.toggleSequential(hashes)
       qc.invalidateQueries({ queryKey: ['torrents'], exact: false })
-      setActionNotice({ text: `Sequential toggled for ${hashes.length.toLocaleString()} torrent${hashes.length === 1 ? '' : 's'}`, tone: 'ok' })
+      setActionNotice({ text: `Sequential toggled for ${hashes.length.toLocaleString(getRegionalLocale())} torrent${hashes.length === 1 ? '' : 's'}`, tone: 'ok' })
     } catch {
       setActionNotice({ text: 'Failed to toggle sequential download', tone: 'error' })
     } finally {
@@ -845,21 +866,21 @@ export function App() {
         </nav>
 
         {view === 'torrents' && (
-          <span className="tng-topbar-pill" data-tone="neutral" role="status" aria-label={`${total.toLocaleString()} torrents`} style={{
+          <span className="tng-topbar-pill" data-tone="neutral" role="status" aria-label={`${total.toLocaleString(getRegionalLocale())} torrents`} style={{
             color: 'var(--muted)', background: 'var(--surface)', border: '1px solid var(--border)',
             borderRadius: 999, padding: '2px 8px', fontSize: 11, fontWeight: 700,
             whiteSpace: 'nowrap', flex: '0 0 auto',
           }}>
-            {total.toLocaleString()} torrents
+            {total.toLocaleString(getRegionalLocale())} torrents
           </span>
         )}
         {selected.size > 0 && view === 'torrents' && (
-          <span className="tng-topbar-pill" data-tone="accent" role="status" aria-label={`${selected.size.toLocaleString()} selected`} style={{
+          <span className="tng-topbar-pill" data-tone="accent" role="status" aria-label={`${selected.size.toLocaleString(getRegionalLocale())} selected`} style={{
             color: 'var(--accent-text)', background: 'var(--accent-soft)', border: '1px solid var(--accent)',
             borderRadius: 999, padding: '2px 8px', fontSize: 11, fontWeight: 800,
             whiteSpace: 'nowrap', flex: '0 0 auto',
           }}>
-            {selected.size.toLocaleString()} selected
+            {selected.size.toLocaleString(getRegionalLocale())} selected
           </span>
         )}
         <button type="button" onClick={() => setHelpOpen(true)} title="Help and links" style={{
@@ -973,6 +994,8 @@ export function App() {
             themeMode={themeMode}
             onTheme={setThemeId}
             onThemeMode={setThemeMode}
+            regionalFormat={regionalFormat}
+            onRegionalFormat={changeRegionalFormat}
             onSelectTracker={goToTrackerTorrents}
           />
         )}
@@ -1176,7 +1199,7 @@ function StandbyScreen({ onTakeOver }: { onTakeOver: () => void }) {
   )
 }
 
-function SettingsView({ section, onSection, mediaInference, onMediaInference, themeId, themeMode, onTheme, onThemeMode, onSelectTracker }: {
+function SettingsView({ section, onSection, mediaInference, onMediaInference, themeId, themeMode, onTheme, onThemeMode, regionalFormat, onRegionalFormat, onSelectTracker }: {
   section: SettingsSection
   onSection: (section: SettingsSection) => void
   mediaInference: MediaInferenceMode
@@ -1186,6 +1209,8 @@ function SettingsView({ section, onSection, mediaInference, onMediaInference, th
   onTheme: (id: string) => void
   onSelectTracker: (tracker: string) => void
   onThemeMode: (mode: ThemeMode) => void
+  regionalFormat: string
+  onRegionalFormat: (value: string) => void
 }) {
   const sections: Array<[SettingsSection, string, string]> = [
     ['library', 'Library', '▦'],
@@ -1303,6 +1328,8 @@ function SettingsView({ section, onSection, mediaInference, onMediaInference, th
               themeMode={themeMode}
               onTheme={onTheme}
               onThemeMode={onThemeMode}
+              regionalFormat={regionalFormat}
+              onRegionalFormat={onRegionalFormat}
             />
           </PanelFrame>
           <div style={{

@@ -1,3 +1,4 @@
+import { getRegionalLocale } from '../lib/localeFormat'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -62,7 +63,7 @@ export function BulkEditDialog({ hashes, onClose }: Props) {
         <header style={{ padding: '13px 15px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 12, alignItems: 'center' }}>
           <div style={{ flex: 1 }}>
             <h2 id="bulk-edit-title" style={{ margin: 0, color: 'var(--text)', fontWeight: 700, fontSize: 15 }}>Edit selected torrents</h2>
-            <div id="bulk-edit-description" style={{ color: 'var(--faint)', fontSize: 12 }}>{hashes.length.toLocaleString()} torrent{hashes.length === 1 ? '' : 's'} selected</div>
+            <div id="bulk-edit-description" style={{ color: 'var(--faint)', fontSize: 12 }}>{hashes.length.toLocaleString(getRegionalLocale())} torrent{hashes.length === 1 ? '' : 's'} selected</div>
           </div>
           {busy && <span role="status" aria-live="polite" style={{
             color: 'var(--accent-text)', background: 'var(--accent-soft)', border: '1px solid var(--accent)',

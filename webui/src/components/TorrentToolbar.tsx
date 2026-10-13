@@ -1,3 +1,4 @@
+import { getRegionalLocale } from '../lib/localeFormat'
 interface Props {
   selectedCount: number
   onAdd: () => void
@@ -100,7 +101,7 @@ export function TorrentToolbar({
         background: selectedCount > 0 ? 'var(--accent-soft)' : 'transparent',
         fontWeight: selectedCount > 0 ? 800 : 600,
       }}>
-        {busy ? 'Working...' : selectedCount > 0 ? `${selectedCount.toLocaleString()} selected` : 'No selection'}
+        {busy ? 'Working...' : selectedCount > 0 ? `${selectedCount.toLocaleString(getRegionalLocale())} selected` : 'No selection'}
       </span>
       {selectedCount > 0 && (
         <button

@@ -1,3 +1,4 @@
+import { getRegionalLocale } from '../lib/localeFormat'
 import { isFinalizing, type TorrentSummary } from '../api/client'
 import { DetailDockControls, type DetailPosition } from './DetailDockControls'
 
@@ -109,7 +110,7 @@ export function TorrentSelectionPanel({
             Selection workspace
           </h2>
           <span style={{ display: 'block', color: 'var(--accent-text)', fontSize: 11, marginTop: 3, fontWeight: 700 }}>
-            {selectedCount.toLocaleString()} torrents selected
+            {selectedCount.toLocaleString(getRegionalLocale())} torrents selected
           </span>
         </div>
         <DetailDockControls position={position} onChange={onPositionChange} />
@@ -126,7 +127,7 @@ export function TorrentSelectionPanel({
             background: 'color-mix(in srgb, var(--warning) 8%, var(--surface))',
             color: 'var(--warning)', borderRadius: 6, padding: '8px 9px', marginBottom: 12, fontSize: 11,
           }}>
-            Summary data is available for {knownCount.toLocaleString()} of {selectedCount.toLocaleString()} selected torrents.
+            Summary data is available for {knownCount.toLocaleString(getRegionalLocale())} of {selectedCount.toLocaleString(getRegionalLocale())} selected torrents.
           </div>
         )}
 
@@ -154,7 +155,7 @@ export function TorrentSelectionPanel({
                 color: status.color, borderColor: `color-mix(in srgb, ${status.color} 40%, var(--border))`,
                 background: `color-mix(in srgb, ${status.color} 10%, transparent)`,
               }}>
-                {status.label} <strong>{count.toLocaleString()}</strong>
+                {status.label} <strong>{count.toLocaleString(getRegionalLocale())}</strong>
               </span>
             )) : <span style={{ color: 'var(--faint)', fontSize: 11 }}>No summary data loaded.</span>}
           </div>
@@ -190,7 +191,7 @@ export function TorrentSelectionPanel({
             <h3 id="selection-included-heading" className="tng-selection-section-title">Included</h3>
             <div className="tng-selection-names">
               {names.map(name => <span key={name} title={name}>{name}</span>)}
-              {selectedCount > names.length && <span className="tng-selection-more">+ {(selectedCount - names.length).toLocaleString()} more</span>}
+              {selectedCount > names.length && <span className="tng-selection-more">+ {(selectedCount - names.length).toLocaleString(getRegionalLocale())} more</span>}
             </div>
           </section>
         )}

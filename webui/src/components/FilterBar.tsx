@@ -1,3 +1,4 @@
+import { getRegionalLocale } from '../lib/localeFormat'
 import { useEffect, useState } from 'react'
 import type { ListParams } from '../api/client'
 import { maskAnnounceUrl } from '../lib/maskUrl'
@@ -131,7 +132,7 @@ export function FilterBar({ params, onChange }: Props) {
           color: 'var(--accent-text)', background: 'var(--accent-soft)', border: '1px solid var(--accent)',
           borderRadius: 999, padding: '2px 8px', fontSize: 11, fontWeight: 800, whiteSpace: 'nowrap',
         }}>
-          {activeCount.toLocaleString()} active
+          {activeCount.toLocaleString(getRegionalLocale())} active
         </span>
       )}
       {(chips.length > 0 || params.sort) && (

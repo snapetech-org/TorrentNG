@@ -1,3 +1,4 @@
+import { getRegionalLocale } from '../lib/localeFormat'
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type ListParams, type SavedView } from '../api/client'
@@ -222,7 +223,7 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
       </div>
 
       <div id="torrent-sidebar-body" className="tng-sidebar-body" data-mobile-open={mobileOpen ? 'true' : 'false'}>
-      <Section title="State" summary={facets ? `${facets.status.all?.toLocaleString() ?? total.toLocaleString()} total` : undefined}>
+      <Section title="State" summary={facets ? `${facets.status.all?.toLocaleString(getRegionalLocale()) ?? total.toLocaleString(getRegionalLocale())} total` : undefined}>
         {STATUS_OPTIONS.map(option => (
           <CountRow
             key={option.value}
@@ -261,7 +262,7 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
         )}
       </Section>
 
-      <Section title="Categories / Labels" summary={categories.length ? categories.length.toLocaleString() : undefined}>
+      <Section title="Categories / Labels" summary={categories.length ? categories.length.toLocaleString(getRegionalLocale()) : undefined}>
         <CountRow
           icon="⌁"
           label="All categories"
@@ -282,12 +283,12 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
           />
         ))}
         {categories.length > MAX_SECTION_ROWS && (
-          <div style={overflowNote}>Showing first {MAX_SECTION_ROWS.toLocaleString()} categories</div>
+          <div style={overflowNote}>Showing first {MAX_SECTION_ROWS.toLocaleString(getRegionalLocale())} categories</div>
         )}
       </Section>
 
       {tags.length > 0 && (
-        <Section title="Tags" summary={tags.length.toLocaleString()}>
+        <Section title="Tags" summary={tags.length.toLocaleString(getRegionalLocale())}>
           <CountRow
             icon="#"
             label="All tags"
@@ -305,12 +306,12 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
             />
           ))}
           {tags.length > MAX_SECTION_ROWS && (
-            <div style={overflowNote}>Showing first {MAX_SECTION_ROWS.toLocaleString()} tags</div>
+            <div style={overflowNote}>Showing first {MAX_SECTION_ROWS.toLocaleString(getRegionalLocale())} tags</div>
           )}
         </Section>
       )}
 
-      <Section title="Trackers" summary={trackerHealth?.trackers.length.toLocaleString()}>
+      <Section title="Trackers" summary={trackerHealth?.trackers.length.toLocaleString(getRegionalLocale())}>
         <CountRow
           icon="☊"
           label="All trackers"
@@ -351,7 +352,7 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
           <div style={overflowNote}>No cached tracker URLs yet.</div>
         )}
         {trackerHealth && trackerHealth.trackers.length > MAX_SECTION_ROWS && (
-          <div style={overflowNote}>Showing first {MAX_SECTION_ROWS.toLocaleString()} trackers</div>
+          <div style={overflowNote}>Showing first {MAX_SECTION_ROWS.toLocaleString(getRegionalLocale())} trackers</div>
         )}
       </Section>
 
@@ -372,7 +373,7 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
         </div>
       </Section>
 
-      <Section title="Saved Views" summary={viewsBusy ? 'working' : views.length ? views.length.toLocaleString() : undefined}>
+      <Section title="Saved Views" summary={viewsBusy ? 'working' : views.length ? views.length.toLocaleString(getRegionalLocale()) : undefined}>
         {views.length === 0 && (
           <div style={emptySavedViewStyle}>
             Save the current filters as a named view.
@@ -471,7 +472,7 @@ function CountRow({ icon, label, active, count, maxCount, tone, onClick }: {
         padding: count !== undefined ? '0 6px' : undefined,
         background: count !== undefined ? 'var(--surface)' : undefined,
       }}>
-        {count === undefined ? '' : count.toLocaleString()}
+        {count === undefined ? '' : count.toLocaleString(getRegionalLocale())}
       </span>
     </button>
   )
