@@ -84,9 +84,17 @@ class WorkflowSecurityTests(unittest.TestCase):
     def test_public_pull_requests_never_select_persistent_runners(self) -> None:
         ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
         self.assertRegex(ci, r"(?m)^\s*pull_request:")
-        self.assertIn('branches: ["**"]', ci)
+        self.assertRegex(ci, r'(?m)^  push:\n    branches: \["main"\]$')
+        self.assertNotIn('branches: ["**"]', ci)
         self.assertNotRegex(ci, r"(?m)^\s*runs-on:\s*\[self-hosted")
-        self.assertEqual(ci.count("github.event_name == 'push' && fromJSON"), 6)
+        self.assertEqual(
+            ci.count("github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON"),
+            6,
+        )
+        self.assertEqual(
+            ci.count("fromJSON('[\"self-hosted\",\"Linux\",\"X64\",\"kspls0\"]')"),
+            6,
+        )
         self.assertNotRegex(ci, r"(?m)^\s*pull_request_target:")
 
         windows = (WORKFLOWS / "windows-smoke.yml").read_text(encoding="utf-8")
