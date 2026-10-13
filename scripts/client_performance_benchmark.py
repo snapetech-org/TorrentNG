@@ -198,6 +198,7 @@ class Benchmark:
         self.torrentng_pids = {}
         self.cgroup_paths = {}
         self.engine_memory_metrics = []
+        self.process_memory_snapshots = []
         self.last_engine_memory_metrics_at = 0.0
         self.partial_download_rows = {}
         self.partial_seed_rows = {}
@@ -343,6 +344,11 @@ class Benchmark:
                 "cgroup_memory_peak_bytes", "cgroup_memory_anon_bytes",
                 "cgroup_memory_file_bytes", "cgroup_memory_slab_bytes",
                 "torrentng_process_rss_bytes", "torrentng_process_hwm_bytes",
+                "torrentng_process_rss_anon_bytes", "torrentng_process_rss_file_bytes",
+                "torrentng_process_rss_shmem_bytes", "torrentng_process_vm_data_bytes",
+                "torrentng_process_vm_stk_bytes", "torrentng_process_vm_pte_bytes",
+                "torrentng_process_threads", "cgroup_memory_sock_bytes",
+                "cgroup_memory_kernel_stack_bytes", "cgroup_memory_pagetables_bytes",
             ])
 
     def _prepare_qbit_config(self):
@@ -808,6 +814,7 @@ class Benchmark:
     def _read_cgroup_memory(path):
         result = {
             "current": 0, "peak": 0, "anon": 0, "file": 0, "slab": 0,
+            "sock": 0, "kernel_stack": 0, "pagetables": 0,
         }
         if path is None:
             return result
@@ -831,20 +838,96 @@ class Benchmark:
             result["anon"] = stat.get("anon", stat.get("total_rss", stat.get("rss", 0)))
             result["file"] = stat.get("file", stat.get("total_cache", stat.get("cache", 0)))
             result["slab"] = stat.get("slab", stat.get("total_slab", 0))
+            result["sock"] = stat.get("sock", 0)
+            result["kernel_stack"] = stat.get("kernel_stack", 0)
+            result["pagetables"] = stat.get("pagetables", 0)
         except (OSError, ValueError):
             pass
         return result
 
     @staticmethod
     def _read_process_memory(pid):
-        result = {"rss": 0, "hwm": 0}
+        byte_fields = {
+            "VmRSS": "rss", "VmHWM": "hwm", "RssAnon": "rss_anon",
+            "RssFile": "rss_file", "RssShmem": "rss_shmem",
+            "VmData": "vm_data", "VmStk": "vm_stk", "VmPTE": "vm_pte",
+        }
+        result = {value: 0 for value in byte_fields.values()}
+        result.update({"threads": 0, "thread_names": {}, "smaps_rollup": {}, "mappings": []})
         if not pid:
             return result
         try:
             for line in Path(f"/proc/{pid}/status").read_text().splitlines():
                 fields = line.split()
-                if len(fields) >= 2 and fields[0] in ("VmRSS:", "VmHWM:"):
-                    result["rss" if fields[0] == "VmRSS:" else "hwm"] = int(fields[1]) * 1024
+                if len(fields) < 2:
+                    continue
+                key = fields[0].rstrip(":")
+                if key in byte_fields:
+                    result[byte_fields[key]] = int(fields[1]) * 1024
+                elif key == "Threads":
+                    result["threads"] = int(fields[1])
+        except (OSError, ValueError):
+            pass
+
+        try:
+            task_root = Path(f"/proc/{pid}/task")
+            for task in task_root.iterdir():
+                try:
+                    name = (task / "comm").read_text().strip() or "unknown"
+                except OSError:
+                    name = "unknown"
+                result["thread_names"][name] = result["thread_names"].get(name, 0) + 1
+        except OSError:
+            pass
+
+        byte_metrics = {
+            "Rss", "Pss", "Pss_Anon", "Pss_File", "Pss_Shmem",
+            "Shared_Clean", "Shared_Dirty", "Private_Clean", "Private_Dirty",
+            "Anonymous", "AnonHugePages", "Swap",
+        }
+        try:
+            lines = Path(f"/proc/{pid}/smaps").read_text().splitlines()
+            maps = []
+            current = None
+            for line in lines:
+                fields = line.split()
+                if (len(fields) >= 5 and "-" in fields[0]
+                        and len(fields[1]) == 4 and fields[1][0] in "r-"
+                        and fields[1][1] in "w-" and fields[1][2] in "x-"):
+                    if current is not None and current["rss_bytes"]:
+                        maps.append(current)
+                    try:
+                        start, end = fields[0].split("-", 1)
+                        size = int(end, 16) - int(start, 16)
+                    except ValueError:
+                        size = 0
+                    current = {
+                        "name": " ".join(fields[5:]) if len(fields) > 5 else "[anonymous]",
+                        "size_bytes": size,
+                        "rss_bytes": 0,
+                        "pss_bytes": 0,
+                        "anonymous_bytes": 0,
+                        "private_dirty_bytes": 0,
+                        "private_clean_bytes": 0,
+                        "shared_clean_bytes": 0,
+                    }
+                elif current is not None and len(fields) >= 2 and fields[0].rstrip(":") in byte_metrics:
+                    try:
+                        amount = int(fields[1]) * 1024
+                    except ValueError:
+                        continue
+                    key = fields[0].rstrip(":")
+                    result["smaps_rollup"][key] = result["smaps_rollup"].get(key, 0) + amount
+                    target = {
+                        "Rss": "rss_bytes", "Pss": "pss_bytes",
+                        "Anonymous": "anonymous_bytes", "Private_Dirty": "private_dirty_bytes",
+                        "Private_Clean": "private_clean_bytes", "Shared_Clean": "shared_clean_bytes",
+                    }.get(key)
+                    if target:
+                        current[target] += amount
+            if current is not None and current["rss_bytes"]:
+                maps.append(current)
+            result["mappings"] = sorted(maps, key=lambda item: item["rss_bytes"], reverse=True)[:20]
         except (OSError, ValueError):
             pass
         return result
@@ -891,7 +974,7 @@ class Benchmark:
     def _write_memory_profile(self):
         samples = []
         for row in self.samples:
-            if len(row) < 18:
+            if len(row) < 28:
                 continue
             samples.append({
                 "utc": row[0], "client": row[1], "phase": row[2],
@@ -903,6 +986,16 @@ class Benchmark:
                 "cgroup_memory_slab_bytes": int(row[15]),
                 "torrentng_process_rss_bytes": int(row[16]),
                 "torrentng_process_hwm_bytes": int(row[17]),
+                "torrentng_process_rss_anon_bytes": int(row[18]),
+                "torrentng_process_rss_file_bytes": int(row[19]),
+                "torrentng_process_rss_shmem_bytes": int(row[20]),
+                "torrentng_process_vm_data_bytes": int(row[21]),
+                "torrentng_process_vm_stk_bytes": int(row[22]),
+                "torrentng_process_vm_pte_bytes": int(row[23]),
+                "torrentng_process_threads": int(row[24]),
+                "cgroup_memory_sock_bytes": int(row[25]),
+                "cgroup_memory_kernel_stack_bytes": int(row[26]),
+                "cgroup_memory_pagetables_bytes": int(row[27]),
             })
         self.memory_profile.parent.mkdir(parents=True, exist_ok=True)
         self.memory_profile.write_text(json.dumps({
@@ -910,12 +1003,14 @@ class Benchmark:
             "source_commit": self.source_commit,
             "host": self.host,
             "memory_samples": samples,
+            "process_memory_snapshots": self.process_memory_snapshots,
             "engine_metrics_snapshots": self.engine_memory_metrics,
             "notes": {
                 "docker_stats": "Docker-reported container working set, sampled at the configured interval.",
                 "cgroup_memory_current": "Container cgroup total, including anon and file cache.",
                 "cgroup_memory_anon": "Container anonymous memory from memory.stat.",
                 "torrentng_process_rss": "Host /proc RSS for torrentngd when available; zero means unavailable.",
+                "process_memory_snapshots": "TorrentNG /proc status, thread names, smaps totals, and the 20 largest resident mappings captured with cgroup samples.",
                 "engine_metrics": "TorrentNG resource-governor, peer-buffer, storage-pool and jemalloc metrics sampled during transfer and at phase boundaries.",
                 "jemalloc_metrics": "jemalloc allocated/active/resident/mapped/retained gauges sampled during TorrentNG phases; metrics are unavailable if jemalloc statistics are not compiled or supported.",
             },
@@ -950,8 +1045,19 @@ class Benchmark:
             f"{cpu:.2f}", memory, f"{os.getloadavg()[0]:.2f}",
             cgroup["current"], cgroup["peak"], cgroup["anon"],
             cgroup["file"], cgroup["slab"], process["rss"], process["hwm"],
+            process["rss_anon"], process["rss_file"], process["rss_shmem"],
+            process["vm_data"], process["vm_stk"], process["vm_pte"],
+            process["threads"], cgroup["sock"], cgroup["kernel_stack"],
+            cgroup["pagetables"],
         ]
         self.samples.append(row)
+        if client == "torrentngd":
+            self.process_memory_snapshots.append({
+                "utc": row[0], "phase": phase, "threads": process["threads"],
+                "thread_names": process["thread_names"],
+                "smaps_rollup": process["smaps_rollup"],
+                "largest_mappings": process["mappings"],
+            })
         with self.csv_path.open("a", newline="") as handle:
             csv.writer(handle).writerow(row)
         now = time.monotonic()
