@@ -95,7 +95,7 @@ function fmtEta(t: TorrentSummary, live?: SmoothedLiveRate): EtaDisplay {
   }
   if (t.size_bytes <= 0) {
     return {
-      label: t.is_active ? 'Calc…' : '—',
+      label: t.is_active ? 'Calculating…' : '—',
       titleSource: 'Waiting for torrent metadata',
       color: 'var(--faint)',
     }
@@ -122,7 +122,7 @@ function fmtEta(t: TorrentSummary, live?: SmoothedLiveRate): EtaDisplay {
   if (live?.fresh) {
     return { label: 'Stalled', titleSource: 'Downloading, but no current download rate', color: 'var(--warning)' }
   }
-  return { label: 'Calc…', titleSource: 'Collecting a live download rate', color: 'var(--muted)' }
+  return { label: 'Calculating…', titleSource: 'Collecting a live download rate', color: 'var(--muted)' }
 }
 
 function priorityLabel(priority: number): { source: string; parameters?: Record<string, string | number> } {

@@ -887,7 +887,7 @@ function RtorrentSettingsPanel() {
                         )}
                         <div style={readoutGridStyle}>
                           <Readout label="Editing" value={formatSettingValue(value, setting.unit)} />
-                          <Readout label="Live" value={live === null ? 'unavailable' : formatSettingValue(live, setting.unit)} />
+                          <Readout label="Current" value={live === null ? 'unavailable' : formatSettingValue(live, setting.unit)} />
                           <Readout label="Saved" value={saved === null ? 'default' : formatSettingValue(saved, setting.unit)} />
                           <Readout label="Default" value={formatSettingValue(inputValue(setting.value_type, setting.default_value), setting.unit)} />
                           <Readout label="Command" value={setting.command} mono />
@@ -925,7 +925,7 @@ function RtorrentSettingsPanel() {
                                 disabled={save.isPending}
                                 style={smallButtonStyle(!save.isPending)}
                               >
-                                <LocalizedText source="Live" />
+                                <LocalizedText source="Current" />
                               </button>
                             )}
                             <button
