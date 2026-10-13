@@ -8,7 +8,7 @@ RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 
 
 class WorkflowRunnerPolicyTests(unittest.TestCase):
-    def test_ci_local_runners_are_limited_to_snapetech_prs_and_main(self) -> None:
+    def test_ci_local_runners_are_limited_to_main(self) -> None:
         source = CI_WORKFLOW.read_text(encoding="utf-8")
         runners = [
             line.strip()
@@ -17,10 +17,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         ]
         self.assertEqual(len(runners), 6)
         for runner in runners:
-            self.assertIn(
-                "github.event_name == 'pull_request' && github.event.pull_request.user.login == 'snapetech'",
-                runner,
-            )
+            self.assertNotIn("github.event_name == 'pull_request'", runner)
             self.assertIn(
                 "github.event_name == 'push' && github.ref == 'refs/heads/main'",
                 runner,
@@ -47,7 +44,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         for runner in runners:
             self.assertIn("host", runner)
 
-    def test_webui_snapshot_profile_matches_runner_selection(self) -> None:
+    def test_all_pull_requests_use_hosted_runners_and_snapshot_profile(self) -> None:
         source = CI_WORKFLOW.read_text(encoding="utf-8")
         local_runner = next(
             line.strip()
@@ -60,12 +57,13 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             if "TNG_WEBUI_SNAPSHOT_PROFILE:" in line
         )
         for condition in (
-            "github.event_name == 'pull_request' && github.event.pull_request.user.login == 'snapetech'",
             "github.event_name == 'push' && github.ref == 'refs/heads/main'",
             "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
         ):
             self.assertIn(condition, local_runner)
             self.assertIn(condition, snapshot_profile)
+        self.assertNotIn("github.event_name == 'pull_request'", local_runner)
+        self.assertNotIn("github.event_name == 'pull_request'", snapshot_profile)
         self.assertIn("&& 'self-hosted' || 'hosted'", snapshot_profile)
 
 

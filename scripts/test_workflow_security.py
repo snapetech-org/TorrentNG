@@ -81,7 +81,7 @@ def run_interop_preflight(
 
 
 class WorkflowSecurityTests(unittest.TestCase):
-    def test_only_owner_authored_pull_requests_select_persistent_runners(self) -> None:
+    def test_pull_requests_never_select_persistent_runners(self) -> None:
         ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
         self.assertRegex(ci, r"(?m)^\s*pull_request:")
         self.assertRegex(ci, r'(?m)^  push:\n    branches: \["main"\]$')
@@ -94,10 +94,7 @@ class WorkflowSecurityTests(unittest.TestCase):
         ]
         self.assertEqual(len(runner_lines), 6)
         for runner in runner_lines:
-            self.assertIn(
-                "github.event_name == 'pull_request' && github.event.pull_request.user.login == 'snapetech'",
-                runner,
-            )
+            self.assertNotIn("github.event_name == 'pull_request'", runner)
             self.assertIn(
                 "github.event_name == 'push' && github.ref == 'refs/heads/main'",
                 runner,
