@@ -245,8 +245,13 @@ jobs:
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@be39649afda95dbf70f87cce95f68b8d5797b296 # nightly
 
-      - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
+      - name: Install cargo-fuzz into job-private storage
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo_fuzz_root="$(mktemp -d -- "$RUNNER_TEMP/cargo-fuzz.XXXXXX")"
+          cargo install cargo-fuzz --locked --root "$cargo_fuzz_root" --force
+          printf '%s\n' "$cargo_fuzz_root/bin" >> "$GITHUB_PATH"
 
       # TNG-027: bounded smoke run, not a real fuzzing campaign -- this
       # exists to catch a target that's gone stale (no longer builds

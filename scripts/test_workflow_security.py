@@ -118,6 +118,23 @@ class WorkflowSecurityTests(unittest.TestCase):
                     "",
                 ))
                 self.assertIn(expected, ci)
+
+    def test_fuzz_smoke_installs_cargo_fuzz_in_run_owned_storage(self) -> None:
+        ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        job = ci.split("  fuzz-smoke:" + chr(10), 1)[1].split(
+            chr(10) + "  sidecar:", 1
+        )[0]
+        self.assertIn(
+            'cargo_fuzz_root="$(mktemp -d -- "$RUNNER_TEMP/cargo-fuzz.XXXXXX")"',
+            job,
+        )
+        self.assertIn(
+            'cargo install cargo-fuzz --locked --root "$cargo_fuzz_root" --force',
+            job,
+        )
+        self.assertIn("printf", job)
+        self.assertIn('"$cargo_fuzz_root/bin" >> "$GITHUB_PATH"', job)
+
     def test_self_hosted_jobs_use_runner_temp_for_temporary_files(self) -> None:
         missing: list[str] = []
         observed = 0
