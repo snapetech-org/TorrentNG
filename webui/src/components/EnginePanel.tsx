@@ -1,3 +1,4 @@
+import { getRegionalLocale } from '../lib/localeFormat'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type EngineDiagnostics, type ProbeValue, type RtorrentSettingDescriptor } from '../api/client'
@@ -555,10 +556,10 @@ function RtorrentSettingsPanel() {
             gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
             gap: 8,
           }}>
-            <SettingStat label="Managed knobs" value={data.settings.length.toLocaleString()} />
-            <SettingStat label="Pending autosave" value={dirtyCount.toLocaleString()} tone={dirtyCount > 0 ? 'warn' : 'ok'} />
+            <SettingStat label="Managed knobs" value={data.settings.length.toLocaleString(getRegionalLocale())} />
+            <SettingStat label="Pending autosave" value={dirtyCount.toLocaleString(getRegionalLocale())} tone={dirtyCount > 0 ? 'warn' : 'ok'} />
             <SettingStat label="Custom lines" value={customRcDirty ? 'edited' : 'saved'} tone={customRcDirty ? 'warn' : 'ok'} />
-            <SettingStat label="Live unavailable" value={unavailableCount.toLocaleString()} tone={unavailableCount > 0 ? 'warn' : 'ok'} />
+            <SettingStat label="Live unavailable" value={unavailableCount.toLocaleString(getRegionalLocale())} tone={unavailableCount > 0 ? 'warn' : 'ok'} />
             <SettingStat label="Overlay" value={data.overlay_writable ? 'writable' : 'readonly'} tone={data.overlay_writable ? 'ok' : 'warn'} />
             <SettingStat label="Restart support" value={data.restart_supported ? 'available' : 'manual'} tone={data.restart_supported ? 'ok' : 'warn'} />
           </div>
@@ -628,7 +629,7 @@ function RtorrentSettingsPanel() {
             </div>
           )}
           <div id="rt-settings-result-count" role="status" aria-live="polite" style={{ color: 'var(--faint)', fontSize: 11 }}>
-            Showing {visibleSettingCount.toLocaleString()} of {data.settings.length.toLocaleString()} managed settings{collapsedVisibleCount > 0 ? `; ${collapsedVisibleCount.toLocaleString()} hidden in collapsed groups` : ''}.
+            Showing {visibleSettingCount.toLocaleString(getRegionalLocale())} of {data.settings.length.toLocaleString(getRegionalLocale())} managed settings{collapsedVisibleCount > 0 ? `; ${collapsedVisibleCount.toLocaleString(getRegionalLocale())} hidden in collapsed groups` : ''}.
           </div>
           {filteredGroups.length > 0 && (
             <nav aria-label="Settings groups" style={{
@@ -1233,8 +1234,8 @@ function NumericKnob({ setting, value, describedBy, onChange, onPreset }: {
       </div>
       <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, color: 'var(--faint)', fontSize: 10 }}>
-          <span>{min.toLocaleString()}</span>
-          <span>{max.toLocaleString()}</span>
+          <span>{min.toLocaleString(getRegionalLocale())}</span>
+          <span>{max.toLocaleString(getRegionalLocale())}</span>
         </div>
         <input
           type="range"
@@ -1416,7 +1417,7 @@ function settingCategory(setting: RtorrentSettingDescriptor): SettingGroup['name
 
 function settingDescription(setting: RtorrentSettingDescriptor): string {
   const bounds = setting.value_type === 'int' && setting.minimum !== null && setting.maximum !== null
-    ? ` Range ${setting.minimum.toLocaleString()}-${setting.maximum.toLocaleString()}${setting.unit ? ` ${setting.unit}` : ''}.`
+    ? ` Range ${setting.minimum.toLocaleString(getRegionalLocale())}-${setting.maximum.toLocaleString(getRegionalLocale())}${setting.unit ? ` ${setting.unit}` : ''}.`
     : ''
   const apply = setting.restart_required ? ' Saved immediately; daemon restart required to take effect.' : ' Saved and applied live when supported by rTorrent.'
   return `${setting.command} via ${setting.setter}.${bounds}${apply}`
@@ -1563,7 +1564,7 @@ function CommandIndex({ commands }: { commands?: { ok: boolean; count: number; c
               }}
             />
             <span style={{ color: 'var(--faint)', fontSize: 11, whiteSpace: 'nowrap' }}>
-              {filtered.length.toLocaleString()} shown
+              {filtered.length.toLocaleString(getRegionalLocale())} shown
             </span>
           </div>
           <div style={{

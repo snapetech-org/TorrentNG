@@ -92,7 +92,7 @@ class WorkflowSecurityTests(unittest.TestCase):
             for line in ci.splitlines()
             if line.lstrip().startswith("runs-on:") and "self-hosted" in line
         ]
-        self.assertEqual(len(runner_lines), 6)
+        self.assertEqual(len(runner_lines), 7)
         for runner in runner_lines:
             self.assertNotIn("github.event_name == 'pull_request'", runner)
             self.assertIn(

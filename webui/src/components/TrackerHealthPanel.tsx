@@ -1,3 +1,4 @@
+import { getRegionalLocale } from '../lib/localeFormat'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { maskAnnounceUrl, TrackerUrl } from '../lib/maskUrl'
@@ -12,7 +13,7 @@ function hostLabel(url: string): string {
 
 function fmtDate(ts: number): string {
   if (!ts) return 'never'
-  return new Date(ts * 1000).toLocaleString()
+  return new Date(ts * 1000).toLocaleString(getRegionalLocale())
 }
 
 interface Props {
@@ -201,7 +202,7 @@ function Summary({ label, value, tone }: { label: string; value: number; tone: '
       background: 'var(--surface)', padding: '5px 8px', fontSize: 12,
     }}>
       <span style={{ color: 'var(--faint)' }}>{label}</span>
-      <span style={{ color, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{value.toLocaleString()}</span>
+      <span style={{ color, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{value.toLocaleString(getRegionalLocale())}</span>
     </span>
   )
 }
@@ -209,7 +210,7 @@ function Summary({ label, value, tone }: { label: string; value: number; tone: '
 function Metric({ label, value, color }: { label: string; value: number; color: string }) {
   return (
     <div>
-      <div style={{ color, fontWeight: 700, fontSize: 15 }}>{value.toLocaleString()}</div>
+      <div style={{ color, fontWeight: 700, fontSize: 15 }}>{value.toLocaleString(getRegionalLocale())}</div>
       <div style={{ color: 'var(--faint)', fontSize: 11 }}>{label}</div>
     </div>
   )

@@ -1,0 +1,3 @@
+# Keep `cargo update` inside the crate on versions that build with rust-version.
+[resolver]
+incompatible-rust-versions = "fallback"

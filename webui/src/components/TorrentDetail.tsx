@@ -1,3 +1,4 @@
+import { formatRegionalNumber, getRegionalLocale } from '../lib/localeFormat'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, isFinalizing } from '../api/client'
@@ -6,15 +7,15 @@ import { TrackerUrl } from '../lib/maskUrl'
 import { DetailDockControls, type DetailPosition } from './DetailDockControls'
 
 function fmtSize(bytes: number): string {
-  if (bytes >= 1e12) return (bytes / 1e12).toFixed(2) + ' TB'
-  if (bytes >= 1e9)  return (bytes / 1e9).toFixed(2) + ' GB'
-  if (bytes >= 1e6)  return (bytes / 1e6).toFixed(1) + ' MB'
-  return (bytes / 1e3).toFixed(0) + ' KB'
+  if (bytes >= 1e12) return formatRegionalNumber(bytes / 1e12, { maximumFractionDigits: 2 }) + ' TB'
+  if (bytes >= 1e9) return formatRegionalNumber(bytes / 1e9, { maximumFractionDigits: 2 }) + ' GB'
+  if (bytes >= 1e6) return formatRegionalNumber(bytes / 1e6, { maximumFractionDigits: 1 }) + ' MB'
+  return formatRegionalNumber(bytes / 1e3, { maximumFractionDigits: 0 }) + ' KB'
 }
 
 function fmtDate(ts: number): string {
   if (!ts) return '—'
-  return new Date(ts * 1000).toLocaleString()
+  return new Date(ts * 1000).toLocaleString(getRegionalLocale())
 }
 
 function fmtSpeed(bps: number): string {
@@ -143,7 +144,7 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
   }
 
   const progress = t.size_bytes > 0 ? (t.bytes_done / t.size_bytes) * 100 : 0
-  const ratio = (t.ratio / 1000).toFixed(3)
+  const ratio = formatRegionalNumber(t.ratio / 1000, { minimumFractionDigits: 3, maximumFractionDigits: 3 })
   const tags = t.tags ? t.tags.split(',').filter(Boolean) : []
   const canStop = t.state !== 0
   const state = t.state === 3
@@ -274,7 +275,7 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
         <div style={{ marginBottom: 14 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
             <span style={{ fontSize: 11, color: 'var(--faint)' }}>Progress</span>
-            <span style={{ fontSize: 11, color: 'var(--muted)' }}>{progress.toFixed(1)}%</span>
+            <span style={{ fontSize: 11, color: 'var(--muted)' }}>{formatRegionalNumber(progress, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%</span>
           </div>
           <div role="progressbar" aria-label={`Download progress for ${t.name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100, Math.max(0, progress))} style={{ height: 4, background: 'var(--surface-2)', borderRadius: 2, overflow: 'hidden' }}>
             <div style={{
