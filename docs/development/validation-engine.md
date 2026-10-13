@@ -20,7 +20,9 @@ When evaluating an unreviewed branch, copy `trusted-test-launcher.mjs` and
 `trusted-test-sandbox-policy.mjs` from the same reviewed revision to a location
 outside the checkout, keeping them together. The launcher snapshots only paths
 in the Git index, hides the original checkout and common host configuration and
-data roots, and runs candidate code offline. Stage new candidate files first.
+data roots, and runs candidate code offline. Credential files and non-source
+files in credential-named folders are omitted while source files such as
+`auth.rs` remain available. Stage new candidate files first.
 
 ```sh
 node /path/to/trusted-test-launcher.mjs "$PWD" -- python3 scripts/validate_development.py --tests-only
