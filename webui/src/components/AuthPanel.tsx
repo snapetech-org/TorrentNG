@@ -1,3 +1,5 @@
+import { LocalizedRichText, LocalizedText } from '../lib/LocalizedText'
+import { translateInterface } from '../lib/interfaceLocale'
 import { useEffect, useState, type CSSProperties, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type AuthSettings } from '../api/client'
@@ -17,9 +19,9 @@ export function AuthPanel() {
       queryClient.setQueryData(['auth-settings'], settings)
       setUsername(settings.username)
       setPassword('')
-      setNotice('Login credentials saved.')
+      setNotice(translateInterface("Login credentials saved."))
     },
-    onError: () => setNotice('Could not save login credentials.'),
+    onError: () => setNotice(translateInterface("Could not save login credentials.")),
   })
   const reset = useMutation({
     mutationFn: api.auth.resetSettings,
@@ -27,9 +29,9 @@ export function AuthPanel() {
       queryClient.setQueryData(['auth-settings'], settings)
       setUsername(settings.username)
       setPassword('')
-      setNotice('Credentials restored from config.toml.')
+      setNotice(translateInterface("Credentials restored from config.toml."))
     },
-    onError: () => setNotice('Could not restore credentials from config.toml.'),
+    onError: () => setNotice(translateInterface("Could not restore credentials from config.toml.")),
   })
 
   useEffect(() => {
@@ -45,24 +47,22 @@ export function AuthPanel() {
   return (
     <section aria-labelledby="auth-settings-title" style={{ padding: '16px 24px', maxWidth: 760 }}>
       <h2 id="auth-settings-title" style={{ margin: '0 0 5px', fontSize: 14, color: 'var(--text)' }}>
-        Login credentials
-      </h2>
+        <LocalizedText source="Login credentials" /></h2>
       <p style={{ margin: '0 0 14px', color: 'var(--faint)', fontSize: 12, lineHeight: 1.55 }}>
-        Choose a WebUI username and password. Public binds require a password of at least 16 characters. API tokens stay enabled for automation and can also be entered in either login field.
-      </p>
+        <LocalizedText source="Choose a WebUI username and password. Public binds require a password of at least 16 characters. API tokens stay enabled for automation and can also be entered in either login field." /></p>
 
-      {isLoading && <div role="status">Loading authentication settings…</div>}
-      {error && <div role="alert" style={{ color: 'var(--danger)', fontSize: 12 }}>Authentication settings are unavailable.</div>}
+      {isLoading && <div role="status"><LocalizedText source="Loading authentication settings…" /></div>}
+      {error && <div role="alert" style={{ color: 'var(--danger)', fontSize: 12 }}><LocalizedText source="Authentication settings are unavailable." /></div>}
       {data && (
         <>
           <div style={{ marginBottom: 14, fontSize: 12, color: 'var(--muted)', lineHeight: 1.55 }}>
-            <div>Current username: <strong>{data.username}</strong></div>
-            <div>API-token login: <strong>{data.api_token_login_enabled ? 'enabled' : 'not configured'}</strong></div>
+            <div><LocalizedText source="Current username:" spaceAfter /><strong>{data.username}</strong></div>
+            <div><LocalizedText source="API-token login:" spaceAfter /><strong>{data.api_token_login_enabled ? <LocalizedText source="Enabled" /> : <LocalizedText source="not configured" />}</strong></div>
           </div>
 
           <form onSubmit={submit} style={{ display: 'grid', gap: 10, maxWidth: 440 }}>
             <label style={labelStyle}>
-              Username
+              <LocalizedText source="Username" />
               <input
                 value={username}
                 onChange={event => setUsername(event.target.value)}
@@ -73,8 +73,7 @@ export function AuthPanel() {
               />
             </label>
             <label style={labelStyle}>
-              New password
-              <input
+              <LocalizedText source="New password" /><input
                 type="password"
                 value={password}
                 onChange={event => setPassword(event.target.value)}
@@ -87,17 +86,27 @@ export function AuthPanel() {
             </label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               <button type="submit" disabled={save.isPending || reset.isPending} style={buttonStyle}>
-                {save.isPending ? 'Saving…' : 'Save credentials'}
+                {save.isPending ? <LocalizedText source="Saving…" /> : <LocalizedText source="Save credentials" />}
               </button>
               <button type="button" onClick={() => reset.mutate()} disabled={save.isPending || reset.isPending} style={secondaryButtonStyle}>
-                {reset.isPending ? 'Restoring…' : 'Restore config.toml credentials'}
+                {reset.isPending ? <LocalizedText source="Restoring…" /> : <LocalizedText source="Restore config.toml credentials" />}
               </button>
             </div>
           </form>
           {notice && <div role="status" aria-live="polite" style={{ marginTop: 10, color: 'var(--muted)', fontSize: 12 }}>{notice}</div>}
 
           <div style={{ marginTop: 16, padding: 11, border: '1px solid var(--border)', borderRadius: 6, color: 'var(--faint)', fontSize: 11, lineHeight: 1.55 }}>
-            API tokens are configured in <code>[auth].api_tokens</code> or <code>[auth].api_tokens_file</code>. On Unraid, find the token in the container’s <strong>API Token</strong> setting; the existing-client profile also accepts <code>TNG_API_TOKENS</code> or <code>RTNG_API_TOKENS</code>. Runtime credential changes are stored in the service state directory; reset here to use values from config.toml again.
+            <LocalizedRichText
+              source="API tokens are configured in {tokenConfig} or {tokenFileConfig}. On Unraid, find the token in the container's {unraidSetting} setting. The existing-client profile also accepts {tngApiTokens} or {rtngApiTokens}. Runtime credential changes are saved in the service state directory. Select Restore to load values from {configFile} again."
+              parameters={{
+                tokenConfig: <code>[auth].api_tokens</code>,
+                tokenFileConfig: <code>[auth].api_tokens_file</code>,
+                unraidSetting: <strong>API Token</strong>,
+                tngApiTokens: <code>TNG_API_TOKENS</code>,
+                rtngApiTokens: <code>RTNG_API_TOKENS</code>,
+                configFile: <code>config.toml</code>,
+              }}
+            />
           </div>
         </>
       )}

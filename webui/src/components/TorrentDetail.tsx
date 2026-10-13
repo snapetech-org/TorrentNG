@@ -1,3 +1,5 @@
+import { LocalizedErrorText, LocalizedText } from '../lib/LocalizedText'
+import { interfaceTextProps, translateInterface } from '../lib/interfaceLocale'
 import { formatRegionalNumber, getRegionalLocale } from '../lib/localeFormat'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -178,18 +180,18 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
             {t.name}
           </h2>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 7 }}>
-            <Pill color={state.color}>{state.label}</Pill>
-            {t.complete && <Pill color="var(--success)">Complete</Pill>}
+            <Pill color={state.color}><LocalizedText source={state.label} /></Pill>
+            {t.complete && <Pill color="var(--success)"><LocalizedText source="Complete" /></Pill>}
             {t.down_rate > 0 && <Pill color="var(--accent)">DL {fmtSpeed(t.down_rate)}</Pill>}
             {t.up_rate > 0 && <Pill color="var(--success)">UL {fmtSpeed(t.up_rate)}</Pill>}
           </div>
         </div>
         <DetailDockControls position={position} onChange={onPositionChange} />
-        <button type="button" onClick={onClose} title="Hide details" aria-label="Hide details" style={{
+        <button type="button" onClick={onClose} title={translateInterface("Hide details")} aria-label={translateInterface("Hide details")} style={{
           background: 'var(--surface-2)', border: '1px solid var(--border-strong)', borderRadius: 5,
           cursor: 'pointer', color: 'var(--muted)', fontSize: 16, lineHeight: 1,
           width: 28, height: 28, padding: 0, flexShrink: 0,
-        }}>×</button>
+        }} {...interfaceTextProps("Hide details")}>×</button>
       </div>
 
       <label style={{
@@ -197,14 +199,14 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
         color: 'var(--muted)', fontSize: 11,
       }}>
-        <span>Auto-display details on selection</span>
+        <span><LocalizedText source="Auto-display details on selection" /></span>
         <input
           type="checkbox"
-          aria-label="Automatically show details when a torrent is selected"
+          aria-label={translateInterface("Automatically show details when a torrent is selected")}
           checked={autoDisplay}
           onChange={e => onAutoDisplayChange(e.target.checked)}
           style={{ accentColor: 'var(--accent)', cursor: 'pointer', flexShrink: 0 }}
-        />
+        {...interfaceTextProps("Automatically show details when a torrent is selected")} />
       </label>
 
       <div style={{
@@ -214,7 +216,7 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
         <button type="button" onClick={onClose} style={{
           background: 'transparent', border: '1px solid var(--border-strong)', borderRadius: 5,
           color: 'var(--muted)', padding: '3px 9px', fontSize: 11, cursor: 'pointer',
-        }}>Hide panel</button>
+        }}><LocalizedText source="Hide panel" /></button>
       </div>
 
       {/* Action buttons */}
@@ -238,32 +240,34 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
           background: 'color-mix(in srgb, var(--danger) 10%, var(--panel))',
           color: 'var(--danger)', fontSize: 11, overflowWrap: 'anywhere',
         }}>
-          {error}
+          <LocalizedErrorText message={error} />
         </div>
       )}
 
       {confirmDelete && (
-        <div role="alertdialog" aria-label={`Delete ${t.name}`} aria-describedby="torrent-detail-delete-description" style={{
+        <div role="alertdialog" aria-label={translateInterface('Delete {name}', { name: t.name })} {...interfaceTextProps('Delete {name}')} aria-describedby="torrent-detail-delete-description" style={{
           padding: '10px 14px', background: 'color-mix(in srgb, var(--danger) 12%, var(--panel))', borderBottom: '1px solid var(--danger)',
           fontSize: 12,
         }}>
-          <div id="torrent-detail-delete-description" style={{ color: 'var(--danger)', marginBottom: 8 }}>Delete "{t.name}"?</div>
+          <div id="torrent-detail-delete-description" style={{ color: 'var(--danger)', marginBottom: 8 }}>
+            <LocalizedText source="Delete “{name}”?" parameters={{ name: t.name }} />
+          </div>
           <div style={{ display: 'flex', gap: 6 }}>
             <button type="button" disabled={busy} onClick={() => remove(false)} style={{
               background: 'color-mix(in srgb, var(--danger) 18%, var(--surface-2))', border: 'none', borderRadius: 4,
               color: 'var(--danger)', padding: '3px 10px', fontSize: 11,
               cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.55 : 1,
-            }}>Remove torrent</button>
+            }}><LocalizedText source="Remove torrent" /></button>
             <button type="button" disabled={busy} onClick={() => remove(true)} style={{
               background: 'color-mix(in srgb, var(--danger) 28%, var(--surface-2))', border: 'none', borderRadius: 4,
               color: 'var(--danger)', padding: '3px 10px', fontSize: 11,
               cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.55 : 1,
-            }}>+ Delete files</button>
+            }}><LocalizedText source="+ Delete files" /></button>
             <button type="button" disabled={busy} onClick={() => setConfirmDelete(false)} style={{
               background: 'none', border: '1px solid var(--border-strong)', borderRadius: 4,
               color: 'var(--faint)', padding: '3px 8px', fontSize: 11,
               cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.55 : 1,
-            }}>Cancel</button>
+            }}><LocalizedText source="Cancel" /></button>
           </div>
         </div>
       )}
@@ -274,10 +278,10 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
         {/* Progress bar */}
         <div style={{ marginBottom: 14 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-            <span style={{ fontSize: 11, color: 'var(--faint)' }}>Progress</span>
+            <span style={{ fontSize: 11, color: 'var(--faint)' }}><LocalizedText source="Progress" /></span>
             <span style={{ fontSize: 11, color: 'var(--muted)' }}>{formatRegionalNumber(progress, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%</span>
           </div>
-          <div role="progressbar" aria-label={`Download progress for ${t.name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100, Math.max(0, progress))} style={{ height: 4, background: 'var(--surface-2)', borderRadius: 2, overflow: 'hidden' }}>
+          <div role="progressbar" aria-label={translateInterface('Download progress for {name}', { name: t.name })} {...interfaceTextProps('Download progress for {name}')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100, Math.max(0, progress))} style={{ height: 4, background: 'var(--surface-2)', borderRadius: 2, overflow: 'hidden' }}>
             <div style={{
               width: `${progress}%`, height: '100%',
               background: progress >= 100 ? 'var(--success)' : 'var(--accent)', borderRadius: 2,
@@ -308,12 +312,12 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
         </div>
 
         {t.category && (<>
-          <div style={LABEL}>Category</div>
+          <div style={LABEL}><LocalizedText source="Category" /></div>
           <div style={VALUE}>{t.category}</div>
         </>)}
 
         {tags.length > 0 && (<>
-          <div style={LABEL}>Tags</div>
+          <div style={LABEL}><LocalizedText source="Tags" /></div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 12 }}>
             {tags.map(tag => (
               <span key={tag} style={{
@@ -325,7 +329,7 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
         </>)}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ ...LABEL, flex: 1 }}>Save path</div>
+          <div style={{ ...LABEL, flex: 1 }}><LocalizedText source="Save path" /></div>
           {!editingPath && (
             <button
               type="button"
@@ -338,14 +342,14 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
                 color: 'var(--faint)', padding: '1px 6px', fontSize: 10, cursor: 'pointer',
               }}
             >
-              Edit
+              <LocalizedText source="Edit" />
             </button>
           )}
         </div>
         {editingPath ? (
           <div style={{ marginBottom: 12 }}>
             <input
-              aria-label="Save path"
+              aria-label={translateInterface("Save path")}
               value={savePath}
               onChange={e => setSavePath(e.target.value)}
               disabled={busy}
@@ -354,7 +358,7 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
                 border: '1px solid var(--border-strong)', borderRadius: 4, color: 'var(--text)',
                 padding: '5px 7px', fontSize: 11, fontFamily: 'monospace',
               }}
-            />
+            {...interfaceTextProps("Save path")} />
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 6 }}>
               <button
                 type="button"
@@ -365,7 +369,7 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
                   color: 'var(--faint)', padding: '3px 8px', fontSize: 11, cursor: 'pointer',
                 }}
               >
-                Cancel
+                <LocalizedText source="Cancel" />
               </button>
               <button
                 type="button"
@@ -378,7 +382,7 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
                   opacity: busy || !savePath.trim() ? 0.5 : 1,
                 }}
               >
-                Save
+                <LocalizedText source="Save" />
               </button>
             </div>
           </div>
@@ -387,29 +391,29 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
         )}
 
         {t.message && (<>
-          <div style={LABEL}>Message</div>
+          <div style={LABEL}><LocalizedText source="Message" /></div>
           <div style={{ ...VALUE, color: 'var(--warning)' }}>{t.message}</div>
         </>)}
 
-        <div style={LABEL}>Hash</div>
+        <div style={LABEL}><LocalizedText source="Hash" /></div>
         <div style={MONO}>{t.hash}</div>
 
         {/* Trackers */}
         {trackersLoading && (
-          <Section title="Trackers">
+          <Section title={<LocalizedText source="Trackers" />}>
             <LoadingBlock />
           </Section>
         )}
         {trackersError && (
-          <Section title="Trackers">
-            <Notice>Tracker details unavailable.</Notice>
+          <Section title={<LocalizedText source="Trackers" />}>
+            <Notice><LocalizedText source="Tracker details unavailable." /></Notice>
           </Section>
         )}
         {trackers && (
-          <Section title="Trackers">
+          <Section title={<LocalizedText source="Trackers" />}>
             <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
               <input
-                aria-label="New tracker URL"
+                aria-label={translateInterface("New tracker URL")}
                 value={newTracker}
                 onChange={e => setNewTracker(e.target.value)}
                 disabled={busy}
@@ -419,7 +423,7 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
                   border: '1px solid var(--border-strong)', borderRadius: 4, color: 'var(--text)',
                   padding: '5px 7px', fontSize: 11, fontFamily: 'monospace',
                 }}
-              />
+              {...interfaceTextProps("New tracker URL")} />
               <button
                 type="button"
                 onClick={addTracker}
@@ -431,7 +435,7 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
                   opacity: busy || !newTracker.trim() ? 0.5 : 1,
                 }}
               >
-                Add
+                <LocalizedText source="Add" />
               </button>
             </div>
             {trackers.map((tr, i) => {
@@ -459,35 +463,41 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
                       cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.5 : 1,
                     }}
                   >
-                    Remove
+                    <LocalizedText source="Remove" />
                   </button>
                 </div>
                 <div style={{ fontSize: 10, color: 'var(--faint)', marginTop: 1 }}>
-                  {tr.scrape_complete} seeds · {tr.scrape_incomplete} peers
+                  <LocalizedText
+                    source="Tracker scrape: {seeds} seeds, {peers} peers"
+                    parameters={{
+                      seeds: tr.scrape_complete.toLocaleString(getRegionalLocale()),
+                      peers: tr.scrape_incomplete.toLocaleString(getRegionalLocale()),
+                    }}
+                  />
                   {tr.message ? ` · ${tr.message}` : ''}
                 </div>
               </div>
               )
             })}
             {trackers.length === 0 && (
-              <EmptyBlock>No trackers configured.</EmptyBlock>
+              <EmptyBlock><LocalizedText source="No trackers configured." /></EmptyBlock>
             )}
           </Section>
         )}
 
         {/* Files */}
         {filesLoading && (
-          <Section title="Files">
+          <Section title={<LocalizedText source="Files" />}>
             <LoadingBlock />
           </Section>
         )}
         {filesError && (
-          <Section title="Files">
-            <Notice>File details unavailable.</Notice>
+          <Section title={<LocalizedText source="Files" />}>
+            <Notice><LocalizedText source="File details unavailable." /></Notice>
           </Section>
         )}
         {files && files.length > 0 && (
-          <Section title={`Files (${files.length})`}>
+          <Section title={<LocalizedText source="Files ({count})" parameters={{ count: formatRegionalNumber(files.length) }} />}>
             {files.map(f => {
               // A wanted file (priority !== 0) in a torrent the backend
               // already reports as fully complete can't itself be
@@ -508,11 +518,11 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
                     textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   }} title={f.path}>{f.path.split('/').pop()}</div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 2 }}>
-                    <div role="progressbar" aria-label={`Progress for ${f.path}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100, Math.max(0, fp))} style={{ flex: 1, height: 2, background: 'var(--surface-2)', borderRadius: 1, overflow: 'hidden' }}>
+                    <div role="progressbar" aria-label={translateInterface('Progress for {path}', { path: f.path })} {...interfaceTextProps('Progress for {path}')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100, Math.max(0, fp))} style={{ flex: 1, height: 2, background: 'var(--surface-2)', borderRadius: 1, overflow: 'hidden' }}>
                       <div style={{ width: `${fp}%`, height: '100%', background: fp >= 100 ? 'var(--success)' : 'var(--accent)' }} />
                     </div>
                     <span style={{ fontSize: 10, color: 'var(--faint)', flexShrink: 0 }}>{fmtSize(f.size_bytes)}</span>
-                    <span style={{ fontSize: 10, color: f.priority === 0 ? 'var(--faint)' : f.priority >= 2 ? 'var(--accent)' : 'var(--success)', flexShrink: 0 }}>{priority}</span>
+                    <span style={{ fontSize: 10, color: f.priority === 0 ? 'var(--faint)' : f.priority >= 2 ? 'var(--accent)' : 'var(--success)', flexShrink: 0 }}><LocalizedText source={priority} /></span>
                   </div>
                 </div>
               )
@@ -520,8 +530,8 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
           </Section>
         )}
         {files && files.length === 0 && (
-          <Section title="Files">
-            <EmptyBlock>No file list available yet.</EmptyBlock>
+          <Section title={<LocalizedText source="Files" />}>
+            <EmptyBlock><LocalizedText source="No file list available yet." /></EmptyBlock>
           </Section>
         )}
 
@@ -547,7 +557,7 @@ function Pill({ color, children }: { color: string; children: React.ReactNode })
   )
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, children }: { title: React.ReactNode; children: React.ReactNode }) {
   return (
     <div style={{ marginTop: 16 }}>
       <h3 style={{

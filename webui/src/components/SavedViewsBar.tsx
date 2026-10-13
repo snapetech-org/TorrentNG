@@ -1,3 +1,5 @@
+import { LocalizedErrorText, LocalizedText } from '../lib/LocalizedText'
+import { interfaceTextProps, translateInterface } from '../lib/interfaceLocale'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type ListParams, type SavedView } from '../api/client'
@@ -98,17 +100,17 @@ export function SavedViewsBar({ params, onApply }: Props) {
   }
 
   return (
-    <div className="tng-savedviews" role="region" aria-label="Saved views" style={{
+    <div className="tng-savedviews" role="region" aria-label={translateInterface("Saved views")} style={{
       display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
       padding: '6px 12px', background: 'var(--surface)', borderBottom: '1px solid var(--border)',
       fontSize: 12,
-    }}>
+    }} {...interfaceTextProps("Saved views")}>
       <span style={{
         color: 'var(--faint)', fontWeight: 800, textTransform: 'uppercase', fontSize: 10,
         letterSpacing: 0, display: 'inline-flex', alignItems: 'center', gap: 5,
       }}>
         <span aria-hidden="true" style={{ color: 'var(--accent)' }}>◇</span>
-        Views
+        <LocalizedText source="Views" />
       </span>
       {error && <span role="alert" aria-live="assertive" style={{
         color: 'var(--danger)',
@@ -116,7 +118,7 @@ export function SavedViewsBar({ params, onApply }: Props) {
         border: '1px solid color-mix(in srgb, var(--danger) 38%, var(--border))',
         borderRadius: 999,
         padding: '2px 8px',
-      }}>{error}</span>}
+      }}><LocalizedErrorText message={error} /></span>}
 
       {views.map(view => {
         const isActive = stableKey(cleanParams(view.params)) === activeKey
@@ -145,7 +147,8 @@ export function SavedViewsBar({ params, onApply }: Props) {
             </button>
             <button
               type="button"
-              aria-label={`Delete saved view ${view.name}`}
+              aria-label={translateInterface('Delete saved view {name}', { name: view.name })}
+              {...interfaceTextProps('Delete saved view {name}')}
               onClick={() => removeView(view.id)}
               disabled={Boolean(busy)}
               style={{
@@ -161,7 +164,7 @@ export function SavedViewsBar({ params, onApply }: Props) {
       })}
 
       {views.length === 0 && !error && (
-        <span style={{ color: 'var(--faint)', fontSize: 11 }}>No saved views yet</span>
+        <span style={{ color: 'var(--faint)', fontSize: 11 }}><LocalizedText source="No saved views yet" /></span>
       )}
       {hasActiveFilters && !hasSavedCurrentView && !error && (
         <span className="tng-unsaved-view" role="status" style={{
@@ -174,24 +177,23 @@ export function SavedViewsBar({ params, onApply }: Props) {
           fontWeight: 800,
           whiteSpace: 'nowrap',
         }}>
-          Unsaved view
-        </span>
+          <LocalizedText source="Unsaved view" /></span>
       )}
 
       <div className="tng-savedview-save" style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: views.length ? 4 : 0 }}>
         <input
-          aria-label="Saved view name"
+          aria-label={translateInterface("Saved view name")}
           value={name}
           onChange={e => setName(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') saveView() }}
           disabled={Boolean(busy)}
-          placeholder="Save current view"
+          placeholder={translateInterface("Save current view")}
           style={{
             width: 150, background: 'var(--surface)', border: '1px solid var(--border-strong)',
             borderRadius: 5, color: 'var(--text)', padding: '3px 8px', fontSize: 12,
             outline: 'none',
           }}
-        />
+        {...interfaceTextProps("Saved view name")} />
         <button
           type="button"
           onClick={saveView}
@@ -203,7 +205,7 @@ export function SavedViewsBar({ params, onApply }: Props) {
             opacity: name.trim() && !busy ? 1 : 0.5,
           }}
         >
-          {busy === '__save__' ? 'Saving…' : 'Save'}
+          {busy === '__save__' ? <LocalizedText source="Saving…" /> : <LocalizedText source="Save" />}
         </button>
       </div>
     </div>

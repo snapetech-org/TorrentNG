@@ -1,4 +1,6 @@
-import { getRegionalLocale } from '../lib/localeFormat'
+import { LocalizedErrorText, LocalizedText } from '../lib/LocalizedText'
+import { interfaceTextProps, translateInterface, useInterfaceLanguage } from '../lib/interfaceLocale'
+import { formatRegionalNumber, getRegionalLocale } from '../lib/localeFormat'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -19,7 +21,7 @@ const HOUR = 3600
 export const MAX_PATH_POLICIES = 64
 
 const RECOVERY_LABEL: Record<HostCrashRecovery, string> = {
-  watermark: 'Watermark only',
+  watermark: 'Use only the sync checkpoint',
   recent: 'Recent writes',
   full: 'Full recheck',
 }
@@ -120,41 +122,54 @@ export function looksAbsolute(path: string): boolean {
   return path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith('\\\\')
 }
 
-export function validateDraft(draft: CrashSafetySettings): string[] {
+type Translate = (source: string, parameters?: Record<string, string | number>) => string
+
+function interpolate(source: string, parameters: Record<string, string | number> = {}) {
+  return source.replace(/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g, (placeholder, name: string) => {
+    const value = parameters[name]
+    return typeof value === 'string' || typeof value === 'number' ? String(value) : placeholder
+  })
+}
+
+export function validateDraft(draft: CrashSafetySettings, t: Translate = interpolate): string[] {
   const problems: string[] = []
   if (!Number.isFinite(draft.recent_write_window_secs) || draft.recent_write_window_secs < 60) {
-    problems.push('The recent-write window must be at least one minute.')
+    problems.push(t('The recent-write window must be at least one minute.'))
   }
   if (draft.recent_write_window_secs > 365 * 24 * HOUR) {
-    problems.push('The recent-write window cannot exceed 365 days.')
+    problems.push(t('The recent-write window cannot exceed 365 days.'))
   }
   if (
     !Number.isInteger(draft.completion_verify_sample_percent)
     || draft.completion_verify_sample_percent < 1
     || draft.completion_verify_sample_percent > 100
   ) {
-    problems.push('The sample size must be a whole number from 1 to 100 percent.')
+    problems.push(t('The sample size must be a whole number from 1 to 100 percent.'))
   }
   for (const [name, paths] of [['Weak', draft.weak_mount_paths], ['Strong', draft.strong_mount_paths]] as const) {
     const bad = paths.find(path => !looksAbsolute(path))
-    if (bad) problems.push(`${name} mount paths must be absolute: “${bad}”.`)
+    if (bad) problems.push(t('{name} mount paths must be absolute: “{path}”.', { name, path: bad }))
   }
   const overlap = draft.weak_mount_paths.find(path => draft.strong_mount_paths.includes(path))
-  if (overlap) problems.push(`“${overlap}” is listed as both weak and strong.`)
+  if (overlap) problems.push(t('“{path}” is listed as both weak and strong.', { path: overlap }))
   const policies = draft.path_policies ?? []
   if (policies.length > MAX_PATH_POLICIES) {
-    problems.push(`At most ${MAX_PATH_POLICIES} location policies are allowed.`)
+    problems.push(t('At most {count} location policies are allowed.', { count: MAX_PATH_POLICIES }))
   }
   policies.forEach((policy, index) => {
     const path = policy.path.trim()
-    const name = path ? `“${path}”` : `Location policy ${index + 1}`
-    if (!looksAbsolute(path)) problems.push(`${name} needs an absolute folder path.`)
+    const name = path ? `“${path}”` : t('Location policy {index}', { index: index + 1 })
+    if (!looksAbsolute(path)) {
+      problems.push(path
+        ? t('“{path}” needs an absolute folder path.', { path })
+        : t('Location policy {index} needs an absolute folder path.', { index: index + 1 }))
+    }
     const percent = policy.completion_verify_sample_percent
     if (percent !== null && (!Number.isInteger(percent) || percent < 1 || percent > 100)) {
-      problems.push(`${name}: the sample size must be a whole number from 1 to 100 percent.`)
+      problems.push(t('The sample size for {name} must be a whole number from 1 to 100 percent.', { name }))
     }
     if (path && policies.findIndex(other => other.path.trim() === path) !== index) {
-      problems.push(`${name} appears more than once; each location can have only one policy.`)
+      problems.push(t('{name} appears more than once; each location can have only one policy.', { name }))
     }
   })
   return problems
@@ -201,12 +216,13 @@ function sameSettings(a: CrashSafetySettings, b: CrashSafetySettings): boolean {
   return JSON.stringify(a) === JSON.stringify(b)
 }
 
-function formatWhen(unix: number | null): string {
-  if (!unix) return 'unknown'
+function formatWhen(unix: number | null, t: Translate = interpolate): string {
+  if (!unix) return t('unknown')
   return new Date(unix * 1000).toLocaleString(getRegionalLocale())
 }
 
 export function CrashSafetyPanel() {
+  const { t, language } = useInterfaceLanguage()
   const qc = useQueryClient()
   const { data: engine } = useQuery({ queryKey: ['engine'], queryFn: api.engine, staleTime: 5_000 })
   const supported = engine?.backend.capabilities.supports_crash_safety === true
@@ -253,7 +269,7 @@ export function CrashSafetyPanel() {
     strong_mount_paths: parsePathList(strongText),
     path_policies: (draft.path_policies ?? []).map(policy => ({ ...policy, path: policy.path.trim() })),
   }
-  const problems = effectiveDraft ? validateDraft(effectiveDraft) : []
+  const problems = effectiveDraft ? validateDraft(effectiveDraft, t) : []
   const dirty = Boolean(view && effectiveDraft && !sameSettings(effectiveDraft, view.settings))
 
   const check = useMutation({
@@ -282,12 +298,9 @@ export function CrashSafetyPanel() {
   if (!supported) {
     return (
       <section aria-labelledby={ids.title} style={sectionStyle}>
-        <h2 id={ids.title} style={h2Style}>Crash safety</h2>
+        <h2 id={ids.title} style={h2Style}><LocalizedText source="Crash safety" /></h2>
         <div role="status" style={infoStyle}>
-          Crash-safety controls are available when TorrentNG runs its own client (<code>torrentngd</code>). The
-          selected backend manages its own resume state, so a power loss is handled by that client&rsquo;s
-          own recovery.
-        </div>
+          <LocalizedText source="Crash-safety controls are available when TorrentNG runs its own client (" /><code>torrentngd</code><LocalizedText source="). The selected backend manages its own resume state, so a power loss is handled by that client’s own recovery." /></div>
       </section>
     )
   }
@@ -295,10 +308,10 @@ export function CrashSafetyPanel() {
   if (!view || !draft || !effectiveDraft) {
     return (
       <section aria-labelledby={ids.title} aria-busy={isLoading} style={sectionStyle}>
-        <h2 id={ids.title} style={h2Style}>Crash safety</h2>
+        <h2 id={ids.title} style={h2Style}><LocalizedText source="Crash safety" /></h2>
         {error
-          ? <div role="alert" style={errorStyle}>Could not load crash-safety settings: {error instanceof Error ? error.message : 'unknown error'}</div>
-          : <div role="status" style={subtleStyle}>Loading…</div>}
+          ? <div role="alert" style={errorStyle}><LocalizedText source="Could not load crash-safety settings:" spaceAfter />{error instanceof Error ? <LocalizedErrorText message={error.message} /> : <LocalizedText source="unknown error" />}</div>
+          : <div role="status" style={subtleStyle}><LocalizedText source="Loading…" /></div>}
       </section>
     )
   }
@@ -318,76 +331,77 @@ export function CrashSafetyPanel() {
     <section aria-labelledby={ids.title} aria-busy={busy} style={sectionStyle}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 6 }}>
         <div>
-          <h2 id={ids.title} style={h2Style}>Crash safety</h2>
+          <h2 id={ids.title} style={h2Style}><LocalizedText source="Crash safety" /></h2>
           <div style={subtleStyle}>
-            Keeps a power cut or crash from marking half-written files as complete.
-            {' '}
-            <span title="docs/CRASH_SAFETY.md in the project repository">Full guide: <code>docs/CRASH_SAFETY.md</code></span>
+            <LocalizedText source="Keeps a power cut or crash from marking half-written files as complete." />{' '}
+            <span title={translateInterface("docs/CRASH_SAFETY.md in the project repository")} {...interfaceTextProps("docs/CRASH_SAFETY.md in the project repository")}><LocalizedText source="Full guide:" spaceAfter /><code>docs/CRASH_SAFETY.md</code></span>
           </div>
         </div>
-        {dirty && <Pill tone="warn">Unsaved</Pill>}
+        {dirty && <Pill tone="warn"><LocalizedText source="Unsaved" /></Pill>}
       </div>
 
       {/* ---------- status ---------- */}
       <div className="tng-card" role="region" aria-labelledby={ids.status} style={cardStyle} data-testid="crash-safety-status">
-        <div id={ids.status} style={cardTitleStyle}>Last shutdown</div>
+        <div id={ids.status} style={cardTitleStyle}><LocalizedText source="Previous run status" /></div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <Pill tone={verdict.tone}>{verdict.title}</Pill>
+          <Pill tone={verdict.tone}><LocalizedText source={verdict.title} /></Pill>
           {report.previous_run.crash_reference_unix && unclean && (
-            <span style={subtleStyle}>around {formatWhen(report.previous_run.crash_reference_unix)}</span>
+            <span style={subtleStyle}><LocalizedText source="around {when}" parameters={{ when: formatWhen(report.previous_run.crash_reference_unix, t) }} /></span>
           )}
         </div>
-        <p style={paraStyle}>{verdict.detail}</p>
+        <p style={paraStyle}><LocalizedText source={verdict.detail} /></p>
         {unclean && (
           <p style={paraStyle} data-testid="crash-recovery-summary">
-            Recovery this run: <strong>{c.recovery_rechecks}</strong> torrent{c.recovery_rechecks === 1 ? '' : 's'} rechecked,{' '}
-            <strong>{c.audit_pieces_downgraded}</strong> piece{c.audit_pieces_downgraded === 1 ? '' : 's'} re-verified by the
-            allocation audit, <strong>{c.integrity_regressions}</strong> integrity regression{c.integrity_regressions === 1 ? '' : 's'}.
+            <LocalizedText
+              source="Recovery this run: torrents checked again: {rechecked}; pieces re-verified by the allocation audit: {verified}; integrity regressions: {regressions}."
+              parameters={{
+                rechecked: formatRegionalNumber(c.recovery_rechecks),
+                verified: formatRegionalNumber(c.audit_pieces_downgraded),
+                regressions: formatRegionalNumber(c.integrity_regressions),
+              }}
+            />
           </p>
         )}
         {c.integrity_regressions > 0 && (
           <div role="alert" style={warnStyle}>
-            {c.integrity_regressions} torrent{c.integrity_regressions === 1 ? ' that was' : 's that were'} already reported complete
-            had pieces that no longer verified. Missing data is being downloaded again in place, which also repairs
-            hardlinked copies. Check the Logs panel for the affected files.
+            <LocalizedText source={c.integrity_regressions === 1 ? '{count} torrent was already reported complete, but some pieces no longer verify.' : '{count} torrents were already reported complete, but some pieces no longer verify.'} parameters={{ count: c.integrity_regressions }} />{' '}
+            <LocalizedText source="Missing data is being downloaded again in place, which also repairs hardlinked copies. Check the Logs panel for the affected files." />
           </div>
         )}
         <dl style={statGridStyle}>
           <Stat label="Finishing now" value={c.completions_pending}
             hint="Downloads held at “Finalizing” until storage confirms the data is on disk." />
-          <Stat label="Held this run" value={c.completions_gated} hint="Downloads that went through the completion gate since start." />
+          <Stat label="Downloads held this run" value={c.completions_gated} hint="Downloads that went through the completion gate since start." />
           <Stat label="Read-back checked" value={c.completion_verify_pieces} hint="Pieces re-read from disk after completing." />
           <Stat label="Read-back failures" value={c.completion_verify_failures} hint="Pieces that did not match when re-read." />
         </dl>
         {c.completion_sync_unsupported > 0 && (
           <div role="note" style={warnStyle}>
-            A filesystem answered that <code>fsync</code> is not supported. Completions there are released without a data
-            sync, and the mount is treated as weak.
-          </div>
+            <LocalizedText source="A filesystem answered that" spaceAfter /><code>fsync</code> <LocalizedText source="is not supported. Completions there are released without a data sync, and the mount is treated as weak." /></div>
         )}
       </div>
 
       {/* ---------- presets ---------- */}
       <div style={{ marginTop: 14 }}>
-        <div style={cardTitleStyle}>Presets</div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }} role="group" aria-label="Crash-safety presets">
+        <div style={cardTitleStyle}><LocalizedText source="Presets" /></div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }} role="group" aria-label={t("Crash-safety presets")} {...interfaceTextProps("Crash-safety presets")}>
           {PRESETS.map(preset => (
             <button
               key={preset.id}
               type="button"
               className="tng-preset-button"
-              title={preset.blurb}
+              title={t(preset.blurb)}
+              {...interfaceTextProps(preset.blurb)}
               disabled={busy}
               style={presetButtonStyle}
               onClick={() => setDraft(preset.apply(effectiveDraft))}
             >
-              {preset.label}
+              <LocalizedText source={preset.label} />
             </button>
           ))}
         </div>
         <div style={{ ...subtleStyle, marginTop: 6 }}>
-          Presets change the options below without saving. Your mount-path overrides are never touched.
-        </div>
+          <LocalizedText source="Presets change the options below without saving. Your mount-path overrides are never touched." /></div>
       </div>
 
       {/* ---------- settings ---------- */}
@@ -446,7 +460,7 @@ export function CrashSafetyPanel() {
             onChange={value => set('host_crash_recovery', value)}
             disabled={!effectiveDraft.host_crash_detection}
             options={[
-              ['watermark', 'Watermark only'],
+              ['watermark', 'Use only the sync checkpoint'],
               ['recent', 'Recent writes'],
               ['full', 'Full recheck'],
             ]}
@@ -496,13 +510,13 @@ export function CrashSafetyPanel() {
           />
           <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
             <PathList
-              label="Always treat as weak"
+              label="Always rate these paths as Weak"
               value={weakText}
               onChange={setWeakText}
               help="One absolute path per line. Use for storage the probe cannot see through, such as a ZFS dataset with sync disabled."
             />
             <PathList
-              label="Always treat as strong"
+              label="Always rate these paths as Strong"
               value={strongText}
               onChange={setStrongText}
               help="One absolute path per line. Use when you know a network or FUSE mount honors fsync."
@@ -512,13 +526,10 @@ export function CrashSafetyPanel() {
 
         <Group title="Different settings for specific folders">
           <div style={helpStyle}>
-            One library can sit on different storage. Add a policy for a folder to give torrents saved there their own
-            completion, recovery, audit or read-back settings. The most specific folder wins, and any option you leave
-            on “Use global setting” follows the settings above. Storage trust still applies on top: a weak location is
-            checked harder than its policy alone would ask.
+            <LocalizedText source="One library can sit on different storage. Add a policy for a folder to give torrents saved there their own completion, recovery, audit or read-back settings. The most specific folder wins, and any option you leave on “Use global setting” follows the settings above. Storage trust still applies on top: a weak location is checked harder than its policy alone would ask." />
           </div>
           {policies.length === 0
-            ? <div style={subtleStyle} data-testid="no-path-policies">No folder policies. Every save location uses the settings above.</div>
+            ? <div style={subtleStyle} data-testid="no-path-policies"><LocalizedText source="No folder policies. Every save location uses the settings above." /></div>
             : policies.map((policy, index) => (
               <PolicyEditor
                 key={index}
@@ -535,25 +546,24 @@ export function CrashSafetyPanel() {
               disabled={busy || policies.length >= MAX_PATH_POLICIES}
               onClick={() => set('path_policies', [...policies, emptyPathPolicy()])}
             >
-              Add folder policy
-            </button>
+              <LocalizedText source="Add folder policy" /></button>
           </div>
         </Group>
 
         {problems.length > 0 && (
           <ul role="alert" style={{ ...errorStyle, margin: 0, paddingLeft: 22 }}>
-            {problems.map(problem => <li key={problem}>{problem}</li>)}
+            {problems.map(problem => <li key={problem} lang={language} dir={language === 'ar' ? 'rtl' : 'ltr'}>{problem}</li>)}
           </ul>
         )}
         {(apply.isError || reset.isError) && (
           <div role="alert" style={errorStyle}>
-            {((apply.error ?? reset.error) instanceof Error ? (apply.error ?? reset.error)?.message : null) ?? 'The change was not applied.'}
+            {((apply.error ?? reset.error) instanceof Error ? <LocalizedErrorText message={(apply.error ?? reset.error)?.message ?? ''} /> : null) ?? <LocalizedText source="The change was not applied." />}
           </div>
         )}
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <button type="submit" disabled={!dirty || problems.length > 0 || busy} style={primaryButtonStyle(dirty && problems.length === 0 && !busy)}>
-            {apply.isPending ? 'Applying…' : 'Apply'}
+            {apply.isPending ? <LocalizedText source="Applying…" /> : <LocalizedText source="Apply" />}
           </button>
           <button
             type="button"
@@ -565,45 +575,40 @@ export function CrashSafetyPanel() {
               setStrongText(view.settings.strong_mount_paths.join('\n'))
             }}
           >
-            Discard changes
-          </button>
+            <LocalizedText source="Discard changes" /></button>
           {view.overridden && (
             <button type="button" disabled={busy} style={secondaryButtonStyle} onClick={() => reset.mutate()}
-              title="Forget the runtime change and use the values from the config file again">
-              Reset to config file
-            </button>
+              title={translateInterface("Forget the runtime change and use the values from the config file again")} {...interfaceTextProps("Forget the runtime change and use the values from the config file again")}>
+              <LocalizedText source="Reset to config file" /></button>
           )}
           <span role="status" aria-live="polite" style={{ minHeight: 18 }}>
-            {saved === 'applied' && <Pill tone="ok">Applied</Pill>}
-            {saved === 'reset' && <Pill tone="ok">Reset</Pill>}
+            {saved === 'applied' && <Pill tone="ok"><LocalizedText source="Applied" /></Pill>}
+            {saved === 'reset' && <Pill tone="ok"><LocalizedText source="Reset" /></Pill>}
           </span>
         </div>
         <div style={subtleStyle}>
           {view.overridden
-            ? 'These settings were changed at runtime and override the config file. They persist across restarts until reset.'
-            : 'These settings come from the config file. Changes made here are saved separately and persist across restarts.'}
-          {' '}Changes take effect immediately, for torrents that start or finish from now on.
-        </div>
+            ? <LocalizedText source="These settings were changed at runtime and override the config file. They persist across restarts until reset." />
+            : <LocalizedText source="These settings come from the config file. Changes made here are saved separately and persist across restarts." />}
+          {' '}<LocalizedText source="Changes take effect immediately, for torrents that start or finish from now on." /></div>
       </form>
 
       {/* ---------- check a location ---------- */}
       <form
         style={{ marginTop: 16 }}
-        aria-label="Check a location"
+        aria-label={t("Check a location")}
         onSubmit={event => {
           event.preventDefault()
           const path = checkPath.trim()
           if (looksAbsolute(path)) check.mutate(path)
         }}
-      >
-        <div style={cardTitleStyle}>Check a location</div>
+        {...interfaceTextProps("Check a location")}>
+        <div style={cardTitleStyle}><LocalizedText source="Check a location" /></div>
         <div style={{ ...subtleStyle, marginBottom: 6 }}>
-          See which settings a folder gets right now, how its storage is rated and what recovery would do there. The
-          folder does not need to exist and is not added to the list below.
-        </div>
+          <LocalizedText source="See which settings a folder gets right now, how its storage is rated and what recovery would do there. The folder does not need to exist and is not added to the list below." /></div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div style={{ flex: '1 1 260px' }}>
-            <label htmlFor={`${ids.form}-check`} style={fieldLabelStyle}>Folder</label>
+            <label htmlFor={`${ids.form}-check`} style={fieldLabelStyle}><LocalizedText source="Folder" /></label>
             <input
               id={`${ids.form}-check`}
               type="text"
@@ -615,16 +620,16 @@ export function CrashSafetyPanel() {
             />
           </div>
           <button type="submit" style={secondaryButtonStyle} disabled={!looksAbsolute(checkPath.trim()) || check.isPending}>
-            {check.isPending ? 'Checking…' : 'Check'}
+            {check.isPending ? <LocalizedText source="Checking…" /> : <LocalizedText source="Check" />}
           </button>
         </div>
         {checkPath.trim() !== '' && !looksAbsolute(checkPath.trim()) && (
-          <div style={{ ...subtleStyle, color: 'var(--warning)' }}>Enter an absolute folder path.</div>
+          <div style={{ ...subtleStyle, color: 'var(--warning)' }}><LocalizedText source="Enter an absolute folder path." /></div>
         )}
         <div role="status" aria-live="polite">
           {check.isError && (
             <div role="alert" style={{ ...errorStyle, marginTop: 8 }}>
-              Could not check that folder: {check.error instanceof Error ? check.error.message : 'unknown error'}
+              <LocalizedText source="Could not check that folder:" spaceAfter />{check.error instanceof Error ? <LocalizedErrorText message={check.error.message} /> : <LocalizedText source="unknown error" />}
             </div>
           )}
           {check.data && <PathReportView report={check.data} />}
@@ -633,26 +638,26 @@ export function CrashSafetyPanel() {
 
       {/* ---------- mounts ---------- */}
       <div style={{ marginTop: 16 }}>
-        <div style={cardTitleStyle}>Save locations seen so far</div>
+        <div style={cardTitleStyle}><LocalizedText source="Observed save locations" /></div>
         {report.mounts.length === 0
-          ? <div style={subtleStyle}>None yet. A location appears here once a torrent using it starts.</div>
+          ? <div style={subtleStyle}><LocalizedText source="None yet. A location appears here once a torrent using it starts." /></div>
           : (
             <table style={tableStyle}>
-              <caption style={visuallyHidden}>Durability rating of each save location</caption>
+              <caption style={visuallyHidden}><LocalizedText source="Durability rating of each save location" /></caption>
               <thead>
                 <tr>
-                  <th scope="col" style={thStyle}>Path</th>
-                  <th scope="col" style={thStyle}>Filesystem</th>
-                  <th scope="col" style={thStyle}>Rating</th>
-                  <th scope="col" style={thStyle}>Why</th>
+                  <th scope="col" style={thStyle}><LocalizedText source="Path" /></th>
+                  <th scope="col" style={thStyle}><LocalizedText source="Filesystem" /></th>
+                  <th scope="col" style={thStyle}><LocalizedText source="Rating" /></th>
+                  <th scope="col" style={thStyle}><LocalizedText source="Why" /></th>
                 </tr>
               </thead>
               <tbody>
                 {report.mounts.map(mount => (
                   <tr key={mount.path}>
                     <td style={{ ...tdStyle, fontFamily: 'monospace', overflowWrap: 'anywhere' }}>{mount.path}</td>
-                    <td style={tdStyle}>{mount.fs_type ?? 'unknown'}</td>
-                    <td style={tdStyle}><Pill tone={TRUST_TEXT[mount.trust].tone}>{TRUST_TEXT[mount.trust].label}</Pill></td>
+                    <td style={tdStyle}>{mount.fs_type ?? <LocalizedText source="unknown" />}</td>
+                    <td style={tdStyle}><Pill tone={TRUST_TEXT[mount.trust].tone}><LocalizedText source={TRUST_TEXT[mount.trust].label} /></Pill></td>
                     <td style={tdStyle}>{mount.reasons.join(' ')}</td>
                   </tr>
                 ))}
@@ -660,9 +665,7 @@ export function CrashSafetyPanel() {
             </table>
           )}
         <div style={{ ...subtleStyle, marginTop: 6 }}>
-          The rating covers the filesystem layer only. It cannot see a disk&rsquo;s own volatile write cache or a RAID
-          controller without battery backup.
-        </div>
+          <LocalizedText source="The rating covers the filesystem layer only. It cannot see a disk’s own volatile write cache or a RAID controller without battery backup." /></div>
       </div>
     </section>
   )
@@ -674,7 +677,7 @@ function Group({ title, children }: { title: string; children: React.ReactNode }
   const id = useId()
   return (
     <fieldset aria-labelledby={id} style={groupStyle}>
-      <legend id={id} style={cardTitleStyle}>{title}</legend>
+      <legend id={id} style={cardTitleStyle}><LocalizedText source={title} /></legend>
       <div style={{ display: 'grid', gap: 12 }}>{children}</div>
     </fieldset>
   )
@@ -683,8 +686,8 @@ function Group({ title, children }: { title: string; children: React.ReactNode }
 function Help({ id, help, cost }: { id: string; help: string; cost?: string }) {
   return (
     <div id={id} style={helpStyle}>
-      {help}
-      {cost && <div style={{ marginTop: 3 }}>{cost}</div>}
+      <LocalizedText source={help} />
+      {cost && <div style={{ marginTop: 3 }}><LocalizedText source={cost} /></div>}
     </div>
   )
 }
@@ -704,7 +707,7 @@ function Toggle({ label, checked, onChange, help, cost, disabled }: {
       <label htmlFor={id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
         <input id={id} type="checkbox" checked={checked} disabled={disabled} aria-describedby={helpId}
           onChange={event => onChange(event.target.checked)} />
-        {label}
+        <LocalizedText source={label} />
       </label>
       <Help id={helpId} help={help} cost={cost} />
     </div>
@@ -722,12 +725,13 @@ function Select<T extends string>({ label, value, onChange, options, help, cost,
 }) {
   const id = useId()
   const helpId = `${id}-help`
+  const { t, textProps } = useInterfaceLanguage()
   return (
     <div>
-      <label htmlFor={id} style={fieldLabelStyle}>{label}</label>
+      <label htmlFor={id} style={fieldLabelStyle}><LocalizedText source={label} /></label>
       <select id={id} value={value} disabled={disabled} aria-describedby={helpId}
         onChange={event => onChange(event.target.value as T)} style={inputStyle}>
-        {options.map(([optionValue, text]) => <option key={optionValue} value={optionValue}>{text}</option>)}
+        {options.map(([optionValue, text]) => <option key={optionValue} value={optionValue} {...textProps(text)}>{t(text)}</option>)}
       </select>
       <Help id={helpId} help={help} cost={cost} />
     </div>
@@ -747,7 +751,7 @@ function NumberField({ label, value, min, max, onChange, help, disabled }: {
   const helpId = `${id}-help`
   return (
     <div>
-      <label htmlFor={id} style={fieldLabelStyle}>{label}</label>
+      <label htmlFor={id} style={fieldLabelStyle}><LocalizedText source={label} /></label>
       <input id={id} type="number" inputMode="numeric" min={min} max={max} value={Number.isFinite(value) ? value : ''}
         disabled={disabled} aria-describedby={helpId} style={{ ...inputStyle, maxWidth: 140 }}
         onChange={event => onChange(Number(event.target.value))} />
@@ -761,7 +765,7 @@ function PathList({ label, value, onChange, help }: { label: string; value: stri
   const helpId = `${id}-help`
   return (
     <div>
-      <label htmlFor={id} style={fieldLabelStyle}>{label}</label>
+      <label htmlFor={id} style={fieldLabelStyle}><LocalizedText source={label} /></label>
       <textarea id={id} rows={3} value={value} spellCheck={false} aria-describedby={helpId}
         onChange={event => onChange(event.target.value)}
         style={{ ...inputStyle, fontFamily: 'monospace', resize: 'vertical' }} />
@@ -780,17 +784,18 @@ function OverrideSelect<T extends string>({ label, value, onChange, options }: {
   options: [T, string][]
 }) {
   const id = useId()
+  const { t, textProps } = useInterfaceLanguage()
   return (
     <div>
-      <label htmlFor={id} style={fieldLabelStyle}>{label}</label>
+      <label htmlFor={id} style={fieldLabelStyle}><LocalizedText source={label} /></label>
       <select
         id={id}
         value={value ?? INHERIT}
         style={inputStyle}
         onChange={event => onChange(event.target.value === INHERIT ? null : (event.target.value as T))}
       >
-        <option value={INHERIT}>Use global setting</option>
-        {options.map(([optionValue, text]) => <option key={optionValue} value={optionValue}>{text}</option>)}
+        <option value={INHERIT} {...textProps('Use global setting')}>{t('Use global setting')}</option>
+        {options.map(([optionValue, text]) => <option key={optionValue} value={optionValue} {...textProps(text)}>{t(text)}</option>)}
       </select>
     </div>
   )
@@ -802,15 +807,16 @@ function PolicyEditor({ index, policy, onChange, onRemove }: {
   onChange: (next: CrashSafetyPathPolicy) => void
   onRemove: () => void
 }) {
+  const { t, textProps } = useInterfaceLanguage()
   const pathId = useId()
   const percentId = useId()
   const gate = policy.completion_gate === null ? null : policy.completion_gate ? 'on' : 'off'
   return (
     <fieldset style={{ ...groupStyle, background: 'color-mix(in srgb, var(--surface) 84%, var(--bg))' }} data-testid="path-policy">
-      <legend style={cardTitleStyle}>Folder policy {index + 1}</legend>
+      <legend style={cardTitleStyle}><LocalizedText source="Folder policy" spaceAfter />{index + 1}</legend>
       <div style={{ display: 'grid', gap: 10 }}>
         <div>
-          <label htmlFor={pathId} style={fieldLabelStyle}>Folder</label>
+          <label htmlFor={pathId} style={fieldLabelStyle}><LocalizedText source="Folder" /></label>
           <input
             id={pathId}
             type="text"
@@ -820,7 +826,7 @@ function PolicyEditor({ index, policy, onChange, onRemove }: {
             style={{ ...inputStyle, fontFamily: 'monospace' }}
             onChange={event => onChange({ ...policy, path: event.target.value })}
           />
-          <div style={helpStyle}>Applies to torrents saved in this folder or anywhere below it.</div>
+          <div style={helpStyle}><LocalizedText source="Applies to torrents saved in this folder or anywhere below it." /></div>
         </div>
         <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))' }}>
           <OverrideSelect<'on' | 'off'>
@@ -848,7 +854,7 @@ function PolicyEditor({ index, policy, onChange, onRemove }: {
             options={Object.entries(VERIFY_LABEL) as [CompletionVerifyMode, string][]}
           />
           <div>
-            <label htmlFor={percentId} style={fieldLabelStyle}>Sample size (percent)</label>
+            <label htmlFor={percentId} style={fieldLabelStyle}><LocalizedText source="Sample size (percent)" /></label>
             <input
               id={percentId}
               type="number"
@@ -856,7 +862,8 @@ function PolicyEditor({ index, policy, onChange, onRemove }: {
               min={1}
               max={100}
               value={policy.completion_verify_sample_percent ?? ''}
-              placeholder="Global"
+              placeholder={translateInterface("Global")}
+              {...interfaceTextProps("Global")}
               style={inputStyle}
               onChange={event =>
                 onChange({
@@ -868,8 +875,9 @@ function PolicyEditor({ index, policy, onChange, onRemove }: {
         </div>
         <div>
           <button type="button" style={secondaryButtonStyle} onClick={onRemove}
-            aria-label={`Remove folder policy ${index + 1}${policy.path.trim() ? ` for ${policy.path.trim()}` : ''}`}>
-            Remove
+            aria-label={t(policy.path.trim() ? 'Remove folder policy {index} for {path}' : 'Remove folder policy {index}', { index: index + 1, path: policy.path.trim() })}
+            {...textProps(policy.path.trim() ? 'Remove folder policy {index} for {path}' : 'Remove folder policy {index}')}>
+            <LocalizedText source="Remove" />
           </button>
         </div>
       </div>
@@ -878,6 +886,7 @@ function PolicyEditor({ index, policy, onChange, onRemove }: {
 }
 
 function PathReportView({ report }: { report: CrashSafetyPathReport }) {
+  const { t } = useInterfaceLanguage()
   const trust = TRUST_TEXT[report.mount.trust]
   const recoveryRaised = report.host_crash_recovery_effective !== report.host_crash_recovery
   const verifyRaised = report.completion_verify_effective !== report.completion_verify
@@ -889,29 +898,30 @@ function PathReportView({ report }: { report: CrashSafetyPathReport }) {
       <Row label="Folder policy">
         {report.matched_policy
           ? <code>{report.matched_policy}</code>
-          : 'None. The global settings apply.'}
+          : <LocalizedText source="None. The global settings apply." />}
       </Row>
       <Row label="Storage rating">
-        <Pill tone={trust.tone}>{trust.label}</Pill>
-        {' '}{report.mount.fs_type ?? 'unknown filesystem'}
+        <Pill tone={trust.tone}><LocalizedText source={trust.label} /></Pill>
+        {' '}{report.mount.fs_type ?? <LocalizedText source="unknown filesystem" />}
         {report.mount.reasons.length > 0 && <div style={subtleStyle}>{report.mount.reasons.join(' ')}</div>}
       </Row>
-      <Row label="Hold completion">{report.completion_gate ? 'On' : 'Off'}</Row>
+      <Row label="Hold completion"><LocalizedText source={report.completion_gate ? 'On' : 'Off'} /></Row>
       <Row label="Recovery after a power loss">
-        {RECOVERY_LABEL[report.host_crash_recovery_effective]}
+        <LocalizedText source={RECOVERY_LABEL[report.host_crash_recovery_effective]} />
         {recoveryRaised && (
           <div style={subtleStyle}>
-            Raised from {RECOVERY_LABEL[report.host_crash_recovery]}{reason ? ` because ${reason}` : ''}.
+            {reason
+              ? <LocalizedText source="Recovery setting was raised from {value} because {reason}." parameters={{ value: t(RECOVERY_LABEL[report.host_crash_recovery]), reason: t(reason) }} />
+              : <LocalizedText source="Recovery setting was raised from {value}." parameters={{ value: t(RECOVERY_LABEL[report.host_crash_recovery]) }} />}
           </div>
         )}
       </Row>
-      <Row label="Allocation audit">{AUDIT_LABEL[report.structural_audit]}</Row>
+      <Row label="Allocation audit"><LocalizedText source={AUDIT_LABEL[report.structural_audit]} /></Row>
       <Row label="Read-back verification">
-        {verifyLabel}{report.completion_verify_effective === 'sample' ? ` (${report.completion_verify_sample_percent}%)` : ''}
+        <LocalizedText source={verifyLabel} />{report.completion_verify_effective === 'sample' ? ` (${report.completion_verify_sample_percent}%)` : ''}
         {verifyRaised && (
           <div style={subtleStyle}>
-            Raised from {VERIFY_LABEL[report.completion_verify]} because this location is rated Weak.
-          </div>
+            <LocalizedText source="Read-back verification was raised from {value} because this location is rated weak." parameters={{ value: t(VERIFY_LABEL[report.completion_verify]) }} /></div>
         )}
       </Row>
     </dl>
@@ -921,16 +931,17 @@ function PathReportView({ report }: { report: CrashSafetyPathReport }) {
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <>
-      <dt style={{ ...cardTitleStyle, marginBottom: 0, alignSelf: 'start', paddingTop: 2 }}>{label}</dt>
+      <dt style={{ ...cardTitleStyle, marginBottom: 0, alignSelf: 'start', paddingTop: 2 }}><LocalizedText source={label} /></dt>
       <dd style={{ margin: 0, color: 'var(--muted)', fontSize: 12, overflowWrap: 'anywhere' }}>{children}</dd>
     </>
   )
 }
 
 function Stat({ label, value, hint }: { label: string; value: number; hint: string }) {
+  const { t, textProps } = useInterfaceLanguage()
   return (
-    <div title={hint}>
-      <dt style={{ ...cardTitleStyle, marginBottom: 2 }}>{label}</dt>
+    <div title={t(hint)} {...textProps(hint)}>
+      <dt style={{ ...cardTitleStyle, marginBottom: 2 }}><LocalizedText source={label} /></dt>
       <dd style={{ margin: 0, fontSize: 18, fontWeight: 800, color: 'var(--text)' }}>{value.toLocaleString(getRegionalLocale())}</dd>
     </div>
   )

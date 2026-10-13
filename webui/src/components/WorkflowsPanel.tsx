@@ -1,3 +1,5 @@
+import { LocalizedErrorText, LocalizedText } from '../lib/LocalizedText'
+import { interfaceTextProps, translateInterface } from '../lib/interfaceLocale'
 import { getRegionalLocale } from '../lib/localeFormat'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -22,7 +24,7 @@ const EMPTY: WorkflowRule = {
 export function WorkflowsPanel() {
   const qc = useQueryClient()
   const [draft, setDraft] = useState<WorkflowRule>(EMPTY)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<string | { source: string; parameters?: Record<string, string | number> } | null>(null)
   const [pending, setPending] = useState<string | null>(null)
   const [preview, setPreview] = useState<{ name: string; count: number } | null>(null)
   const { data: rules = [], isLoading: rulesLoading } = useQuery({
@@ -85,7 +87,10 @@ export function WorkflowsPanel() {
       if (dryRun) {
         setPreview({ name: rule.name, count: appliedCount })
       } else if (errorCount > 0) {
-        setError(`${errorCount} error(s) running ${rule.name}`)
+        setError({
+          source: errorCount === 1 ? '{count} error running {name}' : '{count} errors running {name}',
+          parameters: { count: errorCount.toLocaleString(getRegionalLocale()), name: rule.name },
+        })
       }
       qc.invalidateQueries({ queryKey: ['workflow-runs'] })
     } catch (e) {
@@ -99,47 +104,56 @@ export function WorkflowsPanel() {
     <section aria-labelledby="workflow-rules-title" aria-busy={Boolean(pending) || rulesLoading} style={{ padding: '18px 24px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
         <div>
-          <h2 id="workflow-rules-title" style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>Workflow Rules</h2>
+          <h2 id="workflow-rules-title" style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)' }}><LocalizedText source="Workflow Rules" /></h2>
           <div style={{ fontSize: 12, color: 'var(--faint)', marginTop: 2 }}>
-            {rules.length.toLocaleString(getRegionalLocale())} rules · {runs.length.toLocaleString(getRegionalLocale())} runs
+            <LocalizedText
+              source="{rules} rules · {runs} runs"
+              parameters={{
+                rules: rules.length.toLocaleString(getRegionalLocale()),
+                runs: runs.length.toLocaleString(getRegionalLocale()),
+              }}
+            />
           </div>
         </div>
         {pending && <Busy label={pending === '__save__' ? 'Saving' : 'Working'} />}
       </div>
       <PanelBox>
-        <h3 style={{ margin: '0 0 10px', fontSize: 12, fontWeight: 800, color: 'var(--text)' }}>Workflow builder</h3>
+        <h3 style={{ margin: '0 0 10px', fontSize: 12, fontWeight: 800, color: 'var(--text)' }}><LocalizedText source="Workflow builder" /></h3>
         <div style={scrollX}>
           <div style={{ display: 'grid', gridTemplateColumns: '150px 120px 120px 150px minmax(240px, 1fr) auto', gap: 8, minWidth: 860, maxWidth: 1080 }}>
-            <Field label="Name"><Input value={draft.name} placeholder="notify complete" onChange={name => setDraft({ ...draft, name })} /></Field>
+            <Field label="Name"><Input value={draft.name} placeholder={translateInterface("notify complete")} onChange={name => setDraft({ ...draft, name })} /></Field>
             <Field label="Event"><Select value={draft.event} onChange={event => setDraft({ ...draft, event: event as WorkflowRule['event'] })} options={['completed', 'added', 'category_changed']} /></Field>
             <Field label="Action"><Select value={draft.action} onChange={action => setDraft({ ...draft, action: action as WorkflowRule['action'] })} options={['webhook', 'script', 'set_category', 'set_location']} /></Field>
-            <Field label="Category filter"><Input value={draft.category ?? ''} placeholder="any category" onChange={category => setDraft({ ...draft, category })} /></Field>
+            <Field label="Category filter"><Input value={draft.category ?? ''} placeholder={translateInterface("any category")} onChange={category => setDraft({ ...draft, category })} /></Field>
             <Field label={draft.action === 'set_category' ? 'Target category' : 'Target'}><Input value={
               draft.action === 'webhook' ? draft.url ?? '' :
               draft.action === 'script' ? draft.command ?? '' :
               draft.action === 'set_category' ? draft.target_category ?? '' :
               draft.target_path ?? ''
-            } placeholder={draft.action === 'set_category' ? 'category name' : 'URL, command, or path'} onChange={value => setDraft({
+            } placeholder={translateInterface(draft.action === 'set_category' ? 'category name' : 'URL, command, or path')} onChange={value => setDraft({
               ...draft,
               url: draft.action === 'webhook' ? value : null,
               command: draft.action === 'script' ? value : null,
               target_path: draft.action === 'set_location' ? value : null,
               target_category: draft.action === 'set_category' ? value : null,
             })} /></Field>
-            <button type="button" onClick={save} disabled={!draft.name.trim() || Boolean(pending)} style={primaryButton(!draft.name.trim() || Boolean(pending))}>{pending === '__save__' ? 'Saving…' : 'Save'}</button>
+            <button type="button" onClick={save} disabled={!draft.name.trim() || Boolean(pending)} style={primaryButton(!draft.name.trim() || Boolean(pending))}>{pending === '__save__' ? <LocalizedText source="Saving…" /> : <LocalizedText source="Save" />}</button>
           </div>
         </div>
       </PanelBox>
-      {error && <Notice tone="error">{error}</Notice>}
+      {error && <Notice tone="error">{typeof error === 'string' ? <LocalizedErrorText message={error} /> : <LocalizedText source={error.source} parameters={error.parameters} />}</Notice>}
       {preview && (
         <Notice tone="ok">
-          {preview.name}: {preview.count.toLocaleString(getRegionalLocale())} matching torrent{preview.count === 1 ? '' : 's'}
+          <LocalizedText
+            source="Preview found {count} matches for {name}"
+            parameters={{ count: preview.count.toLocaleString(getRegionalLocale()), name: preview.name }}
+          />
         </Notice>
       )}
       <div style={{ ...scrollX, display: 'grid', gap: 8, maxWidth: 1080 }}>
-        {rulesLoading && <div role="status" aria-label="Loading workflow rules"><SkeletonRows count={3} /></div>}
+        {rulesLoading && <div role="status" aria-label={translateInterface("Loading workflow rules")} {...interfaceTextProps("Loading workflow rules")}><SkeletonRows count={3} /></div>}
         {!rulesLoading && rules.length === 0 && (
-          <EmptyState title="No workflow rules configured" detail="Create a workflow above, then preview it against the current torrent list before running." />
+          <EmptyState title={translateInterface("No workflow rules configured")} detail={translateInterface("Create a workflow above, then preview it against the current torrent list before running.")} />
         )}
         {rules.map(rule => (
           <div key={rule.id} className="tng-automation-row" data-enabled={rule.enabled ? 'true' : 'false'} style={{
@@ -155,37 +169,36 @@ export function WorkflowsPanel() {
               }} />
               {rule.name}
             </strong>
-            <Pill tone="info">{rule.event}</Pill>
-            <Pill tone={rule.enabled ? 'ok' : 'idle'}>{rule.action}</Pill>
-            <span style={{ color: 'var(--faint)' }}>{rule.category || 'any category'}</span>
+            <Pill tone="info"><LocalizedText source={workflowOptionLabel(rule.event)} /></Pill>
+            <Pill tone={rule.enabled ? 'ok' : 'idle'}><LocalizedText source={workflowActionLabel(rule.action)} /></Pill>
+            <span style={{ color: 'var(--faint)' }}>{rule.category || translateInterface('any category')}</span>
             <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {rule.url ? redactUrlForDisplay(rule.url) : rule.command || rule.target_path || rule.target_category || (rule.tracker ? maskAnnounceUrl(rule.tracker) : null) || 'configured'}
+              {rule.url ? redactUrlForDisplay(rule.url) : rule.command || rule.target_path || rule.target_category || (rule.tracker ? maskAnnounceUrl(rule.tracker) : null) || translateInterface('configured')}
             </span>
             <button type="button" onClick={() => run(rule, true)} disabled={Boolean(pending)} style={{
               background: 'none', border: '1px solid var(--border-strong)', borderRadius: 4,
               color: 'var(--muted)', padding: '3px 8px', fontSize: 11,
               cursor: pending ? 'not-allowed' : 'pointer', opacity: pending ? 0.55 : 1,
-            }}>Preview</button>
+            }}><LocalizedText source="Preview" /></button>
             <button type="button" onClick={() => run(rule, false)} disabled={Boolean(pending)} style={{
               background: 'var(--surface-2)', border: '1px solid var(--accent)', borderRadius: 4,
               color: 'var(--accent)', padding: '3px 8px', fontSize: 11,
               cursor: pending ? 'not-allowed' : 'pointer', opacity: pending ? 0.55 : 1,
-            }}>Run</button>
+            }}><LocalizedText source="Run" /></button>
             <button type="button" onClick={() => remove(rule.id)} disabled={Boolean(pending)} style={{
               background: 'none', border: '1px solid var(--border-strong)', borderRadius: 4,
               color: 'var(--faint)', padding: '3px 8px', fontSize: 11,
               cursor: pending ? 'not-allowed' : 'pointer', opacity: pending ? 0.55 : 1,
-            }}>Delete</button>
+            }}><LocalizedText source="Delete" /></button>
           </div>
         ))}
       </div>
       <h3 style={{ fontSize: 13, fontWeight: 700, margin: '20px 0 10px', color: 'var(--text)' }}>
-        Recent Runs
-      </h3>
+        <LocalizedText source="Recent Runs" /></h3>
       <div style={{ ...scrollX, display: 'grid', gap: 6, maxWidth: 1080 }}>
         {runs.slice(0, 8).map(run => <WorkflowRunRow key={run.id} run={run} />)}
         {runs.length === 0 && (
-          <EmptyState title="No workflow runs recorded" detail="Preview or run a workflow to see recent activity here." />
+          <EmptyState title={translateInterface("No workflow runs recorded")} detail={translateInterface("Preview or run a workflow to see recent activity here.")} />
         )}
       </div>
     </section>
@@ -196,7 +209,7 @@ function Busy({ label }: { label: string }) {
   return <span style={{
     color: 'var(--accent-text)', background: 'var(--accent-soft)', border: '1px solid var(--accent)',
     borderRadius: 999, padding: '2px 8px', fontSize: 11, fontWeight: 700,
-  }}>{label}</span>
+  }}><LocalizedText source={label} /></span>
 }
 
 function Notice({ tone, children }: { tone: 'ok' | 'error'; children: React.ReactNode }) {
@@ -220,7 +233,9 @@ function WorkflowRunRow({ run }: { run: WorkflowRun }) {
   const matchedCount = run.matched_total ?? run.matched.length
   const appliedCount = run.applied_total ?? run.applied.length
   const errorCount = run.errors_total ?? run.errors.length
-  const status = errorCount > 0 ? `${errorCount} error(s)` : run.dry_run ? 'previewed' : 'completed'
+  const status = errorCount > 0
+    ? <LocalizedText source={errorCount === 1 ? '{count} error' : '{count} errors'} parameters={{ count: errorCount.toLocaleString(getRegionalLocale()) }} />
+    : <LocalizedText source={run.dry_run ? 'Previewed' : 'Completed'} />
   const tone = errorCount > 0 ? 'error' : run.dry_run ? 'info' : 'ok'
   return (
     <div className="tng-automation-row" data-enabled={errorCount === 0 ? 'true' : 'false'} style={{
@@ -232,9 +247,9 @@ function WorkflowRunRow({ run }: { run: WorkflowRun }) {
       <strong style={{ color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {run.rule_name}
       </strong>
-      <span style={{ color: 'var(--muted)' }}>{run.action}</span>
-      <span style={{ color: 'var(--faint)' }}>{matchedCount.toLocaleString(getRegionalLocale())} matched</span>
-      <span style={{ color: 'var(--faint)' }}>{appliedCount.toLocaleString(getRegionalLocale())} applied</span>
+      <span style={{ color: 'var(--muted)' }}><LocalizedText source={workflowActionLabel(run.action)} /></span>
+      <span style={{ color: 'var(--faint)' }}><LocalizedText source="Matched: {count}" parameters={{ count: matchedCount.toLocaleString(getRegionalLocale()) }} /></span>
+      <span style={{ color: 'var(--faint)' }}><LocalizedText source="Applied: {count}" parameters={{ count: appliedCount.toLocaleString(getRegionalLocale()) }} /></span>
       <Pill tone={tone}>{status}</Pill>
       <span style={{ color: 'var(--faint)', textAlign: 'right' }}>
         {new Date(run.started_at * 1000).toLocaleString(getRegionalLocale())}
@@ -257,7 +272,7 @@ function PanelBox({ children }: { children: React.ReactNode }) {
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <label style={{ display: 'grid', gap: 4, minWidth: 0 }}>
-    <span style={{ color: 'var(--faint)', fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0 }}>{label}</span>
+    <span style={{ color: 'var(--faint)', fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0 }}><LocalizedText source={label} /></span>
     {children}
   </label>
 }
@@ -323,6 +338,23 @@ function Select({ value, options, onChange }: { value: string; options: string[]
     minWidth: 0, background: 'var(--bg)', border: '1px solid var(--border-strong)',
     borderRadius: 5, color: 'var(--text)', padding: '4px 8px', fontSize: 12,
   }}>
-    {options.map(option => <option key={option} value={option}>{option}</option>)}
+    {options.map(option => <option key={option} value={option}><LocalizedText source={workflowOptionLabel(option)} /></option>)}
   </select>
+}
+
+function workflowOptionLabel(value: string) {
+  const labels: Record<string, string> = {
+    completed: 'Completed',
+    added: 'Added',
+    category_changed: 'Category changed',
+    webhook: 'Webhook',
+    script: 'Run script',
+    set_category: 'Set category',
+    set_location: 'Set location',
+  }
+  return labels[value] ?? value
+}
+
+function workflowActionLabel(value: string) {
+  return workflowOptionLabel(value)
 }

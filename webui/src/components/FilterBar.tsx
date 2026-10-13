@@ -1,7 +1,24 @@
 import { getRegionalLocale } from '../lib/localeFormat'
+import { useInterfaceLanguage } from '../lib/interfaceLocale'
 import { useEffect, useState } from 'react'
 import type { ListParams } from '../api/client'
 import { maskAnnounceUrl } from '../lib/maskUrl'
+
+const SORT_COLUMNS: Record<string, string> = {
+  name: 'Name', status: 'Status', size: 'Size', progress: 'Progress', remaining: 'Left',
+  speed_down: 'Download speed', speed_up: 'Upload speed', seeds: 'Seeds', peers: 'Peers',
+  ratio: 'Ratio', added: 'Added', completed: 'Completed',
+}
+const STATUS_LABELS: Record<string, string> = {
+  downloading: 'Downloading', seeding: 'Seeding', completed: 'Completed', running: 'Running',
+  queued: 'Queued', stopped: 'Stopped', active: 'Active', inactive: 'Inactive', stalled: 'Stalled',
+  stalled_uploading: 'Stalled Uploading', stalled_downloading: 'Stalled Downloading', checking: 'Checking',
+  moving: 'Moving', error: 'Errored', tracker_error: 'Tracker Errors',
+}
+const MEDIA_TYPE_LABELS: Record<string, string> = {
+  ebook: 'Ebooks', tv: 'TV', video: 'Video', audio: 'Audio', iso: 'ISO/Image', game: 'Game',
+  software: 'Software/Archive', other: 'Other',
+}
 
 interface Props {
   params: ListParams
@@ -9,10 +26,18 @@ interface Props {
 }
 
 export function FilterBar({ params, onChange }: Props) {
+  const { t, textProps } = useInterfaceLanguage()
+  const localized = (source: string, parameters?: Record<string, string | number>) => (
+    <span {...textProps(source)}>{t(source, parameters)}</span>
+  )
   const [search, setSearch] = useState(params.filter ?? '')
   const hasSidebarFilters = Boolean(params.status || params.category || params.tag || params.tracker || params.media_type)
   const activeCount = [params.filter || search, params.status, params.category, params.tag, params.tracker, params.media_type].filter(Boolean).length
-  const sortLabel = `${params.sort ?? 'name'} ${params.dir === 'desc' ? 'desc' : 'asc'}`
+  const sortColumn = params.sort ? SORT_COLUMNS[params.sort] : 'Name'
+  const sortColumnText = sortColumn ? t(sortColumn) : params.sort ?? t('Name')
+  const sortDirection = params.dir === 'desc' ? 'Descending' : 'Ascending'
+  const sortLabel = t('Sort: {column} ({direction})', { column: sortColumnText, direction: t(sortDirection) })
+  const sortDescription = t('Sorted by {column}, {direction}', { column: sortColumnText, direction: t(sortDirection) })
   const chips = [
     (params.filter || search) && ['Search', params.filter || search, 'filter'],
     params.status && ['State', params.status, 'status'],
@@ -33,7 +58,7 @@ export function FilterBar({ params, onChange }: Props) {
   }, [params.filter])
 
   return (
-    <div className="tng-filterbar" role="region" aria-label="Torrent filters" style={{
+    <div className="tng-filterbar" role="region" aria-label={t('Torrent filters')} {...textProps('Torrent filters')} style={{
       display: 'flex',
       gap: 8,
       padding: '7px 12px',
@@ -50,9 +75,10 @@ export function FilterBar({ params, onChange }: Props) {
       }}>
         <span aria-hidden="true" style={{ color: 'var(--faint)', fontSize: 12 }}>⌕</span>
         <input
-          aria-label="Search torrents"
+          aria-label={t('Search torrents')}
+          {...textProps('Search torrents')}
           type="search"
-          placeholder="Search torrents"
+          placeholder={t('Search torrents')}
           value={search}
           onChange={e => setSearch(e.target.value)}
           style={{
@@ -73,7 +99,7 @@ export function FilterBar({ params, onChange }: Props) {
             borderRadius: 999, padding: '1px 6px', fontSize: 10, fontWeight: 800,
             whiteSpace: 'nowrap',
           }}>
-            live
+            {localized('live')}
           </span>
         )}
       </label>
@@ -82,7 +108,7 @@ export function FilterBar({ params, onChange }: Props) {
         <button
           className="tng-filterbar-button"
           type="button"
-          aria-label="Clear torrent search"
+          aria-label={t('Clear torrent search')}
           onClick={() => {
             setSearch('')
             onChange({ filter: undefined, offset: 0 })
@@ -97,14 +123,14 @@ export function FilterBar({ params, onChange }: Props) {
             cursor: 'pointer',
           }}
         >
-          Clear search
+          {localized('Clear search')}
         </button>
       )}
       {hasSidebarFilters && (
         <button
           className="tng-filterbar-button"
           type="button"
-          aria-label="Clear sidebar filters"
+          aria-label={t('Clear sidebar filters')}
           onClick={() => onChange({
             status: undefined,
             category: undefined,
@@ -113,7 +139,7 @@ export function FilterBar({ params, onChange }: Props) {
             media_type: undefined,
             offset: 0,
           })}
-          title="Clear sidebar filters"
+          title={t('Clear sidebar filters')}
           style={{
             background: 'none',
             border: '1px solid var(--border-strong)',
@@ -124,7 +150,7 @@ export function FilterBar({ params, onChange }: Props) {
             cursor: 'pointer',
           }}
         >
-          Clear filters
+          {localized('Clear filters')}
         </button>
       )}
       {hasSidebarFilters && (
@@ -132,19 +158,19 @@ export function FilterBar({ params, onChange }: Props) {
           color: 'var(--accent-text)', background: 'var(--accent-soft)', border: '1px solid var(--accent)',
           borderRadius: 999, padding: '2px 8px', fontSize: 11, fontWeight: 800, whiteSpace: 'nowrap',
         }}>
-          {activeCount.toLocaleString(getRegionalLocale())} active
+          {localized('{count} active', { count: activeCount.toLocaleString(getRegionalLocale()) })}
         </span>
       )}
       {(chips.length > 0 || params.sort) && (
         <div className="tng-filterbar-chips" style={{ display: 'flex', gap: 5, flexWrap: 'wrap', minWidth: 0 }}>
-          <span className="tng-filter-chip tng-filter-chip-muted" aria-label={`Sorted by ${sortLabel}`} title={`Sorted by ${sortLabel}`} style={{
+          <span className="tng-filter-chip tng-filter-chip-muted" aria-label={sortDescription} title={sortDescription} {...textProps('Sorted by {column}, {direction}')} style={{
             display: 'inline-flex', alignItems: 'center', gap: 4,
             maxWidth: 190, border: '1px solid var(--border)', borderRadius: 999,
             background: 'var(--surface)', color: 'var(--muted)', padding: '2px 7px',
             fontSize: 11,
           }}>
-            <span style={{ color: 'var(--faint)' }}>Sort</span>
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sortLabel}</span>
+            <span style={{ color: 'var(--faint)' }}>{localized('Sort')}</span>
+            <span {...textProps('Sort: {column} ({direction})')} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sortLabel}</span>
           </span>
           {chips.map(([label, value, key]) => (
             <span key={`${label}:${value}`} className="tng-filter-chip" title={key === 'tracker' ? maskAnnounceUrl(value) : value} style={{
@@ -153,11 +179,15 @@ export function FilterBar({ params, onChange }: Props) {
               background: 'var(--surface)', color: 'var(--muted)', padding: '2px 7px',
               fontSize: 11,
             }}>
-              <span style={{ color: 'var(--faint)' }}>{label}</span>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{key === 'tracker' ? maskAnnounceUrl(value) : value}</span>
+              <span style={{ color: 'var(--faint)' }}>{localized(label)}</span>
+              <span {...textProps(key === 'status' ? STATUS_LABELS[value] ?? value : key === 'media_type' ? MEDIA_TYPE_LABELS[value] ?? value : value)} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {key === 'tracker' ? maskAnnounceUrl(value)
+                  : key === 'status' ? t(STATUS_LABELS[value] ?? value)
+                    : key === 'media_type' ? t(MEDIA_TYPE_LABELS[value] ?? value) : value}
+              </span>
               <button
                 type="button"
-                aria-label={`Clear ${label} filter`}
+                aria-label={t('Clear {label} filter', { label: t(label) })}
                 onClick={() => {
                   if (key === 'filter') setSearch('')
                   onChange({ [key]: undefined, offset: 0 })

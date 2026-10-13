@@ -1,3 +1,5 @@
+import { LocalizedErrorText, LocalizedText } from '../lib/LocalizedText'
+import { interfaceTextProps, translateInterface, useInterfaceLanguage } from '../lib/interfaceLocale'
 import { getRegionalLocale } from '../lib/localeFormat'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -24,11 +26,11 @@ export function EnginePanel() {
   return (
     <section aria-labelledby="backend-title" aria-busy={isLoading || isFetching} style={{ padding: '16px 24px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
-        <h2 id="backend-title" style={{ fontSize: 13, margin: 0, color: 'var(--text)' }}>Backend</h2>
+        <h2 id="backend-title" style={{ fontSize: 13, margin: 0, color: 'var(--text)' }}><LocalizedText source="Backend" /></h2>
         {data && (
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <Badge ok text={backendDisplayName(data.backend.type)} />
-            {isRtorrent && <Badge ok={driftProblems === 0} text={driftProblems === 0 ? 'profile clean' : `${driftProblems} drift`} />}
+            {isRtorrent && <Badge ok={driftProblems === 0} text={driftProblems === 0 ? translateInterface('Profile matches defaults') : translateInterface('{count} drift', { count: driftProblems.toLocaleString(getRegionalLocale()) })} />}
             {isRtorrent && <Badge ok={data.capabilities.every(c => c.available)} text={`${data.capabilities.filter(c => c.available).length}/${data.capabilities.length} XMLRPC`} />}
             <button
               type="button"
@@ -43,14 +45,14 @@ export function EnginePanel() {
                 cursor: isFetching ? 'not-allowed' : 'pointer', opacity: isFetching ? 0.55 : 1,
               }}
             >
-              {isFetching ? 'Refreshing…' : 'Refresh'}
+              {isFetching ? <LocalizedText source="Refreshing…" /> : <LocalizedText source="Refresh" />}
             </button>
           </div>
         )}
       </div>
 
-      {isLoading && <div role="status" aria-label="Loading backend diagnostics"><EngineSkeleton /></div>}
-      {error && <Notice>Engine diagnostics unavailable</Notice>}
+      {isLoading && <div role="status" aria-label={translateInterface("Loading backend diagnostics")} {...interfaceTextProps("Loading backend diagnostics")}><EngineSkeleton /></div>}
+      {error && <Notice><LocalizedText source="Engine diagnostics unavailable" /></Notice>}
       {data && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
           <BackendSummary data={data} />
@@ -97,7 +99,7 @@ function BackendSummary({ data }: { data: EngineDiagnostics }) {
   ]
   return (
     <Panel>
-      <Subhead>Backend</Subhead>
+      <Subhead><LocalizedText source="Backend" /></Subhead>
       <Rows rows={rows} />
     </Panel>
   )
@@ -132,7 +134,7 @@ function Provenance({ data }: { data: EngineDiagnostics }) {
   const p = data.provenance
   return (
     <Panel>
-      <Subhead>Provenance</Subhead>
+      <Subhead><LocalizedText source="Provenance" /></Subhead>
       <Rows rows={[
         ['TorrentNG', p.daemon_version ?? p.sidecar_version ?? 'unknown'],
         ...(data.backend.type === 'rtorrent' ? [
@@ -159,7 +161,7 @@ function backendDisplayName(type: string): string {
 function Capabilities({ data }: { data: EngineDiagnostics }) {
   return (
     <Panel>
-      <Subhead>Capabilities</Subhead>
+      <Subhead><LocalizedText source="Capabilities" /></Subhead>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 8 }}>
         {data.capabilities.map(cap => (
           <div key={cap.key} className="tng-engine-capability" data-available={cap.available ? 'true' : 'false'} style={{
@@ -192,7 +194,7 @@ function HttpStack({ data }: { data: EngineDiagnostics }) {
   const h = data.http
   return (
     <Panel wide>
-      <Subhead>Tracker HTTP Stack</Subhead>
+      <Subhead><LocalizedText source="Tracker HTTP Stack" /></Subhead>
       <Rows rows={[
         ['User agent', val(h.user_agent)],
         ['Open requests', val(h.current_open)],
@@ -214,7 +216,7 @@ function DhtStack({ data }: { data: EngineDiagnostics }) {
   const d = data.dht
   return (
     <Panel wide>
-      <Subhead>DHT And Peer Discovery</Subhead>
+      <Subhead><LocalizedText source="DHT and peer discovery" /></Subhead>
       <Rows rows={[
         ['DHT', val(d.enabled) || 'unknown'],
         ['DHT port', val(d.port)],
@@ -234,8 +236,8 @@ function ProfileDrift({ data }: { data: EngineDiagnostics }) {
   const problems = rows.filter(row => row.status !== 'match')
   return (
     <Panel wide>
-      <Subhead>Engine Profile Drift</Subhead>
-      {problems.length === 0 && <div style={{ color: 'var(--success)', fontSize: 12 }}>Running profile matches TorrentNG defaults</div>}
+      <Subhead><LocalizedText source="Engine Profile Drift" /></Subhead>
+      {problems.length === 0 && <div style={{ color: 'var(--success)', fontSize: 12 }}><LocalizedText source="Running profile matches TorrentNG defaults" /></div>}
       {problems.length > 0 && (
         <div style={{ display: 'grid', gap: 6 }}>
           {problems.map(row => (
@@ -251,9 +253,9 @@ function ProfileDrift({ data }: { data: EngineDiagnostics }) {
               fontSize: 12,
             }}>
               <div title={row.command} style={{ color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.label}</div>
-              <div title={row.expected} style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Expected {row.expected}</div>
+              <div title={row.expected} style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><LocalizedText source="Expected: {value}" parameters={{ value: row.expected }} /></div>
               <div title={row.actual ?? row.detail ?? ''} style={{ color: 'var(--danger)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {row.status === 'unavailable' ? 'Unavailable' : `Actual ${row.actual ?? ''}`}
+                {row.status === 'unavailable' ? <LocalizedText source="Unavailable" /> : <LocalizedText source="Actual: {value}" parameters={{ value: row.actual ?? '' }} />}
               </div>
             </div>
           ))}
@@ -265,6 +267,7 @@ function ProfileDrift({ data }: { data: EngineDiagnostics }) {
 
 function RtorrentSettingsPanel() {
   const qc = useQueryClient()
+  const { language, t } = useInterfaceLanguage()
   const { data, isLoading, error } = useQuery({
     queryKey: ['rtorrent-settings'],
     queryFn: api.rtorrentSettings.get,
@@ -275,7 +278,11 @@ function RtorrentSettingsPanel() {
   const [filter, setFilter] = useState('')
   const [viewFilter, setViewFilter] = useState<SettingsViewFilter>('all')
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
-  const [notice, setNotice] = useState<{ tone: 'ok' | 'warn' | 'error'; text: string } | null>(null)
+  const [notice, setNotice] = useState<
+    | { tone: 'ok' | 'warn' | 'error'; source: string; parameters?: Record<string, string | number> }
+    | { tone: 'error'; raw: string }
+    | null
+  >(null)
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null)
   const [lastSaveFailed, setLastSaveFailed] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -305,22 +312,27 @@ function RtorrentSettingsPanel() {
     onSuccess: result => {
       qc.invalidateQueries({ queryKey: ['rtorrent-settings'] })
       qc.invalidateQueries({ queryKey: ['engine'] })
-      const bits = [`saved ${result.applied.length} live setting${result.applied.length === 1 ? '' : 's'}`]
-      if (result.restart_required) bits.push('restart required')
-      if (result.errors.length) bits.push(`${result.errors.length} live apply error${result.errors.length === 1 ? '' : 's'}`)
       setLastSavedAt(Date.now())
       setLastSaveFailed(false)
-      setNotice({ tone: result.errors.length ? 'warn' : 'ok', text: bits.join(' · ') })
+      setNotice({
+        tone: result.errors.length ? 'warn' : 'ok',
+        source: 'Save result · live applied: {live} · restart required: {restart} · live errors: {errors}',
+        parameters: {
+          live: result.applied.length.toLocaleString(getRegionalLocale()),
+          restart: t(result.restart_required ? 'Yes' : 'No'),
+          errors: result.errors.length.toLocaleString(getRegionalLocale()),
+        },
+      })
     },
     onError: e => {
       setLastSaveFailed(true)
-      setNotice({ tone: 'error', text: String(e) })
+      setNotice({ tone: 'error', raw: String(e) })
     },
   })
   const restart = useMutation({
     mutationFn: api.rtorrentSettings.restart,
-    onSuccess: () => setNotice({ tone: 'warn', text: 'Restart requested. The container/service should come back automatically.' }),
-    onError: e => setNotice({ tone: 'error', text: String(e) }),
+    onSuccess: () => setNotice({ tone: 'warn', source: 'Restart requested. The container or service should come back automatically.' }),
+    onError: e => setNotice({ tone: 'error', raw: String(e) }),
   })
 
   const dirtySettings = data?.settings.filter(setting => {
@@ -370,7 +382,7 @@ function RtorrentSettingsPanel() {
   }, [data, save])
   const defaultAll = () => {
     if (!data) return
-    if (!window.confirm('Apply defaults to every managed rTorrent setting? The changes will autosave shortly.')) return
+    if (!window.confirm(translateInterface('Apply defaults to every managed rTorrent setting? The changes will autosave shortly.'))) return
     const next: Record<string, string | number | boolean> = {}
     for (const setting of data.settings) {
       next[setting.key] = inputValue(setting.value_type, setting.default_value)
@@ -380,7 +392,7 @@ function RtorrentSettingsPanel() {
     if (data.overlay_writable && !save.isPending) {
       window.setTimeout(() => save.mutate({ values: next, customRc }), 0)
     }
-    setNotice({ tone: 'warn', text: 'Managed settings moved to defaults. Autosave will apply shortly.' })
+    setNotice({ tone: 'warn', source: 'Managed settings reset to their defaults. Changes will be saved automatically shortly.' })
   }
   const resetGroup = (settings: RtorrentSettingDescriptor[]) => {
     if (!data) return
@@ -397,7 +409,7 @@ function RtorrentSettingsPanel() {
     })
   }
   const defaultGroup = (settings: RtorrentSettingDescriptor[]) => {
-    if (!window.confirm(`Apply defaults to ${settings.length} setting${settings.length === 1 ? '' : 's'} in this group? Autosave will apply shortly.`)) return
+    if (!window.confirm(translateInterface('Apply defaults to {count} settings in this group? Autosave will apply shortly.', { count: settings.length.toLocaleString(getRegionalLocale()) }))) return
     setDraft(prev => {
       const next = { ...prev }
       for (const setting of settings) {
@@ -420,9 +432,9 @@ function RtorrentSettingsPanel() {
   const copyText = async (text: string, label: string) => {
     try {
       await navigator.clipboard?.writeText(text)
-      setNotice({ tone: 'ok', text: `${label} copied` })
+      setNotice({ tone: 'ok', source: '{label} copied', parameters: { label } })
     } catch {
-      setNotice({ tone: 'error', text: `Could not copy ${label.toLowerCase()}` })
+      setNotice({ tone: 'error', source: 'Could not copy {label}', parameters: { label } })
     }
   }
   const restartDirtyCount = data ? dirtySettings.filter(setting => setting.restart_required).length : 0
@@ -433,12 +445,23 @@ function RtorrentSettingsPanel() {
     .reduce((sum, group) => sum + group.settings.length, 0)
   const allGroupsCollapsed = filteredGroups.length > 0 && filteredGroups.every(group => collapsedGroups.has(group.name))
   const autosaveText = lastSaveFailed
-    ? `${dirtyCount} change${dirtyCount === 1 ? '' : 's'} could not be saved. Retry when the API is available.`
+    ? t('{count} pending changes could not be saved. Retry when the API is available.', { count: dirtyCount.toLocaleString(getRegionalLocale()) })
     : save.isPending
-      ? 'Saving changes...'
+      ? t('Saving changes…')
       : dirtyCount === 0
-        ? `All settings are saved${lastSavedAt ? `; last save ${formatRelativeTime(lastSavedAt)}` : ''}.`
-        : `${dirtyCount} change${dirtyCount === 1 ? '' : 's'} will autosave shortly: ${liveDirtyCount} live, ${restartDirtyCount} restart${customRcDirty ? ', custom lines edited' : ''}.`
+        ? lastSavedAt
+          ? t('All settings are saved; last save {when}.', { when: formatRelativeTime(lastSavedAt, language, t) })
+          : t('All settings are saved.')
+        : t(
+          customRcDirty
+            ? 'Pending autosave · changes: {count} · live: {live} · restart: {restart} · custom lines edited.'
+            : 'Pending autosave · changes: {count} · live: {live} · restart: {restart}.',
+          {
+            count: dirtyCount.toLocaleString(getRegionalLocale()),
+            live: liveDirtyCount.toLocaleString(getRegionalLocale()),
+            restart: restartDirtyCount.toLocaleString(getRegionalLocale()),
+          },
+        )
   const toggleAllGroups = () => {
     if (allGroupsCollapsed) {
       setCollapsedGroups(new Set())
@@ -451,7 +474,7 @@ function RtorrentSettingsPanel() {
     const text = visibleSettings
       .map(setting => `${setting.label}\n  get: ${setting.command}\n  set: ${setting.setter}`)
       .join('\n')
-    copyText(text, 'Visible commands')
+    copyText(text, t('Visible commands'))
   }
   const copyChangeSummary = () => {
     if (!data) return
@@ -459,10 +482,10 @@ function RtorrentSettingsPanel() {
       const row = data.values.find(value => value.key === setting.key)
       const base = baselineValue(setting, row?.saved ?? null, row?.live.value ?? null)
       const next = draft[setting.key] ?? base
-      return `${setting.label}: ${formatSettingValue(base, setting.unit)} -> ${formatSettingValue(next, setting.unit)} (${setting.restart_required ? 'restart' : 'live'})`
+      return `${setting.label}: ${formatSettingValue(base, setting.unit)} -> ${formatSettingValue(next, setting.unit)} (${setting.restart_required ? t('Restart required') : t('Live')})`
     })
-    if (customRcDirty) lines.push('Custom rTorrent lines: edited (restart)')
-    copyText(lines.join('\n'), 'Change summary')
+    if (customRcDirty) lines.push(`${t('Custom rTorrent lines')}: ${t('edited')} (${t('Restart required')})`)
+    copyText(lines.join('\n'), t('Change summary'))
   }
   const updateSetting = useCallback((setting: RtorrentSettingDescriptor, value: string | number | boolean, immediate = false) => {
     const nextValue = setting.value_type === 'int' ? clampSettingValue(setting, Number(value)) : value
@@ -538,9 +561,9 @@ function RtorrentSettingsPanel() {
 
   return (
     <Panel wide>
-      <Subhead>Settings Control Panel</Subhead>
+      <Subhead><LocalizedText source="Settings Control Panel" /></Subhead>
       {isLoading && <span className="tng-skeleton" style={{ width: '70%', height: 12 }} />}
-      {error && <InlineNotice>rTorrent settings unavailable</InlineNotice>}
+      {error && <InlineNotice><LocalizedText source="rTorrent settings unavailable" /></InlineNotice>}
       {data && (
         <div style={{ display: 'grid', gap: 10 }}>
           <div id="rt-settings-autosave-status" role="status" aria-live="polite" style={visuallyHiddenStyle}>
@@ -548,20 +571,19 @@ function RtorrentSettingsPanel() {
           </div>
           {lastSaveFailed && (
             <div role="alert" style={visuallyHiddenStyle}>
-              Autosave failed. Pending changes remain in the form.
-            </div>
+              <LocalizedText source="{count} pending changes could not be saved. Retry when the API is available." parameters={{ count: dirtyCount.toLocaleString(getRegionalLocale()) }} /></div>
           )}
           <div style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
             gap: 8,
           }}>
-            <SettingStat label="Managed knobs" value={data.settings.length.toLocaleString(getRegionalLocale())} />
-            <SettingStat label="Pending autosave" value={dirtyCount.toLocaleString(getRegionalLocale())} tone={dirtyCount > 0 ? 'warn' : 'ok'} />
-            <SettingStat label="Custom lines" value={customRcDirty ? 'edited' : 'saved'} tone={customRcDirty ? 'warn' : 'ok'} />
-            <SettingStat label="Live unavailable" value={unavailableCount.toLocaleString(getRegionalLocale())} tone={unavailableCount > 0 ? 'warn' : 'ok'} />
-            <SettingStat label="Overlay" value={data.overlay_writable ? 'writable' : 'readonly'} tone={data.overlay_writable ? 'ok' : 'warn'} />
-            <SettingStat label="Restart support" value={data.restart_supported ? 'available' : 'manual'} tone={data.restart_supported ? 'ok' : 'warn'} />
+            <SettingStat label={translateInterface("Managed settings")} value={data.settings.length.toLocaleString(getRegionalLocale())} />
+            <SettingStat label={translateInterface("Pending autosave")} value={dirtyCount.toLocaleString(getRegionalLocale())} tone={dirtyCount > 0 ? 'warn' : 'ok'} />
+            <SettingStat label={translateInterface("Custom lines")} value={translateInterface(customRcDirty ? 'edited' : 'saved')} tone={customRcDirty ? 'warn' : 'ok'} />
+            <SettingStat label={translateInterface("Live readback unavailable")} value={unavailableCount.toLocaleString(getRegionalLocale())} tone={unavailableCount > 0 ? 'warn' : 'ok'} />
+            <SettingStat label={translateInterface('Overlay')} value={translateInterface(data.overlay_writable ? 'Writable' : 'Readonly')} tone={data.overlay_writable ? 'ok' : 'warn'} />
+            <SettingStat label={translateInterface("Restart support")} value={translateInterface(data.restart_supported ? 'Available' : 'Manual')} tone={data.restart_supported ? 'ok' : 'warn'} />
           </div>
           {!data.overlay_writable && (
             <div role="alert" style={{
@@ -572,16 +594,13 @@ function RtorrentSettingsPanel() {
               padding: '8px 10px',
               fontSize: 12,
             }}>
-              Settings overlay directory is not writable from this process. Review values is still available; save may fail until the service can write the overlay path.
-            </div>
+              <LocalizedText source="Settings overlay directory is not writable from this process. Review values is still available; save may fail until the service can write the overlay path." /></div>
           )}
           <div style={{ color: 'var(--faint)', fontSize: 12, lineHeight: 1.45, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <span>
-              Values are saved to <span style={{ color: 'var(--muted)', fontFamily: 'monospace' }}>{data.overlay_path}</span>. Live-safe controls are applied immediately; controls marked restart are saved for the next daemon start.
-            </span>
-            <button type="button" onClick={() => copyText(data.overlay_path, 'Overlay path')} style={smallButtonStyle(true)}>
-              Copy path
-            </button>
+              <LocalizedText source="Values are saved to" spaceAfter /><span style={{ color: 'var(--muted)', fontFamily: 'monospace' }}>{data.overlay_path}</span><LocalizedText source=". Live-safe controls are applied immediately; controls marked restart are saved for the next daemon start." /></span>
+            <button type="button" onClick={() => copyText(data.overlay_path, t('Overlay path'))} style={smallButtonStyle(true)}>
+              <LocalizedText source="Copy path" /></button>
           </div>
           <div style={{
             display: 'grid',
@@ -590,7 +609,7 @@ function RtorrentSettingsPanel() {
             alignItems: 'end',
           }}>
             <label style={{ display: 'grid', gap: 5, minWidth: 0 }}>
-              <span style={{ color: 'var(--text)', fontSize: 12, fontWeight: 800 }}>Find settings</span>
+              <span style={{ color: 'var(--text)', fontSize: 12, fontWeight: 800 }}><LocalizedText source="Find settings" /></span>
               <span style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 6 }}>
                 <input
                   ref={searchRef}
@@ -598,14 +617,14 @@ function RtorrentSettingsPanel() {
                   value={filter}
                   onChange={e => setFilter(e.target.value)}
                   aria-keyshortcuts="/"
-                  aria-label="Find settings"
+                  aria-label={translateInterface("Find settings")}
                   aria-describedby="rt-settings-result-count"
-                  title="Find settings"
-                  placeholder="Filter by label, command, category, or type"
+                  title={translateInterface("Find settings")}
+                  placeholder={translateInterface("Filter by label, command, category, or type")}
                   style={{ ...inputStyle, padding: '7px 9px' }}
-                />
+                {...interfaceTextProps("Find settings")} />
                 <button type="button" onClick={() => { setFilter(''); searchRef.current?.focus() }} disabled={!filter} style={smallButtonStyle(Boolean(filter))}>
-                  Clear
+                  <LocalizedText source="Clear" />
                 </button>
               </span>
             </label>
@@ -621,18 +640,29 @@ function RtorrentSettingsPanel() {
           {(filter || viewFilter !== 'all') && (
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <button type="button" onClick={() => { setFilter(''); setViewFilter('all') }} style={smallButtonStyle(true)}>
-                Clear filters
-              </button>
+                <LocalizedText source="Clear filters" /></button>
               <span style={{ color: 'var(--faint)', fontSize: 11 }}>
-                Filtered by {filter ? `"${filter}"` : 'view'}{filter && viewFilter !== 'all' ? ` and ${viewFilter}` : ''}
+                <LocalizedText
+                  source={filter && viewFilter !== 'all' ? 'Filtered by {filter} and {view}' : filter ? 'Filtered by {filter}' : 'Showing {view} settings'}
+                  parameters={{ filter: `"${filter}"`, view: t(viewFilter === 'restart' ? 'Restart required' : viewFilter === 'edited' ? 'Edited' : viewFilter === 'live' ? 'Live' : 'Unavailable') }}
+                />
               </span>
             </div>
           )}
           <div id="rt-settings-result-count" role="status" aria-live="polite" style={{ color: 'var(--faint)', fontSize: 11 }}>
-            Showing {visibleSettingCount.toLocaleString(getRegionalLocale())} of {data.settings.length.toLocaleString(getRegionalLocale())} managed settings{collapsedVisibleCount > 0 ? `; ${collapsedVisibleCount.toLocaleString(getRegionalLocale())} hidden in collapsed groups` : ''}.
+            <LocalizedText
+              source={collapsedVisibleCount > 0
+                ? 'Showing {visible} of {total} managed settings; {hidden} hidden in collapsed groups.'
+                : 'Showing {visible} of {total} managed settings.'}
+              parameters={{
+                visible: visibleSettingCount.toLocaleString(getRegionalLocale()),
+                total: data.settings.length.toLocaleString(getRegionalLocale()),
+                hidden: collapsedVisibleCount.toLocaleString(getRegionalLocale()),
+              }}
+            />
           </div>
           {filteredGroups.length > 0 && (
-            <nav aria-label="Settings groups" style={{
+            <nav aria-label={translateInterface("Settings groups")} style={{
               display: 'flex',
               gap: 6,
               flexWrap: 'wrap',
@@ -640,7 +670,7 @@ function RtorrentSettingsPanel() {
               borderRadius: 8,
               background: 'color-mix(in srgb, var(--surface) 70%, var(--bg))',
               padding: 8,
-            }}>
+            }} {...interfaceTextProps("Settings groups")}>
               {filteredGroups.map(group => {
                 const groupId = groupDomId(group.name)
                 return (
@@ -651,7 +681,7 @@ function RtorrentSettingsPanel() {
                     style={smallButtonStyle(true)}
                     aria-controls={groupId}
                   >
-                    {group.name} ({group.settings.length})
+                    <LocalizedText source="{group} ({count})" parameters={{ group: group.name, count: group.settings.length.toLocaleString(getRegionalLocale()) }} />
                   </button>
                 )
               })}
@@ -661,7 +691,7 @@ function RtorrentSettingsPanel() {
                 style={smallButtonStyle(true)}
                 aria-controls="rt-custom-rc"
               >
-                Custom lines ({customRc.split('\n').filter(line => line.trim()).length})
+                <LocalizedText source="Custom lines ({count})" parameters={{ count: customRc.split('\n').filter(line => line.trim()).length.toLocaleString(getRegionalLocale()) }} />
               </button>
             </nav>
           )}
@@ -676,30 +706,27 @@ function RtorrentSettingsPanel() {
             padding: 10,
           }}>
             <div style={{ display: 'grid', gap: 4, minWidth: 0 }}>
-              <div style={{ color: 'var(--text)', fontSize: 12, fontWeight: 800 }}>Autosave state</div>
+              <div style={{ color: 'var(--text)', fontSize: 12, fontWeight: 800 }}><LocalizedText source="Autosave state" /></div>
               <div style={{ color: 'var(--faint)', fontSize: 11 }}>
                 {autosaveText}
               </div>
             </div>
-            <div role="toolbar" aria-label="Settings workspace actions" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <div role="toolbar" aria-label={translateInterface("Settings workspace actions")} style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }} {...interfaceTextProps("Settings workspace actions")}>
               <button type="button" onClick={toggleAllGroups} style={smallButtonStyle(filteredGroups.length > 0)} disabled={filteredGroups.length === 0}>
-                {allGroupsCollapsed ? 'Expand all' : 'Collapse all'}
+                {allGroupsCollapsed ? <LocalizedText source="Expand all" /> : <LocalizedText source="Collapse all" />}
               </button>
               <button
                 type="button"
                 onClick={defaultAll}
-                title={!data.overlay_writable ? 'Settings overlay is readonly' : 'Apply defaults to all managed settings'}
+                title={translateInterface(!data.overlay_writable ? 'Settings overlay is readonly' : 'Apply defaults to all managed settings')}
                 disabled={save.isPending || !data.overlay_writable}
                 style={smallButtonStyle(!save.isPending && data.overlay_writable)}
               >
-                Defaults all
-              </button>
+                <LocalizedText source="Reset all managed settings to defaults" /></button>
               <button type="button" onClick={copyVisibleCommands} disabled={visibleSettings.length === 0} style={smallButtonStyle(visibleSettings.length > 0)}>
-                Copy visible commands
-              </button>
+                <LocalizedText source="Copy visible commands" /></button>
               <button type="button" onClick={copyChangeSummary} disabled={dirtyCount === 0} style={smallButtonStyle(dirtyCount > 0)}>
-                Copy change summary
-              </button>
+                <LocalizedText source="Copy change summary" /></button>
             </div>
           </div>
           {dirtyCount > 0 && (
@@ -720,8 +747,7 @@ function RtorrentSettingsPanel() {
               padding: '8px 10px',
               fontSize: 12,
             }}>
-              Autosave failed. Pending changes are still in the form; retry save before leaving this page.
-            </div>
+              <LocalizedText source="{count} pending changes could not be saved. Retry when the API is available." parameters={{ count: dirtyCount.toLocaleString(getRegionalLocale()) }} /></div>
           )}
           <div style={{ display: 'grid', gap: 12 }}>
             {filteredGroups.map(group => {
@@ -748,7 +774,7 @@ function RtorrentSettingsPanel() {
                   textTransform: 'uppercase',
                   padding: '0 6px',
                 }}>
-                  {group.name}
+                  <LocalizedText source={group.name} />
                 </legend>
                 <div style={{
                   display: 'grid',
@@ -758,26 +784,25 @@ function RtorrentSettingsPanel() {
                   marginBottom: 9,
                 }}>
                   <div style={{ display: 'grid', gap: 5, minWidth: 0 }}>
-                    <div style={{ color: 'var(--faint)', fontSize: 11 }}>{group.description}</div>
+                    <div style={{ color: 'var(--faint)', fontSize: 11 }}><LocalizedText source={group.description} /></div>
                     <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                      <SettingPill tone={groupDirty > 0 ? 'warn' : 'ok'}>{groupDirty} edited</SettingPill>
-                      <SettingPill tone={groupRestart > 0 ? 'warn' : 'ok'}>{groupRestart} restart</SettingPill>
-                      <SettingPill tone="ok">{group.settings.length} shown</SettingPill>
+                      <SettingPill tone={groupDirty > 0 ? 'warn' : 'ok'}><LocalizedText source="Edited: {count}" parameters={{ count: groupDirty.toLocaleString(getRegionalLocale()) }} /></SettingPill>
+                      <SettingPill tone={groupRestart > 0 ? 'warn' : 'ok'}><LocalizedText source="Restart required: {count}" parameters={{ count: groupRestart.toLocaleString(getRegionalLocale()) }} /></SettingPill>
+                      <SettingPill tone="ok"><LocalizedText source="Shown: {count}" parameters={{ count: group.settings.length.toLocaleString(getRegionalLocale()) }} /></SettingPill>
                     </div>
                   </div>
-                  <div role="toolbar" aria-label={`${group.name} actions`} style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  <div role="toolbar" aria-label={translateInterface('{group} actions', { group: group.name })} {...interfaceTextProps('{group} actions')} style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                     <button
                       type="button"
                       onClick={() => defaultGroup(group.settings)}
-                      title={!data.overlay_writable ? 'Settings overlay is readonly' : 'Apply defaults to this group'}
+                      title={translateInterface(!data.overlay_writable ? 'Settings overlay is readonly' : 'Apply defaults to this group')}
                       style={smallButtonStyle(!save.isPending && data.overlay_writable)}
                       disabled={save.isPending || !data.overlay_writable}
                     >
-                      Defaults
+                      <LocalizedText source="Defaults" />
                     </button>
                     <button type="button" onClick={() => resetGroup(group.settings)} style={smallButtonStyle(groupDirty > 0 && !save.isPending)} disabled={groupDirty === 0 || save.isPending}>
-                      Reset group
-                    </button>
+                      <LocalizedText source="Reset group" /></button>
                     <button
                       type="button"
                       aria-expanded={!collapsed}
@@ -785,7 +810,7 @@ function RtorrentSettingsPanel() {
                       onClick={() => toggleGroup(group.name)}
                       style={smallButtonStyle(true)}
                     >
-                      {collapsed ? 'Expand' : 'Collapse'}
+                      {collapsed ? <LocalizedText source="Expand" /> : <LocalizedText source="Collapse" />}
                     </button>
                   </div>
                 </div>
@@ -814,14 +839,14 @@ function RtorrentSettingsPanel() {
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, color: 'var(--text)', fontSize: 13, fontWeight: 800 }}>
                           <span id={titleId}>{setting.label}</span>
                           <span style={{ display: 'inline-flex', gap: 5, alignItems: 'center', flexShrink: 0 }}>
-                            {dirty && <SettingPill tone="warn">edited</SettingPill>}
-                            {dirty && <SettingPill tone={lastSaveFailed ? 'warn' : save.isPending ? 'warn' : 'ok'}>{lastSaveFailed ? 'retry' : save.isPending ? 'saving' : 'pending'}</SettingPill>}
-                            {setting.restart_required && <SettingPill tone="warn">restart</SettingPill>}
-                            {row?.live.ok === false && <SettingPill tone="warn">unavailable</SettingPill>}
+                            {dirty && <SettingPill tone="warn"><LocalizedText source="edited" /></SettingPill>}
+                            {dirty && <SettingPill tone={lastSaveFailed ? 'warn' : save.isPending ? 'warn' : 'ok'}><LocalizedText source={lastSaveFailed ? 'retry' : save.isPending ? 'saving' : 'pending'} /></SettingPill>}
+                            {setting.restart_required && <SettingPill tone="warn"><LocalizedText source="Restart required" /></SettingPill>}
+                            {row?.live.ok === false && <SettingPill tone="warn"><LocalizedText source="unavailable" /></SettingPill>}
                           </span>
                         </div>
                         <div id={descriptionId} style={{ color: 'var(--faint)', fontSize: 11, lineHeight: 1.35 }}>
-                          {settingDescription(setting)}
+                          {settingDescription(setting, t)}
                         </div>
                         {liveError && (
                           <div id={liveErrorId} role="status" style={{
@@ -869,65 +894,63 @@ function RtorrentSettingsPanel() {
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1fr) auto', gap: 8, alignItems: 'center' }}>
                           <span style={{ color: 'var(--faint)', fontSize: 10 }}>
-                            {setting.restart_required ? 'Autosaves now; effective after restart' : 'Autosaves and applies live'}
+                            {setting.restart_required ? <LocalizedText source="Autosaves now; effective after restart" /> : <LocalizedText source="Autosaves and applies live" />}
                           </span>
-                          <div role="toolbar" aria-label={`${setting.label} actions`} style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                          <div role="toolbar" aria-label={translateInterface('{setting} actions', { setting: setting.label })} {...interfaceTextProps('{setting} actions')} style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                             <button
                               type="button"
-                              aria-label={`Reset ${setting.label} to baseline`}
+                              aria-label={translateInterface('Reset {setting} to baseline', { setting: setting.label })}
                               onClick={() => updateSetting(setting, base, true)}
                               disabled={!dirty || save.isPending}
                               style={smallButtonStyle(dirty && !save.isPending)}
                             >
-                              Reset
+                              <LocalizedText source="Reset" />
                             </button>
                             {saved !== null && (
                               <button
                                 type="button"
-                                aria-label={`Set ${setting.label} to saved value`}
+                                aria-label={translateInterface('Set {setting} to saved value', { setting: setting.label })}
                                 onClick={() => updateSetting(setting, inputValue(setting.value_type, saved), true)}
                                 disabled={save.isPending}
                                 style={smallButtonStyle(!save.isPending)}
                               >
-                                Saved
+                                <LocalizedText source="Saved" />
                               </button>
                             )}
                             {live !== null && (
                               <button
                                 type="button"
-                                aria-label={`Set ${setting.label} to live value`}
+                                aria-label={translateInterface('Set {setting} to live value', { setting: setting.label })}
                                 onClick={() => updateSetting(setting, inputValue(setting.value_type, live), true)}
                                 disabled={save.isPending}
                                 style={smallButtonStyle(!save.isPending)}
                               >
-                                Live
+                                <LocalizedText source="Live" />
                               </button>
                             )}
                             <button
                               type="button"
-                              aria-label={`Set ${setting.label} to default value`}
+                              aria-label={translateInterface('Set {setting} to default value', { setting: setting.label })}
                               onClick={() => updateSetting(setting, inputValue(setting.value_type, setting.default_value), true)}
                               disabled={save.isPending}
                               style={smallButtonStyle(!save.isPending)}
                             >
-                              Default
+                              <LocalizedText source="Default" />
                             </button>
                             <button
                               type="button"
-                              aria-label={`Copy ${setting.label} current value`}
-                              onClick={() => copyText(formatSettingValue(value, setting.unit), `${setting.label} value`)}
+                              aria-label={translateInterface('Copy {setting} current value', { setting: setting.label })}
+                              onClick={() => copyText(formatSettingValue(value, setting.unit), translateInterface('{setting} value', { setting: setting.label }))}
                               style={smallButtonStyle(true)}
                             >
-                              Copy value
-                            </button>
+                              <LocalizedText source="Copy value" /></button>
                             <button
                               type="button"
-                              aria-label={`Copy ${setting.label} command and setter`}
+                              aria-label={translateInterface('Copy {setting} configuration commands', { setting: setting.label })}
                               onClick={() => copyText(`${setting.command} / ${setting.setter}`, setting.label)}
                               style={smallButtonStyle(true)}
                             >
-                              Copy command
-                            </button>
+                              <LocalizedText source="Copy command" /></button>
                           </div>
                         </div>
                       </section>
@@ -945,8 +968,7 @@ function RtorrentSettingsPanel() {
                 padding: 14,
                 fontSize: 12,
               }}>
-                No settings match the current filter.
-              </div>
+                <LocalizedText source="No settings match the current filter." /></div>
             )}
           </div>
           <label id="rt-custom-rc" ref={customRcRef} style={{
@@ -959,24 +981,23 @@ function RtorrentSettingsPanel() {
             background: customRcDirty ? 'color-mix(in srgb, var(--warning) 7%, var(--surface))' : 'var(--surface)',
           }}>
             <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <span style={{ color: 'var(--text)', fontSize: 12, fontWeight: 800 }}>Custom rTorrent lines</span>
-              {customRcDirty && <SettingPill tone="warn">edited</SettingPill>}
+              <span style={{ color: 'var(--text)', fontSize: 12, fontWeight: 800 }}><LocalizedText source="Custom rTorrent lines" /></span>
+              {customRcDirty && <SettingPill tone="warn"><LocalizedText source="edited" /></SettingPill>}
             </span>
-            <span style={{ color: 'var(--faint)', fontSize: 11 }}>Advanced overrides are imported after managed settings and usually need a restart.</span>
+            <span style={{ color: 'var(--faint)', fontSize: 11 }}><LocalizedText source="Advanced overrides are imported after managed settings and usually need a restart." /></span>
             <textarea
               value={customRc}
               onChange={e => setCustomRc(e.target.value)}
               onBlur={saveNow}
               rows={4}
-              aria-label="Custom rTorrent configuration lines"
-              placeholder="Optional advanced rtorrent.rc overrides imported after managed settings"
+              aria-label={translateInterface("Custom rTorrent configuration lines")}
+              placeholder={translateInterface("Optional advanced rtorrent.rc overrides imported after managed settings")}
               style={{ ...inputStyle, resize: 'vertical', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
-            />
+            {...interfaceTextProps("Custom rTorrent configuration lines")} />
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
-              <span style={{ color: 'var(--faint)', fontSize: 10 }}>{customRc.split('\n').filter(line => line.trim()).length} custom line{customRc.split('\n').filter(line => line.trim()).length === 1 ? '' : 's'}</span>
+              <span style={{ color: 'var(--faint)', fontSize: 10 }}><LocalizedText source="Custom lines: {count}" parameters={{ count: customRc.split('\n').filter(line => line.trim()).length.toLocaleString(getRegionalLocale()) }} /></span>
               <button type="button" onClick={() => setCustomRc(data.custom_rc)} disabled={!customRcDirty || save.isPending} style={smallButtonStyle(customRcDirty && !save.isPending)}>
-                Reset custom lines
-              </button>
+                <LocalizedText source="Reset custom lines" /></button>
             </div>
           </label>
           {notice && <div style={{
@@ -986,7 +1007,9 @@ function RtorrentSettingsPanel() {
             borderRadius: 6,
             padding: '7px 9px',
             background: 'var(--bg)',
-          }} role="status" aria-live="polite">{notice.text}</div>}
+          }} role="status" aria-live="polite">{'source' in notice
+            ? <LocalizedText source={notice.source} parameters={notice.parameters} />
+            : <LocalizedErrorText message={notice.raw} />}</div>}
           <div style={{
             position: 'sticky',
             bottom: 0,
@@ -998,39 +1021,38 @@ function RtorrentSettingsPanel() {
             borderTop: '1px solid var(--border)',
             background: 'color-mix(in srgb, var(--surface) 92%, var(--bg))',
             padding: '10px 0 0',
-          }} role="toolbar" aria-label="Settings save actions">
+          }} role="toolbar" aria-label={translateInterface("Settings save actions")} {...interfaceTextProps("Settings save actions")}>
             <button
               type="button"
               onClick={saveNow}
               disabled={save.isPending || dirtyCount === 0 || !data.overlay_writable}
               aria-keyshortcuts="Control+S Meta+S"
-              title={lastSaveFailed ? 'Retry autosave now' : 'Save pending changes now'}
+              title={translateInterface(lastSaveFailed ? 'Retry autosave now' : 'Save pending changes now')}
               style={buttonStyle(lastSaveFailed ? 'var(--danger)' : 'var(--accent)', lastSaveFailed ? 'color-mix(in srgb, var(--danger) 12%, var(--surface))' : 'var(--accent-soft)', lastSaveFailed ? 'var(--danger)' : 'var(--accent-text)', dirtyCount > 0 && !save.isPending && data.overlay_writable)}
             >
-              {save.isPending ? 'Saving...' : lastSaveFailed ? 'Retry save' : 'Save now'}
+              {save.isPending ? <LocalizedText source="Saving…" /> : lastSaveFailed ? <LocalizedText source="Retry save" /> : <LocalizedText source="Save now" />}
             </button>
             <button
               type="button"
               onClick={resetAll}
               disabled={dirtyCount === 0 || save.isPending}
               aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z"
-              title="Reset edits"
+              title={translateInterface("Reset edits")}
               style={buttonStyle('var(--border-strong)', 'var(--surface-2)', 'var(--muted)', dirtyCount > 0 && !save.isPending)}
-            >
-              Reset edits
-            </button>
+             {...interfaceTextProps("Reset edits")}>
+              <LocalizedText source="Reset edits" /></button>
             <button
               type="button"
               onClick={() => {
-                if (window.confirm('Restart rTorrent/TorrentNG now? Active transfers will reconnect after the service comes back.')) restart.mutate()
+                if (window.confirm(translateInterface('Restart rTorrent/TorrentNG now? Active transfers will reconnect after the service comes back.'))) restart.mutate()
               }}
               disabled={restart.isPending}
               style={buttonStyle('var(--warning)', 'color-mix(in srgb, var(--warning) 12%, var(--surface))', 'var(--warning)')}
             >
-              {restart.isPending ? 'Restarting…' : 'Restart daemon'}
+              {restart.isPending ? <LocalizedText source="Restarting…" /> : <LocalizedText source="Restart daemon" />}
             </button>
             <span role="status" aria-live="polite" style={{ color: lastSaveFailed ? 'var(--danger)' : dirtyCount > 0 ? 'var(--warning)' : 'var(--faint)', fontSize: 12, fontWeight: 800 }}>
-              {!data.overlay_writable ? 'Readonly overlay' : save.isPending ? 'Autosaving' : lastSaveFailed ? 'Autosave failed' : dirtyCount > 0 ? `${dirtyCount} pending autosave` : 'Saved'}
+              {!data.overlay_writable ? <LocalizedText source="Read-only configuration overlay" /> : save.isPending ? <LocalizedText source="Autosaving" /> : lastSaveFailed ? <LocalizedText source="Autosave failed" /> : dirtyCount > 0 ? <LocalizedText source="{count} pending" parameters={{ count: dirtyCount.toLocaleString(getRegionalLocale()) }} /> : <LocalizedText source="Saved" />}
             </span>
           </div>
         </div>
@@ -1090,7 +1112,7 @@ function ChangeReview({ settings, draft, customRcDirty, values, saving }: {
       padding: '8px 10px',
     }}>
       <summary style={{ color: 'var(--text)', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>
-        Review autosave changes ({settings.length + (customRcDirty ? 1 : 0)}){saving ? ' - saving' : ''}
+        <LocalizedText source="Review autosave changes ({count})" parameters={{ count: settings.length + (customRcDirty ? 1 : 0) }} />{saving ? <LocalizedText source="- saving" /> : ''}
       </summary>
       <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
         {settings.map(setting => {
@@ -1111,9 +1133,13 @@ function ChangeReview({ settings, draft, customRcDirty, values, saving }: {
               minWidth: 0,
             }}>
               <span title={setting.command} style={{ color: 'var(--text)', fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{setting.label}</span>
-              <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>from {formatSettingValue(base, setting.unit)}</span>
-              <span style={{ color: 'var(--warning)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>to {formatSettingValue(next, setting.unit)}</span>
-              <SettingPill tone={setting.restart_required ? 'warn' : 'ok'}>{setting.restart_required ? 'restart' : 'live'}</SettingPill>
+              <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <LocalizedText source="From {value}" parameters={{ value: formatSettingValue(base, setting.unit) }} />
+              </span>
+              <span style={{ color: 'var(--warning)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <LocalizedText source="To {value}" parameters={{ value: formatSettingValue(next, setting.unit) }} />
+              </span>
+              <SettingPill tone={setting.restart_required ? 'warn' : 'ok'}><LocalizedText source={setting.restart_required ? 'Restart required' : 'Live'} /></SettingPill>
             </div>
           )
         })}
@@ -1127,8 +1153,7 @@ function ChangeReview({ settings, draft, customRcDirty, values, saving }: {
             fontSize: 11,
             fontWeight: 800,
           }}>
-            Custom rTorrent lines edited
-          </div>
+            <LocalizedText source="Custom rTorrent lines edited" /></div>
         )}
       </div>
     </details>
@@ -1145,18 +1170,20 @@ function ViewFilter({ value, onChange, dirtyCount, restartCount, liveCount, unav
   liveCount: number
   unavailableCount: number
 }) {
-  const options: Array<[SettingsViewFilter, string, string]> = [
-    ['all', 'All', 'Show every managed setting'],
-    ['edited', `Edited ${dirtyCount}`, 'Show managed settings pending autosave'],
-    ['restart', `Restart ${restartCount}`, 'Show settings that need restart'],
-    ['live', `Live ${liveCount}`, 'Show settings that can apply live'],
-    ['unavailable', `Unavailable ${unavailableCount}`, 'Show settings without a live readback'],
+  const options: Array<[SettingsViewFilter, string, number | undefined, string]> = [
+    ['all', 'All', undefined, 'Show every managed setting'],
+    ['edited', 'Edited: {count}', dirtyCount, 'Show managed settings pending autosave'],
+    ['restart', 'Restart required: {count}', restartCount, 'Show settings that need restart'],
+    ['live', 'Live: {count}', liveCount, 'Show settings that can apply live'],
+    ['unavailable', 'Unavailable: {count}', unavailableCount, 'Show settings without a live readback'],
   ]
   return (
     <div style={{ display: 'grid', gap: 5, minWidth: 0 }}>
-      <span style={{ color: 'var(--text)', fontSize: 12, fontWeight: 800 }}>View</span>
-      <div role="group" aria-label="Settings view filter" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(96px, 1fr))', gap: 5 }}>
-        {options.map(([optionValue, label, title]) => {
+      <span style={{ color: 'var(--text)', fontSize: 12, fontWeight: 800 }}><LocalizedText source="View" /></span>
+      <div role="group" aria-label={translateInterface("Settings view filter")} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(96px, 1fr))', gap: 5 }} {...interfaceTextProps("Settings view filter")}>
+        {options.map(([optionValue, labelSource, count, titleSource]) => {
+          const label = translateInterface(labelSource, count === undefined ? {} : { count: count.toLocaleString(getRegionalLocale()) })
+          const title = translateInterface(titleSource)
           const active = value === optionValue
           return (
             <button
@@ -1245,7 +1272,7 @@ function NumericKnob({ setting, value, describedBy, onChange, onPreset }: {
           value={Number.isFinite(value) ? value : min}
           onChange={e => onChange(Number(e.target.value))}
           style={{ width: '100%', accentColor: 'var(--accent)' }}
-          aria-label={`${setting.label} dial`}
+          aria-label={translateInterface('{setting} slider', { setting: setting.label })}
           aria-describedby={describedBy}
           aria-valuetext={formatSettingValue(value, setting.unit)}
         />
@@ -1258,15 +1285,15 @@ function NumericKnob({ setting, value, describedBy, onChange, onPreset }: {
             value={Number.isFinite(value) ? value : min}
             onChange={e => onChange(Number(e.target.value))}
             style={inputStyle}
-            aria-label={`${setting.label} value`}
+            aria-label={translateInterface('{setting} value', { setting: setting.label })}
             aria-describedby={describedBy}
           />
           {setting.unit && <span style={{ color: 'var(--faint)', fontSize: 11, fontWeight: 800 }}>{setting.unit}</span>}
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 5 }}>
-          <button type="button" aria-label={`Set ${setting.label} to minimum ${formatSettingValue(min, setting.unit)}`} onClick={() => onPreset(min)} style={miniPresetButtonStyle}>Min</button>
-          <button type="button" aria-label={`Set ${setting.label} to default ${formatSettingValue(inputValue(setting.value_type, setting.default_value), setting.unit)}`} onClick={() => onPreset(Number(inputValue(setting.value_type, setting.default_value)))} style={miniPresetButtonStyle}>Default</button>
-          <button type="button" aria-label={`Set ${setting.label} to maximum ${formatSettingValue(max, setting.unit)}`} onClick={() => onPreset(max)} style={miniPresetButtonStyle}>Max</button>
+          <button type="button" aria-label={translateInterface('Set {setting} to minimum {value}', { setting: setting.label, value: formatSettingValue(min, setting.unit) })} onClick={() => onPreset(min)} style={miniPresetButtonStyle}><LocalizedText source="Min" /></button>
+          <button type="button" aria-label={translateInterface('Set {setting} to default {value}', { setting: setting.label, value: formatSettingValue(inputValue(setting.value_type, setting.default_value), setting.unit) })} onClick={() => onPreset(Number(inputValue(setting.value_type, setting.default_value)))} style={miniPresetButtonStyle}><LocalizedText source="Default" /></button>
+          <button type="button" aria-label={translateInterface('Set {setting} to maximum {value}', { setting: setting.label, value: formatSettingValue(max, setting.unit) })} onClick={() => onPreset(max)} style={miniPresetButtonStyle}><LocalizedText source="Max" /></button>
         </div>
       </div>
     </div>
@@ -1320,7 +1347,7 @@ function BooleanKnob({ setting, value, describedBy, onChange }: {
           boxShadow: '0 1px 4px var(--shadow)',
         }} />
       </span>
-      <span style={{ fontSize: 13, fontWeight: 800 }}>{value ? 'On' : 'Off'}</span>
+      <span style={{ fontSize: 13, fontWeight: 800 }}><LocalizedText source={value ? 'On' : 'Off'} /></span>
     </button>
   )
 }
@@ -1352,7 +1379,7 @@ function SegmentedSetting({ label, value, options, describedBy, onChange }: {
               fontWeight: 800,
             }}
           >
-            {label}
+            <LocalizedText source={label} />
           </button>
         )
       })}
@@ -1363,7 +1390,7 @@ function SegmentedSetting({ label, value, options, describedBy, onChange }: {
 function Readout({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div style={{ minWidth: 0, display: 'grid', gap: 2 }}>
-      <span style={{ color: 'var(--faint)', fontSize: 9, fontWeight: 800, textTransform: 'uppercase' }}>{label}</span>
+      <span style={{ color: 'var(--faint)', fontSize: 9, fontWeight: 800, textTransform: 'uppercase' }}><LocalizedText source={label} /></span>
       <span title={value} style={{
         color: 'var(--muted)',
         fontSize: 10,
@@ -1391,7 +1418,7 @@ interface SettingGroup {
 function groupSettings(settings: RtorrentSettingDescriptor[]): SettingGroup[] {
   const groups: SettingGroup[] = [
     { name: 'Transfer Slots', description: 'Global and per-torrent concurrency limits.', settings: [] },
-    { name: 'Tracker HTTP', description: 'Tracker request pressure, connection reuse, and DNS behavior.', settings: [] },
+    { name: 'Tracker HTTP', description: 'Tracker request load, connection reuse, and DNS behavior.', settings: [] },
     { name: 'Peer Discovery', description: 'DHT, PEX, and UDP tracker discovery controls.', settings: [] },
     { name: 'Storage And Session', description: 'Cache, file/socket ceilings, hashing, and session persistence.', settings: [] },
     { name: 'Advanced', description: 'Settings that do not fit a narrower operational group.', settings: [] },
@@ -1415,12 +1442,18 @@ function settingCategory(setting: RtorrentSettingDescriptor): SettingGroup['name
   return 'Advanced'
 }
 
-function settingDescription(setting: RtorrentSettingDescriptor): string {
+function settingDescription(setting: RtorrentSettingDescriptor, t: (source: string, parameters?: Record<string, string | number>) => string = translateInterface): string {
   const bounds = setting.value_type === 'int' && setting.minimum !== null && setting.maximum !== null
-    ? ` Range ${setting.minimum.toLocaleString(getRegionalLocale())}-${setting.maximum.toLocaleString(getRegionalLocale())}${setting.unit ? ` ${setting.unit}` : ''}.`
+    ? t('Range: {minimum}–{maximum}{unit}.', {
+      minimum: setting.minimum.toLocaleString(getRegionalLocale()),
+      maximum: setting.maximum.toLocaleString(getRegionalLocale()),
+      unit: setting.unit ? ` ${setting.unit}` : '',
+    })
     : ''
-  const apply = setting.restart_required ? ' Saved immediately; daemon restart required to take effect.' : ' Saved and applied live when supported by rTorrent.'
-  return `${setting.command} via ${setting.setter}.${bounds}${apply}`
+  const apply = setting.restart_required
+    ? t('Saved immediately; daemon restart required to take effect.')
+    : t('Saved and applied live when supported by rTorrent.')
+  return [t('{command} via {setter}.', { command: setting.command, setter: setting.setter }), bounds, apply].filter(Boolean).join(' ')
 }
 
 function baselineValue(setting: RtorrentSettingDescriptor, saved: string | null, live: string | null): string | number | boolean {
@@ -1442,12 +1475,12 @@ function sameDraft(
   return rightKeys.every(key => sameSettingValue(left[key], right[key]))
 }
 
-function formatRelativeTime(ts: number): string {
+function formatRelativeTime(ts: number, language: string, t: (source: string) => string): string {
   const seconds = Math.max(0, Math.round((Date.now() - ts) / 1000))
-  if (seconds < 5) return 'just now'
-  if (seconds < 60) return `${seconds}s ago`
-  const minutes = Math.round(seconds / 60)
-  return `${minutes}m ago`
+  if (seconds < 5) return t('just now')
+  const formatter = new Intl.RelativeTimeFormat(language, { numeric: 'auto' })
+  if (seconds < 60) return formatter.format(-seconds, 'second')
+  return formatter.format(-Math.round(seconds / 60), 'minute')
 }
 
 function clampSettingValue(setting: RtorrentSettingDescriptor, value: number): number {
@@ -1543,28 +1576,28 @@ function CommandIndex({ commands }: { commands?: { ok: boolean; count: number; c
   }, [commands, filter])
   return (
     <Panel wide>
-      <Subhead>XMLRPC Command Surface</Subhead>
+      <Subhead><LocalizedText source="XML-RPC Command Interface" /></Subhead>
       {!commands && <div style={{ display: 'grid', gap: 7 }}>
         <span className="tng-skeleton" style={{ width: '42%', height: 10 }} />
         <span className="tng-skeleton" style={{ width: '72%', height: 8 }} />
       </div>}
-      {commands && !commands.ok && <InlineNotice>Command index unavailable</InlineNotice>}
+      {commands && !commands.ok && <InlineNotice><LocalizedText source="Command index unavailable" /></InlineNotice>}
       {commands?.ok && (
         <details>
-          <summary style={{ color: 'var(--text)', fontSize: 12, cursor: 'pointer' }}>{commands.count} commands exposed by rTorrent</summary>
+          <summary style={{ color: 'var(--text)', fontSize: 12, cursor: 'pointer' }}>{commands.count} <LocalizedText source="commands exposed by rTorrent" /></summary>
           <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
             <input
               value={filter}
               onChange={e => setFilter(e.target.value)}
-              aria-label="Filter XMLRPC commands"
-              placeholder="Filter commands"
+              aria-label={translateInterface("Filter XMLRPC commands")}
+              placeholder={translateInterface("Filter commands")}
               style={{
                 minWidth: 0, flex: '1 1 220px', background: 'var(--bg)', border: '1px solid var(--border-strong)',
                 borderRadius: 5, color: 'var(--text)', padding: '5px 8px', fontSize: 12,
               }}
-            />
+            {...interfaceTextProps("Filter XMLRPC commands")} />
             <span style={{ color: 'var(--faint)', fontSize: 11, whiteSpace: 'nowrap' }}>
-              {filtered.length.toLocaleString(getRegionalLocale())} shown
+              <LocalizedText source="Shown: {count}" parameters={{ count: filtered.length.toLocaleString(getRegionalLocale()) }} />
             </span>
           </div>
           <div style={{
@@ -1602,19 +1635,21 @@ function Panel({ children, wide }: { children: React.ReactNode; wide?: boolean }
 }
 
 function Rows({ rows }: { rows: [string, string][] }) {
+  const { t } = useInterfaceLanguage()
+  const localizableValues = new Set(['yes', 'no', 'not applicable', 'not declared', 'none declared', 'none', 'default', 'unknown', 'unavailable'])
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '160px minmax(0, 1fr)', gap: '6px 12px', fontSize: 12 }}>
       {rows.map(([k, v]) => (
         <div key={k} className="tng-engine-kv" style={{ display: 'contents' }}>
-          <div style={{ color: 'var(--faint)' }}>{k}</div>
-          <div title={v} style={{ color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v}</div>
+          <div style={{ color: 'var(--faint)' }}><LocalizedText source={k} /></div>
+          <div title={v} style={{ color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{localizableValues.has(v.toLowerCase()) ? t(v) : v}</div>
         </div>
       ))}
     </div>
   )
 }
 
-function Subhead({ children }: { children: string }) {
+function Subhead({ children }: { children: React.ReactNode }) {
   return <h3 style={{
     fontSize: 11, fontWeight: 800, textTransform: 'uppercase', color: 'var(--accent-text)',
     margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: 6,

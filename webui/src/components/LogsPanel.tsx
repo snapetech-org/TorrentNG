@@ -1,3 +1,5 @@
+import { LocalizedText } from '../lib/LocalizedText'
+import { interfaceTextProps, translateInterface } from '../lib/interfaceLocale'
 import { getRegionalLocale } from '../lib/localeFormat'
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -24,40 +26,39 @@ export function LogsPanel() {
     <section aria-labelledby="operator-logs-title" aria-busy={query.isFetching} style={{ padding: '18px 24px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
         <h2 id="operator-logs-title" style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)', flex: 1, minWidth: 180 }}>
-          Operator Logs
-        </h2>
-        <select value={level} onChange={event => setLevel(event.target.value)} style={selectStyle} aria-label="Log level">
-          <option value="">All levels</option>
-          <option value="info">Info</option>
-          <option value="warn">Warnings</option>
-          <option value="error">Errors</option>
+          <LocalizedText source="Operator Logs" /></h2>
+        <select value={level} onChange={event => setLevel(event.target.value)} style={selectStyle} aria-label={translateInterface("Log level")} {...interfaceTextProps("Log level")}>
+          <option value=""><LocalizedText source="All levels" /></option>
+          <option value="info"><LocalizedText source="Info" /></option>
+          <option value="warn"><LocalizedText source="Warnings" /></option>
+          <option value="error"><LocalizedText source="Errors" /></option>
         </select>
-        <select value={kind} onChange={event => setKind(event.target.value)} style={selectStyle} aria-label="Log kind">
-          <option value="">All kinds</option>
-          <option value="rtorrent_log">rTorrent</option>
-          <option value="rtorrent_log_ingest_error">rTorrent ingest errors</option>
-          <option value="rtorrent_log_ingest_recovered">rTorrent ingest recovery</option>
-          <option value="rtorrent_sync_error">Sync errors</option>
-          <option value="rtorrent_sync_recovered">Sync recovery</option>
-          <option value="rtorrent_stats_error">Transfer stats errors</option>
-          <option value="rtorrent_stats_recovered">Transfer stats recovery</option>
-          <option value="rtorrent_user_agent_error">User-agent errors</option>
-          <option value="torrent_added">Torrent added</option>
-          <option value="torrent_removed">Torrent removed</option>
-          <option value="torrent_updated">Torrent updated</option>
-          <option value="categories_updated">Categories</option>
-          <option value="tags_updated">Tags</option>
-          <option value="saved_views_updated">Saved views</option>
-          <option value="ratio_groups_updated">Ratio groups</option>
-          <option value="rss_rules_updated">RSS rules</option>
-          <option value="workflows_updated">Workflows</option>
-          <option value="workflow_runs_updated">Workflow runs</option>
-          <option value="settings_changed">Settings</option>
-          <option value="admin_restart_requested">Restart requests</option>
-          <option value="sidecar_started">Startup</option>
+        <select value={kind} onChange={event => setKind(event.target.value)} style={selectStyle} aria-label={translateInterface("Log kind")} {...interfaceTextProps("Log kind")}>
+          <option value=""><LocalizedText source="All kinds" /></option>
+          <option value="rtorrent_log"><LocalizedText source="rTorrent" /></option>
+          <option value="rtorrent_log_ingest_error"><LocalizedText source="rTorrent log import errors" /></option>
+          <option value="rtorrent_log_ingest_recovered"><LocalizedText source="rTorrent log import recovered" /></option>
+          <option value="rtorrent_sync_error"><LocalizedText source="Sync errors" /></option>
+          <option value="rtorrent_sync_recovered"><LocalizedText source="Sync recovered" /></option>
+          <option value="rtorrent_stats_error"><LocalizedText source="Transfer stats errors" /></option>
+          <option value="rtorrent_stats_recovered"><LocalizedText source="Transfer stats recovery" /></option>
+          <option value="rtorrent_user_agent_error"><LocalizedText source="User-agent errors" /></option>
+          <option value="torrent_added"><LocalizedText source="Torrent added" /></option>
+          <option value="torrent_removed"><LocalizedText source="Torrent removed" /></option>
+          <option value="torrent_updated"><LocalizedText source="Torrent updated" /></option>
+          <option value="categories_updated"><LocalizedText source="Categories" /></option>
+          <option value="tags_updated"><LocalizedText source="Tags" /></option>
+          <option value="saved_views_updated"><LocalizedText source="Saved views" /></option>
+          <option value="ratio_groups_updated"><LocalizedText source="Ratio groups" /></option>
+          <option value="rss_rules_updated"><LocalizedText source="RSS rules" /></option>
+          <option value="workflows_updated"><LocalizedText source="Workflows" /></option>
+          <option value="workflow_runs_updated"><LocalizedText source="Workflow run events" /></option>
+          <option value="settings_changed"><LocalizedText source="Settings" /></option>
+          <option value="admin_restart_requested"><LocalizedText source="Restart requests" /></option>
+          <option value="sidecar_started"><LocalizedText source="Startup" /></option>
         </select>
         <button type="button" onClick={() => query.refetch()} disabled={query.isFetching} style={buttonStyle}>
-          {query.isFetching ? 'Refreshing...' : 'Refresh'}
+          {query.isFetching ? <LocalizedText source="Refreshing..." /> : <LocalizedText source="Refresh" />}
         </button>
         <button
           type="button"
@@ -65,19 +66,18 @@ export function LogsPanel() {
           disabled={!newestId || query.isFetching}
           style={buttonStyle}
         >
-          Newer
+          <LocalizedText source="Newer" />
         </button>
         {lastKnownId && (
           <button type="button" onClick={() => setLastKnownId(undefined)} style={buttonStyle}>
-            Latest page
-          </button>
+            <LocalizedText source="Go to newest logs" /></button>
         )}
       </div>
 
-      {query.isLoading && <div role="status" aria-label="Loading logs"><SkeletonRows /></div>}
-      {query.error && <Notice>Logs unavailable</Notice>}
+      {query.isLoading && <div role="status" aria-label={translateInterface("Loading logs")} {...interfaceTextProps("Loading logs")}><SkeletonRows /></div>}
+      {query.error && <Notice><LocalizedText source="Logs unavailable" /></Notice>}
       {!query.isLoading && !query.error && logs.length === 0 && (
-        <EmptyState>No log events matched the current filters.</EmptyState>
+        <EmptyState><LocalizedText source="No log events matched the current filters." /></EmptyState>
       )}
       <div style={{ display: 'grid', gap: 8, maxWidth: 1040 }}>
         {logs.map(event => (

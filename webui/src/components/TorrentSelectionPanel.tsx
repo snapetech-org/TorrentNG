@@ -1,4 +1,6 @@
-import { formatRegionalNumber, getRegionalLocale } from '../lib/localeFormat'
+import { LocalizedText } from '../lib/LocalizedText'
+import { useInterfaceLanguage } from '../lib/interfaceLocale'
+import { formatRegionalNumber } from '../lib/localeFormat'
 import { isFinalizing, type TorrentSummary } from '../api/client'
 import { DetailDockControls, type DetailPosition } from './DetailDockControls'
 
@@ -69,7 +71,7 @@ function ActionButton({
       }}
     >
       <span aria-hidden="true">{icon}</span>
-      <span>{label}</span>
+      <span><LocalizedText source={label} /></span>
     </button>
   )
 }
@@ -78,6 +80,7 @@ export function TorrentSelectionPanel({
   torrents, selectedCount, position, onPositionChange, onClose,
   onStart, onStop, onRecheck, onReannounce, onEdit, onSequential, onClearSelection, busy,
 }: Props) {
+  const { t: localize, textProps } = useInterfaceLanguage()
   const knownCount = torrents.length
   const totalSize = torrents.reduce((sum, torrent) => sum + Math.max(0, torrent.size_bytes), 0)
   const totalDone = torrents.reduce((sum, torrent) => sum + Math.max(0, torrent.bytes_done), 0)
@@ -107,17 +110,15 @@ export function TorrentSelectionPanel({
       }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <h2 id="selection-workspace-title" style={{ margin: 0, display: 'block', fontWeight: 800, fontSize: 13, color: 'var(--text)', lineHeight: 1.3 }}>
-            Selection workspace
-          </h2>
+            <LocalizedText source="Selection workspace" /></h2>
           <span style={{ display: 'block', color: 'var(--accent-text)', fontSize: 11, marginTop: 3, fontWeight: 700 }}>
-            {selectedCount.toLocaleString(getRegionalLocale())} torrents selected
-          </span>
+            {formatRegionalNumber(selectedCount)} <LocalizedText source="torrents selected" /></span>
         </div>
         <DetailDockControls position={position} onChange={onPositionChange} />
-        <button type="button" onClick={onClose} title="Hide details" aria-label="Hide details" style={{
+        <button type="button" onClick={onClose} title={localize("Hide details")} aria-label={localize("Hide details")} style={{
           background: 'var(--surface-2)', border: '1px solid var(--border-strong)', borderRadius: 5,
           cursor: 'pointer', color: 'var(--muted)', fontSize: 16, lineHeight: 1, width: 28, height: 28, padding: 0, flexShrink: 0,
-        }}>×</button>
+        }} {...textProps("Hide details")}>×</button>
       </header>
 
       <div className="tng-selection-body" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '14px 14px 0' }}>
@@ -127,59 +128,62 @@ export function TorrentSelectionPanel({
             background: 'color-mix(in srgb, var(--warning) 8%, var(--surface))',
             color: 'var(--warning)', borderRadius: 6, padding: '8px 9px', marginBottom: 12, fontSize: 11,
           }}>
-            Summary data is available for {knownCount.toLocaleString(getRegionalLocale())} of {selectedCount.toLocaleString(getRegionalLocale())} selected torrents.
+            <LocalizedText source="Summary data is available for {known} of {selected} selected torrents." parameters={{
+              known: formatRegionalNumber(knownCount),
+              selected: formatRegionalNumber(selectedCount),
+            }} />
           </div>
         )}
 
         <section className="tng-selection-section" aria-labelledby="selection-summary-heading">
-          <h3 id="selection-summary-heading" className="tng-selection-section-title">Aggregate view</h3>
+          <h3 id="selection-summary-heading" className="tng-selection-section-title"><LocalizedText source="Selection summary" /></h3>
           <div className="tng-selection-stats">
             <Stat label="Total size" value={knownCount ? fmtSize(totalSize) : '—'} />
             <Stat label="Downloaded" value={knownCount ? fmtSize(totalDownloaded) : '—'} />
             <Stat label="Progress" value={knownCount ? `${formatRegionalNumber(progress, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%` : '—'} />
-            <Stat label="Down speed" value={knownCount ? fmtSpeed(totalDown) : '—'} tone="accent" />
-            <Stat label="Up speed" value={knownCount ? fmtSpeed(totalUp) : '—'} tone="success" />
+            <Stat label="Download speed" value={knownCount ? fmtSpeed(totalDown) : '—'} tone="accent" />
+            <Stat label="Upload speed" value={knownCount ? fmtSpeed(totalUp) : '—'} tone="success" />
             <Stat label="Ratio" value={knownCount ? formatRegionalNumber(ratio, { minimumFractionDigits: 3, maximumFractionDigits: 3 }) : '—'} />
             <Stat label="Uploaded" value={knownCount ? fmtSize(totalUploaded) : '—'} />
           </div>
-          <div className="tng-selection-progress" role="progressbar" aria-label={knownCount ? `${formatRegionalNumber(progress, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} percent complete` : 'Progress unavailable'} aria-valuemin={0} aria-valuemax={100} aria-valuenow={knownCount ? progress : 0}>
+          <div className="tng-selection-progress" role="progressbar" aria-label={knownCount ? localize('{percent} percent complete', { percent: formatRegionalNumber(progress, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) }) : localize('Progress unavailable')} {...textProps(knownCount ? '{percent} percent complete' : 'Progress unavailable')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={knownCount ? progress : 0}>
             <span style={{ width: `${progress}%` }} />
           </div>
         </section>
 
         <section className="tng-selection-section" aria-labelledby="selection-state-heading">
-          <h3 id="selection-state-heading" className="tng-selection-section-title">State mix</h3>
+          <h3 id="selection-state-heading" className="tng-selection-section-title"><LocalizedText source="State mix" /></h3>
           <div className="tng-selection-statuses">
             {statuses.length > 0 ? statuses.map(({ status, count }) => (
               <span key={status.label} className="tng-selection-status" style={{
                 color: status.color, borderColor: `color-mix(in srgb, ${status.color} 40%, var(--border))`,
                 background: `color-mix(in srgb, ${status.color} 10%, transparent)`,
               }}>
-                {status.label} <strong>{count.toLocaleString(getRegionalLocale())}</strong>
+                <LocalizedText source={status.label} /> <strong>{formatRegionalNumber(count)}</strong>
               </span>
-            )) : <span style={{ color: 'var(--faint)', fontSize: 11 }}>No summary data loaded.</span>}
+            )) : <span style={{ color: 'var(--faint)', fontSize: 11 }}><LocalizedText source="No summary data loaded." /></span>}
           </div>
         </section>
 
         <section className="tng-selection-section" aria-labelledby="selection-values-heading">
-          <h3 id="selection-values-heading" className="tng-selection-section-title">Shared values</h3>
+          <h3 id="selection-values-heading" className="tng-selection-section-title"><LocalizedText source="Shared values" /></h3>
           <div className="tng-selection-values">
-            <ValueRow label="Category" value={category} />
-            <ValueRow label="Save path" value={location} mono />
-            <ValueRow label="Tags" value={tags.length ? tags.join(', ') : 'None'} />
+            <ValueRow label="Category" value={['None', 'Mixed'].includes(category) ? localize(category) : category} />
+            <ValueRow label="Save path" value={['None', 'Mixed'].includes(location) ? localize(location) : location} mono />
+            <ValueRow label="Tags" value={tags.length ? tags.join(', ') : localize('None')} />
           </div>
         </section>
 
         <section className="tng-selection-section" aria-labelledby="selection-actions-heading">
-          <h3 id="selection-actions-heading" className="tng-selection-section-title">Bulk actions</h3>
-          <div className="tng-selection-action-group-label">Transfer</div>
+          <h3 id="selection-actions-heading" className="tng-selection-section-title"><LocalizedText source="Bulk actions" /></h3>
+          <div className="tng-selection-action-group-label"><LocalizedText source="Transfer" /></div>
           <div className="tng-selection-actions">
             <ActionButton label="Start" icon="▶" color="var(--success)" onClick={onStart} disabled={busy} />
             <ActionButton label="Stop" icon="■" color="var(--muted)" onClick={onStop} disabled={busy} />
             <ActionButton label="Recheck" icon="↻" color="var(--warning)" onClick={onRecheck} disabled={busy} />
             <ActionButton label="Announce" icon="⇄" color="var(--accent)" onClick={onReannounce} disabled={busy} />
           </div>
-          <div className="tng-selection-action-group-label">Manage</div>
+          <div className="tng-selection-action-group-label"><LocalizedText source="Manage" /></div>
           <div className="tng-selection-actions">
             <ActionButton label="Edit selected" icon="✎" color="var(--accent)" onClick={onEdit} disabled={busy} />
             <ActionButton label="Sequential" icon="≡" color="var(--warning)" onClick={onSequential} disabled={busy} />
@@ -188,17 +192,17 @@ export function TorrentSelectionPanel({
 
         {names.length > 0 && (
           <section className="tng-selection-section" aria-labelledby="selection-included-heading">
-            <h3 id="selection-included-heading" className="tng-selection-section-title">Included</h3>
+            <h3 id="selection-included-heading" className="tng-selection-section-title"><LocalizedText source="Included" /></h3>
             <div className="tng-selection-names">
               {names.map(name => <span key={name} title={name}>{name}</span>)}
-              {selectedCount > names.length && <span className="tng-selection-more">+ {(selectedCount - names.length).toLocaleString(getRegionalLocale())} more</span>}
+              {selectedCount > names.length && <span className="tng-selection-more">+ {formatRegionalNumber(selectedCount - names.length)} <LocalizedText source="more" /></span>}
             </div>
           </section>
         )}
 
         <div className="tng-selection-footer">
-          <span>Use Edit selected for category, tags, location, and share limits.</span>
-          <button type="button" onClick={onClearSelection} disabled={busy}>Clear selection</button>
+          <span><LocalizedText source="Use Edit selected for category, tags, location, and share limits." /></span>
+          <button type="button" onClick={onClearSelection} disabled={busy}><LocalizedText source="Deselect all" /></button>
         </div>
         <div style={{ height: 14 }} />
       </div>
@@ -209,7 +213,7 @@ export function TorrentSelectionPanel({
 function Stat({ label, value, tone }: { label: string; value: string; tone?: 'accent' | 'success' }) {
   return (
     <div className="tng-selection-stat">
-      <span>{label}</span>
+      <span><LocalizedText source={label} /></span>
       <strong data-tone={tone}>{value}</strong>
     </div>
   )
@@ -218,7 +222,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'ac
 function ValueRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
   return (
     <div className="tng-selection-value-row">
-      <span>{label}</span>
+      <span><LocalizedText source={label} /></span>
       <strong className={mono ? 'tng-selection-mono' : undefined} title={value}>{value}</strong>
     </div>
   )

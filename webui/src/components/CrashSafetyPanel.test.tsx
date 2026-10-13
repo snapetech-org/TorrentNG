@@ -273,8 +273,8 @@ describe('CrashSafetyPanel', () => {
   it('blocks Apply and explains why when a value is invalid', async () => {
     const user = userEvent.setup()
     renderPanel()
-    await screen.findByLabelText('Always treat as weak')
-    await user.type(screen.getByLabelText('Always treat as weak'), 'not-absolute')
+    await screen.findByLabelText('Always rate these paths as Weak')
+    await user.type(screen.getByLabelText('Always rate these paths as Weak'), 'not-absolute')
     const alert = await screen.findByRole('alert')
     expect(alert.textContent).toMatch(/must be absolute/)
     expect((screen.getByRole('button', { name: 'Apply' }) as HTMLButtonElement).disabled).toBe(true)
@@ -404,9 +404,9 @@ describe('CrashSafetyPanel', () => {
     expect(pathQueries).toEqual(['/mnt/nas/tv'])
     expect(within(report).getByText('/mnt/nas')).toBeTruthy()
     expect(within(report).getByText('Weak')).toBeTruthy()
-    expect(report.textContent).toContain('Raised from Watermark only because this location is rated Weak')
+    expect(report.textContent).toContain('Recovery setting was raised from {value}. Use only the sync checkpoint because this location is rated Weak')
     expect(report.textContent).toContain('Sample (10%)')
-    expect(report.textContent).toContain('Raised from Off because this location is rated Weak')
+    expect(report.textContent).toContain('Recovery setting was raised from {value}. Off because this location is rated Weak')
   })
 
   it('says so when no folder policy matches and reports a failed check', async () => {
@@ -426,7 +426,7 @@ describe('CrashSafetyPanel', () => {
     await user.click(within(form).getByRole('button', { name: 'Check' }))
     const report = await screen.findByTestId('path-report')
     expect(report.textContent).toContain('None. The global settings apply.')
-    expect(report.textContent).not.toContain('Raised from')
+    expect(report.textContent).not.toContain('Recovery setting was raised from {value}.')
 
     pathReport = new Response('bad', { status: 400 })
     await user.click(within(form).getByRole('button', { name: 'Check' }))
