@@ -38,9 +38,9 @@ rt-api-deluge = { path = "../rt-api-deluge" }
 uuid.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
 tikv-jemallocator = { version = "0.7.0", features = ["stats"] }
 
 [dev-dependencies]
-libc.workspace = true
 tempfile.workspace = true
 tower.workspace = true

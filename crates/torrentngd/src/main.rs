@@ -36,9 +36,10 @@ mod migrate;
 
 // `tikv-jemalloc-sys` reads this compile-time config before main(). Disabling
 // transparent huge-page extents avoids charging whole 2 MiB pages for the
-// daemon's small allocator arenas. MALLOC_CONF remains a later, operator-level
-// override. Keep background purge workers disabled by default; the crate's
-// runtime-support feature remains available to deployments that enable them.
+// daemon's small allocator arenas. The process-level policy below also covers
+// hosts whose global THP mode is `always`. MALLOC_CONF remains available for
+// allocator tuning. Keep background purge workers disabled by default; the
+// crate's runtime-support feature remains available to deployments that enable them.
 // The authenticated /metrics endpoint exposes allocator stats so live
 // allocations and allocator residency can be measured separately.
 #[cfg(target_os = "linux")]
@@ -60,6 +61,78 @@ static malloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
 #[cfg(target_os = "linux")]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+#[cfg(target_os = "linux")]
+fn parse_thp_disable_setting(value: Option<&[u8]>) -> Option<bool> {
+    match value {
+        None => Some(true),
+        Some(value)
+            if [b"1".as_slice(), b"true", b"yes", b"on"]
+                .iter()
+                .any(|accepted| value.eq_ignore_ascii_case(accepted)) =>
+        {
+            Some(true)
+        }
+        Some(value)
+            if [b"0".as_slice(), b"false", b"no", b"off"]
+                .iter()
+                .any(|accepted| value.eq_ignore_ascii_case(accepted)) =>
+        {
+            Some(false)
+        }
+        Some(_) => None,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn disable_transparent_huge_pages() {
+    const ENV_NAME: &[u8] = b"TORRENTNGD_DISABLE_THP\0";
+    // PR_SET_THP_DISABLE is 41 in linux/prctl.h. libc does not expose it for
+    // every Linux C library target, so use the stable Linux ABI value here.
+    const PR_SET_THP_DISABLE: libc::c_long = 41;
+
+    // Read getenv directly and avoid creating a Rust String before the process
+    // THP policy is applied; a first small allocation can itself fault a huge
+    // page when the host's global THP mode is `always`.
+    let value = unsafe {
+        let value = libc::getenv(ENV_NAME.as_ptr().cast());
+        if value.is_null() {
+            None
+        } else {
+            Some(std::ffi::CStr::from_ptr(value).to_bytes())
+        }
+    };
+    let (disable, invalid_setting) = match parse_thp_disable_setting(value) {
+        Some(disable) => (disable, false),
+        None => (true, true),
+    };
+    if !disable {
+        return;
+    }
+
+    // SAFETY: the Linux prctl syscall takes PR_SET_THP_DISABLE followed by
+    // the disable flag and three zero arguments. It is process-local and needs
+    // no elevated privileges.
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_prctl,
+            PR_SET_THP_DISABLE,
+            1 as libc::c_long,
+            0 as libc::c_long,
+            0 as libc::c_long,
+            0 as libc::c_long,
+        )
+    };
+    if result == -1 {
+        eprintln!(
+            "torrentngd: could not disable transparent huge pages for this process: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+    if invalid_setting {
+        eprintln!("torrentngd: invalid TORRENTNGD_DISABLE_THP value; disabling THP");
+    }
+}
 
 const DEFAULT_MAX_TOKIO_WORKER_THREADS: usize = 4;
 
@@ -130,6 +203,8 @@ fn install_panic_payload_redacting_hook() {
 }
 
 fn main() -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    disable_transparent_huge_pages();
     install_panic_payload_redacting_hook();
     let worker_threads = configured_tokio_worker_threads()?;
     tokio::runtime::Builder::new_multi_thread()
@@ -920,6 +995,16 @@ mod tests {
         assert_eq!(tokio_worker_threads_for(Some("2"), Some(64)).unwrap(), 2);
         assert!(tokio_worker_threads_for(Some("0"), Some(64)).is_err());
         assert!(tokio_worker_threads_for(Some("many"), Some(64)).is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn transparent_huge_pages_are_disabled_by_default_with_explicit_opt_out() {
+        assert_eq!(super::parse_thp_disable_setting(None), Some(true));
+        assert_eq!(super::parse_thp_disable_setting(Some(b"yes")), Some(true));
+        assert_eq!(super::parse_thp_disable_setting(Some(b"OFF")), Some(false));
+        assert_eq!(super::parse_thp_disable_setting(Some(b"0")), Some(false));
+        assert_eq!(super::parse_thp_disable_setting(Some(b"unexpected")), None);
     }
 
     #[test]

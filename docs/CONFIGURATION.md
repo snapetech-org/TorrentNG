@@ -136,6 +136,14 @@ crash instead of trusted, and the final save when a torrent exits always syncs. 
 | `pressure_constrained_pct` | `75` | Percent of total cap that reports constrained pressure |
 | `pressure_critical_pct` | `90` | Percent of total cap that reports critical pressure |
 
+On Linux, `torrentngd` disables transparent huge pages for its own process at
+startup. This protects memory use when the host enables huge pages globally,
+without changing the host's setting or affecting other processes. Set
+`TORRENTNGD_DISABLE_THP=0` to skip the process-level policy; unset or invalid
+values keep it enabled. The packaged allocator still defaults to
+`MALLOC_CONF=thp:never`. To let jemalloc follow the host policy as well, set
+`MALLOC_CONF=thp:default` when opting out.
+
 The `queued_disk` memory class reports payload bytes reserved by queued or
 active disk, hash, and peer-read elevator jobs. Leases are acquired before
 enqueue and released on queue rejection, cancellation, or completion.
