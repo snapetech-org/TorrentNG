@@ -23,6 +23,7 @@ import { useDialogFocus } from './hooks/useDialogFocus'
 import { api, AuthError, type ListParams, type LiveStats, type TorrentSummary } from './api/client'
 import { PALETTES, applyTheme, findPalette, THEME_MODE_STORAGE_KEY, THEME_STORAGE_KEY, type ThemeMode } from './themes'
 import { REGIONAL_FORMAT_KEY, REGIONAL_FORMAT_OPTIONS, getRegionalLocale } from './lib/localeFormat'
+import { useInterfaceLanguage } from './lib/interfaceLocale'
 
 const EnginePanel = lazy(() => import('./components/EnginePanel').then(module => ({ default: module.EnginePanel })))
 const StoragePanel = lazy(() => import('./components/StoragePanel').then(module => ({ default: module.StoragePanel })))
@@ -273,6 +274,7 @@ function useSingleActiveTab() {
 }
 
 export function App() {
+  const { t } = useInterfaceLanguage()
   const qc = useQueryClient()
   const activeTab = useSingleActiveTab()
   const [authState, setAuthState] = useState<AuthState>('checking')
@@ -851,6 +853,7 @@ export function App() {
                 setView(v)
               }}
               aria-current={view === v ? 'page' : undefined}
+              aria-label={t(v === 'torrents' ? 'Torrents' : 'Settings')}
               style={{
               background: view === v ? 'var(--accent-soft)' : 'transparent',
               border: '1px solid ' + (view === v ? 'var(--accent)' : 'transparent'),
@@ -860,7 +863,7 @@ export function App() {
               fontWeight: view === v ? 800 : 600,
             }}>
               <span aria-hidden="true" style={{ color: view === v ? 'var(--accent-text)' : 'var(--accent)' }}>{v === 'torrents' ? '▤' : '⚙'}</span>
-              {v}
+              {t(v === 'torrents' ? 'Torrents' : 'Settings')}
             </button>
           ))}
         </nav>
@@ -1212,6 +1215,7 @@ function SettingsView({ section, onSection, mediaInference, onMediaInference, th
   regionalFormat: string
   onRegionalFormat: (value: string) => void
 }) {
+  const { t } = useInterfaceLanguage()
   const sections: Array<[SettingsSection, string, string]> = [
     ['library', 'Library', '▦'],
     ['engine', 'Backend', '⚙'],
@@ -1228,15 +1232,15 @@ function SettingsView({ section, onSection, mediaInference, onMediaInference, th
   }
   return (
     <>
-      <aside className="tng-settings-sidebar" aria-label="Settings sections" style={{
+      <aside className="tng-settings-sidebar" aria-label={t("Settings")} style={{
         width: 220, flexShrink: 0, background: 'var(--panel)', borderRight: '1px solid var(--border)',
         padding: 12,
       }}>
         <div style={{ margin: '4px 4px 12px' }}>
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: 'var(--text)' }}>Settings</h2>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: 'var(--text)' }}>{t("Settings")}</h2>
           <div style={{ fontSize: 11, color: 'var(--faint)', marginTop: 3 }}>Daemon, library, and browser controls</div>
         </div>
-        <div role="tablist" aria-label="Settings sections" aria-orientation="vertical">
+        <div role="tablist" aria-label={t("Settings")} aria-orientation="vertical">
         {sections.map(([key, label, icon]) => (
           <button
             key={key}
@@ -1286,7 +1290,7 @@ function SettingsView({ section, onSection, mediaInference, onMediaInference, th
             padding: '7px 9px', fontSize: 13, cursor: 'pointer',
           }}>
             <span style={{ color: section === key ? 'var(--accent-text)' : 'var(--accent)', textAlign: 'center' }}>{icon}</span>
-            <span>{label}</span>
+            <span>{t(label)}</span>
             {section === key && <span style={{ color: 'var(--accent-text)', fontSize: 10 }}>●</span>}
           </button>
         ))}

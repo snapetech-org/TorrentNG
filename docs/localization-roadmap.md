@@ -7,7 +7,7 @@ The current React interface is under `webui/`. The reachable source, branches, a
 ## Implementation plan
 
 1. Extract visible copy from `webui/src` into an English source catalog. Preserve torrent names, tracker names, categories, paths, URLs, and values returned by the engine.
-2. Use `i18next` with `react-i18next` and ICU plural support. Add English fallback and checks for missing keys and placeholder mismatches.
+2. Extend the compact shell catalog with screen-sized batches and English per-key fallback. Add a full message framework when dynamic errors or plural rules make it useful, with missing-key and placeholder checks.
 3. Put Display Language in the existing Settings > Appearance panel. Persist it with the same per-browser preferences as appearance, apply it immediately, and use the browser's preferred locale only before the user makes an explicit choice.
 4. Drive date, time, count, and plural formatting from that saved locale so labels and formatted values stay consistent.
 5. Add locales in the ranked order below. Arabic needs document `lang`/ `dir`, logical layout rules, and RTL review of the torrent table, selection controls, dialogs, and settings at mobile and desktop widths.
@@ -37,4 +37,4 @@ Translate interface labels, help, empty states, validation, notifications, and e
 
 ## Implemented in this PR
 
-The existing Appearance panel now offers an explicit regional format for dates, times, and numbers, including Spanish, Simplified and Traditional Chinese, Hindi, German, Japanese, French, Brazilian Portuguese, Arabic, Korean, Vietnamese, and Indonesian. The setting is saved in this browser and applies to existing locale-aware displays; it does not translate interface text. Full UI catalogs and Arabic RTL support remain future work.
+Settings > Support > Appearance now offers a browser-local interface-language selector for twelve locales. The app tabs and settings navigation use translated labels with English fallback; most torrent workflows remain English. Arabic sets the document language and direction, with full RTL review still needed.

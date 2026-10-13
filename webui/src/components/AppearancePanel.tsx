@@ -1,5 +1,6 @@
 import type { ThemeMode } from '../themes'
 import { REGIONAL_FORMAT_OPTIONS } from '../lib/localeFormat'
+import { INTERFACE_LANGUAGE_OPTIONS, useInterfaceLanguage, type InterfaceLanguage } from '../lib/interfaceLocale'
 
 export type MediaInferenceMode = 'full' | 'suffix' | 'hints' | 'off'
 
@@ -23,19 +24,26 @@ const MODES: Array<{ value: MediaInferenceMode; label: string; description: stri
 ]
 
 export function AppearancePanel({ mediaInference, onMediaInference, themes = [], themeId, themeMode = 'dark', onTheme, onThemeMode, regionalFormat, onRegionalFormat }: Props) {
+  const { language, setLanguage, t } = useInterfaceLanguage()
   const alternateMode: ThemeMode = themeMode === 'dark' ? 'light' : 'dark'
 
   return (
     <section aria-labelledby="appearance-title" style={{ padding: 18 }}>
-      <h2 id="appearance-title" style={{ margin: '0 0 4px', fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>Appearance</h2>
+      <h2 id="appearance-title" style={{ margin: '0 0 4px', fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{t("Appearance")}</h2>
       <div style={{ fontSize: 12, color: 'var(--faint)', marginBottom: 14 }}>
         Configure presentation-only behavior for this browser.
       </div>
 
-      {themes.length > 0 && (
-        <div className="tng-card tng-appearance-panel" style={{ ...panelStyle, marginBottom: 12 }}>
+      <div className="tng-card tng-appearance-panel" style={{ ...panelStyle, marginBottom: 12 }}>
+        <label htmlFor="interface-language" style={{ display: 'grid', gap: 6, color: 'var(--text)', fontSize: 12, fontWeight: 700, marginBottom: 12 }}>
+          {t("Interface language")}
+          <select id="interface-language" value={language} onChange={event => setLanguage(event.currentTarget.value as InterfaceLanguage)} style={{ color: 'var(--text)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 5, padding: '8px 9px', font: 'inherit' }}>
+            {INTERFACE_LANGUAGE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </label>
+        <div style={{ fontSize: 11, color: 'var(--faint)', marginTop: -8, marginBottom: 10 }}>{t("Translations currently cover navigation and language settings; most other screens are still in English.")}</div>
         <label htmlFor="regional-format" style={{ display: 'grid', gap: 6, color: 'var(--text)', fontSize: 12, fontWeight: 700 }}>
-          Date, time, and number format
+          {t("Date, time, and number format")}
           <select
             id="regional-format"
             value={regionalFormat}
@@ -46,11 +54,12 @@ export function AppearancePanel({ mediaInference, onMediaInference, themes = [],
           </select>
         </label>
         <div style={{ fontSize: 11, color: 'var(--faint)', marginTop: 5 }}>
-          Changes date, time, and number formatting. Interface text remains English.
+          {t("Choose how dates, times, and numbers are displayed. This setting is separate from interface language.")}
         </div>
       </div>
 
-      <div className="tng-card tng-appearance-panel" style={{ ...panelStyle, marginBottom: 12 }}>
+      {themes.length > 0 && (
+        <div className="tng-card tng-appearance-panel" style={{ ...panelStyle, marginBottom: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
             <div>
               <h3 style={{ margin: 0, fontSize: 12, color: 'var(--text)', fontWeight: 800 }}>Theme palette</h3>
