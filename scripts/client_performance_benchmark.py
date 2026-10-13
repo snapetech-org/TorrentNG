@@ -370,24 +370,6 @@ class Benchmark:
         path.chmod(0o644)
         (self.workdir / "config/rtorrent").mkdir(parents=True, exist_ok=True)
 
-    def _qbit_login(self, client="qbittorrent"):
-        logs = self.compose("logs", "--no-color", client, quiet=True)[0]
-        passwords = re.findall(
-            r"temporary password is provided for this session:\s*(\S+)", logs,
-        )
-        password = passwords[-1] if passwords else os.environ.get("INTEROP_QBITTORRENT_PASSWORD", "")
-        if not password:
-            raise RuntimeError("qBittorrent temporary WebUI password not found")
-        body = urllib.parse.urlencode({"username": "admin", "password": password}).encode()
-        with self.http(
-            client, "/api/v2/auth/login", data=body,
-            headers={"Content-Type": "application/x-www-form-urlencoded",
-                     "Host": "localhost:8080"},
-        ) as response:
-            text = response.read().decode("utf-8", "replace")
-        if text.strip() != "Ok.":
-            raise RuntimeError(f"qBittorrent login failed: {text[:120]}")
-
     def _qbit_json(self, client, path, *, data=None, headers=None):
         request_headers = {"Host": "localhost:8080"}
         request_headers.update(headers or {})
@@ -492,8 +474,13 @@ class Benchmark:
                     if data.get("ready") is True:
                         return
                 elif client == "qbittorrent":
-                    self._qbit_login()
-                    return
+                    with self.http(
+                        client, "/api/v2/app/version",
+                        headers={"Host": "localhost:8080"},
+                    ) as response:
+                        if response.read().decode("utf-8", "replace").strip():
+                            return
+                    raise RuntimeError("qBittorrent returned an empty version")
                 elif client == "transmission":
                     try:
                         result = self._transmission("session-get")
@@ -536,7 +523,6 @@ class Benchmark:
         if client == "torrentngd":
             return
         if client == "qbittorrent":
-            self._qbit_login()
             values = {
                 "max_connec": MAX_PEERS,
                 "max_connec_per_torrent": MAX_PEERS,
