@@ -42,6 +42,9 @@ LABELS = {
 }
 TOKEN = "interop-backend-token-20260904"
 RATE_BPS = int(os.environ.get("TNG_CLIENT_BENCH_RATE_BPS", 32 * 1024 * 1024))
+SEED_LEECHER_RATE_BPS = int(os.environ.get(
+    "TNG_CLIENT_BENCH_SEED_LEECHER_RATE_BPS", 4 * 1024 * 1024,
+))
 MAX_PEERS = int(os.environ.get("TNG_CLIENT_BENCH_MAX_PEERS", "32"))
 DOWNLOAD_TIMEOUT = int(os.environ.get("TNG_CLIENT_BENCH_TIMEOUT_SECS", "1800"))
 SEED_TIMEOUT = int(os.environ.get("TNG_CLIENT_BENCH_SEED_TIMEOUT_SECS", "900"))
@@ -176,7 +179,6 @@ class Benchmark:
             ))
         self.project = "tngbench" + re.sub(r"[^a-z0-9]", "", self.stamp.lower())
         self.image = f"torrentng/torrentngd:benchmark-{self.stamp.lower()}"
-        self.aria2_image = f"torrentng/interop-aria2:benchmark-{self.stamp.lower()}"
         self.env = os.environ.copy()
         self.ports = {}
         used_ports = set()
@@ -185,17 +187,20 @@ class Benchmark:
         self.samples = []
         self.partial_seed_rows = {}
         self.partial_seed_elapsed = {}
-        self.aria2_version = "unknown"
+        self.partial_seed_setup = {}
+        self.seed_leecher_version = "unknown"
+        self.seed_leecher_image = "not started"
         self.cleanup_status = "pending"
         self.failure = ""
         self._env("INTEROP_WORKDIR", self.workdir)
         self._env("INTEROP_TORRENTNG_IMAGE", self.image)
-        self._env("INTEROP_ARIA2_IMAGE", self.aria2_image)
         self._env("INTEROP_MAX_PEERS", MAX_PEERS)
         self._env("INTEROP_RATE_BPS", RATE_BPS)
         self._env("INTEROP_SOURCE_REVISION", self._git("rev-parse", "HEAD"))
         self._env("INTEROP_TORRENTNG_CONFIG", self.workdir / "config/torrentngd.config.toml")
         self._env("INTEROP_RTORRENT_CONFIG", self.workdir / "config/rtorrent-benchmark.rc")
+        self._env("INTEROP_SEED_QBIT_CONFIG", self.workdir / "config/qbittorrent-seed")
+        self._env("INTEROP_SEED_QBIT_DOWNLOAD_DIR", self.workdir / "leecher")
         self._env("TMPDIR", self.workdir / "tmp")
         self._env("INTEROP_CLIENT_BIND_ADDR", os.environ.get("TNG_CLIENT_BENCH_PEER_BIND", "0.0.0.0"))
         self._env("INTEROP_RTORRENT_BIND_ADDR", os.environ.get("TNG_CLIENT_BENCH_PEER_BIND", "0.0.0.0"))
@@ -209,12 +214,13 @@ class Benchmark:
             ("deluge", "INTEROP_DELUGE_HOST_PORT"),
             ("deluge_daemon", "INTEROP_DELUGE_DAEMON_PORT"),
             ("tracker", "INTEROP_TRACKER_HOST_PORT"),
-            ("aria2_rpc", "INTEROP_ARIA2_RPC_HOST_PORT"),
+            ("seed_leecher", "INTEROP_SEED_QBIT_HOST_PORT"),
             ("peer_torrentngd", "INTEROP_RUST_PEER_PORT"),
             ("peer_qbittorrent", "INTEROP_QBIT_PEER_PORT"),
             ("peer_transmission", "INTEROP_TRANSMISSION_PEER_PORT"),
             ("peer_deluge", "INTEROP_DELUGE_PEER_PORT"),
             ("peer_rtorrent", "INTEROP_RTORRENT_PEER_PORT"),
+            ("peer_seed_qbittorrent", "INTEROP_SEED_QBIT_PEER_PORT"),
         )
         for key, envname in keys:
             self.ports[key] = available_port(used_ports)
@@ -297,6 +303,7 @@ class Benchmark:
             directory.chmod(0o777)
         (self.workdir / "downloads").chmod(0o777)
         self._prepare_qbit_config()
+        self._prepare_seed_qbit_config()
         self._prepare_torrentng_config()
         self._prepare_rtorrent_config()
         self.csv_path.parent.mkdir(parents=True, exist_ok=True)
@@ -315,6 +322,21 @@ class Benchmark:
             "[BitTorrent]\n"
             "Session\\DefaultSavePath=/downloads/qbittorrent\n"
             "Session\\Port=6882\n\n"
+            "[LegalNotice]\nAccepted=true\n\n"
+            "[Preferences]\n"
+            "WebUI\\AuthSubnetWhitelist=0.0.0.0/0,::/0\n"
+            "WebUI\\AuthSubnetWhitelistEnabled=true\n"
+            "WebUI\\LocalHostAuth=false\n"
+            "WebUI\\Port=8080\n"
+        )
+
+    def _prepare_seed_qbit_config(self):
+        path = self.workdir / "config/qbittorrent-seed/qBittorrent/qBittorrent.conf"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "[BitTorrent]\n"
+            "Session\\DefaultSavePath=/downloads\n"
+            "Session\\Port=6886\n\n"
             "[LegalNotice]\nAccepted=true\n\n"
             "[Preferences]\n"
             "WebUI\\AuthSubnetWhitelist=0.0.0.0/0,::/0\n"
@@ -348,8 +370,8 @@ class Benchmark:
         path.chmod(0o644)
         (self.workdir / "config/rtorrent").mkdir(parents=True, exist_ok=True)
 
-    def _qbit_login(self):
-        logs = self.compose("logs", "--no-color", "qbittorrent", quiet=True)[0]
+    def _qbit_login(self, client="qbittorrent"):
+        logs = self.compose("logs", "--no-color", client, quiet=True)[0]
         passwords = re.findall(
             r"temporary password is provided for this session:\s*(\S+)", logs,
         )
@@ -358,13 +380,18 @@ class Benchmark:
             raise RuntimeError("qBittorrent temporary WebUI password not found")
         body = urllib.parse.urlencode({"username": "admin", "password": password}).encode()
         with self.http(
-            "qbittorrent", "/api/v2/auth/login", data=body,
+            client, "/api/v2/auth/login", data=body,
             headers={"Content-Type": "application/x-www-form-urlencoded",
                      "Host": "localhost:8080"},
         ) as response:
             text = response.read().decode("utf-8", "replace")
         if text.strip() != "Ok.":
             raise RuntimeError(f"qBittorrent login failed: {text[:120]}")
+
+    def _qbit_json(self, client, path, *, data=None, headers=None):
+        request_headers = {"Host": "localhost:8080"}
+        request_headers.update(headers or {})
+        return self.json(client, path, data=data, headers=request_headers)
 
     def _transmission(self, method, arguments=None):
         session = self.sessions["transmission"]
@@ -657,7 +684,7 @@ class Benchmark:
             ])
             self._torrentng_request("/api/qb/v2/torrents/add", data=body,
                                     headers={"Content-Type": content_type})
-        elif client == "qbittorrent":
+        elif client in ("qbittorrent", "seed_leecher"):
             fields = [
                 ("torrents", path.name, data, "application/x-bittorrent"),
                 ("savepath", None, save_path.encode(), "text/plain"),
@@ -845,21 +872,101 @@ class Benchmark:
                 digest.update(chunk)
         return digest.hexdigest()
 
-    def _aria2(self, port, secret, method, params=None):
-        body = {
-            "jsonrpc": "2.0", "id": "torrentng-benchmark",
-            "method": "aria2." + method,
-            "params": ["token:" + secret, *(params or [])],
+    def _start_seed_leecher(self, torrent_path):
+        client = "seed_leecher"
+        self.sessions[client] = HttpClient(self.api_url(client))
+        self.compose("up", "-d", client, quiet=True, timeout=900)
+        container_id = self.service_id(client)
+        if container_id:
+            self.seed_leecher_image = run_command(
+                ["docker", "inspect", "-f", "{{.Config.Image}}", container_id],
+                env=self.env, check=False, quiet=True,
+            )[0].strip() or "unknown"
+        deadline = time.monotonic() + 240
+        ready = False
+        while time.monotonic() < deadline:
+            try:
+                with self.http(
+                    client, "/api/v2/app/version",
+                    headers={"Host": "localhost:8080"},
+                ) as response:
+                    self.seed_leecher_version = response.read().decode().strip()
+                ready = bool(self.seed_leecher_version)
+                if ready:
+                    break
+            except (OSError, urllib.error.URLError, urllib.error.HTTPError,
+                    RuntimeError, ValueError):
+                time.sleep(2)
+        if not ready:
+            raise RuntimeError("timed out waiting for the qBittorrent seed leecher")
+        preferences = {
+            "encryption": 2,
+            "bittorrent_protocol": 1,
+            "dht": False,
+            "lsd": False,
+            "pex": False,
+            "max_connec": MAX_PEERS,
+            "max_connec_per_torrent": MAX_PEERS,
+            "dl_limit": SEED_LEECHER_RATE_BPS,
+            "up_limit": RATE_BPS,
         }
-        request = urllib.request.Request(
-            f"http://127.0.0.1:{port}/jsonrpc",
-            data=json.dumps(body).encode(), headers={"Content-Type": "application/json"},
+        self._qbit_json(
+            client, "/api/v2/app/setPreferences",
+            data=urllib.parse.urlencode({"json": json.dumps(preferences)}).encode(),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
-        with urllib.request.urlopen(request, timeout=5) as response:
-            result = json.loads(response.read())
-        if result.get("error"):
-            raise RuntimeError(f"aria2 RPC failed: {result['error']}")
-        return result.get("result")
+        self._add_torrent(client, torrent_path, "/downloads")
+
+    def _seed_leecher_status(self, info_hash):
+        rows = self._qbit_json(
+            "seed_leecher", "/api/v2/torrents/info?hash=" + urllib.parse.quote(info_hash),
+        ) or []
+        row = next((r for r in rows if r.get("hash", "").lower() == info_hash.lower()), None)
+        return self._qbit_shape(row)
+
+    def _wait_seed_leecher_tracker(self, info_hash):
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            try:
+                rows = self._qbit_json(
+                    "seed_leecher",
+                    "/api/v2/torrents/trackers?hash=" + urllib.parse.quote(info_hash),
+                ) or []
+            except urllib.error.HTTPError as error:
+                if error.code != 404:
+                    raise
+                rows = []
+            tracker = next((
+                row for row in rows
+                if row.get("url", "").startswith(("http://", "https://", "udp://"))
+            ), None)
+            if (tracker and int(tracker.get("status", 0)) == 2
+                    and int(tracker.get("num_seeds", 0)) >= 1):
+                return
+            time.sleep(2)
+        raise TimeoutError("qBittorrent seed leecher did not register with the private tracker")
+
+    def _reannounce(self, client, info_hash):
+        if client == "torrentngd":
+            body = urllib.parse.urlencode({"hashes": info_hash}).encode()
+            self._torrentng_request(
+                "/api/qb/v2/torrents/reannounce", data=body,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+        elif client == "qbittorrent":
+            body = urllib.parse.urlencode({"hashes": info_hash}).encode()
+            self.http(
+                client, "/api/v2/torrents/reannounce", data=body,
+                headers={"Content-Type": "application/x-www-form-urlencoded",
+                         "Host": "localhost:8080"},
+            ).close()
+        elif client == "transmission":
+            self._transmission("torrent-reannounce", {"ids": [info_hash]})
+        elif client == "deluge":
+            self._deluge_connect()
+            self._deluge("core.force_reannounce", [[info_hash]])
+        else:
+            self._scgi("d.tracker_announce", info_hash)
 
     def _seed_test(self, client, payload, torrent_path, info_hash, size, checksum):
         save_path = "/downloads/rtorrent" if client == "rtorrent" else f"/downloads/{client}/public"
@@ -875,51 +982,25 @@ class Benchmark:
 
         leecher_dir = self.workdir / "leecher" / client
         leecher_dir.mkdir(parents=True, exist_ok=True)
-        port = self.ports["aria2_rpc"]
-        secret = hashlib.sha256(f"{self.project}-{client}".encode()).hexdigest()[:32]
-        self._env("INTEROP_ARIA2_RPC_HOST_PORT", port)
-        self._env("INTEROP_ARIA2_RPC_SECRET", secret)
-        self._env("INTEROP_ARIA2_DOWNLOAD_DIR", leecher_dir)
-        self._env("INTEROP_SEED_TORRENT", torrent_path)
-        started = time.monotonic()
-        deadline = started + SEED_TIMEOUT
+        self._env("INTEROP_SEED_QBIT_DOWNLOAD_DIR", leecher_dir)
+        setup_started = time.monotonic()
         rows = []
         self.partial_seed_rows[client] = rows
         self.partial_seed_elapsed[client] = 0.0
+        self.partial_seed_setup[client] = 0.0
         next_log = 0
-        last_peer = started
         try:
-            self.compose("up", "-d", "seed_leecher", quiet=True, timeout=180)
+            self._start_seed_leecher(torrent_path)
+            self._wait_seed_leecher_tracker(info_hash)
+            self._reannounce(client, info_hash)
+            started = time.monotonic()
+            deadline = started + SEED_TIMEOUT
+            last_peer = started
+            self.partial_seed_setup[client] = started - setup_started
             while time.monotonic() < deadline:
-                try:
-                    active = self._aria2(port, secret, "tellActive", [[
-                        "gid", "status", "completedLength", "totalLength", "downloadSpeed",
-                        "uploadSpeed", "connections",
-                    ]])
-                except urllib.error.URLError:
-                    if time.monotonic() - started < 30:
-                        time.sleep(0.25)
-                        continue
-                    raise
-                if not active:
-                    active = self._aria2(port, secret, "tellWaiting", [0, 10, [
-                        "gid", "status", "completedLength", "totalLength", "downloadSpeed",
-                        "uploadSpeed", "connections",
-                    ]]) or []
-                if not active:
-                    if time.monotonic() - started >= 30:
-                        raise RuntimeError("aria2 leecher did not load the private torrent")
-                    time.sleep(1)
-                    continue
-                item = active[0]
-                total = int(item.get("totalLength", 0))
-                completed = int(item.get("completedLength", 0))
-                state = {
-                    "progress": completed / total if total else 0,
-                    "down": int(item.get("downloadSpeed", 0)),
-                    "up": int(item.get("uploadSpeed", 0)),
-                    "peers": int(item.get("connections", 0)),
-                }
+                state = self._seed_leecher_status(info_hash)
+                total = state["total"]
+                completed = int(total * state["progress"])
                 elapsed = time.monotonic() - started
                 rows.append(self._sample(client, "controlled_seed", elapsed, state))
                 self.partial_seed_rows[client] = rows
@@ -945,7 +1026,7 @@ class Benchmark:
                         matches = list(leecher_dir.rglob(payload.name))
                         candidate = matches[0] if matches else candidate
                     if not candidate.is_file() or candidate.stat().st_size != size:
-                        raise RuntimeError("aria2 completed but the leecher file is absent or short")
+                        raise RuntimeError("qBittorrent completed but the leecher file is absent or short")
                     actual = self._sha256(candidate)
                     if actual != checksum:
                         raise RuntimeError("controlled leecher SHA-256 did not match Debian")
@@ -953,10 +1034,6 @@ class Benchmark:
                 time.sleep(INTERVAL)
             raise TimeoutError(f"controlled seed transfer exceeded {SEED_TIMEOUT}s")
         finally:
-            try:
-                self._aria2(port, secret, "shutdown")
-            except Exception:
-                pass
             self.compose("stop", "seed_leecher", check=False, quiet=True, timeout=30)
 
     @staticmethod
@@ -1026,6 +1103,7 @@ class Benchmark:
             "download_peak_rss": down["peak_rss"], "download_peak_peers": down["peak_peers"],
             "download_sha": actual,
             "seed_seconds": seed_elapsed,
+            "seed_setup_seconds": self.partial_seed_setup.get(client, 0.0),
             "seed_bytes": seed_bytes,
             "seed_mib_s": seed_bytes / seed_elapsed / 1048576 if seed_elapsed else 0,
             "seed_peak_mib_s": seed["peak_rate"] / 1048576,
@@ -1070,14 +1148,18 @@ class Benchmark:
             f"- ISO: {meta['iso_name']}; {meta['size']:,} bytes; "
             f"torrent infohash {meta['info_hash']}",
             f"- Official SHA-256: {meta['sha256']}",
-            f"- Download and upload limits: {RATE_BPS:,} B/s "
+            f"- Client download and upload limits: {RATE_BPS:,} B/s "
             f"({RATE_BPS / 1048576:.1f} MiB/s); max peers {MAX_PEERS}",
+            f"- Controlled seed leecher receive limit: {SEED_LEECHER_RATE_BPS:,} B/s "
+            f"({SEED_LEECHER_RATE_BPS / 1048576:.1f} MiB/s). The shared receiver cap "
+            "keeps its normal 16 KiB block-request rate below TorrentNG's bounded "
+            "per-peer request window, so seed results are receiver-limited at this setting.",
             "- Each public download ran alone, in this order: " +
             ", ".join(LABELS[c] for c in CLIENTS),
             "- Container image references: " + "; ".join(
                 f"{LABELS[c]}: {client_images.get(c, 'not started')}" for c in CLIENTS
-            ) + f"; aria2 leecher: {client_images.get('seed_leecher', self.aria2_image)}",
-            f"- aria2 leecher version: {self.aria2_version}",
+            ) + f"; seed leecher: {client_images.get('seed_leecher', self.seed_leecher_image)}",
+            f"- Seed leecher: qBittorrent {self.seed_leecher_version}",
             "- The TorrentNG image was built from the recorded checkout. Reference "
             "images are pinned by digest in deploy/interop/compose.yml.",
             "",
@@ -1102,18 +1184,20 @@ class Benchmark:
             "## Controlled seeding",
             "",
             "Each client seeded the same verified ISO through a private single-file "
-            "torrent on the isolated Compose OpenTracker. One aria2c container "
+            "torrent on the isolated Compose OpenTracker. A separate qBittorrent "
+            "container with BitTorrent encryption disabled and TCP enabled "
             "downloaded and checked Debian's published SHA-256. This measures a "
             "controlled one-seeder/one-leecher transfer, not public swarm demand.",
             "",
-            "| Client | Result | Leecher time (s) | Average upload (MiB/s) | Peak sampled (MiB/s) | Mean CPU (%) | Peak CPU (%) | Peak RSS (MiB) | Peak peers | Leecher SHA-256 / failure |",
-            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+            "| Client | Result | Leecher setup (s) | Transfer (s) | Average upload (MiB/s) | Peak sampled (MiB/s) | Mean CPU (%) | Peak CPU (%) | Peak RSS (MiB) | Peak peers | Leecher SHA-256 / failure |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
         ])
         for client in CLIENTS:
             row = by_client.get(client, {})
             lines.append(
                 f"| {LABELS[client]} | {row.get('seed', 'FAIL')} | "
-                f"{row.get('seed_seconds', 0):.1f} | {row.get('seed_mib_s', 0):.2f} | "
+                f"{row.get('seed_setup_seconds', 0):.1f} | {row.get('seed_seconds', 0):.1f} | "
+                f"{row.get('seed_mib_s', 0):.2f} | "
                 f"{row.get('seed_peak_mib_s', 0):.2f} | {row.get('seed_mean_cpu', 0):.2f} | "
                 f"{row.get('seed_peak_cpu', 0):.2f} | {row.get('seed_peak_rss', 0) / 1048576:.1f} | "
                 f"{row.get('seed_peak_peers', 0)} | "
@@ -1130,12 +1214,15 @@ class Benchmark:
             f"- Each client was configured for a {RATE_BPS / 1048576:.1f} MiB/s global "
             f"download and upload ceiling and {MAX_PEERS} global/per-torrent peer ceiling.",
             f"- Sampling interval: {INTERVAL:g} seconds. Average transfer rate is the "
-            "verified ISO byte count divided by completion wall time. Peak rates come "
-            "from client or aria2 payload counters. CPU is Docker CPU percent, where "
+            "verified ISO byte count divided by completion wall time. The seed "
+            "transfer timer starts after both clients are ready, the leecher is "
+            "registered, and the seeder has reannounced; leecher setup time is listed "
+            "separately. Peak rates come "
+            "from client payload counters. CPU is Docker CPU percent, where "
             "100% represents one logical core. Memory is container usage rather than "
             "process-only RSS.",
             "- Public download uses the current public Debian swarm. Controlled seeding "
-            "uses a private task-local tracker and one aria2c container on the same "
+            "uses a private task-local tracker and one qBittorrent leecher on the same "
             "Compose network. The tracker is reset between clients. The no-peer "
             f"startup limit is {SEED_NO_PEER_TIMEOUT}s; full transfer limit is "
             f"{SEED_TIMEOUT}s.",
@@ -1163,7 +1250,7 @@ class Benchmark:
         self.report.write_text("\n".join(lines))
 
     def run(self):
-        if RATE_BPS < 1 or MAX_PEERS < 1 or INTERVAL < 1:
+        if RATE_BPS < 1 or SEED_LEECHER_RATE_BPS < 1 or MAX_PEERS < 1 or INTERVAL < 1:
             raise RuntimeError("rate ceiling, peer ceiling, and sample interval must be positive")
         if DOWNLOAD_TIMEOUT < 60 or SEED_TIMEOUT < 60:
             raise RuntimeError("download and seed timeouts must be at least 60 seconds")
@@ -1175,13 +1262,10 @@ class Benchmark:
         print(f"Scratch: {self.workdir}", flush=True)
         print(f"Compose project: {self.project}", flush=True)
         self.prepare()
-        self.compose("build", "torrentngd", "seed_leecher", timeout=3600)
-        self.aria2_version = run_command(
-            ["docker", "run", "--rm", self.aria2_image, "--version"], quiet=True,
-        )[0].splitlines()[0]
+        self.compose("build", "torrentngd", timeout=3600)
         tracker_ip = self._start_tracker()
         meta = self._torrent_metadata()
-        client_images = {"seed_leecher": self.aria2_image}
+        client_images = {}
         for client in CLIENTS:
             private_path = self.workdir / "torrents" / f"private-seed-{client}.torrent"
             try:
@@ -1204,6 +1288,7 @@ class Benchmark:
                     client_images[client] = image.strip()
                 self.compose("stop", client, check=False, quiet=True, timeout=60)
                 self.compose("restart", "opentracker", check=False, quiet=True, timeout=60)
+        client_images["seed_leecher"] = self.seed_leecher_image
         self._write_report(meta, client_images)
         return int(not (
             len(self.results) == len(CLIENTS)
@@ -1216,8 +1301,6 @@ class Benchmark:
                          check=False, quiet=True, timeout=180)
             self.cleanup_status = "isolated Compose project, containers, and named volumes removed"
             run_command(["docker", "image", "rm", self.image], env=self.env,
-                        check=False, quiet=True, timeout=60)
-            run_command(["docker", "image", "rm", self.aria2_image], env=self.env,
                         check=False, quiet=True, timeout=60)
         except Exception as error:
             self.cleanup_status = f"cleanup error: {type(error).__name__}: {error}"
@@ -1258,8 +1341,9 @@ def main():
 
 Runs one current Debian amd64 netinst public download and one controlled
 private seed transfer for TorrentNG, qBittorrent, Transmission, Deluge, and
-rTorrent. Docker Compose builds the current TorrentNG checkout and a local
-aria2 leecher image; reference client images are pinned in deploy/interop/compose.yml.
+rTorrent. Docker Compose builds the current TorrentNG checkout. Reference
+client images, including the qBittorrent seed leecher, are pinned by digest in
+deploy/interop/compose.yml.
 
 Environment:
   TNG_CLIENT_BENCH_CLIENTS=torrentngd,qbittorrent,... (default: all five)
@@ -1267,6 +1351,7 @@ Environment:
   TNG_CLIENT_BENCH_SCRATCH_ROOT=/existing/writable/path (default: /var/tmp)
   TNG_CLIENT_BENCH_WORKDIR=/new/path (must not already exist)
   TNG_CLIENT_BENCH_RATE_BPS=33554432 (download and upload ceiling)
+  TNG_CLIENT_BENCH_SEED_LEECHER_RATE_BPS=4194304 (shared seed receiver ceiling)
   TNG_CLIENT_BENCH_MAX_PEERS=32
   TNG_CLIENT_BENCH_TIMEOUT_SECS=1800
   TNG_CLIENT_BENCH_SEED_TIMEOUT_SECS=900

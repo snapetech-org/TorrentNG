@@ -137,37 +137,23 @@ services:
     networks: [interop]
 
   seed_leecher:
-    image: ${INTEROP_ARIA2_IMAGE:-torrentng/aria2c:interop}
-    build:
-      context: .
-      dockerfile: aria2.Dockerfile
+    <<: *interop-dns
+    image: lscr.io/linuxserver/qbittorrent@sha256:2be038f3421f60f62e8e4bf201f66f385b68e4fbc9ed3ab79051069ea22e2650
     restart: "no"
-    command:
-      - --no-conf=true
-      - --enable-rpc=true
-      - --rpc-listen-all=true
-      - --rpc-listen-port=6800
-      - --rpc-secret=${INTEROP_ARIA2_RPC_SECRET:-benchmark}
-      - --enable-dht=false
-      - --bt-enable-lpd=false
-      - --enable-peer-exchange=false
-      - --bt-force-encryption=false
-      - --bt-require-crypto=false
-      - --bt-min-crypto-level=plain
-      - --bt-max-peers=${INTEROP_MAX_PEERS:-32}
-      - --listen-port=6886
-      - --max-overall-download-limit=${INTEROP_RATE_BPS:-33554432}
-      - --file-allocation=none
-      - --continue=false
-      - --summary-interval=0
-      - --console-log-level=warn
-      - --dir=/downloads
-      - /seed.torrent
     ports:
-      - "127.0.0.1:${INTEROP_ARIA2_RPC_HOST_PORT:-26800}:6800"
+      - "127.0.0.1:${INTEROP_SEED_QBIT_HOST_PORT:-26801}:8080"
+      - "${INTEROP_CLIENT_BIND_ADDR:-0.0.0.0}:${INTEROP_SEED_QBIT_PEER_PORT:-29186}:6886"
+      - "${INTEROP_CLIENT_BIND_ADDR:-0.0.0.0}:${INTEROP_SEED_QBIT_PEER_PORT:-29186}:6886/udp"
     volumes:
-      - ${INTEROP_ARIA2_DOWNLOAD_DIR:-../../certification/interop/leecher}:/downloads
-      - ${INTEROP_SEED_TORRENT:-../../certification/interop/seed.torrent}:/seed.torrent:ro
+      - ${INTEROP_SEED_QBIT_CONFIG:-../../certification/interop/config/qbittorrent-seed}:/config
+      - ${INTEROP_SEED_QBIT_DOWNLOAD_DIR:-../../certification/interop/leecher}:/downloads
+    environment:
+      PUID: "${PUID:-1000}"
+      PGID: "${PGID:-1000}"
+      TZ: "${TZ:-Etc/UTC}"
+      WEBUI_PORT: "8080"
+      TORRENTING_PORT: "6886"
+      QBT_WEBUI_PORT: "8080"
     networks: [interop]
 
   fixture-http:
