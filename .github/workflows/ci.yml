@@ -18,9 +18,7 @@ jobs:
   native-quality:
     name: TorrentNG client quality
     timeout-minutes: 60
-    runs-on:
-      group: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && 'trusted-main' || '' }}
-      labels: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && fromJSON('["self-hosted","Linux","X64","host"]') || fromJSON('["ubuntu-latest"]') }}
+    runs-on: ${{ (((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && vars.TRUSTED_MAIN_RUNNERS_ENABLED == 'true') && 'trusted-main' || 'ubuntu-latest' }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -165,9 +163,7 @@ jobs:
   # tests the locked workspace at the declared Rust 1.88 MSRV.
   msrv-check:
     timeout-minutes: 60
-    runs-on:
-      group: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && 'trusted-main' || '' }}
-      labels: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && fromJSON('["self-hosted","Linux","X64","host"]') || fromJSON('["ubuntu-latest"]') }}
+    runs-on: ${{ (((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && vars.TRUSTED_MAIN_RUNNERS_ENABLED == 'true') && 'trusted-main' || 'ubuntu-latest' }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -202,9 +198,7 @@ jobs:
   msrv-check-sidecar:
     name: Compatible-client service MSRV gate
     timeout-minutes: 30
-    runs-on:
-      group: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && 'trusted-main' || '' }}
-      labels: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && fromJSON('["self-hosted","Linux","X64","host"]') || fromJSON('["ubuntu-latest"]') }}
+    runs-on: ${{ (((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && vars.TRUSTED_MAIN_RUNNERS_ENABLED == 'true') && 'trusted-main' || 'ubuntu-latest' }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -235,9 +229,7 @@ jobs:
 
   fuzz-smoke:
     timeout-minutes: 30
-    runs-on:
-      group: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && 'trusted-main' || '' }}
-      labels: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && fromJSON('["self-hosted","Linux","X64","host"]') || fromJSON('["ubuntu-latest"]') }}
+    runs-on: ${{ (((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && vars.TRUSTED_MAIN_RUNNERS_ENABLED == 'true') && 'trusted-main' || 'ubuntu-latest' }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -330,9 +322,7 @@ jobs:
   sidecar:
     name: Compatible-client service quality
     timeout-minutes: 30
-    runs-on:
-      group: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && 'trusted-main' || '' }}
-      labels: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && fromJSON('["self-hosted","Linux","X64","host"]') || fromJSON('["ubuntu-latest"]') }}
+    runs-on: ${{ (((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && vars.TRUSTED_MAIN_RUNNERS_ENABLED == 'true') && 'trusted-main' || 'ubuntu-latest' }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -364,9 +354,7 @@ jobs:
   desktop:
     name: Desktop client quality
     timeout-minutes: 40
-    runs-on:
-      group: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && 'trusted-main' || '' }}
-      labels: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && fromJSON('["self-hosted","Linux","X64","host"]') || fromJSON('["ubuntu-latest"]') }}
+    runs-on: ${{ (((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && vars.TRUSTED_MAIN_RUNNERS_ENABLED == 'true') && 'trusted-main' || 'ubuntu-latest' }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -403,9 +391,7 @@ jobs:
 
   webui:
     timeout-minutes: 20
-    runs-on:
-      group: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && 'trusted-main' || '' }}
-      labels: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && fromJSON('["self-hosted","Linux","X64","host"]') || fromJSON('["ubuntu-latest"]') }}
+    runs-on: ${{ (((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && vars.TRUSTED_MAIN_RUNNERS_ENABLED == 'true') && 'trusted-main' || 'ubuntu-latest' }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -450,7 +436,7 @@ jobs:
         working-directory: webui
         env:
           DBUS_SESSION_BUS_ADDRESS: unix:path=/dev/null
-          TNG_WEBUI_SNAPSHOT_PROFILE: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && 'self-hosted' || 'hosted' }}
+          TNG_WEBUI_SNAPSHOT_PROFILE: ${{ (((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && vars.TRUSTED_MAIN_RUNNERS_ENABLED == 'true') && 'self-hosted' || 'hosted' }}
         run: npm run test:e2e -- --reporter=line
 
       - name: Upload WebUI browser failure evidence

@@ -10,37 +10,31 @@ MAIN_RUNNER_CONDITION = (
     "((github.event_name == 'push' && github.ref == 'refs/heads/main') "
     "|| (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))"
 )
-TRUSTED_MAIN_GROUP = (
-    "$" + "{{ " + MAIN_RUNNER_CONDITION + " && 'trusted-main' || '' }}"
+TRUSTED_MAIN_RUNNER = (
+    "$" + "{{ (" + MAIN_RUNNER_CONDITION
+    + " && vars.TRUSTED_MAIN_RUNNERS_ENABLED == 'true') && 'trusted-main' || 'ubuntu-latest' }}"
 )
-TRUSTED_MAIN_LABELS = (
-    "$" + "{{ " + MAIN_RUNNER_CONDITION
-    + " && fromJSON('[\"self-hosted\",\"Linux\",\"X64\",\"host\"]') "
-    + "|| fromJSON('[\"ubuntu-latest\"]') }}"
+TRUSTED_MAIN_SNAPSHOT_PROFILE = (
+    "$" + "{{ (" + MAIN_RUNNER_CONDITION
+    + " && vars.TRUSTED_MAIN_RUNNERS_ENABLED == 'true') && 'self-hosted' || 'hosted' }}"
 )
 
 
-def shared_runner_blocks(source: str) -> list[str]:
-    return re.findall(
-        r"(?m)^    runs-on:\n(?P<runner>      group: [^\n]+\n      labels: [^\n]+)",
-        source,
-    )
+def shared_runner_selectors(source: str) -> list[str]:
+    return re.findall(r"(?m)^    runs-on: (\$\{\{[^\n]+\}\})$", source)
 
 
 class WorkflowRunnerPolicyTests(unittest.TestCase):
-    def test_ci_local_runners_are_limited_to_main(self) -> None:
+    def test_ci_local_runners_are_limited_to_ready_main_pool(self) -> None:
         source = CI_WORKFLOW.read_text(encoding="utf-8")
-        runners = shared_runner_blocks(source)
+        runners = shared_runner_selectors(source)
         self.assertEqual(len(runners), 7)
-        expected_block = (
-            "      group: " + TRUSTED_MAIN_GROUP + "\n"
-            + "      labels: " + TRUSTED_MAIN_LABELS
-        )
+        self.assertEqual(runners, [TRUSTED_MAIN_RUNNER] * 7)
         for runner in runners:
-            self.assertEqual(runner, expected_block)
             self.assertNotIn("github.event_name == 'pull_request'", runner)
             self.assertNotIn("kspld0", runner)
             self.assertNotIn("kspls0", runner)
+            self.assertNotIn("fromJSON", runner)
 
     def test_release_workflow_has_no_pull_request_trigger(self) -> None:
         source = RELEASE_WORKFLOW.read_text(encoding="utf-8")
@@ -55,23 +49,15 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         for runner in runners:
             self.assertIn("host", runner)
 
-    def test_all_pull_requests_use_hosted_runners_and_snapshot_profile(self) -> None:
+    def test_snapshot_profile_matches_actual_runner_selection(self) -> None:
         source = CI_WORKFLOW.read_text(encoding="utf-8")
-        local_runner = shared_runner_blocks(source)[0]
         snapshot_profile = next(
-            line.strip()
+            line.strip().removeprefix("TNG_WEBUI_SNAPSHOT_PROFILE: ")
             for line in source.splitlines()
             if "TNG_WEBUI_SNAPSHOT_PROFILE:" in line
         )
-        for condition in (
-            "github.event_name == 'push' && github.ref == 'refs/heads/main'",
-            "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
-        ):
-            self.assertIn(condition, local_runner)
-            self.assertIn(condition, snapshot_profile)
-        self.assertNotIn("github.event_name == 'pull_request'", local_runner)
-        self.assertNotIn("github.event_name == 'pull_request'", snapshot_profile)
-        self.assertIn("&& 'self-hosted' || 'hosted'", snapshot_profile)
+        self.assertEqual(snapshot_profile, TRUSTED_MAIN_SNAPSHOT_PROFILE)
+        self.assertNotIn("fromJSON", snapshot_profile)
 
 
 if __name__ == "__main__":
