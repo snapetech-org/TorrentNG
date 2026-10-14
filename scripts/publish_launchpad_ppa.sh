@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly REPO="snapetech/TorrentNG"
+readonly REPO="snapetech-org/TorrentNG"
 readonly WORKFLOW="release-ppa.yml"
 readonly EXPECTED_FINGERPRINT="605676EA8D1633352357044A4DF9BA816E46C024"
 readonly ADDITIONAL_KEY_UID="slskdn (TorrentNG additional Launchpad key) <slskdn@proton.me>"
@@ -9,7 +9,7 @@ readonly ADDITIONAL_KEY_SECRET_SERVICE="torrentng-launchpad-ppa"
 readonly LAUNCHPAD_KEY_PAGE="https://launchpad.net/~keefshape/+editpgpkeys"
 readonly LAUNCHPAD_KEYS_API="https://api.launchpad.net/1.0/~keefshape/gpg_keys"
 readonly UBUNTU_KEYSERVER="hkps://keyserver.ubuntu.com"
-readonly ACTIONS_URL="https://github.com/snapetech/TorrentNG/actions/workflows/release-ppa.yml"
+readonly ACTIONS_URL="https://github.com/snapetech-org/TorrentNG/actions/workflows/release-ppa.yml"
 readonly PPA_PACKAGES_URL="https://launchpad.net/~keefshape/+archive/ubuntu/torrentng/+packages"
 
 fail() {

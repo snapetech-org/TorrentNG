@@ -31,7 +31,7 @@ TorrentNG has three parts. You normally need only one of them.
 | Run torrents on a home server, NAS, or seedbox and use it from a browser | **TorrentNG Server** (`torrentngd` + WebUI) | The headless engine with the browser interface and APIs. Available as Docker images, release binaries, and packages. |
 | Keep qBittorrent, rTorrent, Transmission, or Deluge and add the TorrentNG interface | **TorrentNG WebUI Bridge** (`torrentng`) | A web interface and API for the client you already run. It replaces ruTorrent or the client's own WebUI and adds automation APIs, while your client keeps its files and runs transfers. |
 
-Downloads are on the [releases page](https://github.com/snapetech/TorrentNG/releases):
+Downloads are on the [releases page](https://github.com/snapetech-org/TorrentNG/releases):
 `torrentng-desktop-*` for the Desktop app, `torrentngd-native-*` for the Server.
 See the [Desktop guide](docs/DESKTOP.md) for install steps and what each file is.
 The Server quick start is below. To connect an existing client, start with the
