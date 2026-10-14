@@ -103,11 +103,20 @@ class WorkflowSecurityTests(unittest.TestCase):
                 "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
                 runner,
             )
-            self.assertIn(
-                "fromJSON('[\"self-hosted\",\"Linux\",\"X64\",\"host\"]')",
-                runner,
+            self.assertIn("vars.TRUSTED_MAIN_RUNNERS_ENABLED == 'true'", runner)
+            pool_selector = re.search(
+                r"fromJSON\('(?P<value>\{.*?\})'\)", runner
             )
-            self.assertIn("fromJSON('[\"ubuntu-latest\"]')", runner)
+            self.assertIsNotNone(pool_selector)
+            assert pool_selector is not None
+            self.assertEqual(
+                json.loads(pool_selector.group("value").replace(chr(92), "")),
+                {
+                    "group": "trusted-main",
+                    "labels": ["self-hosted", "Linux", "X64", "host"],
+                },
+            )
+            self.assertRegex(runner, r"\|\|\s*'ubuntu-latest'")
         self.assertNotRegex(ci, r"(?m)^\s*pull_request_target:")
 
         windows = (WORKFLOWS / "windows-smoke.yml").read_text(encoding="utf-8")
