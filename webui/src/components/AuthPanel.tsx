@@ -101,7 +101,7 @@ export function AuthPanel() {
               parameters={{
                 tokenConfig: <code>[auth].api_tokens</code>,
                 tokenFileConfig: <code>[auth].api_tokens_file</code>,
-                unraidSetting: <strong>API Token</strong>,
+                unraidSetting: <strong><LocalizedText source="API Token" /></strong>,
                 tngApiTokens: <code>TNG_API_TOKENS</code>,
                 rtngApiTokens: <code>RTNG_API_TOKENS</code>,
                 configFile: <code>config.toml</code>,

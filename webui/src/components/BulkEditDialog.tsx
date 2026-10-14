@@ -1,5 +1,5 @@
 import { LocalizedErrorText, LocalizedText } from '../lib/LocalizedText'
-import { interfaceTextProps, translateInterface } from '../lib/interfaceLocale'
+import { useInterfaceLanguage } from '../lib/interfaceLocale'
 import { getRegionalLocale } from '../lib/localeFormat'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -18,6 +18,7 @@ const INPUT: React.CSSProperties = {
 
 export function BulkEditDialog({ hashes, onClose }: Props) {
   const qc = useQueryClient()
+  const { t, textProps } = useInterfaceLanguage()
   const [category, setCategory] = useState('')
   const [tags, setTags] = useState('')
   const [location, setLocation] = useState('')
@@ -77,9 +78,9 @@ export function BulkEditDialog({ hashes, onClose }: Props) {
         </header>
 
         <div style={{ padding: 15, display: 'grid', gap: 14 }}>
-          <Field label="Category">
+          <Field source="Category">
             <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
-              <select aria-label="Category" value={category} onChange={e => setCategory(e.target.value)} disabled={busy} style={INPUT}>
+              <select aria-label={t('Category')} {...textProps('Category')} value={category} onChange={e => setCategory(e.target.value)} disabled={busy} style={INPUT}>
                 <option value=""><LocalizedText source="Clear category" /></option>
                 {categories.map(cat => <option key={cat.name} value={cat.name}>{cat.name}</option>)}
               </select>
@@ -87,9 +88,9 @@ export function BulkEditDialog({ hashes, onClose }: Props) {
             </div>
           </Field>
 
-          <Field label="Tags">
+          <Field source="Tags">
             <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
-              <input aria-label="Tags" value={tags} onChange={e => setTags(e.target.value)} disabled={busy} placeholder={translateInterface("comma,separated,tags")} style={INPUT} {...interfaceTextProps("comma,separated,tags")} />
+              <input aria-label={t('Tags')} {...textProps('Tags')} value={tags} onChange={e => setTags(e.target.value)} disabled={busy} placeholder={t('Comma-separated tags')} style={INPUT} {...textProps('Comma-separated tags')} />
               <button type="button" disabled={busy} onClick={() => apply('Tags applied', () => api.torrents.setTags(hashes, tagList))} style={smallButton('#93c5fd', busy)}><LocalizedText source="Set tags" /></button>
             </div>
             {allTags.length > 0 && (
@@ -109,18 +110,18 @@ export function BulkEditDialog({ hashes, onClose }: Props) {
             )}
           </Field>
 
-          <Field label="Location">
+          <Field source="Location">
             <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 8 }}>
-              <input aria-label="Location" value={location} onChange={e => setLocation(e.target.value)} disabled={busy} placeholder="/downloads/category" style={{ ...INPUT, fontFamily: 'monospace' }} />
+              <input aria-label={t('Location')} {...textProps('Location')} value={location} onChange={e => setLocation(e.target.value)} disabled={busy} placeholder="/downloads/category" style={{ ...INPUT, fontFamily: 'monospace' }} />
               <button type="button" disabled={busy || !location.trim()} onClick={() => apply('Location previewed', async () => { await api.bulk('set-location', hashes, true, { save_path: location.trim() }) })} style={smallButton('var(--muted)', busy || !location.trim())}><LocalizedText source="Preview" /></button>
               <button type="button" disabled={busy || !location.trim()} onClick={() => apply('Location applied', () => api.torrents.setLocation(hashes, location.trim()))} style={smallButton('#93c5fd', busy || !location.trim())}><LocalizedText source="Move" /></button>
             </div>
           </Field>
 
-          <Field label={translateInterface("Share limits")}>
+          <Field source="Share limits">
             <div className="tng-action-grid-3" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 8 }}>
-              <input aria-label={translateInterface("Ratio limit")} value={ratioLimit} onChange={e => setRatioLimit(e.target.value)} disabled={busy} placeholder={translateInterface("Ratio -2 default, -1 unlimited")} style={INPUT} {...interfaceTextProps("Ratio limit")} />
-              <input aria-label={translateInterface("Seed time limit")} value={seedMinutes} onChange={e => setSeedMinutes(e.target.value)} disabled={busy} placeholder={translateInterface("Minutes -2 default, -1 unlimited")} style={INPUT} {...interfaceTextProps("Seed time limit")} />
+              <input aria-label={t('Ratio limit')} {...textProps('Ratio limit')} value={ratioLimit} onChange={e => setRatioLimit(e.target.value)} disabled={busy} placeholder={t('Ratio -2 default, -1 unlimited')} style={INPUT} />
+              <input aria-label={t('Seed time limit')} {...textProps('Seed time limit')} value={seedMinutes} onChange={e => setSeedMinutes(e.target.value)} disabled={busy} placeholder={t('Minutes -2 default, -1 unlimited')} style={INPUT} />
               <button type="button" disabled={busy} onClick={() => apply('Share limits applied', () => api.torrents.setShareLimits(
                 hashes,
                 ratioLimit.trim() ? Number(ratioLimit) : -2,
@@ -152,14 +153,15 @@ export function BulkEditDialog({ hashes, onClose }: Props) {
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div className="tng-form-card" role="group" aria-label={label} style={{
+function Field({ source, children }: { source: string; children: React.ReactNode }) {
+  const { t, textProps } = useInterfaceLanguage()
+  return <div className="tng-form-card" role="group" aria-label={t(source)} {...textProps(source)} style={{
     display: 'grid', gap: 6, color: 'var(--muted)', fontSize: 11, fontWeight: 700,
     textTransform: 'uppercase', background: 'var(--surface)', border: '1px solid var(--border)',
     borderRadius: 7, padding: 10,
     boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.025)',
   }}>
-    <span>{label}</span>
+    <span {...textProps(source)}>{t(source)}</span>
     {children}
   </div>
 }

@@ -182,8 +182,8 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 7 }}>
             <Pill color={state.color}><LocalizedText source={state.label} /></Pill>
             {t.complete && <Pill color="var(--success)"><LocalizedText source="Complete" /></Pill>}
-            {t.down_rate > 0 && <Pill color="var(--accent)">DL {fmtSpeed(t.down_rate)}</Pill>}
-            {t.up_rate > 0 && <Pill color="var(--success)">UL {fmtSpeed(t.up_rate)}</Pill>}
+            {t.down_rate > 0 && <Pill color="var(--accent)"><span role="img" aria-label={translateInterface('Download speed')} {...interfaceTextProps('Download speed')}>↓</span> {fmtSpeed(t.down_rate)}</Pill>}
+            {t.up_rate > 0 && <Pill color="var(--success)"><span role="img" aria-label={translateInterface('Upload speed')} {...interfaceTextProps('Upload speed')}>↑</span> {fmtSpeed(t.up_rate)}</Pill>}
           </div>
         </div>
         <DetailDockControls position={position} onChange={onPositionChange} />

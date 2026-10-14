@@ -1,5 +1,5 @@
 import { LocalizedErrorText, LocalizedText } from '../lib/LocalizedText'
-import { interfaceTextProps, useInterfaceLanguage } from '../lib/interfaceLocale'
+import { useInterfaceLanguage } from '../lib/interfaceLocale'
 import { formatRegionalNumber } from '../lib/localeFormat'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -21,7 +21,7 @@ const EMPTY: RssRule = {
 }
 
 export function RssRulesPanel() {
-  const { t } = useInterfaceLanguage()
+  const { t, textProps } = useInterfaceLanguage()
   const qc = useQueryClient()
   const [draft, setDraft] = useState<RssRule>(EMPTY)
   const [sampleTitle, setSampleTitle] = useState('')
@@ -141,11 +141,11 @@ export function RssRulesPanel() {
         <h3 style={{ margin: '0 0 10px', fontSize: 12, fontWeight: 800, color: 'var(--text)' }}><LocalizedText source="Rule builder" /></h3>
         <div style={scrollX}>
           <div style={{ display: 'grid', gridTemplateColumns: '130px minmax(240px, 1fr) 130px 120px 120px auto', gap: 8, minWidth: 850, maxWidth: 1080, marginBottom: 10 }}>
-            <Field label={<LocalizedText source="Name" />}><Input value={draft.name} placeholder={t("new releases")} onChange={name => setDraft({ ...draft, name })} /></Field>
+            <Field label={<LocalizedText source="Name" />}><Input value={draft.name} placeholder={t('new releases')} languageProps={textProps('new releases')} onChange={name => setDraft({ ...draft, name })} /></Field>
             <Field label={<LocalizedText source="Feed URL" />}><Input value={draft.feed_url} placeholder="https://..." onChange={feed_url => setDraft({ ...draft, feed_url })} /></Field>
-            <Field label={<LocalizedText source="Include" />}><Input value={draft.include} placeholder={t("required text")} onChange={include => setDraft({ ...draft, include })} /></Field>
-            <Field label={<LocalizedText source="Exclude" />}><Input value={draft.exclude ?? ''} placeholder={t("optional")} onChange={exclude => setDraft({ ...draft, exclude })} /></Field>
-            <Field label={<LocalizedText source="Category" />}><Input value={draft.category ?? ''} placeholder={t("optional")} onChange={category => setDraft({ ...draft, category })} /></Field>
+            <Field label={<LocalizedText source="Include" />}><Input value={draft.include} placeholder={t('required text')} languageProps={textProps('required text')} onChange={include => setDraft({ ...draft, include })} /></Field>
+            <Field label={<LocalizedText source="Exclude" />}><Input value={draft.exclude ?? ''} placeholder={t('optional')} languageProps={textProps('optional')} onChange={exclude => setDraft({ ...draft, exclude })} /></Field>
+            <Field label={<LocalizedText source="Category" />}><Input value={draft.category ?? ''} placeholder={t('optional')} languageProps={textProps('optional')} onChange={category => setDraft({ ...draft, category })} /></Field>
             <button
               type="button"
               onClick={save}
@@ -157,7 +157,7 @@ export function RssRulesPanel() {
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 1fr) 180px 120px', gap: 8, minWidth: 620, maxWidth: 1080 }}>
             <Field label={<LocalizedText source="Save path" />}><Input value={draft.save_path ?? ''} placeholder="/downloads" onChange={save_path => setDraft({ ...draft, save_path })} /></Field>
-            <Field label={<LocalizedText source="Tags" />}><Input value={draft.tags.join(',')} placeholder={t("comma,separated")} onChange={tags => setDraft({ ...draft, tags: tags.split(',') })} /></Field>
+            <Field label={<LocalizedText source="Tags" />}><Input value={draft.tags.join(',')} placeholder={t('Comma-separated tags')} languageProps={textProps('Comma-separated tags')} onChange={tags => setDraft({ ...draft, tags: tags.split(',') })} /></Field>
             <label style={{
               alignSelf: 'end', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
               color: 'var(--muted)', fontSize: 12, border: '1px solid var(--border-strong)', borderRadius: 5,
@@ -172,7 +172,7 @@ export function RssRulesPanel() {
       {error && <Notice tone="error"><LocalizedErrorText message={error} /></Notice>}
 
       <div style={{ ...scrollX, display: 'grid', gap: 8, maxWidth: 1080 }}>
-        {isLoading && <div role="status" aria-label={t("Loading RSS rules")} {...interfaceTextProps("Loading RSS rules")}><SkeletonRows count={3} /></div>}
+        {isLoading && <div role="status" aria-label={t('Loading RSS rules')} {...textProps('Loading RSS rules')}><SkeletonRows count={3} /></div>}
         {!isLoading && rules.length === 0 && (
           <EmptyState title={t("No RSS rules configured")} detail={t("Create a rule above, then use match test to check titles before applying.")} />
         )}
@@ -207,7 +207,7 @@ export function RssRulesPanel() {
         <h4 style={{ margin: '0 0 10px', fontSize: 12, fontWeight: 800, color: 'var(--text)' }}><LocalizedText source="Sample item" /></h4>
         <div style={scrollX}>
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) minmax(220px, 1fr) auto auto auto', gap: 8, minWidth: 720, maxWidth: 1080, marginBottom: 8 }}>
-          <Field label={<LocalizedText source="Title" />}><Input value={sampleTitle} placeholder={t("Sample title")} onChange={setSampleTitle} /></Field>
+          <Field label={<LocalizedText source="Title" />}><Input value={sampleTitle} placeholder={t('Sample title')} languageProps={textProps('Sample title')} onChange={setSampleTitle} /></Field>
           <Field label={<LocalizedText source="Link" />}><Input value={sampleLink} placeholder="https://..." onChange={setSampleLink} /></Field>
           <button type="button" onClick={test} disabled={!sampleTitle.trim() || Boolean(pending)} style={buttonStyle(!sampleTitle.trim() || Boolean(pending))}>
             {pending === '__test__' ? <LocalizedText source="Testing…" /> : <LocalizedText source="Test" />}
@@ -329,8 +329,8 @@ function ghostButtonStyle(disabled = false): React.CSSProperties {
   }
 }
 
-function Input({ value, placeholder, onChange }: { value: string; placeholder: string; onChange: (value: string) => void }) {
-  return <input value={value} placeholder={placeholder} onChange={e => onChange(e.target.value)} style={{
+function Input({ value, placeholder, onChange, languageProps }: { value: string; placeholder: string; onChange: (value: string) => void; languageProps?: React.HTMLAttributes<HTMLInputElement> }) {
+  return <input {...languageProps} value={value} placeholder={placeholder} onChange={e => onChange(e.target.value)} style={{
     minWidth: 0, background: 'var(--bg)', border: '1px solid var(--border-strong)',
     borderRadius: 5, color: 'var(--text)', padding: '4px 8px', fontSize: 12,
   }} />

@@ -1579,8 +1579,8 @@ function LoginScreen({ message, onLogin }: {
             <p style={{ margin: 0 }}><LocalizedRichText
               source="On Unraid, find the API token in the native container template's {nativeSetting} field or the WebUI service template's {webuiSetting} field. Native config accepts {tokenConfig} or {tokenFileConfig}; the WebUI service accepts {tngApiTokens} or {rtngApiTokens}."
               parameters={{
-                nativeSetting: <strong>API Token</strong>,
-                webuiSetting: <strong>API Tokens</strong>,
+                nativeSetting: <strong><LocalizedText source="API Token" /></strong>,
+                webuiSetting: <strong><LocalizedText source="API Tokens" /></strong>,
                 tokenConfig: <code>[auth].api_tokens</code>,
                 tokenFileConfig: <code>[auth].api_tokens_file</code>,
                 tngApiTokens: <code>TNG_API_TOKENS</code>,
