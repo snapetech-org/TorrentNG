@@ -26,8 +26,10 @@ jobs:
           set -euo pipefail
           : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
           mkdir -p "$RUNNER_TEMP"
-          test -w "$RUNNER_TEMP"
-          printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          runner_temp_root="$(realpath -e -- "$RUNNER_TEMP")"
+          test -d "$runner_temp_root"
+          test -w "$runner_temp_root"
+          printf 'TMPDIR=%s\n' "$runner_temp_root" >> "$GITHUB_ENV"
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -171,8 +173,10 @@ jobs:
           set -euo pipefail
           : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
           mkdir -p "$RUNNER_TEMP"
-          test -w "$RUNNER_TEMP"
-          printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          runner_temp_root="$(realpath -e -- "$RUNNER_TEMP")"
+          test -d "$runner_temp_root"
+          test -w "$runner_temp_root"
+          printf 'TMPDIR=%s\n' "$runner_temp_root" >> "$GITHUB_ENV"
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -206,8 +210,10 @@ jobs:
           set -euo pipefail
           : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
           mkdir -p "$RUNNER_TEMP"
-          test -w "$RUNNER_TEMP"
-          printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          runner_temp_root="$(realpath -e -- "$RUNNER_TEMP")"
+          test -d "$runner_temp_root"
+          test -w "$runner_temp_root"
+          printf 'TMPDIR=%s\n' "$runner_temp_root" >> "$GITHUB_ENV"
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -237,8 +243,10 @@ jobs:
           set -euo pipefail
           : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
           mkdir -p "$RUNNER_TEMP"
-          test -w "$RUNNER_TEMP"
-          printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          runner_temp_root="$(realpath -e -- "$RUNNER_TEMP")"
+          test -d "$runner_temp_root"
+          test -w "$runner_temp_root"
+          printf 'TMPDIR=%s\n' "$runner_temp_root" >> "$GITHUB_ENV"
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -252,7 +260,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo_fuzz_root="$(mktemp -d -- "$RUNNER_TEMP/cargo-fuzz.XXXXXX")"
+          cargo_fuzz_root="$(mktemp -d -- "$TMPDIR/cargo-fuzz.XXXXXX")"
           cargo install cargo-fuzz --locked --root "$cargo_fuzz_root" --force
           printf '%s\n' "$cargo_fuzz_root/bin" >> "$GITHUB_PATH"
 
@@ -330,8 +338,10 @@ jobs:
           set -euo pipefail
           : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
           mkdir -p "$RUNNER_TEMP"
-          test -w "$RUNNER_TEMP"
-          printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          runner_temp_root="$(realpath -e -- "$RUNNER_TEMP")"
+          test -d "$runner_temp_root"
+          test -w "$runner_temp_root"
+          printf 'TMPDIR=%s\n' "$runner_temp_root" >> "$GITHUB_ENV"
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -362,8 +372,10 @@ jobs:
           set -euo pipefail
           : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
           mkdir -p "$RUNNER_TEMP"
-          test -w "$RUNNER_TEMP"
-          printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          runner_temp_root="$(realpath -e -- "$RUNNER_TEMP")"
+          test -d "$runner_temp_root"
+          test -w "$runner_temp_root"
+          printf 'TMPDIR=%s\n' "$runner_temp_root" >> "$GITHUB_ENV"
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -399,8 +411,10 @@ jobs:
           set -euo pipefail
           : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
           mkdir -p "$RUNNER_TEMP"
-          test -w "$RUNNER_TEMP"
-          printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          runner_temp_root="$(realpath -e -- "$RUNNER_TEMP")"
+          test -d "$runner_temp_root"
+          test -w "$runner_temp_root"
+          printf 'TMPDIR=%s\n' "$runner_temp_root" >> "$GITHUB_ENV"
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

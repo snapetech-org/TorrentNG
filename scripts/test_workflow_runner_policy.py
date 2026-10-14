@@ -37,6 +37,18 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             self.assertNotIn("kspls0", runner)
             self.assertIn("fromJSON('" + TRUSTED_MAIN_RUNNER_JSON + "')", runner)
 
+    def test_ci_runner_temp_is_resolved_before_validation(self) -> None:
+        source = CI_WORKFLOW.read_text(encoding="utf-8")
+        self.assertEqual(
+            source.count('runner_temp_root="$(realpath -e -- "$RUNNER_TEMP")"'),
+            7,
+        )
+        self.assertEqual(
+            source.count("printf 'TMPDIR=%s\\n' \"$runner_temp_root\""),
+            7,
+        )
+        self.assertIn('mktemp -d -- "$TMPDIR/cargo-fuzz.XXXXXX"', source)
+
     def test_release_workflow_has_no_pull_request_trigger(self) -> None:
         source = RELEASE_WORKFLOW.read_text(encoding="utf-8")
         trigger_block = source.split("jobs:", maxsplit=1)[0]

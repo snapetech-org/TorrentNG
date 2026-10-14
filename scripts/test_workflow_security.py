@@ -155,7 +155,7 @@ class WorkflowSecurityTests(unittest.TestCase):
             chr(10) + "  sidecar:", 1
         )[0]
         self.assertIn(
-            'cargo_fuzz_root="$(mktemp -d -- "$RUNNER_TEMP/cargo-fuzz.XXXXXX")"',
+            'cargo_fuzz_root="$(mktemp -d -- "$TMPDIR/cargo-fuzz.XXXXXX")"',
             job,
         )
         self.assertIn(
@@ -223,13 +223,26 @@ class WorkflowSecurityTests(unittest.TestCase):
                 required = (
                     "RUNNER_TEMP:?RUNNER_TEMP is required",
                     'mkdir -p "$RUNNER_TEMP"',
-                    'test -w "$RUNNER_TEMP"',
                     "TMPDIR=%s",
-                    "$RUNNER_TEMP",
                     "$GITHUB_ENV",
                     '>> "$GITHUB_ENV"',
                 )
-                if any(item not in setup for item in required):
+                resolved_temp_root = (
+                    'runner_temp_root="$(realpath -e -- "$RUNNER_TEMP")"'
+                )
+                path_checks = (
+                    (
+                        'test -d "$runner_temp_root"',
+                        'test -w "$runner_temp_root"',
+                        "$runner_temp_root",
+                    )
+                    if resolved_temp_root in setup
+                    else (
+                        'test -w "$RUNNER_TEMP"',
+                        "$RUNNER_TEMP",
+                    )
+                )
+                if any(item not in setup for item in (*required, *path_checks)):
                     missing.append(
                         f"{workflow_path.name}:{job_name}:incomplete temp setup"
                     )
