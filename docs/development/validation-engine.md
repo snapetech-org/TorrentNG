@@ -5,6 +5,15 @@ replacing Cargo, unittest, Vitest, or the certification scripts. Its inventory
 tracks Rust unit and integration test sources, Python test modules, WebUI tests,
 and the certification self-tests.
 
+## GitHub runner routing
+
+The pull-request checks remain on GitHub-hosted runners. Seven Linux CI jobs
+may use the restricted organization `trusted-main` group for pushes or manual
+runs on `main` only when `TRUSTED_MAIN_RUNNERS_ENABLED` is set to `true`;
+otherwise they remain hosted. The server-side group allowlist is pinned to
+`.github/workflows/ci.yml@refs/heads/main`. The production
+`backend-evidence.yml` workflow stays outside this group.
+
 From the repository root:
 
 ```sh

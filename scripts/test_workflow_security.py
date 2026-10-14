@@ -103,11 +103,20 @@ class WorkflowSecurityTests(unittest.TestCase):
                 "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
                 runner,
             )
-            self.assertIn(
-                "fromJSON('[\"self-hosted\",\"Linux\",\"X64\",\"host\"]')",
-                runner,
+            self.assertIn("vars.TRUSTED_MAIN_RUNNERS_ENABLED == 'true'", runner)
+            pool_selector = re.search(
+                r"fromJSON\('(?P<value>\{.*?\})'\)", runner
             )
-            self.assertIn("fromJSON('[\"ubuntu-latest\"]')", runner)
+            self.assertIsNotNone(pool_selector)
+            assert pool_selector is not None
+            self.assertEqual(
+                json.loads(pool_selector.group("value").replace(chr(92), "")),
+                {
+                    "group": "trusted-main",
+                    "labels": ["self-hosted", "Linux", "X64", "host"],
+                },
+            )
+            self.assertRegex(runner, r"\|\|\s*'ubuntu-latest'")
         self.assertNotRegex(ci, r"(?m)^\s*pull_request_target:")
 
         windows = (WORKFLOWS / "windows-smoke.yml").read_text(encoding="utf-8")
@@ -146,7 +155,7 @@ class WorkflowSecurityTests(unittest.TestCase):
             chr(10) + "  sidecar:", 1
         )[0]
         self.assertIn(
-            'cargo_fuzz_root="$(mktemp -d -- "$RUNNER_TEMP/cargo-fuzz.XXXXXX")"',
+            'cargo_fuzz_root="$(mktemp -d -- "$TMPDIR/cargo-fuzz.XXXXXX")"',
             job,
         )
         self.assertIn(
@@ -214,13 +223,26 @@ class WorkflowSecurityTests(unittest.TestCase):
                 required = (
                     "RUNNER_TEMP:?RUNNER_TEMP is required",
                     'mkdir -p "$RUNNER_TEMP"',
-                    'test -w "$RUNNER_TEMP"',
                     "TMPDIR=%s",
-                    "$RUNNER_TEMP",
                     "$GITHUB_ENV",
                     '>> "$GITHUB_ENV"',
                 )
-                if any(item not in setup for item in required):
+                resolved_temp_root = (
+                    'runner_temp_root="$(realpath -e -- "$RUNNER_TEMP")"'
+                )
+                path_checks = (
+                    (
+                        'test -d "$runner_temp_root"',
+                        'test -w "$runner_temp_root"',
+                        "$runner_temp_root",
+                    )
+                    if resolved_temp_root in setup
+                    else (
+                        'test -w "$RUNNER_TEMP"',
+                        "$RUNNER_TEMP",
+                    )
+                )
+                if any(item not in setup for item in (*required, *path_checks)):
                     missing.append(
                         f"{workflow_path.name}:{job_name}:incomplete temp setup"
                     )
