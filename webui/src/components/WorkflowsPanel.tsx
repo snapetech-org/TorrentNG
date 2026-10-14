@@ -153,7 +153,7 @@ export function WorkflowsPanel() {
       <div style={{ ...scrollX, display: 'grid', gap: 8, maxWidth: 1080 }}>
         {rulesLoading && <div role="status" aria-label={translateInterface("Loading workflow rules")} {...interfaceTextProps("Loading workflow rules")}><SkeletonRows count={3} /></div>}
         {!rulesLoading && rules.length === 0 && (
-          <EmptyState title={translateInterface("No workflow rules configured")} detail={translateInterface("Create a workflow above, then preview it against the current torrent list before running.")} />
+          <EmptyState title={<LocalizedText source="No workflow rules configured" />} detail={<LocalizedText source="Create a workflow above, then preview it against the current torrent list before running." />} />
         )}
         {rules.map(rule => (
           <div key={rule.id} className="tng-automation-row" data-enabled={rule.enabled ? 'true' : 'false'} style={{
@@ -198,7 +198,7 @@ export function WorkflowsPanel() {
       <div style={{ ...scrollX, display: 'grid', gap: 6, maxWidth: 1080 }}>
         {runs.slice(0, 8).map(run => <WorkflowRunRow key={run.id} run={run} />)}
         {runs.length === 0 && (
-          <EmptyState title={translateInterface("No workflow runs recorded")} detail={translateInterface("Preview or run a workflow to see recent activity here.")} />
+          <EmptyState title={<LocalizedText source="No workflow runs recorded" />} detail={<LocalizedText source="Preview or run a workflow to see recent activity here." />} />
         )}
       </div>
     </section>
@@ -292,7 +292,7 @@ function Pill({ tone, children }: { tone: 'ok' | 'info' | 'idle' | 'error'; chil
   }}>{children}</span>
 }
 
-function EmptyState({ title, detail }: { title: string; detail: string }) {
+function EmptyState({ title, detail }: { title: React.ReactNode; detail: React.ReactNode }) {
   return <div style={{
     border: '1px dashed var(--border-strong)', borderRadius: 8, padding: '16px 14px',
     background: 'color-mix(in srgb, var(--surface) 72%, transparent)', color: 'var(--muted)', fontSize: 12,

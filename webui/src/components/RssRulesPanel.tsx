@@ -174,7 +174,7 @@ export function RssRulesPanel() {
       <div style={{ ...scrollX, display: 'grid', gap: 8, maxWidth: 1080 }}>
         {isLoading && <div role="status" aria-label={t('Loading RSS rules')} {...textProps('Loading RSS rules')}><SkeletonRows count={3} /></div>}
         {!isLoading && rules.length === 0 && (
-          <EmptyState title={t("No RSS rules configured")} detail={t("Create a rule above, then use match test to check titles before applying.")} />
+          <EmptyState title={<LocalizedText source="No RSS rules configured" />} detail={<LocalizedText source="Create a rule above, then use match test to check titles before applying." />} />
         )}
         {rules.map(rule => (
           <div key={rule.id} className="tng-automation-row" data-enabled={rule.enabled ? 'true' : 'false'} style={{
@@ -230,7 +230,7 @@ export function RssRulesPanel() {
           }}>
             <Pill tone={match.matched ? 'ok' : 'idle'}>{match.matched ? <LocalizedText source="match" /> : <LocalizedText source="Skipped" />}</Pill>
             <span style={{ color: 'var(--text)', fontWeight: 700 }}>{match.rule_name}</span>
-            <span style={{ color: 'var(--faint)' }}>{match.reason}</span>
+            <span style={{ color: 'var(--faint)' }}><LocalizedText source={match.reason} /></span>
           </div>
         ))}
       </div>
@@ -294,7 +294,7 @@ function Pill({ tone, children }: { tone: 'ok' | 'idle'; children: React.ReactNo
   }}>{children}</span>
 }
 
-function EmptyState({ title, detail }: { title: string; detail: string }) {
+function EmptyState({ title, detail }: { title: React.ReactNode; detail: React.ReactNode }) {
   return <div style={{
     border: '1px dashed var(--border-strong)', borderRadius: 8, padding: '16px 14px',
     background: 'color-mix(in srgb, var(--surface) 72%, transparent)', color: 'var(--muted)', fontSize: 12,

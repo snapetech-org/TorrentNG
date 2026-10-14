@@ -192,6 +192,7 @@ export function AddTorrentDialog({ onClose }: Props) {
                     background: 'var(--surface-2)', border: '1px solid var(--border-strong)', borderRadius: 4,
                     color: 'var(--accent-text)', padding: '2px 7px', fontSize: 10, cursor: 'pointer',
                   }}
+                {...textProps('Select more files')}
                 >{t('Select more files')}</button>
               </div>
             </div>
@@ -255,7 +256,7 @@ export function AddTorrentDialog({ onClose }: Props) {
               }}
               style={{ ...INPUT, cursor: 'pointer' }}
             >
-              <option value="">{t('None')}</option>
+              <option value="" {...textProps('None')}>{t('None')}</option>
               {categories.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
             </select>
             {selectedCategory?.save_path && (

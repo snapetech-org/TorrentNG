@@ -65,7 +65,7 @@ function ActionBtn({
       fontSize: 11,
       cursor: disabled ? 'not-allowed' : 'pointer',
       opacity: disabled ? 0.5 : 1,
-    }}>{label}</button>
+    }}><LocalizedText source={label} /></button>
   )
 }
 

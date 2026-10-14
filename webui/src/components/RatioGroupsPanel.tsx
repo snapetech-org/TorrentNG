@@ -121,7 +121,7 @@ export function RatioGroupsPanel() {
       <div style={{ ...scrollX, display: 'grid', gap: 8, maxWidth: 980 }}>
         {isLoading && <div role="status" aria-label={translateInterface("Loading ratio groups")} {...interfaceTextProps("Loading ratio groups")}><SkeletonRows count={3} /></div>}
         {!isLoading && groups.length === 0 && (
-          <EmptyState title={translateInterface("No ratio groups configured")} detail={translateInterface("Create a group above, then preview which torrents match before applying it.")} />
+          <EmptyState title={<LocalizedText source="No ratio groups configured" />} detail={<LocalizedText source="Create a group above, then preview which torrents match before applying it." />} />
         )}
         {groups.map(group => (
           <div key={group.name} className="tng-automation-row" data-enabled={group.enabled ? 'true' : 'false'} style={{
@@ -229,7 +229,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   </label>
 }
 
-function EmptyState({ title, detail }: { title: string; detail: string }) {
+function EmptyState({ title, detail }: { title: React.ReactNode; detail: React.ReactNode }) {
   return <div style={{
     border: '1px dashed var(--border-strong)', borderRadius: 8, padding: '16px 14px',
     background: 'color-mix(in srgb, var(--surface) 72%, transparent)', color: 'var(--muted)', fontSize: 12,

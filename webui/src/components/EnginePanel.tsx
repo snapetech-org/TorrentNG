@@ -29,9 +29,9 @@ export function EnginePanel() {
         <h2 id="backend-title" style={{ fontSize: 13, margin: 0, color: 'var(--text)' }}><LocalizedText source="Backend" /></h2>
         {data && (
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <Badge ok text={data.backend.type === 'torrentng' ? translateInterface('TorrentNG client') : data.backend.type} />
-            {isRtorrent && <Badge ok={driftProblems === 0} text={driftProblems === 0 ? translateInterface('Profile matches defaults') : translateInterface('{count} drift', { count: driftProblems.toLocaleString(getRegionalLocale()) })} />}
-            {isRtorrent && <Badge ok={data.capabilities.every(c => c.available)} text={`${data.capabilities.filter(c => c.available).length}/${data.capabilities.length} XMLRPC`} />}
+            <Badge ok text={data.backend.type === 'torrentng' ? <LocalizedText source="TorrentNG client" /> : <bdi dir="ltr">{data.backend.type}</bdi>} />
+            {isRtorrent && <Badge ok={driftProblems === 0} text={driftProblems === 0 ? <LocalizedText source="Profile matches defaults" /> : <LocalizedText source="{count} drift" parameters={{ count: driftProblems.toLocaleString(getRegionalLocale()) }} />} />}
+            {isRtorrent && <Badge ok={data.capabilities.every(c => c.available)} text={<bdi dir="ltr">{`${data.capabilities.filter(c => c.available).length}/${data.capabilities.length} XMLRPC`}</bdi>} />}
             <button
               type="button"
               onClick={() => {
@@ -174,7 +174,7 @@ function Capabilities({ data }: { data: EngineDiagnostics }) {
           }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
               <span {...textProps(cap.label)} style={{ fontSize: 12, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t(cap.label)}</span>
-              <Badge ok={cap.available} text={cap.available ? 'yes' : 'no'} />
+              <Badge ok={cap.available} text={<LocalizedText source={cap.available ? 'yes' : 'no'} />} />
             </div>
             <div title={cap.command} style={{ fontSize: 11, color: 'var(--faint)', marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {cap.command}
@@ -581,12 +581,12 @@ function RtorrentSettingsPanel() {
             gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
             gap: 8,
           }}>
-            <SettingStat label={translateInterface("Managed settings")} value={data.settings.length.toLocaleString(getRegionalLocale())} />
-            <SettingStat label={translateInterface("Pending autosave")} value={dirtyCount.toLocaleString(getRegionalLocale())} tone={dirtyCount > 0 ? 'warn' : 'ok'} />
-            <SettingStat label={translateInterface("Custom lines")} value={translateInterface(customRcDirty ? 'edited' : 'saved')} tone={customRcDirty ? 'warn' : 'ok'} />
-            <SettingStat label={translateInterface("Live readback unavailable")} value={unavailableCount.toLocaleString(getRegionalLocale())} tone={unavailableCount > 0 ? 'warn' : 'ok'} />
-            <SettingStat label={translateInterface('Overlay')} value={translateInterface(data.overlay_writable ? 'Writable' : 'Readonly')} tone={data.overlay_writable ? 'ok' : 'warn'} />
-            <SettingStat label={translateInterface("Restart support")} value={translateInterface(data.restart_supported ? 'Available' : 'Manual')} tone={data.restart_supported ? 'ok' : 'warn'} />
+            <SettingStat label={<LocalizedText source="Managed settings" />} value={<bdi>{data.settings.length.toLocaleString(getRegionalLocale())}</bdi>} />
+            <SettingStat label={<LocalizedText source="Pending autosave" />} value={<bdi>{dirtyCount.toLocaleString(getRegionalLocale())}</bdi>} tone={dirtyCount > 0 ? 'warn' : 'ok'} />
+            <SettingStat label={<LocalizedText source="Custom lines" />} value={<LocalizedText source={customRcDirty ? 'edited' : 'saved'} />} tone={customRcDirty ? 'warn' : 'ok'} />
+            <SettingStat label={<LocalizedText source="Live readback unavailable" />} value={<bdi>{unavailableCount.toLocaleString(getRegionalLocale())}</bdi>} tone={unavailableCount > 0 ? 'warn' : 'ok'} />
+            <SettingStat label={<LocalizedText source="Overlay" />} value={<LocalizedText source={data.overlay_writable ? 'Writable' : 'Readonly'} />} tone={data.overlay_writable ? 'ok' : 'warn'} />
+            <SettingStat label={<LocalizedText source="Restart support" />} value={<LocalizedText source={data.restart_supported ? 'Available' : 'Manual'} />} tone={data.restart_supported ? 'ok' : 'warn'} />
           </div>
           {!data.overlay_writable && (
             <div role="alert" style={{
@@ -1065,7 +1065,7 @@ function RtorrentSettingsPanel() {
   )
 }
 
-function SettingStat({ label, value, tone = 'neutral' }: { label: string; value: string; tone?: 'neutral' | 'ok' | 'warn' }) {
+function SettingStat({ label, value, tone = 'neutral' }: { label: React.ReactNode; value: React.ReactNode; tone?: 'neutral' | 'ok' | 'warn' }) {
   const color = tone === 'ok' ? 'var(--success)' : tone === 'warn' ? 'var(--warning)' : 'var(--muted)'
   return (
     <div style={{
@@ -1639,16 +1639,27 @@ function Panel({ children, wide }: { children: React.ReactNode; wide?: boolean }
 }
 
 function Rows({ rows }: { rows: [string, string][] }) {
-  const { t } = useInterfaceLanguage()
-  const localizableValues = new Set(['yes', 'no', 'not applicable', 'not declared', 'none declared', 'none', 'default', 'unknown', 'unavailable', 'torrentng client'])
+  const localizableValues = new Set(['yes', 'no', 'enabled', 'disabled', 'not applicable', 'not declared', 'none declared', 'none', 'default', 'unknown', 'unavailable', 'torrentng client'])
+  const booleanValueRows = new Set(['Verify peer', 'Verify host', 'PEX', 'UDP trackers'])
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '160px minmax(0, 1fr)', gap: '6px 12px', fontSize: 12 }}>
-      {rows.map(([k, v]) => (
-        <div key={k} className="tng-engine-kv" style={{ display: 'contents' }}>
-          <div style={{ color: 'var(--faint)' }}><LocalizedText source={k} /></div>
-          <div title={v} style={{ color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{localizableValues.has(v.toLowerCase()) ? t(v) : v}</div>
-        </div>
-      ))}
+      {rows.map(([k, v]) => {
+        const valueKey = v.toLowerCase()
+        const localizable = localizableValues.has(valueKey) &&
+          (valueKey !== 'enabled' && valueKey !== 'disabled' || booleanValueRows.has(k))
+        return (
+          <div key={k} className="tng-engine-kv" style={{ display: 'contents' }}>
+            <div style={{ color: 'var(--faint)' }}><LocalizedText source={k} /></div>
+            <div
+              title={localizable ? translateInterface(v) : v}
+              {...(localizable ? interfaceTextProps(v) : {})}
+              style={{ color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            >
+              {localizable ? <LocalizedText source={v} /> : <bdi dir="ltr">{v}</bdi>}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -1674,7 +1685,7 @@ function InlineNotice({ children }: { children: React.ReactNode }) {
   }}>{children}</div>
 }
 
-function Badge({ ok, text }: { ok: boolean; text: string }) {
+function Badge({ ok, text }: { ok: boolean; text: React.ReactNode }) {
   return (
     <span style={{
       border: '1px solid ' + (ok ? 'color-mix(in srgb, var(--success) 45%, var(--border))' : 'color-mix(in srgb, var(--danger) 50%, var(--border))'),
