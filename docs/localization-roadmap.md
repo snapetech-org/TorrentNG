@@ -4,7 +4,7 @@
 
 The React interface in `webui/` now has a browser-local language selector and a catalog for its fixed, application-owned UI copy. The current audit contains 1,134 unique source messages and 13,608 translated locale cells across the twelve supported locales. Each non-English catalog loads on demand as a separate chunk; English remains visible until the selected chunk arrives. Torrent, tracker, category, path, URL, command, and other engine or user-provided values remain data and are not translated.
 
-Catalog coverage is generated from the current WebUI source plus complete templates for dynamic messages and fixed keyboard-help rows. The locale files are checked for exact key parity, non-empty values, and named-placeholder parity. The catalog was machine-translated, then checked for key parity, placeholders, suspicious corruption, and terminology that changes meaning in TorrentNG workflows. This is not a fluent-speaker sign-off; short ambiguous labels and long help text still need in-context native-speaker review.
+Catalog coverage is generated from the current WebUI source plus complete templates for dynamic messages and fixed keyboard-help rows. The WebUI unit suite checks exact key parity, non-empty values, and named-placeholder parity in `localeCatalogs.test.ts`. The catalog was machine-translated, then checked for key parity, placeholders, suspicious corruption, and terminology that changes meaning in TorrentNG workflows. This is not a fluent-speaker sign-off; short ambiguous labels and long help text still need in-context native-speaker review.
 
 ## Supported locales
 

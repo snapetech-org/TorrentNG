@@ -15,7 +15,7 @@ export const UI_LABELS: Record<string, string> = {
   "API tokens are configured in {tokenConfig} or {tokenFileConfig}. On Unraid, find the token in the container's {unraidSetting} setting. The existing-client profile also accepts {tngApiTokens} or {rtngApiTokens}. Runtime credential changes are saved in the service state directory. Select Restore to load values from {configFile} again.": "API 令牌配置在 {tokenConfig} 或 {tokenFileConfig} 中。在 Unraid 中，可在容器的 {unraidSetting} 设置中找到令牌。现有客户端配置也接受 {tngApiTokens} 或 {rtngApiTokens}。运行时凭据更改会保存在服务状态目录中。选择“恢复”可重新从 {configFile} 加载值。",
   "API-token login:": "使用 API 令牌登录：",
   "Action": "行动",
-  "Actions": "行动",
+  "Actions": "操作",
   "Actions for {name}": "{name} 的操作",
   "Active": "活动中",
   "Active theme {name}": "当前主题：{name}",

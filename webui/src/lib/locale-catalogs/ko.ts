@@ -15,7 +15,7 @@ export const UI_LABELS: Record<string, string> = {
   "API tokens are configured in {tokenConfig} or {tokenFileConfig}. On Unraid, find the token in the container's {unraidSetting} setting. The existing-client profile also accepts {tngApiTokens} or {rtngApiTokens}. Runtime credential changes are saved in the service state directory. Select Restore to load values from {configFile} again.": "API 토큰은 {tokenConfig} 또는 {tokenFileConfig}에서 설정합니다. Unraid에서는 컨테이너의 {unraidSetting} 설정에서 토큰을 찾으세요. 기존 클라이언트 프로필은 {tngApiTokens} 또는 {rtngApiTokens}도 지원합니다. 실행 중 변경한 인증 정보는 서비스 상태 디렉터리에 저장됩니다. {configFile}의 값을 다시 불러오려면 복원을 선택하세요.",
   "API-token login:": "API 토큰 로그인:",
   "Action": "행동",
-  "Actions": "행위",
+  "Actions": "작업",
   "Actions for {name}": "{name}에 대한 작업",
   "Active": "활성",
   "Active theme {name}": "활성 테마: {name}",

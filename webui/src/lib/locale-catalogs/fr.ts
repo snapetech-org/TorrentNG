@@ -15,7 +15,7 @@ export const UI_LABELS: Record<string, string> = {
   "API tokens are configured in {tokenConfig} or {tokenFileConfig}. On Unraid, find the token in the container's {unraidSetting} setting. The existing-client profile also accepts {tngApiTokens} or {rtngApiTokens}. Runtime credential changes are saved in the service state directory. Select Restore to load values from {configFile} again.": "Les jetons API se configurent dans {tokenConfig} ou {tokenFileConfig}. Sur Unraid, cherchez le jeton dans le paramètre {unraidSetting} du conteneur. Le profil pour les clients existants accepte aussi {tngApiTokens} ou {rtngApiTokens}. Les changements d’identifiants à l’exécution sont enregistrés dans le répertoire d’état du service. Choisissez « Restaurer » pour recharger les valeurs de {configFile}.",
   "API-token login:": "Connexion API :",
   "Action": "Action",
-  "Actions": "Actes",
+  "Actions": "Actions",
   "Actions for {name}": "Actions pour {name}",
   "Active": "Actif",
   "Active theme {name}": "Thème actif : {name}",

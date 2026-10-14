@@ -15,7 +15,7 @@ export const UI_LABELS: Record<string, string> = {
   "API tokens are configured in {tokenConfig} or {tokenFileConfig}. On Unraid, find the token in the container's {unraidSetting} setting. The existing-client profile also accepts {tngApiTokens} or {rtngApiTokens}. Runtime credential changes are saved in the service state directory. Select Restore to load values from {configFile} again.": "Mã thông báo API được cấu hình trong {tokenConfig} hoặc {tokenFileConfig}. Trên Unraid, tìm mã trong cài đặt {unraidSetting} của vùng chứa. Hồ sơ máy khách hiện có cũng chấp nhận {tngApiTokens} hoặc {rtngApiTokens}. Thay đổi thông tin xác thực khi chạy được lưu trong thư mục trạng thái của dịch vụ. Chọn Khôi phục để tải lại các giá trị từ {configFile}.",
   "API-token login:": "Đăng nhập API-token:",
   "Action": "Hoạt động",
-  "Actions": "hành động",
+  "Actions": "Thao tác",
   "Actions for {name}": "Các hành động dành cho {name}",
   "Active": "Đang hoạt động",
   "Active theme {name}": "Giao diện đang dùng: {name}",
