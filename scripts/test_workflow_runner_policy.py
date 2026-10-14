@@ -10,9 +10,10 @@ MAIN_RUNNER_CONDITION = (
     "((github.event_name == 'push' && github.ref == 'refs/heads/main') "
     "|| (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))"
 )
+TRUSTED_MAIN_RUNNER_JSON = '{"group":"trusted-main","labels":["self-hosted","Linux","X64","host"]}'
 TRUSTED_MAIN_RUNNER = (
     "$" + "{{ (" + MAIN_RUNNER_CONDITION
-    + " && vars.TRUSTED_MAIN_RUNNERS_ENABLED == 'true') && 'trusted-main' || 'ubuntu-latest' }}"
+    + " && vars.TRUSTED_MAIN_RUNNERS_ENABLED == 'true') && fromJSON('" + TRUSTED_MAIN_RUNNER_JSON + "') || 'ubuntu-latest' }}"
 )
 TRUSTED_MAIN_SNAPSHOT_PROFILE = (
     "$" + "{{ (" + MAIN_RUNNER_CONDITION
@@ -34,7 +35,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             self.assertNotIn("github.event_name == 'pull_request'", runner)
             self.assertNotIn("kspld0", runner)
             self.assertNotIn("kspls0", runner)
-            self.assertNotIn("fromJSON", runner)
+            self.assertIn("fromJSON('" + TRUSTED_MAIN_RUNNER_JSON + "')", runner)
 
     def test_release_workflow_has_no_pull_request_trigger(self) -> None:
         source = RELEASE_WORKFLOW.read_text(encoding="utf-8")
