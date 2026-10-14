@@ -89,6 +89,7 @@ export function AppearancePanel({ mediaInference, onMediaInference, themes = [],
           <div className="tng-theme-gallery">
             {themes.map(theme => {
               const tokens = theme[themeMode]
+              const themeLabel = t(theme.label)
               const active = theme.id === themeId
               return (
                 <button
@@ -96,7 +97,7 @@ export function AppearancePanel({ mediaInference, onMediaInference, themes = [],
                   type="button"
                   className="tng-theme-card"
                   data-active={active ? 'true' : 'false'}
-                  aria-label={t(active ? 'Active theme {name}' : 'Select theme {name}', { name: theme.label })}
+                  aria-label={t(active ? 'Active theme {name}' : 'Select theme {name}', { name: themeLabel })}
                   {...textProps(active ? 'Active theme {name}' : 'Select theme {name}')}
                   aria-pressed={active}
                   onClick={() => onTheme?.(theme.id)}
@@ -120,7 +121,7 @@ export function AppearancePanel({ mediaInference, onMediaInference, themes = [],
                     <span className="tng-theme-card-row" />
                   </span>
                   <span className="tng-theme-card-label">
-                    <span {...textProps('Select theme {name}')}>{theme.label}</span>
+                    <span {...textProps(theme.label)}>{themeLabel}</span>
                     {active && <span {...textProps('Active')}>{t('Active')}</span>}
                   </span>
                 </button>

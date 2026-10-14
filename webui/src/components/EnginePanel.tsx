@@ -29,7 +29,7 @@ export function EnginePanel() {
         <h2 id="backend-title" style={{ fontSize: 13, margin: 0, color: 'var(--text)' }}><LocalizedText source="Backend" /></h2>
         {data && (
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <Badge ok text={backendDisplayName(data.backend.type)} />
+            <Badge ok text={data.backend.type === 'torrentng' ? translateInterface('TorrentNG client') : data.backend.type} />
             {isRtorrent && <Badge ok={driftProblems === 0} text={driftProblems === 0 ? translateInterface('Profile matches defaults') : translateInterface('{count} drift', { count: driftProblems.toLocaleString(getRegionalLocale()) })} />}
             {isRtorrent && <Badge ok={data.capabilities.every(c => c.available)} text={`${data.capabilities.filter(c => c.available).length}/${data.capabilities.length} XMLRPC`} />}
             <button
@@ -159,6 +159,7 @@ function backendDisplayName(type: string): string {
 }
 
 function Capabilities({ data }: { data: EngineDiagnostics }) {
+  const { t, textProps } = useInterfaceLanguage()
   return (
     <Panel>
       <Subhead><LocalizedText source="Capabilities" /></Subhead>
@@ -172,7 +173,7 @@ function Capabilities({ data }: { data: EngineDiagnostics }) {
             minWidth: 0,
           }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <span style={{ fontSize: 12, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cap.label}</span>
+              <span {...textProps(cap.label)} style={{ fontSize: 12, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t(cap.label)}</span>
               <Badge ok={cap.available} text={cap.available ? 'yes' : 'no'} />
             </div>
             <div title={cap.command} style={{ fontSize: 11, color: 'var(--faint)', marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -180,7 +181,7 @@ function Capabilities({ data }: { data: EngineDiagnostics }) {
             </div>
             {cap.detail && (
               <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 5, lineHeight: 1.4 }}>
-                {cap.detail}
+                <span {...textProps(cap.detail)}>{t(cap.detail)}</span>
               </div>
             )}
           </div>
@@ -232,6 +233,7 @@ function DhtStack({ data }: { data: EngineDiagnostics }) {
 }
 
 function ProfileDrift({ data }: { data: EngineDiagnostics }) {
+  const { t, textProps } = useInterfaceLanguage()
   const rows = data.drift
   const problems = rows.filter(row => row.status !== 'match')
   return (
@@ -252,7 +254,7 @@ function ProfileDrift({ data }: { data: EngineDiagnostics }) {
               background: 'color-mix(in srgb, var(--danger) 10%, var(--surface))',
               fontSize: 12,
             }}>
-              <div title={row.command} style={{ color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.label}</div>
+              <div title={row.command} {...textProps(row.label)} style={{ color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t(row.label)}</div>
               <div title={row.expected} style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><LocalizedText source="Expected: {value}" parameters={{ value: row.expected }} /></div>
               <div title={row.actual ?? row.detail ?? ''} style={{ color: 'var(--danger)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {row.status === 'unavailable' ? <LocalizedText source="Unavailable" /> : <LocalizedText source="Actual: {value}" parameters={{ value: row.actual ?? '' }} />}
@@ -357,14 +359,15 @@ function RtorrentSettingsPanel() {
         return [
           setting.key,
           setting.label,
+          t(setting.label),
           setting.command,
           setting.setter,
           setting.value_type,
           settingCategory(setting),
-          settingDescription(setting),
+          settingDescription(setting, t),
         ].some(value => value.toLowerCase().includes(needle))
       }))
-  }, [data, draft, filter, viewFilter])
+  }, [data, draft, filter, language, t, viewFilter])
   const resetAll = useCallback(() => {
     if (!data) return
     const next: Record<string, string | number | boolean> = {}
@@ -472,7 +475,7 @@ function RtorrentSettingsPanel() {
   const visibleSettings = filteredGroups.flatMap(group => group.settings)
   const copyVisibleCommands = () => {
     const text = visibleSettings
-      .map(setting => `${setting.label}\n  get: ${setting.command}\n  set: ${setting.setter}`)
+      .map(setting => `${t(setting.label)}\n  get: ${setting.command}\n  set: ${setting.setter}`)
       .join('\n')
     copyText(text, t('Visible commands'))
   }
@@ -482,7 +485,7 @@ function RtorrentSettingsPanel() {
       const row = data.values.find(value => value.key === setting.key)
       const base = baselineValue(setting, row?.saved ?? null, row?.live.value ?? null)
       const next = draft[setting.key] ?? base
-      return `${setting.label}: ${formatSettingValue(base, setting.unit)} -> ${formatSettingValue(next, setting.unit)} (${setting.restart_required ? t('Restart required') : t('Live')})`
+      return `${t(setting.label)}: ${formatSettingValue(base, setting.unit)} -> ${formatSettingValue(next, setting.unit)} (${setting.restart_required ? t('Restart required') : t('Live')})`
     })
     if (customRcDirty) lines.push(`${t('Custom rTorrent lines')}: ${t('edited')} (${t('Restart required')})`)
     copyText(lines.join('\n'), t('Change summary'))
@@ -826,6 +829,7 @@ function RtorrentSettingsPanel() {
                     const titleId = `rt-setting-${setting.key}-title`
                     const liveErrorId = `rt-setting-${setting.key}-live-error`
                     const liveError = row?.live.ok === false ? row.live.error ?? 'Live readback unavailable' : null
+                    const settingLabel = t(setting.label)
                     return (
                       <section key={setting.key} className="tng-form-card" data-dirty={dirty ? 'true' : 'false'} aria-labelledby={titleId} aria-describedby={liveError ? `${descriptionId} ${liveErrorId}` : descriptionId} style={{
                         border: `1px solid ${dirty ? 'color-mix(in srgb, var(--warning) 58%, var(--border))' : 'var(--border)'}`,
@@ -837,7 +841,7 @@ function RtorrentSettingsPanel() {
                         minWidth: 0,
                       }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, color: 'var(--text)', fontSize: 13, fontWeight: 800 }}>
-                          <span id={titleId}>{setting.label}</span>
+                          <span id={titleId} {...interfaceTextProps(setting.label)}>{settingLabel}</span>
                           <span style={{ display: 'inline-flex', gap: 5, alignItems: 'center', flexShrink: 0 }}>
                             {dirty && <SettingPill tone="warn"><LocalizedText source="edited" /></SettingPill>}
                             {dirty && <SettingPill tone={lastSaveFailed ? 'warn' : save.isPending ? 'warn' : 'ok'}><LocalizedText source={lastSaveFailed ? 'retry' : save.isPending ? 'saving' : 'pending'} /></SettingPill>}
@@ -858,7 +862,7 @@ function RtorrentSettingsPanel() {
                             fontSize: 11,
                             overflowWrap: 'anywhere',
                           }}>
-                            {liveError}
+                            <LocalizedErrorText message={liveError} />
                           </div>
                         )}
                         {setting.value_type === 'bool' ? (
@@ -870,7 +874,7 @@ function RtorrentSettingsPanel() {
                           />
                         ) : setting.key === 'dht_mode' ? (
                           <SegmentedSetting
-                            label={setting.label}
+                            label={settingLabel}
                             value={String(value)}
                             options={[['auto', 'Auto'], ['on', 'On'], ['disable', 'Off']]}
                             describedBy={descriptionId}
@@ -896,10 +900,10 @@ function RtorrentSettingsPanel() {
                           <span style={{ color: 'var(--faint)', fontSize: 10 }}>
                             {setting.restart_required ? <LocalizedText source="Autosaves now; effective after restart" /> : <LocalizedText source="Autosaves and applies live" />}
                           </span>
-                          <div role="toolbar" aria-label={translateInterface('{setting} actions', { setting: setting.label })} {...interfaceTextProps('{setting} actions')} style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                          <div role="toolbar" aria-label={translateInterface('{setting} actions', { setting: settingLabel })} {...interfaceTextProps('{setting} actions')} style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                             <button
                               type="button"
-                              aria-label={translateInterface('Reset {setting} to baseline', { setting: setting.label })}
+                              aria-label={translateInterface('Reset {setting} to baseline', { setting: settingLabel })}
                               onClick={() => updateSetting(setting, base, true)}
                               disabled={!dirty || save.isPending}
                               style={smallButtonStyle(dirty && !save.isPending)}
@@ -909,7 +913,7 @@ function RtorrentSettingsPanel() {
                             {saved !== null && (
                               <button
                                 type="button"
-                                aria-label={translateInterface('Set {setting} to saved value', { setting: setting.label })}
+                                aria-label={translateInterface('Set {setting} to saved value', { setting: settingLabel })}
                                 onClick={() => updateSetting(setting, inputValue(setting.value_type, saved), true)}
                                 disabled={save.isPending}
                                 style={smallButtonStyle(!save.isPending)}
@@ -920,7 +924,7 @@ function RtorrentSettingsPanel() {
                             {live !== null && (
                               <button
                                 type="button"
-                                aria-label={translateInterface('Set {setting} to live value', { setting: setting.label })}
+                                aria-label={translateInterface('Set {setting} to live value', { setting: settingLabel })}
                                 onClick={() => updateSetting(setting, inputValue(setting.value_type, live), true)}
                                 disabled={save.isPending}
                                 style={smallButtonStyle(!save.isPending)}
@@ -930,7 +934,7 @@ function RtorrentSettingsPanel() {
                             )}
                             <button
                               type="button"
-                              aria-label={translateInterface('Set {setting} to default value', { setting: setting.label })}
+                              aria-label={translateInterface('Set {setting} to default value', { setting: settingLabel })}
                               onClick={() => updateSetting(setting, inputValue(setting.value_type, setting.default_value), true)}
                               disabled={save.isPending}
                               style={smallButtonStyle(!save.isPending)}
@@ -939,15 +943,15 @@ function RtorrentSettingsPanel() {
                             </button>
                             <button
                               type="button"
-                              aria-label={translateInterface('Copy {setting} current value', { setting: setting.label })}
-                              onClick={() => copyText(formatSettingValue(value, setting.unit), translateInterface('{setting} value', { setting: setting.label }))}
+                              aria-label={translateInterface('Copy {setting} current value', { setting: settingLabel })}
+                              onClick={() => copyText(formatSettingValue(value, setting.unit), translateInterface('{setting} value', { setting: settingLabel }))}
                               style={smallButtonStyle(true)}
                             >
                               <LocalizedText source="Copy value" /></button>
                             <button
                               type="button"
-                              aria-label={translateInterface('Copy {setting} configuration commands', { setting: setting.label })}
-                              onClick={() => copyText(`${setting.command} / ${setting.setter}`, setting.label)}
+                              aria-label={translateInterface('Copy {setting} configuration commands', { setting: settingLabel })}
+                              onClick={() => copyText(`${setting.command} / ${setting.setter}`, settingLabel)}
                               style={smallButtonStyle(true)}
                             >
                               <LocalizedText source="Copy command" /></button>
@@ -1132,7 +1136,7 @@ function ChangeReview({ settings, draft, customRcDirty, values, saving }: {
               fontSize: 11,
               minWidth: 0,
             }}>
-              <span title={setting.command} style={{ color: 'var(--text)', fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{setting.label}</span>
+              <span title={setting.command} {...interfaceTextProps(setting.label)} style={{ color: 'var(--text)', fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{translateInterface(setting.label)}</span>
               <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 <LocalizedText source="From {value}" parameters={{ value: formatSettingValue(base, setting.unit) }} />
               </span>
@@ -1272,7 +1276,7 @@ function NumericKnob({ setting, value, describedBy, onChange, onPreset }: {
           value={Number.isFinite(value) ? value : min}
           onChange={e => onChange(Number(e.target.value))}
           style={{ width: '100%', accentColor: 'var(--accent)' }}
-          aria-label={translateInterface('{setting} slider', { setting: setting.label })}
+          aria-label={translateInterface('{setting} slider', { setting: translateInterface(setting.label) })}
           aria-describedby={describedBy}
           aria-valuetext={formatSettingValue(value, setting.unit)}
         />
@@ -1285,15 +1289,15 @@ function NumericKnob({ setting, value, describedBy, onChange, onPreset }: {
             value={Number.isFinite(value) ? value : min}
             onChange={e => onChange(Number(e.target.value))}
             style={inputStyle}
-            aria-label={translateInterface('{setting} value', { setting: setting.label })}
+            aria-label={translateInterface('{setting} value', { setting: translateInterface(setting.label) })}
             aria-describedby={describedBy}
           />
           {setting.unit && <span style={{ color: 'var(--faint)', fontSize: 11, fontWeight: 800 }}>{setting.unit}</span>}
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 5 }}>
-          <button type="button" aria-label={translateInterface('Set {setting} to minimum {value}', { setting: setting.label, value: formatSettingValue(min, setting.unit) })} onClick={() => onPreset(min)} style={miniPresetButtonStyle}><LocalizedText source="Min" /></button>
-          <button type="button" aria-label={translateInterface('Set {setting} to default {value}', { setting: setting.label, value: formatSettingValue(inputValue(setting.value_type, setting.default_value), setting.unit) })} onClick={() => onPreset(Number(inputValue(setting.value_type, setting.default_value)))} style={miniPresetButtonStyle}><LocalizedText source="Default" /></button>
-          <button type="button" aria-label={translateInterface('Set {setting} to maximum {value}', { setting: setting.label, value: formatSettingValue(max, setting.unit) })} onClick={() => onPreset(max)} style={miniPresetButtonStyle}><LocalizedText source="Max" /></button>
+          <button type="button" aria-label={translateInterface('Set {setting} to minimum {value}', { setting: translateInterface(setting.label), value: formatSettingValue(min, setting.unit) })} onClick={() => onPreset(min)} style={miniPresetButtonStyle}><LocalizedText source="Min" /></button>
+          <button type="button" aria-label={translateInterface('Set {setting} to default {value}', { setting: translateInterface(setting.label), value: formatSettingValue(inputValue(setting.value_type, setting.default_value), setting.unit) })} onClick={() => onPreset(Number(inputValue(setting.value_type, setting.default_value)))} style={miniPresetButtonStyle}><LocalizedText source="Default" /></button>
+          <button type="button" aria-label={translateInterface('Set {setting} to maximum {value}', { setting: translateInterface(setting.label), value: formatSettingValue(max, setting.unit) })} onClick={() => onPreset(max)} style={miniPresetButtonStyle}><LocalizedText source="Max" /></button>
         </div>
       </div>
     </div>
@@ -1311,7 +1315,7 @@ function BooleanKnob({ setting, value, describedBy, onChange }: {
       type="button"
       role="switch"
       aria-checked={value}
-      aria-label={setting.label}
+      aria-label={translateInterface(setting.label)}
       aria-describedby={describedBy}
       onClick={() => onChange(!value)}
       style={{
@@ -1636,7 +1640,7 @@ function Panel({ children, wide }: { children: React.ReactNode; wide?: boolean }
 
 function Rows({ rows }: { rows: [string, string][] }) {
   const { t } = useInterfaceLanguage()
-  const localizableValues = new Set(['yes', 'no', 'not applicable', 'not declared', 'none declared', 'none', 'default', 'unknown', 'unavailable'])
+  const localizableValues = new Set(['yes', 'no', 'not applicable', 'not declared', 'none declared', 'none', 'default', 'unknown', 'unavailable', 'torrentng client'])
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '160px minmax(0, 1fr)', gap: '6px 12px', fontSize: 12 }}>
       {rows.map(([k, v]) => (
