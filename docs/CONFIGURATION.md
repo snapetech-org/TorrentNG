@@ -76,9 +76,9 @@ peer sockets and restarts DHT on its corresponding port; an explicit
 | `device_elevator_enabled` | `true` | Enable per-device peer-read elevator scheduling where storage profiles benefit |
 | `file_pool_size` | `512` | Open-file cache entries shared by path-backed schedulers in one process/configuration; maximum `65536` |
 | `idle_file_ttl_secs` | `300` | Seconds before idle cached file handles are eligible to close |
-| `io_worker_threads` | `4` | Shared positioned-I/O worker threads for path-backed schedulers in one process/configuration; maximum `64` |
+| `io_worker_threads` | `2` | Shared positioned-I/O worker threads for path-backed schedulers in one process/configuration; maximum `64` |
 | `io_queue_depth` | `256` | Bounded positioned-I/O queue depth shared by those schedulers; maximum `16384` |
-| `hash_worker_threads` | `2` | Shared storage hash worker threads for path-backed schedulers in one process/configuration; maximum `64` |
+| `hash_worker_threads` | `1` | Shared storage hash worker threads for path-backed schedulers in one process/configuration; maximum `64` |
 | `hash_queue_depth` | `256` | Bounded hash queue depth shared by those schedulers; maximum `16384` |
 | `preallocation_mode` | `auto` | Payload preallocation mode: `off`, `auto`, `sparse`, or `full` |
 | `durability_mode` | `checkpoint` | Payload durability mode: `fast`, `checkpoint`, or `strict` |
@@ -131,7 +131,7 @@ crash instead of trusted, and the final save when a torrent exits always syncs. 
 | `queued_disk_cap_mb` | `64` | Queued disk/hash/elevator memory class cap |
 | `piece_assembly_cap_mb` | `0` | Incomplete piece assembly memory class cap; `0` disables in-memory assembly and writes verified blocks directly to storage |
 | `piece_index_cap_mb` | `128` | Persistent piece-picker, availability-index, and v1 piece-hash memory class cap |
-| `peer_buffer_cap_mb` | `128` | Peer state, rx/tx, upload, and webseed buffer memory class cap |
+| `peer_buffer_cap_mb` | `128` | Cap on peer-buffer bytes held by resource-governor leases. Outstanding-request payload capacity and command-queue capacity are reported as separate estimates and may overlap leased bytes. |
 | `metadata_cap_mb` | `32` | Metadata, tracker peer cache, DHT table, and API snapshot class baseline cap |
 | `pressure_constrained_pct` | `75` | Percent of total cap that reports constrained pressure |
 | `pressure_critical_pct` | `90` | Percent of total cap that reports critical pressure |
@@ -140,9 +140,25 @@ On Linux, `torrentngd` disables transparent huge pages for its own process at
 startup. This protects memory use when the host enables huge pages globally,
 without changing the host's setting or affecting other processes. Set
 `TORRENTNGD_DISABLE_THP=0` to skip the process-level policy; unset or invalid
-values keep it enabled. The packaged allocator still defaults to
-`MALLOC_CONF=thp:never`. To let jemalloc follow the host policy as well, set
-`MALLOC_CONF=thp:default` when opting out.
+values keep it enabled. The system allocator is the default build; jemalloc and
+mimalloc are opt-in build features. To build an alternative allocator with
+Cargo, select exactly one feature and disable defaults:
+
+```sh
+cargo build --release -p torrentngd --no-default-features --features jemalloc-allocator
+cargo build --release -p torrentngd --no-default-features --features mimalloc-allocator
+```
+
+The native Docker Compose build accepts the same feature names through
+`TORRENTNG_CARGO_FEATURES`:
+
+```sh
+TORRENTNG_CARGO_FEATURES=jemalloc-allocator \
+  docker compose -f deploy/native/compose.yml build torrentngd
+```
+
+For jemalloc builds, the container entrypoint defaults `MALLOC_CONF=thp:never`. Set
+`MALLOC_CONF=thp:default` to let jemalloc follow the host policy as well.
 
 The `queued_disk` memory class reports payload bytes reserved by queued or
 active disk, hash, and peer-read elevator jobs. Leases are acquired before

@@ -72,15 +72,28 @@ and downloaded files before importing, moving, or deleting data. Migration
 starts with a report; review it before using `--apply`. Some imported progress
 may need a full data check before another client can resume it.
 
-The dated [Debian ISO comparison and native memory investigation](certification/reports/native-memory-optimization-20261013-agentvm.md)
-measures public downloads, controlled seeding, and memory use against
-qBittorrent, Transmission, Deluge, and rTorrent. It records an optimization that
-cut TorrentNG's measured download anonymous-memory peak and documents where it
-still does not beat every peer. Each client has one sequential pass, so these
-results are a low-confidence comparison for the reported host and swarm window,
-not a general ranking. The earlier [unoptimized baseline](certification/reports/client-performance-benchmark-20261013.md)
-is retained for reference. Neither report proves a tested maximum torrent
-count. See the dated [release evidence](docs/RELEASE_EVIDENCE.md) for what was
+The dated [Debian ISO comparison and native memory investigation](certification/reports/native-memory-optimization-20261014-agentvm.md)
+records public download, controlled seeding, and anonymous memory against
+qBittorrent, Transmission, Deluge, and rTorrent. TorrentNG averaged 0.49 MiB/s
+on its one public-swarm pass, slower than the completed peers at 5.60–16.82
+MiB/s; in the controlled seed test it averaged 3.56 MiB/s, close to their
+3.61–3.74 MiB/s. Its measured anonymous peaks were 8.3 MiB in public download
+and 7.4 MiB while seeding. That was about 2.1–3.2 times less than qBittorrent
+and Transmission, and 11–12 times less than Deluge. The peer ratios combine
+sequential runs, with Transmission and Deluge measured in a later rerun; they
+are not a general ranking. A separate system-allocator run used less memory
+than the previous jemalloc run (18.8 MiB public / 25.3 MiB seed), while seed
+rates were 3.56 vs 3.66 MiB/s. This allocator comparison is not a concurrent
+A/B. A mimalloc follow-up used more anonymous memory (19.8 MiB public / 23.6
+MiB seed) and did not complete the public download within 30 minutes. A
+qBittorrent check right afterward completed in 39.6 seconds at 19.08 MiB/s,
+which flags a current TorrentNG download gap; sequential testing leaves the
+precise cause unresolved. The results do not show orders-of-magnitude savings
+against every peer; rTorrent did not start, and public swarm speeds varied
+sharply. The earlier
+[unoptimized baseline](certification/reports/client-performance-benchmark-20261013.md)
+is retained for reference. Neither report establishes a maximum torrent count.
+See the dated [release evidence](docs/RELEASE_EVIDENCE.md) for what was
 exercised and where.
 
 ## Learn more
@@ -91,7 +104,7 @@ exercised and where.
 - [Install on Unraid](deploy/unraid/README.md)
 - [Configuration](docs/CONFIGURATION.md)
 - [Migration and export](docs/MIGRATION.md)
-- [Client performance benchmark](docs/CLIENT_PERFORMANCE_BENCHMARK.md) · [dated comparison and memory investigation](certification/reports/native-memory-optimization-20261013-agentvm.md)
+- [Client performance benchmark](docs/CLIENT_PERFORMANCE_BENCHMARK.md) · [dated comparison and memory investigation](certification/reports/native-memory-optimization-20261014-agentvm.md)
 - [API and compatibility limits](docs/API.md) · [client matrices](docs/CLIENT_COMPATIBILITY_MATRICES.md)
 - [Backup and restore](docs/BACKUP_RESTORE.md)
 - [Documentation index](docs/README.md)

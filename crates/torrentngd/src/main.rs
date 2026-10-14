@@ -34,15 +34,9 @@ use rt_session::SessionRegistry;
 mod export;
 mod migrate;
 
-// `tikv-jemalloc-sys` reads this compile-time config before main(). Disabling
-// transparent huge-page extents avoids charging whole 2 MiB pages for the
-// daemon's small allocator arenas. The process-level policy below also covers
-// hosts whose global THP mode is `always`. MALLOC_CONF remains available for
-// allocator tuning. Keep background purge workers disabled by default; the
-// crate's runtime-support feature remains available to deployments that enable them.
-// The authenticated /metrics endpoint exposes allocator stats so live
-// allocations and allocator residency can be measured separately.
-#[cfg(target_os = "linux")]
+// `tikv-jemalloc-sys` reads this compile-time config before main(). It only
+// applies when Jemalloc is selected as the global allocator.
+#[cfg(all(target_os = "linux", feature = "jemalloc-allocator"))]
 #[allow(non_upper_case_globals)]
 #[export_name = "_rjem_malloc_conf"]
 static malloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
@@ -57,10 +51,31 @@ static malloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
     .c_char
 });
 
-// jemalloc is the Linux daemon's global allocator.
-#[cfg(target_os = "linux")]
+#[cfg(any(
+    all(feature = "system-allocator", feature = "jemalloc-allocator"),
+    all(feature = "system-allocator", feature = "mimalloc-allocator"),
+    all(feature = "jemalloc-allocator", feature = "mimalloc-allocator"),
+    not(any(
+        feature = "system-allocator",
+        feature = "jemalloc-allocator",
+        feature = "mimalloc-allocator"
+    ))
+))]
+compile_error!("select exactly one TorrentNG allocator feature");
+
+// System is the default. Alternative allocators are opt-in so measurements and
+// allocator-specific metrics cannot silently describe a different heap.
+#[cfg(feature = "system-allocator")]
+#[global_allocator]
+static GLOBAL: std::alloc::System = std::alloc::System;
+
+#[cfg(all(target_os = "linux", feature = "jemalloc-allocator"))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+#[cfg(all(target_os = "linux", feature = "mimalloc-allocator"))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[cfg(target_os = "linux")]
 fn parse_thp_disable_setting(value: Option<&[u8]>) -> Option<bool> {

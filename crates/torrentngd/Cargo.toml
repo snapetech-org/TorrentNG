@@ -10,6 +10,12 @@ license.workspace = true
 name = "torrentngd"
 path = "src/main.rs"
 
+[features]
+default = ["system-allocator"]
+system-allocator = []
+jemalloc-allocator = ["dep:tikv-jemallocator", "rt-api-native/jemalloc-stats"]
+mimalloc-allocator = ["dep:mimalloc"]
+
 [dependencies]
 tokio.workspace = true
 tracing.workspace = true
@@ -30,7 +36,7 @@ rt-db         = { path = "../rt-db" }
 rt-storage    = { path = "../rt-storage" }
 rt-migrate    = { path = "../rt-migrate" }
 rt-fastresume = { path = "../rt-fastresume" }
-rt-api-native = { path = "../rt-api-native", features = ["jemalloc-stats"] }
+rt-api-native = { path = "../rt-api-native" }
 rt-api-qbit   = { path = "../rt-api-qbit" }
 rt-api-model  = { path = "../rt-api-model" }
 rt-api-transmission = { path = "../rt-api-transmission" }
@@ -39,7 +45,8 @@ uuid.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true
-tikv-jemallocator = { version = "0.7.0", features = ["stats"] }
+tikv-jemallocator = { version = "0.7.0", features = ["stats"], optional = true }
+mimalloc = { version = "0.1.52", optional = true, default-features = false }
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -8173,7 +8173,7 @@ fn render_metrics_with_health(
         &mut out,
         "torrentng_peer_rx_buffer_bytes",
         "gauge",
-        "Expected peer receive buffer bytes reserved by outstanding block requests",
+        "Potential peer receive payload capacity from outstanding block requests; not a direct reading of allocated bytes",
         stats.peer_rx_buffer_bytes,
     );
     metric(
@@ -8196,6 +8196,23 @@ fn render_metrics_with_health(
         "gauge",
         "Total peer command queue capacity across active peer tasks",
         stats.peer_command_queue_capacity,
+    );
+    metric(
+        &mut out,
+        "torrentng_peer_command_queue_bytes",
+        "gauge",
+        "Estimated peer command queue capacity bytes; this estimate may overlap leased memory",
+        stats.peer_command_queue_bytes,
+    );
+    metric(
+        &mut out,
+        "torrentng_peer_buffer_estimated_bytes",
+        "gauge",
+        "Estimated peer request, upload-buffer, and command-queue bytes; may overlap leased memory and is not cap accounting",
+        stats
+            .peer_rx_buffer_bytes
+            .saturating_add(stats.peer_tx_buffer_bytes)
+            .saturating_add(stats.peer_command_queue_bytes),
     );
     metric(
         &mut out,
@@ -10603,6 +10620,7 @@ mod tests {
             peer_command_queue_depth: 51,
             peer_command_queue_capacity: 52,
             peer_command_queue_full: 53,
+            peer_command_queue_bytes: 43,
             tracker_peer_cache_entries: 43,
             tracker_peer_cache_drops: 44,
             ..Default::default()
@@ -10709,6 +10727,9 @@ mod tests {
         assert!(rendered.contains("torrentng_peer_tx_buffer_bytes 42"));
         assert!(rendered.contains("torrentng_peer_command_queue_depth 51"));
         assert!(rendered.contains("torrentng_peer_command_queue_capacity 52"));
+        assert!(rendered.contains("torrentng_peer_command_queue_bytes 43"));
+        assert!(rendered.contains("torrentng_peer_buffer_estimated_bytes 126"));
+        assert!(rendered.contains("torrentng_memory_class_used_bytes{class=\"peer_buffer\"} 0"));
         assert!(rendered.contains("torrentng_peer_command_queue_full_total 53"));
         assert!(rendered.contains("torrentng_tracker_peer_cache_entries 43"));
         assert!(rendered.contains("torrentng_tracker_peer_cache_drops_total 44"));

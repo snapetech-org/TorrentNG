@@ -184,6 +184,34 @@ class HttpClient:
 class Benchmark:
     def __init__(self):
         self.skip_build = env_enabled("TNG_CLIENT_BENCH_SKIP_BUILD")
+        allocator = os.environ.get("TNG_CLIENT_BENCH_ALLOCATOR", "system").strip().lower()
+        allocator_features = {
+            "system": "system-allocator",
+            "jemalloc": "jemalloc-allocator",
+            "mimalloc": "mimalloc-allocator",
+        }
+        if allocator not in allocator_features:
+            raise RuntimeError("TNG_CLIENT_BENCH_ALLOCATOR must be system, jemalloc, or mimalloc")
+        self.allocator = allocator
+        self.cargo_features = allocator_features[allocator]
+        self.mimalloc_purge_delay = optional_nonnegative_int(
+            "TNG_CLIENT_BENCH_MIMALLOC_PURGE_DELAY",
+        )
+        allow_thp = os.environ.get("TNG_CLIENT_BENCH_MIMALLOC_ALLOW_THP")
+        if allow_thp is not None and allow_thp.strip().lower() not in (
+            "1", "0", "true", "false", "yes", "no", "on", "off",
+        ):
+            raise RuntimeError(
+                "TNG_CLIENT_BENCH_MIMALLOC_ALLOW_THP must be a boolean value"
+            )
+        self.mimalloc_allow_thp = (
+            allow_thp.strip().lower() in ("1", "true", "yes", "on")
+            if allow_thp is not None else None
+        )
+        if self.allocator != "mimalloc" and (
+            self.mimalloc_purge_delay is not None or self.mimalloc_allow_thp is not None
+        ):
+            raise RuntimeError("MIMALLOC benchmark settings require TNG_CLIENT_BENCH_ALLOCATOR=mimalloc")
         self.prebuilt_image = os.environ.get(
             "TNG_CLIENT_BENCH_PREBUILT_IMAGE", "torrentng/torrentngd:interop",
         ).strip()
@@ -260,12 +288,33 @@ class Benchmark:
             self.workdir = Path(tempfile.mkdtemp(
                 prefix=f"torrentng-client-bench-{self.stamp}-", dir=scratch,
             ))
+        config_root_value = os.environ.get("TNG_CLIENT_BENCH_CONFIG_ROOT")
+        if config_root_value:
+            config_root = Path(config_root_value).expanduser()
+            if config_root.is_symlink():
+                raise RuntimeError(f"refusing symlink config root: {config_root}")
+            config_root = config_root.resolve()
+            if not config_root.is_dir() or not os.access(config_root, os.W_OK | os.X_OK):
+                raise RuntimeError(f"config root is not a writable directory: {config_root}")
+            self.config_dir = config_root / f"torrentng-client-bench-{self.stamp}"
+            if self.config_dir.exists() or self.config_dir.is_symlink():
+                raise RuntimeError(f"refusing pre-existing config directory: {self.config_dir}")
+        else:
+            self.config_dir = self.workdir / "config"
         self.project = "tngbench" + re.sub(r"[^a-z0-9]", "", self.stamp.lower())
         self.image = f"torrentng/torrentngd:benchmark-{self.stamp.lower()}"
         malloc_conf_override = os.environ.get("TNG_CLIENT_BENCH_MALLOC_CONF")
-        self.malloc_conf = (
-            malloc_conf_override.strip() if malloc_conf_override is not None else "thp:never"
-        )
+        if self.allocator == "jemalloc":
+            self.malloc_conf = (
+                malloc_conf_override.strip()
+                if malloc_conf_override is not None else "thp:never"
+            )
+        else:
+            if malloc_conf_override is not None:
+                raise RuntimeError(
+                    "TNG_CLIENT_BENCH_MALLOC_CONF requires TNG_CLIENT_BENCH_ALLOCATOR=jemalloc"
+                )
+            self.malloc_conf = None
         self.compose_override_path = None
         self.env = os.environ.copy()
         self.ports = {}
@@ -296,9 +345,10 @@ class Benchmark:
         self._env("INTEROP_MAX_PEERS", MAX_PEERS)
         self._env("INTEROP_RATE_BPS", RATE_BPS)
         self._env("INTEROP_SOURCE_REVISION", self._git("rev-parse", "HEAD"))
-        self._env("INTEROP_TORRENTNG_CONFIG", self.workdir / "config/torrentngd.config.toml")
-        self._env("INTEROP_RTORRENT_CONFIG", self.workdir / "config/rtorrent-benchmark.rc")
-        self._env("INTEROP_SEED_QBIT_CONFIG", self.workdir / "config/qbittorrent-seed")
+        self._env("INTEROP_CONFIG_DIR", self.config_dir)
+        self._env("INTEROP_TORRENTNG_CONFIG", self.config_dir / "torrentngd.config.toml")
+        self._env("INTEROP_RTORRENT_CONFIG", self.config_dir / "rtorrent-benchmark.rc")
+        self._env("INTEROP_SEED_QBIT_CONFIG", self.config_dir / "qbittorrent-seed")
         self._env("INTEROP_SEED_QBIT_DOWNLOAD_DIR", self.workdir / "leecher")
         self._env("TMPDIR", self.workdir / "tmp")
         self._env("INTEROP_CLIENT_BIND_ADDR", os.environ.get("TNG_CLIENT_BENCH_PEER_BIND", "0.0.0.0"))
@@ -332,6 +382,15 @@ class Benchmark:
         self.scratch_device, self.scratch_type = self._findmnt(self.workdir)
         self.source_commit = self._git("rev-parse", "HEAD")
         self.source_tree = self._git("rev-parse", "HEAD^{tree}")
+        (
+            self.source_dirty,
+            self.source_patch_sha256,
+            self.source_untracked_count,
+            self.source_untracked_sha256,
+            self.source_fingerprint_sha256,
+        ) = self._source_fingerprint()
+        self._env("INTEROP_SOURCE_FINGERPRINT", self.source_fingerprint_sha256)
+        self._env("INTEROP_TORRENTNG_CARGO_FEATURES", self.cargo_features)
         self.host = socket.gethostname()
         self.kernel = platform.release()
         self.machine = platform.machine()
@@ -369,6 +428,56 @@ class Benchmark:
     def _git(*args):
         return run_command(["git", *args], quiet=True)[0].strip()
 
+    def _source_fingerprint(self):
+        status = subprocess.run(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+        ).stdout
+        patch = subprocess.run(
+            [
+                "git", "diff", "--binary", "--full-index", "--no-ext-diff",
+                "--no-textconv", "--no-renames", "--no-color",
+                "--diff-algorithm=myers", "--no-indent-heuristic", "HEAD",
+            ],
+            cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+        ).stdout
+        untracked = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+            cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+        ).stdout
+        untracked_hash = hashlib.sha256()
+        untracked_paths = [raw for raw in untracked.split(b"\0") if raw]
+        for raw_path in sorted(untracked_paths):
+            path = ROOT / os.fsdecode(raw_path)
+            untracked_hash.update(len(raw_path).to_bytes(8, "big"))
+            untracked_hash.update(raw_path)
+            if path.is_symlink():
+                target = os.fsencode(os.readlink(path))
+                untracked_hash.update(b"symlink\0")
+                untracked_hash.update(target)
+            elif path.is_file():
+                untracked_hash.update(b"file\0")
+                with path.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        untracked_hash.update(chunk)
+            else:
+                untracked_hash.update(b"other\0")
+        patch_sha256 = hashlib.sha256(patch).hexdigest()
+        untracked_sha256 = untracked_hash.hexdigest()
+        fingerprint = hashlib.sha256()
+        for value in (
+            self.source_commit,
+            self.source_tree,
+            patch_sha256,
+            untracked_sha256,
+        ):
+            fingerprint.update(value.encode("ascii"))
+            fingerprint.update(b"\0")
+        return (
+            bool(status.strip()), patch_sha256, len(untracked_paths),
+            untracked_sha256, fingerprint.hexdigest(),
+        )
+
     def compose(self, *args, check=True, quiet=False, timeout=None):
         command = ["docker", "compose", "-p", self.project, "-f", str(COMPOSE_FILE)]
         if self.compose_override_path is not None:
@@ -396,8 +505,10 @@ class Benchmark:
         return json.loads(body) if body else None
 
     def prepare(self):
-        for rel in ("artifacts", "config", "downloads", "leecher", "logs", "tmp", "torrents", "watch/rtorrent"):
+        for rel in ("artifacts", "downloads", "leecher", "logs", "tmp", "torrents", "watch/rtorrent"):
             (self.workdir / rel).mkdir(parents=True, exist_ok=True)
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        self.config_dir.chmod(0o777)
         for client in CLIENTS:
             directory = self.workdir / "downloads" / client
             directory.mkdir(parents=True, exist_ok=True)
@@ -405,7 +516,15 @@ class Benchmark:
                 (directory / "public").mkdir(exist_ok=True)
             directory.chmod(0o777)
         (self.workdir / "downloads").chmod(0o777)
-        compose_environment = {"MALLOC_CONF": self.malloc_conf}
+        compose_environment = {}
+        if self.malloc_conf is not None:
+            compose_environment["MALLOC_CONF"] = self.malloc_conf
+        if self.mimalloc_purge_delay is not None:
+            compose_environment["MIMALLOC_PURGE_DELAY"] = str(self.mimalloc_purge_delay)
+        if self.mimalloc_allow_thp is not None:
+            compose_environment["MIMALLOC_ALLOW_THP"] = (
+                "1" if self.mimalloc_allow_thp else "0"
+            )
         if self.tokio_worker_threads is not None:
             compose_environment["TOKIO_WORKER_THREADS"] = str(self.tokio_worker_threads)
         if compose_environment:
@@ -438,7 +557,7 @@ class Benchmark:
             ])
 
     def _prepare_qbit_config(self):
-        path = self.workdir / "config/qbittorrent/qBittorrent/qBittorrent.conf"
+        path = self.config_dir / "qbittorrent/qBittorrent/qBittorrent.conf"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             "[BitTorrent]\n"
@@ -453,7 +572,7 @@ class Benchmark:
         )
 
     def _prepare_seed_qbit_config(self, client):
-        path = self.workdir / "config/qbittorrent-seed" / client / "qBittorrent/qBittorrent.conf"
+        path = self.config_dir / "qbittorrent-seed" / client / "qBittorrent/qBittorrent.conf"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             "[BitTorrent]\n"
@@ -525,7 +644,7 @@ class Benchmark:
                 text = text[:section.start(1)] + body + text[section.end(1):]
             else:
                 text = text.rstrip() + "\n\n[memory]\n" + "\n".join(memory_overrides) + "\n"
-        path = self.workdir / "config/torrentngd.config.toml"
+        path = self.config_dir / "torrentngd.config.toml"
         path.write_text(text)
         path.chmod(0o600)
 
@@ -537,10 +656,10 @@ class Benchmark:
             f"throttle.global_down.max_rate.set_kb = {RATE_BPS // 1024}",
             f"throttle.global_up.max_rate.set_kb = {RATE_BPS // 1024}",
         ]
-        path = self.workdir / "config/rtorrent-benchmark.rc"
+        path = self.config_dir / "rtorrent-benchmark.rc"
         path.write_text(base + "\n" + "\n".join(additions) + "\n")
         path.chmod(0o644)
-        rtorrent_config = self.workdir / "config/rtorrent"
+        rtorrent_config = self.config_dir / "rtorrent"
         rtorrent_config.mkdir(parents=True, exist_ok=True)
         (rtorrent_config / "session").mkdir(exist_ok=True)
 
@@ -615,7 +734,7 @@ class Benchmark:
             raise RuntimeError("Deluge WebUI did not establish its daemon connection")
 
     def _scgi(self, method, *params):
-        path = self.workdir / "config/rtorrent/scgi.sock"
+        path = self.config_dir / "rtorrent/scgi.sock"
         if not path.exists():
             raise RuntimeError(f"rTorrent SCGI socket does not exist: {path}")
         body = xmlrpc.client.dumps(params, methodname=method, allow_none=True).encode()
@@ -674,7 +793,7 @@ class Benchmark:
                     self._deluge_connect()
                     return
                 else:
-                    path = self.workdir / "config/rtorrent/scgi.sock"
+                    path = self.config_dir / "rtorrent/scgi.sock"
                     if path.exists():
                         self._scgi("system.client_version")
                         return
@@ -682,6 +801,15 @@ class Benchmark:
                     RuntimeError, ValueError, xmlrpc.client.Error):
                 pass
             time.sleep(2)
+        if client == "rtorrent":
+            cid = self.service_id(client)
+            if cid:
+                output, _ = run_command(
+                    ["docker", "logs", "--tail", "80", cid],
+                    env=self.env, check=False, quiet=True, timeout=10,
+                )
+                if output.strip():
+                    print("rTorrent startup log tail:\n" + output.rstrip(), flush=True)
         raise RuntimeError(f"timed out waiting for {LABELS[client]}")
 
     def _torrentng_request(self, path, *, data=None, headers=None):
@@ -1138,6 +1266,14 @@ class Benchmark:
         self.memory_profile.write_text(json.dumps({
             "schema_version": 1,
             "source_commit": self.source_commit,
+            "source_tree": self.source_tree,
+            "source_dirty": self.source_dirty,
+            "source_patch_sha256": self.source_patch_sha256,
+            "source_untracked_count": self.source_untracked_count,
+            "source_untracked_sha256": self.source_untracked_sha256,
+            "source_fingerprint_sha256": self.source_fingerprint_sha256,
+            "cargo_features": self.cargo_features,
+            "allocator": self.allocator,
             "host": self.host,
             "memory_samples": samples,
             "process_memory_snapshots": self.process_memory_snapshots,
@@ -1148,8 +1284,10 @@ class Benchmark:
                 "cgroup_memory_anon": "Container anonymous memory from memory.stat.",
                 "torrentng_process_rss": "Host /proc RSS for torrentngd when available; zero means unavailable.",
                 "process_memory_snapshots": "TorrentNG /proc status, thread names, smaps totals, and the 20 largest resident mappings captured with cgroup samples.",
-                "engine_metrics": "TorrentNG resource-governor, peer-buffer, storage-pool and jemalloc metrics sampled during transfer and at phase boundaries.",
-                "jemalloc_metrics": "jemalloc allocated/active/resident/mapped/retained gauges sampled during TorrentNG phases; metrics are unavailable if jemalloc statistics are not compiled or supported.",
+                "engine_metrics": "TorrentNG resource-governor leases, estimated peer-buffer capacities, storage-pool gauges, and optional allocator metrics sampled during transfer and at phase boundaries.",
+                "jemalloc_metrics": "Jemalloc allocator gauges are present only when the jemalloc-allocator feature is selected. They describe Jemalloc's allocator state, not total process allocations or RSS.",
+                "source_fingerprint": "SHA-256 derived from commit/tree, a normalized full-index Git diff, and all non-ignored untracked file paths and contents at benchmark start.",
+                "process_memory": "Linux /proc RSS, anonymous RSS, file RSS, thread count, and smaps samples are process-level readings; allocator gauges do not replace them.",
             },
         }, indent=2) + "\n")
 
@@ -1383,7 +1521,7 @@ class Benchmark:
     def _start_seed_leecher(self, torrent_path, seeder):
         client = "seed_leecher"
         # Reuse the same controlled infohash with a fresh helper state for each seeder.
-        client_config = self.workdir / "config/qbittorrent-seed" / seeder
+        client_config = self.config_dir / "qbittorrent-seed" / seeder
         self._env("INTEROP_SEED_QBIT_CONFIG", client_config)
         self._prepare_seed_qbit_config(seeder)
         self.sessions[client] = HttpClient(self.api_url(client))
@@ -1742,6 +1880,7 @@ class Benchmark:
         self._write_memory_profile()
         load_end = os.getloadavg()
         load_peak = max((float(row[10]) for row in self.samples), default=self.load_start[0])
+        config_device, config_type = self._findmnt(self.config_dir)
 
         def mib(value):
             return f"{value / 1048576:.1f}" if value else "n/a"
@@ -1781,8 +1920,8 @@ class Benchmark:
             "- The TorrentNG image was built from the recorded checkout. Reference "
             "images are pinned by digest in deploy/interop/compose.yml."
             if not self.skip_build else
-            f"- The TorrentNG image {self.prebuilt_image} carries the recorded source revision label. "
-            "Reference images are pinned by digest in deploy/interop/compose.yml."
+            f"- The TorrentNG image {self.prebuilt_image} carries matching source, fingerprint, "
+            "and allocator labels. Reference images are pinned by digest in deploy/interop/compose.yml."
         )
         lines = [
             f"# TorrentNG and reference client performance: {meta['iso_name']}",
@@ -1790,14 +1929,22 @@ class Benchmark:
             f"- Started (UTC): {self.started}",
             f"- TorrentNG source commit: {self.source_commit}",
             f"- TorrentNG source tree: {self.source_tree}",
+            f"- TorrentNG worktree dirty: {'yes' if self.source_dirty else 'no'}",
+            f"- TorrentNG tracked diff SHA-256: {self.source_patch_sha256}",
+            f"- TorrentNG untracked files: {self.source_untracked_count}; content SHA-256: {self.source_untracked_sha256}",
+            f"- TorrentNG source fingerprint SHA-256: {self.source_fingerprint_sha256}",
             f"- Host: {self.host}; {self.cpu_count} logical CPUs; "
             f"{self.mem_total / 1073741824:.1f} GiB RAM; "
             f"{self.mem_available / 1073741824:.1f} GiB available at start; "
             f"Linux {self.kernel} ({self.machine})",
             f"- Docker: {self.docker_version}; {self.compose_version}",
             f"- Scratch filesystem: {self.scratch_device} ({self.scratch_type})",
-            f"- TorrentNG MALLOC_CONF: {self.malloc_conf or 'jemalloc defaults'}",
-            f"- TorrentNG build mode: {'prebuilt ' + self.prebuilt_image + ' (revision verified)' if self.skip_build else 'built from this checkout'}",
+            f"- Config filesystem: {config_device} ({config_type})",
+            f"- TorrentNG allocator: {self.allocator} ({self.cargo_features})",
+            f"- TorrentNG MALLOC_CONF: {self.malloc_conf if self.malloc_conf is not None else 'not applicable'}",
+            f"- TorrentNG mimalloc purge delay: {self.mimalloc_purge_delay if self.allocator == 'mimalloc' and self.mimalloc_purge_delay is not None else ('allocator default' if self.allocator == 'mimalloc' else 'not applicable')}",
+            f"- TorrentNG mimalloc THP override: {self.mimalloc_allow_thp if self.allocator == 'mimalloc' and self.mimalloc_allow_thp is not None else ('allocator default' if self.allocator == 'mimalloc' else 'not applicable')}",
+            f"- TorrentNG build mode: {'prebuilt ' + self.prebuilt_image + ' (source, fingerprint, and allocator verified)' if self.skip_build else 'built from this checkout; image labels verified'}",
             f"- Requested TorrentNG runtime/storage worker overrides: {runtime_overrides}",
             f"- Requested TorrentNG memory-cap overrides: {memory_cap_overrides}",
             "- Peak `tokio-rt-worker`-named threads by phase (async + blocking): "
@@ -1875,7 +2022,7 @@ class Benchmark:
             "",
             "## Memory profile",
             "",
-            "Memory uses the container cgroup and Docker working-set counter, sampled at the transfer interval. Anonymous memory excludes charged file cache, so these columns help separate process/runtime growth from data caching. TorrentNG process RSS and its engine allocation counters are in the linked profile. `n/a` means the runtime did not expose that counter.",
+            "Memory uses the container cgroup and Docker working-set counter, sampled at the transfer interval. Anonymous memory excludes charged file cache, so these columns help separate process/runtime growth from data caching. TorrentNG process RSS, engine resource-governor leases, peer-buffer estimates, and (for Jemalloc builds only) allocator metrics are in the linked profile. Allocator counters do not replace process RSS. `n/a` means the runtime did not expose that counter.",
             "",
             "| Client | Idle container mean (MiB) | Idle anonymous mean (MiB) | Download peak container (MiB) | Download peak anonymous (MiB) | Seed peak container (MiB) | Seed peak anonymous (MiB) |",
             "|---|---:|---:|---:|---:|---:|---:|",
@@ -1913,8 +2060,9 @@ class Benchmark:
             "from client payload counters. CPU is Docker CPU percent, where "
             "100% represents one logical core. Each client has an idle baseline "
             f"sampled for {IDLE_SAMPLE_SECONDS:g} seconds before adding a torrent. "
-            "Cgroup anonymous/file memory and TorrentNG engine allocation metrics help "
-            "attribute the sampled container footprint.",
+            "Cgroup anonymous/file memory and TorrentNG process/engine metrics help "
+            "attribute the sampled container footprint. Jemalloc counters appear only "
+            "when that allocator is selected and do not represent total process allocations.",
             f"- Public download uses the current public Debian swarm with a {DOWNLOAD_TIMEOUT}s "
             "completion timeout. Controlled seeding "
             "uses a private task-local tracker and one qBittorrent leecher on the same "
@@ -1946,26 +2094,32 @@ class Benchmark:
         self.report.parent.mkdir(parents=True, exist_ok=True)
         self.report.write_text("\n".join(lines))
 
-    def _use_prebuilt_image(self):
-        image_revision, code = run_command(
+    def _assert_image_labels(self, image):
+        labels, code = run_command(
             [
                 "docker", "image", "inspect", "--format",
-                '{{index .Config.Labels "org.opencontainers.image.revision"}}',
-                self.prebuilt_image,
+                '{{index .Config.Labels "org.opencontainers.image.revision"}}|'
+                '{{index .Config.Labels "org.torrentng.source.fingerprint"}}|'
+                '{{index .Config.Labels "org.torrentng.cargo.features"}}',
+                image,
             ],
             env=self.env, check=False, quiet=True,
         )
         if code != 0:
-            raise RuntimeError(f"prebuilt image is not available: {self.prebuilt_image}")
-        image_revision = image_revision.strip()
-        if image_revision != self.source_commit:
+            raise RuntimeError(f"TorrentNG image is not available: {image}")
+        actual = labels.strip().split("|", 2)
+        expected = [self.source_commit, self.source_fingerprint_sha256, self.cargo_features]
+        if actual != expected:
             raise RuntimeError(
-                "prebuilt image source revision does not match the checkout: "
-                f"{image_revision or 'unlabeled'} != {self.source_commit}"
+                f"TorrentNG image metadata does not match this benchmark checkout: "
+                f"{actual!r} != {expected!r}"
             )
+
+    def _use_prebuilt_image(self):
+        self._assert_image_labels(self.prebuilt_image)
         run_command(["docker", "image", "tag", self.prebuilt_image, self.image], env=self.env)
         print(
-            f"Using prebuilt image {self.prebuilt_image} verified at {self.source_commit}",
+            f"Using prebuilt image {self.prebuilt_image}; source and allocator labels verified",
             flush=True,
         )
 
@@ -1982,6 +2136,7 @@ class Benchmark:
             if shutil.which(required) is None:
                 raise RuntimeError(f"missing required command: {required}")
         print(f"Scratch: {self.workdir}", flush=True)
+        print(f"Config scratch: {self.config_dir}", flush=True)
         print(f"Compose project: {self.project}", flush=True)
         self.prepare()
         if "torrentngd" in CLIENTS:
@@ -1989,6 +2144,7 @@ class Benchmark:
                 self._use_prebuilt_image()
             else:
                 self.compose("build", "torrentngd", timeout=3600)
+                self._assert_image_labels(self.image)
         tracker_ip = self._start_tracker()
         meta = self._torrent_metadata()
         if self.seed_source_override is not None:
@@ -2057,6 +2213,14 @@ class Benchmark:
                 shutil.rmtree(self.workdir)
         except Exception as error:
             self.cleanup_status += f"; scratch cleanup error: {type(error).__name__}: {error}"
+        if self.config_dir.parent != self.workdir:
+            try:
+                if self.config_dir.exists() and not self.config_dir.is_symlink():
+                    shutil.rmtree(self.config_dir)
+            except Exception as error:
+                self.cleanup_status += (
+                    f"; config scratch cleanup error: {type(error).__name__}: {error}"
+                )
         if not self.report.exists():
             self.report.parent.mkdir(parents=True, exist_ok=True)
             lines = [
@@ -2096,7 +2260,8 @@ deploy/interop/compose.yml.
 
 Environment:
   TNG_CLIENT_BENCH_CLIENTS=torrentngd,qbittorrent,... (default: all five)
-  TNG_CLIENT_BENCH_SKIP_BUILD=1 (use a prebuilt image with the exact source revision)
+  TNG_CLIENT_BENCH_ALLOCATOR=system|jemalloc|mimalloc (default: system)
+  TNG_CLIENT_BENCH_SKIP_BUILD=1 (use an image with matching commit, source fingerprint, and allocator labels)
   TNG_CLIENT_BENCH_PREBUILT_IMAGE=torrentng/torrentngd:interop
   TNG_CLIENT_BENCH_SEED_SOURCE=/path/to/verified/debian.iso
   TNG_CLIENT_BENCH_REPORT=/path/to/report.md
@@ -2112,6 +2277,8 @@ Environment:
   TNG_CLIENT_BENCH_SAMPLE_SECS=2
   TNG_CLIENT_BENCH_IDLE_SAMPLE_SECS=8
   TNG_CLIENT_BENCH_PEER_BIND=0.0.0.0
+  TNG_CLIENT_BENCH_MIMALLOC_PURGE_DELAY=0
+  TNG_CLIENT_BENCH_MIMALLOC_ALLOW_THP=0
   TNG_CLIENT_BENCH_TOKIO_WORKER_THREADS=2
   TNG_CLIENT_BENCH_STORAGE_IO_WORKER_THREADS=2
   TNG_CLIENT_BENCH_STORAGE_HASH_WORKER_THREADS=1
