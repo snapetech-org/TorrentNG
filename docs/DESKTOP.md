@@ -30,7 +30,7 @@ Desktop app ──(loopback, bearer token)──► torrentngd  ◄── browse
 
 ## Install
 
-Download from the [releases page](https://github.com/snapetech/TorrentNG/releases)
+Download from the [releases page](https://github.com/snapetech-org/TorrentNG/releases)
 and verify against `SHA256SUMS-<tag>.txt`.
 
 | OS | File | Install |

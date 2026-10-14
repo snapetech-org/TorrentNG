@@ -80,8 +80,8 @@ container_scanning:native:
 
 .github_publication_defaults:
   variables:
-    GITHUB_MIRROR_URL: "git@github.com:snapetech/TorrentNG.git"
-    GITHUB_REPOSITORY: "snapetech/TorrentNG"
+    GITHUB_MIRROR_URL: "git@github.com:snapetech-org/TorrentNG.git"
+    GITHUB_REPOSITORY: "snapetech-org/TorrentNG"
 
 # External publication is intentionally gated on all earlier GitLab stages.
 # Set GITHUB_MIRROR_SSH_KEY, GITHUB_TOKEN, and GHCR_TOKEN in GitLab CI as needed.

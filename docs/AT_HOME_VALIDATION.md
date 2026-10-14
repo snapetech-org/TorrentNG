@@ -16,7 +16,7 @@ From a Linux host with Docker and the target storage available. If the
 repository is not already cloned on that host:
 
 ```sh
-git clone https://github.com/snapetech/torrentng.git
+git clone https://github.com/snapetech-org/torrentng.git
 cd torrentng
 ```
 
