@@ -31,7 +31,7 @@ function fmtSize(bytes: number): string {
 }
 
 function fmtSpeed(bps: number): string {
-  return bps > 0 ? `${fmtSize(bps)}/s` : '0 B/s'
+  return bps > 0 ? `${fmtSize(bps)}/s` : `${formatRegionalNumber(0)} B/s`
 }
 
 function statusFor(t: TorrentSummary): Status {

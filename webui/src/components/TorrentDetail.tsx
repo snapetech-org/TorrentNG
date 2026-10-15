@@ -21,7 +21,7 @@ function fmtDate(ts: number): string {
 }
 
 function fmtSpeed(bps: number): string {
-  if (!bps) return '0 B/s'
+  if (!bps) return `${formatRegionalNumber(0)} B/s`
   return `${fmtSize(bps)}/s`
 }
 
