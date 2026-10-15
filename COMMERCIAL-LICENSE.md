@@ -22,4 +22,4 @@ Unless you have a separate signed commercial license, your use of this
 software is governed solely by AGPL-3.0-or-later under [LICENSE](LICENSE).
 
 To inquire about commercial licensing, open an issue at
-<https://github.com/snapetech/TorrentNG/issues>.
+<https://github.com/snapetech-org/TorrentNG/issues>.

@@ -4,7 +4,7 @@ Release:        1%{?dist}
 Summary:        TorrentNG Engine: native Rust BitTorrent client with the shared WebUI/API
 
 License:        GPL-3.0-or-later
-URL:            https://github.com/snapetech/TorrentNG
+URL:            https://github.com/snapetech-org/TorrentNG
 Source0:        torrentngd-native-main-0-linux-x86_64.tar.gz
 Source1:        torrentngd.service
 Source2:        torrentngd.sysusers

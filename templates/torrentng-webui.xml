@@ -7,7 +7,7 @@
   <Privileged>false</Privileged>
   <Shell>sh</Shell>
 
-  <Icon>https://raw.githubusercontent.com/snapetech/TorrentNG/main/icon.png</Icon>
+  <Icon>https://raw.githubusercontent.com/snapetech-org/TorrentNG/main/icon.png</Icon>
 
   <WebUI>http://[IP]:[PORT:8080]</WebUI>
 
@@ -31,10 +31,10 @@ The image supports runtime PUID/PGID handling. This template defaults to Unraid'
   <Category>Downloaders:</Category>
   <Category>Network:Web</Category>
 
-  <Support>https://github.com/snapetech/TorrentNG/issues</Support>
-  <Project>https://github.com/snapetech/TorrentNG</Project>
-  <TemplateURL>https://raw.githubusercontent.com/snapetech/TorrentNG/main/templates/torrentng-webui.xml</TemplateURL>
-  <ReadMe>https://raw.githubusercontent.com/snapetech/TorrentNG/main/deploy/unraid/README.md</ReadMe>
+  <Support>https://github.com/snapetech-org/TorrentNG/issues</Support>
+  <Project>https://github.com/snapetech-org/TorrentNG</Project>
+  <TemplateURL>https://raw.githubusercontent.com/snapetech-org/TorrentNG/main/templates/torrentng-webui.xml</TemplateURL>
+  <ReadMe>https://raw.githubusercontent.com/snapetech-org/TorrentNG/main/deploy/unraid/README.md</ReadMe>
 
   <ExtraSearchTerms>rutorrent replacement webui bittorrent rtorrent qbittorrent transmission deluge prowlarr sonarr radarr autobrr cross-seed</ExtraSearchTerms>
   <Requires>An existing rTorrent, qBittorrent, Transmission, or Deluge install reachable on your network. Set Secret Key and API Tokens before first start; use an API Token in either WebUI login field. To retrieve the TorrentNG login, open Unraid's Docker tab, click this container's icon, choose Console, and run `torrentng auth-token`. Backend credentials do not log in to TorrentNG.</Requires>

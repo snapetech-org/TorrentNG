@@ -1368,7 +1368,7 @@ function SettingsView({ section, onSection, mediaInference, onMediaInference, th
             gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
           }}>
             <SupportCard icon="☊" title={translateInterface("Discord support")} href="https://discord.gg/5PyXBfvS6T" detail={translateInterface("Community support and release discussion")} />
-            <SupportCard icon="⌘" title={translateInterface("GitHub project")} href="https://github.com/snapetech/TorrentNG" detail={translateInterface("Source, issues, and deployment files")} />
+            <SupportCard icon="⌘" title={translateInterface("GitHub project")} href="https://github.com/snapetech-org/TorrentNG" detail={translateInterface("Source, issues, and deployment files")} />
             <button type="button" onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: '?' }))} style={{
               ...supportButton, width: '100%', minHeight: 72, textAlign: 'left',
               display: 'grid', gridTemplateColumns: '32px 1fr', alignItems: 'center',
@@ -1593,7 +1593,7 @@ function LoginScreen({ message, onLogin }: {
           }} {...interfaceTextProps("Sign-in instructions")}>
             <LocalizedText source="Login help:" />{' '}
             <a
-              href="https://github.com/snapetech/TorrentNG/blob/main/README.md#try-the-torrentng-engine"
+              href="https://github.com/snapetech-org/TorrentNG/blob/main/README.md#try-the-torrentng-engine"
               target="_blank"
               rel="noopener noreferrer"
               style={helpLinkStyle}
@@ -1601,7 +1601,7 @@ function LoginScreen({ message, onLogin }: {
               Docker Engine</a>
             {' · '}
             <a
-              href="https://github.com/snapetech/TorrentNG/blob/main/docs/NATIVE_DEPLOYMENT.md#webui-login"
+              href="https://github.com/snapetech-org/TorrentNG/blob/main/docs/NATIVE_DEPLOYMENT.md#webui-login"
               target="_blank"
               rel="noopener noreferrer"
               style={helpLinkStyle}
@@ -1609,7 +1609,7 @@ function LoginScreen({ message, onLogin }: {
               <LocalizedText source="Linux / Kubernetes" /></a>
             {' · '}
             <a
-              href="https://github.com/snapetech/TorrentNG/blob/main/sidecar/README.md#webui-login"
+              href="https://github.com/snapetech-org/TorrentNG/blob/main/sidecar/README.md#webui-login"
               target="_blank"
               rel="noopener noreferrer"
               style={helpLinkStyle}
@@ -1617,7 +1617,7 @@ function LoginScreen({ message, onLogin }: {
               <LocalizedText source="Docker + existing client" /></a>
             {' · '}
             <a
-              href="https://github.com/snapetech/TorrentNG/blob/main/deploy/unraid/README.md#webui-login"
+              href="https://github.com/snapetech-org/TorrentNG/blob/main/deploy/unraid/README.md#webui-login"
               target="_blank"
               rel="noopener noreferrer"
               style={helpLinkStyle}
@@ -1626,7 +1626,7 @@ function LoginScreen({ message, onLogin }: {
             </a>
             {' · '}
             <a
-              href="https://github.com/snapetech/TorrentNG/blob/main/packaging/yunohost/doc/POST_INSTALL.md#first-sign-in"
+              href="https://github.com/snapetech-org/TorrentNG/blob/main/packaging/yunohost/doc/POST_INSTALL.md#first-sign-in"
               target="_blank"
               rel="noopener noreferrer"
               style={helpLinkStyle}

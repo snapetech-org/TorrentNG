@@ -98,14 +98,14 @@ For a manual installation, use the template for the mode you want:
 1. Docker tab -> **Add Container**.
 2. In the **Template** field at the top, paste the raw GitHub URL of the
    template you want, e.g.
-   `https://raw.githubusercontent.com/snapetech/TorrentNG/main/templates/torrentng-webui.xml`.
+   `https://raw.githubusercontent.com/snapetech-org/TorrentNG/main/templates/torrentng-webui.xml`.
 3. The form populates from the template. Fill in the required fields
    (Secret Key, API Tokens, and the backend URL/credentials for
    `torrentng-webui`; the API Token and Config path for `torrentng`) and
    Apply.
 
 For the native engine, use
-[`templates/torrentng.xml`](https://raw.githubusercontent.com/snapetech/TorrentNG/main/templates/torrentng.xml).
+[`templates/torrentng.xml`](https://raw.githubusercontent.com/snapetech-org/TorrentNG/main/templates/torrentng.xml).
 
 ## Storage and permissions
 
@@ -123,6 +123,6 @@ backends report degraded health while reconnecting.
 
 ## Support
 
-Use the [TorrentNG issue tracker](https://github.com/snapetech/TorrentNG/issues)
+Use the [TorrentNG issue tracker](https://github.com/snapetech-org/TorrentNG/issues)
 for installation and runtime problems. Include your template choice, image
 version, selected backend, and relevant logs with credentials removed.

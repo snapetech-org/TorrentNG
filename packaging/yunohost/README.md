@@ -20,7 +20,7 @@ is maintained in a separate YunoHost repository.
 Install the current package branch directly with YunoHost's package tooling:
 
 ```sh
-sudo yunohost app install https://github.com/snapetech/torrentng_ynh --debug
+sudo yunohost app install https://github.com/snapetech-org/torrentng_ynh --debug
 ```
 
 The `tests.toml` file is intentionally minimal. The official package CI should

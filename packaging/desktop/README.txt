@@ -12,4 +12,4 @@ Settings live in:
   macOS    ~/Library/Application Support/TorrentNG Desktop/config.toml
   Windows  %APPDATA%\TorrentNG Desktop\config.toml
 
-Docs: https://github.com/snapetech/TorrentNG/blob/main/docs/DESKTOP.md
+Docs: https://github.com/snapetech-org/TorrentNG/blob/main/docs/DESKTOP.md
