@@ -61,15 +61,17 @@ cd ..
 ```
 
 CI also runs declared Rust MSRV builds, bounded fuzz smoke, dependency audits,
-backup/restore, and fault/load jobs. After the local checks pass, open a pull
-request and wait for every required GitHub check before merging. Opening the PR
-starts hosted test and evidence jobs; do this when you are ready for those runs.
+backup/restore, and fault/load jobs. After the local checks pass, follow the
+current `main` merge rules: open a pull request and wait for its required checks
+when those rules require it, or push directly when they allow it. The hosted
+checks start through the route required by those rules.
 
 ## 3. Pin hardware evidence to the merged commit
 
-After the required checks pass and the PR is merged, update to the exact `main`
-commit that the release would use. Run the hardware and release evidence below
-against this clean commit, not the earlier feature-branch SHA:
+After the required checks pass and the changes reach `main` through the allowed
+merge route, update to the exact commit that the release would use. Run the
+hardware and release evidence below against this clean commit, not the earlier
+feature-branch SHA:
 
 ```sh
 git switch main
