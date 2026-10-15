@@ -1,9 +1,7 @@
 # Release-note fragments
 
-Add one new Markdown fragment for each user-facing feature, bug fix, security
-change, operational behavior change, or user-facing documentation change.
-Fragments are append-only: create a new file instead of editing one that has
-already shipped.
+For any user-facing change, add one structured fragment under `release-notes/` describing it. A
+single fragment may cover related user-facing changes in the same pull request. Keep shipped fragments unchanged.
 
 ```md
 ---
@@ -22,9 +20,10 @@ area, required action (or `none`), and breaking-change status. Write the body fo
 the person using or operating TorrentNG; keep it between 30 and 400 characters,
 start with a capitalized sentence, and end with punctuation.
 
-The pull-request and main-branch checks require a valid fragment or the exact
-opt-out marker `release-note: none` on its own line for internal-only work. For
-direct commits, put the marker on its own line in the commit message. The tag
+For internal-only work, no fragment is needed. In a pull request, either select the internal-only
+option in the template or put `release-note: none` on its own line in the description. When a
+direct push or merge check reads commit messages, put the same marker on its own line in the
+commit message. The tag
 workflow assembles fragments since the previous published release and uses the
 same text for the GitHub release and Discord announcement. If a release range
 contains no user-facing changes, its release page says so explicitly.
