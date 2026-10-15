@@ -1,3 +1,5 @@
+import { LocalizedErrorText, LocalizedText } from '../lib/LocalizedText'
+import { interfaceTextProps, translateInterface } from '../lib/interfaceLocale'
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -45,8 +47,8 @@ export function UserAgentPanel() {
   if (!supported) {
     return (
       <section aria-labelledby="user-agent-title" style={{ padding: '18px 20px', maxWidth: 680 }}>
-        <h2 id="user-agent-title" style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>Client Identifier</h2>
-        <div role="status" style={noticeStyle}>The selected backend does not support runtime tracker user-agent changes.</div>
+        <h2 id="user-agent-title" style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)' }}><LocalizedText source="Client Identifier" /></h2>
+        <div role="status" style={noticeStyle}><LocalizedText source="The selected backend does not support runtime tracker user-agent changes." /></div>
       </section>
     )
   }
@@ -56,21 +58,19 @@ export function UserAgentPanel() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
         <div>
           <h2 id="user-agent-title" style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>
-            Client Identifier
-          </h2>
+            <LocalizedText source="Client Identifier" /></h2>
           <div style={{ color: 'var(--faint)', fontSize: 12, marginTop: 3 }}>
-            Tracker-facing user agent
-          </div>
+            <LocalizedText source="User agent sent to trackers" /></div>
         </div>
         {isDirty && <span style={{
           color: 'var(--warning)', background: 'color-mix(in srgb, var(--warning) 10%, var(--surface))',
           border: '1px solid color-mix(in srgb, var(--warning) 45%, var(--border))',
           borderRadius: 999, padding: '2px 8px', fontSize: 11, fontWeight: 700,
-        }}>Unsaved</span>}
+        }}><LocalizedText source="Unsaved" /></span>}
       </div>
 
       <div className="tng-card tng-identity-panel" data-dirty={isDirty ? 'true' : 'false'} style={panelStyle}>
-        <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text)', marginBottom: 10 }}>Preset identity</div>
+        <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text)', marginBottom: 10 }}><LocalizedText source="Preset identity" /></div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
           {PRESETS.map(p => (
             <button
@@ -89,7 +89,7 @@ export function UserAgentPanel() {
         </div>
 
         <label style={{ display: 'grid', gap: 5 }}>
-          <span style={labelStyle}>Custom user agent</span>
+          <span style={labelStyle}><LocalizedText source="Custom user agent" /></span>
           <input
             id="custom-user-agent"
             ref={inputRef}
@@ -97,7 +97,7 @@ export function UserAgentPanel() {
             value={draft}
             onChange={e => setDraft(e.target.value)}
             disabled={mutation.isPending}
-            placeholder={isLoading ? 'Loading…' : 'user-agent string'}
+            placeholder={translateInterface(isLoading ? 'Loading…' : 'User agent string')}
             style={{
               width: '100%',
               background: 'var(--bg)',
@@ -110,14 +110,14 @@ export function UserAgentPanel() {
               outline: 'none',
               boxSizing: 'border-box',
             }}
-          />
+          {...interfaceTextProps(isLoading ? 'Loading…' : 'User agent string')} />
         </label>
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 10 }}>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {isCustom && draft && <Pill tone="info">Custom value</Pill>}
-            {saved && <Pill tone="ok">Applied</Pill>}
-            {mutation.isPending && <Pill tone="info">Applying</Pill>}
+            {isCustom && draft && <Pill tone="info"><LocalizedText source="Custom value" /></Pill>}
+            {saved && <Pill tone="ok"><LocalizedText source="Applied" /></Pill>}
+            {mutation.isPending && <Pill tone="info"><LocalizedText source="Applying" /></Pill>}
           </div>
           <button
             type="button"
@@ -125,19 +125,19 @@ export function UserAgentPanel() {
             disabled={!isDirty || mutation.isPending || !draft.trim()}
             style={applyButton(Boolean(isDirty) && !mutation.isPending && Boolean(draft.trim()))}
           >
-            {mutation.isPending ? 'Applying…' : 'Apply'}
+            {mutation.isPending ? <LocalizedText source="Applying…" /> : <LocalizedText source="Apply" />}
           </button>
         </div>
 
         {mutation.isError && (
           <div role="alert" aria-live="assertive" style={noticeStyle}>
-            {mutation.error instanceof Error ? mutation.error.message : 'Failed'}
+            {mutation.error instanceof Error ? <LocalizedErrorText message={mutation.error.message} /> : <LocalizedText source="Failed" />}
           </div>
         )}
       </div>
 
       <div className="tng-metric-tile" style={currentStyle}>
-        <span style={{ color: 'var(--faint)', fontWeight: 800, textTransform: 'uppercase', fontSize: 10 }}>Current</span>
+        <span style={{ color: 'var(--faint)', fontWeight: 800, textTransform: 'uppercase', fontSize: 10 }}><LocalizedText source="Current" /></span>
         <span style={{ fontFamily: 'monospace', color: 'var(--muted)', overflowWrap: 'anywhere' }}>{data?.user_agent ?? '…'}</span>
       </div>
     </section>

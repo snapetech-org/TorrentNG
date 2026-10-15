@@ -1,3 +1,4 @@
+import { useInterfaceLanguage } from './interfaceLocale'
 import { useState } from 'react'
 
 /**
@@ -37,6 +38,7 @@ const BTN: React.CSSProperties = {
  * real, unmasked URL regardless of reveal state.
  */
 export function TrackerUrl({ url, mono = true }: { url: string; mono?: boolean }) {
+  const { t, textProps } = useInterfaceLanguage()
   const [revealed, setRevealed] = useState(false)
   const [copied, setCopied] = useState(false)
   if (!url) return <span>-</span>
@@ -59,15 +61,15 @@ export function TrackerUrl({ url, mono = true }: { url: string; mono?: boolean }
           fontFamily: mono ? 'monospace' : undefined,
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
         }}
-        title={revealed ? url : 'Passkey hidden - click Show to reveal'}
+        title={revealed ? url : t('Credential hidden — select Show to reveal')}
       >
         {revealed ? url : maskAnnounceUrl(url)}
       </span>
-      <button type="button" onClick={() => setRevealed(v => !v)} style={BTN} title={revealed ? 'Hide credential' : 'Reveal credential'}>
-        {revealed ? 'Hide' : 'Show'}
+      <button type="button" onClick={() => setRevealed(v => !v)} style={BTN} title={t(revealed ? 'Hide credential' : 'Reveal credential')} {...textProps(revealed ? 'Hide credential' : 'Reveal credential')}>
+        {revealed ? <span {...textProps('Hide')}>{t('Hide')}</span> : <span {...textProps('Show')}>{t('Show')}</span>}
       </button>
-      <button type="button" onClick={copy} style={BTN} title="Copy the real tracker URL">
-        {copied ? 'Copied' : 'Copy'}
+      <button type="button" onClick={copy} style={BTN} title={t("Copy the real tracker URL")} {...textProps("Copy the real tracker URL")}>
+        {copied ? <span {...textProps('Copied')}>{t('Copied')}</span> : <span {...textProps('Copy')}>{t('Copy')}</span>}
       </button>
     </span>
   )

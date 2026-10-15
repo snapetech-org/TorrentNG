@@ -24,36 +24,42 @@ const MODES: Array<{ value: MediaInferenceMode; label: string; description: stri
 ]
 
 export function AppearancePanel({ mediaInference, onMediaInference, themes = [], themeId, themeMode = 'dark', onTheme, onThemeMode, regionalFormat, onRegionalFormat }: Props) {
-  const { language, setLanguage, t } = useInterfaceLanguage()
+  const { language, setLanguage, t, textProps } = useInterfaceLanguage()
   const alternateMode: ThemeMode = themeMode === 'dark' ? 'light' : 'dark'
+  const localized = (source: string, parameters?: Record<string, string | number>) => (
+    <span {...textProps(source)}>{t(source, parameters)}</span>
+  )
 
   return (
     <section aria-labelledby="appearance-title" style={{ padding: 18 }}>
-      <h2 id="appearance-title" style={{ margin: '0 0 4px', fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{t("Appearance")}</h2>
-      <div style={{ fontSize: 12, color: 'var(--faint)', marginBottom: 14 }}>
-        Configure presentation-only behavior for this browser.
+      <h2 id="appearance-title" {...textProps('Appearance')} style={{ margin: '0 0 4px', fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{t("Appearance")}</h2>
+      <div {...textProps('Configure presentation-only behavior for this browser.')} style={{ fontSize: 12, color: 'var(--faint)', marginBottom: 14 }}>
+        {t('Configure presentation-only behavior for this browser.')}
       </div>
 
       <div className="tng-card tng-appearance-panel" style={{ ...panelStyle, marginBottom: 12 }}>
-        <label htmlFor="interface-language" lang={language} dir={language === 'ar' ? 'rtl' : 'ltr'} style={{ display: 'grid', gap: 6, color: 'var(--text)', fontSize: 12, fontWeight: 700, marginBottom: 12 }}>
-          {t("Interface language")}
+        <label htmlFor="interface-language" {...textProps('Interface language')} style={{ display: 'grid', gap: 6, color: 'var(--text)', fontSize: 12, fontWeight: 700, marginBottom: 12 }}>
+          {localized('Interface language')}
           <select id="interface-language" value={language} onChange={event => setLanguage(event.currentTarget.value as InterfaceLanguage)} style={{ color: 'var(--text)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 5, padding: '8px 9px', font: 'inherit' }}>
             {INTERFACE_LANGUAGE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
         </label>
-        <div lang={language} dir={language === 'ar' ? 'rtl' : 'ltr'} style={{ fontSize: 11, color: 'var(--faint)', marginTop: -8, marginBottom: 10 }}>{t("Translations currently cover navigation and language settings; most other screens are still in English.")}</div>
-        <label htmlFor="regional-format" style={{ display: 'grid', gap: 6, color: 'var(--text)', fontSize: 12, fontWeight: 700 }}>
-          {t("Date, time, and number format")}
+        <label htmlFor="regional-format" {...textProps('Date, time, and number format')} style={{ display: 'grid', gap: 6, color: 'var(--text)', fontSize: 12, fontWeight: 700 }}>
+          {localized('Date, time, and number format')}
           <select
             id="regional-format"
             value={regionalFormat}
             onChange={event => onRegionalFormat(event.currentTarget.value)}
             style={{ color: 'var(--text)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 5, padding: '8px 9px', font: 'inherit' }}
           >
-            {REGIONAL_FORMAT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+            {REGIONAL_FORMAT_OPTIONS.map(option => (
+              <option key={option.value} value={option.value}>
+                {option.value === 'system' ? t(option.label) : option.label}
+              </option>
+            ))}
           </select>
         </label>
-        <div style={{ fontSize: 11, color: 'var(--faint)', marginTop: 5 }}>
+        <div {...textProps('Choose how dates, times, and numbers are displayed. This setting is separate from interface language.')} style={{ fontSize: 11, color: 'var(--faint)', marginTop: 5 }}>
           {t("Choose how dates, times, and numbers are displayed. This setting is separate from interface language.")}
         </div>
       </div>
@@ -62,26 +68,28 @@ export function AppearancePanel({ mediaInference, onMediaInference, themes = [],
         <div className="tng-card tng-appearance-panel" style={{ ...panelStyle, marginBottom: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
             <div>
-              <h3 style={{ margin: 0, fontSize: 12, color: 'var(--text)', fontWeight: 800 }}>Theme palette</h3>
-              <div style={{ fontSize: 11, color: 'var(--faint)', marginTop: 2 }}>Preview the full shell colors used by each theme.</div>
+              <h3 {...textProps('Theme palette')} style={{ margin: 0, fontSize: 12, color: 'var(--text)', fontWeight: 800 }}>{t('Theme palette')}</h3>
+              <div {...textProps('Preview the full shell colors used by each theme.')} style={{ fontSize: 11, color: 'var(--faint)', marginTop: 2 }}>{t('Preview the full shell colors used by each theme.')}</div>
             </div>
             <button
               type="button"
               onClick={() => onThemeMode?.(alternateMode)}
-              aria-label={`Switch to ${alternateMode} theme`}
+              aria-label={t('Switch to {mode} theme', { mode: t(alternateMode === 'dark' ? 'Dark' : 'Light') })}
+              {...textProps('Switch to {mode} theme')}
               aria-pressed={themeMode === 'dark'}
               style={{
                 color: 'var(--accent-text)', background: 'var(--accent-soft)', border: '1px solid var(--accent)',
                 borderRadius: 999, padding: '3px 9px', fontSize: 11, fontWeight: 800, cursor: 'pointer',
               }}
             >
-              {themeMode === 'dark' ? 'Dark' : 'Light'}
+              <span {...textProps(themeMode === 'dark' ? 'Dark' : 'Light')}>{t(themeMode === 'dark' ? 'Dark' : 'Light')}</span>
             </button>
           </div>
 
           <div className="tng-theme-gallery">
             {themes.map(theme => {
               const tokens = theme[themeMode]
+              const themeLabel = t(theme.label)
               const active = theme.id === themeId
               return (
                 <button
@@ -89,7 +97,8 @@ export function AppearancePanel({ mediaInference, onMediaInference, themes = [],
                   type="button"
                   className="tng-theme-card"
                   data-active={active ? 'true' : 'false'}
-                  aria-label={`${theme.label} theme${active ? ', active' : ''}`}
+                  aria-label={t(active ? 'Active theme {name}' : 'Select theme {name}', { name: themeLabel })}
+                  {...textProps(active ? 'Active theme {name}' : 'Select theme {name}')}
                   aria-pressed={active}
                   onClick={() => onTheme?.(theme.id)}
                   style={{
@@ -112,8 +121,8 @@ export function AppearancePanel({ mediaInference, onMediaInference, themes = [],
                     <span className="tng-theme-card-row" />
                   </span>
                   <span className="tng-theme-card-label">
-                    <span>{theme.label}</span>
-                    {active && <span>Active</span>}
+                    <span {...textProps(theme.label)}>{themeLabel}</span>
+                    {active && <span {...textProps('Active')}>{t('Active')}</span>}
                   </span>
                 </button>
               )
@@ -125,15 +134,15 @@ export function AppearancePanel({ mediaInference, onMediaInference, themes = [],
       <div className="tng-card tng-appearance-panel" style={panelStyle}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
           <div>
-            <h3 style={{ margin: 0, fontSize: 12, color: 'var(--text)', fontWeight: 800 }}>Media type inference</h3>
-            <div style={{ fontSize: 11, color: 'var(--faint)', marginTop: 2 }}>Controls the icon and type filters only.</div>
+              <h3 {...textProps('Media type inference')} style={{ margin: 0, fontSize: 12, color: 'var(--text)', fontWeight: 800 }}>{t('Media type inference')}</h3>
+              <div {...textProps('Controls the icon and type filters only.')} style={{ fontSize: 11, color: 'var(--faint)', marginTop: 2 }}>{t('Controls the icon and type filters only.')}</div>
           </div>
           <span style={{
             color: 'var(--accent-text)', background: 'var(--accent-soft)', border: '1px solid var(--accent)',
             borderRadius: 999, padding: '2px 8px', fontSize: 11, fontWeight: 800,
-          }}>{MODES.find(mode => mode.value === mediaInference)?.label}</span>
+          }} {...textProps(MODES.find(mode => mode.value === mediaInference)?.label ?? 'Full')}>{t(MODES.find(mode => mode.value === mediaInference)?.label ?? 'Full')}</span>
         </div>
-        <div role="radiogroup" aria-label="Media type inference mode">
+        <div role="radiogroup" aria-label={t('Media type inference mode')} {...textProps('Media type inference mode')}>
         {MODES.map(mode => (
           <label key={mode.value} className="tng-appearance-option" data-active={mediaInference === mode.value ? 'true' : 'false'} style={{
             display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 10, alignItems: 'start',
@@ -144,20 +153,21 @@ export function AppearancePanel({ mediaInference, onMediaInference, themes = [],
             <input
               type="radio"
               name="mediaInference"
-              aria-label={mode.label}
+              aria-label={t(mode.label)}
+              {...textProps(mode.label)}
               checked={mediaInference === mode.value}
               onChange={() => onMediaInference(mode.value)}
               style={{ accentColor: 'var(--accent)', marginTop: 2 }}
             />
             <span>
-              <span style={{ display: 'block', color: 'var(--text)', fontSize: 13, fontWeight: 600 }}>{mode.label}</span>
-              <span style={{ display: 'block', color: 'var(--faint)', fontSize: 12, marginTop: 2 }}>{mode.description}</span>
+              <span {...textProps(mode.label)} style={{ display: 'block', color: 'var(--text)', fontSize: 13, fontWeight: 600 }}>{t(mode.label)}</span>
+              <span {...textProps(mode.description)} style={{ display: 'block', color: 'var(--faint)', fontSize: 12, marginTop: 2 }}>{t(mode.description)}</span>
             </span>
             {mediaInference === mode.value && (
               <span style={{
                 color: 'var(--accent-text)', background: 'var(--accent-soft)', border: '1px solid var(--accent)',
                 borderRadius: 999, padding: '1px 7px', fontSize: 10, fontWeight: 700,
-              }}>Active</span>
+              }} {...textProps('Active')}>{t('Active')}</span>
             )}
           </label>
         ))}

@@ -1,3 +1,5 @@
+import { LocalizedText } from '../lib/LocalizedText'
+import { interfaceTextProps, useInterfaceLanguage } from '../lib/interfaceLocale'
 import { formatRegionalNumber, getRegionalLocale } from '../lib/localeFormat'
 import { useState } from 'react'
 import type { LiveStats, StorageRoot } from '../api/client'
@@ -15,15 +17,17 @@ interface Props {
   utpTitle?: string
   utpEnabled?: boolean
   togglingFeature?: 'dht' | 'pex' | null
-  featureError?: string | null
-  actionMessage?: string | null
+  featureError?: InterfaceMessage | null
+  actionMessage?: InterfaceMessage | null
   actionTone?: 'ok' | 'error'
   onToggleDht?: () => void
   onTogglePex?: () => void
 }
 
+type InterfaceMessage = { source: string; parameters?: Record<string, string | number> }
+
 function fmtSpeed(bps: number): string {
-  if (!bps) return '0 B/s'
+  if (!bps) return formatRegionalNumber(0) + ' B/s'
   if (bps >= 1e9) return formatRegionalNumber(bps / 1e9, { maximumFractionDigits: 1 }) + ' GB/s'
   if (bps >= 1e6) return formatRegionalNumber(bps / 1e6, { maximumFractionDigits: 1 }) + ' MB/s'
   if (bps >= 1e3) return formatRegionalNumber(bps / 1e3, { maximumFractionDigits: 0 }) + ' KB/s'
@@ -54,19 +58,26 @@ function themedTone(color: string): { color: string; bg: string; border: string 
 }
 
 function Badge({
-  label, value, title, state, onClick, disabled, meter,
+  label, value, valueSuffix, title, state, onClick, disabled, meter,
 }: {
   label: string
   value: string
+  valueSuffix?: string
   title?: string
   state?: string
   onClick?: () => void
   disabled?: boolean
   meter?: number
 }) {
-  const t = tone(state)
+  const { language, t, textProps } = useInterfaceLanguage()
+  const colors = tone(state)
   const Element = onClick && !disabled ? 'button' : 'span'
   const handleClick = disabled ? undefined : onClick
+  const localizedLabel = t(label)
+  const stateLabels = new Set(['connected', 'connecting', 'starting', 'disconnected', 'unknown', 'on', 'off', 'open', 'closed', 'listening'])
+  const localizedValue = stateLabels.has(value)
+    ? language === 'en' ? value : t(value[0].toUpperCase() + value.slice(1))
+    : value
   return (
     <Element
       className="tng-status-badge"
@@ -75,7 +86,7 @@ function Badge({
       role={onClick ? 'switch' : undefined}
       aria-checked={onClick ? state === 'on' : undefined}
       aria-disabled={disabled || undefined}
-      aria-label={onClick ? `${label}: ${value}. Activate to toggle` : undefined}
+      aria-label={onClick ? t('{label}: {value}. Activate to toggle', { label: localizedLabel, value: localizedValue }) : undefined}
       title={title}
       onClick={handleClick}
       style={{
@@ -84,10 +95,10 @@ function Badge({
       gap: 5,
       minHeight: 22,
       padding: '0 8px',
-      border: `1px solid ${t.border}`,
+      border: `1px solid ${colors.border}`,
       borderRadius: 6,
-      background: t.bg,
-      color: t.color,
+      background: colors.bg,
+      color: colors.color,
       whiteSpace: 'nowrap',
       fontVariantNumeric: 'tabular-nums',
       cursor: onClick && !disabled ? 'pointer' : 'default',
@@ -95,12 +106,12 @@ function Badge({
       opacity: disabled ? 0.7 : 1,
     }}>
       <span aria-hidden="true" style={{
-        width: 6, height: 6, borderRadius: 999, background: t.color,
-        boxShadow: `0 0 0 2px color-mix(in srgb, ${t.color} 12%, transparent)`,
+        width: 6, height: 6, borderRadius: 999, background: colors.color,
+        boxShadow: `0 0 0 2px color-mix(in srgb, ${colors.color} 12%, transparent)`,
         flex: '0 0 auto',
       }} />
-      <span style={{ color: 'var(--faint)' }}>{label}</span>
-      <span>{value}</span>
+      <span style={{ color: 'var(--faint)' }} {...textProps(label)}>{localizedLabel}</span>
+      <span {...(stateLabels.has(value) ? textProps(value[0].toUpperCase() + value.slice(1)) : {})}>{localizedValue}{valueSuffix}</span>
       {meter !== undefined && (
         <span aria-hidden="true" style={{
           position: 'absolute', left: 6, right: 6, bottom: 3, height: 2,
@@ -109,7 +120,7 @@ function Badge({
         }}>
           <span style={{
             display: 'block', width: `${Math.min(100, Math.max(0, meter))}%`, height: '100%',
-            background: t.color,
+            background: colors.color,
           }} />
         </span>
       )}
@@ -117,7 +128,7 @@ function Badge({
   )
 }
 
-function Notice({ tone, children }: { tone: 'ok' | 'error'; children: React.ReactNode }) {
+function Notice({ tone, message, children }: { tone: 'ok' | 'error'; message?: InterfaceMessage; children?: React.ReactNode }) {
   return (
     <span role={tone === 'error' ? 'alert' : 'status'} aria-live={tone === 'error' ? 'assertive' : 'polite'} style={{
       display: 'inline-flex', alignItems: 'center', gap: 5, minHeight: 22,
@@ -129,7 +140,7 @@ function Notice({ tone, children }: { tone: 'ok' | 'error'; children: React.Reac
       whiteSpace: 'nowrap',
     }}>
       <span>{tone === 'error' ? '!' : '✓'}</span>
-      <span>{children}</span>
+      <span>{message ? <LocalizedText source={message.source} parameters={message.parameters} /> : children}</span>
     </span>
   )
 }
@@ -138,6 +149,7 @@ export function StatusBar({
   loaded, total, selected, stats, backendType, backendStatus, cached, storage, togglingFeature, onToggleDht, onTogglePex,
   featureError, actionMessage, actionTone = 'ok', utpLabel, utpTitle, utpEnabled,
 }: Props) {
+  const { t } = useInterfaceLanguage()
   const [mobileExpanded, setMobileExpanded] = useState(false)
   const connected = backendStatus === 'connected'
   const rendered = Math.min(loaded, total)
@@ -148,13 +160,13 @@ export function StatusBar({
     ? (storage.used_bytes / storage.total_bytes) * 100
     : undefined
   const storageTitle = storage?.ok
-    ? `${fmtBytes(storage.available_bytes)} free on ${storage.path}`
-    : storage?.error ?? 'Storage status unavailable'
+    ? t('Free space on {path}: {size}', { size: fmtBytes(storage.available_bytes), path: storage.path })
+    : storage?.error ?? t('Storage status unavailable')
 
   return (
     <footer
       className="tng-statusbar"
-      aria-label="Application status"
+      aria-label={t("Application status")}
       data-connected={connected ? 'true' : 'false'}
       data-selected={selected > 0 ? 'true' : 'false'}
       data-mobile-expanded={mobileExpanded ? 'true' : 'false'}
@@ -162,26 +174,26 @@ export function StatusBar({
       minHeight: 38, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12,
       padding: '0 12px', background: 'var(--bg)', borderTop: '1px solid var(--border-strong)',
       color: 'var(--faint)', fontSize: 11, overflowX: 'auto',
-    }}>
+    }} {...interfaceTextProps("Application status")}>
       <div className="tng-statusbar-summary" style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 'max-content' }}>
-        <Badge label={backendType} value={connected ? 'connected' : 'disconnected'} state={connected ? 'on' : 'closed'} />
+        <Badge label={backendType === 'torrentng' ? 'TorrentNG client' : backendType === 'backend' ? 'backend' : backendType} value={connected ? 'connected' : 'disconnected'} state={connected ? 'on' : 'closed'} />
       </div>
       <div className="tng-statusbar-counts" style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 'max-content' }}>
         <Badge label="Torrents" value={total.toLocaleString(getRegionalLocale())} state="idle" />
         {rendered !== total && <Badge label="Rendered" value={rendered.toLocaleString(getRegionalLocale())} state="idle" />}
         {cached !== undefined && <Badge label="Cached" value={cached.toLocaleString(getRegionalLocale())} state="idle" />}
         {selected > 0 && <Badge label="Selected" value={selected.toLocaleString(getRegionalLocale())} state="on" />}
-        {featureError && <Notice tone="error">{featureError}</Notice>}
-        {actionMessage && <Notice tone={actionTone}>{actionMessage}</Notice>}
+        {featureError && <Notice tone="error" message={featureError} />}
+        {actionMessage && <Notice tone={actionTone} message={actionMessage} />}
       </div>
-      <nav className="tng-status-support" aria-label="Support TorrentNG">
-        <span>Keep seeding</span>
+      <nav className="tng-status-support" aria-label={t("Support TorrentNG")} {...interfaceTextProps("Support TorrentNG")}>
+        <span><LocalizedText source="Keep seeding" /></span>
         <a
           href="https://ko-fi.com/snapetech"
           target="_blank"
           rel="noreferrer"
-          title="Support TorrentNG development on Ko-fi"
-        >Ko-fi</a>
+          title={t("Support TorrentNG development on Ko-fi")}
+         {...interfaceTextProps("Support TorrentNG development on Ko-fi")}>Ko-fi</a>
       </nav>
       <span className="tng-statusbar-spacer" style={{ flex: 1 }} />
       <div className="tng-statusbar-live" style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 'max-content' }}>
@@ -198,11 +210,11 @@ export function StatusBar({
           color: 'var(--muted)', padding: '2px 8px', fontSize: 11, cursor: 'pointer', minWidth: 'max-content',
         }}
       >
-        {mobileExpanded ? 'Less ▴' : 'More ▾'}
+        {mobileExpanded ? <LocalizedText source="Less ▴" /> : <LocalizedText source="More ▾" />}
       </button>
       <div className="tng-statusbar-metrics" style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 'max-content' }}>
-        <Badge label="DL total" value={fmtBytes(stats.download_total)} title="Downloaded since the daemon last started (not a lifetime total)" state="on" />
-        <Badge label="UL total" value={fmtBytes(stats.upload_total)} title="Uploaded since the daemon last started (not a lifetime total)" state="on" />
+        <Badge label="Total downloaded" value={fmtBytes(stats.download_total)} title={t("Downloaded since the daemon last started (not a lifetime total)")} state="on" />
+        <Badge label="Total uploaded" value={fmtBytes(stats.upload_total)} title={t("Uploaded since the daemon last started (not a lifetime total)")} state="on" />
         <Badge
           label="Disk"
           value={storageLabel}
@@ -211,20 +223,21 @@ export function StatusBar({
           meter={storagePct}
         />
         <Badge
-          label="Conn"
-          value={`${(stats.connections ?? 0).toLocaleString(getRegionalLocale())}${stats.pending_connections ? ` +${stats.pending_connections}` : ''}`}
-          title="Established and pending peer sockets on the incoming port"
+          label="Connections"
+          value={`${(stats.connections ?? 0).toLocaleString(getRegionalLocale())}${stats.pending_connections ? ` +${formatRegionalNumber(stats.pending_connections)}` : ''}`}
+          title={t("Established and pending peer sockets on the incoming port")}
           state={(stats.connections ?? 0) > 0 ? 'on' : 'unknown'}
         />
         <Badge
-          label="FW"
-          value={`${stats.firewall ?? 'unknown'}${stats.listen_port ? ` :${stats.listen_port}` : ''}`}
-          title="Incoming port listener state inferred from live TCP sockets"
+          label="Firewall"
+          value={stats.firewall ?? 'unknown'}
+          valueSuffix={stats.listen_port ? ` :${stats.listen_port}` : ''}
+          title={t("Incoming port listener state inferred from live TCP sockets")}
           state={stats.firewall}
         />
         <Badge
           label="DHT"
-          title="Toggle runtime backend DHT"
+          title={t("Toggle runtime backend DHT")}
           state={stats.dht}
           disabled={togglingFeature === 'dht'}
           value={togglingFeature === 'dht' ? '...' : (stats.dht ?? 'unknown')}
@@ -232,7 +245,7 @@ export function StatusBar({
         />
         <Badge
           label="PEX"
-          title="Toggle runtime backend peer exchange"
+          title={t("Toggle runtime backend peer exchange")}
           state={stats.pex}
           disabled={togglingFeature === 'pex'}
           value={togglingFeature === 'pex' ? '...' : (stats.pex ?? 'unknown')}

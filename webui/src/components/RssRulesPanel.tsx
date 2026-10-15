@@ -1,4 +1,6 @@
-import { getRegionalLocale } from '../lib/localeFormat'
+import { LocalizedErrorText, LocalizedText } from '../lib/LocalizedText'
+import { useInterfaceLanguage } from '../lib/interfaceLocale'
+import { formatRegionalNumber } from '../lib/localeFormat'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -19,12 +21,16 @@ const EMPTY: RssRule = {
 }
 
 export function RssRulesPanel() {
+  const { t, textProps } = useInterfaceLanguage()
   const qc = useQueryClient()
   const [draft, setDraft] = useState<RssRule>(EMPTY)
   const [sampleTitle, setSampleTitle] = useState('')
   const [sampleLink, setSampleLink] = useState('')
   const [matches, setMatches] = useState<RssRuleMatch[]>([])
-  const [applyResult, setApplyResult] = useState<string | null>(null)
+  const [applyResult, setApplyResult] = useState<{
+    source: string
+    parameters: Record<string, string | number>
+  } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState<string | null>(null)
   const { data: rules = [], isLoading } = useQuery({
@@ -95,10 +101,21 @@ export function RssRulesPanel() {
       const matchedCount = result.matched_total ?? result.applied_total ?? result.applied.length
       const appliedCount = result.applied_total ?? result.applied.length
       const errorCount = result.errors_total ?? result.errors.length
-      const summary = result.dry_run
-        ? `${matchedCount} matched`
-        : `${matchedCount} matched, ${appliedCount} applied`
-      setApplyResult(`${result.dry_run ? 'Preview' : 'Apply'}: ${summary}, ${errorCount} error(s)`)
+      const source = result.dry_run
+        ? errorCount === 1
+          ? 'Preview: {matched} matched, {count} error'
+          : 'Preview: {matched} matched, {count} errors'
+        : errorCount === 1
+          ? 'Apply: {matched} matched, {applied} applied, {count} error'
+          : 'Apply: {matched} matched, {applied} applied, {count} errors'
+      setApplyResult({
+        source,
+        parameters: {
+          matched: formatRegionalNumber(matchedCount),
+          applied: formatRegionalNumber(appliedCount),
+          count: formatRegionalNumber(errorCount),
+        },
+      })
     } catch (e) {
       setError(String(e))
     } finally {
@@ -110,51 +127,54 @@ export function RssRulesPanel() {
     <section aria-labelledby="rss-rules-title" aria-busy={Boolean(pending) || isLoading} style={{ padding: '18px 24px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
         <div>
-          <h2 id="rss-rules-title" style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>RSS Rules</h2>
+          <h2 id="rss-rules-title" style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)' }}><LocalizedText source="RSS Rules" /></h2>
           <div style={{ fontSize: 12, color: 'var(--faint)', marginTop: 2 }}>
-            {rules.length.toLocaleString(getRegionalLocale())} configured · {matches.length.toLocaleString(getRegionalLocale())} match results
+            <LocalizedText source="{rules} configured · {matches} match results" parameters={{
+              rules: formatRegionalNumber(rules.length),
+              matches: formatRegionalNumber(matches.length),
+            }} />
           </div>
         </div>
-        {pending && <Busy label={pending.replace(/^__|__$/g, '') || 'Working'} />}
+        {pending && <Busy label={t(pending === '__save__' ? 'Saving' : pending === '__test__' ? 'Testing' : pending === '__preview__' ? 'Previewing' : pending === '__apply__' ? 'Applying' : rules.some(rule => rule.id === pending) ? 'Deleting' : 'Working')} />}
       </div>
       <PanelBox>
-        <h3 style={{ margin: '0 0 10px', fontSize: 12, fontWeight: 800, color: 'var(--text)' }}>Rule builder</h3>
+        <h3 style={{ margin: '0 0 10px', fontSize: 12, fontWeight: 800, color: 'var(--text)' }}><LocalizedText source="Rule builder" /></h3>
         <div style={scrollX}>
           <div style={{ display: 'grid', gridTemplateColumns: '130px minmax(240px, 1fr) 130px 120px 120px auto', gap: 8, minWidth: 850, maxWidth: 1080, marginBottom: 10 }}>
-            <Field label="Name"><Input value={draft.name} placeholder="new releases" onChange={name => setDraft({ ...draft, name })} /></Field>
-            <Field label="Feed URL"><Input value={draft.feed_url} placeholder="https://..." onChange={feed_url => setDraft({ ...draft, feed_url })} /></Field>
-            <Field label="Include"><Input value={draft.include} placeholder="required text" onChange={include => setDraft({ ...draft, include })} /></Field>
-            <Field label="Exclude"><Input value={draft.exclude ?? ''} placeholder="optional" onChange={exclude => setDraft({ ...draft, exclude })} /></Field>
-            <Field label="Category"><Input value={draft.category ?? ''} placeholder="optional" onChange={category => setDraft({ ...draft, category })} /></Field>
+            <Field label={<LocalizedText source="Name" />}><Input value={draft.name} placeholder={t('new releases')} languageProps={textProps('new releases')} onChange={name => setDraft({ ...draft, name })} /></Field>
+            <Field label={<LocalizedText source="Feed URL" />}><Input value={draft.feed_url} placeholder="https://..." onChange={feed_url => setDraft({ ...draft, feed_url })} /></Field>
+            <Field label={<LocalizedText source="Include" />}><Input value={draft.include} placeholder={t('required text')} languageProps={textProps('required text')} onChange={include => setDraft({ ...draft, include })} /></Field>
+            <Field label={<LocalizedText source="Exclude" />}><Input value={draft.exclude ?? ''} placeholder={t('optional')} languageProps={textProps('optional')} onChange={exclude => setDraft({ ...draft, exclude })} /></Field>
+            <Field label={<LocalizedText source="Category" />}><Input value={draft.category ?? ''} placeholder={t('optional')} languageProps={textProps('optional')} onChange={category => setDraft({ ...draft, category })} /></Field>
             <button
               type="button"
               onClick={save}
               disabled={!draft.name.trim() || !draft.feed_url.trim() || !draft.include.trim() || Boolean(pending)}
               style={buttonStyle(!draft.name.trim() || !draft.feed_url.trim() || !draft.include.trim() || Boolean(pending))}
             >
-              {pending === '__save__' ? 'Saving…' : 'Save'}
+              {pending === '__save__' ? <LocalizedText source="Saving…" /> : <LocalizedText source="Save" />}
             </button>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 1fr) 180px 120px', gap: 8, minWidth: 620, maxWidth: 1080 }}>
-            <Field label="Save path"><Input value={draft.save_path ?? ''} placeholder="/downloads" onChange={save_path => setDraft({ ...draft, save_path })} /></Field>
-            <Field label="Tags"><Input value={draft.tags.join(',')} placeholder="comma,separated" onChange={tags => setDraft({ ...draft, tags: tags.split(',') })} /></Field>
+            <Field label={<LocalizedText source="Save path" />}><Input value={draft.save_path ?? ''} placeholder="/downloads" onChange={save_path => setDraft({ ...draft, save_path })} /></Field>
+            <Field label={<LocalizedText source="Tags" />}><Input value={draft.tags.join(',')} placeholder={t('Comma-separated tags')} languageProps={textProps('Comma-separated tags')} onChange={tags => setDraft({ ...draft, tags: tags.split(',') })} /></Field>
             <label style={{
               alignSelf: 'end', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
               color: 'var(--muted)', fontSize: 12, border: '1px solid var(--border-strong)', borderRadius: 5,
               minHeight: 29, background: 'var(--bg)',
             }}>
               <input type="checkbox" checked={draft.start} onChange={e => setDraft({ ...draft, start: e.target.checked })} />
-              Start
+              <LocalizedText source="Start" />
             </label>
           </div>
         </div>
       </PanelBox>
-      {error && <Notice tone="error">{error}</Notice>}
+      {error && <Notice tone="error"><LocalizedErrorText message={error} /></Notice>}
 
       <div style={{ ...scrollX, display: 'grid', gap: 8, maxWidth: 1080 }}>
-        {isLoading && <div role="status" aria-label="Loading RSS rules"><SkeletonRows count={3} /></div>}
+        {isLoading && <div role="status" aria-label={t('Loading RSS rules')} {...textProps('Loading RSS rules')}><SkeletonRows count={3} /></div>}
         {!isLoading && rules.length === 0 && (
-          <EmptyState title="No RSS rules configured" detail="Create a rule above, then use match test to check titles before applying." />
+          <EmptyState title={<LocalizedText source="No RSS rules configured" />} detail={<LocalizedText source="Create a rule above, then use match test to check titles before applying." />} />
         )}
         {rules.map(rule => (
           <div key={rule.id} className="tng-automation-row" data-enabled={rule.enabled ? 'true' : 'false'} style={{
@@ -172,46 +192,45 @@ export function RssRulesPanel() {
             </strong>
             <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{redactUrlForDisplay(rule.feed_url)}</span>
             <span style={{ color: 'var(--muted)' }}>{rule.include}</span>
-            <span style={{ color: 'var(--faint)' }}>{rule.category || 'no category'}</span>
-            <Pill tone={rule.enabled ? 'ok' : 'idle'}>{rule.enabled ? 'enabled' : 'disabled'}</Pill>
+            <span style={{ color: 'var(--faint)' }}>{rule.category || <LocalizedText source="no category" />}</span>
+            <Pill tone={rule.enabled ? 'ok' : 'idle'}>{rule.enabled ? <LocalizedText source="enabled" /> : <LocalizedText source="disabled" />}</Pill>
             <button type="button" onClick={() => remove(rule.id)} disabled={Boolean(pending)} style={ghostButtonStyle(Boolean(pending))}>
-              {pending === rule.id ? 'Deleting…' : 'Delete'}
+              {pending === rule.id ? <LocalizedText source="Deleting…" /> : <LocalizedText source="Delete" />}
             </button>
           </div>
         ))}
       </div>
 
       <h3 style={{ fontSize: 13, fontWeight: 600, margin: '20px 0 10px', color: 'var(--text)' }}>
-        Match Test
-      </h3>
+        <LocalizedText source="Match Test" /></h3>
       <PanelBox>
-        <h4 style={{ margin: '0 0 10px', fontSize: 12, fontWeight: 800, color: 'var(--text)' }}>Sample item</h4>
+        <h4 style={{ margin: '0 0 10px', fontSize: 12, fontWeight: 800, color: 'var(--text)' }}><LocalizedText source="Sample item" /></h4>
         <div style={scrollX}>
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) minmax(220px, 1fr) auto auto auto', gap: 8, minWidth: 720, maxWidth: 1080, marginBottom: 8 }}>
-          <Field label="Title"><Input value={sampleTitle} placeholder="Sample title" onChange={setSampleTitle} /></Field>
-          <Field label="Link"><Input value={sampleLink} placeholder="https://..." onChange={setSampleLink} /></Field>
+          <Field label={<LocalizedText source="Title" />}><Input value={sampleTitle} placeholder={t('Sample title')} languageProps={textProps('Sample title')} onChange={setSampleTitle} /></Field>
+          <Field label={<LocalizedText source="Link" />}><Input value={sampleLink} placeholder="https://..." onChange={setSampleLink} /></Field>
           <button type="button" onClick={test} disabled={!sampleTitle.trim() || Boolean(pending)} style={buttonStyle(!sampleTitle.trim() || Boolean(pending))}>
-            {pending === '__test__' ? 'Testing…' : 'Test'}
+            {pending === '__test__' ? <LocalizedText source="Testing…" /> : <LocalizedText source="Test" />}
           </button>
           <button type="button" onClick={() => apply(true)} disabled={!sampleTitle.trim() || !sampleLink.trim() || Boolean(pending)} style={buttonStyle(!sampleTitle.trim() || !sampleLink.trim() || Boolean(pending))}>
-            {pending === '__preview__' ? 'Previewing…' : 'Preview'}
+            {pending === '__preview__' ? <LocalizedText source="Previewing…" /> : <LocalizedText source="Preview" />}
           </button>
           <button type="button" onClick={() => apply(false)} disabled={!sampleTitle.trim() || !sampleLink.trim() || Boolean(pending)} style={buttonStyle(!sampleTitle.trim() || !sampleLink.trim() || Boolean(pending))}>
-            {pending === '__apply__' ? 'Applying…' : 'Apply'}
+            {pending === '__apply__' ? <LocalizedText source="Applying…" /> : <LocalizedText source="Apply" />}
           </button>
         </div>
       </div>
       </PanelBox>
-      {applyResult && <Notice tone="ok">{applyResult}</Notice>}
+      {applyResult && <Notice tone="ok"><LocalizedText source={applyResult.source} parameters={applyResult.parameters} /></Notice>}
       <div style={{ display: 'grid', gap: 6, maxWidth: 1080 }}>
         {matches.map(match => (
           <div key={match.rule_id} className="tng-rss-match" data-matched={match.matched ? 'true' : 'false'} style={{
             display: 'flex', alignItems: 'center', gap: 8, border: '1px solid var(--border)',
             borderRadius: 6, padding: '8px 10px', background: 'var(--surface)', fontSize: 12,
           }}>
-            <Pill tone={match.matched ? 'ok' : 'idle'}>{match.matched ? 'match' : 'skip'}</Pill>
+            <Pill tone={match.matched ? 'ok' : 'idle'}>{match.matched ? <LocalizedText source="match" /> : <LocalizedText source="Skipped" />}</Pill>
             <span style={{ color: 'var(--text)', fontWeight: 700 }}>{match.rule_name}</span>
-            <span style={{ color: 'var(--faint)' }}>{match.reason}</span>
+            <span style={{ color: 'var(--faint)' }}><LocalizedText source={match.reason} /></span>
           </div>
         ))}
       </div>
@@ -222,8 +241,8 @@ export function RssRulesPanel() {
 function Busy({ label }: { label: string }) {
   return <span role="status" aria-live="polite" style={{
     color: 'var(--accent-text)', background: 'var(--accent-soft)', border: '1px solid var(--accent)',
-    borderRadius: 999, padding: '2px 8px', fontSize: 11, fontWeight: 700, textTransform: 'capitalize',
-  }}>{label}</span>
+    borderRadius: 999, padding: '2px 8px', fontSize: 11, fontWeight: 700,
+  }}><LocalizedText source={label} /></span>
 }
 
 function Notice({ tone, children }: { tone: 'ok' | 'error'; children: React.ReactNode }) {
@@ -255,7 +274,7 @@ function PanelBox({ children }: { children: React.ReactNode }) {
   }}>{children}</div>
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
   return <label style={{ display: 'grid', gap: 4, minWidth: 0 }}>
     <span style={{ color: 'var(--faint)', fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0 }}>{label}</span>
     {children}
@@ -275,7 +294,7 @@ function Pill({ tone, children }: { tone: 'ok' | 'idle'; children: React.ReactNo
   }}>{children}</span>
 }
 
-function EmptyState({ title, detail }: { title: string; detail: string }) {
+function EmptyState({ title, detail }: { title: React.ReactNode; detail: React.ReactNode }) {
   return <div style={{
     border: '1px dashed var(--border-strong)', borderRadius: 8, padding: '16px 14px',
     background: 'color-mix(in srgb, var(--surface) 72%, transparent)', color: 'var(--muted)', fontSize: 12,
@@ -310,8 +329,8 @@ function ghostButtonStyle(disabled = false): React.CSSProperties {
   }
 }
 
-function Input({ value, placeholder, onChange }: { value: string; placeholder: string; onChange: (value: string) => void }) {
-  return <input value={value} placeholder={placeholder} onChange={e => onChange(e.target.value)} style={{
+function Input({ value, placeholder, onChange, languageProps }: { value: string; placeholder: string; onChange: (value: string) => void; languageProps?: React.HTMLAttributes<HTMLInputElement> }) {
+  return <input {...languageProps} value={value} placeholder={placeholder} onChange={e => onChange(e.target.value)} style={{
     minWidth: 0, background: 'var(--bg)', border: '1px solid var(--border-strong)',
     borderRadius: 5, color: 'var(--text)', padding: '4px 8px', fontSize: 12,
   }} />

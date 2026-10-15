@@ -1,3 +1,5 @@
+import { LocalizedErrorText, LocalizedText } from '../lib/LocalizedText'
+import { interfaceTextProps, translateInterface } from '../lib/interfaceLocale'
 import { getRegionalLocale } from '../lib/localeFormat'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -17,7 +19,7 @@ const EMPTY: RatioGroup = {
 export function RatioGroupsPanel() {
   const qc = useQueryClient()
   const [draft, setDraft] = useState<RatioGroup>(EMPTY)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<string | { source: string; parameters?: Record<string, string | number> } | null>(null)
   const [pending, setPending] = useState<string | null>(null)
   const [preview, setPreview] = useState<{ name: string; count: number } | null>(null)
 
@@ -71,7 +73,10 @@ export function RatioGroupsPanel() {
       if (dryRun) {
         setPreview({ name, count: appliedCount })
       } else if (errorCount > 0) {
-        setError(`${errorCount} error(s) applying ${name}`)
+        setError({
+          source: errorCount === 1 ? '{count} error applying {name}' : '{count} errors applying {name}',
+          parameters: { count: errorCount.toLocaleString(getRegionalLocale()), name },
+        })
       }
     } catch (e) {
       setError(String(e))
@@ -84,39 +89,39 @@ export function RatioGroupsPanel() {
     <section aria-labelledby="ratio-groups-title" aria-busy={Boolean(pending) || isLoading} style={{ padding: '18px 24px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
         <div>
-          <h2 id="ratio-groups-title" style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>Ratio Groups</h2>
-          <div style={{ fontSize: 12, color: 'var(--faint)', marginTop: 2 }}>{groups.length.toLocaleString(getRegionalLocale())} configured</div>
+          <h2 id="ratio-groups-title" style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)' }}><LocalizedText source="Ratio Groups" /></h2>
+          <div style={{ fontSize: 12, color: 'var(--faint)', marginTop: 2 }}><LocalizedText source="Configured groups: {count}" parameters={{ count: groups.length.toLocaleString(getRegionalLocale()) }} /></div>
         </div>
         {pending && <Busy label={pending === '__save__' ? 'Saving' : 'Working'} />}
       </div>
 
       <PanelBox>
-        <h3 style={{ margin: '0 0 10px', fontSize: 12, fontWeight: 800, color: 'var(--text)' }}>Create or update group</h3>
+        <h3 style={{ margin: '0 0 10px', fontSize: 12, fontWeight: 800, color: 'var(--text)' }}><LocalizedText source="Create or update group" /></h3>
         <div style={scrollX}>
           <div style={{ display: 'grid', gridTemplateColumns: '160px 90px 110px 150px minmax(220px, 1fr) auto', gap: 8, minWidth: 820, maxWidth: 980 }}>
             <Field label="Name"><Input value={draft.name} placeholder="ebooks-strict" onChange={name => setDraft({ ...draft, name })} /></Field>
             <Field label="Ratio"><Input value={String(draft.ratio_limit)} placeholder="1.5" onChange={value => setDraft({ ...draft, ratio_limit: Number(value) })} /></Field>
             <Field label="Seed min"><Input value={String(draft.seeding_time_limit)} placeholder="-1" onChange={value => setDraft({ ...draft, seeding_time_limit: Number(value) })} /></Field>
-            <Field label="Category"><Input value={draft.category ?? ''} placeholder="optional" onChange={category => setDraft({ ...draft, category })} /></Field>
-            <Field label="Tracker"><Input value={draft.tracker ?? ''} placeholder="contains" onChange={tracker => setDraft({ ...draft, tracker })} /></Field>
+            <Field label="Category"><Input value={draft.category ?? ''} placeholder="optional" localizePlaceholder onChange={category => setDraft({ ...draft, category })} /></Field>
+            <Field label="Tracker"><Input value={draft.tracker ?? ''} placeholder="contains" localizePlaceholder onChange={tracker => setDraft({ ...draft, tracker })} /></Field>
             <button type="button" onClick={save} disabled={!draft.name.trim() || Boolean(pending)} style={primaryButton(!draft.name.trim() || Boolean(pending))}>
-              {pending === '__save__' ? 'Saving…' : 'Save'}
+              {pending === '__save__' ? <LocalizedText source="Saving…" /> : <LocalizedText source="Save" />}
             </button>
           </div>
         </div>
       </PanelBox>
 
-      {error && <Notice tone="error">{error}</Notice>}
+      {error && <Notice tone="error">{typeof error === 'string' ? <LocalizedErrorText message={error} /> : <LocalizedText source={error.source} parameters={error.parameters} />}</Notice>}
       {preview && (
         <Notice tone="ok">
-          {preview.name}: {preview.count.toLocaleString(getRegionalLocale())} matching torrent{preview.count === 1 ? '' : 's'}
+          <LocalizedText source="Preview found {count} matches for {name}" parameters={{ count: preview.count.toLocaleString(getRegionalLocale()), name: preview.name }} />
         </Notice>
       )}
 
       <div style={{ ...scrollX, display: 'grid', gap: 8, maxWidth: 980 }}>
-        {isLoading && <div role="status" aria-label="Loading ratio groups"><SkeletonRows count={3} /></div>}
+        {isLoading && <div role="status" aria-label={translateInterface("Loading ratio groups")} {...interfaceTextProps("Loading ratio groups")}><SkeletonRows count={3} /></div>}
         {!isLoading && groups.length === 0 && (
-          <EmptyState title="No ratio groups configured" detail="Create a group above, then preview which torrents match before applying it." />
+          <EmptyState title={<LocalizedText source="No ratio groups configured" />} detail={<LocalizedText source="Create a group above, then preview which torrents match before applying it." />} />
         )}
         {groups.map(group => (
           <div key={group.name} className="tng-automation-row" data-enabled={group.enabled ? 'true' : 'false'} style={{
@@ -132,10 +137,14 @@ export function RatioGroupsPanel() {
               }} />
               {group.name}
             </strong>
-            <span style={{ color: 'var(--muted)' }}>ratio {group.ratio_limit}</span>
-            <span style={{ color: 'var(--muted)' }}>{group.seeding_time_limit < 0 ? 'no time cap' : `${group.seeding_time_limit}m`}</span>
-            <span style={{ color: 'var(--faint)' }}>{group.category || 'any category'}</span>
-            <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={group.tracker ? maskAnnounceUrl(group.tracker) : undefined}>{group.tracker ? maskAnnounceUrl(group.tracker) : 'any tracker'}</span>
+            <span style={{ color: 'var(--muted)' }}><LocalizedText source="Ratio: {value}" parameters={{ value: group.ratio_limit.toLocaleString(getRegionalLocale()) }} /></span>
+            <span style={{ color: 'var(--muted)' }}>
+              {group.seeding_time_limit < 0
+                ? <LocalizedText source="No time cap" />
+                : <LocalizedText source={group.seeding_time_limit === 1 ? '{value} minute' : '{value} minutes'} parameters={{ value: group.seeding_time_limit.toLocaleString(getRegionalLocale()) }} />}
+            </span>
+            <span style={{ color: 'var(--faint)' }}>{group.category || <LocalizedText source="Any category" />}</span>
+            <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={group.tracker ? maskAnnounceUrl(group.tracker) : undefined}>{group.tracker ? maskAnnounceUrl(group.tracker) : <LocalizedText source="any tracker" />}</span>
             <button
               type="button"
               onClick={() => apply(group.name, true)}
@@ -147,7 +156,7 @@ export function RatioGroupsPanel() {
                 opacity: pending ? 0.55 : 1,
               }}
             >
-              Preview
+              <LocalizedText source="Preview" />
             </button>
             <button
               type="button"
@@ -160,7 +169,7 @@ export function RatioGroupsPanel() {
                 opacity: pending ? 0.55 : 1,
               }}
             >
-              Apply
+              <LocalizedText source="Apply" />
             </button>
             <button
               type="button"
@@ -173,7 +182,7 @@ export function RatioGroupsPanel() {
                 opacity: pending ? 0.55 : 1,
               }}
             >
-              Delete
+              <LocalizedText source="Delete" />
             </button>
           </div>
         ))}
@@ -186,7 +195,7 @@ function Busy({ label }: { label: string }) {
   return <span role="status" aria-live="polite" style={{
     color: 'var(--accent-text)', background: 'var(--accent-soft)', border: '1px solid var(--accent)',
     borderRadius: 999, padding: '2px 8px', fontSize: 11, fontWeight: 700,
-  }}>{label}</span>
+  }}><LocalizedText source={label} /></span>
 }
 
 function Notice({ tone, children }: { tone: 'ok' | 'error'; children: React.ReactNode }) {
@@ -215,12 +224,12 @@ function PanelBox({ children }: { children: React.ReactNode }) {
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <label style={{ display: 'grid', gap: 4, minWidth: 0 }}>
-    <span style={{ color: 'var(--faint)', fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0 }}>{label}</span>
+    <span style={{ color: 'var(--faint)', fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0 }}><LocalizedText source={label} /></span>
     {children}
   </label>
 }
 
-function EmptyState({ title, detail }: { title: string; detail: string }) {
+function EmptyState({ title, detail }: { title: React.ReactNode; detail: React.ReactNode }) {
   return <div style={{
     border: '1px dashed var(--border-strong)', borderRadius: 8, padding: '16px 14px',
     background: 'color-mix(in srgb, var(--surface) 72%, transparent)', color: 'var(--muted)', fontSize: 12,
@@ -259,16 +268,22 @@ const scrollX: React.CSSProperties = {
   paddingBottom: 2,
 }
 
-function Input({ value, placeholder, onChange }: { value: string; placeholder: string; onChange: (value: string) => void }) {
+function Input({ value, placeholder, onChange, localizePlaceholder = false }: {
+  value: string
+  placeholder: string
+  onChange: (value: string) => void
+  localizePlaceholder?: boolean
+}) {
   return (
     <input
       value={value}
-      placeholder={placeholder}
+      placeholder={localizePlaceholder ? translateInterface(placeholder) : placeholder}
       onChange={e => onChange(e.target.value)}
       style={{
         minWidth: 0, background: 'var(--bg)', border: '1px solid var(--border-strong)',
         borderRadius: 5, color: 'var(--text)', padding: '4px 8px', fontSize: 12,
       }}
+      {...(localizePlaceholder ? interfaceTextProps(placeholder) : {})}
     />
   )
 }
