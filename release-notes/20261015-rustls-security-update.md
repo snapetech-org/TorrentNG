@@ -1,3 +1,8 @@
-Update the Rustls dependency in the server, sidecar, and desktop lockfiles to
-the patched 0.23.46 release after the dependency audit identified four RustSec
-advisories against 0.23.45.
+---
+category: security
+audience: operators
+area: security
+action: none
+breaking: false
+---
+The server, sidecar, and desktop clients now use Rustls 0.23.46, which resolves four RustSec advisories affecting 0.23.45.
