@@ -3,9 +3,11 @@ FROM rust:1.96-alpine AS build
 RUN apk add --no-cache build-base linux-headers musl-dev
 
 WORKDIR /src
+ARG TORRENTNG_CARGO_FEATURES=system-allocator
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
-RUN cargo build --release --locked --target x86_64-unknown-linux-musl -p torrentngd
+RUN cargo build --release --locked --target x86_64-unknown-linux-musl -p torrentngd \
+    --no-default-features --features "$TORRENTNG_CARGO_FEATURES"
 
 FROM node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9 AS webui-build
 
@@ -19,6 +21,8 @@ FROM alpine:3.24.2
 ARG TNG_UID=1000
 ARG TNG_GID=1000
 ARG TORRENTNG_SOURCE_REVISION=unknown
+ARG TORRENTNG_SOURCE_FINGERPRINT=unknown
+ARG TORRENTNG_CARGO_FEATURES=default
 
 RUN apk add --no-cache ca-certificates curl jq tini util-linux \
     && case "$TNG_UID" in ''|*[!0-9]*) echo "TNG_UID must be a nonzero numeric ID" >&2; exit 1;; *[1-9]*) :;; *) echo "TNG_UID must be a nonzero numeric ID" >&2; exit 1;; esac \
@@ -41,7 +45,9 @@ ENV TNG_DEFAULT_GID="${TNG_GID}"
 
 LABEL org.opencontainers.image.title="TorrentNG Engine" \
       org.opencontainers.image.description="TorrentNG Engine: native Rust BitTorrent client with the shared WebUI/API, migration tooling, storage, jobs, and recovery." \
-      org.opencontainers.image.revision="${TORRENTNG_SOURCE_REVISION}"
+      org.opencontainers.image.revision="${TORRENTNG_SOURCE_REVISION}" \
+      org.torrentng.source.fingerprint="${TORRENTNG_SOURCE_FINGERPRINT}" \
+      org.torrentng.cargo.features="${TORRENTNG_CARGO_FEATURES}"
 
 USER root
 VOLUME ["/data", "/downloads", "/var/lib/torrentngd", "/config"]

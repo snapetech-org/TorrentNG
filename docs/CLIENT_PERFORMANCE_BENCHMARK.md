@@ -3,12 +3,24 @@
 This benchmark compares TorrentNG's native engine with qBittorrent,
 Transmission, Deluge, and rTorrent using an official Debian amd64 netinst
 torrent. It records public download behavior and a separate controlled seed
-transfer for each client. The current dated results are in
-[`certification/reports/client-performance-benchmark-20261013.md`](../certification/reports/client-performance-benchmark-20261013.md),
-with the combined time-series CSV beside the report. In this run, all four
-clients that started completed and verified the ISO; the rTorrent image failed
-at startup. The report includes both public download and controlled seeding
-KPIs, client versions, the fixed test limits, and the run's confidence limits.
+transfer for each client. The latest comparison and memory investigation are in
+[`certification/reports/native-memory-optimization-20261014-agentvm.md`](../certification/reports/native-memory-optimization-20261014-agentvm.md),
+with raw time-series and allocator/process profiles beside the report. It
+includes public download and controlled seed results, client versions, fixed
+test limits, measured memory, and confidence limits. The previous
+[unoptimized baseline](../certification/reports/client-performance-benchmark-20261013.md)
+is retained to show the before measurements.
+
+The native daemon defaults to the system allocator; jemalloc and mimalloc are
+opt-in build features. It also defaults to direct block writes with
+`memory.piece_assembly_cap_mb = 0`, avoiding a second in-memory copy of each
+incomplete piece. When a jemalloc build is selected, the native container
+entrypoint defaults to `MALLOC_CONF=thp:never`, while allowing an operator
+override. The report gives the measured effects and their limits: TorrentNG's public
+swarm rate was much lower in its one pass, while controlled seed rate was close
+to the peers. Its anonymous memory was lower in the recorded peer comparison,
+but the ratios combine sequential runs and are not orders of magnitude against
+every client.
 
 ## Run a comparison
 
@@ -55,11 +67,21 @@ This copies only the source ISO and torrent file after the client measurements;
 the temporary client downloads are still removed. Existing destination files
 are reused only when their size and SHA-256 match.
 
+When scratch is on root-squashed NFS, keep client configuration on a writable
+local filesystem so Docker does not need to `chown` a bind mount on NFS. For
+example, set `TNG_CLIENT_BENCH_CONFIG_ROOT=/var/tmp` while keeping
+`TNG_CLIENT_BENCH_SCRATCH_ROOT` on the LVM-backed NFS share. The report records
+both filesystems because the download path affects measured performance.
+
 Useful environment variables:
 
 | Variable | Default | Purpose |
 |---|---:|---|
 | `TNG_CLIENT_BENCH_CLIENTS` | all five | Select client IDs for a focused run. |
+| `TNG_CLIENT_BENCH_SKIP_BUILD` | `0` | Reuse an image only when its source commit, source fingerprint, and allocator labels match this checkout. |
+| `TNG_CLIENT_BENCH_PREBUILT_IMAGE` | `torrentng/torrentngd:interop` | Image checked and aliased for a run when skip-build is enabled. |
+| `TNG_CLIENT_BENCH_ALLOCATOR` | `system` | Select the build allocator: `system`, `jemalloc`, or `mimalloc`. |
+| `TNG_CLIENT_BENCH_CONFIG_ROOT` | scratch directory | Put container configuration bind mounts on a writable local filesystem such as `/var/tmp`. |
 | `TNG_CLIENT_BENCH_SEED_SOURCE` | none | Use a local ISO for controlled seeding after checking its published Debian SHA-256. |
 | `TNG_CLIENT_BENCH_REPORT` | dated report in `certification/reports/` | Choose the Markdown report path; the CSV uses the same basename. |
 | `TNG_CLIENT_BENCH_RATE_BPS` | 33,554,432 B/s | Shared per-client global download and upload ceiling. |
@@ -68,6 +90,16 @@ Useful environment variables:
 | `TNG_CLIENT_BENCH_TIMEOUT_SECS` | 1,800 s | Public download completion window. |
 | `TNG_CLIENT_BENCH_SEED_TIMEOUT_SECS` | 900 s | Controlled seed completion window. |
 | `TNG_CLIENT_BENCH_SAMPLE_SECS` | 2 s | Sampling interval for rates and resource use. |
+| `TNG_CLIENT_BENCH_MALLOC_CONF` | allocator default | Set jemalloc options for TorrentNG; pass an empty value to test jemalloc defaults. |
+| `TNG_CLIENT_BENCH_MIMALLOC_PURGE_DELAY` | mimalloc default | Override mimalloc's purge delay in milliseconds; requires `TNG_CLIENT_BENCH_ALLOCATOR=mimalloc`. |
+| `TNG_CLIENT_BENCH_MIMALLOC_ALLOW_THP` | mimalloc default | Override mimalloc's transparent huge-page policy; requires the mimalloc allocator. |
+| `TNG_CLIENT_BENCH_PIECE_ASSEMBLY_CAP_MB` | config default | Override the incomplete-piece assembly cap; `0` tests direct block writes without whole-piece assembly buffers. |
+| `TNG_CLIENT_BENCH_PEER_BUFFER_CAP_MB` | config default | Override the process-wide peer buffer cap. |
+| `TNG_CLIENT_BENCH_TOKIO_WORKER_THREADS` | Tokio default | Set Tokio worker count for a measured TorrentNG run. |
+| `TNG_CLIENT_BENCH_STORAGE_IO_WORKER_THREADS` | config default | Override TorrentNG storage I/O workers for the measured run. |
+| `TNG_CLIENT_BENCH_STORAGE_HASH_WORKER_THREADS` | config default | Override TorrentNG storage hash workers for the measured run. |
+| `TNG_CLIENT_BENCH_STORAGE_PEER_READ_READAHEAD_BYTES` | config default | Override the peer-upload read-ahead size in bytes for a measured run. |
+| `TNG_CLIENT_BENCH_STORAGE_PEER_READ_CACHE_ENTRIES` | config default | Override the peer-upload read-ahead cache entry limit; set `0` to disable the cache. |
 
 The common leecher limit applies to the receiver, not the client being tested.
 The default is below TorrentNG's per-peer request-window guard; seed results

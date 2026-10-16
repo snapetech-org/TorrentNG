@@ -34,15 +34,157 @@ use rt_session::SessionRegistry;
 mod export;
 mod migrate;
 
-// jemalloc handles the daemon's real allocation shape — many concurrent
-// per-torrent tasks doing small, high-churn allocations (peer buffers,
-// piece-map/picker state, DB rows) over long uptimes — better than glibc's
-// allocator, which fragments and grows RSS under sustained small-object
-// churn. Background threads purge freed arenas back to the OS instead of
-// holding them, which is what actually keeps long-run memory flat.
-#[cfg(target_os = "linux")]
+// `tikv-jemalloc-sys` reads this compile-time config before main(). It only
+// applies when Jemalloc is selected as the global allocator.
+#[cfg(all(target_os = "linux", feature = "jemalloc-allocator"))]
+#[allow(non_upper_case_globals)]
+#[export_name = "_rjem_malloc_conf"]
+static malloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
+    union CCharRef {
+        byte: &'static u8,
+        c_char: &'static std::ffi::c_char,
+    }
+
+    CCharRef {
+        byte: &b"thp:never\0"[0],
+    }
+    .c_char
+});
+
+#[cfg(any(
+    all(feature = "system-allocator", feature = "jemalloc-allocator"),
+    all(feature = "system-allocator", feature = "mimalloc-allocator"),
+    all(feature = "jemalloc-allocator", feature = "mimalloc-allocator"),
+    not(any(
+        feature = "system-allocator",
+        feature = "jemalloc-allocator",
+        feature = "mimalloc-allocator"
+    ))
+))]
+compile_error!("select exactly one TorrentNG allocator feature");
+
+// System is the default. Alternative allocators are opt-in so measurements and
+// allocator-specific metrics cannot silently describe a different heap.
+#[cfg(feature = "system-allocator")]
+#[global_allocator]
+static GLOBAL: std::alloc::System = std::alloc::System;
+
+#[cfg(all(target_os = "linux", feature = "jemalloc-allocator"))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+#[cfg(all(target_os = "linux", feature = "mimalloc-allocator"))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(target_os = "linux")]
+fn parse_thp_disable_setting(value: Option<&[u8]>) -> Option<bool> {
+    match value {
+        None => Some(true),
+        Some(value)
+            if [b"1".as_slice(), b"true", b"yes", b"on"]
+                .iter()
+                .any(|accepted| value.eq_ignore_ascii_case(accepted)) =>
+        {
+            Some(true)
+        }
+        Some(value)
+            if [b"0".as_slice(), b"false", b"no", b"off"]
+                .iter()
+                .any(|accepted| value.eq_ignore_ascii_case(accepted)) =>
+        {
+            Some(false)
+        }
+        Some(_) => None,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn disable_transparent_huge_pages() {
+    const ENV_NAME: &[u8] = b"TORRENTNGD_DISABLE_THP\0";
+    // PR_SET_THP_DISABLE is 41 in linux/prctl.h. libc does not expose it for
+    // every Linux C library target, so use the stable Linux ABI value here.
+    const PR_SET_THP_DISABLE: libc::c_long = 41;
+
+    // Read getenv directly and avoid creating a Rust String before the process
+    // THP policy is applied; a first small allocation can itself fault a huge
+    // page when the host's global THP mode is `always`.
+    let value = unsafe {
+        let value = libc::getenv(ENV_NAME.as_ptr().cast());
+        if value.is_null() {
+            None
+        } else {
+            Some(std::ffi::CStr::from_ptr(value).to_bytes())
+        }
+    };
+    let (disable, invalid_setting) = match parse_thp_disable_setting(value) {
+        Some(disable) => (disable, false),
+        None => (true, true),
+    };
+    if !disable {
+        return;
+    }
+
+    // SAFETY: the Linux prctl syscall takes PR_SET_THP_DISABLE followed by
+    // the disable flag and three zero arguments. It is process-local and needs
+    // no elevated privileges.
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_prctl,
+            PR_SET_THP_DISABLE,
+            1 as libc::c_long,
+            0 as libc::c_long,
+            0 as libc::c_long,
+            0 as libc::c_long,
+        )
+    };
+    if result == -1 {
+        eprintln!(
+            "torrentngd: could not disable transparent huge pages for this process: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+    if invalid_setting {
+        eprintln!("torrentngd: invalid TORRENTNGD_DISABLE_THP value; disabling THP");
+    }
+}
+
+const DEFAULT_MAX_TOKIO_WORKER_THREADS: usize = 4;
+
+fn tokio_worker_threads_for(
+    override_value: Option<&str>,
+    available_parallelism: Option<usize>,
+) -> anyhow::Result<usize> {
+    if let Some(value) = override_value {
+        let workers = value
+            .parse::<usize>()
+            .context("TOKIO_WORKER_THREADS must be a positive integer")?;
+        anyhow::ensure!(
+            workers > 0,
+            "TOKIO_WORKER_THREADS must be greater than zero"
+        );
+        return Ok(workers);
+    }
+
+    Ok(available_parallelism
+        .unwrap_or(1)
+        .max(1)
+        .min(DEFAULT_MAX_TOKIO_WORKER_THREADS))
+}
+
+fn configured_tokio_worker_threads() -> anyhow::Result<usize> {
+    let override_value = match std::env::var("TOKIO_WORKER_THREADS") {
+        Ok(value) => Some(value),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            anyhow::bail!("TOKIO_WORKER_THREADS must be valid Unicode")
+        }
+    };
+    let available_parallelism = std::thread::available_parallelism()
+        .ok()
+        .map(std::num::NonZeroUsize::get);
+    tokio_worker_threads_for(override_value.as_deref(), available_parallelism)
+}
 
 /// Bound request handlers that can fan out into engine/database work. The
 /// limit is deliberately enforced at the daemon boundary so all mounted API
@@ -75,9 +217,20 @@ fn install_panic_payload_redacting_hook() {
     }));
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    disable_transparent_huge_pages();
     install_panic_payload_redacting_hook();
+    let worker_threads = configured_tokio_worker_threads()?;
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(worker_threads)
+        .enable_all()
+        .build()
+        .context("failed to build Tokio runtime")?
+        .block_on(torrentngd_main())
+}
+
+async fn torrentngd_main() -> anyhow::Result<()> {
     let argv: Vec<String> = std::env::args().collect();
     match argv.get(1).map(String::as_str) {
         Some("-h" | "--help" | "help") => {
@@ -831,8 +984,8 @@ mod tests {
     use super::{
         bearer_token, daemon_auth_guard, daemon_public_auth_path, daemon_public_path,
         install_panic_payload_redacting_hook, load_or_create_bootstrap_password, request_id,
-        request_uri_is_bounded, skip_request_log, static_dir, DaemonAuthGate,
-        MAX_REQUEST_URI_BYTES,
+        request_uri_is_bounded, skip_request_log, static_dir, tokio_worker_threads_for,
+        DaemonAuthGate, MAX_REQUEST_URI_BYTES,
     };
     use axum::{
         body::Body,
@@ -844,6 +997,30 @@ mod tests {
     use std::process::Command;
     use std::sync::Arc;
     use tower::ServiceExt;
+
+    #[test]
+    fn tokio_worker_default_is_capped_but_scales_down_for_small_hosts() {
+        assert_eq!(tokio_worker_threads_for(None, Some(64)).unwrap(), 4);
+        assert_eq!(tokio_worker_threads_for(None, Some(2)).unwrap(), 2);
+        assert_eq!(tokio_worker_threads_for(None, None).unwrap(), 1);
+    }
+
+    #[test]
+    fn tokio_worker_environment_override_is_respected_and_validated() {
+        assert_eq!(tokio_worker_threads_for(Some("2"), Some(64)).unwrap(), 2);
+        assert!(tokio_worker_threads_for(Some("0"), Some(64)).is_err());
+        assert!(tokio_worker_threads_for(Some("many"), Some(64)).is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn transparent_huge_pages_are_disabled_by_default_with_explicit_opt_out() {
+        assert_eq!(super::parse_thp_disable_setting(None), Some(true));
+        assert_eq!(super::parse_thp_disable_setting(Some(b"yes")), Some(true));
+        assert_eq!(super::parse_thp_disable_setting(Some(b"OFF")), Some(false));
+        assert_eq!(super::parse_thp_disable_setting(Some(b"0")), Some(false));
+        assert_eq!(super::parse_thp_disable_setting(Some(b"unexpected")), None);
+    }
 
     #[test]
     fn bootstrap_password_is_unique_persistent_and_private() {

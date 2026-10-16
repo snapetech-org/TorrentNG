@@ -9203,12 +9203,10 @@ fn finalize_engine_stats_resources(
     resources.classes[piece_assembly].used_bytes = resources.classes[piece_assembly]
         .used_bytes
         .max(stats.piece_assembly_bytes);
-    let peer_buffer = MemoryClass::PeerBuffer as usize;
-    let governor_peer_buffer_bytes = resources.classes[peer_buffer].used_bytes;
-    resources.classes[peer_buffer].used_bytes = governor_peer_buffer_bytes
-        .saturating_add(stats.peer_rx_buffer_bytes)
-        .saturating_add(stats.peer_tx_buffer_bytes)
-        .saturating_add(stats.peer_command_queue_bytes);
+    // Keep the cap gauge tied to bytes with live governor leases. The
+    // request-window and queue-capacity gauges below are estimates and can
+    // overlap these leases; adding them here made `used_bytes` exceed the cap
+    // without representing allocated memory.
     let tracker_peers = MemoryClass::TrackerPeers as usize;
     // Live tracker caches now own governor leases. Keep the larger of that
     // authoritative live total and the collected runtime estimate so a slow
@@ -21350,6 +21348,7 @@ mod tests {
         assert_eq!(stats.peer_command_queue_depth, 11);
         assert_eq!(stats.peer_command_queue_capacity, 12);
         assert_eq!(stats.peer_command_queue_full, 13);
+        assert_eq!(stats.peer_command_queue_bytes, 11 * 128);
         assert_eq!(stats.tracker_peer_cache_entries, 9);
         assert_eq!(stats.tracker_peer_cache_drops, 10);
         assert_eq!(stats.dht_routing_nodes, 11);
@@ -21372,7 +21371,7 @@ mod tests {
         );
         assert_eq!(
             resources.classes[MemoryClass::PeerBuffer as usize].used_bytes,
-            15 + 11 * 128
+            0
         );
         assert_eq!(
             resources.classes[MemoryClass::TrackerPeers as usize].used_bytes,
@@ -21503,8 +21502,11 @@ mod tests {
         let resources = stats.resources.expect("resource snapshot");
         assert_eq!(
             resources.classes[MemoryClass::PeerBuffer as usize].used_bytes,
-            64 + 1 + 2 + 3
+            64
         );
+        assert_eq!(stats.peer_rx_buffer_bytes, 1);
+        assert_eq!(stats.peer_tx_buffer_bytes, 2);
+        assert_eq!(stats.peer_command_queue_bytes, 3);
         drop(lease);
     }
 

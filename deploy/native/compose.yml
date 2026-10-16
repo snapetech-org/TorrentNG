@@ -6,6 +6,8 @@ services:
       dockerfile: deploy/native/Dockerfile
       args:
         TORRENTNG_SOURCE_REVISION: "${TORRENTNG_SOURCE_REVISION:-unknown}"
+        TORRENTNG_SOURCE_FINGERPRINT: "${TORRENTNG_SOURCE_FINGERPRINT:-unknown}"
+        TORRENTNG_CARGO_FEATURES: "${TORRENTNG_CARGO_FEATURES:-system-allocator}"
     restart: unless-stopped
     cap_drop:
       - ALL

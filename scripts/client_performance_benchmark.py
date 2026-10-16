@@ -50,6 +50,8 @@ DOWNLOAD_TIMEOUT = int(os.environ.get("TNG_CLIENT_BENCH_TIMEOUT_SECS", "1800"))
 SEED_TIMEOUT = int(os.environ.get("TNG_CLIENT_BENCH_SEED_TIMEOUT_SECS", "900"))
 SEED_NO_PEER_TIMEOUT = int(os.environ.get("TNG_CLIENT_BENCH_NO_PEER_TIMEOUT_SECS", "90"))
 INTERVAL = float(os.environ.get("TNG_CLIENT_BENCH_SAMPLE_SECS", "2"))
+ALLOCATOR_METRIC_INTERVAL = float(os.environ.get("TNG_CLIENT_BENCH_ALLOCATOR_SAMPLE_SECS", "5"))
+IDLE_SAMPLE_SECONDS = float(os.environ.get("TNG_CLIENT_BENCH_IDLE_SAMPLE_SECS", "8"))
 TORRENT_INDEX = "https://cdimage.debian.org/debian-cd/current/amd64/bt-cd/"
 SHA256SUMS_URL = "https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/SHA256SUMS"
 
@@ -84,6 +86,36 @@ def available_port(used=()):
             continue
         return port
     raise RuntimeError("could not allocate an unused TCP/UDP port")
+
+
+def optional_positive_int(name):
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise RuntimeError(f"{name} must be a positive integer") from error
+    if parsed < 1:
+        raise RuntimeError(f"{name} must be a positive integer")
+    return parsed
+
+
+def optional_nonnegative_int(name):
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise RuntimeError(f"{name} must be a non-negative integer") from error
+    if parsed < 0:
+        raise RuntimeError(f"{name} must be a non-negative integer")
+    return parsed
+
+
+def env_enabled(name):
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def to_bytes(value):
@@ -151,6 +183,81 @@ class HttpClient:
 
 class Benchmark:
     def __init__(self):
+        self.skip_build = env_enabled("TNG_CLIENT_BENCH_SKIP_BUILD")
+        allocator = os.environ.get("TNG_CLIENT_BENCH_ALLOCATOR", "system").strip().lower()
+        allocator_features = {
+            "system": "system-allocator",
+            "jemalloc": "jemalloc-allocator",
+            "mimalloc": "mimalloc-allocator",
+        }
+        if allocator not in allocator_features:
+            raise RuntimeError("TNG_CLIENT_BENCH_ALLOCATOR must be system, jemalloc, or mimalloc")
+        self.allocator = allocator
+        self.cargo_features = allocator_features[allocator]
+        self.mimalloc_purge_delay = optional_nonnegative_int(
+            "TNG_CLIENT_BENCH_MIMALLOC_PURGE_DELAY",
+        )
+        allow_thp = os.environ.get("TNG_CLIENT_BENCH_MIMALLOC_ALLOW_THP")
+        if allow_thp is not None and allow_thp.strip().lower() not in (
+            "1", "0", "true", "false", "yes", "no", "on", "off",
+        ):
+            raise RuntimeError(
+                "TNG_CLIENT_BENCH_MIMALLOC_ALLOW_THP must be a boolean value"
+            )
+        self.mimalloc_allow_thp = (
+            allow_thp.strip().lower() in ("1", "true", "yes", "on")
+            if allow_thp is not None else None
+        )
+        if self.allocator != "mimalloc" and (
+            self.mimalloc_purge_delay is not None or self.mimalloc_allow_thp is not None
+        ):
+            raise RuntimeError("MIMALLOC benchmark settings require TNG_CLIENT_BENCH_ALLOCATOR=mimalloc")
+        self.prebuilt_image = os.environ.get(
+            "TNG_CLIENT_BENCH_PREBUILT_IMAGE", "torrentng/torrentngd:interop",
+        ).strip()
+        self.tokio_worker_threads = optional_positive_int(
+            "TNG_CLIENT_BENCH_TOKIO_WORKER_THREADS",
+        )
+        self.storage_io_worker_threads = optional_positive_int(
+            "TNG_CLIENT_BENCH_STORAGE_IO_WORKER_THREADS",
+        )
+        self.storage_hash_worker_threads = optional_positive_int(
+            "TNG_CLIENT_BENCH_STORAGE_HASH_WORKER_THREADS",
+        )
+        self.storage_peer_read_readahead_bytes = optional_nonnegative_int(
+            "TNG_CLIENT_BENCH_STORAGE_PEER_READ_READAHEAD_BYTES",
+        )
+        self.storage_peer_read_cache_entries = optional_nonnegative_int(
+            "TNG_CLIENT_BENCH_STORAGE_PEER_READ_CACHE_ENTRIES",
+        )
+        self.piece_assembly_cap_mb = optional_nonnegative_int(
+            "TNG_CLIENT_BENCH_PIECE_ASSEMBLY_CAP_MB",
+        )
+        self.peer_buffer_cap_mb = optional_nonnegative_int(
+            "TNG_CLIENT_BENCH_PEER_BUFFER_CAP_MB",
+        )
+        for name, value in (
+            ("TNG_CLIENT_BENCH_STORAGE_IO_WORKER_THREADS", self.storage_io_worker_threads),
+            ("TNG_CLIENT_BENCH_STORAGE_HASH_WORKER_THREADS", self.storage_hash_worker_threads),
+        ):
+            if value is not None and value > 64:
+                raise RuntimeError(f"{name} must be <= 64")
+        for name, value in (
+            ("TNG_CLIENT_BENCH_PIECE_ASSEMBLY_CAP_MB", self.piece_assembly_cap_mb),
+            ("TNG_CLIENT_BENCH_PEER_BUFFER_CAP_MB", self.peer_buffer_cap_mb),
+        ):
+            if value is not None and value > 512:
+                raise RuntimeError(f"{name} must be <= 512")
+        if (self.storage_peer_read_readahead_bytes is not None
+                and self.storage_peer_read_readahead_bytes > 64 * 1024 * 1024):
+            raise RuntimeError(
+                "TNG_CLIENT_BENCH_STORAGE_PEER_READ_READAHEAD_BYTES must be <= 67108864"
+            )
+        if (self.storage_peer_read_cache_entries is not None
+                and self.storage_peer_read_cache_entries > 65_536):
+            raise RuntimeError(
+                "TNG_CLIENT_BENCH_STORAGE_PEER_READ_CACHE_ENTRIES must be <= 65536"
+            )
         now = dt.datetime.now(dt.timezone.utc)
         self.stamp = now.strftime("%Y%m%dT%H%M%SZ")
         self.started = now.isoformat(timespec="seconds")
@@ -159,10 +266,11 @@ class Benchmark:
             ROOT / f"certification/reports/client-performance-benchmark-{self.stamp}.md",
         )).expanduser().resolve()
         self.csv_path = self.report.with_name(self.report.stem + "-samples.csv")
+        self.memory_profile = self.report.with_name(self.report.stem + "-memory-profile.json")
         artifact_dir = os.environ.get("TNG_CLIENT_BENCH_ARTIFACT_DIR")
         self.artifact_dir = Path(artifact_dir).expanduser().resolve() if artifact_dir else None
         self.artifact_status = "not requested"
-        if self.report.exists() or self.csv_path.exists():
+        if self.report.exists() or self.csv_path.exists() or self.memory_profile.exists():
             raise RuntimeError(f"refusing to overwrite an existing benchmark report: {self.report}")
         scratch = Path(os.environ.get("TNG_CLIENT_BENCH_SCRATCH_ROOT", "/var/tmp")).resolve()
         if not scratch.is_dir() or not os.access(scratch, os.W_OK | os.X_OK):
@@ -180,14 +288,47 @@ class Benchmark:
             self.workdir = Path(tempfile.mkdtemp(
                 prefix=f"torrentng-client-bench-{self.stamp}-", dir=scratch,
             ))
+        config_root_value = os.environ.get("TNG_CLIENT_BENCH_CONFIG_ROOT")
+        if config_root_value:
+            config_root = Path(config_root_value).expanduser()
+            if config_root.is_symlink():
+                raise RuntimeError(f"refusing symlink config root: {config_root}")
+            config_root = config_root.resolve()
+            if not config_root.is_dir() or not os.access(config_root, os.W_OK | os.X_OK):
+                raise RuntimeError(f"config root is not a writable directory: {config_root}")
+            self.config_dir = config_root / f"torrentng-client-bench-{self.stamp}"
+            if self.config_dir.exists() or self.config_dir.is_symlink():
+                raise RuntimeError(f"refusing pre-existing config directory: {self.config_dir}")
+        else:
+            self.config_dir = self.workdir / "config"
         self.project = "tngbench" + re.sub(r"[^a-z0-9]", "", self.stamp.lower())
         self.image = f"torrentng/torrentngd:benchmark-{self.stamp.lower()}"
+        malloc_conf_override = os.environ.get("TNG_CLIENT_BENCH_MALLOC_CONF")
+        if self.allocator == "jemalloc":
+            self.malloc_conf = (
+                malloc_conf_override.strip()
+                if malloc_conf_override is not None else "thp:never"
+            )
+        else:
+            if malloc_conf_override is not None:
+                raise RuntimeError(
+                    "TNG_CLIENT_BENCH_MALLOC_CONF requires TNG_CLIENT_BENCH_ALLOCATOR=jemalloc"
+                )
+            self.malloc_conf = None
+        self.compose_override_path = None
         self.env = os.environ.copy()
         self.ports = {}
         used_ports = set()
         self.sessions = {}
         self.results = []
         self.samples = []
+        self.container_ids = {}
+        self.container_pids = {}
+        self.torrentng_pids = {}
+        self.cgroup_paths = {}
+        self.engine_memory_metrics = []
+        self.process_memory_snapshots = []
+        self.last_engine_memory_metrics_at = 0.0
         self.partial_download_rows = {}
         self.partial_seed_rows = {}
         self.partial_seed_elapsed = {}
@@ -204,9 +345,10 @@ class Benchmark:
         self._env("INTEROP_MAX_PEERS", MAX_PEERS)
         self._env("INTEROP_RATE_BPS", RATE_BPS)
         self._env("INTEROP_SOURCE_REVISION", self._git("rev-parse", "HEAD"))
-        self._env("INTEROP_TORRENTNG_CONFIG", self.workdir / "config/torrentngd.config.toml")
-        self._env("INTEROP_RTORRENT_CONFIG", self.workdir / "config/rtorrent-benchmark.rc")
-        self._env("INTEROP_SEED_QBIT_CONFIG", self.workdir / "config/qbittorrent-seed")
+        self._env("INTEROP_CONFIG_DIR", self.config_dir)
+        self._env("INTEROP_TORRENTNG_CONFIG", self.config_dir / "torrentngd.config.toml")
+        self._env("INTEROP_RTORRENT_CONFIG", self.config_dir / "rtorrent-benchmark.rc")
+        self._env("INTEROP_SEED_QBIT_CONFIG", self.config_dir / "qbittorrent-seed")
         self._env("INTEROP_SEED_QBIT_DOWNLOAD_DIR", self.workdir / "leecher")
         self._env("TMPDIR", self.workdir / "tmp")
         self._env("INTEROP_CLIENT_BIND_ADDR", os.environ.get("TNG_CLIENT_BENCH_PEER_BIND", "0.0.0.0"))
@@ -237,9 +379,18 @@ class Benchmark:
         self.cpu_count = os.cpu_count() or 0
         self.mem_total = self._meminfo("MemTotal")
         self.mem_available = self._meminfo("MemAvailable")
-        self.scratch_device, self.scratch_type = self._findmnt(scratch)
+        self.scratch_device, self.scratch_type = self._findmnt(self.workdir)
         self.source_commit = self._git("rev-parse", "HEAD")
         self.source_tree = self._git("rev-parse", "HEAD^{tree}")
+        (
+            self.source_dirty,
+            self.source_patch_sha256,
+            self.source_untracked_count,
+            self.source_untracked_sha256,
+            self.source_fingerprint_sha256,
+        ) = self._source_fingerprint()
+        self._env("INTEROP_SOURCE_FINGERPRINT", self.source_fingerprint_sha256)
+        self._env("INTEROP_TORRENTNG_CARGO_FEATURES", self.cargo_features)
         self.host = socket.gethostname()
         self.kernel = platform.release()
         self.machine = platform.machine()
@@ -277,9 +428,63 @@ class Benchmark:
     def _git(*args):
         return run_command(["git", *args], quiet=True)[0].strip()
 
+    def _source_fingerprint(self):
+        status = subprocess.run(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+        ).stdout
+        patch = subprocess.run(
+            [
+                "git", "diff", "--binary", "--full-index", "--no-ext-diff",
+                "--no-textconv", "--no-renames", "--no-color",
+                "--diff-algorithm=myers", "--no-indent-heuristic", "HEAD",
+            ],
+            cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+        ).stdout
+        untracked = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+            cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+        ).stdout
+        untracked_hash = hashlib.sha256()
+        untracked_paths = [raw for raw in untracked.split(b"\0") if raw]
+        for raw_path in sorted(untracked_paths):
+            path = ROOT / os.fsdecode(raw_path)
+            untracked_hash.update(len(raw_path).to_bytes(8, "big"))
+            untracked_hash.update(raw_path)
+            if path.is_symlink():
+                target = os.fsencode(os.readlink(path))
+                untracked_hash.update(b"symlink\0")
+                untracked_hash.update(target)
+            elif path.is_file():
+                untracked_hash.update(b"file\0")
+                with path.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        untracked_hash.update(chunk)
+            else:
+                untracked_hash.update(b"other\0")
+        patch_sha256 = hashlib.sha256(patch).hexdigest()
+        untracked_sha256 = untracked_hash.hexdigest()
+        fingerprint = hashlib.sha256()
+        for value in (
+            self.source_commit,
+            self.source_tree,
+            patch_sha256,
+            untracked_sha256,
+        ):
+            fingerprint.update(value.encode("ascii"))
+            fingerprint.update(b"\0")
+        return (
+            bool(status.strip()), patch_sha256, len(untracked_paths),
+            untracked_sha256, fingerprint.hexdigest(),
+        )
+
     def compose(self, *args, check=True, quiet=False, timeout=None):
+        command = ["docker", "compose", "-p", self.project, "-f", str(COMPOSE_FILE)]
+        if self.compose_override_path is not None:
+            command.extend(["-f", str(self.compose_override_path)])
+        command.extend(args)
         return run_command(
-            ["docker", "compose", "-p", self.project, "-f", str(COMPOSE_FILE), *args],
+            command,
             env=self.env, check=check, quiet=quiet, timeout=timeout,
         )
 
@@ -300,8 +505,10 @@ class Benchmark:
         return json.loads(body) if body else None
 
     def prepare(self):
-        for rel in ("artifacts", "config", "downloads", "leecher", "logs", "tmp", "torrents", "watch/rtorrent"):
+        for rel in ("artifacts", "downloads", "leecher", "logs", "tmp", "torrents", "watch/rtorrent"):
             (self.workdir / rel).mkdir(parents=True, exist_ok=True)
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        self.config_dir.chmod(0o777)
         for client in CLIENTS:
             directory = self.workdir / "downloads" / client
             directory.mkdir(parents=True, exist_ok=True)
@@ -309,6 +516,26 @@ class Benchmark:
                 (directory / "public").mkdir(exist_ok=True)
             directory.chmod(0o777)
         (self.workdir / "downloads").chmod(0o777)
+        compose_environment = {}
+        if self.malloc_conf is not None:
+            compose_environment["MALLOC_CONF"] = self.malloc_conf
+        if self.mimalloc_purge_delay is not None:
+            compose_environment["MIMALLOC_PURGE_DELAY"] = str(self.mimalloc_purge_delay)
+        if self.mimalloc_allow_thp is not None:
+            compose_environment["MIMALLOC_ALLOW_THP"] = (
+                "1" if self.mimalloc_allow_thp else "0"
+            )
+        if self.tokio_worker_threads is not None:
+            compose_environment["TOKIO_WORKER_THREADS"] = str(self.tokio_worker_threads)
+        if compose_environment:
+            self.compose_override_path = self.workdir / "compose.memory-profile.yml"
+            env_lines = "".join(
+                f"      {key}: {json.dumps(value)}\n"
+                for key, value in compose_environment.items()
+            )
+            self.compose_override_path.write_text(
+                "services:\n  torrentngd:\n    environment:\n" + env_lines
+            )
         self._prepare_qbit_config()
         self._prepare_torrentng_config()
         self._prepare_rtorrent_config()
@@ -318,11 +545,19 @@ class Benchmark:
                 "utc", "client", "phase", "elapsed_seconds", "progress",
                 "download_bytes_per_second", "upload_bytes_per_second",
                 "connected_peers", "container_cpu_percent", "container_memory_bytes",
-                "host_load_1m",
+                "host_load_1m", "cgroup_memory_current_bytes",
+                "cgroup_memory_peak_bytes", "cgroup_memory_anon_bytes",
+                "cgroup_memory_file_bytes", "cgroup_memory_slab_bytes",
+                "torrentng_process_rss_bytes", "torrentng_process_hwm_bytes",
+                "torrentng_process_rss_anon_bytes", "torrentng_process_rss_file_bytes",
+                "torrentng_process_rss_shmem_bytes", "torrentng_process_vm_data_bytes",
+                "torrentng_process_vm_stk_bytes", "torrentng_process_vm_pte_bytes",
+                "torrentng_process_threads", "cgroup_memory_sock_bytes",
+                "cgroup_memory_kernel_stack_bytes", "cgroup_memory_pagetables_bytes",
             ])
 
     def _prepare_qbit_config(self):
-        path = self.workdir / "config/qbittorrent/qBittorrent/qBittorrent.conf"
+        path = self.config_dir / "qbittorrent/qBittorrent/qBittorrent.conf"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             "[BitTorrent]\n"
@@ -337,7 +572,7 @@ class Benchmark:
         )
 
     def _prepare_seed_qbit_config(self, client):
-        path = self.workdir / "config/qbittorrent-seed" / client / "qBittorrent/qBittorrent.conf"
+        path = self.config_dir / "qbittorrent-seed" / client / "qBittorrent/qBittorrent.conf"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             "[BitTorrent]\n"
@@ -358,7 +593,58 @@ class Benchmark:
                       f"upload_rate_limit = {RATE_BPS}", text)
         text = re.sub(r"(?m)^download_rate_limit\s*=\s*\d+\s*$",
                       f"download_rate_limit = {RATE_BPS}", text)
-        path = self.workdir / "config/torrentngd.config.toml"
+        storage_overrides = []
+        if self.storage_io_worker_threads is not None:
+            storage_overrides.append(
+                f"io_worker_threads = {self.storage_io_worker_threads}"
+            )
+        if self.storage_hash_worker_threads is not None:
+            storage_overrides.append(
+                f"hash_worker_threads = {self.storage_hash_worker_threads}"
+            )
+        if self.storage_peer_read_readahead_bytes is not None:
+            storage_overrides.append(
+                "peer_read_readahead_bytes = "
+                f"{self.storage_peer_read_readahead_bytes}"
+            )
+        if self.storage_peer_read_cache_entries is not None:
+            storage_overrides.append(
+                "peer_read_cache_entries = "
+                f"{self.storage_peer_read_cache_entries}"
+            )
+        if storage_overrides:
+            text = re.sub(
+                r'(?m)^(download_dir\s*=\s*"[^"]+"\s*)$',
+                lambda match: match.group(1) + "\n" + "\n".join(storage_overrides),
+                text,
+                count=1,
+            )
+        memory_overrides = []
+        if self.piece_assembly_cap_mb is not None:
+            memory_overrides.append(
+                f"piece_assembly_cap_mb = {self.piece_assembly_cap_mb}"
+            )
+        if self.peer_buffer_cap_mb is not None:
+            memory_overrides.append(f"peer_buffer_cap_mb = {self.peer_buffer_cap_mb}")
+        if memory_overrides:
+            section = re.search(r"(?ms)^\[memory\]\s*\n(.*?)(?=^\[|\Z)", text)
+            if section:
+                body = section.group(1)
+                for key, value in (
+                    ("piece_assembly_cap_mb", self.piece_assembly_cap_mb),
+                    ("peer_buffer_cap_mb", self.peer_buffer_cap_mb),
+                ):
+                    if value is None:
+                        continue
+                    setting = re.compile(rf"(?m)^{key}\s*=\s*\d+\s*$")
+                    if setting.search(body):
+                        body = setting.sub(f"{key} = {value}", body, count=1)
+                    else:
+                        body = body.rstrip() + f"\n{key} = {value}\n"
+                text = text[:section.start(1)] + body + text[section.end(1):]
+            else:
+                text = text.rstrip() + "\n\n[memory]\n" + "\n".join(memory_overrides) + "\n"
+        path = self.config_dir / "torrentngd.config.toml"
         path.write_text(text)
         path.chmod(0o600)
 
@@ -370,10 +656,10 @@ class Benchmark:
             f"throttle.global_down.max_rate.set_kb = {RATE_BPS // 1024}",
             f"throttle.global_up.max_rate.set_kb = {RATE_BPS // 1024}",
         ]
-        path = self.workdir / "config/rtorrent-benchmark.rc"
+        path = self.config_dir / "rtorrent-benchmark.rc"
         path.write_text(base + "\n" + "\n".join(additions) + "\n")
         path.chmod(0o644)
-        rtorrent_config = self.workdir / "config/rtorrent"
+        rtorrent_config = self.config_dir / "rtorrent"
         rtorrent_config.mkdir(parents=True, exist_ok=True)
         (rtorrent_config / "session").mkdir(exist_ok=True)
 
@@ -448,7 +734,7 @@ class Benchmark:
             raise RuntimeError("Deluge WebUI did not establish its daemon connection")
 
     def _scgi(self, method, *params):
-        path = self.workdir / "config/rtorrent/scgi.sock"
+        path = self.config_dir / "rtorrent/scgi.sock"
         if not path.exists():
             raise RuntimeError(f"rTorrent SCGI socket does not exist: {path}")
         body = xmlrpc.client.dumps(params, methodname=method, allow_none=True).encode()
@@ -507,7 +793,7 @@ class Benchmark:
                     self._deluge_connect()
                     return
                 else:
-                    path = self.workdir / "config/rtorrent/scgi.sock"
+                    path = self.config_dir / "rtorrent/scgi.sock"
                     if path.exists():
                         self._scgi("system.client_version")
                         return
@@ -515,6 +801,15 @@ class Benchmark:
                     RuntimeError, ValueError, xmlrpc.client.Error):
                 pass
             time.sleep(2)
+        if client == "rtorrent":
+            cid = self.service_id(client)
+            if cid:
+                output, _ = run_command(
+                    ["docker", "logs", "--tail", "80", cid],
+                    env=self.env, check=False, quiet=True, timeout=10,
+                )
+                if output.strip():
+                    print("rTorrent startup log tail:\n" + output.rstrip(), flush=True)
         raise RuntimeError(f"timed out waiting for {LABELS[client]}")
 
     def _torrentng_request(self, path, *, data=None, headers=None):
@@ -727,8 +1022,277 @@ class Benchmark:
         else:
             self._scgi("d.stop", info_hash)
 
-    def _stats(self, client):
+    def _remember_container(self, client):
         cid = self.service_id(client)
+        if not cid:
+            return
+        self.container_ids[client] = cid
+        output, code = run_command(
+            ["docker", "inspect", "--format", "{{.State.Pid}}", cid],
+            env=self.env, check=False, quiet=True, timeout=10,
+        )
+        try:
+            pid = int(output.strip()) if code == 0 else 0
+        except ValueError:
+            pid = 0
+        if pid <= 0:
+            return
+        self.container_pids[client] = pid
+        try:
+            cgroup_lines = Path(f"/proc/{pid}/cgroup").read_text().splitlines()
+        except OSError:
+            cgroup_lines = []
+        for line in cgroup_lines:
+            parts = line.split(":", 2)
+            if len(parts) != 3:
+                continue
+            hierarchy, controllers, relative = parts
+            if hierarchy == "0" and not controllers:
+                candidate = Path("/sys/fs/cgroup") / relative.lstrip("/")
+                if (candidate / "memory.current").is_file():
+                    self.cgroup_paths[client] = candidate
+                    break
+            elif "memory" in controllers.split(","):
+                candidate = Path("/sys/fs/cgroup/memory") / relative.lstrip("/")
+                if (candidate / "memory.usage_in_bytes").is_file():
+                    self.cgroup_paths[client] = candidate
+                    break
+        if client == "torrentngd":
+            output, code = run_command(
+                ["docker", "top", cid, "-eo", "pid,args"],
+                env=self.env, check=False, quiet=True, timeout=10,
+            )
+            if code == 0:
+                for line in output.splitlines()[1:]:
+                    fields = line.strip().split(None, 1)
+                    if len(fields) != 2:
+                        continue
+                    executable_tokens = [token.strip("'\"") for token in fields[1].split()]
+                    if any(Path(token).name == "torrentngd" for token in executable_tokens):
+                        try:
+                            self.torrentng_pids[client] = int(fields[0])
+                        except ValueError:
+                            pass
+                        break
+
+    @staticmethod
+    def _read_cgroup_memory(path):
+        result = {
+            "current": 0, "peak": 0, "anon": 0, "file": 0, "slab": 0,
+            "sock": 0, "kernel_stack": 0, "pagetables": 0,
+        }
+        if path is None:
+            return result
+        files = {
+            "current": ("memory.current", "memory.usage_in_bytes"),
+            "peak": ("memory.peak", "memory.max_usage_in_bytes"),
+        }
+        for key, candidates in files.items():
+            for candidate in candidates:
+                try:
+                    result[key] = int((path / candidate).read_text().strip())
+                    break
+                except (OSError, ValueError):
+                    continue
+        try:
+            stat = {}
+            for line in (path / "memory.stat").read_text().splitlines():
+                fields = line.split()
+                if len(fields) == 2:
+                    stat[fields[0]] = int(fields[1])
+            result["anon"] = stat.get("anon", stat.get("total_rss", stat.get("rss", 0)))
+            result["file"] = stat.get("file", stat.get("total_cache", stat.get("cache", 0)))
+            result["slab"] = stat.get("slab", stat.get("total_slab", 0))
+            result["sock"] = stat.get("sock", 0)
+            result["kernel_stack"] = stat.get("kernel_stack", 0)
+            result["pagetables"] = stat.get("pagetables", 0)
+        except (OSError, ValueError):
+            pass
+        return result
+
+    @staticmethod
+    def _read_process_memory(pid):
+        byte_fields = {
+            "VmRSS": "rss", "VmHWM": "hwm", "RssAnon": "rss_anon",
+            "RssFile": "rss_file", "RssShmem": "rss_shmem",
+            "VmData": "vm_data", "VmStk": "vm_stk", "VmPTE": "vm_pte",
+        }
+        result = {value: 0 for value in byte_fields.values()}
+        result.update({"threads": 0, "thread_names": {}, "smaps_rollup": {}, "mappings": []})
+        if not pid:
+            return result
+        try:
+            for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+                fields = line.split()
+                if len(fields) < 2:
+                    continue
+                key = fields[0].rstrip(":")
+                if key in byte_fields:
+                    result[byte_fields[key]] = int(fields[1]) * 1024
+                elif key == "Threads":
+                    result["threads"] = int(fields[1])
+        except (OSError, ValueError):
+            pass
+
+        try:
+            task_root = Path(f"/proc/{pid}/task")
+            for task in task_root.iterdir():
+                try:
+                    name = (task / "comm").read_text().strip() or "unknown"
+                except OSError:
+                    name = "unknown"
+                result["thread_names"][name] = result["thread_names"].get(name, 0) + 1
+        except OSError:
+            pass
+
+        byte_metrics = {
+            "Rss", "Pss", "Pss_Anon", "Pss_File", "Pss_Shmem",
+            "Shared_Clean", "Shared_Dirty", "Private_Clean", "Private_Dirty",
+            "Anonymous", "AnonHugePages", "Swap",
+        }
+        try:
+            lines = Path(f"/proc/{pid}/smaps").read_text().splitlines()
+            maps = []
+            current = None
+            for line in lines:
+                fields = line.split()
+                if (len(fields) >= 5 and "-" in fields[0]
+                        and len(fields[1]) == 4 and fields[1][0] in "r-"
+                        and fields[1][1] in "w-" and fields[1][2] in "x-"):
+                    if current is not None and current["rss_bytes"]:
+                        maps.append(current)
+                    try:
+                        start, end = fields[0].split("-", 1)
+                        size = int(end, 16) - int(start, 16)
+                    except ValueError:
+                        size = 0
+                    current = {
+                        "name": " ".join(fields[5:]) if len(fields) > 5 else "[anonymous]",
+                        "size_bytes": size,
+                        "rss_bytes": 0,
+                        "pss_bytes": 0,
+                        "anonymous_bytes": 0,
+                        "private_dirty_bytes": 0,
+                        "private_clean_bytes": 0,
+                        "shared_clean_bytes": 0,
+                    }
+                elif current is not None and len(fields) >= 2 and fields[0].rstrip(":") in byte_metrics:
+                    try:
+                        amount = int(fields[1]) * 1024
+                    except ValueError:
+                        continue
+                    key = fields[0].rstrip(":")
+                    result["smaps_rollup"][key] = result["smaps_rollup"].get(key, 0) + amount
+                    target = {
+                        "Rss": "rss_bytes", "Pss": "pss_bytes",
+                        "Anonymous": "anonymous_bytes", "Private_Dirty": "private_dirty_bytes",
+                        "Private_Clean": "private_clean_bytes", "Shared_Clean": "shared_clean_bytes",
+                    }.get(key)
+                    if target:
+                        current[target] += amount
+            if current is not None and current["rss_bytes"]:
+                maps.append(current)
+            result["mappings"] = sorted(maps, key=lambda item: item["rss_bytes"], reverse=True)[:20]
+        except (OSError, ValueError):
+            pass
+        return result
+
+    def _memory_components(self, client):
+        cgroup = self._read_cgroup_memory(self.cgroup_paths.get(client))
+        process = self._read_process_memory(self.torrentng_pids.get(client))
+        return cgroup, process
+
+    def _capture_engine_memory_metrics(self, client, phase):
+        if client != "torrentngd":
+            return
+        profile = {"utc": dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds"),
+                   "client": client, "phase": phase, "metrics": {}}
+        try:
+            text = self._torrentng_request("/metrics").decode("utf-8", "replace")
+            for line in text.splitlines():
+                if not line or line.startswith("#") or " " not in line:
+                    continue
+                name, value = line.rsplit(" ", 1)
+                metric_name = name.split("{", 1)[0]
+                if (metric_name == "torrentng_memory_used_bytes"
+                        or metric_name.startswith("torrentng_memory_class_")
+                        or metric_name.startswith("torrentng_storage_peer_read_cache_")
+                        or metric_name.startswith("torrentng_storage_frame_bytes_")
+                        or metric_name.startswith("torrentng_jemalloc_")
+                        or metric_name in {
+                            "torrentng_peer_rx_buffer_bytes",
+                            "torrentng_peer_tx_buffer_bytes",
+                            "torrentng_piece_assembly_bytes",
+                            "torrentng_storage_file_pool_memory_bytes",
+                        }
+                        or metric_name.startswith("torrentng_hot_torrent_storage_cache_bytes")
+                        or metric_name.startswith("torrentng_hot_torrent_peer_buffer_bytes")):
+                    try:
+                        profile["metrics"][name] = float(value)
+                    except ValueError:
+                        continue
+        except (OSError, urllib.error.URLError, urllib.error.HTTPError, ValueError) as error:
+            profile["error"] = f"{type(error).__name__}: {error}"
+        self.engine_memory_metrics.append(profile)
+        self.last_engine_memory_metrics_at = time.monotonic()
+
+    def _write_memory_profile(self):
+        samples = []
+        for row in self.samples:
+            if len(row) < 28:
+                continue
+            samples.append({
+                "utc": row[0], "client": row[1], "phase": row[2],
+                "container_working_set_bytes": int(row[9]),
+                "cgroup_memory_current_bytes": int(row[11]),
+                "cgroup_memory_peak_bytes": int(row[12]),
+                "cgroup_memory_anon_bytes": int(row[13]),
+                "cgroup_memory_file_bytes": int(row[14]),
+                "cgroup_memory_slab_bytes": int(row[15]),
+                "torrentng_process_rss_bytes": int(row[16]),
+                "torrentng_process_hwm_bytes": int(row[17]),
+                "torrentng_process_rss_anon_bytes": int(row[18]),
+                "torrentng_process_rss_file_bytes": int(row[19]),
+                "torrentng_process_rss_shmem_bytes": int(row[20]),
+                "torrentng_process_vm_data_bytes": int(row[21]),
+                "torrentng_process_vm_stk_bytes": int(row[22]),
+                "torrentng_process_vm_pte_bytes": int(row[23]),
+                "torrentng_process_threads": int(row[24]),
+                "cgroup_memory_sock_bytes": int(row[25]),
+                "cgroup_memory_kernel_stack_bytes": int(row[26]),
+                "cgroup_memory_pagetables_bytes": int(row[27]),
+            })
+        self.memory_profile.parent.mkdir(parents=True, exist_ok=True)
+        self.memory_profile.write_text(json.dumps({
+            "schema_version": 1,
+            "source_commit": self.source_commit,
+            "source_tree": self.source_tree,
+            "source_dirty": self.source_dirty,
+            "source_patch_sha256": self.source_patch_sha256,
+            "source_untracked_count": self.source_untracked_count,
+            "source_untracked_sha256": self.source_untracked_sha256,
+            "source_fingerprint_sha256": self.source_fingerprint_sha256,
+            "cargo_features": self.cargo_features,
+            "allocator": self.allocator,
+            "host": self.host,
+            "memory_samples": samples,
+            "process_memory_snapshots": self.process_memory_snapshots,
+            "engine_metrics_snapshots": self.engine_memory_metrics,
+            "notes": {
+                "docker_stats": "Docker-reported container working set, sampled at the configured interval.",
+                "cgroup_memory_current": "Container cgroup total, including anon and file cache.",
+                "cgroup_memory_anon": "Container anonymous memory from memory.stat.",
+                "torrentng_process_rss": "Host /proc RSS for torrentngd when available; zero means unavailable.",
+                "process_memory_snapshots": "TorrentNG /proc status, thread names, smaps totals, and the 20 largest resident mappings captured with cgroup samples.",
+                "engine_metrics": "TorrentNG resource-governor leases, estimated peer-buffer capacities, storage-pool gauges, and optional allocator metrics sampled during transfer and at phase boundaries.",
+                "jemalloc_metrics": "Jemalloc allocator gauges are present only when the jemalloc-allocator feature is selected. They describe Jemalloc's allocator state, not total process allocations or RSS.",
+                "source_fingerprint": "SHA-256 derived from commit/tree, a normalized full-index Git diff, and all non-ignored untracked file paths and contents at benchmark start.",
+                "process_memory": "Linux /proc RSS, anonymous RSS, file RSS, thread count, and smaps samples are process-level readings; allocator gauges do not replace them.",
+            },
+        }, indent=2) + "\n")
+
+    def _stats(self, client):
+        cid = self.container_ids.get(client) or self.service_id(client)
         if not cid:
             return 0.0, 0
         output, code = run_command(
@@ -747,17 +1311,47 @@ class Benchmark:
 
     def _sample(self, client, phase, elapsed, status, down_override=None):
         cpu, memory = self._stats(client)
+        cgroup, process = self._memory_components(client)
         row = [
             dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds"),
             client, phase, f"{elapsed:.3f}", f"{status.get('progress', 0):.6f}",
             int(status.get("down", 0) if down_override is None else down_override),
             int(status.get("up", 0)), int(status.get("peers", 0)),
             f"{cpu:.2f}", memory, f"{os.getloadavg()[0]:.2f}",
+            cgroup["current"], cgroup["peak"], cgroup["anon"],
+            cgroup["file"], cgroup["slab"], process["rss"], process["hwm"],
+            process["rss_anon"], process["rss_file"], process["rss_shmem"],
+            process["vm_data"], process["vm_stk"], process["vm_pte"],
+            process["threads"], cgroup["sock"], cgroup["kernel_stack"],
+            cgroup["pagetables"],
         ]
         self.samples.append(row)
+        if client == "torrentngd":
+            self.process_memory_snapshots.append({
+                "utc": row[0], "phase": phase, "threads": process["threads"],
+                "thread_names": process["thread_names"],
+                "smaps_rollup": process["smaps_rollup"],
+                "largest_mappings": process["mappings"],
+            })
         with self.csv_path.open("a", newline="") as handle:
             csv.writer(handle).writerow(row)
+        now = time.monotonic()
+        if (client == "torrentngd"
+                and now - self.last_engine_memory_metrics_at >= ALLOCATOR_METRIC_INTERVAL):
+            self._capture_engine_memory_metrics(client, phase)
         return row
+
+    def _sample_idle(self, client):
+        started = time.monotonic()
+        while True:
+            elapsed = time.monotonic() - started
+            self._sample(client, "idle", elapsed, {
+                "progress": 0.0, "down": 0, "up": 0, "peers": 0,
+            })
+            remaining = IDLE_SAMPLE_SECONDS - (time.monotonic() - started)
+            if remaining <= 0:
+                break
+            time.sleep(min(INTERVAL, remaining))
 
     def _wait_complete(self, client, info_hash, name, expected_size, timeout, phase):
         start = time.monotonic()
@@ -927,7 +1521,7 @@ class Benchmark:
     def _start_seed_leecher(self, torrent_path, seeder):
         client = "seed_leecher"
         # Reuse the same controlled infohash with a fresh helper state for each seeder.
-        client_config = self.workdir / "config/qbittorrent-seed" / seeder
+        client_config = self.config_dir / "qbittorrent-seed" / seeder
         self._env("INTEROP_SEED_QBIT_CONFIG", client_config)
         self._prepare_seed_qbit_config(seeder)
         self.sessions[client] = HttpClient(self.api_url(client))
@@ -1096,15 +1690,41 @@ class Benchmark:
     def _summary(rows, phase):
         records = [row for row in rows if row[2] == phase]
         if not records:
-            return {"mean_cpu": 0.0, "peak_cpu": 0.0, "peak_rss": 0,
+            return {"mean_cpu": 0.0, "peak_cpu": 0.0, "peak_memory": 0,
+                    "peak_cgroup_current": 0, "peak_cgroup_anon": 0,
+                    "peak_cgroup_file": 0, "peak_process_rss": 0,
+                    "mean_memory": 0, "mean_cgroup_anon": 0,
                     "peak_rate": 0, "peak_peers": 0}
         return {
             "mean_cpu": sum(float(row[8]) for row in records) / len(records),
             "peak_cpu": max(float(row[8]) for row in records),
-            "peak_rss": max(int(row[9]) for row in records),
+            "peak_memory": max(int(row[9]) for row in records),
+            "peak_cgroup_current": max(int(row[11]) for row in records),
+            "peak_cgroup_anon": max(int(row[13]) for row in records),
+            "peak_cgroup_file": max(int(row[14]) for row in records),
+            "peak_process_rss": max(int(row[16]) for row in records),
+            "mean_memory": sum(int(row[9]) for row in records) / len(records),
+            "mean_cgroup_anon": sum(int(row[13]) for row in records) / len(records),
             "peak_rate": max(int(row[5]) for row in records),
             "peak_peers": max(int(row[7]) for row in records),
         }
+
+    def _release_client_payloads(self, client, iso_name):
+        download_root = self.workdir / "downloads" / client
+        payloads = [download_root / iso_name] if client == "rtorrent" else [
+            download_root / "public" / iso_name,
+            download_root / "seed" / iso_name,
+        ]
+        retained_source = self.seed_source.resolve() if self.seed_source is not None else None
+        for path in payloads:
+            if not path.is_file() or path.is_symlink():
+                continue
+            if retained_source is not None and path.resolve() == retained_source:
+                continue
+            path.unlink()
+        leecher_dir = self.workdir / "leecher" / client
+        if leecher_dir.exists() and not leecher_dir.is_symlink():
+            shutil.rmtree(leecher_dir)
 
     def _run_one(self, client, meta, tracker_ip, private_path):
         print(f"\n==> {LABELS[client]}: public download", flush=True)
@@ -1112,6 +1732,9 @@ class Benchmark:
         self.sessions[client] = HttpClient(self.api_url(client)) if client != "rtorrent" else None
         self._wait_ready(client)
         self._configure(client)
+        self._remember_container(client)
+        self._sample_idle(client)
+        self._capture_engine_memory_metrics(client, "idle")
         version = self._version(client)
         torrent = meta["torrent_path"]
         save_path = "/downloads/rtorrent" if client == "rtorrent" else f"/downloads/{client}/public"
@@ -1154,6 +1777,7 @@ class Benchmark:
                 self._pause(client, meta["info_hash"])
             except Exception:
                 pass
+            self._capture_engine_memory_metrics(client, "after_public_download")
 
         seed_result = "NOT RUN"
         seed_error = ""
@@ -1174,7 +1798,10 @@ class Benchmark:
                     partial.unlink()
             seed_payload = seed_dir / meta["iso_name"]
             if seed_payload.resolve() != self.seed_source.resolve():
-                shutil.copyfile(self.seed_source, seed_payload)
+                try:
+                    os.link(self.seed_source, seed_payload)
+                except OSError:
+                    shutil.copyfile(self.seed_source, seed_payload)
             local_hash = make_private_torrent(
                 seed_payload, f"http://{tracker_ip}:6969/announce", private_path,
             )
@@ -1196,7 +1823,11 @@ class Benchmark:
                     self._pause(client, local_hash)
                 except Exception:
                     pass
+                self._capture_engine_memory_metrics(client, "after_controlled_seed")
 
+        idle = self._summary(
+            [row for row in self.samples if row[1] == client], "idle",
+        )
         down = self._summary(public_rows, "public_download")
         seed = self._summary(seed_rows, "controlled_seed")
         seed_bytes = int(meta["size"] * float(seed_rows[-1][4])) if seed_rows else 0
@@ -1208,7 +1839,14 @@ class Benchmark:
             "download_mib_s": download_bytes / download_elapsed / 1048576 if download_elapsed else 0,
             "download_peak_mib_s": down["peak_rate"] / 1048576,
             "download_mean_cpu": down["mean_cpu"], "download_peak_cpu": down["peak_cpu"],
-            "download_peak_rss": down["peak_rss"], "download_peak_peers": down["peak_peers"],
+            "download_peak_memory": down["peak_memory"],
+            "download_peak_cgroup_current": down["peak_cgroup_current"],
+            "download_peak_cgroup_anon": down["peak_cgroup_anon"],
+            "download_peak_cgroup_file": down["peak_cgroup_file"],
+            "download_peak_process_rss": down["peak_process_rss"],
+            "idle_mean_memory": idle["mean_memory"],
+            "idle_mean_cgroup_anon": idle["mean_cgroup_anon"],
+            "download_peak_peers": down["peak_peers"],
             "download_sha": download_sha,
             "seed_seconds": seed_elapsed,
             "seed_setup_seconds": seed_setup,
@@ -1216,7 +1854,12 @@ class Benchmark:
             "seed_mib_s": seed_bytes / seed_elapsed / 1048576 if seed_elapsed else 0,
             "seed_peak_mib_s": seed["peak_rate"] / 1048576,
             "seed_mean_cpu": seed["mean_cpu"], "seed_peak_cpu": seed["peak_cpu"],
-            "seed_peak_rss": seed["peak_rss"], "seed_peak_peers": seed["peak_peers"],
+            "seed_peak_memory": seed["peak_memory"],
+            "seed_peak_cgroup_current": seed["peak_cgroup_current"],
+            "seed_peak_cgroup_anon": seed["peak_cgroup_anon"],
+            "seed_peak_cgroup_file": seed["peak_cgroup_file"],
+            "seed_peak_process_rss": seed["peak_process_rss"],
+            "seed_peak_peers": seed["peak_peers"],
             "seed_sha": seed_sha, "seed_error": seed_error,
         })
         if public_result == "PASS" and seed_result == "PASS":
@@ -1234,20 +1877,78 @@ class Benchmark:
             )
 
     def _write_report(self, meta, client_images):
+        self._write_memory_profile()
         load_end = os.getloadavg()
         load_peak = max((float(row[10]) for row in self.samples), default=self.load_start[0])
+        config_device, config_type = self._findmnt(self.config_dir)
+
+        def mib(value):
+            return f"{value / 1048576:.1f}" if value else "n/a"
+
+        runtime_overrides = [
+            f"Tokio={self.tokio_worker_threads}" if self.tokio_worker_threads else "",
+            f"storage I/O={self.storage_io_worker_threads}"
+            if self.storage_io_worker_threads else "",
+            f"storage hash={self.storage_hash_worker_threads}"
+            if self.storage_hash_worker_threads else "",
+            f"peer-read readahead={self.storage_peer_read_readahead_bytes}B"
+            if self.storage_peer_read_readahead_bytes is not None else "",
+            f"peer-read cache={self.storage_peer_read_cache_entries} entries"
+            if self.storage_peer_read_cache_entries is not None else "",
+        ]
+        runtime_overrides = ", ".join(value for value in runtime_overrides if value) or "defaults"
+        memory_cap_overrides = ", ".join(
+            value for value in (
+                f"piece assembly={self.piece_assembly_cap_mb} MiB"
+                if self.piece_assembly_cap_mb is not None else "",
+                f"peer buffer={self.peer_buffer_cap_mb} MiB"
+                if self.peer_buffer_cap_mb is not None else "",
+            ) if value
+        ) or "config defaults"
+        observed_tokio_named_threads = {}
+        for snapshot in self.process_memory_snapshots:
+            count = snapshot.get("thread_names", {}).get("tokio-rt-worker", 0)
+            phase = snapshot.get("phase", "unknown")
+            observed_tokio_named_threads[phase] = max(
+                observed_tokio_named_threads.get(phase, 0), count
+            )
+        observed_thread_summary = ", ".join(
+            f"{phase}={count}"
+            for phase, count in sorted(observed_tokio_named_threads.items())
+        ) or "no TorrentNG process snapshots"
+        image_description = (
+            "- The TorrentNG image was built from the recorded checkout. Reference "
+            "images are pinned by digest in deploy/interop/compose.yml."
+            if not self.skip_build else
+            f"- The TorrentNG image {self.prebuilt_image} carries matching source, fingerprint, "
+            "and allocator labels. Reference images are pinned by digest in deploy/interop/compose.yml."
+        )
         lines = [
             f"# TorrentNG and reference client performance: {meta['iso_name']}",
             "",
             f"- Started (UTC): {self.started}",
             f"- TorrentNG source commit: {self.source_commit}",
             f"- TorrentNG source tree: {self.source_tree}",
+            f"- TorrentNG worktree dirty: {'yes' if self.source_dirty else 'no'}",
+            f"- TorrentNG tracked diff SHA-256: {self.source_patch_sha256}",
+            f"- TorrentNG untracked files: {self.source_untracked_count}; content SHA-256: {self.source_untracked_sha256}",
+            f"- TorrentNG source fingerprint SHA-256: {self.source_fingerprint_sha256}",
             f"- Host: {self.host}; {self.cpu_count} logical CPUs; "
             f"{self.mem_total / 1073741824:.1f} GiB RAM; "
             f"{self.mem_available / 1073741824:.1f} GiB available at start; "
             f"Linux {self.kernel} ({self.machine})",
             f"- Docker: {self.docker_version}; {self.compose_version}",
             f"- Scratch filesystem: {self.scratch_device} ({self.scratch_type})",
+            f"- Config filesystem: {config_device} ({config_type})",
+            f"- TorrentNG allocator: {self.allocator} ({self.cargo_features})",
+            f"- TorrentNG MALLOC_CONF: {self.malloc_conf if self.malloc_conf is not None else 'not applicable'}",
+            f"- TorrentNG mimalloc purge delay: {self.mimalloc_purge_delay if self.allocator == 'mimalloc' and self.mimalloc_purge_delay is not None else ('allocator default' if self.allocator == 'mimalloc' else 'not applicable')}",
+            f"- TorrentNG mimalloc THP override: {self.mimalloc_allow_thp if self.allocator == 'mimalloc' and self.mimalloc_allow_thp is not None else ('allocator default' if self.allocator == 'mimalloc' else 'not applicable')}",
+            f"- TorrentNG build mode: {'prebuilt ' + self.prebuilt_image + ' (source, fingerprint, and allocator verified)' if self.skip_build else 'built from this checkout; image labels verified'}",
+            f"- Requested TorrentNG runtime/storage worker overrides: {runtime_overrides}",
+            f"- Requested TorrentNG memory-cap overrides: {memory_cap_overrides}",
+            "- Peak `tokio-rt-worker`-named threads by phase (async + blocking): "
+            f"{observed_thread_summary}",
             f"- Host load average (1/5/15m): "
             f"{self.load_start[0]:.2f}/{self.load_start[1]:.2f}/{self.load_start[2]:.2f} "
             f"at start; {load_end[0]:.2f}/{load_end[1]:.2f}/{load_end[2]:.2f} at end; "
@@ -1271,13 +1972,12 @@ class Benchmark:
                 f"{LABELS[c]}: {client_images.get(c, 'not started')}" for c in CLIENTS
             ) + f"; seed leecher: {client_images.get('seed_leecher', self.seed_leecher_image)}",
             f"- Seed leecher: qBittorrent {self.seed_leecher_version}",
-            "- The TorrentNG image was built from the recorded checkout. Reference "
-            "images are pinned by digest in deploy/interop/compose.yml.",
+            image_description,
             "",
             "## Public download",
             "",
-            "| Client | Version | Result | Progress (%) | Time (s) | Average (MiB/s) | Peak sampled (MiB/s) | Mean CPU (%) | Peak CPU (%) | Peak RSS (MiB) | Peak peers | SHA-256 / failure |",
-            "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+            "| Client | Version | Result | Progress (%) | Time (s) | Average (MiB/s) | Peak sampled (MiB/s) | Mean CPU (%) | Peak CPU (%) | Peak peers | SHA-256 / failure |",
+            "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
         ]
         by_client = {row["client"]: row for row in self.results}
         for client in CLIENTS:
@@ -1288,7 +1988,6 @@ class Benchmark:
                 f"{row.get('download_seconds', 0):.1f} | "
                 f"{row.get('download_mib_s', 0):.2f} | {row.get('download_peak_mib_s', 0):.2f} | "
                 f"{row.get('download_mean_cpu', 0):.2f} | {row.get('download_peak_cpu', 0):.2f} | "
-                f"{row.get('download_peak_rss', 0) / 1048576:.1f} | "
                 f"{row.get('download_peak_peers', 0)} | "
                 f"{row.get('download_sha') or row.get('download_error') or row.get('error', 'n/a')} |"
             )
@@ -1305,8 +2004,8 @@ class Benchmark:
             "public download or the explicitly verified seed-source file, and can run "
             "even if that client's public-swarm download stalls.",
             "",
-            "| Client | Result | Leecher setup (s) | Transfer (s) | Average upload (MiB/s) | Peak sampled (MiB/s) | Mean CPU (%) | Peak CPU (%) | Peak RSS (MiB) | Peak peers | Leecher SHA-256 / failure |",
-            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+            "| Client | Result | Leecher setup (s) | Transfer (s) | Average upload (MiB/s) | Peak sampled (MiB/s) | Mean CPU (%) | Peak CPU (%) | Peak peers | Leecher SHA-256 / failure |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---|",
         ])
         for client in CLIENTS:
             row = by_client.get(client, {})
@@ -1315,9 +2014,28 @@ class Benchmark:
                 f"{row.get('seed_setup_seconds', 0):.1f} | {row.get('seed_seconds', 0):.1f} | "
                 f"{row.get('seed_mib_s', 0):.2f} | "
                 f"{row.get('seed_peak_mib_s', 0):.2f} | {row.get('seed_mean_cpu', 0):.2f} | "
-                f"{row.get('seed_peak_cpu', 0):.2f} | {row.get('seed_peak_rss', 0) / 1048576:.1f} | "
+                f"{row.get('seed_peak_cpu', 0):.2f} | "
                 f"{row.get('seed_peak_peers', 0)} | "
                 f"{row.get('seed_sha') or row.get('seed_error') or row.get('error', 'not verified')} |"
+            )
+        lines.extend([
+            "",
+            "## Memory profile",
+            "",
+            "Memory uses the container cgroup and Docker working-set counter, sampled at the transfer interval. Anonymous memory excludes charged file cache, so these columns help separate process/runtime growth from data caching. TorrentNG process RSS, engine resource-governor leases, peer-buffer estimates, and (for Jemalloc builds only) allocator metrics are in the linked profile. Allocator counters do not replace process RSS. `n/a` means the runtime did not expose that counter.",
+            "",
+            "| Client | Idle container mean (MiB) | Idle anonymous mean (MiB) | Download peak container (MiB) | Download peak anonymous (MiB) | Seed peak container (MiB) | Seed peak anonymous (MiB) |",
+            "|---|---:|---:|---:|---:|---:|---:|",
+        ])
+        for client in CLIENTS:
+            row = by_client.get(client, {})
+            lines.append(
+                f"| {LABELS[client]} | {mib(row.get('idle_mean_memory', 0))} | "
+                f"{mib(row.get('idle_mean_cgroup_anon', 0))} | "
+                f"{mib(row.get('download_peak_memory', 0))} | "
+                f"{mib(row.get('download_peak_cgroup_anon', 0))} | "
+                f"{mib(row.get('seed_peak_memory', 0))} | "
+                f"{mib(row.get('seed_peak_cgroup_anon', 0))} |"
             )
         lines.extend([
             "",
@@ -1340,8 +2058,11 @@ class Benchmark:
             "registered, and the seeder has reannounced; leecher setup time is listed "
             "separately. Peak rates come "
             "from client payload counters. CPU is Docker CPU percent, where "
-            "100% represents one logical core. Memory is container usage rather than "
-            "process-only RSS.",
+            "100% represents one logical core. Each client has an idle baseline "
+            f"sampled for {IDLE_SAMPLE_SECONDS:g} seconds before adding a torrent. "
+            "Cgroup anonymous/file memory and TorrentNG process/engine metrics help "
+            "attribute the sampled container footprint. Jemalloc counters appear only "
+            "when that allocator is selected and do not represent total process allocations.",
             f"- Public download uses the current public Debian swarm with a {DOWNLOAD_TIMEOUT}s "
             "completion timeout. Controlled seeding "
             "uses a private task-local tracker and one qBittorrent leecher on the same "
@@ -1363,6 +2084,7 @@ class Benchmark:
             "## Artifacts and cleanup",
             "",
             f"- Raw time-series samples: [{self.csv_path.name}]({self.csv_path.name})",
+            f"- Cgroup and TorrentNG allocator profile: [{self.memory_profile.name}]({self.memory_profile.name})",
             f"- Preserved source artifacts: {self.artifact_status}",
             f"- Temporary benchmark directory: {self.workdir}",
             f"- Compose cleanup status: **{self.cleanup_status}**",
@@ -1372,21 +2094,57 @@ class Benchmark:
         self.report.parent.mkdir(parents=True, exist_ok=True)
         self.report.write_text("\n".join(lines))
 
+    def _assert_image_labels(self, image):
+        labels, code = run_command(
+            [
+                "docker", "image", "inspect", "--format",
+                '{{index .Config.Labels "org.opencontainers.image.revision"}}|'
+                '{{index .Config.Labels "org.torrentng.source.fingerprint"}}|'
+                '{{index .Config.Labels "org.torrentng.cargo.features"}}',
+                image,
+            ],
+            env=self.env, check=False, quiet=True,
+        )
+        if code != 0:
+            raise RuntimeError(f"TorrentNG image is not available: {image}")
+        actual = labels.strip().split("|", 2)
+        expected = [self.source_commit, self.source_fingerprint_sha256, self.cargo_features]
+        if actual != expected:
+            raise RuntimeError(
+                f"TorrentNG image metadata does not match this benchmark checkout: "
+                f"{actual!r} != {expected!r}"
+            )
+
+    def _use_prebuilt_image(self):
+        self._assert_image_labels(self.prebuilt_image)
+        run_command(["docker", "image", "tag", self.prebuilt_image, self.image], env=self.env)
+        print(
+            f"Using prebuilt image {self.prebuilt_image}; source and allocator labels verified",
+            flush=True,
+        )
+
     def run(self):
         if RATE_BPS < 1 or SEED_LEECHER_RATE_BPS < 1 or MAX_PEERS < 1 or INTERVAL < 1:
             raise RuntimeError("rate ceiling, peer ceiling, and sample interval must be positive")
         if DOWNLOAD_TIMEOUT < 60 or SEED_TIMEOUT < 60:
             raise RuntimeError("download and seed timeouts must be at least 60 seconds")
+        if IDLE_SAMPLE_SECONDS < 0:
+            raise RuntimeError("idle memory sample duration cannot be negative")
         if SEED_NO_PEER_TIMEOUT < 10:
             raise RuntimeError("no-peer timeout must be at least 10 seconds")
         for required in ("docker", "aria2c", "findmnt", "git"):
             if shutil.which(required) is None:
                 raise RuntimeError(f"missing required command: {required}")
         print(f"Scratch: {self.workdir}", flush=True)
+        print(f"Config scratch: {self.config_dir}", flush=True)
         print(f"Compose project: {self.project}", flush=True)
         self.prepare()
         if "torrentngd" in CLIENTS:
-            self.compose("build", "torrentngd", timeout=3600)
+            if self.skip_build:
+                self._use_prebuilt_image()
+            else:
+                self.compose("build", "torrentngd", timeout=3600)
+                self._assert_image_labels(self.image)
         tracker_ip = self._start_tracker()
         meta = self._torrent_metadata()
         if self.seed_source_override is not None:
@@ -1417,7 +2175,11 @@ class Benchmark:
                         env=self.env, check=False, quiet=True,
                     )
                     client_images[client] = image.strip()
-                self.compose("stop", client, check=False, quiet=True, timeout=60)
+                _, stop_code = self.compose(
+                    "stop", client, check=False, quiet=True, timeout=60,
+                )
+                if stop_code == 0:
+                    self._release_client_payloads(client, meta["iso_name"])
                 self.compose("restart", "opentracker", check=False, quiet=True, timeout=60)
         client_images["seed_leecher"] = self.seed_leecher_image
         if self.artifact_dir is not None:
@@ -1433,6 +2195,11 @@ class Benchmark:
         ))
 
     def cleanup(self):
+        if not self.memory_profile.exists():
+            try:
+                self._write_memory_profile()
+            except Exception as error:
+                self.cleanup_status += f"; memory profile error: {type(error).__name__}: {error}"
         try:
             self.compose("down", "--volumes", "--remove-orphans",
                          check=False, quiet=True, timeout=180)
@@ -1446,6 +2213,14 @@ class Benchmark:
                 shutil.rmtree(self.workdir)
         except Exception as error:
             self.cleanup_status += f"; scratch cleanup error: {type(error).__name__}: {error}"
+        if self.config_dir.parent != self.workdir:
+            try:
+                if self.config_dir.exists() and not self.config_dir.is_symlink():
+                    shutil.rmtree(self.config_dir)
+            except Exception as error:
+                self.cleanup_status += (
+                    f"; config scratch cleanup error: {type(error).__name__}: {error}"
+                )
         if not self.report.exists():
             self.report.parent.mkdir(parents=True, exist_ok=True)
             lines = [
@@ -1478,12 +2253,16 @@ def main():
 
 Runs one current Debian amd64 netinst public download and one controlled
 private seed transfer for TorrentNG, qBittorrent, Transmission, Deluge, and
-rTorrent. Docker Compose builds the current TorrentNG checkout. Reference
+rTorrent. Docker Compose builds the current TorrentNG checkout unless a
+revision-matched prebuilt image is selected. Reference
 client images, including the qBittorrent seed leecher, are pinned by digest in
 deploy/interop/compose.yml.
 
 Environment:
   TNG_CLIENT_BENCH_CLIENTS=torrentngd,qbittorrent,... (default: all five)
+  TNG_CLIENT_BENCH_ALLOCATOR=system|jemalloc|mimalloc (default: system)
+  TNG_CLIENT_BENCH_SKIP_BUILD=1 (use an image with matching commit, source fingerprint, and allocator labels)
+  TNG_CLIENT_BENCH_PREBUILT_IMAGE=torrentng/torrentngd:interop
   TNG_CLIENT_BENCH_SEED_SOURCE=/path/to/verified/debian.iso
   TNG_CLIENT_BENCH_REPORT=/path/to/report.md
   TNG_CLIENT_BENCH_ARTIFACT_DIR=/persistent/path (verified ISO and .torrent)
@@ -1496,7 +2275,17 @@ Environment:
   TNG_CLIENT_BENCH_SEED_TIMEOUT_SECS=900
   TNG_CLIENT_BENCH_NO_PEER_TIMEOUT_SECS=90
   TNG_CLIENT_BENCH_SAMPLE_SECS=2
+  TNG_CLIENT_BENCH_IDLE_SAMPLE_SECS=8
   TNG_CLIENT_BENCH_PEER_BIND=0.0.0.0
+  TNG_CLIENT_BENCH_MIMALLOC_PURGE_DELAY=0
+  TNG_CLIENT_BENCH_MIMALLOC_ALLOW_THP=0
+  TNG_CLIENT_BENCH_TOKIO_WORKER_THREADS=2
+  TNG_CLIENT_BENCH_STORAGE_IO_WORKER_THREADS=2
+  TNG_CLIENT_BENCH_STORAGE_HASH_WORKER_THREADS=1
+  TNG_CLIENT_BENCH_STORAGE_PEER_READ_READAHEAD_BYTES=131072
+  TNG_CLIENT_BENCH_STORAGE_PEER_READ_CACHE_ENTRIES=16
+  TNG_CLIENT_BENCH_PIECE_ASSEMBLY_CAP_MB=0
+  TNG_CLIENT_BENCH_PEER_BUFFER_CAP_MB=16
 
 The report and raw CSV remain in the repository; task scratch, the isolated
 Compose project, its volumes, and benchmark-tagged images are removed on exit.""")
