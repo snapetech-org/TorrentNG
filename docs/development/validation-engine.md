@@ -7,12 +7,10 @@ and the certification self-tests.
 
 ## GitHub runner routing
 
-The pull-request checks remain on GitHub-hosted runners. Seven Linux CI jobs
-may use the restricted organization `trusted-main` group for pushes or manual
-runs on `main` only when `TRUSTED_MAIN_RUNNERS_ENABLED` is set to `true`;
-otherwise they remain hosted. The server-side group allowlist is pinned to
-`.github/workflows/ci.yml@refs/heads/main`. The production
-`backend-evidence.yml` workflow stays outside this group.
+All CI and release jobs use GitHub-hosted runners. Linux jobs use
+`ubuntu-latest`; Windows smoke checks use `windows-latest`. Real-device storage
+evidence requires an operator-run test against the intended mount. The 24-hour
+soak requires an operator-managed process outside GitHub Actions.
 
 From the repository root:
 
