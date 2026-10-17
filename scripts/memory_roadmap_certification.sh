@@ -8,6 +8,31 @@ OUT="${1:-$REPORT_DIR/memory-roadmap-certification-$(date -u +%Y%m%dT%H%M%SZ).md
 mkdir -p "$(dirname "$OUT")"
 overall=0
 
+# Evidence is only valid for the source it was produced from. Selecting the
+# newest report by modification time and stamping the current commit on the
+# result would let an old PASS pass for a different tree, so every source
+# report must record the full or abbreviated commit it ran at and that commit
+# must be the current HEAD.
+HEAD_FULL="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+if [[ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ]]; then
+  WORKTREE_STATE="dirty"
+else
+  WORKTREE_STATE="clean"
+fi
+
+report_commit() {
+  local file="$1"
+  grep -m1 -E '^- Commit:' "$file" 2>/dev/null | sed -E 's/^- Commit:[[:space:]]*//; s/[[:space:]]+$//'
+}
+
+matches_head() {
+  local file="$1"
+  [[ -n "$file" && -f "$file" && "$HEAD_FULL" != unknown ]] || return 1
+  local commit
+  commit="$(report_commit "$file")"
+  [[ -n "$commit" && "$commit" != unknown && "$commit" != unavailable && "$HEAD_FULL" == "$commit"* ]]
+}
+
 latest_report() {
   local pattern="$1"
   find "$REPORT_DIR" -maxdepth 1 -type f -name "$pattern" -printf '%T@\t%p\n' 2>/dev/null |
@@ -18,12 +43,12 @@ latest_report() {
 contains() {
   local file="$1"
   local pattern="$2"
-  [[ -n "$file" && -f "$file" ]] && grep -Eq "$pattern" "$file"
+  matches_head "$file" && grep -Eq "$pattern" "$file"
 }
 
 report_passes() {
   local file="$1"
-  [[ -n "$file" && -f "$file" ]] || return 1
+  matches_head "$file" || return 1
   if grep -q '^Overall status:' "$file"; then
     grep -q '^Overall status: PASS$' "$file"
   elif grep -q '^Result:' "$file"; then
@@ -47,6 +72,10 @@ report_link() {
   local file="$1"
   if [[ -n "$file" ]]; then
     printf '%s' "${file#"$ROOT"/}"
+    if ! matches_head "$file"; then
+      printf ' (not valid for this commit: report commit %s, HEAD %s)' \
+        "$(report_commit "$file" | grep . || echo none)" "${HEAD_FULL:0:12}"
+    fi
   else
     printf 'missing'
   fi
@@ -64,6 +93,8 @@ storage_uring="$(latest_report 'storage-uring-graduation-*.md')"
   echo "- Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "- Host: $(hostname)"
   echo "- Commit: $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  echo "- Worktree: $WORKTREE_STATE"
+  echo "- Evidence rule: a row passes only if its source report records this exact commit."
   echo
   echo "| Roadmap item | Status | Evidence |"
   echo "| --- | --- | --- |"

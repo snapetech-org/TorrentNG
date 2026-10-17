@@ -224,7 +224,7 @@ reproduced).
 | F31 | P0 | scale checks certify synthetic projections | PERF-109 | G5 | accepted |
 | F32 | P0 | throughput comparisons don't establish capacity | PERF-104..107 | G0 | accepted |
 | F33 | P1 | CPU/cache/backend microbenchmarks reward wrong behaviour | PERF-102, PERF-107 | G0 | accepted |
-| F34 | P0 | certification stamps current commit on historical PASS text | PERF-114 | G0 | accepted |
+| F34 | P0 | certification stamps current commit on historical PASS text | PERF-114 | G0 | fixed for `memory_roadmap_certification.sh` (source reports must record the current HEAD; other aggregators and machine-readable manifests remain PERF-114) |
 | F35 | P1 | announce waits for optional scrape | SYS-010 | G5 | fixed (announce delivered first; scrape separate event, process-wide cap of 4; broader discovery/control budgets still SYS-010) |
 
 ## 6. Work packages
@@ -333,3 +333,4 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 2026-10-17 | F25 fixed: nested copy entries skip verification; test `deep_copy_hashes_each_leaf_once_per_side` (thread-local hash counter). |
 | 2026-10-17 | F26 partly: `SessionSnapshot` stores `Arc<TorrentEntry>`; test `changing_one_row_shares_every_other_snapshot_row`. The 711k-allocation probe should be re-run in the bulk pass to quantify. |
 | 2026-10-17 | F13 partly: `enforce_piece_assembly_budget` spills evicted assemblies via `write_block` and marks the piece restored-partial; falls back to reject on write failure. Test `evicted_piece_assembly_is_spilled_to_disk_not_discarded`. |
+| 2026-10-17 | F34: `scripts/memory_roadmap_certification.sh` only accepts source reports whose `- Commit:` matches HEAD, records worktree state, and labels stale evidence; `scripts/test_memory_roadmap_certification.py` (3 cases) passes. Other certification aggregators still select by mtime. |
