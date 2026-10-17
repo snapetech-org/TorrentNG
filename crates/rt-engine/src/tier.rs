@@ -530,6 +530,9 @@ impl TierScaleSnapshot {
 
 /// Stale entries tolerated before compaction even when few are live.
 const STALE_COMPACT_FLOOR: usize = 1024;
+/// Queues up to this long are cleaned eagerly on cancel; longer ones (many
+/// entries sharing one deadline) use lazy deletion to stay linear.
+const EAGER_CANCEL_QUEUE_LEN: usize = 32;
 
 #[derive(Debug, Clone)]
 pub struct ActivityTimerWheel<K> {
@@ -576,8 +579,19 @@ where
     }
 
     pub fn cancel(&mut self, key: &K) -> bool {
-        if self.scheduled.remove(key).is_none() {
+        let Some(deadline) = self.scheduled.remove(key) else {
             return false;
+        };
+        // A short queue (the normal case: one deadline per torrent) is cheap
+        // to clean immediately, so reschedule/cancel leaves nothing behind.
+        if let Some(keys) = self.deadlines.get_mut(&deadline) {
+            if keys.len() <= EAGER_CANCEL_QUEUE_LEN {
+                keys.retain(|candidate| candidate != key);
+                if keys.is_empty() {
+                    self.deadlines.remove(&deadline);
+                }
+                return true;
+            }
         }
         // Do not search the deadline's queue for the key. With N entries
         // sharing one deadline, retaining across the queue per cancel made
