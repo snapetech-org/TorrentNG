@@ -1321,14 +1321,19 @@ mod tests {
         reg.get_mut(&hashes[7]).unwrap().name = "changed".to_owned();
         let after = reg.snapshot();
 
-        // Only the changed row (and nothing cloned from the other 299) is a
-        // new allocation: every other row is the same shared entry.
+        // Rebuilds are per shard, so the changed row's shard is rematerialized
+        // and every row in every other shard is the same shared entry.
+        let rebuilt = reg.shard_members[SessionRegistry::shard_of(&hashes[7])].len();
         let shared = before
             .entries
             .iter()
             .filter(|old| after.entries.iter().any(|new| Arc::ptr_eq(old, new)))
             .count();
-        assert_eq!(shared, hashes.len() - 1);
+        assert_eq!(shared, hashes.len() - rebuilt);
+        assert!(
+            rebuilt < 20,
+            "a shard must hold a small slice of the registry"
+        );
         assert_eq!(after.find(&hashes[7]).unwrap().name, "changed");
         assert_eq!(after.len(), hashes.len());
     }
