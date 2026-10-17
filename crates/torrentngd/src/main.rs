@@ -168,8 +168,7 @@ fn tokio_worker_threads_for(
 
     Ok(available_parallelism
         .unwrap_or(1)
-        .max(1)
-        .min(DEFAULT_MAX_TOKIO_WORKER_THREADS))
+        .clamp(1, DEFAULT_MAX_TOKIO_WORKER_THREADS))
 }
 
 fn configured_tokio_worker_threads() -> anyhow::Result<usize> {
