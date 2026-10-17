@@ -1345,7 +1345,7 @@ fn evict_piece_assemblies_to_budget(
     current_piece: u32,
     max_assemblies: usize,
     max_bytes: usize,
-) -> Vec<u32> {
+) -> Vec<(u32, PieceAssembly)> {
     let mut evictions = Vec::new();
     while assemblies.len() > max_assemblies || *assembly_bytes > max_bytes {
         let Some(evict_piece) = assemblies
@@ -1359,7 +1359,7 @@ fn evict_piece_assemblies_to_budget(
 
         if let Some(assembly) = assemblies.remove(&evict_piece) {
             *assembly_bytes = assembly_bytes.saturating_sub(assembly.len());
-            evictions.push(evict_piece);
+            evictions.push((evict_piece, assembly));
         }
     }
     evictions
@@ -10789,7 +10789,10 @@ mod tests {
         );
         let mut bytes = 12;
 
-        let evictions = evict_piece_assemblies_to_budget(&mut assemblies, &mut bytes, 3, 2, 12);
+        let evictions = evict_piece_assemblies_to_budget(&mut assemblies, &mut bytes, 3, 2, 12)
+            .into_iter()
+            .map(|(piece, _)| piece)
+            .collect::<Vec<_>>();
 
         assert_eq!(evictions, vec![1]);
         assert_eq!(bytes, 8);
@@ -10825,7 +10828,10 @@ mod tests {
         );
         let mut bytes = 12;
 
-        let evictions = evict_piece_assemblies_to_budget(&mut assemblies, &mut bytes, 3, 3, 8);
+        let evictions = evict_piece_assemblies_to_budget(&mut assemblies, &mut bytes, 3, 3, 8)
+            .into_iter()
+            .map(|(piece, _)| piece)
+            .collect::<Vec<_>>();
 
         assert_eq!(evictions, vec![1]);
         assert_eq!(bytes, 8);
@@ -10840,7 +10846,10 @@ mod tests {
         assemblies.insert(7, PieceAssembly::new(16));
         let mut bytes = 16;
 
-        let evictions = evict_piece_assemblies_to_budget(&mut assemblies, &mut bytes, 7, 0, 0);
+        let evictions = evict_piece_assemblies_to_budget(&mut assemblies, &mut bytes, 7, 0, 0)
+            .into_iter()
+            .map(|(piece, _)| piece)
+            .collect::<Vec<_>>();
 
         assert!(evictions.is_empty());
         assert_eq!(bytes, 16);
@@ -11969,6 +11978,81 @@ mod tests {
         drop(peer_event_rx);
     }
 
+    #[tokio::test]
+    async fn evicted_piece_assembly_is_spilled_to_disk_not_discarded() {
+        let temp = tempfile::tempdir().unwrap();
+        let conn = Connection::open_in_memory().unwrap();
+        rt_db::migrate(&conn).unwrap();
+        let piece_length = u64::from(MAX_BLOCK_SIZE) * 2;
+        let meta = TorrentMetaV1 {
+            info_hash: [25; 20],
+            announce: None,
+            announce_list: Vec::new(),
+            webseeds: Vec::new(),
+            comment: None,
+            created_by: None,
+            creation_date: None,
+            name: "spill.bin".into(),
+            piece_length,
+            pieces: vec![[0; 20], [0; 20]],
+            files: vec![rt_metainfo::TorrentFileV1 {
+                index: 0,
+                length: piece_length * 2,
+                path: rt_path::SafeRelPath::from_name("spill.bin", false).unwrap(),
+                offset: 0,
+                pad: false,
+            }],
+            private: false,
+            raw: Vec::new(),
+        };
+        let db = Arc::new(Mutex::new(conn));
+        let (_cmd_tx, cmd_rx) = mpsc::channel(1);
+        let mut task = TorrentTask::new(
+            meta,
+            temp.path().to_path_buf(),
+            false,
+            TorrentState::Downloading,
+            Arc::new(RwLock::new(SessionRegistry::new())),
+            DbExecutor::direct(Arc::clone(&db)),
+            ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default()),
+            cmd_rx,
+            temp.path().join("fastresume"),
+            8,
+            6881,
+            10,
+            10,
+            60,
+            1024 * 1024,
+            StorageIoConfig::default(),
+            false,
+            OutboundEgressPolicy::default(),
+            GlobalNetworkBudget::unlimited(),
+            10_000,
+            None,
+        )
+        .await;
+        // One assembly fits the budget; the second forces the first out.
+        task.piece_assembly_soft_cap_bytes = piece_length as usize;
+        let block = |piece: u32, fill: u8| BlockEvent {
+            piece,
+            offset: 0,
+            data: bytes::Bytes::from(vec![fill; MAX_BLOCK_SIZE as usize]),
+        };
+        task.record_piece_block(&block(0, 0xA1)).await.unwrap();
+        task.record_piece_block(&block(1, 0xB2)).await.unwrap();
+
+        // Piece 0 left memory, but its received block was written, not lost.
+        assert!(!task.piece_assemblies.contains_key(&0));
+        assert!(task.piece_assemblies.contains_key(&1));
+        assert!(task.restored_partial_pieces.contains(&0));
+        assert_eq!(task.piece_assembly_evictions, 1);
+        let on_disk = std::fs::read(temp.path().join("spill.bin")).unwrap();
+        assert_eq!(
+            &on_disk[..MAX_BLOCK_SIZE as usize],
+            &vec![0xA1; MAX_BLOCK_SIZE as usize][..]
+        );
+    }
+
     #[test]
     fn v1_padding_bytes_must_be_zero() {
         let files = vec![
@@ -12921,6 +13005,7 @@ mod tests {
             offset: request.begin,
             data: bytes::Bytes::from(vec![0xA5; request.length as usize]),
         })
+        .await
         .unwrap();
         assert!(!task
             .picker

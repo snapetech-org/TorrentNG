@@ -370,7 +370,7 @@ impl TorrentTask {
         }
         let aggregate_piece_write = self.can_aggregate_piece_write(piece);
         if aggregate_piece_write {
-            if let Err(e) = self.record_piece_block(&block) {
+            if let Err(e) = self.record_piece_block(&block).await {
                 warn!(
                     component = "torrent",
                     operation = "assemble_piece",
@@ -500,7 +500,7 @@ impl TorrentTask {
             .unwrap_or(false)
     }
 
-    pub(super) fn record_piece_block(&mut self, block: &BlockEvent) -> anyhow::Result<()> {
+    pub(super) async fn record_piece_block(&mut self, block: &BlockEvent) -> anyhow::Result<()> {
         let len = self.piece_length(block.piece)? as usize;
         if len > self.piece_assembly_soft_cap_bytes {
             return Ok(());
@@ -527,7 +527,7 @@ impl TorrentTask {
             self.remove_piece_assembly(block.piece);
         }
         result?;
-        self.enforce_piece_assembly_budget(block.piece);
+        self.enforce_piece_assembly_budget(block.piece).await;
         Ok(())
     }
 
@@ -551,8 +551,8 @@ impl TorrentTask {
         }
     }
 
-    pub(super) fn enforce_piece_assembly_budget(&mut self, current_piece: u32) {
-        let evictions = evict_piece_assemblies_to_budget(
+    pub(super) async fn enforce_piece_assembly_budget(&mut self, current_piece: u32) {
+        let evicted = evict_piece_assemblies_to_budget(
             &mut self.piece_assemblies,
             &mut self.piece_assembly_bytes,
             current_piece,
@@ -561,14 +561,45 @@ impl TorrentTask {
         );
         self.piece_assembly_evictions = self
             .piece_assembly_evictions
-            .saturating_add(evictions.len() as u64);
-        // The assembly is the only copy of these bytes until a complete piece
-        // is written. Dropping it while leaving the picker's received-bit
-        // state intact would make the next block recreate an incomplete
-        // zero-filled assembly and then fail completion. Reject the affected
-        // pieces so their already-received blocks are requested again.
-        for piece in evictions {
-            self.picker.reject_piece(piece as usize);
+            .saturating_add(evicted.len() as u64);
+        for (piece, assembly) in evicted {
+            // The assembly is the only copy of these blocks. Re-requesting
+            // them would spend network bytes, picker state and time to undo a
+            // memory bound, so spill what was received into the payload files
+            // through the same direct-write path restored partial pieces use.
+            // The picker keeps its received state and the piece completes by
+            // verifying from disk.
+            let mut spilled = true;
+            for (offset, data) in assembly.received_blocks() {
+                let block = BlockEvent {
+                    piece,
+                    offset,
+                    data,
+                };
+                if let Err(error) = self.write_block(&block).await {
+                    warn!(
+                        component = "storage",
+                        operation = "spill_piece_assembly",
+                        torrent = %self.info_hash_hex,
+                        piece,
+                        offset,
+                        result = "error",
+                        error = %error,
+                        "failed to spill an evicted piece assembly; re-requesting its blocks"
+                    );
+                    spilled = false;
+                    break;
+                }
+            }
+            if spilled {
+                self.restored_partial_pieces.insert(piece);
+            } else {
+                // Dropping the assembly while leaving the picker's
+                // received-bit state intact would make the next block
+                // recreate an incomplete zero-filled assembly. Fall back to
+                // requesting the affected blocks again.
+                self.picker.reject_piece(piece as usize);
+            }
         }
     }
 

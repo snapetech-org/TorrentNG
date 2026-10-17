@@ -203,7 +203,7 @@ reproduced).
 | F10 | P0 | webseed debit inside `debug_assert!` | SYS-003 | G0 | fixed (SYS-003) |
 | F11 | P1 | no token-ready wakeup for download pacing | SYS-003, NET-107 | G0 | fixed (SYS-003; deadline-driven, not per-peer polling) |
 | F12 | P1 | choker feedback/exploration | NET-111 | G2 | accepted |
-| F13 | P0 | memory pressure discards received data | NET-103 | G2 | accepted |
+| F13 | P0 | memory pressure discards received data | NET-103 | G2 | partly fixed (evicted assemblies spill to the payload files and the piece verifies from disk; reserve-before-request admission remains NET-103) |
 | F14 | P0 | picker memory estimate wrong (`Vec<bool>`) | SYS-004, NET-109 | G0 | fixed (packed `PieceFlags`; estimate counts bitsets, counts and BTree buckets) |
 | F15 | P1 | picker scans all pieces before rarity buckets | NET-109 | G2 | partly fixed (default no-priority path is O(1); bucket `BTreeSet` allocation storm remains NET-109) |
 | F16 | P0/P1 | buffers lose coherent owner across boundaries | IO-003 | G1 | accepted |
@@ -332,3 +332,4 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 2026-10-17 | F18: gate is runtime-toggleable (`[storage] peer_read_readahead_sequential_only`, default true; documented in CONFIGURATION.md). Existing readahead cache scheduler tests set it to false to keep their expansion semantics. `cargo check --workspace --all-targets` is clean. |
 | 2026-10-17 | F25 fixed: nested copy entries skip verification; test `deep_copy_hashes_each_leaf_once_per_side` (thread-local hash counter). |
 | 2026-10-17 | F26 partly: `SessionSnapshot` stores `Arc<TorrentEntry>`; test `changing_one_row_shares_every_other_snapshot_row`. The 711k-allocation probe should be re-run in the bulk pass to quantify. |
+| 2026-10-17 | F13 partly: `enforce_piece_assembly_budget` spills evicted assemblies via `write_block` and marks the piece restored-partial; falls back to reject on write failure. Test `evicted_piece_assembly_is_spilled_to_disk_not_discarded`. |
