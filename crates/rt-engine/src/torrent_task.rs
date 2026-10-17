@@ -20,7 +20,7 @@ use rusqlite::Connection;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit, RwLock};
-use tokio::time::{interval, sleep, timeout, Sleep};
+use tokio::time::{interval, sleep, timeout, Instant as TokioInstant, Sleep};
 use tokio_util::codec::Framed;
 use tracing::{debug, info, warn};
 use url::Url;
@@ -1702,6 +1702,10 @@ pub struct TorrentTask {
     download_limit_bytes_per_sec: Option<u64>,
     download_tokens: u64,
     download_tokens_updated: Instant,
+    /// When the local download bucket will next hold enough tokens for a
+    /// request that refilling had to skip. Nothing else restarts a peer whose
+    /// outstanding requests drained while the bucket was empty.
+    download_token_wake: Option<Instant>,
     torrent_upload: Arc<SharedRateLimiter>,
     torrent_download_limit_bytes_per_sec: Option<u64>,
     torrent_upload_limit_bytes_per_sec: Option<u64>,
@@ -2045,6 +2049,7 @@ impl TorrentTask {
             download_limit_bytes_per_sec: None,
             download_tokens: u64::MAX,
             download_tokens_updated: Instant::now(),
+            download_token_wake: None,
             torrent_upload: Arc::new(SharedRateLimiter::new(None)),
             torrent_download_limit_bytes_per_sec: None,
             torrent_upload_limit_bytes_per_sec: None,
@@ -2617,6 +2622,16 @@ impl TorrentTask {
 
                 _ = peer_control_retry_tick.tick() => {
                     self.retry_pending_peer_controls();
+                }
+
+                _ = sleep_until_download_tokens(self.download_token_wake), if self.download_token_wake.is_some() => {
+                    self.download_token_wake = None;
+                    if !self.paused {
+                        let peers: Vec<SocketAddr> = self.active_peers.keys().copied().collect();
+                        for peer in peers {
+                            self.refill_peer_requests(peer).await;
+                        }
+                    }
                 }
 
                 _ = &mut webseed_sleep, if !self.paused && self.active_peers.is_empty() && !self.meta.webseeds.is_empty() && !self.picker.is_complete() => {
@@ -5449,6 +5464,13 @@ impl TorrentTask {
             }
         }
         durable
+    }
+}
+
+/// Resolve at `deadline`; callers guard on the deadline being set.
+async fn sleep_until_download_tokens(deadline: Option<Instant>) {
+    if let Some(deadline) = deadline {
+        tokio::time::sleep_until(TokioInstant::from_std(deadline)).await;
     }
 }
 
@@ -11697,6 +11719,96 @@ mod tests {
                 .acquire_or_cancelled(u64::MAX / 2, &control, generation)
                 .await
         );
+    }
+
+    #[tokio::test]
+    async fn drained_download_bucket_schedules_a_token_ready_wakeup() {
+        let temp = tempfile::tempdir().unwrap();
+        let conn = Connection::open_in_memory().unwrap();
+        rt_db::migrate(&conn).unwrap();
+        let meta = TorrentMetaV1 {
+            info_hash: [26; 20],
+            announce: None,
+            announce_list: Vec::new(),
+            webseeds: Vec::new(),
+            comment: None,
+            created_by: None,
+            creation_date: None,
+            name: "paced.bin".into(),
+            piece_length: 4,
+            pieces: vec![[0; 20]],
+            files: vec![rt_metainfo::TorrentFileV1 {
+                index: 0,
+                length: 4,
+                path: SafeRelPath::from_name("paced.bin", false).unwrap(),
+                offset: 0,
+                pad: false,
+            }],
+            private: false,
+            raw: Vec::new(),
+        };
+        let db = Arc::new(Mutex::new(conn));
+        let (_cmd_tx, cmd_rx) = mpsc::channel(1);
+        let mut task = TorrentTask::new(
+            meta,
+            temp.path().to_path_buf(),
+            false,
+            TorrentState::Downloading,
+            Arc::new(RwLock::new(SessionRegistry::new())),
+            DbExecutor::direct(Arc::clone(&db)),
+            ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default()),
+            cmd_rx,
+            temp.path().join("fastresume"),
+            8,
+            6881,
+            10,
+            10,
+            60,
+            1024 * 1024,
+            StorageIoConfig::default(),
+            false,
+            OutboundEgressPolicy::default(),
+            GlobalNetworkBudget::unlimited(),
+            10_000,
+            None,
+        )
+        .await;
+
+        let peer: SocketAddr = "127.0.0.1:6881".parse().unwrap();
+        let permits = Arc::new(tokio::sync::Semaphore::new(1));
+        let (_id, mut cmd_rx) = task
+            .register_peer(peer, permits.acquire_owned().await.unwrap())
+            .expect("peer registration should fit the memory budget");
+        {
+            let handle = task.active_peers.get_mut(&peer).unwrap();
+            handle.choked = false;
+            handle.peer_has.set(0, true);
+        }
+        task.picker.availability.add_bitfield(&[0x80]);
+
+        // A 2 byte/s limit with an empty bucket cannot afford the 4-byte
+        // block yet: nothing is requested, but a wakeup must be scheduled for
+        // when it can.
+        task.download_limit_bytes_per_sec = Some(2);
+        task.download_tokens = 0;
+        task.download_tokens_updated = Instant::now();
+        task.refill_peer_requests(peer).await;
+        assert!(cmd_rx.try_recv().is_err(), "no request without tokens");
+        let wake = task
+            .download_token_wake
+            .expect("a token-ready wakeup must be scheduled");
+        let wait = wake.saturating_duration_since(Instant::now());
+        assert!(
+            wait > Duration::from_millis(1500) && wait <= Duration::from_secs(2),
+            "4 bytes at 2 B/s is ~2 s away, got {wait:?}"
+        );
+
+        // Once the tokens exist the same refill sends the request.
+        task.download_token_wake = None;
+        task.download_tokens = 4;
+        task.refill_peer_requests(peer).await;
+        assert!(matches!(cmd_rx.try_recv(), Ok(PeerCommand::Request(_))));
+        assert!(task.download_token_wake.is_none());
     }
 
     #[test]

@@ -275,10 +275,9 @@ impl TorrentTask {
         }
 
         let mut queue_full = 0u64;
+        // Bytes the bucket was short by when refilling had to stop.
+        let mut tokens_missing = None;
         while handle.outstanding < request_pipeline {
-            if download_limited && download_tokens == 0 {
-                break;
-            }
             let req = match self.picker.pick(&handle.peer_has) {
                 Some(req) => req,
                 None => {
@@ -293,6 +292,7 @@ impl TorrentTask {
             };
             if download_limited && download_tokens < u64::from(req.length) {
                 self.picker.cancel_request(req.piece as usize, req.begin);
+                tokens_missing = Some(u64::from(req.length) - download_tokens);
                 break;
             }
             if handle.cmd_tx.try_send(PeerCommand::Request(req)).is_err() {
@@ -308,6 +308,17 @@ impl TorrentTask {
         }
         if download_limited {
             self.download_tokens = download_tokens;
+        }
+        if let (Some(missing), Some(limit)) = (tokens_missing, self.download_limit_bytes_per_sec) {
+            // Wake exactly when the missing bytes have refilled, so a rate
+            // below one block per second still makes progress.
+            let wait = Duration::from_secs_f64(missing as f64 / limit as f64)
+                .max(Duration::from_millis(1));
+            let deadline = Instant::now() + wait;
+            self.download_token_wake = Some(
+                self.download_token_wake
+                    .map_or(deadline, |current| current.min(deadline)),
+            );
         }
         self.peer_command_queue_full = self.peer_command_queue_full.saturating_add(queue_full);
     }
