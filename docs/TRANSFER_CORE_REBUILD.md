@@ -198,7 +198,7 @@ reproduced).
 | F05 | P1 | fixed 512 KiB v1 flight window | NET-108 | G2 | accepted |
 | F06 | P0 | 4,096 requests/10 s upload guard | NET-110 | G2 | partly fixed (count ceiling removed; queue bound remains and still drops silently when saturated; protocol-correct rejection and shared byte-admitted upload service are NET-105/NET-110) |
 | F07 | P0 | uTP writer is stop-and-wait | NET-112, NET-113 | G5 | accepted |
-| F08 | P0 | Fast advertised without full request termination | SYS-003, NET-105 | G0 | accepted |
+| F08 | P0 | Fast advertised without full request termination | SYS-003, NET-105 | G0 | partly fixed (v1: Reject for every request whose coordinates are known when Fast is negotiated; v2 handler, outgoing Cancel and endgame cancellation remain NET-105) |
 | F09 | P0 | torrent upload limit copied into per-peer buckets | SYS-003, NET-107 | G0 | fixed (SYS-003; hierarchical scheduler still NET-107) |
 | F10 | P0 | webseed debit inside `debug_assert!` | SYS-003 | G0 | fixed (SYS-003) |
 | F11 | P1 | no token-ready wakeup for download pacing | SYS-003, NET-107 | G0 | fixed (SYS-003; deadline-driven, not per-peer polling) |
@@ -240,7 +240,7 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 2 | NET-101 | P0 | Define typed transfer coordinates and protocol geometry adapters | SYS-001 | todo | |
 | 2 | PERF-101 | P0 | Commit measurement contract and strict result schemas | SYS-001 | todo | |
 | 2 | SYS-002 | P0 | Land v2 reproductions and a reviewed extent correction | SYS-001 | done | `torrent_task_v2::tests::v2_*` multi-block tests (5 completion cases x memory/spill, red without fix) + `v2_request_window_pipelines_every_block_of_a_piece` (red: 4 of 8 requests) |
-| 2 | SYS-003 | P0 | Repair immediate release-rate and negotiated-capability behavior | SYS-001 | wip | F10 done: `webseed_block_is_debited_from_the_local_download_bucket` (fails under `--release` with the old line, tokens left 100; passes with the fix). F09 done: one `SharedRateLimiter` per torrent shared by all peer loops (`torrent_upload_limit_is_one_bucket_shared_by_all_peers`). F11 done: `download_token_wake` deadline + loop branch (`drained_download_bucket_schedules_a_token_ready_wakeup`). Remaining: F08 Fast lifecycle (owner decision on interim) |
+| 2 | SYS-003 | P0 | Repair immediate release-rate and negotiated-capability behavior | SYS-001 | wip | F10 done: `webseed_block_is_debited_from_the_local_download_bucket` (fails under `--release` with the old line, tokens left 100; passes with the fix). F09 done: one `SharedRateLimiter` per torrent shared by all peer loops (`torrent_upload_limit_is_one_bucket_shared_by_all_peers`). F11 done: `download_token_wake` deadline + loop branch (`drained_download_bucket_schedules_a_token_ready_wakeup`). F08 v1 half done (see register); the stop-advertising interim was not needed. Remaining: v2 Reject/Cancel, outgoing Cancel, endgame |
 | 2 | SYS-004 | P0 | Introduce compact identities and honest whole-owner metadata accounting | SYS-001 | todo | |
 | 2 | SYS-009 | P0 | Exercise the production database worker and coalesce progress | SYS-001 | todo | |
 | 2 | SYS-011 | P0 | Make live observability passive and owner-specific | SYS-001 | todo | |
@@ -304,7 +304,7 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 1. **SYS-002** — done. v2 reproductions + extent correction + local
    request-window repair. The window fix is a local loop repair only; the
    authoritative shared ledger (F03) remains NET-104.
-2. **SYS-003** (F10, F09, F11 done; F08 remains) — release-rate and negotiated-capability repairs: webseed debit
+2. **SYS-003** (F10, F09, F11 done; F08 v1 done, v2/Cancel remain) — release-rate and negotiated-capability repairs: webseed debit
    out of `debug_assert!` (F10) with a release-mode test, aggregate torrent
    upload cap (F09), explicit token-ready wakeup (F11), Fast lifecycle (F08;
    interim = stop advertising Fast until NET-105).
@@ -327,3 +327,4 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 2026-10-17 | F28 fixed: `TaskExits`/`spawn_supervised` in `subsystems.rs`; command path calls `reap_exited_torrent_tasks` (O(exits)), the 1 s health tick keeps the full scan. |
 | 2026-10-17 | F19 partly: `sync_all_open_files` no longer unions the shared pool's writable files; `write_at` marks dirty at issue (also narrows F21's lost-dirty window). Test `checkpoint_sync_covers_only_this_schedulers_files` run deferred. |
 | 2026-10-17 | F06 partly: removed the per-peer requests-per-10-seconds ceiling; admission is the bounded request queue + pending-read cap. |
+| 2026-10-17 | F08 (v1): `UploadContext.fast_negotiated`; rejected requests while choked / piece not held / queue saturated / read failed / choke transition; rate-wait interruptions requeue instead of dropping. Aborting in-flight reads on choke is skipped for Fast peers so their result can be rejected. Test `fast_peer_request_while_choked_is_rejected_not_dropped`. Chose real Reject semantics over the stop-advertising interim. |

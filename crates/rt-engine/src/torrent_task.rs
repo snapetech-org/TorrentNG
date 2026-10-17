@@ -1525,6 +1525,9 @@ struct UploadContext {
     /// One bucket per torrent, shared by every peer loop. A bucket per peer
     /// would let N peers each spend the full torrent allowance.
     torrent_upload: Arc<SharedRateLimiter>,
+    /// BEP 6 was negotiated with this peer. A request we will not serve must
+    /// then be answered with Reject Request instead of being dropped.
+    fast_negotiated: bool,
     upload_control: RateLimitCancellation,
     shutdown_control: RateLimitCancellation,
     global_download: Arc<SharedRateLimiter>,
@@ -6082,7 +6085,7 @@ async fn run_outgoing_peer_with_policy(
     info_hash: [u8; 20],
     peer_event_tx: mpsc::Sender<PeerEvent>,
     peer_cmd_rx: mpsc::Receiver<PeerCommand>,
-    upload: UploadContext,
+    mut upload: UploadContext,
     policy: OutgoingTransportPolicy,
 ) -> anyhow::Result<PeerLoopExit> {
     match policy {
@@ -6098,16 +6101,19 @@ async fn run_outgoing_peer_with_policy(
         }
         OutgoingTransportPolicy::PreferUtp => match UtpStream::connect(addr).await {
             Ok(stream) => match prepare_outgoing_utp_peer(addr, info_hash, &upload, stream).await {
-                Ok(peer_io) => Ok(run_peer_loop(
-                    addr,
-                    peer_id,
-                    peer_io,
-                    peer_event_tx,
-                    peer_cmd_rx,
-                    upload,
-                    false,
-                )
-                .await),
+                Ok((peer_io, fast)) => {
+                    upload.fast_negotiated = fast;
+                    Ok(run_peer_loop(
+                        addr,
+                        peer_id,
+                        peer_io,
+                        peer_event_tx,
+                        peer_cmd_rx,
+                        upload,
+                        false,
+                    )
+                    .await)
+                }
                 Err(e) => {
                     debug!(
                         component = "peer",
@@ -6143,7 +6149,7 @@ async fn run_outgoing_peer(
     info_hash: [u8; 20],
     peer_event_tx: mpsc::Sender<PeerEvent>,
     peer_cmd_rx: mpsc::Receiver<PeerCommand>,
-    upload: UploadContext,
+    mut upload: UploadContext,
 ) -> anyhow::Result<PeerLoopExit> {
     let stream = tokio::time::timeout(Duration::from_secs(10), TcpStream::connect(addr)).await??;
     stream.set_nodelay(true)?;
@@ -6198,6 +6204,7 @@ async fn run_outgoing_peer(
         remote_supports_extension,
     )
     .await?;
+    upload.fast_negotiated = remote_supports_fast;
     send_have_state(
         &mut peer_io,
         &upload.have_pieces,
@@ -6245,7 +6252,7 @@ async fn prepare_outgoing_utp_peer(
     info_hash: [u8; 20],
     upload: &UploadContext,
     mut stream: UtpStream,
-) -> anyhow::Result<PeerIo> {
+) -> anyhow::Result<(PeerIo, bool)> {
     let our_hs = Handshake {
         info_hash,
         peer_id: crate::peer_id::our_peer_id(),
@@ -6287,7 +6294,7 @@ async fn prepare_outgoing_utp_peer(
     )
     .await?;
     peer_io.send(Message::Interested).await?;
-    Ok(peer_io)
+    Ok((peer_io, remote_supports_fast))
 }
 
 async fn run_established_utp_peer(
@@ -6296,10 +6303,11 @@ async fn run_established_utp_peer(
     info_hash: [u8; 20],
     peer_event_tx: mpsc::Sender<PeerEvent>,
     peer_cmd_rx: mpsc::Receiver<PeerCommand>,
-    upload: UploadContext,
+    mut upload: UploadContext,
     stream: UtpStream,
 ) -> anyhow::Result<PeerLoopExit> {
-    let peer_io = prepare_outgoing_utp_peer(addr, info_hash, &upload, stream).await?;
+    let (peer_io, fast) = prepare_outgoing_utp_peer(addr, info_hash, &upload, stream).await?;
+    upload.fast_negotiated = fast;
 
     Ok(run_peer_loop(
         addr,
@@ -6321,7 +6329,7 @@ async fn run_incoming_peer(
     info_hash: [u8; 20],
     peer_event_tx: mpsc::Sender<PeerEvent>,
     peer_cmd_rx: mpsc::Receiver<PeerCommand>,
-    upload: UploadContext,
+    mut upload: UploadContext,
     remote_supports_extension: bool,
     remote_supports_fast: bool,
 ) -> anyhow::Result<PeerLoopExit> {
@@ -6356,6 +6364,7 @@ async fn run_incoming_peer(
         remote_supports_extension,
     )
     .await?;
+    upload.fast_negotiated = remote_supports_fast;
     send_have_state(
         &mut peer_io,
         &upload.have_pieces,
@@ -6384,7 +6393,7 @@ async fn run_incoming_utp_peer(
     info_hash: [u8; 20],
     peer_event_tx: mpsc::Sender<PeerEvent>,
     peer_cmd_rx: mpsc::Receiver<PeerCommand>,
-    upload: UploadContext,
+    mut upload: UploadContext,
     remote_supports_extension: bool,
     remote_supports_fast: bool,
 ) -> anyhow::Result<PeerLoopExit> {
@@ -6409,6 +6418,7 @@ async fn run_incoming_utp_peer(
         remote_supports_extension,
     )
     .await?;
+    upload.fast_negotiated = remote_supports_fast;
     send_have_state(
         &mut peer_io,
         &upload.have_pieces,
@@ -6830,13 +6840,25 @@ async fn run_peer_loop(
                     PeerCommand::Choke => {
                         upload.upload_control.cancel();
                         upload_choked = true;
-                        pending_upload_requests.clear();
-                        // A local choke invalidates reads that were admitted
-                        // under the previous upload state. Abort them now so
-                        // a slow disk cannot retain peer memory until the
-                        // per-read timeout.
-                        abort_upload_reads(&upload_reads);
                         peer_io.send(Message::Choke).await?;
+                        if upload.fast_negotiated {
+                            // BEP 6: a choke no longer implicitly discards
+                            // requests; every queued one gets a Reject. Reads
+                            // already in flight finish (bounded by the read
+                            // cap and timeout) and are rejected from their
+                            // result below, because aborting would lose their
+                            // coordinates.
+                            while let Some(request) = pending_upload_requests.pop_front() {
+                                reject_upload_request(&mut peer_io, &upload, request).await?;
+                            }
+                        } else {
+                            pending_upload_requests.clear();
+                            // A local choke invalidates reads that were
+                            // admitted under the previous upload state. Abort
+                            // them now so a slow disk cannot retain peer
+                            // memory until the per-read timeout.
+                            abort_upload_reads(&upload_reads);
+                        }
                     }
                     PeerCommand::Unchoke => {
                         upload.upload_control.cancel();
@@ -7180,7 +7202,13 @@ async fn run_peer_loop(
                         }
                     }
                     Message::Request { piece, begin, length } => {
+                        let request = UploadRequest {
+                            piece,
+                            begin,
+                            length,
+                        };
                         if upload_choked || !upload.have_pieces.get(piece as usize).unwrap_or(false) {
+                            reject_upload_request(&mut peer_io, &upload, request).await?;
                             continue;
                         }
                         if pending_upload_requests.len() >= MAX_QUEUED_UPLOAD_REQUESTS
@@ -7199,13 +7227,10 @@ async fn run_peer_loop(
                                     "dropping excess upload requests without terminating peer"
                                 );
                             }
+                            reject_upload_request(&mut peer_io, &upload, request).await?;
                             continue;
                         }
-                        pending_upload_requests.push_back(UploadRequest {
-                            piece,
-                            begin,
-                            length,
-                        });
+                        pending_upload_requests.push_back(request);
                         start_upload_reads(
                             &mut upload_reads,
                             &mut pending_upload_requests,
@@ -7408,6 +7433,22 @@ async fn run_peer_loop(
                                 .await
                             && upload.upload_control.generation() == control_generation;
                         if !budget_available {
+                            // The rate wait was interrupted by a control
+                            // change. If we are still unchoked this is valid
+                            // demand (for example a limit update): serve it
+                            // next instead of dropping it. Otherwise it is
+                            // rejected like any other discarded request.
+                            if upload_choked {
+                                reject_upload_request(&mut peer_io, &upload, request).await?;
+                            } else {
+                                pending_upload_requests.push_front(request);
+                            }
+                            start_upload_reads(
+                                &mut upload_reads,
+                                &mut pending_upload_requests,
+                                &upload,
+                                upload_choked,
+                            );
                             continue;
                         }
                         peer_io
@@ -7433,7 +7474,9 @@ async fn run_peer_loop(
                     Ok(_) => {
                         // A local choke or shutdown may have arrived while
                         // the read was in flight. Dropping the leased block
-                        // is safer than sending data after the state change.
+                        // is safer than sending data after the state change;
+                        // a Fast peer is told the request will not be served.
+                        reject_upload_request(&mut peer_io, &upload, request).await?;
                     }
                     Err(error) => {
                         warn!(
@@ -7447,6 +7490,7 @@ async fn run_peer_loop(
                             error = %error,
                             "failed to read upload block"
                         );
+                        reject_upload_request(&mut peer_io, &upload, request).await?;
                     }
                 }
                 start_upload_reads(
@@ -7649,6 +7693,25 @@ async fn read_upload_block(
         data: bytes::Bytes::from(data),
         _lease: lease,
     })
+}
+
+/// Answer a request we will not serve. With Fast negotiated BEP 6 requires an
+/// explicit Reject Request; without it the legacy behaviour (silence) stands.
+async fn reject_upload_request(
+    peer_io: &mut PeerIo,
+    upload: &UploadContext,
+    request: UploadRequest,
+) -> anyhow::Result<()> {
+    if upload.fast_negotiated {
+        peer_io
+            .send(Message::Reject {
+                piece: request.piece,
+                begin: request.begin,
+                length: request.length,
+            })
+            .await?;
+    }
+    Ok(())
 }
 
 fn start_upload_reads(
@@ -11806,6 +11869,106 @@ mod tests {
         assert!(task.download_token_wake.is_none());
     }
 
+    #[tokio::test]
+    async fn fast_peer_request_while_choked_is_rejected_not_dropped() {
+        let temp = tempfile::tempdir().unwrap();
+        let payload = vec![7u8; MAX_BLOCK_SIZE as usize];
+        std::fs::write(temp.path().join("peer.bin"), &payload).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = listener.local_addr().unwrap();
+        let remote = TcpStream::connect(peer_addr).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+
+        let piece_map = Arc::new(
+            PieceMap::new(
+                u64::from(MAX_BLOCK_SIZE),
+                vec![FileSpan {
+                    file_index: 0,
+                    path: rt_path::SafeRelPath::from_name("peer.bin", false).unwrap(),
+                    content_offset: 0,
+                    length: u64::from(MAX_BLOCK_SIZE),
+                }],
+            )
+            .unwrap(),
+        );
+        // One byte per second, with the initial burst already spent, keeps
+        // this peer loop in its upload wait until it is cancelled.
+        let slow_upload = Arc::new(SharedRateLimiter::new(Some(1)));
+        slow_upload.acquire(64 * 1024).await;
+        let control = RateLimitCancellation::default();
+        let shutdown_control = RateLimitCancellation::default();
+        let upload = UploadContext {
+            save_root: temp.path().to_path_buf(),
+            piece_map,
+            storage: MountScheduler::new_for_path(
+                StorageRootId::new(),
+                temp.path(),
+                &SchedulerConfig {
+                    profile: StorageProfile::Unknown,
+                    ..Default::default()
+                },
+            ),
+            resources: ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default()),
+            have_pieces: PieceBitmap::from_bools(&[true]),
+            _bitmap_memory_lease: None,
+            metadata: None,
+            is_private: false,
+            pex_enabled: true,
+            torrent_upload: Arc::clone(&slow_upload),
+            fast_negotiated: true,
+            upload_control: control.clone(),
+            shutdown_control: shutdown_control.clone(),
+            global_download: GlobalNetworkBudget::unlimited().download(),
+            global_upload: GlobalNetworkBudget::unlimited().upload(),
+        };
+        let (peer_event_tx, peer_event_rx) = mpsc::channel(4);
+        let (peer_cmd_tx, peer_cmd_rx) = mpsc::channel(4);
+        let loop_task = tokio::spawn(run_peer_loop(
+            peer_addr,
+            PeerId::new(),
+            PeerIo::Tcp(Framed::new(server, PeerCodec::default())),
+            peer_event_tx,
+            peer_cmd_rx,
+            upload,
+            true,
+        ));
+        let mut remote = Framed::new(remote, PeerCodec::default());
+
+        // We never unchoked this peer. Under BEP 6 its request must be
+        // answered with Reject Request rather than silently ignored.
+        remote
+            .send(Message::Request {
+                piece: 0,
+                begin: 0,
+                length: MAX_BLOCK_SIZE,
+            })
+            .await
+            .unwrap();
+        let reply = timeout(Duration::from_secs(2), remote.next())
+            .await
+            .expect("a Fast peer must get an answer to its request")
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            reply,
+            Message::Reject {
+                piece: 0,
+                begin: 0,
+                length: MAX_BLOCK_SIZE
+            }
+        ));
+
+        control.cancel();
+        shutdown_control.cancel();
+        peer_cmd_tx.send(PeerCommand::Shutdown).await.unwrap();
+        let exit = timeout(Duration::from_secs(1), loop_task)
+            .await
+            .expect("shutdown should end the peer loop")
+            .unwrap();
+        assert!(exit.result.is_ok());
+        drop(peer_event_rx);
+    }
+
     #[test]
     fn v1_padding_bytes_must_be_zero() {
         let files = vec![
@@ -11909,6 +12072,7 @@ mod tests {
             is_private: false,
             pex_enabled: true,
             torrent_upload: Arc::new(SharedRateLimiter::new(None)),
+            fast_negotiated: false,
             upload_control: RateLimitCancellation::default(),
             shutdown_control: RateLimitCancellation::default(),
             global_download: GlobalNetworkBudget::unlimited().download(),
@@ -12344,6 +12508,7 @@ mod tests {
             is_private: false,
             pex_enabled: true,
             torrent_upload: Arc::clone(&slow_upload),
+            fast_negotiated: false,
             upload_control: control.clone(),
             shutdown_control: shutdown_control.clone(),
             global_download: GlobalNetworkBudget::unlimited().download(),
@@ -12431,6 +12596,7 @@ mod tests {
             is_private: false,
             pex_enabled: true,
             torrent_upload: Arc::new(SharedRateLimiter::new(None)),
+            fast_negotiated: false,
             upload_control: RateLimitCancellation::default(),
             shutdown_control: RateLimitCancellation::default(),
             global_download: GlobalNetworkBudget::unlimited().download(),
@@ -12501,6 +12667,7 @@ mod tests {
             is_private: false,
             pex_enabled: true,
             torrent_upload: Arc::new(SharedRateLimiter::new(None)),
+            fast_negotiated: false,
             upload_control: RateLimitCancellation::default(),
             shutdown_control: RateLimitCancellation::default(),
             global_download: GlobalNetworkBudget::unlimited().download(),
@@ -12619,6 +12786,7 @@ mod tests {
             is_private: false,
             pex_enabled: true,
             torrent_upload: Arc::new(SharedRateLimiter::new(None)),
+            fast_negotiated: false,
             upload_control: RateLimitCancellation::default(),
             shutdown_control: RateLimitCancellation::default(),
             global_download: GlobalNetworkBudget::unlimited().download(),

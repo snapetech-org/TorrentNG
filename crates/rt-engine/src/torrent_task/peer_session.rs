@@ -262,6 +262,7 @@ impl TorrentTask {
             is_private: self.meta.private,
             pex_enabled: self.pex_enabled,
             torrent_upload: Arc::clone(&self.torrent_upload),
+            fast_negotiated: false,
             upload_control,
             shutdown_control,
             global_download: self.network_budget.download(),
