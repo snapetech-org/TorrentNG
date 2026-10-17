@@ -207,7 +207,7 @@ reproduced).
 | F14 | P0 | picker memory estimate wrong (`Vec<bool>`) | SYS-004, NET-109 | G0 | fixed (packed `PieceFlags`; estimate counts bitsets, counts and BTree buckets) |
 | F15 | P1 | picker scans all pieces before rarity buckets | NET-109 | G2 | partly fixed (default no-priority path is O(1); bucket `BTreeSet` allocation storm remains NET-109) |
 | F16 | P0/P1 | buffers lose coherent owner across boundaries | IO-003 | G1 | accepted |
-| F17 | P1 | shared file cache serialises metadata work | IO-004 | G1 | accepted |
+| F17 | P1 | shared file cache serialises metadata work | IO-004 | G1 | partly fixed (identity stat and file open outside the cache lock, interval-limited idle sweep, write descriptor serves reads; one secure catalog with compact IDs remains IO-004) |
 | F18 | P1 | default readahead 16 KiB → 512 KiB | IO-011 | G4 | partly fixed (readahead expands only a stream that continues the previous read of that file; reuse-driven sizing and pre-reserved speculative capacity remain IO-011) |
 | F19 | P0 | torrent flush syncs unrelated writable files | IO-009 | G4 | partly fixed (barrier covers only this scheduler's dirty files, marked at write issue; exact file fences/sequence watermarks remain IO-009) |
 | F20 | P1 | io_uring worker is a batch barrier | IO-015 | G6 | accepted |
@@ -338,3 +338,4 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 2026-10-17 | F23 partly: `V2FileVerifier::CHUNK_LEAVES`, `MountScheduler::hash_v2_leaves`. Test `v2_file_verify_batches_leaf_hashing_per_chunk`. |
 | 2026-10-17 | F12 partly: `Choker::run_with_mode(ChokeMode)`, optimistic history + uuid tie-break, engine passes decayed rates. Tests: `downloading_mode_rewards_peers_that_deliver_to_us`, `optimistic_slot_rotates_through_every_waiting_peer`, `optimistic_slot_moves_on_when_its_holder_stops_being_interested`. |
 | 2026-10-17 | F05 partly: `adaptive_request_pipeline` (rate x 0.25 s, bounded). Uses delivery rate rather than measured RTT because the peer loop does not yet report per-request delay. Test `request_window_grows_only_for_fast_peers_and_never_under_pressure`. |
+| 2026-10-17 | F17 partly: `FilePool::lookup_valid`, `sweep_idle_if_due_locked`, `mode_satisfies`; tests `write_descriptor_serves_reads_without_reopening`, `idle_sweep_runs_on_an_interval_not_on_every_lookup`. |
