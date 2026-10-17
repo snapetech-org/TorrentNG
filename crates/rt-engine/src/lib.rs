@@ -15,6 +15,7 @@ pub mod tier;
 pub mod torrent_task;
 pub(crate) mod torrent_task_v2;
 pub(crate) mod tracker_runtime;
+pub(crate) mod transfer;
 
 pub use command::{
     EngineCategory, EngineDatabaseWorkerStats, EngineGlobalLimits, EngineJob,
