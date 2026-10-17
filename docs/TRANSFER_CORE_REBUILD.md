@@ -209,7 +209,7 @@ reproduced).
 | F16 | P0/P1 | buffers lose coherent owner across boundaries | IO-003 | G1 | accepted |
 | F17 | P1 | shared file cache serialises metadata work | IO-004 | G1 | accepted |
 | F18 | P1 | default readahead 16 KiB → 512 KiB | IO-011 | G4 | accepted |
-| F19 | P0 | torrent flush syncs unrelated writable files | IO-009 | G4 | accepted |
+| F19 | P0 | torrent flush syncs unrelated writable files | IO-009 | G4 | partly fixed (barrier covers only this scheduler's dirty files, marked at write issue; exact file fences/sequence watermarks remain IO-009) |
 | F20 | P1 | io_uring worker is a batch barrier | IO-015 | G6 | accepted |
 | F21 | P0 | cancellation may release admission/dirty evidence early (moderate confidence) | IO-005 | G1 | accepted |
 | F22 | P1 | several storage schedulers, no fairness authority | IO-006 | G1 | accepted |
@@ -325,3 +325,4 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 2026-10-17 | F14 fixed, F15 partly: `rt-piece-picker` uses packed `PieceFlags` (also availability `retired`), `priority_count` skips the priority scan, and `memory_bytes_for_piece_count` now budgets bitsets + u32 counts + 12 B/piece buckets (about 16.6 B/piece, up from 4.4). Engine piece-index leases grow accordingly. |
 | 2026-10-17 | F27 timer half: `ActivityTimerWheel::cancel` is O(1) with a stale counter and compaction; test `cancelling_a_large_cohort_with_one_deadline_is_linear_and_bounded`. |
 | 2026-10-17 | F28 fixed: `TaskExits`/`spawn_supervised` in `subsystems.rs`; command path calls `reap_exited_torrent_tasks` (O(exits)), the 1 s health tick keeps the full scan. |
+| 2026-10-17 | F19 partly: `sync_all_open_files` no longer unions the shared pool's writable files; `write_at` marks dirty at issue (also narrows F21's lost-dirty window). Test `checkpoint_sync_covers_only_this_schedulers_files` run deferred. |

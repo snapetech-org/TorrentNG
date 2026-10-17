@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -560,6 +560,10 @@ impl FilePool {
         )))))
     }
 
+    /// Writable cached paths, evicting entries whose file was replaced. Only
+    /// tests enumerate the pool now; production syncs are scoped to the
+    /// scheduler's own dirty paths.
+    #[cfg(test)]
     fn write_paths(&self) -> Vec<PathBuf> {
         let mut entries = lock_reset_derived_cache(&self.entries);
         let stale: Vec<PathBuf> = entries
@@ -2307,6 +2311,14 @@ impl MountScheduler {
             }
         };
         let written = data.len();
+        // Record the path as needing a sync when the write is *issued*, not
+        // only after it completes. The backend can finish a submitted write
+        // after this future is dropped; marking only afterwards would let a
+        // cancelled caller leave written bytes that no barrier covers. A
+        // failed write costs one redundant fdatasync, which is harmless.
+        if !strict {
+            mark_dirty_path(&dirty_paths, &dirty_path_generation, key.clone());
+        }
         let result = await_backend_io_with_expected(
             &key,
             backend_write_completion_with_cache_invalidation(
@@ -2488,34 +2500,15 @@ impl MountScheduler {
                 .map(|(path, generation)| (path.clone(), *generation))
                 .collect()
         };
-        let cached_write_paths = match self
-            .io_pool
-            .run({
-                let pool = pool.clone();
-                move || Ok(pool.write_paths())
-            })
-            .await
-        {
-            Ok(paths) => paths,
-            Err(error) => {
-                if matches!(error, StorageError::QueueFull { .. }) {
-                    counters.queue_full.fetch_add(1, Ordering::Relaxed);
-                }
-                return Err(error);
-            }
-        };
-        let mut seen = HashSet::with_capacity(
-            cached_write_paths
-                .len()
-                .saturating_add(dirty_snapshot.len()),
-        );
-        seen.extend(cached_write_paths.iter().cloned());
-        let mut paths_to_sync = cached_write_paths;
-        for (path, _) in &dirty_snapshot {
-            if seen.insert(path.clone()) {
-                paths_to_sync.push(path.clone());
-            }
-        }
+        // Sync exactly the files this scheduler wrote. The descriptor pool is
+        // shared across torrents, so enumerating its writable files here used
+        // to make one torrent's checkpoint fsync every other torrent's (and
+        // clean) files, serially and possibly across devices. Every write
+        // path through this scheduler marks its file dirty at issue time.
+        let paths_to_sync: Vec<PathBuf> = dirty_snapshot
+            .iter()
+            .map(|(path, _)| path.clone())
+            .collect();
 
         // Do not open all dirty files at once. The dirty set can be much
         // larger than the descriptor-cache capacity; syncing each path
@@ -5065,5 +5058,52 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[tokio::test]
+    async fn checkpoint_sync_covers_only_this_schedulers_files() {
+        // Two schedulers with the same configuration share one descriptor
+        // pool. A checkpoint on one must not sync (or clear) the other's
+        // dirty file.
+        let dir = tempfile::tempdir().unwrap();
+        let config = SchedulerConfig {
+            profile: StorageProfile::Hdd,
+            storage_io: StorageIoConfig {
+                durability_mode: DurabilityMode::Checkpoint,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let a = MountScheduler::new(StorageRootId::new(), &config);
+        let b = MountScheduler::new(StorageRootId::new(), &config);
+        a.write_at(
+            IoClass::PeerWrite,
+            &dir.path().join("a.bin"),
+            0,
+            bytes::Bytes::from_static(b"a-data"),
+            true,
+        )
+        .await
+        .unwrap();
+        b.write_at(
+            IoClass::PeerWrite,
+            &dir.path().join("b.bin"),
+            0,
+            bytes::Bytes::from_static(b"b-data"),
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!((a.stats().dirty_files, b.stats().dirty_files), (1, 1));
+
+        b.sync_all_open_files().await.unwrap();
+        assert_eq!(b.stats().dirty_files, 0);
+        assert_eq!(
+            a.stats().dirty_files,
+            1,
+            "another torrent's checkpoint must leave this one's dirty state alone"
+        );
+        a.sync_all_open_files().await.unwrap();
+        assert_eq!(a.stats().dirty_files, 0);
     }
 }
