@@ -10,6 +10,7 @@ files stay on the storage you configure.
 
 ![TorrentNG showing Debian, Ubuntu, and Fedora Linux downloads](docs/assets/torrentng-default-dark-linux-isos.png)
 
+For local MCP access, see the [SnapeTech MCP integration guide](docs/integrations/snapetech-mcp.md).
 ## Is it useful for you?
 
 TorrentNG may help if you manage torrents on a home server, NAS, or other
