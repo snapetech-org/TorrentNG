@@ -216,7 +216,7 @@ reproduced).
 | F23 | P1 | v2 recheck does per-leaf small I/O | IO-012 | G4 | accepted |
 | F24 | P0/P1 | v2 proof serving rereads file; 64 MiB ceiling | IO-013 | G3 | accepted |
 | F25 | P1 | secure copy re-verifies leaves per ancestor | IO-014 | G4 | fixed for hashing (nested entries copy-only; top-level verifies the tree once; scheduling copies through the device service remains IO-014) |
-| F26 | P1 | one row change rebuilds a deep-cloned registry vector | SYS-005, SYS-006 | G5 | accepted |
+| F26 | P1 | one row change rebuilds a deep-cloned registry vector | SYS-005, SYS-006 | G5 | partly fixed (snapshot rows are shared `Arc<TorrentEntry>`, flatten clones pointers; chunked revision deltas, cold/hot metadata split and compact identities remain SYS-005/SYS-004) |
 | F27 | P1 | dormant estimates incomplete; quadratic timer cancel | SYS-004, SYS-008 | G5 | timer half fixed (lazy deletion + compaction); dormant-estimate half remains SYS-004 |
 | F28 | P1 | every engine command scans all task handles | SYS-007 | G5 | fixed (supervised exit queue on the command path; 1 s full scan kept as reconciliation) |
 | F29 | P0 | metrics scrape builds a shadow storage runtime | SYS-011, PERF-108 | G0 | fixed (scrape uses `StorageRuntime::initialized()`; owner-specific metrics still SYS-011) |
@@ -331,3 +331,4 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 2026-10-17 | F18 partly: `PeerReadStreams` gates readahead on sequential continuation. Test `readahead_expands_only_continuing_streams`; existing readahead cache tests may need a sequential first read (check in bulk pass). |
 | 2026-10-17 | F18: gate is runtime-toggleable (`[storage] peer_read_readahead_sequential_only`, default true; documented in CONFIGURATION.md). Existing readahead cache scheduler tests set it to false to keep their expansion semantics. `cargo check --workspace --all-targets` is clean. |
 | 2026-10-17 | F25 fixed: nested copy entries skip verification; test `deep_copy_hashes_each_leaf_once_per_side` (thread-local hash counter). |
+| 2026-10-17 | F26 partly: `SessionSnapshot` stores `Arc<TorrentEntry>`; test `changing_one_row_shares_every_other_snapshot_row`. The 711k-allocation probe should be re-run in the bulk pass to quantify. |

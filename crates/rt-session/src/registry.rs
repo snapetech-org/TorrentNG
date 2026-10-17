@@ -109,7 +109,12 @@ pub struct SessionRegistry {
     shard_snapshot_cache: Vec<SnapshotCache>,
 }
 
-type SnapshotCache = Mutex<Option<(u64, Arc<Vec<TorrentEntry>>)>>;
+/// Snapshot rows are shared, not copied: a shard rebuild materializes only
+/// its dirty rows, and flattening shards into the global projection clones
+/// pointers instead of every owned string in every entry.
+type SharedEntry = Arc<TorrentEntry>;
+
+type SnapshotCache = Mutex<Option<(u64, Arc<Vec<SharedEntry>>)>>;
 
 const CHANGE_LOG_CAPACITY: usize = 16_384;
 pub const MAX_BANNED_PEERS: usize = 65_536;
@@ -194,7 +199,7 @@ pub struct SessionRegistryStats {
 #[derive(Debug, Clone)]
 pub struct SessionSnapshot {
     revision: u64,
-    entries: Arc<Vec<TorrentEntry>>,
+    entries: Arc<Vec<SharedEntry>>,
 }
 
 impl SessionSnapshot {
@@ -211,11 +216,11 @@ impl SessionSnapshot {
     }
 
     pub fn get(&self, index: usize) -> Option<&TorrentEntry> {
-        self.entries.get(index)
+        self.entries.get(index).map(|entry| &**entry)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &TorrentEntry> {
-        self.entries.iter()
+        self.entries.iter().map(|entry| &**entry)
     }
 
     pub fn find(&self, info_hash: &str) -> Option<&TorrentEntry> {
@@ -223,7 +228,7 @@ impl SessionSnapshot {
         self.entries
             .binary_search_by(|entry| entry.info_hash.as_str().cmp(&info_hash))
             .ok()
-            .and_then(|index| self.entries.get(index))
+            .and_then(|index| self.entries.get(index).map(|entry| &**entry))
     }
 }
 
@@ -622,7 +627,7 @@ impl SessionRegistry {
     /// Under steady single-torrent churn across a large registry this keeps
     /// the expensive per-entry projection work proportional to the number of
     /// dirty shards rather than the registry size.
-    fn rebuild_snapshot_entries(&self) -> Vec<TorrentEntry> {
+    fn rebuild_snapshot_entries(&self) -> Vec<SharedEntry> {
         let mut combined = Vec::with_capacity(self.entries.len());
         for shard in 0..SNAPSHOT_SHARDS {
             let shard_entries = self.shard_snapshot(shard);
@@ -635,7 +640,7 @@ impl SessionRegistry {
     /// Return the cached (or freshly rebuilt) sorted projection for one
     /// shard. Rebuilding walks only `shard_members[shard]`, not the whole
     /// registry.
-    fn shard_snapshot(&self, shard: usize) -> Arc<Vec<TorrentEntry>> {
+    fn shard_snapshot(&self, shard: usize) -> Arc<Vec<SharedEntry>> {
         let mut cache = lock_projection_cache(&self.shard_snapshot_cache[shard]);
         let current_revision = self.shard_revisions[shard];
         if let Some((revision, entries)) = cache.as_ref() {
@@ -646,7 +651,7 @@ impl SessionRegistry {
         let mut entries = self.shard_members[shard]
             .iter()
             .filter_map(|handle| self.entries.get(handle))
-            .map(RegistryRecord::to_entry)
+            .map(|record| Arc::new(record.to_entry()))
             .collect::<Vec<_>>();
         entries.sort_unstable_by(|left, right| left.info_hash.cmp(&right.info_hash));
         let entries = Arc::new(entries);
@@ -666,7 +671,7 @@ impl SessionRegistry {
     /// without triggering a rebuild. Tests use this to prove an untouched
     /// shard's cache entry was reused (same allocation) rather than rebuilt.
     #[cfg(test)]
-    fn shard_snapshot_ptr(&self, shard: usize) -> Option<*const Vec<TorrentEntry>> {
+    fn shard_snapshot_ptr(&self, shard: usize) -> Option<*const Vec<SharedEntry>> {
         lock_projection_cache(&self.shard_snapshot_cache[shard])
             .as_ref()
             .map(|(_, entries)| Arc::as_ptr(entries))
@@ -1302,6 +1307,30 @@ mod tests {
             }
         }
         panic!("no two pool hashes landed in different shards");
+    }
+
+    #[test]
+    fn changing_one_row_shares_every_other_snapshot_row() {
+        let mut reg = SessionRegistry::new();
+        let hashes: Vec<String> = (0..300).map(|index| format!("{index:040x}")).collect();
+        for hash in &hashes {
+            reg.add(entry(hash)).unwrap();
+        }
+        let before = reg.snapshot();
+
+        reg.get_mut(&hashes[7]).unwrap().name = "changed".to_owned();
+        let after = reg.snapshot();
+
+        // Only the changed row (and nothing cloned from the other 299) is a
+        // new allocation: every other row is the same shared entry.
+        let shared = before
+            .entries
+            .iter()
+            .filter(|old| after.entries.iter().any(|new| Arc::ptr_eq(old, new)))
+            .count();
+        assert_eq!(shared, hashes.len() - 1);
+        assert_eq!(after.find(&hashes[7]).unwrap().name, "changed");
+        assert_eq!(after.len(), hashes.len());
     }
 
     #[test]
