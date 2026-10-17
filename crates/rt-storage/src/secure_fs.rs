@@ -419,6 +419,7 @@ fn secure_copy(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn secure_copy_entry(
     source_parent: &File,
     source_name: &OsString,

@@ -492,7 +492,7 @@ impl PiecePicker {
 
         // Preserve the old order's priority-first behavior without cloning
         // the complete priority vector.
-        if let Some(piece) = self.priority_piece(&is_candidate) {
+        if let Some(piece) = self.priority_piece(is_candidate) {
             return Some(piece);
         }
 

@@ -195,7 +195,7 @@ reproduced).
 | F02 | P0 | v2 request window cannot fill within a piece | SYS-002, NET-104 | G0 | fixed locally (SYS-002; shared ledger is NET-104) |
 | F03 | P0 | v2 peers lack shared acquisition state | NET-104, NET-114 | G3 | accepted |
 | F04 | P0 | v1 actor awaits disk/hash/persistence | IO-008, NET-106 | G2 | accepted |
-| F05 | P1 | fixed 512 KiB v1 flight window | NET-108 | G2 | accepted |
+| F05 | P1 | fixed 512 KiB v1 flight window | NET-108 | G2 | partly fixed (rate-proportional window, 32..128 blocks, torrent-wide cap of 2,048 requests, never under memory pressure; measured response delay and device-service backlog feedback remain NET-108) |
 | F06 | P0 | 4,096 requests/10 s upload guard | NET-110 | G2 | partly fixed (count ceiling removed; queue bound remains and still drops silently when saturated; protocol-correct rejection and shared byte-admitted upload service are NET-105/NET-110) |
 | F07 | P0 | uTP writer is stop-and-wait | NET-112, NET-113 | G5 | accepted |
 | F08 | P0 | Fast advertised without full request termination | SYS-003, NET-105 | G0 | partly fixed (v1: Reject for every request whose coordinates are known when Fast is negotiated; v2 handler, outgoing Cancel and endgame cancellation remain NET-105) |
@@ -337,3 +337,4 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 2026-10-17 | F24 partly: `V2ProofCache`, `v2_proof_layers`, `read_v2_leaf_hashes`; serving now refuses hashes of content that does not match `pieces root` (a behaviour tightening). Tests `proof_layers_are_refused_for_unverified_content_then_cached`, `proof_cache_is_byte_bounded_and_evicts_least_recently_used`; existing v2 hash-exchange tests must be re-run in the bulk pass. |
 | 2026-10-17 | F23 partly: `V2FileVerifier::CHUNK_LEAVES`, `MountScheduler::hash_v2_leaves`. Test `v2_file_verify_batches_leaf_hashing_per_chunk`. |
 | 2026-10-17 | F12 partly: `Choker::run_with_mode(ChokeMode)`, optimistic history + uuid tie-break, engine passes decayed rates. Tests: `downloading_mode_rewards_peers_that_deliver_to_us`, `optimistic_slot_rotates_through_every_waiting_peer`, `optimistic_slot_moves_on_when_its_holder_stops_being_interested`. |
+| 2026-10-17 | F05 partly: `adaptive_request_pipeline` (rate x 0.25 s, bounded). Uses delivery rate rather than measured RTT because the peer loop does not yet report per-request delay. Test `request_window_grows_only_for_fast_peers_and_never_under_pressure`. |

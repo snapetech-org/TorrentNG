@@ -269,6 +269,12 @@ impl TorrentTask {
         self.refill_download_tokens();
         let mut download_tokens = self.download_tokens;
         let download_limited = self.download_limit_bytes_per_sec.is_some();
+        let other_peers_outstanding: usize = self
+            .active_peers
+            .iter()
+            .filter(|(addr, _)| **addr != peer)
+            .map(|(_, other)| other.outstanding)
+            .sum();
         let Some(handle) = self.active_peers.get_mut(&peer) else {
             return;
         };
@@ -276,11 +282,16 @@ impl TorrentTask {
             return;
         }
 
-        let request_pipeline = memory_aware_request_pipeline(
+        let memory_pipeline = memory_aware_request_pipeline(
             self.piece_assembly_bytes,
             self.piece_assembly_soft_cap_bytes,
         );
-        if request_pipeline < PEER_REQUEST_PIPELINE_NORMAL {
+        let request_pipeline = adaptive_request_pipeline(
+            memory_pipeline,
+            peer_rate(handle.download_rate, handle.download_rate_window_started) as f64,
+            other_peers_outstanding,
+        );
+        if memory_pipeline < PEER_REQUEST_PIPELINE_NORMAL {
             self.peer_request_window_reductions =
                 self.peer_request_window_reductions.saturating_add(1);
         }

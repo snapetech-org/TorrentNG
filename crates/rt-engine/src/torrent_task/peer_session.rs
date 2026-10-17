@@ -275,7 +275,8 @@ impl TorrentTask {
         addr: SocketAddr,
         peer_permit: OwnedSemaphorePermit,
     ) -> Option<(PeerId, mpsc::Receiver<PeerCommand>)> {
-        let (cmd_tx, cmd_rx) = mpsc::channel(64);
+        // Must hold a full adaptive request window plus control messages.
+        let (cmd_tx, cmd_rx) = mpsc::channel(PEER_REQUEST_PIPELINE_ADAPTIVE_MAX * 2);
         let id = PeerId::new();
         // Both dense availability maps are retained for the peer lifetime.
         // Acquire their combined budget before allocating either map so a

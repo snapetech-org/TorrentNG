@@ -795,6 +795,13 @@ const MAX_IN_MEMORY_PIECE_ASSEMBLIES: usize = 64;
 const MAX_IN_MEMORY_PIECE_ASSEMBLY_BYTES_PER_TORRENT: usize = 64 * 1024 * 1024;
 const PEER_REQUEST_PIPELINE_NORMAL: usize = 32;
 const PEER_REQUEST_PIPELINE_CONSTRAINED: usize = 8;
+/// Upper bound of the adaptive per-peer window (2 MiB of 16 KiB blocks).
+const PEER_REQUEST_PIPELINE_ADAPTIVE_MAX: usize = 128;
+/// Requests in flight across the whole torrent beyond which no peer's window
+/// grows past the normal size (32 MiB of blocks).
+const TORRENT_REQUESTS_ADAPTIVE_CAP: usize = 2_048;
+/// Seconds of a peer's delivery rate the window should keep in flight.
+const PEER_REQUEST_WINDOW_SECS: f64 = 0.25;
 const TRACKER_PEER_CACHE_MIN: usize = 256;
 const TRACKER_PEER_CACHE_MULTIPLIER: usize = 4;
 // A HashSet bucket contains the socket address plus control bytes and can
@@ -1039,6 +1046,33 @@ fn memory_aware_request_pipeline(piece_assembly_bytes: usize, soft_cap_bytes: us
     } else {
         PEER_REQUEST_PIPELINE_NORMAL
     }
+}
+
+/// Window for one peer: the fixed floor, grown toward `rate x delay / block`
+/// only for a peer with proven sustained delivery, never under memory
+/// pressure, and only while the whole torrent stays under its request cap. A
+/// fixed 32-block window limited a peer to `512 KiB / response time` (about
+/// 10 MiB/s at 50 ms) no matter how fast it could deliver.
+fn adaptive_request_pipeline(
+    memory_pipeline: usize,
+    peer_rate_bytes_per_sec: f64,
+    other_peers_outstanding: usize,
+) -> usize {
+    if memory_pipeline < PEER_REQUEST_PIPELINE_NORMAL
+        || peer_rate_bytes_per_sec.is_nan()
+        || peer_rate_bytes_per_sec <= 0.0
+    {
+        return memory_pipeline;
+    }
+    let wanted = (peer_rate_bytes_per_sec * PEER_REQUEST_WINDOW_SECS / f64::from(MAX_BLOCK_SIZE))
+        .ceil() as usize;
+    let headroom = TORRENT_REQUESTS_ADAPTIVE_CAP.saturating_sub(other_peers_outstanding);
+    wanted
+        .clamp(
+            PEER_REQUEST_PIPELINE_NORMAL,
+            PEER_REQUEST_PIPELINE_ADAPTIVE_MAX,
+        )
+        .min(headroom.max(PEER_REQUEST_PIPELINE_NORMAL))
 }
 
 #[cfg(test)]
@@ -12051,6 +12085,24 @@ mod tests {
             &on_disk[..MAX_BLOCK_SIZE as usize],
             &vec![0xA1; MAX_BLOCK_SIZE as usize][..]
         );
+    }
+
+    #[test]
+    fn request_window_grows_only_for_fast_peers_and_never_under_pressure() {
+        // Unknown or slow peers keep the fixed floor.
+        assert_eq!(adaptive_request_pipeline(32, 0.0, 0), 32);
+        assert_eq!(adaptive_request_pipeline(32, 100_000.0, 0), 32);
+        // 20 MiB/s x 0.25 s is 320 blocks: capped at the adaptive maximum.
+        assert_eq!(adaptive_request_pipeline(32, 20.0 * 1_048_576.0, 0), 128);
+        // 4 MiB/s x 0.25 s = 64 blocks.
+        assert_eq!(adaptive_request_pipeline(32, 4.0 * 1_048_576.0, 0), 64);
+        // Memory pressure always wins, however fast the peer is.
+        assert_eq!(adaptive_request_pipeline(8, 1e9, 0), 8);
+        // A saturated torrent stops growing every peer's window.
+        assert_eq!(adaptive_request_pipeline(32, 1e9, 2_000), 48);
+        assert_eq!(adaptive_request_pipeline(32, 1e9, 5_000), 32);
+        // NaN never inflates the window.
+        assert_eq!(adaptive_request_pipeline(32, f64::NAN, 0), 32);
     }
 
     #[test]
