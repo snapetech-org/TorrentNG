@@ -653,7 +653,17 @@ impl TorrentTask {
                     // local budget at the final handoff point so a lifecycle
                     // cancellation during either operation charges no bytes
                     // that were not delivered to the torrent task.
-                    debug_assert!(self.try_consume_download_tokens(req.length));
+                    //
+                    // This is deliberately a plain statement: a debit inside
+                    // `debug_assert!` is compiled out of release builds, which
+                    // would leave webseed bytes uncharged against the limit.
+                    if !self.try_consume_download_tokens(req.length) {
+                        // The limit was lowered while the block was in flight.
+                        // The bytes are already here and are delivered, so
+                        // spend what is left instead of leaving the bucket
+                        // untouched.
+                        self.download_tokens = 0;
+                    }
                     // Keep the local success projection behind both budget
                     // waits. The outer actor can cancel this operation while
                     // it waits for the aggregate bucket; committing it before

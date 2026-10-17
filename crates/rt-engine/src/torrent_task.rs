@@ -10947,6 +10947,116 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn webseed_block_is_debited_from_the_local_download_bucket() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let temp = tempfile::tempdir().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let webseed_addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 1024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = stream.read(&mut buffer).await.unwrap();
+                if read == 0 {
+                    return;
+                }
+                request.extend_from_slice(&buffer[..read]);
+            }
+            stream
+                .write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Length: 4\r\nContent-Range: bytes 0-3/4\r\nConnection: close\r\n\r\ndata")
+                .await
+                .unwrap();
+            stream.shutdown().await.unwrap();
+        });
+
+        let meta = TorrentMetaV1 {
+            info_hash: [27; 20],
+            announce: None,
+            announce_list: Vec::new(),
+            webseeds: vec![format!("http://{webseed_addr}/payload.bin")],
+            comment: None,
+            created_by: None,
+            creation_date: None,
+            name: "payload.bin".into(),
+            piece_length: 4,
+            pieces: vec![[0; 20]],
+            files: vec![rt_metainfo::TorrentFileV1 {
+                index: 0,
+                length: 4,
+                path: rt_path::SafeRelPath::from_name("payload.bin", false).unwrap(),
+                offset: 0,
+                pad: false,
+            }],
+            private: false,
+            raw: Vec::new(),
+        };
+        let info_hash = hex::encode(meta.info_hash);
+        let conn = Connection::open_in_memory().unwrap();
+        rt_db::migrate(&conn).unwrap();
+        let mut entry = rt_session::TorrentEntry::new(
+            info_hash.clone(),
+            meta.name.clone(),
+            temp.path().to_string_lossy().into_owned(),
+        );
+        entry.total_length = 4;
+        entry.amount_left = 4;
+        entry.transition(TorrentState::Downloading).unwrap();
+        persist_task_row(&conn, &entry, &meta);
+        let registry = Arc::new(RwLock::new(SessionRegistry::new()));
+        registry.write().await.add(entry).unwrap();
+        let db = Arc::new(Mutex::new(conn));
+        let (_cmd_tx, cmd_rx) = mpsc::channel(4);
+        let resources = ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default());
+        let budget = GlobalNetworkBudget::unlimited();
+        let mut task = TorrentTask::new(
+            meta,
+            temp.path().to_path_buf(),
+            false,
+            TorrentState::Downloading,
+            registry,
+            DbExecutor::direct(Arc::clone(&db)),
+            resources,
+            cmd_rx,
+            temp.path().join("fastresume"),
+            8,
+            6881,
+            10,
+            10,
+            60,
+            1024 * 1024,
+            StorageIoConfig::default(),
+            false,
+            OutboundEgressPolicy {
+                allow_loopback: true,
+                ..OutboundEgressPolicy::default()
+            },
+            budget,
+            10_000,
+            None,
+        )
+        .await;
+        // A one-byte-per-second limit refills nothing during this test, so the
+        // bucket can only go down because the fetched block was debited.
+        task.download_limit_bytes_per_sec = Some(1);
+        task.download_tokens = 100;
+        task.download_tokens_updated = Instant::now();
+
+        let event = timeout(Duration::from_secs(5), task.download_next_webseed_block())
+            .await
+            .expect("webseed fetch should finish")
+            .expect("webseed block should be delivered");
+        assert_eq!(event.data.as_ref(), b"data");
+        assert!(
+            task.download_tokens <= 100 - 4 + 2,
+            "a delivered webseed block must be charged to the local bucket (tokens left: {})",
+            task.download_tokens
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn webseed_rate_wait_does_not_block_lifecycle_commands() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
