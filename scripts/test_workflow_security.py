@@ -22,6 +22,7 @@ CHECKOUT_WORKFLOWS = (
     "release-aur.yml",
     "release-copr.yml",
     "package-smoke-disabled.yml",
+    "fork-safe-validation.yml",
 )
 
 
@@ -82,8 +83,24 @@ def run_interop_preflight(
 
 class WorkflowSecurityTests(unittest.TestCase):
     def test_workflows_use_github_hosted_runners(self) -> None:
+        public_jit_runner = (
+            "runs-on: ${{ github.event_name == 'pull_request' && "
+            "github.event.pull_request.head.repo.fork == true && "
+            "fromJSON('[\"self-hosted\", \"linux\", \"x64\", \"public-pr-torrentng\"]') "
+            "|| 'ubuntu-latest' }}"
+        )
         for workflow_path in WORKFLOWS.glob("*.y*"):
             source = workflow_path.read_text(encoding="utf-8")
+            if workflow_path.name == "fork-safe-validation.yml":
+                self.assertIn(public_jit_runner, source)
+                self.assertIn(
+                    "github.event.pull_request.base.repo.full_name == 'snapetech-org/TorrentNG'",
+                    source,
+                )
+                self.assertIn("contents: read", source)
+                self.assertNotIn("secrets:", source)
+                self.assertNotIn("pull_request_target", source)
+                continue
             self.assertNotRegex(source, r"(?m)^\s*(?:runs-on|labels):.*self-hosted")
             self.assertNotIn("TRUSTED_MAIN_RUNNERS_ENABLED", source)
         windows = (WORKFLOWS / "windows-smoke.yml").read_text(encoding="utf-8")
