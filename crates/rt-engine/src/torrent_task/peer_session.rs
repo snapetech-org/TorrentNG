@@ -261,7 +261,7 @@ impl TorrentTask {
             metadata: self.metadata.clone(),
             is_private: self.meta.private,
             pex_enabled: self.pex_enabled,
-            upload_limit_bytes_per_sec: self.upload_limit_bytes_per_sec,
+            torrent_upload: Arc::clone(&self.torrent_upload),
             upload_control,
             shutdown_control,
             global_download: self.network_budget.download(),
@@ -314,7 +314,6 @@ impl TorrentTask {
                 _peer_permit: peer_permit,
                 _bitmap_memory_lease: bitmap_memory_lease,
                 pending_have,
-                pending_upload_limit: None,
             },
         );
         Some((id, cmd_rx))

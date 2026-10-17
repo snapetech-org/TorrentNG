@@ -199,7 +199,7 @@ reproduced).
 | F06 | P0 | 4,096 requests/10 s upload guard | NET-110 | G2 | accepted |
 | F07 | P0 | uTP writer is stop-and-wait | NET-112, NET-113 | G5 | accepted |
 | F08 | P0 | Fast advertised without full request termination | SYS-003, NET-105 | G0 | accepted |
-| F09 | P0 | torrent upload limit copied into per-peer buckets | SYS-003, NET-107 | G0 | accepted |
+| F09 | P0 | torrent upload limit copied into per-peer buckets | SYS-003, NET-107 | G0 | fixed (SYS-003; hierarchical scheduler still NET-107) |
 | F10 | P0 | webseed debit inside `debug_assert!` | SYS-003 | G0 | fixed (SYS-003) |
 | F11 | P1 | no token-ready wakeup for download pacing | SYS-003, NET-107 | G0 | accepted |
 | F12 | P1 | choker feedback/exploration | NET-111 | G2 | accepted |
@@ -240,7 +240,7 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 2 | NET-101 | P0 | Define typed transfer coordinates and protocol geometry adapters | SYS-001 | todo | |
 | 2 | PERF-101 | P0 | Commit measurement contract and strict result schemas | SYS-001 | todo | |
 | 2 | SYS-002 | P0 | Land v2 reproductions and a reviewed extent correction | SYS-001 | done | `torrent_task_v2::tests::v2_*` multi-block tests (5 completion cases x memory/spill, red without fix) + `v2_request_window_pipelines_every_block_of_a_piece` (red: 4 of 8 requests) |
-| 2 | SYS-003 | P0 | Repair immediate release-rate and negotiated-capability behavior | SYS-001 | wip | F10 done: `webseed_block_is_debited_from_the_local_download_bucket` (fails under `--release` with the old line, tokens left 100; passes with the fix). Remaining: F09 aggregate upload cap, F11 token-ready wakeup, F08 Fast lifecycle |
+| 2 | SYS-003 | P0 | Repair immediate release-rate and negotiated-capability behavior | SYS-001 | wip | F10 done: `webseed_block_is_debited_from_the_local_download_bucket` (fails under `--release` with the old line, tokens left 100; passes with the fix). F09 done: one `SharedRateLimiter` per torrent shared by all peer loops (`torrent_upload_limit_is_one_bucket_shared_by_all_peers`). Remaining: F11 token-ready wakeup, F08 Fast lifecycle (owner decision on interim) |
 | 2 | SYS-004 | P0 | Introduce compact identities and honest whole-owner metadata accounting | SYS-001 | todo | |
 | 2 | SYS-009 | P0 | Exercise the production database worker and coalesce progress | SYS-001 | todo | |
 | 2 | SYS-011 | P0 | Make live observability passive and owner-specific | SYS-001 | todo | |
@@ -304,7 +304,7 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 1. **SYS-002** — done. v2 reproductions + extent correction + local
    request-window repair. The window fix is a local loop repair only; the
    authoritative shared ledger (F03) remains NET-104.
-2. **SYS-003** (F10 done; F09, F11, F08 remain) — release-rate and negotiated-capability repairs: webseed debit
+2. **SYS-003** (F10, F09 done; F11, F08 remain) — release-rate and negotiated-capability repairs: webseed debit
    out of `debug_assert!` (F10) with a release-mode test, aggregate torrent
    upload cap (F09), explicit token-ready wakeup (F11), Fast lifecycle (F08;
    interim = stop advertising Fast until NET-105).
@@ -318,3 +318,4 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 2026-10-17 | Plan created from the audit; F01, F02, F10, F14 re-verified in source at local HEAD. |
 | 2026-10-17 | SYS-002 landed: v2 block vs piece extent split in `handle_v2_piece`, multi-block fixture (32 KiB pieces, sentinel payload), within-piece request pipelining. Note: the 5 `storage_jobs`/`update_save_path` move tests fail when `TMPDIR` is on the NFS scratch pool and pass on tmpfs (environmental, unrelated). |
 | 2026-10-17 | SYS-003 started: F10 fixed. Release-mode regression is `cargo test -p rt-engine --lib --release webseed_block_is_debited` (debug builds pass either way, so the release run is the real check). |
+| 2026-10-17 | SYS-003: F09 fixed. Per-peer upload buckets and `PeerCommand::UpdateUploadLimit` removed; peers draw on one shared per-torrent limiter. Test-env note: run `cargo test -p rt-engine` once with `TMPDIR` on NFS and once on tmpfs; 2 v2 crash-safety tests only pass on NFS, 5 storage-move tests only pass on tmpfs. |

@@ -20,7 +20,7 @@ use rusqlite::Connection;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit, RwLock};
-use tokio::time::{interval, sleep, timeout, Instant as TokioInstant, Sleep};
+use tokio::time::{interval, sleep, timeout, Sleep};
 use tokio_util::codec::Framed;
 use tracing::{debug, info, warn};
 use url::Url;
@@ -1494,10 +1494,6 @@ struct PeerHandle {
     /// bitmap keeps this retry state bounded by the torrent's piece map and
     /// avoids losing a protocol update when a peer is briefly backlogged.
     pending_have: PieceBitmap,
-    /// Latest upload limit not yet delivered to the peer. `Some(None)` is a
-    /// pending explicit limit removal; `None` means there is no pending
-    /// update.
-    pending_upload_limit: Option<Option<u64>>,
 }
 
 #[derive(Debug)]
@@ -1506,7 +1502,6 @@ enum PeerCommand {
     Have(u32),
     Choke,
     Unchoke,
-    UpdateUploadLimit(Option<u64>),
     Shutdown,
 }
 
@@ -1528,7 +1523,9 @@ struct UploadContext {
     metadata: Option<Arc<Vec<u8>>>,
     is_private: bool,
     pex_enabled: bool,
-    upload_limit_bytes_per_sec: Option<u64>,
+    /// One bucket per torrent, shared by every peer loop. A bucket per peer
+    /// would let N peers each spend the full torrent allowance.
+    torrent_upload: Arc<SharedRateLimiter>,
     upload_control: RateLimitCancellation,
     shutdown_control: RateLimitCancellation,
     global_download: Arc<SharedRateLimiter>,
@@ -1705,7 +1702,7 @@ pub struct TorrentTask {
     download_limit_bytes_per_sec: Option<u64>,
     download_tokens: u64,
     download_tokens_updated: Instant,
-    upload_limit_bytes_per_sec: Option<u64>,
+    torrent_upload: Arc<SharedRateLimiter>,
     torrent_download_limit_bytes_per_sec: Option<u64>,
     torrent_upload_limit_bytes_per_sec: Option<u64>,
     completed_piece_verify_from_memory: u64,
@@ -2048,7 +2045,7 @@ impl TorrentTask {
             download_limit_bytes_per_sec: None,
             download_tokens: u64::MAX,
             download_tokens_updated: Instant::now(),
-            upload_limit_bytes_per_sec: None,
+            torrent_upload: Arc::new(SharedRateLimiter::new(None)),
             torrent_download_limit_bytes_per_sec: None,
             torrent_upload_limit_bytes_per_sec: None,
             completed_piece_verify_from_memory: 0,
@@ -3479,30 +3476,10 @@ impl TorrentTask {
 
     fn recompute_upload_limit(&mut self) {
         // See recompute_download_limit: global traffic is enforced by the
-        // engine-owned shared bucket, while this field is per torrent.
-        self.upload_limit_bytes_per_sec = self.torrent_upload_limit_bytes_per_sec;
-        let desired = self.upload_limit_bytes_per_sec;
-        let mut queue_full = 0u64;
-        for handle in self.active_peers.values_mut() {
-            match handle
-                .cmd_tx
-                .try_send(PeerCommand::UpdateUploadLimit(desired))
-            {
-                Ok(()) => {
-                    handle.pending_upload_limit = None;
-                    handle.upload_control.cancel();
-                }
-                Err(_) => {
-                    // Keep the latest desired value. A stale queued command
-                    // may still be delivered first, but this pending value
-                    // will then be retried after it and restores the current
-                    // policy instead of silently losing the update.
-                    handle.pending_upload_limit = Some(desired);
-                    queue_full = queue_full.saturating_add(1);
-                }
-            }
-        }
-        self.peer_command_queue_full = self.peer_command_queue_full.saturating_add(queue_full);
+        // engine-owned shared bucket. The per-torrent bucket is shared by all
+        // peers; changing it wakes any peer waiting on the old rate.
+        self.torrent_upload
+            .set_limit(self.torrent_upload_limit_bytes_per_sec);
     }
 
     fn torrent_limits_from_db(
@@ -6753,9 +6730,6 @@ async fn run_peer_loop(
     let mut remote_ut_metadata_id = None;
     let mut download_choked = true;
     let mut upload_choked = true;
-    let mut upload_limit_bytes_per_sec = upload.upload_limit_bytes_per_sec;
-    let mut upload_tokens = upload_limit_bytes_per_sec.unwrap_or(u64::MAX);
-    let mut upload_tokens_updated = TokioInstant::now();
     let mut timeout_tick = interval(Duration::from_secs(5));
     let mut last_activity = Instant::now();
     let mut request_window_started = Instant::now();
@@ -6829,18 +6803,6 @@ async fn run_peer_loop(
                         upload.upload_control.cancel();
                         upload_choked = false;
                         peer_io.send(Message::Unchoke).await?;
-                        start_upload_reads(
-                            &mut upload_reads,
-                            &mut pending_upload_requests,
-                            &upload,
-                            upload_choked,
-                        );
-                    }
-                    PeerCommand::UpdateUploadLimit(limit) => {
-                        upload.upload_control.cancel();
-                        upload_limit_bytes_per_sec = limit;
-                        upload_tokens = upload_limit_bytes_per_sec.unwrap_or(u64::MAX);
-                        upload_tokens_updated = TokioInstant::now();
                         start_upload_reads(
                             &mut upload_reads,
                             &mut pending_upload_requests,
@@ -7415,16 +7377,10 @@ async fn run_peer_loop(
                     Ok(block) if !upload_choked => {
                         let bytes = block.data.len() as u64;
                         let control_generation = upload.upload_control.generation();
-                        let budget_available = wait_for_upload_budget(
-                            upload_limit_bytes_per_sec,
-                            &mut upload_tokens,
-                            &mut upload_tokens_updated,
-                            bytes,
-                            &upload.upload_control,
-                            control_generation,
-                        )
-                        .await;
-                        let budget_available = budget_available
+                        let budget_available = upload
+                            .torrent_upload
+                            .acquire_or_cancelled(bytes, &upload.upload_control, control_generation)
+                            .await
                             && upload
                                 .global_upload
                                 .acquire_or_cancelled(
@@ -7734,47 +7690,6 @@ fn abort_upload_reads(
     for read in upload_reads.iter() {
         read.abort();
     }
-}
-
-async fn wait_for_upload_budget(
-    limit: Option<u64>,
-    tokens: &mut u64,
-    tokens_updated: &mut TokioInstant,
-    bytes: u64,
-    cancellation: &RateLimitCancellation,
-    generation: u64,
-) -> bool {
-    if cancellation.generation() != generation {
-        return false;
-    }
-    let Some(limit) = limit.filter(|limit| *limit > 0) else {
-        *tokens = u64::MAX;
-        *tokens_updated = TokioInstant::now();
-        return cancellation.generation() == generation;
-    };
-    let mut remaining = bytes;
-    while remaining > 0 {
-        if cancellation.generation() != generation {
-            return false;
-        }
-        let now = TokioInstant::now();
-        let elapsed = now.saturating_duration_since(*tokens_updated);
-        *tokens_updated = now;
-        let refill = (elapsed.as_secs_f64() * limit as f64).floor() as u64;
-        *tokens = tokens.saturating_add(refill).min(limit);
-        let requested = remaining.min(limit);
-        if *tokens >= requested {
-            *tokens -= requested;
-            remaining -= requested;
-            continue;
-        }
-        let missing = requested.saturating_sub(*tokens);
-        tokio::select! {
-            _ = sleep(Duration::from_secs_f64(missing as f64 / limit as f64).max(Duration::from_millis(1))) => {}
-            _ = cancellation.wait_for_change(generation) => return false,
-        }
-    }
-    cancellation.generation() == generation
 }
 
 fn validate_bitfield_shape(bits: &[u8], piece_count: usize) -> anyhow::Result<()> {
@@ -11694,6 +11609,96 @@ mod tests {
         assert!(task.tracker_tiers[0][1].is_due());
     }
 
+    #[tokio::test]
+    async fn torrent_upload_limit_is_one_bucket_shared_by_all_peers() {
+        let temp = tempfile::tempdir().unwrap();
+        let conn = Connection::open_in_memory().unwrap();
+        rt_db::migrate(&conn).unwrap();
+        let meta = TorrentMetaV1 {
+            info_hash: [26; 20],
+            announce: None,
+            announce_list: Vec::new(),
+            webseeds: Vec::new(),
+            comment: None,
+            created_by: None,
+            creation_date: None,
+            name: "shared-upload.bin".into(),
+            piece_length: 4,
+            pieces: vec![[0; 20]],
+            files: vec![rt_metainfo::TorrentFileV1 {
+                index: 0,
+                length: 4,
+                path: SafeRelPath::from_name("shared-upload.bin", false).unwrap(),
+                offset: 0,
+                pad: false,
+            }],
+            private: false,
+            raw: Vec::new(),
+        };
+        let db = Arc::new(Mutex::new(conn));
+        let (_cmd_tx, cmd_rx) = mpsc::channel(1);
+        let mut task = TorrentTask::new(
+            meta,
+            temp.path().to_path_buf(),
+            false,
+            TorrentState::Downloading,
+            Arc::new(RwLock::new(SessionRegistry::new())),
+            DbExecutor::direct(Arc::clone(&db)),
+            ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default()),
+            cmd_rx,
+            temp.path().join("fastresume"),
+            8,
+            6881,
+            10,
+            10,
+            60,
+            1024 * 1024,
+            StorageIoConfig::default(),
+            false,
+            OutboundEgressPolicy::default(),
+            GlobalNetworkBudget::unlimited(),
+            10_000,
+            None,
+        )
+        .await;
+
+        task.set_torrent_upload_limit(Some(200_000));
+        let permits = Arc::new(tokio::sync::Semaphore::new(2));
+        let mut contexts = Vec::new();
+        let mut _rxs = Vec::new();
+        for port in [6881, 6882] {
+            let peer: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+            let (_id, rx) = task
+                .register_peer(peer, permits.clone().acquire_owned().await.unwrap())
+                .expect("peer registration should fit the memory budget");
+            _rxs.push(rx);
+            contexts.push(task.upload_context(peer).expect("registered peer"));
+        }
+
+        // Both peers draw on the same bucket, so together they can spend the
+        // torrent allowance only once.
+        assert!(Arc::ptr_eq(
+            &contexts[0].torrent_upload,
+            &contexts[1].torrent_upload
+        ));
+        let bucket = Arc::clone(&contexts[0].torrent_upload);
+        let control = RateLimitCancellation::default();
+        let generation = control.generation();
+        assert!(
+            bucket
+                .acquire_or_cancelled(200_000, &control, generation)
+                .await
+        );
+        // The limit change applies to the shared bucket, not per-peer copies.
+        task.set_torrent_upload_limit(None);
+        assert!(
+            contexts[1]
+                .torrent_upload
+                .acquire_or_cancelled(u64::MAX / 2, &control, generation)
+                .await
+        );
+    }
+
     #[test]
     fn v1_padding_bytes_must_be_zero() {
         let files = vec![
@@ -11796,7 +11801,7 @@ mod tests {
             metadata: None,
             is_private: false,
             pex_enabled: true,
-            upload_limit_bytes_per_sec: None,
+            torrent_upload: Arc::new(SharedRateLimiter::new(None)),
             upload_control: RateLimitCancellation::default(),
             shutdown_control: RateLimitCancellation::default(),
             global_download: GlobalNetworkBudget::unlimited().download(),
@@ -12186,63 +12191,6 @@ mod tests {
         ));
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn upload_budget_handles_a_block_larger_than_the_rate_limit() {
-        let waiter = tokio::spawn(async {
-            let mut tokens = 1_000;
-            let mut tokens_updated = TokioInstant::now();
-            let control = RateLimitCancellation::default();
-            let generation = control.generation();
-            wait_for_upload_budget(
-                Some(1_000),
-                &mut tokens,
-                &mut tokens_updated,
-                2_000,
-                &control,
-                generation,
-            )
-            .await
-        });
-        tokio::task::yield_now().await;
-        assert!(!waiter.is_finished());
-
-        tokio::time::advance(Duration::from_secs(1)).await;
-        tokio::task::yield_now().await;
-        let finished = waiter.is_finished();
-        if !finished {
-            waiter.abort();
-        }
-        assert!(
-            finished,
-            "an upload block larger than the rate bucket must complete in chunks"
-        );
-        assert!(waiter.await.unwrap());
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn upload_budget_wakes_when_peer_control_changes() {
-        let control = RateLimitCancellation::default();
-        let generation = control.generation();
-        let waiter_control = control.clone();
-        let waiter = tokio::spawn(async move {
-            let mut tokens = 0;
-            let mut tokens_updated = TokioInstant::now();
-            wait_for_upload_budget(
-                Some(1),
-                &mut tokens,
-                &mut tokens_updated,
-                1,
-                &waiter_control,
-                generation,
-            )
-            .await
-        });
-        tokio::task::yield_now().await;
-        assert!(!waiter.is_finished());
-        control.cancel();
-        assert!(!waiter.await.unwrap());
-    }
-
     #[tokio::test]
     async fn peer_loop_shutdown_interrupts_rate_limited_upload() {
         let temp = tempfile::tempdir().unwrap();
@@ -12265,6 +12213,10 @@ mod tests {
             )
             .unwrap(),
         );
+        // One byte per second, with the initial burst already spent, keeps
+        // this peer loop in its upload wait until it is cancelled.
+        let slow_upload = Arc::new(SharedRateLimiter::new(Some(1)));
+        slow_upload.acquire(64 * 1024).await;
         let control = RateLimitCancellation::default();
         let shutdown_control = RateLimitCancellation::default();
         let upload = UploadContext {
@@ -12284,7 +12236,7 @@ mod tests {
             metadata: None,
             is_private: false,
             pex_enabled: true,
-            upload_limit_bytes_per_sec: Some(1),
+            torrent_upload: Arc::clone(&slow_upload),
             upload_control: control.clone(),
             shutdown_control: shutdown_control.clone(),
             global_download: GlobalNetworkBudget::unlimited().download(),
@@ -12371,7 +12323,7 @@ mod tests {
             metadata: None,
             is_private: false,
             pex_enabled: true,
-            upload_limit_bytes_per_sec: None,
+            torrent_upload: Arc::new(SharedRateLimiter::new(None)),
             upload_control: RateLimitCancellation::default(),
             shutdown_control: RateLimitCancellation::default(),
             global_download: GlobalNetworkBudget::unlimited().download(),
@@ -12441,7 +12393,7 @@ mod tests {
             metadata: Some(Arc::new(b"metadata".to_vec())),
             is_private: false,
             pex_enabled: true,
-            upload_limit_bytes_per_sec: None,
+            torrent_upload: Arc::new(SharedRateLimiter::new(None)),
             upload_control: RateLimitCancellation::default(),
             shutdown_control: RateLimitCancellation::default(),
             global_download: GlobalNetworkBudget::unlimited().download(),
@@ -12559,7 +12511,7 @@ mod tests {
             metadata: None,
             is_private: false,
             pex_enabled: true,
-            upload_limit_bytes_per_sec: None,
+            torrent_upload: Arc::new(SharedRateLimiter::new(None)),
             upload_control: RateLimitCancellation::default(),
             shutdown_control: RateLimitCancellation::default(),
             global_download: GlobalNetworkBudget::unlimited().download(),
@@ -12906,7 +12858,6 @@ mod tests {
                 _peer_permit: peer_permit,
                 _bitmap_memory_lease: bitmap_memory_lease,
                 pending_have,
-                pending_upload_limit: None,
             },
         );
 

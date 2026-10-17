@@ -170,7 +170,7 @@ impl RateLimitCancellation {
 }
 
 impl SharedRateLimiter {
-    fn new(limit_bytes_per_sec: Option<u64>) -> Self {
+    pub(crate) fn new(limit_bytes_per_sec: Option<u64>) -> Self {
         let capacity = limit_bytes_per_sec
             .filter(|limit| *limit > 0)
             .map(|limit| limit.max(MAX_INITIAL_BURST_BYTES))
@@ -198,7 +198,7 @@ impl SharedRateLimiter {
         }
     }
 
-    fn set_limit(&self, limit: Option<u64>) {
+    pub(crate) fn set_limit(&self, limit: Option<u64>) {
         let limit = limit.filter(|limit| *limit > 0);
         let mut state = self.lock_state();
         if state.limit_bytes_per_sec == limit {

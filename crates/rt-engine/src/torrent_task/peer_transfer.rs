@@ -580,19 +580,6 @@ impl TorrentTask {
     pub(super) fn retry_pending_peer_controls(&mut self) {
         let mut queue_full = 0u64;
         for handle in self.active_peers.values_mut() {
-            if let Some(limit) = handle.pending_upload_limit {
-                match handle
-                    .cmd_tx
-                    .try_send(PeerCommand::UpdateUploadLimit(limit))
-                {
-                    Ok(()) => {
-                        handle.pending_upload_limit = None;
-                        handle.upload_control.cancel();
-                    }
-                    Err(_) => queue_full = queue_full.saturating_add(1),
-                }
-            }
-
             while let Some(piece) = handle.pending_have.first_set_u32() {
                 match handle.cmd_tx.try_send(PeerCommand::Have(piece)) {
                     Ok(()) => handle.pending_have.set(piece as usize, false),
