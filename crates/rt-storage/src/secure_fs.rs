@@ -389,6 +389,7 @@ fn secure_import(
             &destination_name,
             (source, destination, 0),
             expected_bytes,
+            true,
             check_control,
         )
     }
@@ -413,6 +414,7 @@ fn secure_copy(
         &destination_name,
         (source, destination, 0),
         expected_bytes,
+        true,
         check_control,
     )
 }
@@ -424,6 +426,7 @@ fn secure_copy_entry(
     destination_name: &OsString,
     paths: (&Path, &Path, usize),
     expected_bytes: u64,
+    verify_content: bool,
     check_control: &dyn Fn() -> Result<(), StorageError>,
 ) -> Result<(), StorageError> {
     let mut destination_created = false;
@@ -434,6 +437,7 @@ fn secure_copy_entry(
         destination_name,
         paths,
         expected_bytes,
+        verify_content,
         check_control,
         &mut destination_created,
     );
@@ -483,6 +487,7 @@ fn secure_copy_entry_inner(
     destination_name: &OsString,
     paths: (&Path, &Path, usize),
     expected_bytes: u64,
+    verify_content: bool,
     check_control: &dyn Fn() -> Result<(), StorageError>,
     destination_created: &mut bool,
 ) -> Result<(), StorageError> {
@@ -538,6 +543,13 @@ fn secure_copy_entry_inner(
         destination_path,
         check_control,
     )?;
+    if !verify_content {
+        // A nested entry of a directory copy: the top-level entry verifies
+        // the whole tree once, so verifying here too would re-hash this
+        // subtree at every ancestor (a leaf d levels deep was hashed d + 1
+        // times on each side).
+        return Ok(());
+    }
     verify_content_at(
         source_parent,
         source_name,
@@ -567,6 +579,7 @@ fn copy_directory_contents(
             &name,
             (&child_source, &child_destination, depth.saturating_add(1)),
             u64::MAX,
+            false,
             check_control,
         )?;
     }
@@ -1118,6 +1131,12 @@ fn verify_content_at(
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Files hashed on this thread, for copy-verification cost tests.
+    static HASHED_FILES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn hash_file_at(
     parent: &File,
     name: &OsString,
@@ -1125,6 +1144,8 @@ fn hash_file_at(
     check_control: &dyn Fn() -> Result<(), StorageError>,
 ) -> Result<[u8; 20], StorageError> {
     check_control()?;
+    #[cfg(test)]
+    HASHED_FILES.with(|count| count.set(count.get() + 1));
     let mut file = open_file_at(parent, name, path, libc::O_RDONLY)?;
     let mut hasher = Sha1::new();
     let mut buffer = [0u8; 64 * 1024];
@@ -1763,5 +1784,29 @@ mod tests {
         assert!(delete_error.to_string().contains("directory nesting depth"));
         assert!(source.exists(), "rejected deep tree must remain intact");
         assert!(destination.exists());
+    }
+
+    #[test]
+    fn deep_copy_hashes_each_leaf_once_per_side() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source");
+        let mut leaf_dir = source.clone();
+        for level in 0..6 {
+            leaf_dir.push(format!("d{level}"));
+        }
+        std::fs::create_dir_all(&leaf_dir).unwrap();
+        std::fs::write(leaf_dir.join("payload.bin"), b"payload").unwrap();
+        let destination = directory.path().join("destination");
+        let roots = vec![directory.path().to_path_buf()];
+        let no_control = || Ok(());
+
+        HASHED_FILES.with(|count| count.set(0));
+        secure_copy(&source, &destination, 0, &roots, &no_control).unwrap();
+        // One source hash and one destination hash, independent of depth.
+        assert_eq!(HASHED_FILES.with(|count| count.get()), 2);
+        assert_eq!(
+            std::fs::read(destination.join("d0/d1/d2/d3/d4/d5/payload.bin")).unwrap(),
+            b"payload"
+        );
     }
 }

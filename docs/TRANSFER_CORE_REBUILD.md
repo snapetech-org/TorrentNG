@@ -215,7 +215,7 @@ reproduced).
 | F22 | P1 | several storage schedulers, no fairness authority | IO-006 | G1 | accepted |
 | F23 | P1 | v2 recheck does per-leaf small I/O | IO-012 | G4 | accepted |
 | F24 | P0/P1 | v2 proof serving rereads file; 64 MiB ceiling | IO-013 | G3 | accepted |
-| F25 | P1 | secure copy re-verifies leaves per ancestor | IO-014 | G4 | accepted |
+| F25 | P1 | secure copy re-verifies leaves per ancestor | IO-014 | G4 | fixed for hashing (nested entries copy-only; top-level verifies the tree once; scheduling copies through the device service remains IO-014) |
 | F26 | P1 | one row change rebuilds a deep-cloned registry vector | SYS-005, SYS-006 | G5 | accepted |
 | F27 | P1 | dormant estimates incomplete; quadratic timer cancel | SYS-004, SYS-008 | G5 | timer half fixed (lazy deletion + compaction); dormant-estimate half remains SYS-004 |
 | F28 | P1 | every engine command scans all task handles | SYS-007 | G5 | fixed (supervised exit queue on the command path; 1 s full scan kept as reconciliation) |
@@ -330,3 +330,4 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 2026-10-17 | F08 (v1): `UploadContext.fast_negotiated`; rejected requests while choked / piece not held / queue saturated / read failed / choke transition; rate-wait interruptions requeue instead of dropping. Aborting in-flight reads on choke is skipped for Fast peers so their result can be rejected. Test `fast_peer_request_while_choked_is_rejected_not_dropped`. Chose real Reject semantics over the stop-advertising interim. |
 | 2026-10-17 | F18 partly: `PeerReadStreams` gates readahead on sequential continuation. Test `readahead_expands_only_continuing_streams`; existing readahead cache tests may need a sequential first read (check in bulk pass). |
 | 2026-10-17 | F18: gate is runtime-toggleable (`[storage] peer_read_readahead_sequential_only`, default true; documented in CONFIGURATION.md). Existing readahead cache scheduler tests set it to false to keep their expansion semantics. `cargo check --workspace --all-targets` is clean. |
+| 2026-10-17 | F25 fixed: nested copy entries skip verification; test `deep_copy_hashes_each_leaf_once_per_side` (thread-local hash counter). |
