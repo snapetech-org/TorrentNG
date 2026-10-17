@@ -225,7 +225,7 @@ reproduced).
 | F32 | P0 | throughput comparisons don't establish capacity | PERF-104..107 | G0 | accepted |
 | F33 | P1 | CPU/cache/backend microbenchmarks reward wrong behaviour | PERF-102, PERF-107 | G0 | accepted |
 | F34 | P0 | certification stamps current commit on historical PASS text | PERF-114 | G0 | accepted |
-| F35 | P1 | announce waits for optional scrape | SYS-010 | G5 | accepted |
+| F35 | P1 | announce waits for optional scrape | SYS-010 | G5 | fixed (announce delivered first; scrape separate event, process-wide cap of 4; broader discovery/control budgets still SYS-010) |
 
 ## 6. Work packages
 
@@ -321,3 +321,4 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 2026-10-17 | SYS-003: F09 fixed. Per-peer upload buckets and `PeerCommand::UpdateUploadLimit` removed; peers draw on one shared per-torrent limiter. Test-env note: run `cargo test -p rt-engine` once with `TMPDIR` on NFS and once on tmpfs; 2 v2 crash-safety tests only pass on NFS, 5 storage-move tests only pass on tmpfs. |
 | 2026-10-17 | SYS-003: F11 fixed. Policy change: code for all tasks first, bulk test pass at the end (owner request). Bulk-test backlog: full `rt-engine` suite on both TMPDIRs, clippy, `--release` webseed test. Known pre-existing load-flaky crash-safety tests (base commit also flakes). |
 | 2026-10-17 | F29 fixed: `StorageRuntime::initialized()`; `/metrics` no longer initialises the global runtime and exports `torrentng_storage_runtime_initialized`. Test deferred to bulk pass. |
+| 2026-10-17 | F35 fixed: `TrackerWorkerEvent::{Announce,Scrape}`; v2 uses `TrackerWorkers::announce_only()` (it never consumed scrape stats). Test `announce_result_is_not_held_back_by_a_stalled_scrape` written, run deferred to bulk pass. |

@@ -75,8 +75,9 @@ use crate::network_budget::{GlobalNetworkBudget, RateLimitCancellation, SharedRa
 use crate::tracker_runtime::{
     announce_tracker, bounded_response_body, first_tracker_key, next_tracker_key, protocol_numwant,
     tracker_keys_for_announce, tracker_keys_for_stopped_announce, url_log_target,
-    TrackerAnnounceContext, TrackerAnnounceResult, TrackerAnnounceSpec, TrackerKey, TrackerWorkers,
-    MAX_TRACKER_ANNOUNCES_IN_FLIGHT, STOPPED_TRACKER_ANNOUNCE_DEADLINE,
+    TrackerAnnounceContext, TrackerAnnounceResult, TrackerAnnounceSpec, TrackerKey,
+    TrackerScrapeResult, TrackerWorkerEvent, TrackerWorkers, MAX_TRACKER_ANNOUNCES_IN_FLIGHT,
+    STOPPED_TRACKER_ANNOUNCE_DEADLINE,
 };
 use crate::{EnginePeerSnapshot, EngineTorrentLimits, EngineWebseedSnapshot, TorrentRuntimeStats};
 
@@ -2589,8 +2590,15 @@ impl TorrentTask {
                     }
                 }
 
-                Some(result) = self.tracker_workers.recv() => {
-                    self.handle_tracker_result(result).await;
+                Some(event) = self.tracker_workers.recv_event() => {
+                    match event {
+                        TrackerWorkerEvent::Announce(result) => {
+                            self.handle_tracker_result(result).await;
+                        }
+                        TrackerWorkerEvent::Scrape(scrape) => {
+                            self.handle_tracker_scrape(scrape).await;
+                        }
+                    }
                 }
 
                 _ = choke_tick.tick() => {
@@ -2767,6 +2775,24 @@ impl TorrentTask {
         self.tracker_workers.start(candidates, context);
     }
 
+    async fn handle_tracker_scrape(&mut self, result: TrackerScrapeResult) {
+        if !self.tracker_workers.is_current(result.generation) {
+            return;
+        }
+        let (tier_idx, tracker_idx) = result.key;
+        let Some(tracker) = self
+            .tracker_tiers
+            .get_mut(tier_idx)
+            .and_then(|tier| tier.get_mut(tracker_idx))
+        else {
+            return;
+        };
+        tracker.scrape_complete = Some(result.scrape.complete);
+        tracker.scrape_incomplete = Some(result.scrape.incomplete);
+        tracker.scrape_downloaded = Some(result.scrape.downloaded);
+        self.persist_tracker_state().await;
+    }
+
     async fn handle_tracker_result(&mut self, result: TrackerAnnounceResult) {
         self.tracker_workers.complete(result.key, result.generation);
         if !self.tracker_workers.is_current(result.generation) {
@@ -2784,11 +2810,6 @@ impl TorrentTask {
             Ok(resp) => {
                 let peers: Vec<SocketAddr> = resp.peers.iter().map(|peer| peer.addr).collect();
                 tracker.on_success_with_min_interval(&resp, self.min_announce_interval);
-                if let Some(scrape) = result.scrape {
-                    tracker.scrape_complete = Some(scrape.complete);
-                    tracker.scrape_incomplete = Some(scrape.incomplete);
-                    tracker.scrape_downloaded = Some(scrape.downloaded);
-                }
                 self.persist_tracker_state().await;
                 self.tracker_event = tracker_event_after_success(self.tracker_event, result.event);
                 if !peers.is_empty() && !self.paused {

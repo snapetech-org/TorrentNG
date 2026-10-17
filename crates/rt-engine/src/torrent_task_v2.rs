@@ -775,7 +775,7 @@ impl V2TorrentTask {
             active_tracker_tier: 0,
             private_tracker_key,
             tracker_event: TrackerEvent::Started,
-            tracker_workers: TrackerWorkers::new(),
+            tracker_workers: TrackerWorkers::announce_only(),
             listen_port,
             http_timeout: Duration::from_secs(http_timeout_secs.max(1)),
             udp_timeout: Duration::from_secs(udp_timeout_secs.max(1)),

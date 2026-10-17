@@ -25,6 +25,11 @@ use crate::egress_policy::{OutboundEgressPolicy, OutboundTargetKind};
 const MAX_TRACKER_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const MAX_TRACKER_UDP_RESPONSE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_TRACKER_ANNOUNCES_IN_FLIGHT: usize = 8;
+/// Process-wide cap on optional HTTP scrapes. Scrapes are statistics only, so
+/// when the cap is reached the scrape is skipped instead of queued.
+const MAX_SCRAPES_IN_FLIGHT: usize = 4;
+static SCRAPE_PERMITS: tokio::sync::Semaphore =
+    tokio::sync::Semaphore::const_new(MAX_SCRAPES_IN_FLIGHT);
 pub(crate) const STOPPED_TRACKER_ANNOUNCE_DEADLINE: Duration = Duration::from_secs(10);
 // A parsed compact response can grow its peer vector once more when a
 // response contains both `peers` and `peers6`; the actor then materializes a
@@ -167,8 +172,20 @@ pub(crate) struct TrackerAnnounceResult {
     pub(crate) url: String,
     pub(crate) event: TrackerEvent,
     pub(crate) response: Result<AnnounceResponse, TrackerError>,
-    pub(crate) scrape: Option<ScrapeStats>,
     pub(crate) _response_memory_lease: Option<MemoryLease>,
+}
+
+/// Statistics from an optional scrape, delivered after the announce result so
+/// a slow scrape never holds back the peers an announce already returned.
+pub(crate) struct TrackerScrapeResult {
+    pub(crate) key: TrackerKey,
+    pub(crate) generation: u64,
+    pub(crate) scrape: ScrapeStats,
+}
+
+pub(crate) enum TrackerWorkerEvent {
+    Announce(TrackerAnnounceResult),
+    Scrape(TrackerScrapeResult),
 }
 
 pub(crate) struct LeasedAnnounceResponse {
@@ -180,6 +197,9 @@ pub(crate) struct LeasedAnnounceResponse {
 pub(crate) struct TrackerWorkers {
     result_tx: mpsc::Sender<TrackerAnnounceResult>,
     result_rx: mpsc::Receiver<TrackerAnnounceResult>,
+    scrape_tx: mpsc::Sender<TrackerScrapeResult>,
+    scrape_rx: mpsc::Receiver<TrackerScrapeResult>,
+    scrape_enabled: bool,
     inflight: HashMap<TrackerKey, tokio::task::AbortHandle>,
     generation: u64,
 }
@@ -187,12 +207,23 @@ pub(crate) struct TrackerWorkers {
 impl TrackerWorkers {
     pub(crate) fn new() -> Self {
         let (result_tx, result_rx) = mpsc::channel(128);
+        let (scrape_tx, scrape_rx) = mpsc::channel(128);
         Self {
             result_tx,
             result_rx,
+            scrape_tx,
+            scrape_rx,
+            scrape_enabled: true,
             inflight: HashMap::new(),
             generation: 0,
         }
+    }
+
+    /// Workers for a torrent type that does not consume scrape statistics.
+    pub(crate) fn announce_only() -> Self {
+        let mut workers = Self::new();
+        workers.scrape_enabled = false;
+        workers
     }
 
     pub(crate) fn available(&self) -> usize {
@@ -230,6 +261,8 @@ impl TrackerWorkers {
             let result_tx = self.result_tx.clone();
             let worker_context = context.clone();
             let worker_url = url.clone();
+            let scrape_tx = self.scrape_tx.clone();
+            let scrape_enabled = self.scrape_enabled;
             let worker = tokio::spawn(async move {
                 let response =
                     announce_tracker(&worker_context, &worker_url, event, tracker_id.as_deref())
@@ -237,11 +270,8 @@ impl TrackerWorkers {
                 // UDP trackers have no HTTP scrape endpoint. Trying to pass
                 // their URL through the HTTP egress policy causes a failed
                 // client/DNS attempt after every successful announce.
-                let scrape = if response.is_ok() && !is_udp_tracker_url(&worker_url) {
-                    scrape_tracker(&worker_context, &worker_url).await.ok()
-                } else {
-                    None
-                };
+                let wants_scrape =
+                    scrape_enabled && response.is_ok() && !is_udp_tracker_url(&worker_url);
                 let (response, response_memory_lease) = match response {
                     Ok(response) => (Ok(response.response), Some(response._memory_lease)),
                     Err(error) => (Err(error), None),
@@ -250,10 +280,9 @@ impl TrackerWorkers {
                     .send(TrackerAnnounceResult {
                         key,
                         generation,
-                        url: worker_url,
+                        url: worker_url.clone(),
                         event,
                         response,
-                        scrape,
                         _response_memory_lease: response_memory_lease,
                     })
                     .await
@@ -265,6 +294,21 @@ impl TrackerWorkers {
                         result = "actor_gone",
                         "tracker announce result discarded because the torrent actor stopped"
                     );
+                    return;
+                }
+                // The announce result, with its peers, is already delivered.
+                // The scrape is best effort and capped process-wide.
+                if wants_scrape {
+                    let Ok(_permit) = SCRAPE_PERMITS.try_acquire() else {
+                        return;
+                    };
+                    if let Ok(scrape) = scrape_tracker(&worker_context, &worker_url).await {
+                        let _ = scrape_tx.try_send(TrackerScrapeResult {
+                            key,
+                            generation,
+                            scrape,
+                        });
+                    }
                 }
             });
             self.inflight.insert(key, worker.abort_handle());
@@ -273,6 +317,14 @@ impl TrackerWorkers {
 
     pub(crate) async fn recv(&mut self) -> Option<TrackerAnnounceResult> {
         self.result_rx.recv().await
+    }
+
+    /// Next announce result or scrape statistic, whichever is ready first.
+    pub(crate) async fn recv_event(&mut self) -> Option<TrackerWorkerEvent> {
+        tokio::select! {
+            result = self.result_rx.recv() => result.map(TrackerWorkerEvent::Announce),
+            scrape = self.scrape_rx.recv() => scrape.map(TrackerWorkerEvent::Scrape),
+        }
     }
 
     pub(crate) fn complete(&mut self, key: TrackerKey, generation: u64) {
@@ -295,6 +347,7 @@ impl TrackerWorkers {
             abort.abort();
         }
         while self.result_rx.try_recv().is_ok() {}
+        while self.scrape_rx.try_recv().is_ok() {}
     }
 }
 
@@ -719,5 +772,81 @@ mod tests {
         assert!(reserve_tracker_response_bytes(&governor, 1).is_err());
         drop(lease);
         assert!(reserve_tracker_response_bytes(&governor, 64).is_ok());
+    }
+
+    #[tokio::test]
+    async fn announce_result_is_not_held_back_by_a_stalled_scrape() {
+        use super::{TrackerAnnounceContext, TrackerAnnounceSpec, TrackerWorkerEvent};
+        use crate::egress_policy::OutboundEgressPolicy;
+        use rt_tracker::TrackerEvent;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // The announce endpoint answers at once; the scrape endpoint accepts
+        // the connection and never replies.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    return;
+                };
+                tokio::spawn(async move {
+                    let mut request = Vec::new();
+                    let mut buffer = [0_u8; 1024];
+                    while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        match stream.read(&mut buffer).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(read) => request.extend_from_slice(&buffer[..read]),
+                        }
+                    }
+                    if request.starts_with(b"GET /announce") {
+                        let body = b"d8:intervali1800e5:peers0:e";
+                        let head = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        );
+                        let _ = stream.write_all(head.as_bytes()).await;
+                        let _ = stream.write_all(body).await;
+                        let _ = stream.shutdown().await;
+                    } else {
+                        tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+                    }
+                });
+            }
+        });
+
+        let context = TrackerAnnounceContext {
+            info_hash: [7; 20],
+            uploaded: 0,
+            downloaded: 0,
+            left: 1,
+            listen_port: 6881,
+            http_timeout: std::time::Duration::from_secs(60),
+            udp_timeout: std::time::Duration::from_secs(5),
+            numwant: 50,
+            egress_policy: OutboundEgressPolicy {
+                allow_loopback: true,
+                ..OutboundEgressPolicy::default()
+            },
+            resources: ResourceGovernor::new(ResourceGovernorConfig::default()),
+        };
+        let mut workers = TrackerWorkers::new();
+        workers.start(
+            [TrackerAnnounceSpec {
+                key: (0, 0),
+                url: format!("http://{addr}/announce"),
+                tracker_id: None,
+                event: TrackerEvent::Started,
+            }],
+            context,
+        );
+        let event = tokio::time::timeout(std::time::Duration::from_secs(5), workers.recv_event())
+            .await
+            .expect("announce result must not wait for the scrape")
+            .expect("workers keep their channels open");
+        match event {
+            TrackerWorkerEvent::Announce(result) => assert!(result.response.is_ok()),
+            TrackerWorkerEvent::Scrape(_) => panic!("the stalled scrape cannot have finished"),
+        }
     }
 }
