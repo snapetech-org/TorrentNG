@@ -237,7 +237,7 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 |---|---|---|---|---|---|---|
 | 1 | SYS-001 | P0 | Pin the reference, capability matrix and shared ownership contracts | none | wip | this document pins the reference and ownership summary; the capability matrix and per-ticket spec template are still to write |
 | 2 | IO-001 | P0 | Define storage evidence contracts and deterministic fault harness | SYS-001 | todo | |
-| 2 | NET-101 | P0 | Define typed transfer coordinates and protocol geometry adapters | SYS-001 | todo | |
+| 2 | NET-101 | P0 | Define typed transfer coordinates and protocol geometry adapters | SYS-001 | wip | pure module landed in `crates/rt-engine/src/transfer/` with unit tests (compiled and clippy-clean, NOT yet run); live integration pending NET-114 |
 | 2 | PERF-101 | P0 | Commit measurement contract and strict result schemas | SYS-001 | todo | |
 | 2 | SYS-002 | P0 | Land v2 reproductions and a reviewed extent correction | SYS-001 | done | `torrent_task_v2::tests::v2_*` multi-block tests (5 completion cases x memory/spill, red without fix) + `v2_request_window_pipelines_every_block_of_a_piece` (red: 4 of 8 requests) |
 | 2 | SYS-003 | P0 | Repair immediate release-rate and negotiated-capability behavior | SYS-001 | done | F10, F09, F11 fixed with tests; F08 for v1 (v2/Cancel remain NET-105) |
@@ -247,7 +247,7 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 3 | IO-002 | P0 | Separate block and piece extents and repair multi-block v2 transfers | IO-001, SYS-002, NET-101 | todo | |
 | 3 | IO-003 | P0 | Carry capacity leases through immutable payload ownership | IO-001 | todo | |
 | 3 | IO-004 | P0 | Unify the secure file catalog and descriptor lifecycle | IO-001 | wip | file-cache lock narrowed (F17); no secure catalog yet |
-| 3 | NET-102 | P0 | Build a deterministic transfer simulator and invariant oracle | NET-101 | todo | |
+| 3 | NET-102 | P0 | Build a deterministic transfer simulator and invariant oracle | NET-101 | wip | pure module landed in `crates/rt-engine/src/transfer/` with unit tests (compiled and clippy-clean, NOT yet run); live integration pending NET-114 |
 | 3 | PERF-102 | P0 | Build independent cumulative resource observer | PERF-101 | todo | |
 | 3 | PERF-103 | P0 | Implement client adapters with pinned identity and settings readback | PERF-101 | todo | |
 | 3 | PERF-105 | P0 | Build scoped deterministic fixtures and cache controls | PERF-101 | todo | |
@@ -265,12 +265,12 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 4 | SYS-010 | P1 | Bound discovery and control I/O and decouple scrape from announce | SYS-004, SYS-008 | wip | announce delivered before scrape; scrape capped process-wide; DNS/DHT/metadata budgets not started |
 | 5 | IO-006 | P0 | Build one device service over the portable reference backend | IO-005 | todo | |
 | 5 | IO-007 | P0 | Create batched hash jobs and shared hybrid content views | IO-002, IO-003, IO-005 | todo | |
-| 5 | NET-104 | P0 | Implement the authoritative request and content ownership ledger | NET-101, NET-102, NET-103, IO-005 | todo | |
+| 5 | NET-104 | P0 | Implement the authoritative request and content ownership ledger | NET-101, NET-102, NET-103, IO-005 | wip | pure module landed in `crates/rt-engine/src/transfer/` with unit tests (compiled and clippy-clean, NOT yet run); live integration pending NET-114 |
 | 5 | PERF-107 | P0 | Implement independent network, hash, disk and pipeline ceilings | PERF-102, PERF-105, PERF-106 | todo | |
 | 5 | PERF-109 | P0 | Replace synthetic capacity proxies with live production fixtures | PERF-102, PERF-103, PERF-104, PERF-105, PERF-108 | todo | |
 | 5 | PERF-112 | P0 | Enforce v2 and persistence invariants in full transfer paths | PERF-104, PERF-105, PERF-106 | todo | |
 | 6 | IO-012 | P1 | Stream recheck through large chunks and persistent sparse cursors | IO-006, IO-007 | wip | 1 MiB chunked v2 verify + batched leaf hashing; persistent sparse cursors not started |
-| 6 | NET-105 | P0 | Implement negotiated peer protocol request semantics | NET-104 | wip | v1 Reject for known-coordinate requests; v2 + outgoing Cancel + endgame not started |
+| 6 | NET-105 | P0 | Implement negotiated peer protocol request semantics | NET-104 | wip | pure module landed in `crates/rt-engine/src/transfer/` with unit tests (compiled and clippy-clean, NOT yet run); live integration pending NET-114 |
 | 6 | NET-109 | P1 | Rebuild piece selection around active candidates and accurate accounting | NET-104 | wip | priority scan O(1) when idle (F15 common path); active-candidate indexes not started |
 | 6 | PERF-110 | P0 | Automate 28-case catalog and randomized paired execution | PERF-103, PERF-104, PERF-105, PERF-106, PERF-107, PERF-109 | todo | |
 | 6 | PERF-111 | P1 | Add picker timer and changed-snapshot allocation regression probes | PERF-101, PERF-102, PERF-109 | todo | |
@@ -278,13 +278,13 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 7 | NET-106 | P1 | Separate peer read progress from write and storage waits | NET-103, NET-104, NET-105 | todo | |
 | 7 | PERF-113 | P1 | Implement statistical analysis and explicit scorecard | PERF-101, PERF-102, PERF-104, PERF-110 | todo | |
 | 8 | IO-008 | P0 | Move transfer actors to completion-driven storage and hashing | IO-002, IO-006, IO-007, NET-104, NET-106 | todo | |
-| 8 | NET-107 | P1 | Replace replicated token buckets with hierarchical fair rate scheduling | NET-103, NET-104, NET-106 | wip | one per-torrent upload bucket (F09), token-ready wakeup (F11); hierarchical scheduler not started |
+| 8 | NET-107 | P1 | Replace replicated token buckets with hierarchical fair rate scheduling | NET-103, NET-104, NET-106 | wip | pure module landed in `crates/rt-engine/src/transfer/` with unit tests (compiled and clippy-clean, NOT yet run); live integration pending NET-114 |
 | 8 | NET-113 | P1 | Deliver the selected windowed uTP transport behind the shared runtime | NET-103, NET-106, NET-112 | todo | |
 | 8 | PERF-114 | P0 | Replace text-grep qualification with exact artifact manifests | PERF-101, PERF-113 | wip | `memory_roadmap_certification.sh` commit-checked; manifests not started |
 | 9 | IO-009 | P0 | Implement dirty-only generation fences and grouped barriers | IO-004, IO-006, IO-008 | wip | checkpoint sync scoped to the scheduler's dirty files, marked at issue; generation fences not started |
 | 9 | IO-011 | P1 | Replace unconditional readahead with useful range caching | IO-004, IO-006, IO-008 | wip | sequential-only readahead (toggleable); reuse-driven range cache not started |
-| 9 | NET-108 | P1 | Implement adaptive request windows and deadline-driven refill | NET-104, NET-106, NET-107 | wip | rate-proportional window 32..128 (F05); measured-delay feedback not started |
-| 9 | NET-110 | P1 | Implement bounded shared upload service and eliminate valid-demand drops | NET-103, NET-105, NET-106, NET-107 | wip | request-count ceiling removed (F06); shared byte-admitted upload service not started |
+| 9 | NET-108 | P1 | Implement adaptive request windows and deadline-driven refill | NET-104, NET-106, NET-107 | wip | pure module landed in `crates/rt-engine/src/transfer/` with unit tests (compiled and clippy-clean, NOT yet run); live integration pending NET-114 |
+| 9 | NET-110 | P1 | Implement bounded shared upload service and eliminate valid-demand drops | NET-103, NET-105, NET-106, NET-107 | wip | pure module landed in `crates/rt-engine/src/transfer/` with unit tests (compiled and clippy-clean, NOT yet run); live integration pending NET-114 |
 | 9 | PERF-115 | P1 | Integrate hosted correctness and dedicated hardware regression lanes | PERF-110, PERF-111, PERF-112, PERF-113, PERF-114 | todo | |
 | 10 | IO-010 | P0 | Bind resume persistence and crash recovery to barrier evidence | IO-009, SYS-009 | todo | |
 | 10 | IO-014 | P1 | Schedule secure copies and verify each leaf once | IO-006, IO-009, IO-012 | wip | each leaf verified once per side; device-scheduled copy not started |
@@ -349,3 +349,4 @@ bulk test pass establishes correctness of the landed slices only.
 | 2026-10-17 | F05 partly: `adaptive_request_pipeline` (rate x 0.25 s, bounded). Uses delivery rate rather than measured RTT because the peer loop does not yet report per-request delay. Test `request_window_grows_only_for_fast_peers_and_never_under_pressure`. |
 | 2026-10-17 | F17 partly: `FilePool::lookup_valid`, `sweep_idle_if_due_locked`, `mode_satisfies`; tests `write_descriptor_serves_reads_without_reopening`, `idle_sweep_runs_on_an_interval_not_on_every_lookup`. |
 | 2026-10-17 | F27 estimate half: `TierController::estimated_owner_bytes`; not yet wired into the dormant budget check (PERF-109 live-owner fixtures decide the cap). Test `owner_bytes_cover_maps_and_timers_not_just_the_hash_string`. |
+| 2026-10-17 | Code-first phase: `transfer/` core (coords, ledger, obligations, upload, rate, window, sim) committed. Its tests, and all tests added since the last bulk run, have not been executed. |
