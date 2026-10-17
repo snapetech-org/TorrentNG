@@ -283,6 +283,41 @@ where
         self.tier_counts
     }
 
+    /// Estimated bytes owned by this controller for every tracked torrent,
+    /// not just the dormant snapshot's own heap string: the tier map, the
+    /// dormant-snapshot map, the two timer wheels (each stores the key in a
+    /// queue and again in a reverse index) and `heap_of_key` for every
+    /// stored copy of the key. Hash maps are charged at their load-factor
+    /// worst case (one slot of overhead per live slot plus a control byte).
+    pub fn estimated_owner_bytes(&self, heap_of_key: impl Fn(&K) -> usize) -> usize {
+        let slot = |entry: usize| entry.saturating_add(entry / 7).saturating_add(1);
+        let key_size = std::mem::size_of::<K>();
+        let mut total = 0usize;
+        for key in self.tiers.keys() {
+            total = total
+                .saturating_add(slot(key_size + std::mem::size_of::<TorrentActivityTier>()))
+                .saturating_add(heap_of_key(key));
+        }
+        for (key, snapshot) in &self.dormant_snapshots {
+            total = total
+                .saturating_add(slot(
+                    key_size + std::mem::size_of::<DormantTorrentSnapshot>(),
+                ))
+                .saturating_add(heap_of_key(key))
+                .saturating_add(snapshot.estimate_heap_bytes());
+        }
+        // A scheduled key lives in its deadline queue and in the reverse
+        // index (with its deadline), so it is charged twice per wheel entry.
+        let wheel_entry = key_size.saturating_mul(2) + std::mem::size_of::<Instant>();
+        total = total.saturating_add(
+            self.idle_checks
+                .len()
+                .saturating_add(self.tracker_checks.len())
+                .saturating_mul(slot(wheel_entry)),
+        );
+        total
+    }
+
     /// Number of bytes retained by compact dormant projections. This is
     /// maintained incrementally so exposing scale telemetry does not itself
     /// scan every dormant torrent.
@@ -1062,5 +1097,37 @@ mod tests {
         assert_eq!(due.len(), 10);
         assert!(wheel.is_empty());
         assert!(wheel.next_deadline().is_none());
+    }
+
+    #[test]
+    fn owner_bytes_cover_maps_and_timers_not_just_the_hash_string() {
+        let mut controller = TierController::<String>::new(TierPolicy::default());
+        let now = Instant::now();
+        for index in 0..100 {
+            let key = format!("{index:040x}");
+            controller.apply_input(
+                key.clone(),
+                TierInput {
+                    state: TorrentState::Stopped,
+                    connected_peers: 0,
+                    outstanding_requests: 0,
+                    inbound_peer: false,
+                    tracker_due: false,
+                    last_active: Some(now),
+                    now,
+                },
+            );
+            controller.set_dormant_snapshot(
+                key.clone(),
+                DormantTorrentSnapshot::new(key, TorrentState::Stopped, None, Some(now)),
+            );
+        }
+        let owner = controller.estimated_owner_bytes(String::capacity);
+        // The old estimate counted only the snapshot's string capacity.
+        assert!(
+            owner > controller.dormant_heap_bytes() * 3,
+            "owner estimate {owner} should far exceed the string-only {}",
+            controller.dormant_heap_bytes()
+        );
     }
 }

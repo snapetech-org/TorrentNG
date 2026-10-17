@@ -217,7 +217,7 @@ reproduced).
 | F24 | P0/P1 | v2 proof serving rereads file; 64 MiB ceiling | IO-013 | G3 | partly fixed (64 MiB ceiling removed; leaves hashed in 256 KiB reads; layers proven against the metainfo root and kept in a 64 MiB LRU; persisted node store and subtree-only work remain IO-013) |
 | F25 | P1 | secure copy re-verifies leaves per ancestor | IO-014 | G4 | fixed for hashing (nested entries copy-only; top-level verifies the tree once; scheduling copies through the device service remains IO-014) |
 | F26 | P1 | one row change rebuilds a deep-cloned registry vector | SYS-005, SYS-006 | G5 | partly fixed (snapshot rows are shared `Arc<TorrentEntry>`, flatten clones pointers; chunked revision deltas, cold/hot metadata split and compact identities remain SYS-005/SYS-004) |
-| F27 | P1 | dormant estimates incomplete; quadratic timer cancel | SYS-004, SYS-008 | G5 | timer half fixed (lazy deletion + compaction); dormant-estimate half remains SYS-004 |
+| F27 | P1 | dormant estimates incomplete; quadratic timer cancel | SYS-004, SYS-008 | G5 | fixed (lazy-deletion timer; `TierController::estimated_owner_bytes` counts maps, timer wheels and every key copy; compact generational identities remain SYS-004) |
 | F28 | P1 | every engine command scans all task handles | SYS-007 | G5 | fixed (supervised exit queue on the command path; 1 s full scan kept as reconciliation) |
 | F29 | P0 | metrics scrape builds a shadow storage runtime | SYS-011, PERF-108 | G0 | fixed (scrape uses `StorageRuntime::initialized()`; owner-specific metrics still SYS-011) |
 | F30 | P1 | engine unit tests bypass production DB worker | SYS-009 | G0 | accepted |
@@ -339,3 +339,4 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 2026-10-17 | F12 partly: `Choker::run_with_mode(ChokeMode)`, optimistic history + uuid tie-break, engine passes decayed rates. Tests: `downloading_mode_rewards_peers_that_deliver_to_us`, `optimistic_slot_rotates_through_every_waiting_peer`, `optimistic_slot_moves_on_when_its_holder_stops_being_interested`. |
 | 2026-10-17 | F05 partly: `adaptive_request_pipeline` (rate x 0.25 s, bounded). Uses delivery rate rather than measured RTT because the peer loop does not yet report per-request delay. Test `request_window_grows_only_for_fast_peers_and_never_under_pressure`. |
 | 2026-10-17 | F17 partly: `FilePool::lookup_valid`, `sweep_idle_if_due_locked`, `mode_satisfies`; tests `write_descriptor_serves_reads_without_reopening`, `idle_sweep_runs_on_an_interval_not_on_every_lookup`. |
+| 2026-10-17 | F27 estimate half: `TierController::estimated_owner_bytes`; not yet wired into the dormant budget check (PERF-109 live-owner fixtures decide the cap). Test `owner_bytes_cover_maps_and_timers_not_just_the_hash_string`. |
