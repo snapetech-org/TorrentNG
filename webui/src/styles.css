@@ -1395,10 +1395,10 @@ summary:hover {
 
   .tng-savedviews > span:first-child {
     position: sticky;
-    left: 0;
+    inset-inline-start: 0;
     z-index: 1;
     background: var(--surface);
-    padding-right: 4px;
+    padding-inline-end: 4px;
   }
 
   .tng-savedview-chip {

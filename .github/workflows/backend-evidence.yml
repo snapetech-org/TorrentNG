@@ -38,31 +38,6 @@ on:
         required: true
         default: false
         type: boolean
-      run_real_device:
-        description: "Run ignored storage tests against storage_target"
-        required: true
-        default: false
-        type: boolean
-      storage_target:
-        description: "Mounted writable real-device storage path"
-        required: false
-        default: ""
-        type: string
-      run_24h_soak:
-        description: "Run the blocking 24-hour container soak"
-        required: true
-        default: false
-        type: boolean
-      soak_url:
-        description: "Loopback target, or remote HTTPS origin listed in TNG_PROTECTED_TARGET_ALLOWED_ORIGINS"
-        required: false
-        default: "http://localhost:18080"
-        type: string
-      soak_container:
-        description: "Running TorrentNG container name for RSS sampling"
-        required: false
-        default: "certification-torrentng-1"
-        type: string
 
 permissions:
   contents: read
@@ -88,7 +63,7 @@ jobs:
 
       - name: Upload deterministic evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: backend-deterministic-fault-${{ github.run_id }}
           path: |
@@ -99,7 +74,7 @@ jobs:
   live-fault:
     name: Live release-daemon fault matrix
     if: github.ref == 'refs/heads/main' && inputs.run_live_fault == true
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Route temporary files to runner temp
@@ -132,7 +107,7 @@ jobs:
 
       - name: Upload live fault evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: backend-live-fault-${{ github.run_id }}
           path: certification/reports/backend-burndown-native-fault-*
@@ -141,7 +116,7 @@ jobs:
   api-load:
     name: Live many-client and slow-SSE load
     if: github.ref == 'refs/heads/main' && inputs.run_api_load == true
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Route temporary files to runner temp
@@ -178,7 +153,7 @@ jobs:
 
       - name: Upload API/SSE evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: backend-api-load-${{ github.run_id }}
           path: certification/reports/backend-api-load-*
@@ -187,7 +162,7 @@ jobs:
   public-compatibility:
     name: Public/client compatibility evidence
     if: github.ref == 'refs/heads/main' && inputs.run_public_compat == true
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
       - name: Route temporary files to runner temp
@@ -214,93 +189,8 @@ jobs:
 
       - name: Upload public compatibility evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: backend-public-compat-${{ github.run_id }}
           path: certification/reports/universal-compat-backend-*
-          if-no-files-found: warn
-
-  real-device:
-    name: Real-device storage evidence
-    if: github.ref == 'refs/heads/main' && inputs.run_real_device == true
-    runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 60
-    steps:
-      - name: Route temporary files to runner temp
-        shell: bash
-        run: |
-          set -euo pipefail
-          : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
-          mkdir -p "$RUNNER_TEMP"
-          test -w "$RUNNER_TEMP"
-          printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: main
-          persist-credentials: false
-
-      - name: Run mounted-device matrix
-        env:
-          STORAGE_PHASE_B_REAL_DEVICE: "1"
-          TNG_STORAGE_BENCH_DIR: ${{ inputs.storage_target }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${TNG_STORAGE_BENCH_DIR:-}" || ! -d "$TNG_STORAGE_BENCH_DIR" || ! -w "$TNG_STORAGE_BENCH_DIR" ]]; then
-            echo "run_real_device requires a writable storage_target on the self-hosted runner" >&2
-            exit 1
-          fi
-          scripts/storage_phase_b_matrix.sh
-
-      - name: Upload storage evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: backend-real-device-${{ github.run_id }}
-          path: certification/reports/storage-*
-          if-no-files-found: warn
-
-  soak:
-    name: 24-hour production soak
-    if: github.ref == 'refs/heads/main' && inputs.run_24h_soak == true
-    runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 1500
-    steps:
-      - name: Route temporary files to runner temp
-        shell: bash
-        run: |
-          set -euo pipefail
-          : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
-          mkdir -p "$RUNNER_TEMP"
-          test -w "$RUNNER_TEMP"
-          printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: main
-          persist-credentials: false
-
-      - name: Run blocking soak
-        env:
-          TNG_HOST_URL: ${{ inputs.soak_url }}
-          TNG_API_TOKEN: ${{ secrets.TNG_BACKEND_API_TOKEN }}
-          TNG_PROTECTED_TARGET_ALLOWED_ORIGINS: ${{ vars.TNG_PROTECTED_TARGET_ALLOWED_ORIGINS || vars.TNG_BACKEND_API_ALLOWED_ORIGINS }}
-          TNG_CONTAINER: ${{ inputs.soak_container }}
-          SOAK_DURATION_SECONDS: "86400"
-          SOAK_INTERVAL_SECONDS: "60"
-        run: |
-          set -euo pipefail
-          if [[ -z "${TNG_API_TOKEN:-}" ]]; then
-            echo "run_24h_soak requires the TNG_BACKEND_API_TOKEN secret" >&2
-            exit 1
-          fi
-          scripts/soak_certification.sh \
-            "certification/reports/soak-24h-backend-${GITHUB_RUN_ID}.md"
-
-      - name: Upload soak evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: backend-24h-soak-${{ github.run_id }}
-          path: certification/reports/soak-24h-backend-*
           if-no-files-found: warn

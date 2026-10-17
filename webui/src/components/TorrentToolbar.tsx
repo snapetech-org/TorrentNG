@@ -1,4 +1,5 @@
 import { getRegionalLocale } from '../lib/localeFormat'
+import { useInterfaceLanguage } from '../lib/interfaceLocale'
 interface Props {
   selectedCount: number
   onAdd: () => void
@@ -25,6 +26,10 @@ export function TorrentToolbar({
   selectedCount, onAdd, onStart, onStop, onRecheck, onReannounce, onProperties, onEditSelected, onSequential,
   onClearSelection, onHelp, busy,
 }: Props) {
+  const { t, textProps } = useInterfaceLanguage()
+  const localized = (source: string, parameters?: Record<string, string | number>) => (
+    <span {...textProps(source)}>{t(source, parameters)}</span>
+  )
   const disabled = selectedCount === 0 || busy
   const handlers: Record<string, () => void> = {
     start: onStart,
@@ -34,15 +39,15 @@ export function TorrentToolbar({
   }
 
   return (
-    <div className="tng-toolbar" role="toolbar" aria-label="Torrent actions" aria-busy={busy} data-has-selection={selectedCount > 0 ? 'true' : 'false'} data-busy={busy ? 'true' : 'false'} style={{
+    <div className="tng-toolbar" role="toolbar" aria-label={t('Torrent actions')} aria-busy={busy} data-has-selection={selectedCount > 0 ? 'true' : 'false'} data-busy={busy ? 'true' : 'false'} style={{
       minHeight: 40, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8,
       padding: '0 10px', background: 'var(--surface)', borderBottom: '1px solid var(--border)',
       minWidth: 0, overflowX: 'auto', overflowY: 'hidden', scrollbarWidth: 'thin',
     }}>
-      <button type="button" className="tng-toolbar-button" onClick={onAdd} title="Add torrent" aria-label="Add torrent" style={primaryButton}><span aria-hidden="true">+</span><span>Add</span></button>
+      <button type="button" className="tng-toolbar-button" onClick={onAdd} title={t('Add torrent')} aria-label={t('Add torrent')} style={primaryButton}><span aria-hidden="true">+</span>{localized('Add')}</button>
       <div className="tng-toolbar-divider" aria-hidden="true" style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 2px' }} />
-      <span className="tng-toolbar-label" style={groupLabel}>Transfer</span>
-      <div className="tng-toolbar-group" role="group" aria-label="Transfer actions" style={buttonGroup}>
+      <span className="tng-toolbar-label" style={groupLabel}>{localized('Transfer')}</span>
+      <div className="tng-toolbar-group" role="group" aria-label={t('Transfer actions')} style={buttonGroup}>
         {ACTIONS.map(action => (
           <button
             type="button"
@@ -50,48 +55,48 @@ export function TorrentToolbar({
             key={action.key}
             onClick={handlers[action.key]}
             disabled={disabled}
-            title={action.title}
-            aria-label={action.title}
+            title={t(action.title)}
+            aria-label={t(action.title)}
             style={actionButton(action.color, disabled)}
         >
-            <span aria-hidden="true">{action.icon}</span><span>{action.label}</span>
+            <span aria-hidden="true">{action.icon}</span>{localized(action.label)}
           </button>
         ))}
       </div>
-      <span className="tng-toolbar-label" style={groupLabel}>Edit</span>
-      <div className="tng-toolbar-group" role="group" aria-label="Edit actions" style={buttonGroup}>
+      <span className="tng-toolbar-label" style={groupLabel}>{localized('Edit')}</span>
+      <div className="tng-toolbar-group" role="group" aria-label={t('Edit actions')} style={buttonGroup}>
         <button
           type="button"
           className="tng-toolbar-button"
           onClick={onProperties}
           disabled={selectedCount !== 1 || busy}
-          title="Open selected torrent properties"
-          aria-label="Open selected torrent properties"
+          title={t('Open selected torrent properties')}
+          aria-label={t('Open selected torrent properties')}
           style={actionButton('var(--accent)', selectedCount !== 1 || busy)}
         >
-          <span aria-hidden="true">⌘</span><span>Properties</span>
+          <span aria-hidden="true">⌘</span>{localized('Properties')}
         </button>
         <button
           type="button"
           className="tng-toolbar-button"
           onClick={onEditSelected}
           disabled={disabled}
-          title="Bulk edit selected torrents"
-          aria-label="Bulk edit selected torrents"
+          title={t('Bulk edit selected torrents')}
+          aria-label={t('Bulk edit selected torrents')}
           style={actionButton('var(--accent)', disabled)}
         >
-          <span aria-hidden="true">✎</span><span>Edit selected</span>
+          <span aria-hidden="true">✎</span>{localized('Edit selected')}
         </button>
         <button
           type="button"
           className="tng-toolbar-button"
           onClick={onSequential}
           disabled={disabled}
-          title="Toggle sequential download for selected torrents"
-          aria-label="Toggle sequential download for selected torrents"
+          title={t('Toggle sequential download for selected torrents')}
+          aria-label={t('Toggle sequential download for selected torrents')}
           style={actionButton('var(--warning)', disabled)}
         >
-          <span aria-hidden="true">≡</span><span>Sequential</span>
+          <span aria-hidden="true">≡</span>{localized('Sequential')}
         </button>
       </div>
       <span className="tng-toolbar-selection" role="status" aria-live="polite" style={{
@@ -101,7 +106,7 @@ export function TorrentToolbar({
         background: selectedCount > 0 ? 'var(--accent-soft)' : 'transparent',
         fontWeight: selectedCount > 0 ? 800 : 600,
       }}>
-        {busy ? 'Working...' : selectedCount > 0 ? `${selectedCount.toLocaleString(getRegionalLocale())} selected` : 'No selection'}
+        {busy ? localized('Working...') : selectedCount > 0 ? localized('{count} selected', { count: selectedCount.toLocaleString(getRegionalLocale()) }) : localized('No selection')}
       </span>
       {selectedCount > 0 && (
         <button
@@ -109,18 +114,18 @@ export function TorrentToolbar({
           className="tng-toolbar-button"
           onClick={onClearSelection}
           disabled={busy}
-          title="Clear selected torrents"
-          aria-label="Clear selected torrents"
+          title={t('Deselect selected torrents')}
+          aria-label={t('Deselect selected torrents')}
           style={actionButton('var(--muted)', busy)}
         >
-          <span aria-hidden="true">×</span><span>Clear</span>
+          <span aria-hidden="true">×</span>{localized('Clear')}
         </button>
       )}
-      <button type="button" className="tng-toolbar-help tng-toolbar-button" onClick={onHelp} title="Keyboard shortcuts and docs" aria-label="Keyboard shortcuts and docs" style={{
+      <button type="button" className="tng-toolbar-help tng-toolbar-button" onClick={onHelp} title={t('Keyboard shortcuts and docs')} aria-label={t('Keyboard shortcuts and docs')} style={{
         marginLeft: 'auto', flex: '0 0 auto', background: 'transparent', border: '1px solid var(--border-strong)',
         borderRadius: 5, color: 'var(--muted)', padding: '4px 8px', fontSize: 12, cursor: 'pointer',
       }}>
-        <span aria-hidden="true">?</span><span>Help</span>
+        <span aria-hidden="true">?</span>{localized('Help')}
       </button>
     </div>
   )

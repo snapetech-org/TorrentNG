@@ -6715,6 +6715,8 @@ pub async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
                     if let Ok(view) = engine.crash_safety().await {
                         text.push_str(&render_crash_safety_metrics(&view));
                     }
+                    #[cfg(all(target_os = "linux", feature = "jemalloc-stats"))]
+                    append_jemalloc_metrics(&mut text);
                     text
                 },
             )
@@ -8171,7 +8173,7 @@ fn render_metrics_with_health(
         &mut out,
         "torrentng_peer_rx_buffer_bytes",
         "gauge",
-        "Expected peer receive buffer bytes reserved by outstanding block requests",
+        "Potential peer receive payload capacity from outstanding block requests; not a direct reading of allocated bytes",
         stats.peer_rx_buffer_bytes,
     );
     metric(
@@ -8194,6 +8196,23 @@ fn render_metrics_with_health(
         "gauge",
         "Total peer command queue capacity across active peer tasks",
         stats.peer_command_queue_capacity,
+    );
+    metric(
+        &mut out,
+        "torrentng_peer_command_queue_bytes",
+        "gauge",
+        "Estimated peer command queue capacity bytes; this estimate may overlap leased memory",
+        stats.peer_command_queue_bytes,
+    );
+    metric(
+        &mut out,
+        "torrentng_peer_buffer_estimated_bytes",
+        "gauge",
+        "Estimated peer request, upload-buffer, and command-queue bytes; may overlap leased memory and is not cap accounting",
+        stats
+            .peer_rx_buffer_bytes
+            .saturating_add(stats.peer_tx_buffer_bytes)
+            .saturating_add(stats.peer_command_queue_bytes),
     );
     metric(
         &mut out,
@@ -8439,6 +8458,13 @@ fn render_metrics_with_health(
         "gauge",
         "Frame-pool bytes currently checked out by storage I/O",
         storage.frame_in_use_bytes(),
+    );
+    metric(
+        &mut out,
+        "torrentng_storage_frame_bytes_retained",
+        "gauge",
+        "Frame-pool bytes retained in idle buffers for reuse",
+        storage.frame_retained_bytes(),
     );
     metric(
         &mut out,
@@ -8703,6 +8729,46 @@ fn metric_value(out: &mut String, name: &str, kind: &str, help: &str, value: &st
     out.push(' ');
     out.push_str(value);
     out.push('\n');
+}
+
+#[cfg(all(target_os = "linux", feature = "jemalloc-stats"))]
+fn append_jemalloc_metrics(out: &mut String) {
+    use tikv_jemalloc_ctl::{epoch, stats};
+
+    if epoch::advance().is_err() {
+        return;
+    }
+    for (name, help, value) in [
+        (
+            "torrentng_jemalloc_allocated_bytes",
+            "Bytes in live allocations tracked by jemalloc, excluding allocator metadata",
+            stats::allocated::read(),
+        ),
+        (
+            "torrentng_jemalloc_active_bytes",
+            "Bytes in jemalloc active pages that contain application allocations",
+            stats::active::read(),
+        ),
+        (
+            "torrentng_jemalloc_resident_bytes",
+            "Bytes in jemalloc pages currently resident in physical memory",
+            stats::resident::read(),
+        ),
+        (
+            "torrentng_jemalloc_mapped_bytes",
+            "Bytes in active extents mapped by jemalloc",
+            stats::mapped::read(),
+        ),
+        (
+            "torrentng_jemalloc_retained_bytes",
+            "Bytes in virtual mappings retained by jemalloc instead of unmapped",
+            stats::retained::read(),
+        ),
+    ] {
+        if let Ok(value) = value {
+            metric(out, name, "gauge", help, value as u64);
+        }
+    }
 }
 
 fn metric_by_class(out: &mut String, name: &str, kind: &str, help: &str, values: &[u64; 6]) {
@@ -10454,6 +10520,23 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
+    #[cfg(all(target_os = "linux", feature = "jemalloc-stats"))]
+    #[test]
+    fn jemalloc_metrics_export_allocator_bytes() {
+        let mut rendered = String::new();
+        append_jemalloc_metrics(&mut rendered);
+
+        for name in [
+            "torrentng_jemalloc_allocated_bytes",
+            "torrentng_jemalloc_active_bytes",
+            "torrentng_jemalloc_resident_bytes",
+            "torrentng_jemalloc_mapped_bytes",
+            "torrentng_jemalloc_retained_bytes",
+        ] {
+            assert!(rendered.contains(name), "missing {name}: {rendered}");
+        }
+    }
+
     #[tokio::test]
     async fn diagnostics_without_engine_returns_unavailable() {
         let (app, hash) = setup_app_with_torrent().await;
@@ -10537,6 +10620,7 @@ mod tests {
             peer_command_queue_depth: 51,
             peer_command_queue_capacity: 52,
             peer_command_queue_full: 53,
+            peer_command_queue_bytes: 43,
             tracker_peer_cache_entries: 43,
             tracker_peer_cache_drops: 44,
             ..Default::default()
@@ -10643,6 +10727,9 @@ mod tests {
         assert!(rendered.contains("torrentng_peer_tx_buffer_bytes 42"));
         assert!(rendered.contains("torrentng_peer_command_queue_depth 51"));
         assert!(rendered.contains("torrentng_peer_command_queue_capacity 52"));
+        assert!(rendered.contains("torrentng_peer_command_queue_bytes 43"));
+        assert!(rendered.contains("torrentng_peer_buffer_estimated_bytes 126"));
+        assert!(rendered.contains("torrentng_memory_class_used_bytes{class=\"peer_buffer\"} 0"));
         assert!(rendered.contains("torrentng_peer_command_queue_full_total 53"));
         assert!(rendered.contains("torrentng_tracker_peer_cache_entries 43"));
         assert!(rendered.contains("torrentng_tracker_peer_cache_drops_total 44"));
@@ -10769,6 +10856,7 @@ mod tests {
         assert!(rendered.contains("torrentng_storage_descriptor_leases_active "));
         assert!(rendered.contains("torrentng_storage_descriptor_leases_capacity "));
         assert!(rendered.contains("torrentng_storage_descriptor_budget_waits_total "));
+        assert!(rendered.contains("torrentng_storage_frame_bytes_retained "));
         assert!(rendered.contains("torrentng_storage_frame_bytes_cap "));
         assert!(rendered.contains("torrentng_utp_connects_total "));
         assert!(rendered.contains("torrentng_utp_accepts_total "));

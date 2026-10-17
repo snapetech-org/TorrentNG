@@ -19,7 +19,7 @@ any upload.
 ## First PPA publish
 
 From an interactive terminal on a machine with `gh` authenticated to
-`snapetech/TorrentNG` and the Launchpad upload private key in its local GPG
+`snapetech-org/TorrentNG` and the Launchpad upload private key in its local GPG
 keyring, run:
 
 ```sh

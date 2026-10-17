@@ -1,3 +1,5 @@
+import { LocalizedText } from '../lib/LocalizedText'
+import { useInterfaceLanguage } from '../lib/interfaceLocale'
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { formatRegionalNumber } from '../lib/localeFormat'
@@ -31,10 +33,20 @@ type StoragePlanTemplate = {
 
 const storagePlanTemplates: StoragePlanTemplate[] = [
   { id: 'move-library', label: 'Move', operation: 'move', sourceSuffix: 'library/source', destinationSuffix: 'library/destination' },
-  { id: 'import-copy', label: 'Import copy', operation: 'import', sourceSuffix: 'staging/source', destinationSuffix: 'library/imported', hardlinkOrCopy: false },
-  { id: 'import-link', label: 'Import link', operation: 'import', sourceSuffix: 'staging/source', destinationSuffix: 'library/linked', hardlinkOrCopy: true },
+  { id: 'import-copy', label: 'Import by copying', operation: 'import', sourceSuffix: 'staging/source', destinationSuffix: 'library/imported', hardlinkOrCopy: false },
+  { id: 'import-link', label: 'Import using hard links', operation: 'import', sourceSuffix: 'staging/source', destinationSuffix: 'library/linked', hardlinkOrCopy: true },
   { id: 'delete-approved', label: 'Delete', operation: 'delete', targetSuffix: 'library/orphaned', deleteApproved: true },
 ]
+
+const STORAGE_JOB_STATES: Record<string, string> = {
+  queued: 'Queued', pending: 'Pending', running: 'Running', completed: 'Completed',
+  failed: 'Failed', cancelled: 'Cancelled', canceled: 'Cancelled',
+}
+const STORAGE_OPERATIONS: Record<string, string> = { move: 'Move', import: 'Import', delete: 'Delete' }
+const STORAGE_ACTIONS: Record<string, string> = {
+  ImportExisting: 'Import existing data', Rename: 'Move', CopyVerifyRename: 'Copy and verify',
+  SafeDelete: 'Delete safely', SafeDeleteIfPresent: 'Remove if present', PruneEmptyDirs: 'Remove empty folders',
+}
 
 function joinRootPath(root: string, suffix: string): string {
   const clean = root.replace(/\/+$/, '')
@@ -42,6 +54,7 @@ function joinRootPath(root: string, suffix: string): string {
 }
 
 export function StoragePanel() {
+  const { t: localize, textProps } = useInterfaceLanguage()
   const [operation, setOperation] = useState<StoragePlanRequest['operation']>('move')
   const [source, setSource] = useState('')
   const [destination, setDestination] = useState('')
@@ -121,9 +134,7 @@ export function StoragePanel() {
   return (
     <section aria-labelledby="storage-title" aria-busy={isLoading || isFetching || previewPlan.isPending || executePlan.isPending} style={{ padding: '18px 24px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <h2 id="storage-title" style={{ margin: 0, fontSize: 14, fontWeight: 600, color: 'var(--text)', flex: 1 }}>
-          Storage
-        </h2>
+        <h2 id="storage-title" style={{ margin: 0, fontSize: 14, fontWeight: 600, color: 'var(--text)', flex: 1 }}><LocalizedText source="Storage" /></h2>
         <button
           type="button"
           onClick={() => refetch()}
@@ -134,16 +145,16 @@ export function StoragePanel() {
             cursor: isFetching ? 'not-allowed' : 'pointer', opacity: isFetching ? 0.55 : 1,
           }}
         >
-          {isFetching ? 'Refreshing…' : 'Refresh'}
+          {isFetching ? <LocalizedText source="Refreshing…" /> : <LocalizedText source="Refresh" />}
         </button>
       </div>
 
-      {isLoading && <div role="status" aria-label="Loading storage"><SkeletonRows rows={2} /></div>}
-      {error && <Notice>Storage stats unavailable</Notice>}
+      {isLoading && <div role="status" aria-label={localize("Loading storage")} {...textProps("Loading storage")}><SkeletonRows rows={2} /></div>}
+      {error && <Notice><LocalizedText source="Storage stats unavailable" /></Notice>}
 
       <div style={{ display: 'grid', gap: 10, maxWidth: 840 }}>
         {data && data.roots.length === 0 && (
-          <EmptyState>No storage roots reported.</EmptyState>
+          <EmptyState><LocalizedText source="No storage roots reported." /></EmptyState>
         )}
         {data?.roots.map(root => (
           <StorageRootCard
@@ -160,27 +171,26 @@ export function StoragePanel() {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
           <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)', flex: 1, minWidth: 200 }}>
-            Storage Plan
-          </h3>
+            <LocalizedText source="Storage Plan" /></h3>
           <select value={operation} onChange={event => {
             setOperation(event.target.value as StoragePlanRequest['operation'])
             setPreview(null)
-          }} style={fieldStyle} aria-label="Storage operation">
-            <option value="move">Move</option>
-            <option value="import">Import</option>
-            <option value="delete">Delete</option>
+          }} style={fieldStyle} aria-label={localize("Storage operation")} {...textProps("Storage operation")}>
+            <option value="move" {...textProps('Move')}>{localize('Move')}</option>
+            <option value="import" {...textProps('Import')}>{localize('Import')}</option>
+            <option value="delete" {...textProps('Delete')}>{localize('Delete')}</option>
           </select>
           <select value={selectedRoot} onChange={event => {
             setRootPath(event.target.value)
             setPreview(null)
-          }} style={fieldStyle} aria-label="Storage root">
-            {!selectedRoot && <option value="">Select root</option>}
+          }} style={fieldStyle} aria-label={localize("Storage root")} {...textProps("Storage root")}>
+            {!selectedRoot && <option value=""><LocalizedText source="Select root" /></option>}
             {roots.map(root => <option key={root.path} value={root.path}>{root.path}</option>)}
           </select>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap', marginBottom: 10 }}>
-          <span style={{ color: 'var(--faint)', fontSize: 11, fontWeight: 800, textTransform: 'uppercase' }}>Templates</span>
+          <span style={{ color: 'var(--faint)', fontSize: 11, fontWeight: 800, textTransform: 'uppercase' }}><LocalizedText source="Templates" /></span>
           {storagePlanTemplates.map(template => (
             <button
               key={template.id}
@@ -197,7 +207,7 @@ export function StoragePanel() {
                 cursor: 'pointer',
               }}
             >
-              {template.label}
+              <LocalizedText source={template.label} />
             </button>
           ))}
         </div>
@@ -212,48 +222,48 @@ export function StoragePanel() {
             </>
           )}
           <label style={labelStyle}>
-            <span>Expected bytes {operation === 'delete' ? '(optional)' : '(required)'}</span>
-            <input aria-label="Expected bytes" value={bytes} onChange={event => { setBytes(event.target.value); setPreview(null) }} inputMode="numeric" placeholder={operation === 'delete' ? 'Optional' : 'Required'} style={fieldStyle} />
+            <span><LocalizedText source="Expected bytes" spaceAfter />{operation === 'delete' ? <LocalizedText source="(optional)" /> : <LocalizedText source="(required)" />}</span>
+            <input aria-label={localize("Expected bytes")} value={bytes} onChange={event => { setBytes(event.target.value); setPreview(null) }} inputMode="numeric" placeholder={localize(operation === 'delete' ? 'Optional' : 'Required')} style={fieldStyle} {...textProps("Expected bytes")} />
           </label>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 9, marginBottom: 10 }}>
           <label style={labelStyle}>
-            <span>Affected torrents</span>
+            <span><LocalizedText source="Affected torrents" /></span>
             <textarea
               value={affectedTorrents}
-              aria-label="Affected torrents"
+              aria-label={localize("Affected torrents")}
               onChange={event => { setAffectedTorrents(event.target.value); setPreview(null) }}
               rows={3}
-              placeholder="Info hashes, one per line"
+              placeholder={localize("Info hashes, one per line")}
               style={{ ...fieldStyle, resize: 'vertical', minHeight: 76 }}
-            />
+            {...textProps("Affected torrents")} />
           </label>
         </div>
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
           {operation === 'import' && (
             <label style={checkStyle}>
-              <input type="checkbox" aria-label="Allow hardlink or copy import" checked={hardlinkOrCopy} onChange={event => { setHardlinkOrCopy(event.target.checked); setPreview(null) }} />
-              <span>Allow hardlink/copy import</span>
+              <input type="checkbox" aria-label={localize("Allow hardlink or copy import")} checked={hardlinkOrCopy} onChange={event => { setHardlinkOrCopy(event.target.checked); setPreview(null) }} {...textProps("Allow hardlink or copy import")} />
+              <span><LocalizedText source="Allow hardlink/copy import" /></span>
             </label>
           )}
           {operation === 'delete' && (
             <label style={checkStyle}>
-              <input type="checkbox" aria-label="Approve delete execution" checked={deleteApproved} onChange={event => { setDeleteApproved(event.target.checked); setPreview(null) }} />
-              <span>Approve delete execution</span>
+              <input type="checkbox" aria-label={localize("Approve delete execution")} checked={deleteApproved} onChange={event => { setDeleteApproved(event.target.checked); setPreview(null) }} {...textProps("Approve delete execution")} />
+              <span><LocalizedText source="Approve delete execution" /></span>
             </label>
           )}
           <button type="button" onClick={() => previewPlan.mutate()} disabled={previewPlan.isPending || !selectedRoot} style={actionButtonStyle(!previewPlan.isPending && Boolean(selectedRoot))}>
-            {previewPlan.isPending ? 'Previewing...' : 'Preview plan'}
+            {previewPlan.isPending ? <LocalizedText source="Previewing…" /> : <LocalizedText source="Preview plan" />}
           </button>
           <button type="button" onClick={() => executePlan.mutate()} disabled={executePlan.isPending || !canExecute} style={actionButtonStyle(!executePlan.isPending && canExecute)}>
-            {executePlan.isPending ? 'Starting...' : 'Execute plan'}
+            {executePlan.isPending ? <LocalizedText source="Starting…" /> : <LocalizedText source="Execute plan" />}
           </button>
         </div>
 
-        {previewPlan.error && <Notice>Plan preview failed</Notice>}
-        {executePlan.error && <Notice>Plan execution failed</Notice>}
+        {previewPlan.error && <Notice><LocalizedText source="Plan preview failed" /></Notice>}
+        {executePlan.error && <Notice><LocalizedText source="Plan execution failed" /></Notice>}
         {preview && <StoragePlanResult response={preview} />}
       </div>
     </section>
@@ -261,6 +271,7 @@ export function StoragePanel() {
 }
 
 function StorageJobs({ jobs }: { jobs: Job[] }) {
+  const { t: localize, textProps } = useInterfaceLanguage()
   return (
     <div style={{ display: 'grid', gap: 7, marginBottom: 12 }}>
       {jobs.map(job => (
@@ -276,25 +287,25 @@ function StorageJobs({ jobs }: { jobs: Job[] }) {
           }}
         >
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', minWidth: 0 }}>
-            <strong style={{ color: 'var(--text)', fontSize: 12, textTransform: 'capitalize' }}>
-              {job.state}
+            <strong {...textProps(STORAGE_JOB_STATES[job.state.toLowerCase()] ?? job.state)} style={{ color: 'var(--text)', fontSize: 12, textTransform: 'capitalize' }}>
+              {localize(STORAGE_JOB_STATES[job.state.toLowerCase()] ?? job.state)}
             </strong>
             <code style={{ color: 'var(--faint)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {job.job_id}
             </code>
             <span style={{ marginLeft: 'auto', color: 'var(--muted)', fontSize: 12, fontWeight: 800 }}>
-              {Math.round(job.progress * 100)}%
+              {formatRegionalNumber(Math.round(job.progress * 100))}%
             </span>
           </div>
-          <div role="progressbar" aria-label={`Storage job ${job.job_id}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.max(0, Math.min(1, job.progress)) * 100)} style={{ height: 7, borderRadius: 99, background: 'var(--surface-2)', overflow: 'hidden' }}>
+          <div role="progressbar" aria-label={localize('Storage job {id}', { id: job.job_id })} {...textProps('Storage job {id}')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.max(0, Math.min(1, job.progress)) * 100)} style={{ height: 7, borderRadius: 99, background: 'var(--surface-2)', overflow: 'hidden' }}>
             <div style={{ width: `${Math.max(0, Math.min(100, job.progress * 100))}%`, height: '100%', background: 'var(--accent)' }} />
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
-            <SummaryPill label="steps" value={`${job.done}/${job.total}`} />
-            <SummaryPill label="checkpoint" value={String(job.checkpoint)} />
-            <SummaryPill label="bytes" value={fmtBytes(Math.max(0, job.byte_offset ?? job.verified_bytes))} />
+            <SummaryPill label="Steps" value={`${formatRegionalNumber(job.done)}/${formatRegionalNumber(job.total)}`} />
+            <SummaryPill label="Checkpoint" value={formatRegionalNumber(job.checkpoint)} />
+            <SummaryPill label="Bytes" value={fmtBytes(Math.max(0, job.byte_offset ?? job.verified_bytes))} />
             {job.affected_torrents.length > 0 && (
-              <SummaryPill label="torrents" value={String(job.affected_torrents.length)} />
+              <SummaryPill label="Torrents" value={formatRegionalNumber(job.affected_torrents.length)} />
             )}
           </div>
         </div>
@@ -304,33 +315,36 @@ function StorageJobs({ jobs }: { jobs: Job[] }) {
 }
 
 function PathField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const { t: localize, textProps } = useInterfaceLanguage()
   return (
     <label style={labelStyle}>
-      <span>{label}</span>
-            <input aria-label={`${label} path`} value={value} onChange={event => onChange(event.target.value)} placeholder="/path/on/storage/root" style={fieldStyle} />
+      <span><LocalizedText source={label} /></span>
+      <input aria-label={localize('{label} path', { label: localize(label) })} {...textProps('{label} path')} value={value} onChange={event => onChange(event.target.value)} placeholder={localize('Path on storage root')} style={fieldStyle} />
     </label>
   )
 }
 
 function StoragePlanResult({ response }: { response: StoragePlanResponse }) {
+  const { t: localize, textProps } = useInterfaceLanguage()
   const tone = response.plan.can_apply ? 'var(--success)' : 'var(--warning)'
+  const operationSource = STORAGE_OPERATIONS[response.operation.toLowerCase()] ?? response.operation
   const totalBytes = response.plan.steps.reduce((sum, step) => sum + step.bytes, 0)
   const rollbackBytes = response.plan.rollback_steps.reduce((sum, step) => sum + step.bytes, 0)
   const completed = 0
   const remaining = response.plan.steps.length
   return (
-    <div role="region" aria-label={`${response.operation} storage plan`} aria-live="polite" style={{ border: `1px solid color-mix(in srgb, ${tone} 38%, var(--border))`, borderRadius: 7, background: 'var(--surface)', padding: 12 }}>
+    <div role="region" aria-label={localize('{operation} storage plan', { operation: localize(operationSource) })} {...textProps('{operation} storage plan')} aria-live="polite" style={{ border: `1px solid color-mix(in srgb, ${tone} 38%, var(--border))`, borderRadius: 7, background: 'var(--surface)', padding: 12 }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8 }}>
-        <strong style={{ color: 'var(--text)', fontSize: 13, textTransform: 'capitalize' }}>{response.operation}</strong>
-        <span style={{ color: tone, fontSize: 12, fontWeight: 800 }}>{response.plan.can_apply ? 'Can apply' : 'Needs attention'}</span>
+        <strong {...textProps(operationSource)} style={{ color: 'var(--text)', fontSize: 13, textTransform: 'capitalize' }}>{localize(operationSource)}</strong>
+        <span style={{ color: tone, fontSize: 12, fontWeight: 800 }}>{response.plan.can_apply ? <LocalizedText source="Can apply" /> : <LocalizedText source="Needs attention" />}</span>
         {response.job_id && <code style={{ color: 'var(--faint)', fontSize: 11 }}>{response.job_id}</code>}
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 9 }}>
-        <SummaryPill label="steps" value={String(response.plan.steps.length)} />
-        <SummaryPill label="done" value={String(completed)} />
-        <SummaryPill label="remaining" value={String(remaining)} />
-        <SummaryPill label="bytes" value={fmtBytes(totalBytes)} />
-        <SummaryPill label="rollback" value={`${response.plan.rollback_steps.length} / ${fmtBytes(rollbackBytes)}`} />
+        <SummaryPill label="Steps" value={formatRegionalNumber(response.plan.steps.length)} />
+        <SummaryPill label="Done" value={formatRegionalNumber(completed)} />
+        <SummaryPill label="Remaining" value={formatRegionalNumber(remaining)} />
+        <SummaryPill label="Bytes" value={fmtBytes(totalBytes)} />
+        <SummaryPill label="Rollback" value={`${formatRegionalNumber(response.plan.rollback_steps.length)} / ${fmtBytes(rollbackBytes)}`} />
       </div>
       {response.plan.issues.length > 0 && (
         <ul style={{ margin: '0 0 9px 16px', padding: 0, color: 'var(--warning)', fontSize: 12 }}>
@@ -351,9 +365,9 @@ function StoragePlanResult({ response }: { response: StoragePlanResponse }) {
             color: 'var(--muted)',
             fontSize: 12,
           }}>
-            <strong style={{ color: 'var(--text)' }}>{step.action}</strong>
+            <strong {...textProps(STORAGE_ACTIONS[step.action] ?? step.action)} style={{ color: 'var(--text)' }}>{localize(STORAGE_ACTIONS[step.action] ?? step.action)}</strong>
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={[step.source, step.destination].filter(Boolean).join(' -> ')}>
-              {[step.source, step.destination].filter(Boolean).join(' -> ') || 'storage operation'}
+              {[step.source, step.destination].filter(Boolean).join(' -> ') || localize('Storage operation')}
             </span>
             <span>{fmtBytes(step.bytes)}</span>
           </div>
@@ -362,7 +376,7 @@ function StoragePlanResult({ response }: { response: StoragePlanResponse }) {
       </div>
       {response.plan.rollback_steps.length > 0 && (
         <details style={{ marginTop: 9, color: 'var(--muted)', fontSize: 12 }}>
-          <summary style={{ cursor: 'pointer', color: 'var(--accent-text)', fontWeight: 800 }}>Rollback steps</summary>
+          <summary style={{ cursor: 'pointer', color: 'var(--accent-text)', fontWeight: 800 }}><LocalizedText source="Rollback steps" /></summary>
           <div style={{ display: 'grid', gap: 6, marginTop: 7 }}>
             {response.plan.rollback_steps.map((step, index) => (
               <div key={`${step.action}-rollback-${index}`} style={{
@@ -374,9 +388,9 @@ function StoragePlanResult({ response }: { response: StoragePlanResponse }) {
                 borderRadius: 6,
                 padding: '7px 9px',
               }}>
-                <strong style={{ color: 'var(--text)' }}>{step.action}</strong>
+                <strong {...textProps(STORAGE_ACTIONS[step.action] ?? step.action)} style={{ color: 'var(--text)' }}>{localize(STORAGE_ACTIONS[step.action] ?? step.action)}</strong>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={[step.source, step.destination].filter(Boolean).join(' -> ')}>
-                  {[step.source, step.destination].filter(Boolean).join(' -> ') || 'storage operation'}
+                  {[step.source, step.destination].filter(Boolean).join(' -> ') || localize('Storage operation')}
                 </span>
                 <span>{fmtBytes(step.bytes)}</span>
               </div>
@@ -400,13 +414,14 @@ function SummaryPill({ label, value }: { label: string; value: string }) {
       color: 'var(--muted)',
       fontSize: 11,
     }}>
-      <span style={{ color: 'var(--faint)' }}>{label}</span>
+      <span style={{ color: 'var(--faint)' }}><LocalizedText source={label} /></span>
       <strong style={{ color: 'var(--text)' }}>{value}</strong>
     </span>
   )
 }
 
 function StorageRootCard({ root }: { root: NonNullable<Awaited<ReturnType<typeof api.storage>>['roots']>[number] }) {
+  const { t: localize, textProps } = useInterfaceLanguage()
   const tone = !root.ok
     ? 'var(--danger)'
     : root.used_percent >= 90
@@ -438,16 +453,16 @@ function StorageRootCard({ root }: { root: NonNullable<Awaited<ReturnType<typeof
             color: 'var(--warning)', border: '1px solid color-mix(in srgb, var(--warning) 45%, var(--border))',
             background: 'color-mix(in srgb, var(--warning) 9%, transparent)', borderRadius: 999,
             padding: '1px 7px', fontSize: 11, fontWeight: 700,
-          }}>read-only</span>
+          }}><LocalizedText source="read-only" /></span>
         )}
-        <span style={{ color: tone, fontSize: 12, fontWeight: 700 }}>
-          {root.ok ? `${formatRegionalNumber(root.used_percent, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}% used` : 'unavailable'}
+        <span {...textProps(root.ok ? '{percent}% used' : 'Unavailable')} style={{ color: tone, fontSize: 12, fontWeight: 700 }}>
+          {root.ok ? localize('{percent}% used', { percent: formatRegionalNumber(root.used_percent, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) }) : localize('Unavailable')}
         </span>
       </div>
 
       {root.ok ? (
         <>
-            <div className="tng-storage-meter" role="progressbar" aria-label={`${root.path} storage used`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.max(0, Math.min(100, root.used_percent))} style={{ height: 8, background: 'var(--surface-2)', borderRadius: 99, overflow: 'hidden', marginBottom: 9 }}>
+            <div className="tng-storage-meter" role="progressbar" aria-label={localize('{path} storage used', { path: root.path })} {...textProps('{path} storage used')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.max(0, Math.min(100, root.used_percent))} style={{ height: 8, background: 'var(--surface-2)', borderRadius: 99, overflow: 'hidden', marginBottom: 9 }}>
             <div style={{ width: `${Math.min(100, root.used_percent)}%`, height: '100%', background: tone }} />
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8, fontSize: 12 }}>
@@ -505,7 +520,7 @@ function StorageMetric({ label, value }: { label: string; value: string }) {
       display: 'grid', gap: 2, border: '1px solid var(--border)', borderRadius: 6,
       background: 'var(--bg)', padding: '6px 8px', minWidth: 0,
     }}>
-      <span style={{ color: 'var(--faint)', fontSize: 10, textTransform: 'uppercase', fontWeight: 700 }}>{label}</span>
+      <span style={{ color: 'var(--faint)', fontSize: 10, textTransform: 'uppercase', fontWeight: 700 }}><LocalizedText source={label} /></span>
       <span style={{ color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>
     </span>
   )

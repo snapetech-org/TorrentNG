@@ -10,6 +10,7 @@ files stay on the storage you configure.
 
 ![TorrentNG showing Debian, Ubuntu, and Fedora Linux downloads](docs/assets/torrentng-default-dark-linux-isos.png)
 
+For local MCP access, see the [SnapeTech MCP integration guide](docs/integrations/snapetech-mcp.md).
 ## Is it useful for you?
 
 TorrentNG may help if you manage torrents on a home server, NAS, or other
@@ -31,7 +32,7 @@ TorrentNG has three parts. You normally need only one of them.
 | Run torrents on a home server, NAS, or seedbox and use it from a browser | **TorrentNG Server** (`torrentngd` + WebUI) | The headless engine with the browser interface and APIs. Available as Docker images, release binaries, and packages. |
 | Keep qBittorrent, rTorrent, Transmission, or Deluge and add the TorrentNG interface | **TorrentNG WebUI Bridge** (`torrentng`) | A web interface and API for the client you already run. It replaces ruTorrent or the client's own WebUI and adds automation APIs, while your client keeps its files and runs transfers. |
 
-Downloads are on the [releases page](https://github.com/snapetech/TorrentNG/releases):
+Downloads are on the [releases page](https://github.com/snapetech-org/TorrentNG/releases):
 `torrentng-desktop-*` for the Desktop app, `torrentngd-native-*` for the Server.
 See the [Desktop guide](docs/DESKTOP.md) for install steps and what each file is.
 The Server quick start is below. To connect an existing client, start with the
@@ -72,15 +73,29 @@ and downloaded files before importing, moving, or deleting data. Migration
 starts with a report; review it before using `--apply`. Some imported progress
 may need a full data check before another client can resume it.
 
-The latest named 24-hour report covers an idle daemon with no torrents
-transferring, but it does not record the source commit. It is not proof for the
-code in this checkout. A separate [Debian ISO client comparison](certification/reports/client-performance-benchmark-20261013.md)
-measures public downloads and controlled seeding for TorrentNG, qBittorrent,
-Transmission, and Deluge; rTorrent could not start in the test environment.
-It is one low-confidence pass per client, not a general ranking or proof of
-performance on other swarms, disks, or networks. The project does not claim a
-tested maximum torrent count. See the dated [release evidence](docs/RELEASE_EVIDENCE.md)
-for what was exercised and where.
+The dated [Debian ISO comparison and native memory investigation](certification/reports/native-memory-optimization-20261014-agentvm.md)
+records public download, controlled seeding, and anonymous memory against
+qBittorrent, Transmission, Deluge, and rTorrent. TorrentNG averaged 0.49 MiB/s
+on its one public-swarm pass, slower than the completed peers at 5.60–16.82
+MiB/s; in the controlled seed test it averaged 3.56 MiB/s, close to their
+3.61–3.74 MiB/s. Its measured anonymous peaks were 8.3 MiB in public download
+and 7.4 MiB while seeding. That was about 2.1–3.2 times less than qBittorrent
+and Transmission, and 11–12 times less than Deluge. The peer ratios combine
+sequential runs, with Transmission and Deluge measured in a later rerun; they
+are not a general ranking. A separate system-allocator run used less memory
+than the previous jemalloc run (18.8 MiB public / 25.3 MiB seed), while seed
+rates were 3.56 vs 3.66 MiB/s. This allocator comparison is not a concurrent
+A/B. A mimalloc follow-up used more anonymous memory (19.8 MiB public / 23.6
+MiB seed) and did not complete the public download within 30 minutes. A
+qBittorrent check right afterward completed in 39.6 seconds at 19.08 MiB/s,
+which flags a current TorrentNG download gap; sequential testing leaves the
+precise cause unresolved. The results do not show orders-of-magnitude savings
+against every peer; rTorrent did not start, and public swarm speeds varied
+sharply. The earlier
+[unoptimized baseline](certification/reports/client-performance-benchmark-20261013.md)
+is retained for reference. Neither report establishes a maximum torrent count.
+See the dated [release evidence](docs/RELEASE_EVIDENCE.md) for what was
+exercised and where.
 
 ## Learn more
 
@@ -90,7 +105,7 @@ for what was exercised and where.
 - [Install on Unraid](deploy/unraid/README.md)
 - [Configuration](docs/CONFIGURATION.md)
 - [Migration and export](docs/MIGRATION.md)
-- [Client performance benchmark](docs/CLIENT_PERFORMANCE_BENCHMARK.md) · [dated comparison and measurements](certification/reports/client-performance-benchmark-20261013.md)
+- [Client performance benchmark](docs/CLIENT_PERFORMANCE_BENCHMARK.md) · [dated comparison and memory investigation](certification/reports/native-memory-optimization-20261014-agentvm.md)
 - [API and compatibility limits](docs/API.md) · [client matrices](docs/CLIENT_COMPATIBILITY_MATRICES.md)
 - [Backup and restore](docs/BACKUP_RESTORE.md)
 - [Documentation index](docs/README.md)

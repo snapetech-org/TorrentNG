@@ -204,7 +204,10 @@ def format_curated_notes(notes: list[dict[str, Any]]) -> str:
 
 
 def has_explicit_no_release_note(body: str) -> bool:
-    return bool(re.search(r"(?im)^\s*release-note\s*:\s*none\s*$", body))
+    return bool(
+        re.search(r"(?im)^\s*release-note\s*:\s*none\s*$", body)
+        or re.search(r"(?im)^\s*-\s*\[x\][^\n]*(?:internal-only|no user-facing release note)[^\n]*$", body)
+    )
 
 
 def fail(errors: list[str]) -> int:

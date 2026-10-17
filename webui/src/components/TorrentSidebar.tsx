@@ -1,3 +1,6 @@
+import { LocalizedErrorText, LocalizedText } from '../lib/LocalizedText'
+import { interfaceTextProps, translateInterface } from '../lib/interfaceLocale'
+import { useInterfaceLanguage } from '../lib/interfaceLocale'
 import { getRegionalLocale } from '../lib/localeFormat'
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -51,8 +54,8 @@ const SORT_OPTIONS = [
   { value: 'added', label: 'Added' },
   { value: 'size', label: 'Size' },
   { value: 'progress', label: 'Progress' },
-  { value: 'speed_down', label: 'Down speed' },
-  { value: 'speed_up', label: 'Up speed' },
+  { value: 'speed_down', label: 'Download speed' },
+  { value: 'speed_up', label: 'Upload speed' },
   { value: 'ratio', label: 'Ratio' },
 ]
 
@@ -186,16 +189,16 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
     .filter(Boolean).length
 
   return (
-    <aside className="torrent-sidebar" aria-label="Library filters" style={{
+    <aside className="torrent-sidebar" aria-label={translateInterface("Library filters")} style={{
       width: 236, flexShrink: 0, background: 'var(--panel)', borderRight: '1px solid var(--border)',
       display: 'flex', flexDirection: 'column', overflowY: 'auto',
-    }}>
+    }} {...interfaceTextProps("Library filters")}>
       <div style={{
         position: 'sticky', top: 0, zIndex: 2, background: 'var(--panel)',
         borderBottom: '1px solid var(--border)', padding: '9px 10px',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-          <h2 style={{ margin: 0, color: 'var(--text)', fontWeight: 700, fontSize: 13 }}>Library</h2>
+          <h2 style={{ margin: 0, color: 'var(--text)', fontWeight: 700, fontSize: 13 }}><LocalizedText source="Library" /></h2>
           <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{
               color: activeFilterCount ? 'var(--accent-text)' : 'var(--faint)',
@@ -203,7 +206,7 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
               border: '1px solid ' + (activeFilterCount ? 'var(--accent)' : 'var(--border)'),
               borderRadius: 999, padding: '1px 7px', fontSize: 10, fontWeight: 700,
             }}>
-              {activeFilterCount ? `${activeFilterCount} active` : 'all'}
+              {activeFilterCount ? <LocalizedText source="{count} active" parameters={{ count: activeFilterCount.toLocaleString(getRegionalLocale()) }} /> : <LocalizedText source="all" />}
             </span>
             <button
               type="button"
@@ -216,19 +219,20 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
                 color: 'var(--muted)', padding: '3px 8px', fontSize: 11, cursor: 'pointer',
               }}
             >
-              {mobileOpen ? 'Hide filters' : 'Filters'}
+              {mobileOpen ? <LocalizedText source="Hide filters" /> : <LocalizedText source="Filters" />}
             </button>
           </span>
         </div>
       </div>
 
       <div id="torrent-sidebar-body" className="tng-sidebar-body" data-mobile-open={mobileOpen ? 'true' : 'false'}>
-      <Section title="State" summary={facets ? `${facets.status.all?.toLocaleString(getRegionalLocale()) ?? total.toLocaleString(getRegionalLocale())} total` : undefined}>
+      <Section title="State" summary={facets ? <LocalizedText source="Total: {count}" parameters={{ count: (facets.status.all ?? total).toLocaleString(getRegionalLocale()) }} /> : undefined}>
         {STATUS_OPTIONS.map(option => (
           <CountRow
             key={option.value}
             icon={option.icon}
             label={option.label}
+            localize
             active={(params.status ?? '') === option.value}
             count={facets?.status[option.value || 'all'] ?? (option.value ? undefined : total)}
             maxCount={facets?.status.all ?? total}
@@ -237,10 +241,11 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
         ))}
       </Section>
 
-      <Section title="Type" summary={mediaInference === 'off' ? 'manual' : 'inferred'}>
+      <Section title="Type" summary={<LocalizedText source={mediaInference === 'off' ? 'Manual' : 'Inferred'} />}>
         <CountRow
           icon="◇"
           label="All types"
+          localize
           active={!params.media_type}
           count={total}
           maxCount={total}
@@ -251,6 +256,7 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
             key={option.value}
             icon={option.icon}
             label={option.label}
+            localize
             active={(params.media_type ?? '') === option.value}
             count={facets?.media_type[option.value]}
             maxCount={total}
@@ -258,7 +264,7 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
           />
         ))}
         {mediaInference === 'off' && (
-          <div style={overflowNote}>Type filter still uses names, paths, and suffixes.</div>
+          <div style={overflowNote}><LocalizedText source="Type filter still uses names, paths, and suffixes." /></div>
         )}
       </Section>
 
@@ -266,6 +272,7 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
         <CountRow
           icon="⌁"
           label="All categories"
+          localize
           active={!params.category}
           count={categories.length}
           maxCount={Math.max(categories.length, ...categories.map(category => countValue(category.torrent_count)), 1)}
@@ -283,7 +290,7 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
           />
         ))}
         {categories.length > MAX_SECTION_ROWS && (
-          <div style={overflowNote}>Showing first {MAX_SECTION_ROWS.toLocaleString(getRegionalLocale())} categories</div>
+          <div style={overflowNote}><LocalizedText source="Showing first {count} categories" parameters={{ count: MAX_SECTION_ROWS.toLocaleString(getRegionalLocale()) }} /></div>
         )}
       </Section>
 
@@ -291,7 +298,8 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
         <Section title="Tags" summary={tags.length.toLocaleString(getRegionalLocale())}>
           <CountRow
             icon="#"
-            label="All tags"
+          label="All tags"
+          localize
             active={!params.tag}
             count={tags.length}
             onClick={() => onChange({ tag: undefined, offset: 0 })}
@@ -306,7 +314,7 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
             />
           ))}
           {tags.length > MAX_SECTION_ROWS && (
-            <div style={overflowNote}>Showing first {MAX_SECTION_ROWS.toLocaleString(getRegionalLocale())} tags</div>
+            <div style={overflowNote}><LocalizedText source="Showing first {count} tags" parameters={{ count: MAX_SECTION_ROWS.toLocaleString(getRegionalLocale()) }} /></div>
           )}
         </Section>
       )}
@@ -315,6 +323,7 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
         <CountRow
           icon="☊"
           label="All trackers"
+          localize
           active={!params.tracker}
           count={trackerHealth?.trackers.length ?? 0}
           maxCount={Math.max(trackerHealth?.trackers.length ?? 0, ...(trackerHealth?.trackers.map(row => row.torrent_count) ?? []), 1)}
@@ -330,11 +339,11 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
           <input
             value={trackerFilter}
             onChange={e => setTrackerFilter(e.target.value)}
-            aria-label="Filter trackers"
-            placeholder="Tracker contains"
+            aria-label={translateInterface("Filter trackers")}
+            placeholder={translateInterface("Tracker contains")}
             style={inputStyle}
-          />
-          <button type="submit" style={saveStyle(true)}>Go</button>
+          {...interfaceTextProps("Filter trackers")} />
+          <button type="submit" style={saveStyle(true)}><LocalizedText source="Go" /></button>
         </form>
         {trackerHealth?.trackers.slice(0, MAX_SECTION_ROWS).map(row => (
           <CountRow
@@ -349,37 +358,36 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
           />
         ))}
         {trackerHealth && trackerHealth.trackers.length === 0 && (
-          <div style={overflowNote}>No cached tracker URLs yet.</div>
+          <div style={overflowNote}><LocalizedText source="No cached tracker URLs yet." /></div>
         )}
         {trackerHealth && trackerHealth.trackers.length > MAX_SECTION_ROWS && (
-          <div style={overflowNote}>Showing first {MAX_SECTION_ROWS.toLocaleString(getRegionalLocale())} trackers</div>
+          <div style={overflowNote}><LocalizedText source="Showing first {count} trackers" parameters={{ count: MAX_SECTION_ROWS.toLocaleString(getRegionalLocale()) }} /></div>
         )}
       </Section>
 
       <Section title="Sort">
         <select
-          aria-label="Sort torrents by"
+          aria-label={translateInterface("Sort torrents by")}
           value={params.sort ?? 'name'}
           onChange={e => onChange({ sort: e.target.value, offset: 0 })}
           style={selectStyle}
-        >
+         {...interfaceTextProps("Sort torrents by")}>
           {SORT_OPTIONS.map(option => (
-            <option key={option.value} value={option.value}>{option.label}</option>
+            <option key={option.value} value={option.value}><LocalizedText source={option.label} /></option>
           ))}
         </select>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 6 }}>
-          <ToggleButton active={(params.dir ?? 'asc') === 'asc'} onClick={() => onChange({ dir: 'asc', offset: 0 })}>Ascending</ToggleButton>
-          <ToggleButton active={(params.dir ?? 'asc') === 'desc'} onClick={() => onChange({ dir: 'desc', offset: 0 })}>Descending</ToggleButton>
+          <ToggleButton active={(params.dir ?? 'asc') === 'asc'} onClick={() => onChange({ dir: 'asc', offset: 0 })}><LocalizedText source="Ascending" /></ToggleButton>
+          <ToggleButton active={(params.dir ?? 'asc') === 'desc'} onClick={() => onChange({ dir: 'desc', offset: 0 })}><LocalizedText source="Descending" /></ToggleButton>
         </div>
       </Section>
 
-      <Section title="Saved Views" summary={viewsBusy ? 'working' : views.length ? views.length.toLocaleString(getRegionalLocale()) : undefined}>
+      <Section title={translateInterface("Saved Views")} summary={viewsBusy ? <LocalizedText source="Working" /> : views.length ? views.length.toLocaleString(getRegionalLocale()) : undefined}>
         {views.length === 0 && (
           <div style={emptySavedViewStyle}>
-            Save the current filters as a named view.
-          </div>
+            <LocalizedText source="Save the current filters as a named view." /></div>
         )}
-        {viewsError && <div role="alert" aria-live="assertive" style={sidebarNoticeStyle}>{viewsError}</div>}
+        {viewsError && <div role="alert" aria-live="assertive" style={sidebarNoticeStyle}><LocalizedErrorText message={viewsError} /></div>}
         {views.map(view => (
           <div key={view.id} style={savedViewRowStyle}>
             <button
@@ -393,12 +401,13 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
             </button>
             <button
               type="button"
-              aria-label={`Delete ${view.name}`}
+              aria-label={translateInterface('Delete {name}', { name: view.name })}
+              {...interfaceTextProps('Delete {name}')}
               onClick={() => removeView(view.id)}
               disabled={Boolean(viewsBusy)}
-              title="Delete saved view"
+              title={translateInterface("Delete saved view")}
               style={{ ...deleteStyle, opacity: viewsBusy ? 0.55 : 1, cursor: viewsBusy ? 'not-allowed' : 'pointer' }}
-            >
+             {...interfaceTextProps("Delete saved view")}>
               {viewsBusy === view.id ? '…' : 'x'}
             </button>
           </div>
@@ -409,12 +418,12 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
             onChange={e => setViewName(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') saveView() }}
             disabled={Boolean(viewsBusy)}
-            aria-label="Save current view"
-            placeholder="Save view"
+            aria-label={translateInterface("Save current view")}
+            placeholder={translateInterface("Save view")}
             style={inputStyle}
-          />
-          <button type="button" disabled={!viewName.trim() || Boolean(viewsBusy)} onClick={saveView} style={saveStyle(Boolean(viewName.trim()) && !viewsBusy)}>
-            {viewsBusy === '__save__' ? '…' : 'Save'}
+          {...interfaceTextProps("Save current view")} />
+          <button type="button" aria-label={translateInterface(viewsBusy === '__save__' ? 'Saving…' : 'Save')} aria-busy={viewsBusy === '__save__'} disabled={!viewName.trim() || Boolean(viewsBusy)} onClick={saveView} style={saveStyle(Boolean(viewName.trim()) && !viewsBusy)}>
+            {viewsBusy === '__save__' ? <LocalizedText source="Saving…" /> : <LocalizedText source="Save" />}
           </button>
         </div>
       </Section>
@@ -429,8 +438,7 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
             width: '100%', background: 'transparent', border: '1px solid var(--border-strong)', borderRadius: 5,
             color: 'var(--muted)', padding: '6px 8px', fontSize: 12, cursor: 'pointer',
           }}>
-            Clear filters
-          </button>
+            <LocalizedText source="Clear filters" /></button>
         </div>
       )}
       </div>
@@ -438,7 +446,7 @@ export function TorrentSidebar({ params, total, mediaInference, onChange, onAppl
   )
 }
 
-function CountRow({ icon, label, active, count, maxCount, tone, onClick }: {
+function CountRow({ icon, label, active, count, maxCount, tone, onClick, localize = false }: {
   icon?: string
   label: string
   active: boolean
@@ -446,7 +454,9 @@ function CountRow({ icon, label, active, count, maxCount, tone, onClick }: {
   maxCount?: number
   tone?: 'ok' | 'warn'
   onClick: () => void
+  localize?: boolean
 }) {
+  const { t, textProps } = useInterfaceLanguage()
   const pct = count !== undefined && maxCount ? Math.min(100, Math.max(4, (count / maxCount) * 100)) : 0
   return (
     <button type="button" onClick={onClick} aria-pressed={active} style={rowButtonStyle(active)}>
@@ -463,7 +473,7 @@ function CountRow({ icon, label, active, count, maxCount, tone, onClick }: {
         </span>
       )}
       {icon && <span aria-hidden="true" style={iconStyle(active, tone)}>{icon}</span>}
-      <span style={labelStyle}>{label}</span>
+      <span style={labelStyle} {...(localize ? textProps(label) : {})}>{localize ? t(label) : label}</span>
       <span style={{
         color: active ? 'var(--accent-text)' : tone === 'warn' ? 'var(--warning)' : 'var(--faint)',
         fontVariantNumeric: 'tabular-nums',
@@ -478,7 +488,8 @@ function CountRow({ icon, label, active, count, maxCount, tone, onClick }: {
   )
 }
 
-function Section({ title, summary, children }: { title: string; summary?: string; children: React.ReactNode }) {
+function Section({ title, summary, children }: { title: string; summary?: React.ReactNode; children: React.ReactNode }) {
+  const { t, textProps } = useInterfaceLanguage()
   const headingId = `torrent-sidebar-section-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
   return (
     <section aria-labelledby={headingId} style={{ padding: '10px 10px 8px', borderBottom: '1px solid var(--border)' }}>
@@ -487,7 +498,7 @@ function Section({ title, summary, children }: { title: string; summary?: string
         color: 'var(--faint)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
         margin: '0 4px 7px',
       }}>
-        <span>{title}</span>
+        <span {...textProps(title)}>{t(title)}</span>
         {summary && <span style={{ color: 'var(--faint)', fontWeight: 600, textTransform: 'none' }}>{summary}</span>}
       </h3>
       {children}

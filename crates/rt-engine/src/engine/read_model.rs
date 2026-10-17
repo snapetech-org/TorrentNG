@@ -388,12 +388,9 @@ impl Engine {
         resources.classes[piece_assembly].used_bytes = resources.classes[piece_assembly]
             .used_bytes
             .max(stats.piece_assembly_bytes);
-        let peer_buffer = MemoryClass::PeerBuffer as usize;
-        let governor_peer_buffer_bytes = resources.classes[peer_buffer].used_bytes;
-        resources.classes[peer_buffer].used_bytes = governor_peer_buffer_bytes
-            .saturating_add(stats.peer_rx_buffer_bytes)
-            .saturating_add(stats.peer_tx_buffer_bytes)
-            .saturating_add(stats.peer_command_queue_bytes);
+        // Keep the cap gauge tied to bytes with live governor leases. The
+        // request-window and queue-capacity gauges are estimates and can overlap
+        // those leases, so they must remain separate from used_bytes.
         let tracker_peers = MemoryClass::TrackerPeers as usize;
         // Live tracker caches now own governor leases. Keep the larger of
         // that authoritative live total and the collected runtime estimate

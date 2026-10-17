@@ -72,7 +72,7 @@ source_root="$workspace/torrentngd-${upstream_version}"
 mkdir -p "$source_root"
 
 gh release download "$release_tag" \
-  --repo snapetech/TorrentNG \
+  --repo snapetech-org/TorrentNG \
   --dir "$asset_dir" \
   --pattern "torrentngd-native-${release_tag}-linux-x86_64.tar.gz" \
   --pattern "torrentngd-native-${release_tag}-linux-aarch64.tar.gz" \

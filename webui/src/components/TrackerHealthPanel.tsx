@@ -1,3 +1,5 @@
+import { LocalizedText } from '../lib/LocalizedText'
+import { interfaceTextProps, translateInterface } from '../lib/interfaceLocale'
 import { getRegionalLocale } from '../lib/localeFormat'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -11,8 +13,8 @@ function hostLabel(url: string): string {
   }
 }
 
-function fmtDate(ts: number): string {
-  if (!ts) return 'never'
+function fmtDate(ts: number, neverLabel: string): string {
+  if (!ts) return neverLabel
   return new Date(ts * 1000).toLocaleString(getRegionalLocale())
 }
 
@@ -43,8 +45,7 @@ export function TrackerHealthPanel({ onSelectTracker }: Props) {
     <section aria-labelledby="tracker-health-title" style={{ padding: '18px 24px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
         <h2 id="tracker-health-title" style={{ margin: 0, fontSize: 14, fontWeight: 600, color: 'var(--text)', flex: 1 }}>
-          Tracker Health
-        </h2>
+          <LocalizedText source="Tracker Health" /></h2>
         <button
           type="button"
           onClick={() => refetch()}
@@ -55,17 +56,17 @@ export function TrackerHealthPanel({ onSelectTracker }: Props) {
             cursor: isFetching ? 'not-allowed' : 'pointer', opacity: isFetching ? 0.55 : 1,
           }}
         >
-          {isFetching ? 'Refreshing…' : 'Refresh'}
+          {isFetching ? <LocalizedText source="Refreshing…" /> : <LocalizedText source="Refresh" />}
         </button>
       </div>
 
-      {isLoading && <div role="status" aria-label="Loading tracker health"><TrackerSkeleton /></div>}
-      {error && <Notice>Tracker health unavailable</Notice>}
+      {isLoading && <div role="status" aria-label={translateInterface("Loading tracker health")} {...interfaceTextProps("Loading tracker health")}><TrackerSkeleton /></div>}
+      {error && <Notice><LocalizedText source="Tracker health unavailable" /></Notice>}
       {data && data.trackers.length === 0 && (
         <div role="status" style={{
           color: 'var(--faint)', fontSize: 12, border: '1px dashed var(--border-strong)',
           borderRadius: 7, background: 'color-mix(in srgb, var(--surface) 72%, transparent)', padding: 14,
-        }}>No tracker data cached yet</div>
+        }}><LocalizedText source="No tracker data cached yet" /></div>
       )}
       {totals && (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
@@ -88,7 +89,8 @@ export function TrackerHealthPanel({ onSelectTracker }: Props) {
               className="tng-card tng-tracker-row"
               data-tone={errorRatio >= 0.5 ? 'error' : errorRatio > 0 ? 'warn' : 'ok'}
               role="group"
-              aria-label={`${hostLabel(tracker.tracker)} tracker health`}
+              aria-label={translateInterface('Tracker status for {host}', { host: hostLabel(tracker.tracker) })}
+              {...interfaceTextProps('Tracker status for {host}')}
               style={{
                 display: 'grid',
                 gridTemplateColumns: 'minmax(220px, 1fr) 90px 90px 90px 120px',
@@ -115,7 +117,8 @@ export function TrackerHealthPanel({ onSelectTracker }: Props) {
                   {onSelectTracker && (
                     <button
                       type="button"
-                      aria-label={`View torrents on ${hostLabel(tracker.tracker)}`}
+                      aria-label={translateInterface('View torrents on {host}', { host: hostLabel(tracker.tracker) })}
+                      {...interfaceTextProps('View torrents on {host}')}
                       onClick={e => { e.stopPropagation(); onSelectTracker(tracker.tracker) }}
                       style={{
                         border: 0, background: 'none', padding: 0,
@@ -123,8 +126,7 @@ export function TrackerHealthPanel({ onSelectTracker }: Props) {
                         cursor: 'pointer',
                       }}
                     >
-                      View torrents →
-                    </button>
+                      <LocalizedText source="View torrents →" /></button>
                   )}
                 </div>
                 <div style={{
@@ -140,9 +142,9 @@ export function TrackerHealthPanel({ onSelectTracker }: Props) {
               <Metric label="Active" value={tracker.active_count} color="var(--accent)" />
               <Metric label="Errors" value={tracker.error_count} color={color} />
               <div style={{ color: 'var(--faint)', textAlign: 'right' }}>
-                <div>{tracker.seed_count} seeds</div>
-                <div>{tracker.peer_count} peers</div>
-                <div style={{ color: 'var(--faint)', marginTop: 2 }}>{fmtDate(tracker.last_updated)}</div>
+                <div><LocalizedText source="Seed count: {count}" parameters={{ count: tracker.seed_count.toLocaleString(getRegionalLocale()) }} /></div>
+                <div><LocalizedText source="Peer count: {count}" parameters={{ count: tracker.peer_count.toLocaleString(getRegionalLocale()) }} /></div>
+                <div style={{ color: 'var(--faint)', marginTop: 2 }}>{fmtDate(tracker.last_updated, translateInterface('Never'))}</div>
               </div>
               <span aria-hidden="true" style={{
                 gridColumn: '1 / -1',
@@ -201,7 +203,7 @@ function Summary({ label, value, tone }: { label: string; value: number; tone: '
       border: '1px solid var(--border)', borderRadius: 6,
       background: 'var(--surface)', padding: '5px 8px', fontSize: 12,
     }}>
-      <span style={{ color: 'var(--faint)' }}>{label}</span>
+      <span style={{ color: 'var(--faint)' }}><LocalizedText source={label} /></span>
       <span style={{ color, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{value.toLocaleString(getRegionalLocale())}</span>
     </span>
   )
@@ -211,7 +213,7 @@ function Metric({ label, value, color }: { label: string; value: number; color: 
   return (
     <div>
       <div style={{ color, fontWeight: 700, fontSize: 15 }}>{value.toLocaleString(getRegionalLocale())}</div>
-      <div style={{ color: 'var(--faint)', fontSize: 11 }}>{label}</div>
+      <div style={{ color: 'var(--faint)', fontSize: 11 }}><LocalizedText source={label} /></div>
     </div>
   )
 }

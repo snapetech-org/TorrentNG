@@ -1,3 +1,5 @@
+import { LocalizedText } from '../lib/LocalizedText'
+import { useInterfaceLanguage } from '../lib/interfaceLocale'
 import { formatRegionalNumber, getRegionalLocale } from '../lib/localeFormat'
 import { useRef, useEffect, useMemo, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
@@ -53,10 +55,12 @@ function fmtDuration(seconds: number): string {
   const hours = Math.floor((whole % 86400) / 3600)
   const minutes = Math.floor((whole % 3600) / 60)
   const secs = whole % 60
-  if (days > 0) return `${days}d ${hours}h`
-  if (hours > 0) return `${hours}h ${minutes}m`
-  if (minutes > 0) return `${minutes}m ${secs}s`
-  return `${secs}s`
+  const format = (value: number, unit: Intl.NumberFormatOptions['unit']) =>
+    new Intl.NumberFormat(getRegionalLocale(), { style: 'unit', unit, unitDisplay: 'narrow' }).format(value)
+  if (days > 0) return `${format(days, 'day')} ${format(hours, 'hour')}`
+  if (hours > 0) return `${format(hours, 'hour')} ${format(minutes, 'minute')}`
+  if (minutes > 0) return `${format(minutes, 'minute')} ${format(secs, 'second')}`
+  return format(secs, 'second')
 }
 
 function remainingBytes(t: TorrentSummary, live?: SmoothedLiveRate): number {
@@ -66,62 +70,65 @@ function remainingBytes(t: TorrentSummary, live?: SmoothedLiveRate): number {
 
 interface EtaDisplay {
   label: string
-  title: string
+  labelIsFormatted?: boolean
+  titleSource: string
+  titleParameters?: Record<string, string | number>
   color: string
 }
 
 function fmtEta(t: TorrentSummary, live?: SmoothedLiveRate): EtaDisplay {
   if (t.state === 3) {
     return {
-      label: '—',
-      title: t.message ? `Unavailable: ${t.message}` : 'Torrent is in an error state',
+      label: '—', titleSource: t.message ? 'Unavailable: {message}' : 'Torrent is in an error state',
+      titleParameters: t.message ? { message: t.message } : undefined,
       color: 'var(--danger)',
     }
   }
   if (t.state === 4) {
-    return { label: 'Meta…', title: 'Waiting for torrent metadata', color: 'var(--muted)' }
+    return { label: 'Meta…', titleSource: 'Waiting for torrent metadata', color: 'var(--muted)' }
   }
   if (t.state === 5) {
-    return { label: 'Queued', title: 'Waiting to download', color: 'var(--muted)' }
+    return { label: 'Queued', titleSource: 'Waiting to download', color: 'var(--muted)' }
   }
   if (t.state === 2) {
-    return { label: 'Check…', title: 'Checking torrent data', color: 'var(--warning)' }
+    return { label: 'Check…', titleSource: 'Checking torrent data', color: 'var(--warning)' }
   }
   if (t.size_bytes <= 0) {
     return {
-      label: t.is_active ? 'Calc…' : '—',
-      title: 'Waiting for torrent metadata',
+      label: t.is_active ? 'Calculating…' : '—',
+      titleSource: 'Waiting for torrent metadata',
       color: 'var(--faint)',
     }
   }
   const remaining = remainingBytes(t, live)
   if (remaining === 0 || t.complete) {
-    return { label: 'Done', title: 'Complete', color: 'var(--success)' }
+    return { label: 'Done', titleSource: 'Complete', color: 'var(--success)' }
   }
   if (t.state === 0 || !t.is_open) {
-    return { label: 'Paused', title: 'Paused or stopped', color: 'var(--faint)' }
+    return { label: 'Paused', titleSource: 'Paused or stopped', color: 'var(--faint)' }
   }
   if (!t.is_active) {
-    return { label: 'Queued', title: 'Waiting to download', color: 'var(--muted)' }
+    return { label: 'Queued', titleSource: 'Waiting to download', color: 'var(--muted)' }
   }
   const rate = live?.fresh ? live.downloadRate : t.down_rate
   if (rate > 0) {
     return {
-      label: fmtDuration(remaining / rate),
-      title: `${remaining.toLocaleString(getRegionalLocale())} bytes at ${fmtSpeed(rate)}`,
+      label: fmtDuration(remaining / rate), labelIsFormatted: true,
+      titleSource: '{bytes} bytes at {speed}',
+      titleParameters: { bytes: formatRegionalNumber(remaining), speed: fmtSpeed(rate) },
       color: 'var(--accent)',
     }
   }
   if (live?.fresh) {
-    return { label: 'Stalled', title: 'Downloading, but no current download rate', color: 'var(--warning)' }
+    return { label: 'Stalled', titleSource: 'Downloading, but no current download rate', color: 'var(--warning)' }
   }
-  return { label: 'Calc…', title: 'Collecting a live download rate', color: 'var(--muted)' }
+  return { label: 'Calculating…', titleSource: 'Collecting a live download rate', color: 'var(--muted)' }
 }
 
-function priorityLabel(priority: number): string {
-  if (priority > 0) return `High (${priority})`
-  if (priority < 0) return `Low (${priority})`
-  return 'Normal'
+function priorityLabel(priority: number): { source: string; parameters?: Record<string, string | number> } {
+  if (priority > 0) return { source: 'High ({priority})', parameters: { priority } }
+  if (priority < 0) return { source: 'Low ({priority})', parameters: { priority } }
+  return { source: 'Normal' }
 }
 
 function shortPath(path: string): string {
@@ -365,6 +372,7 @@ export function TorrentTable({
   torrents, total, selected, params, onSelect, onSelectAll, onSelectAllMatching, isSelectingAllMatching,
   onDetail, onContextMenu, onSort, onLoadMore, onJumpTo, pageOffset, hasMore, isFetchingMore, detailHash, mediaInference,
 }: Props) {
+  const { t: localize, textProps } = useInterfaceLanguage()
   const parentRef = useRef<HTMLDivElement>(null)
   const columnsRef = useRef<HTMLDivElement>(null)
   const loadMoreRef = useRef(false)
@@ -638,23 +646,22 @@ export function TorrentTable({
           isn't visible - splitting the axes across two nested elements (as
           this used to do) silently breaks sticky-left positioning. */}
       <span id="torrent-selection-help" className="tng-visually-hidden">
-        Click a row to select it. Hold Control or Command to add or remove rows. Hold Shift to select a range. Use Arrow keys to move and Space to select.
-      </span>
+        <LocalizedText source="Click a row to select it. Hold Control or Command to add or remove rows. Hold Shift to select a range. Use Arrow keys to move and Space to select." /></span>
       <div className="tng-list-jump" style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
         minHeight: 42, padding: '5px 12px', borderBottom: '1px solid var(--border)',
         background: 'var(--panel)', color: 'var(--muted)', fontSize: 12,
       }}>
-        <form aria-label="Jump to torrent row" onSubmit={event => {
+        <form aria-label={localize("Jump to torrent row")} onSubmit={event => {
           event.preventDefault()
           const row = Number.parseInt(jumpRow, 10)
           if (!Number.isFinite(row) || row < 1 || row > total) return
           onJumpTo(row - 1)
-        }} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-          <label htmlFor="torrent-row-jump" style={{ whiteSpace: 'nowrap' }}>Jump to row</label>
+        }} style={{ display: 'flex', alignItems: 'center', gap: 7 }} {...textProps("Jump to torrent row")}>
+          <label htmlFor="torrent-row-jump" style={{ whiteSpace: 'nowrap' }}><LocalizedText source="Jump to row" /></label>
           <input
             id="torrent-row-jump"
-            aria-label="Torrent row number"
+            aria-label={localize("Torrent row number")}
             type="number"
             inputMode="numeric"
             min={1}
@@ -672,27 +679,31 @@ export function TorrentTable({
               background: 'var(--surface)', border: '1px solid var(--border-strong)',
               borderRadius: 4, fontSize: 12, fontVariantNumeric: 'tabular-nums',
             }}
-          />
+          {...textProps("Torrent row number")} />
           <button type="submit" disabled={total === 0} style={{
             minHeight: 30, padding: '3px 10px', color: 'var(--accent-text)',
             background: 'var(--surface-2)', border: '1px solid var(--border-strong)',
             borderRadius: 4, fontSize: 12,
-          }}>Jump</button>
+          }}><LocalizedText source="Jump" /></button>
         </form>
         <span aria-live="polite" style={{ color: 'var(--faint)', fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>
-          {total === 0 ? 'No rows' : `Rows ${(pageOffset + 1).toLocaleString(getRegionalLocale())}–${Math.min(total, pageOffset + torrents.length).toLocaleString(getRegionalLocale())} of ${total.toLocaleString(getRegionalLocale())}`}
+          {total === 0 ? <LocalizedText source="No rows" /> : <LocalizedText source="Rows {start}–{end} of {total}" parameters={{
+            start: (pageOffset + 1).toLocaleString(getRegionalLocale()),
+            end: Math.min(total, pageOffset + torrents.length).toLocaleString(getRegionalLocale()),
+            total: total.toLocaleString(getRegionalLocale()),
+          }} />}
         </span>
       </div>
       <div
         ref={parentRef}
         role="grid"
-        aria-label="Torrent list"
+        aria-label={localize("Torrent list")}
         aria-multiselectable="true"
         aria-rowcount={total + 1}
         aria-colcount={visibleCols.length}
         aria-describedby="torrent-selection-help"
         style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: 'auto', position: 'relative' }}
-      >
+       {...textProps("Torrent list")}>
         {torrents.length === 0 && (
           <div role="status" aria-live="polite" style={{
             position: 'absolute', inset: 0, display: 'grid', placeItems: 'center',
@@ -703,8 +714,8 @@ export function TorrentTable({
               background: 'var(--surface)', padding: '18px 22px', display: 'grid', gap: 6,
               maxWidth: 360,
             }}>
-              <span style={{ color: 'var(--text)', fontWeight: 700 }}>No torrents match this view</span>
-              <span>{hasFilters ? 'Clear filters or change the search text.' : 'Add a torrent to populate the table.'}</span>
+              <span style={{ color: 'var(--text)', fontWeight: 700 }}><LocalizedText source="No torrents match this view" /></span>
+              <span>{hasFilters ? <LocalizedText source="Clear filters or change the search text." /> : <LocalizedText source="Add a torrent to populate the table." />}</span>
             </div>
           </div>
         )}
@@ -719,22 +730,22 @@ export function TorrentTable({
             flexShrink: 0, userSelect: 'none', position: 'sticky', top: 0, zIndex: 5,
           }}>
             {/* Select-all checkbox */}
-            <span role="columnheader" aria-colindex={1} aria-label="Select all" style={STICKY_KEYS.includes('check') ? {
+            <span role="columnheader" aria-colindex={1} aria-label={localize("Select all")} style={STICKY_KEYS.includes('check') ? {
               position: 'sticky', insetInlineStart: stickyLeft.check ?? 0, zIndex: 3,
               background: 'var(--table-head)', display: 'flex', alignItems: 'center',
-            } : undefined}>
+            } : undefined} {...textProps("Select all")}>
               <input
                 type="checkbox"
                 aria-label={
-                  allVisible ? 'Clear selection'
-                    : isSelectingAllMatching ? 'Selecting all matching torrents…'
-                      : `Select all ${total.toLocaleString(getRegionalLocale())} torrents matching the current filter`
+                  allVisible ? localize('Deselect all')
+                    : isSelectingAllMatching ? localize('Selecting all matching torrents…')
+                      : localize('Select all {count} torrents matching the current filter', { count: formatRegionalNumber(total) })
                 }
                 title={
-                  allVisible ? 'Clear selection'
+                  allVisible ? localize('Deselect all')
                     : total > torrents.length
-                      ? `Select all ${total.toLocaleString(getRegionalLocale())} torrents matching the current filter (not just the ${torrents.length.toLocaleString(getRegionalLocale())} loaded so far)`
-                      : 'Select all visible torrents'
+                      ? localize('Select all {count} torrents matching the current filter (not just the {loaded} loaded so far)', { count: formatRegionalNumber(total), loaded: formatRegionalNumber(torrents.length) })
+                      : localize('Select all visible torrents')
                 }
                 checked={allVisible}
                 aria-checked={someSelected ? 'mixed' : allVisible}
@@ -755,7 +766,7 @@ export function TorrentTable({
             {visibleCols.slice(1, -1).map((col, visibleIndex) => {
               const content = (
                 <>
-                  {col.label}
+                  <span {...textProps(col.label)}>{localize(col.label)}</span>
                   {col.sortKey === activeSort && (
                     <span style={{ fontSize: 9 }}>{activeDir === 'asc' ? '▲' : '▼'}</span>
                   )}
@@ -773,8 +784,9 @@ export function TorrentTable({
                 <button
                   type="button"
                   onClick={() => onSort(sortKey)}
-                  title={`Sort by ${col.label}`}
-                  aria-label={`Sort by ${col.label}`}
+                  title={localize('Sort by {column}', { column: localize(col.label) })}
+                  aria-label={localize('Sort by {column}', { column: localize(col.label) })}
+                  {...textProps('Sort by {column}')}
                   style={{
                     background: 'transparent', border: 0, padding: 0, margin: 0,
                     color: col.sortKey === activeSort ? 'var(--accent-text)' : 'var(--muted)',
@@ -791,14 +803,14 @@ export function TorrentTable({
                   key={col.key}
                   role="columnheader"
                   aria-colindex={visibleIndex + 2}
-                  aria-label={col.label || col.key}
+                  aria-label={localize(col.label || col.key)}
                   aria-sort={col.sortKey === activeSort ? activeDir === 'asc' ? 'ascending' : 'descending' : 'none'}
                   draggable={draggable}
                   onDragStart={draggable ? (e: React.DragEvent) => { setDragKey(col.key); e.dataTransfer.effectAllowed = 'move' } : undefined}
                   onDragOver={draggable ? (e: React.DragEvent) => e.preventDefault() : undefined}
                   onDrop={draggable ? (e: React.DragEvent) => { e.preventDefault(); if (dragKey) reorderColumn(dragKey, col.key); setDragKey(null) } : undefined}
                   onDragEnd={draggable ? () => setDragKey(null) : undefined}
-                  title={draggable ? `${col.label} - drag to reorder columns` : undefined}
+                  title={draggable ? localize('Drag {column} to reorder columns', { column: localize(col.label || col.key) }) : undefined}
                   style={{
                     position: 'relative', minWidth: 0, overflow: 'hidden',
                     cursor: draggable ? 'grab' : undefined,
@@ -815,7 +827,8 @@ export function TorrentTable({
                   <span
                     role="separator"
                     aria-orientation="vertical"
-                    aria-label={`Resize ${col.label || col.key} column`}
+                    aria-label={localize('Resize {column} column', { column: localize(col.label || col.key) })}
+                    {...textProps('Resize {column} column')}
                     aria-valuemin={MIN_COL_WIDTH}
                     aria-valuemax={2000}
                     aria-valuenow={widths[col.key] ?? (Number.parseFloat(col.width) || MIN_COL_WIDTH)}
@@ -833,31 +846,31 @@ export function TorrentTable({
                         return next
                       })
                     }}
-                    title="Drag to resize column"
+                    title={localize("Drag to resize column")}
                     style={{
                       position: 'absolute', top: 0, right: -4, bottom: 0, width: 8,
                       cursor: 'col-resize', zIndex: 4,
                     }}
-                  />
+                  {...textProps("Drag to resize column")} />
                 </span>
               )
             })}
-            <span role="columnheader" aria-colindex={visibleCols.length} aria-label="Table controls" style={{ position: 'relative', minWidth: 0 }}>
+            <span role="columnheader" aria-colindex={visibleCols.length} aria-label={localize("Table controls")} style={{ position: 'relative', minWidth: 0 }} {...textProps("Table controls")}>
             <button
               ref={columnsButtonRef}
               type="button"
               onClick={() => setColumnsOpen(open => !open)}
               aria-expanded={columnsOpen}
               aria-haspopup="menu"
-              aria-label="Choose visible table columns"
-              title="Choose table columns"
+              aria-label={localize("Choose visible table columns")}
+              title={localize("Choose table columns")}
               style={{
                 position: 'absolute', right: 8, top: 5, background: 'var(--surface)',
                 border: '1px solid var(--border-strong)', borderRadius: 4, color: 'var(--muted)',
                 fontSize: 11, padding: '2px 7px', cursor: 'pointer',
               }}
-            >
-              Columns
+             {...textProps("Choose visible table columns")}>
+              <LocalizedText source="Columns" />
             </button>
             {selected.size > 0 && (
               <span style={{
@@ -868,21 +881,21 @@ export function TorrentTable({
                 color: 'var(--accent-text)', borderRadius: 999, padding: '0 7px',
                 fontSize: 10, fontWeight: 800, textTransform: 'none', letterSpacing: 0,
               }}>
-                {isSelectingAllMatching ? 'Selecting…' : `${selected.size.toLocaleString(getRegionalLocale())} selected`}
+                {isSelectingAllMatching ? <LocalizedText source="Selecting…" /> : localize('{count} selected', { count: formatRegionalNumber(selected.size) })}
               </span>
             )}
             {columnsOpen && (
-              <div ref={columnsRef} role="menu" aria-label="Visible table columns" style={{
+              <div ref={columnsRef} role="menu" aria-label={localize("Visible table columns")} style={{
                 position: 'absolute', right: 8, top: 30, zIndex: 20, width: 210,
                 background: 'var(--panel)', border: '1px solid var(--border-strong)', borderRadius: 6,
                 boxShadow: '0 18px 40px var(--shadow)', padding: 8,
                 textTransform: 'none', letterSpacing: 0, fontWeight: 400,
-              }}>
+              }} {...textProps("Visible table columns")}>
           <div role="row" aria-rowindex={1} style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
                   color: 'var(--faint)', fontSize: 11, margin: '2px 4px 7px',
                 }}>
-                  <span>Visible columns</span>
+                  <span><LocalizedText source="Visible columns" /></span>
                   <span>{visibleCols.filter(col => !col.required).length}/{toggleableCols.length}</span>
                 </div>
                 {toggleableCols.map(col => (
@@ -893,30 +906,31 @@ export function TorrentTable({
                     <input
                       type="checkbox"
                       role="menuitemcheckbox"
-                      aria-label={`Toggle ${col.label || col.key} column`}
+                      aria-label={localize('Toggle {column} column', { column: localize(col.label || col.key) })}
+                      {...textProps('Toggle {column} column')}
                       aria-checked={visibleKeys.includes(col.key)}
                       checked={visibleKeys.includes(col.key)}
                       onChange={e => setColumnVisible(col.key, e.target.checked)}
                       style={{ accentColor: 'var(--accent)' }}
                     />
-                    {col.label || col.key}
+                    <span {...textProps(col.label || col.key)}>{localize(col.label || col.key)}</span>
                   </label>
                 ))}
                 <button type="button" onClick={resetColumns} style={{
                   marginTop: 6, width: '100%', background: 'transparent',
                   border: '1px solid var(--border-strong)', borderRadius: 5, color: 'var(--muted)',
                   padding: '5px 8px', fontSize: 12, cursor: 'pointer',
-                }}>Reset columns</button>
+                }}><LocalizedText source="Reset columns" /></button>
                 <button type="button" onClick={useCompactColumns} style={{
                   marginTop: 6, width: '100%', background: 'transparent',
                   border: '1px solid var(--border-strong)', borderRadius: 5, color: 'var(--muted)',
                   padding: '5px 8px', fontSize: 12, cursor: 'pointer',
-                }}>Compact preset</button>
+                }}><LocalizedText source="Use compact column layout" /></button>
                 <button type="button" onClick={() => setColumnsOpen(false)} style={{
                   marginTop: 6, width: '100%', background: 'var(--surface-2)',
                   border: '1px solid var(--border-strong)', borderRadius: 5, color: 'var(--muted)',
                   padding: '5px 8px', fontSize: 12, cursor: 'pointer',
-                }}>Done</button>
+                }}><LocalizedText source="Done" /></button>
               </div>
             )}
             </span>
@@ -931,7 +945,9 @@ export function TorrentTable({
             const remaining = remainingBytes(t, live)
             const downRate = live?.fresh ? live.downloadRate : t.down_rate
             const upRate = live?.fresh ? live.uploadRate : t.up_rate
-            const { label, accessibleLabel, color } = statusLabel(t)
+            const { label: labelSource, accessibleLabel: accessibleSource, color } = statusLabel(t)
+            const accessibleLabel = localize(accessibleSource)
+            const priority = priorityLabel(t.priority)
             const kind = mediaKind(t, mediaInference)
             const isSelected = selected.has(t.hash)
             const isDetail = detailHash === t.hash
@@ -940,7 +956,8 @@ export function TorrentTable({
               check: (
                 <input
                   type="checkbox"
-                  aria-label={`${isSelected ? 'Deselect' : 'Select'} ${t.name}`}
+                  aria-label={localize(isSelected ? 'Deselect {name}' : 'Select {name}', { name: t.name })}
+                  {...textProps(isSelected ? 'Deselect {name}' : 'Select {name}')}
                   checked={isSelected}
                   tabIndex={-1}
                   onClick={event => {
@@ -952,7 +969,7 @@ export function TorrentTable({
                 />
               ),
               kind: (
-                <span role="img" aria-label={kind.label} title={kind.label} style={{
+                <span role="img" aria-label={localize(kind.label)} title={localize(kind.label)} {...textProps(kind.label)} style={{
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                   width: 26, height: 22, color: kind.color, fontSize: 16,
                 }}>{kind.icon}</span>
@@ -982,7 +999,7 @@ export function TorrentTable({
                 </span>
               ),
               status: (
-                <span aria-label={accessibleLabel} style={{
+                <span aria-label={accessibleLabel} {...textProps(accessibleSource)} style={{
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                   width: 'fit-content', maxWidth: '100%', minWidth: 42, height: 20,
                   padding: '0 7px', borderRadius: 4,
@@ -990,23 +1007,23 @@ export function TorrentTable({
                   background: `color-mix(in srgb, ${color} 12%, transparent)`,
                   color, fontSize: 10, fontWeight: 700,
                 }}>
-                  {label}
+                  {localize(labelSource)}
                 </span>
               ),
               size: <span style={{ color: 'var(--muted)' }}>{fmtSize(t.size_bytes)}</span>,
               progress: <ProgressCell value={t.size_bytes ? Math.min(100, Math.max(0, (t.bytes_done / t.size_bytes) * 100)) : null} />,
-              remaining: <span style={{ color: t.size_bytes <= 0 ? 'var(--faint)' : remaining ? 'var(--muted)' : 'var(--success)' }}>{t.size_bytes <= 0 ? '—' : remaining ? fmtSize(remaining) : 'Done'}</span>,
-              eta: <span title={eta.title} style={{ color: eta.color }}>{eta.label}</span>,
+              remaining: <span style={{ color: t.size_bytes <= 0 ? 'var(--faint)' : remaining ? 'var(--muted)' : 'var(--success)' }}>{t.size_bytes <= 0 ? '—' : remaining ? fmtSize(remaining) : <LocalizedText source="Done" />}</span>,
+              eta: <span title={localize(eta.titleSource, eta.titleParameters)} {...textProps(eta.titleSource)} style={{ color: eta.color }}>{eta.labelIsFormatted ? eta.label : localize(eta.label)}</span>,
               down_rate: <span style={{ color: downRate ? 'var(--accent)' : 'var(--faint)' }}>{fmtSpeed(downRate)}</span>,
               up_rate: <span style={{ color: upRate ? 'var(--success)' : 'var(--faint)' }}>{fmtSpeed(upRate)}</span>,
-              seeds: <span style={{ color: t.peers_complete ? 'var(--success)' : 'var(--faint)' }} title="Connected seeds">{t.peers_complete}</span>,
-              peers: <span style={{ color: t.peers_connected ? 'var(--muted)' : 'var(--faint)' }} title="Connected peers">{t.peers_connected}</span>,
+              seeds: <span style={{ color: t.peers_complete ? 'var(--success)' : 'var(--faint)' }} title={localize("Connected seeds")} {...textProps("Connected seeds")}>{formatRegionalNumber(t.peers_complete)}</span>,
+              peers: <span style={{ color: t.peers_connected ? 'var(--muted)' : 'var(--faint)' }} title={localize("Connected peers")} {...textProps("Connected peers")}>{formatRegionalNumber(t.peers_connected)}</span>,
               ratio: <span style={{ color: t.ratio >= 1000 ? 'var(--success)' : 'var(--muted)' }}>{formatRegionalNumber(t.ratio / 1000, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>,
               added: <span style={{ color: 'var(--faint)' }}>{fmtDate(t.creation_date)}</span>,
               completed: <span style={{ color: 'var(--faint)' }}>{fmtDate(t.timestamp_finished)}</span>,
               downloaded: <span style={{ color: 'var(--muted)' }}>{fmtSize(t.down_total)}</span>,
               uploaded: <span style={{ color: 'var(--muted)' }}>{fmtSize(t.up_total)}</span>,
-              priority: <span style={{ color: 'var(--faint)' }} title={`Priority value ${t.priority}`}>{priorityLabel(t.priority)}</span>,
+              priority: <span style={{ color: 'var(--faint)' }} title={localize('Priority value {priority}', { priority: formatRegionalNumber(t.priority) })} {...textProps(priority.source)}>{localize(priority.source, priority.parameters)}</span>,
               category: <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.category || '—'}</span>,
               tags: <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.tags}>{t.tags || '—'}</span>,
               tracker: <span style={{ color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.tracker_url ? maskAnnounceUrl(t.tracker_url) : undefined}>{trackerHost(t.tracker_url)}</span>,
@@ -1022,16 +1039,19 @@ export function TorrentTable({
                 role="row"
                 aria-rowindex={pageOffset + item.index + 2}
                 aria-selected={isSelected}
-                aria-label={`${t.name}, ${accessibleLabel}${t.message ? `, ${t.message}` : ''}`}
+                aria-label={t.message
+                  ? localize('{name}, {status}. {message}', { name: t.name, status: accessibleLabel, message: t.message })
+                  : localize('{name}, {status}', { name: t.name, status: accessibleLabel })}
                 tabIndex={focusedHash === t.hash || (!focusedHash && item.index === 0) ? 0 : -1}
                 ref={node => {
                   if (node) rowRefs.current.set(t.hash, node)
                   else rowRefs.current.delete(t.hash)
                 }}
                 onFocus={() => setFocusedHash(t.hash)}
-                data-status={label.toLowerCase()}
+                data-status={labelSource.toLowerCase()}
                 data-detail={isDetail ? 'true' : 'false'}
-                title={`${isSelected ? 'Deselect' : 'Select'} ${t.name}. Shift-click for a range; Control/Command-click to add or remove.`}
+                title={localize('{action} {name}. Shift-click for a range; Control/Command-click to add or remove.', { action: localize(isSelected ? 'Deselect' : 'Select'), name: t.name })}
+                {...textProps('{action} {name}. Shift-click for a range; Control/Command-click to add or remove.')}
                 onClick={event => onSelect(t.hash, selectionMode(event))}
                 onContextMenu={e => {
                   e.preventDefault()
@@ -1076,7 +1096,7 @@ export function TorrentTable({
           fontSize: 11, color: 'var(--faint)', flexShrink: 0,
         }}>
           <span className="tng-skeleton" style={{ width: 160, height: 8 }} />
-          <span>Loading more torrents…</span>
+          <span><LocalizedText source="Loading more torrents…" /></span>
         </div>
       )}
 
@@ -1084,15 +1104,15 @@ export function TorrentTable({
         <button
           type="button"
           onClick={onLoadMore}
-          title="Load the next page of torrents"
+          title={localize("Load the next page of torrents")}
           style={{
           minHeight: 30, background: 'var(--table-head)', borderTop: '1px solid var(--border-strong)',
           borderLeft: 0, borderRight: 0, borderBottom: 0, width: '100%',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           fontSize: 11, color: 'var(--accent-text)', flexShrink: 0, cursor: 'pointer', gap: 6,
-        }}>
-          <span>Load more torrents</span>
-          <span style={{ color: 'var(--faint)' }}>{torrents.length.toLocaleString(getRegionalLocale())} / {total.toLocaleString(getRegionalLocale())}</span>
+        }} {...textProps("Load the next page of torrents")}>
+          <span><LocalizedText source="Load more torrents" /></span>
+          <span style={{ color: 'var(--faint)' }}>{formatRegionalNumber(torrents.length)} / {formatRegionalNumber(total)}</span>
         </button>
       )}
     </div>
@@ -1100,13 +1120,14 @@ export function TorrentTable({
 }
 
 function ProgressCell({ value }: { value: number | null }) {
+  const { t: localize, textProps } = useInterfaceLanguage()
   if (value === null) {
-    return <span aria-label="Progress unavailable" style={{ color: 'var(--faint)' }}>—</span>
+    return <span aria-label={localize("Progress unavailable")} style={{ color: 'var(--faint)' }} {...textProps("Progress unavailable")}>—</span>
   }
   return (
-    <span role="progressbar" aria-label="Torrent progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={value} title={`${formatRegionalNumber(value, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`} style={{
+    <span role="progressbar" aria-label={localize("Torrent progress")} aria-valuemin={0} aria-valuemax={100} aria-valuenow={value} title={`${formatRegionalNumber(value, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`} style={{
       display: 'grid', gap: 3, width: '100%', minWidth: 0,
-    }}>
+    }} {...textProps("Torrent progress")}>
       <span style={{ color: value >= 100 ? 'var(--success)' : 'var(--muted)', fontSize: 11, lineHeight: 1 }}>
         {formatRegionalNumber(value, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%
       </span>
