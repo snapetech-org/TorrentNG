@@ -1802,7 +1802,7 @@ mod tests {
         let no_control = || Ok(());
 
         HASHED_FILES.with(|count| count.set(0));
-        secure_copy(&source, &destination, 0, &roots, &no_control).unwrap();
+        secure_copy(&source, &destination, 7, &roots, &no_control).unwrap();
         // One source hash and one destination hash, independent of depth.
         assert_eq!(HASHED_FILES.with(|count| count.get()), 2);
         assert_eq!(
