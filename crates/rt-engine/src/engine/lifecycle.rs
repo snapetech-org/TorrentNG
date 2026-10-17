@@ -1,6 +1,7 @@
 //! Torrent creation, removal, task promotion/demotion, and peer-routing lifecycle.
 //! These methods run on the engine actor and preserve its state transition order.
 
+use super::subsystems::spawn_supervised;
 use super::*;
 
 impl Engine {
@@ -939,7 +940,7 @@ impl Engine {
         .await;
         task.attach_torrent_metadata_memory_lease(torrent_metadata_memory_lease);
         task.attach_crash_safety(Arc::clone(&self.services.crash_safety));
-        let handle = tokio::spawn(task.run());
+        let handle = spawn_supervised(self.runtime.task_exits.guard(&info_hash_hex), task.run());
         let tier_key = info_hash_hex.clone();
         self.runtime
             .torrent_chans
@@ -1051,7 +1052,7 @@ impl Engine {
         )
         .await;
         task.attach_crash_safety(Arc::clone(&self.services.crash_safety));
-        let handle = tokio::spawn(task.run());
+        let handle = spawn_supervised(self.runtime.task_exits.guard(&info_hash_hex), task.run());
         let tier_key = info_hash_hex.clone();
         self.runtime
             .torrent_chans
@@ -1084,24 +1085,27 @@ impl Engine {
         task_memory: MetadataTaskMemory,
     ) -> mpsc::Sender<TorrentCmd> {
         let (cmd_tx, cmd_rx) = mpsc::channel::<TorrentCmd>(32);
-        let handle = tokio::spawn(run_metadata_task(
-            info_hash,
-            info_hash_hex.clone(),
-            trackers,
-            task_memory,
-            cmd_rx,
-            self.cmd_tx.clone(),
-            cmd_tx.clone(),
-            Arc::clone(&self.registry),
-            self.services.resources.clone(),
-            self.config.network.listen_port,
-            self.config.network.max_peers,
-            self.config.tracker.http_timeout_secs,
-            self.config.tracker.udp_timeout_secs,
-            paused,
-            OutboundEgressPolicy::from_config(&self.config.tracker),
-            self.services.network_budget.clone(),
-        ));
+        let handle = spawn_supervised(
+            self.runtime.task_exits.guard(&info_hash_hex),
+            run_metadata_task(
+                info_hash,
+                info_hash_hex.clone(),
+                trackers,
+                task_memory,
+                cmd_rx,
+                self.cmd_tx.clone(),
+                cmd_tx.clone(),
+                Arc::clone(&self.registry),
+                self.services.resources.clone(),
+                self.config.network.listen_port,
+                self.config.network.max_peers,
+                self.config.tracker.http_timeout_secs,
+                self.config.tracker.udp_timeout_secs,
+                paused,
+                OutboundEgressPolicy::from_config(&self.config.tracker),
+                self.services.network_budget.clone(),
+            ),
+        );
         let tier_key = info_hash_hex.clone();
         self.runtime
             .torrent_chans
@@ -1541,6 +1545,30 @@ impl Engine {
     /// preserving the normal resume/recheck path as the recovery action.
     pub(super) async fn reap_finished_torrent_tasks(&mut self) {
         let finished = finished_torrent_hashes_limited(&self.runtime.torrent_tasks);
+        self.reap_torrent_hashes(finished).await;
+    }
+
+    /// Reap only actors that reported their exit through the supervised
+    /// queue: O(exits), not O(active torrents), so it is safe on every engine
+    /// command. A report that races ahead of `JoinHandle::is_finished` is
+    /// dropped here and caught by the periodic full scan.
+    pub(super) async fn reap_exited_torrent_tasks(&mut self) {
+        let finished: Vec<String> = self
+            .runtime
+            .task_exits
+            .drain(MAX_TORRENT_REAPS_PER_TICK)
+            .into_iter()
+            .filter(|info_hash| {
+                self.runtime
+                    .torrent_tasks
+                    .get(info_hash)
+                    .is_some_and(|task| task.is_finished())
+            })
+            .collect();
+        self.reap_torrent_hashes(finished).await;
+    }
+
+    async fn reap_torrent_hashes(&mut self, finished: Vec<String>) {
         for info_hash in finished {
             let Some(task) = self.runtime.torrent_tasks.remove(&info_hash) else {
                 continue;

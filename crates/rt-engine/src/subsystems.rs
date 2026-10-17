@@ -34,6 +34,67 @@ pub(super) struct EngineRuntimeState {
     pub(super) pending_torrent_adds: HashSet<String>,
     pub(super) pending_torrent_deletes: HashSet<String>,
     pub(super) pending_torrent_promotions: HashMap<String, Vec<TorrentPromotionAction>>,
+    /// Exit notifications from supervised torrent actors, so reaping does not
+    /// have to scan every active task handle on each engine command.
+    pub(super) task_exits: TaskExits,
+}
+
+/// Queue of info hashes whose actor future has ended, including by panic.
+pub(super) struct TaskExits {
+    tx: mpsc::UnboundedSender<String>,
+    rx: mpsc::UnboundedReceiver<String>,
+}
+
+impl Default for TaskExits {
+    fn default() -> Self {
+        let (tx, rx) = mpsc::unbounded_channel();
+        Self { tx, rx }
+    }
+}
+
+impl TaskExits {
+    /// A guard to move into the actor's future; dropping it (normal exit or
+    /// unwinding panic) queues the hash.
+    pub(super) fn guard(&self, info_hash: &str) -> TaskExitGuard {
+        TaskExitGuard {
+            info_hash: info_hash.to_owned(),
+            tx: self.tx.clone(),
+        }
+    }
+
+    /// Up to `limit` queued exits; O(exits), independent of active tasks.
+    pub(super) fn drain(&mut self, limit: usize) -> Vec<String> {
+        let mut exits = Vec::new();
+        while exits.len() < limit {
+            match self.rx.try_recv() {
+                Ok(info_hash) => exits.push(info_hash),
+                Err(_) => break,
+            }
+        }
+        exits
+    }
+}
+
+pub(super) struct TaskExitGuard {
+    info_hash: String,
+    tx: mpsc::UnboundedSender<String>,
+}
+
+impl Drop for TaskExitGuard {
+    fn drop(&mut self) {
+        let _ = self.tx.send(std::mem::take(&mut self.info_hash));
+    }
+}
+
+/// Spawn `future` so its exit is reported through `guard`.
+pub(super) fn spawn_supervised<F>(guard: TaskExitGuard, future: F) -> JoinHandle<()>
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    tokio::spawn(async move {
+        let _guard = guard;
+        future.await;
+    })
 }
 
 impl EngineRuntimeState {
@@ -46,6 +107,7 @@ impl EngineRuntimeState {
             pending_torrent_adds: HashSet::new(),
             pending_torrent_deletes: HashSet::new(),
             pending_torrent_promotions: HashMap::new(),
+            task_exits: TaskExits::default(),
         }
     }
 }
@@ -91,5 +153,36 @@ impl EngineSubsystems {
             stats_cache: None,
             crash_safety: crate::crash_safety::CrashSafetyRuntime::inert(),
         }
+    }
+}
+
+#[cfg(test)]
+mod task_exit_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn supervised_exit_is_reported_for_normal_return_and_panic() {
+        let mut exits = TaskExits::default();
+        let ok = spawn_supervised(exits.guard("ok"), async {});
+        let boom = spawn_supervised(exits.guard("boom"), async {
+            panic!("simulated torrent actor panic");
+        });
+        let _ = ok.await;
+        assert!(boom.await.is_err());
+
+        let mut reported = exits.drain(10);
+        reported.sort();
+        assert_eq!(reported, ["boom", "ok"]);
+        assert!(exits.drain(10).is_empty(), "each exit is reported once");
+    }
+
+    #[tokio::test]
+    async fn drain_is_bounded() {
+        let mut exits = TaskExits::default();
+        for index in 0..5 {
+            drop(exits.guard(&format!("t{index}")));
+        }
+        assert_eq!(exits.drain(2).len(), 2);
+        assert_eq!(exits.drain(10).len(), 3);
     }
 }

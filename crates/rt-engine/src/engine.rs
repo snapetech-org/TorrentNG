@@ -2363,7 +2363,7 @@ impl Engine {
                         );
                         break;
                     };
-                    self.reap_finished_torrent_tasks().await;
+                    self.reap_exited_torrent_tasks().await;
                     if !self.handle_cmd(cmd).await {
                         break;
                     }
@@ -2375,6 +2375,8 @@ impl Engine {
                     }
                 }
                 _ = task_health_tick.tick() => {
+                    // Low-frequency reconciliation scan; the command path only
+                    // looks at supervised exit notifications.
                     self.reap_finished_torrent_tasks().await;
                 }
                 _ = heartbeat_tick.tick() => {
@@ -12661,6 +12663,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::from([(info_hash.clone(), task_tx)]),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -12733,6 +12736,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -12913,6 +12917,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -13047,6 +13052,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -13132,6 +13138,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -13289,6 +13296,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::from([(info_hash.clone(), torrent_tx)]),
                 torrent_tasks: HashMap::from([(info_hash.clone(), torrent_task)]),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -13449,6 +13457,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -13604,6 +13613,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -13686,6 +13696,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -13766,6 +13777,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::from([(info_hash.clone(), torrent_tx)]),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -13904,6 +13916,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -14003,6 +14016,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -14502,6 +14516,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -14606,6 +14621,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -15053,6 +15069,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -15129,6 +15146,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -15223,6 +15241,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -15284,6 +15303,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -15473,6 +15493,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -15703,6 +15724,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -15789,6 +15811,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -15862,6 +15885,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -16011,6 +16035,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -16162,6 +16187,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::from([(info_hash.clone(), task_tx.clone())]),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -16405,6 +16431,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -16452,6 +16479,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -16505,6 +16533,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans,
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -16644,6 +16673,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -16704,6 +16734,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -16780,6 +16811,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -16879,6 +16911,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans,
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -16921,6 +16954,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -16975,6 +17009,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -17017,6 +17052,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -17066,6 +17102,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans,
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -17122,6 +17159,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans,
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -17203,6 +17241,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -17297,6 +17336,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::from([(info_hash.clone(), reload_tx)]),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -17391,6 +17431,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans,
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -17473,6 +17514,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans,
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -17559,6 +17601,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans,
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -17630,6 +17673,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans,
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -17708,6 +17752,7 @@ mod tests {
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
                 pending_torrent_promotions: std::collections::HashMap::new(),
+                task_exits: Default::default(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -17768,6 +17813,7 @@ mod tests {
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
                 pending_torrent_promotions: std::collections::HashMap::new(),
+                task_exits: Default::default(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -17839,6 +17885,7 @@ mod tests {
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
                 pending_torrent_promotions: HashMap::new(),
+                task_exits: Default::default(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -17908,6 +17955,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -18050,6 +18098,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -18225,6 +18274,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -18272,6 +18322,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -18606,6 +18657,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::from([(info_hash.clone(), torrent_tx.clone())]),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -18833,6 +18885,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -18973,6 +19026,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -19064,6 +19118,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -19111,6 +19166,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -19250,6 +19306,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans,
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -19375,6 +19432,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::from([(info_hash.clone(), torrent_tx)]),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -19497,6 +19555,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -19605,6 +19664,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -19759,6 +19819,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -19864,6 +19925,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -19946,6 +20008,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -20094,6 +20157,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -20233,6 +20297,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -20468,6 +20533,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -20609,6 +20675,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -20703,6 +20770,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -20820,6 +20888,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -20907,6 +20976,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -21054,6 +21124,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -21153,6 +21224,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -21254,6 +21326,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans,
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -21405,6 +21478,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -21545,6 +21619,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -21652,6 +21727,7 @@ mod tests {
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
                 pending_torrent_promotions: std::collections::HashMap::new(),
+                task_exits: Default::default(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: Some(dht_tx),
@@ -21745,6 +21821,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
@@ -21824,6 +21901,7 @@ mod tests {
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans: HashMap::new(),
                 torrent_tasks: HashMap::new(),
+                task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
                 tier_last_active: HashMap::new(),
                 pending_torrent_adds: HashSet::new(),
