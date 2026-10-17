@@ -197,7 +197,11 @@ impl TorrentTask {
             .map(|peer| PeerSnapshot {
                 id: peer.id,
                 interested: peer.interested,
-                upload_rate: peer.upload_rate,
+                // An idle peer's last sample must not keep earning a slot:
+                // the same staleness decay as the displayed rate applies.
+                upload_rate: peer_rate(peer.upload_rate, peer.upload_rate_window_started) as f64,
+                download_rate: peer_rate(peer.download_rate, peer.download_rate_window_started)
+                    as f64,
                 current_choke: if peer.upload_choked {
                     ChokeState::Choked
                 } else {
@@ -206,7 +210,14 @@ impl TorrentTask {
             })
             .collect();
 
-        let decisions = self.choker.run(&snapshots);
+        // Reciprocate while downloading; serve the fastest peers once
+        // complete.
+        let mode = if self.picker.is_complete() {
+            ChokeMode::Seeding
+        } else {
+            ChokeMode::Downloading
+        };
+        let decisions = self.choker.run_with_mode(&snapshots, mode);
         let peers: Vec<SocketAddr> = self.active_peers.keys().copied().collect();
         let mut queue_full = 0u64;
         for addr in peers {

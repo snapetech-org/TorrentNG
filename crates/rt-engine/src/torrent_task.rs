@@ -38,7 +38,7 @@ use rt_metainfo::{torrent_info_bytes_with_allocation_reservation, TorrentFileV1,
 use rt_metrics::{MemoryClass, MemoryLease, ResourceGovernor};
 use rt_path::{StorageProfile, StorageRootId};
 use rt_peer_manager::{
-    ChokeDecision, ChokeState, Choker, PeerId, PeerSnapshot, DEFAULT_MAX_UNCHOKED,
+    ChokeDecision, ChokeMode, ChokeState, Choker, PeerId, PeerSnapshot, DEFAULT_MAX_UNCHOKED,
 };
 use rt_peer_wire::{
     codec::PeerCodec,

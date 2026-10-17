@@ -202,7 +202,7 @@ reproduced).
 | F09 | P0 | torrent upload limit copied into per-peer buckets | SYS-003, NET-107 | G0 | fixed (SYS-003; hierarchical scheduler still NET-107) |
 | F10 | P0 | webseed debit inside `debug_assert!` | SYS-003 | G0 | fixed (SYS-003) |
 | F11 | P1 | no token-ready wakeup for download pacing | SYS-003, NET-107 | G0 | fixed (SYS-003; deadline-driven, not per-peer polling) |
-| F12 | P1 | choker feedback/exploration | NET-111 | G2 | accepted |
+| F12 | P1 | choker feedback/exploration | NET-111 | G2 | partly fixed (v1: mode-aware ranking, staleness decay, fair random optimistic rotation; v2 still unchokes every interested peer, swarm-trace replay remains NET-111) |
 | F13 | P0 | memory pressure discards received data | NET-103 | G2 | partly fixed (evicted assemblies spill to the payload files and the piece verifies from disk; reserve-before-request admission remains NET-103) |
 | F14 | P0 | picker memory estimate wrong (`Vec<bool>`) | SYS-004, NET-109 | G0 | fixed (packed `PieceFlags`; estimate counts bitsets, counts and BTree buckets) |
 | F15 | P1 | picker scans all pieces before rarity buckets | NET-109 | G2 | partly fixed (default no-priority path is O(1); bucket `BTreeSet` allocation storm remains NET-109) |
@@ -336,3 +336,4 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 2026-10-17 | F34: `scripts/memory_roadmap_certification.sh` only accepts source reports whose `- Commit:` matches HEAD, records worktree state, and labels stale evidence; `scripts/test_memory_roadmap_certification.py` (3 cases) passes. Other certification aggregators still select by mtime. |
 | 2026-10-17 | F24 partly: `V2ProofCache`, `v2_proof_layers`, `read_v2_leaf_hashes`; serving now refuses hashes of content that does not match `pieces root` (a behaviour tightening). Tests `proof_layers_are_refused_for_unverified_content_then_cached`, `proof_cache_is_byte_bounded_and_evicts_least_recently_used`; existing v2 hash-exchange tests must be re-run in the bulk pass. |
 | 2026-10-17 | F23 partly: `V2FileVerifier::CHUNK_LEAVES`, `MountScheduler::hash_v2_leaves`. Test `v2_file_verify_batches_leaf_hashing_per_chunk`. |
+| 2026-10-17 | F12 partly: `Choker::run_with_mode(ChokeMode)`, optimistic history + uuid tie-break, engine passes decayed rates. Tests: `downloading_mode_rewards_peers_that_deliver_to_us`, `optimistic_slot_rotates_through_every_waiting_peer`, `optimistic_slot_moves_on_when_its_holder_stops_being_interested`. |
