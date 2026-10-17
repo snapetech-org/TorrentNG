@@ -240,57 +240,57 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 2 | NET-101 | P0 | Define typed transfer coordinates and protocol geometry adapters | SYS-001 | todo | |
 | 2 | PERF-101 | P0 | Commit measurement contract and strict result schemas | SYS-001 | todo | |
 | 2 | SYS-002 | P0 | Land v2 reproductions and a reviewed extent correction | SYS-001 | done | `torrent_task_v2::tests::v2_*` multi-block tests (5 completion cases x memory/spill, red without fix) + `v2_request_window_pipelines_every_block_of_a_piece` (red: 4 of 8 requests) |
-| 2 | SYS-003 | P0 | Repair immediate release-rate and negotiated-capability behavior | SYS-001 | wip | F10 done: `webseed_block_is_debited_from_the_local_download_bucket` (fails under `--release` with the old line, tokens left 100; passes with the fix). F09 done: one `SharedRateLimiter` per torrent shared by all peer loops (`torrent_upload_limit_is_one_bucket_shared_by_all_peers`). F11 done: `download_token_wake` deadline + loop branch (`drained_download_bucket_schedules_a_token_ready_wakeup`). F08 v1 half done (see register); the stop-advertising interim was not needed. Remaining: v2 Reject/Cancel, outgoing Cancel, endgame |
-| 2 | SYS-004 | P0 | Introduce compact identities and honest whole-owner metadata accounting | SYS-001 | todo | |
+| 2 | SYS-003 | P0 | Repair immediate release-rate and negotiated-capability behavior | SYS-001 | done | F10, F09, F11 fixed with tests; F08 for v1 (v2/Cancel remain NET-105) |
+| 2 | SYS-004 | P0 | Introduce compact identities and honest whole-owner metadata accounting | SYS-001 | wip | F14 packed flags + honest picker estimate; `TierController::estimated_owner_bytes`; compact generational ids not started |
 | 2 | SYS-009 | P0 | Exercise the production database worker and coalesce progress | SYS-001 | todo | |
-| 2 | SYS-011 | P0 | Make live observability passive and owner-specific | SYS-001 | todo | |
+| 2 | SYS-011 | P0 | Make live observability passive and owner-specific | SYS-001 | wip | `/metrics` no longer creates a storage runtime; owner-specific inventory not started |
 | 3 | IO-002 | P0 | Separate block and piece extents and repair multi-block v2 transfers | IO-001, SYS-002, NET-101 | todo | |
 | 3 | IO-003 | P0 | Carry capacity leases through immutable payload ownership | IO-001 | todo | |
-| 3 | IO-004 | P0 | Unify the secure file catalog and descriptor lifecycle | IO-001 | todo | |
+| 3 | IO-004 | P0 | Unify the secure file catalog and descriptor lifecycle | IO-001 | wip | file-cache lock narrowed (F17); no secure catalog yet |
 | 3 | NET-102 | P0 | Build a deterministic transfer simulator and invariant oracle | NET-101 | todo | |
 | 3 | PERF-102 | P0 | Build independent cumulative resource observer | PERF-101 | todo | |
 | 3 | PERF-103 | P0 | Implement client adapters with pinned identity and settings readback | PERF-101 | todo | |
 | 3 | PERF-105 | P0 | Build scoped deterministic fixtures and cache controls | PERF-101 | todo | |
-| 3 | SYS-005 | P1 | Publish registry chunks and revision deltas without global deep clones | SYS-004 | todo | |
-| 3 | SYS-007 | P1 | Replace per-command task scans with supervised completions | SYS-004 | todo | |
-| 3 | SYS-008 | P1 | Replace quadratic timer cancellation and stagger bulk work | SYS-004 | todo | |
+| 3 | SYS-005 | P1 | Publish registry chunks and revision deltas without global deep clones | SYS-004 | wip | snapshot rows shared (`Arc<TorrentEntry>`); chunked revision deltas not started |
+| 3 | SYS-007 | P1 | Replace per-command task scans with supervised completions | SYS-004 | done | supervised exit queue (`TaskExits`); command path O(exits) |
+| 3 | SYS-008 | P1 | Replace quadratic timer cancellation and stagger bulk work | SYS-004 | done | O(1)/lazy timer cancel + compaction; staggering bulk work not started |
 | 3 | SYS-012 | P0 | Preserve feature and platform compatibility through production fixtures | SYS-001, SYS-002, SYS-003 | todo | |
 | 4 | IO-005 | P0 | Make admission and completion ownership bounded and cancellation-safe | IO-003, IO-004 | todo | |
-| 4 | NET-103 | P0 | Reserve payload capacity before requests and carry leased buffer spans | NET-101, NET-102, IO-003 | todo | |
+| 4 | NET-103 | P0 | Reserve payload capacity before requests and carry leased buffer spans | NET-101, NET-102, IO-003 | wip | evicted assemblies spill to disk (F13); reserve-before-request not started |
 | 4 | NET-112 | P1 | Select a uTP backend using a reproducible integration evaluation | NET-101, NET-102 | todo | |
 | 4 | PERF-104 | P0 | Implement common timing barriers and useful-byte accounting | PERF-101, PERF-102, PERF-103 | todo | |
 | 4 | PERF-106 | P0 | Create deterministic independent swarm and network controls | PERF-101, PERF-105 | todo | |
-| 4 | PERF-108 | P0 | Remove metrics-created shadow storage runtime and stabilize accounting | PERF-101, PERF-102, SYS-011 | todo | |
+| 4 | PERF-108 | P0 | Remove metrics-created shadow storage runtime and stabilize accounting | PERF-101, PERF-102, SYS-011 | wip | shadow storage runtime removed from `/metrics`; stable accounting not started |
 | 4 | SYS-006 | P1 | Route APIs through bounded delta, page and sort projections | SYS-005 | todo | |
-| 4 | SYS-010 | P1 | Bound discovery and control I/O and decouple scrape from announce | SYS-004, SYS-008 | todo | |
+| 4 | SYS-010 | P1 | Bound discovery and control I/O and decouple scrape from announce | SYS-004, SYS-008 | wip | announce delivered before scrape; scrape capped process-wide; DNS/DHT/metadata budgets not started |
 | 5 | IO-006 | P0 | Build one device service over the portable reference backend | IO-005 | todo | |
 | 5 | IO-007 | P0 | Create batched hash jobs and shared hybrid content views | IO-002, IO-003, IO-005 | todo | |
 | 5 | NET-104 | P0 | Implement the authoritative request and content ownership ledger | NET-101, NET-102, NET-103, IO-005 | todo | |
 | 5 | PERF-107 | P0 | Implement independent network, hash, disk and pipeline ceilings | PERF-102, PERF-105, PERF-106 | todo | |
 | 5 | PERF-109 | P0 | Replace synthetic capacity proxies with live production fixtures | PERF-102, PERF-103, PERF-104, PERF-105, PERF-108 | todo | |
 | 5 | PERF-112 | P0 | Enforce v2 and persistence invariants in full transfer paths | PERF-104, PERF-105, PERF-106 | todo | |
-| 6 | IO-012 | P1 | Stream recheck through large chunks and persistent sparse cursors | IO-006, IO-007 | todo | |
-| 6 | NET-105 | P0 | Implement negotiated peer protocol request semantics | NET-104 | todo | |
-| 6 | NET-109 | P1 | Rebuild piece selection around active candidates and accurate accounting | NET-104 | todo | |
+| 6 | IO-012 | P1 | Stream recheck through large chunks and persistent sparse cursors | IO-006, IO-007 | wip | 1 MiB chunked v2 verify + batched leaf hashing; persistent sparse cursors not started |
+| 6 | NET-105 | P0 | Implement negotiated peer protocol request semantics | NET-104 | wip | v1 Reject for known-coordinate requests; v2 + outgoing Cancel + endgame not started |
+| 6 | NET-109 | P1 | Rebuild piece selection around active candidates and accurate accounting | NET-104 | wip | priority scan O(1) when idle (F15 common path); active-candidate indexes not started |
 | 6 | PERF-110 | P0 | Automate 28-case catalog and randomized paired execution | PERF-103, PERF-104, PERF-105, PERF-106, PERF-107, PERF-109 | todo | |
 | 6 | PERF-111 | P1 | Add picker timer and changed-snapshot allocation regression probes | PERF-101, PERF-102, PERF-109 | todo | |
 | 6 | SYS-014 | P1 | Qualify complete catalog cost and mixed-load responsiveness | SYS-005, SYS-006, SYS-007, SYS-008, SYS-009, SYS-010, PERF-109 | todo | |
 | 7 | NET-106 | P1 | Separate peer read progress from write and storage waits | NET-103, NET-104, NET-105 | todo | |
 | 7 | PERF-113 | P1 | Implement statistical analysis and explicit scorecard | PERF-101, PERF-102, PERF-104, PERF-110 | todo | |
 | 8 | IO-008 | P0 | Move transfer actors to completion-driven storage and hashing | IO-002, IO-006, IO-007, NET-104, NET-106 | todo | |
-| 8 | NET-107 | P1 | Replace replicated token buckets with hierarchical fair rate scheduling | NET-103, NET-104, NET-106 | todo | |
+| 8 | NET-107 | P1 | Replace replicated token buckets with hierarchical fair rate scheduling | NET-103, NET-104, NET-106 | wip | one per-torrent upload bucket (F09), token-ready wakeup (F11); hierarchical scheduler not started |
 | 8 | NET-113 | P1 | Deliver the selected windowed uTP transport behind the shared runtime | NET-103, NET-106, NET-112 | todo | |
-| 8 | PERF-114 | P0 | Replace text-grep qualification with exact artifact manifests | PERF-101, PERF-113 | todo | |
-| 9 | IO-009 | P0 | Implement dirty-only generation fences and grouped barriers | IO-004, IO-006, IO-008 | todo | |
-| 9 | IO-011 | P1 | Replace unconditional readahead with useful range caching | IO-004, IO-006, IO-008 | todo | |
-| 9 | NET-108 | P1 | Implement adaptive request windows and deadline-driven refill | NET-104, NET-106, NET-107 | todo | |
-| 9 | NET-110 | P1 | Implement bounded shared upload service and eliminate valid-demand drops | NET-103, NET-105, NET-106, NET-107 | todo | |
+| 8 | PERF-114 | P0 | Replace text-grep qualification with exact artifact manifests | PERF-101, PERF-113 | wip | `memory_roadmap_certification.sh` commit-checked; manifests not started |
+| 9 | IO-009 | P0 | Implement dirty-only generation fences and grouped barriers | IO-004, IO-006, IO-008 | wip | checkpoint sync scoped to the scheduler's dirty files, marked at issue; generation fences not started |
+| 9 | IO-011 | P1 | Replace unconditional readahead with useful range caching | IO-004, IO-006, IO-008 | wip | sequential-only readahead (toggleable); reuse-driven range cache not started |
+| 9 | NET-108 | P1 | Implement adaptive request windows and deadline-driven refill | NET-104, NET-106, NET-107 | wip | rate-proportional window 32..128 (F05); measured-delay feedback not started |
+| 9 | NET-110 | P1 | Implement bounded shared upload service and eliminate valid-demand drops | NET-103, NET-105, NET-106, NET-107 | wip | request-count ceiling removed (F06); shared byte-admitted upload service not started |
 | 9 | PERF-115 | P1 | Integrate hosted correctness and dedicated hardware regression lanes | PERF-110, PERF-111, PERF-112, PERF-113, PERF-114 | todo | |
 | 10 | IO-010 | P0 | Bind resume persistence and crash recovery to barrier evidence | IO-009, SYS-009 | todo | |
-| 10 | IO-014 | P1 | Schedule secure copies and verify each leaf once | IO-006, IO-009, IO-012 | todo | |
+| 10 | IO-014 | P1 | Schedule secure copies and verify each leaf once | IO-006, IO-009, IO-012 | wip | each leaf verified once per side; device-scheduled copy not started |
 | 10 | IO-015 | P1 | Add continuous io_uring with retained safe registrations | IO-006, IO-009 | todo | |
-| 10 | NET-111 | P1 | Implement fair seed and download choking policies | NET-104, NET-107, NET-110 | todo | |
-| 11 | IO-013 | P1 | Persist authenticated v2 Merkle nodes and serve bounded proofs | IO-007, IO-010, IO-012 | todo | |
+| 10 | NET-111 | P1 | Implement fair seed and download choking policies | NET-104, NET-107, NET-110 | wip | v1 choker modes + fair optimistic rotation (F12); v2 and trace replay not started |
+| 11 | IO-013 | P1 | Persist authenticated v2 Merkle nodes and serve bounded proofs | IO-007, IO-010, IO-012 | wip | proof layers proven against root + LRU; persisted node store not started |
 | 11 | NET-114 | P1 | Move v1, pure-v2 and hybrid transfer execution onto the shared core | NET-104, NET-105, NET-108, NET-109, NET-110, IO-008, IO-010 | todo | |
 | 12 | NET-115 | P1 | Unify source scheduling and batch progress publication | NET-106, NET-107, NET-108, NET-114, SYS-009 | todo | |
 | 12 | SYS-013 | P0 | Integrate one-writer migration and durable rollback | NET-114, IO-010, SYS-005, SYS-007, SYS-009, SYS-012 | todo | |
@@ -298,6 +298,15 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 13 | NET-116 | P1 | Gate capability rollout with independent correctness and performance evidence | NET-108, NET-109, NET-111, NET-113, NET-114, NET-115, PERF-112, PERF-113, SYS-013 | todo | |
 | 13 | PERF-116 | P1 | Run candidate soak recovery and reversible canary qualification | PERF-112, PERF-114, PERF-115, SYS-013, SYS-014 | todo | |
 | 14 | SYS-015 | P0 | Integrate final gates, independent review and reproducible release | SYS-013, SYS-014, NET-116, IO-016, PERF-116 | todo | |
+
+### Status snapshot (2026-10-17)
+
+4 of 63 tickets `done`, 20 `wip`, 39 `todo`. `wip` means a defined slice
+of the ticket landed with tests (see the Evidence column and the findings
+register) and the rest of its scope has not started. No gate has passed: G0
+still needs SYS-001's capability matrix, SYS-009, SYS-011 and PERF-101 plus a
+valid baseline controller. Nothing here claims a performance result; the
+bulk test pass establishes correctness of the landed slices only.
 
 ### Immediate sequence (G0)
 
