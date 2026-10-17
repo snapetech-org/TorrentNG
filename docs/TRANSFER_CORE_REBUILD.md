@@ -214,7 +214,7 @@ reproduced).
 | F21 | P0 | cancellation may release admission/dirty evidence early (moderate confidence) | IO-005 | G1 | accepted |
 | F22 | P1 | several storage schedulers, no fairness authority | IO-006 | G1 | accepted |
 | F23 | P1 | v2 recheck does per-leaf small I/O | IO-012 | G4 | accepted |
-| F24 | P0/P1 | v2 proof serving rereads file; 64 MiB ceiling | IO-013 | G3 | accepted |
+| F24 | P0/P1 | v2 proof serving rereads file; 64 MiB ceiling | IO-013 | G3 | partly fixed (64 MiB ceiling removed; leaves hashed in 256 KiB reads; layers proven against the metainfo root and kept in a 64 MiB LRU; persisted node store and subtree-only work remain IO-013) |
 | F25 | P1 | secure copy re-verifies leaves per ancestor | IO-014 | G4 | fixed for hashing (nested entries copy-only; top-level verifies the tree once; scheduling copies through the device service remains IO-014) |
 | F26 | P1 | one row change rebuilds a deep-cloned registry vector | SYS-005, SYS-006 | G5 | partly fixed (snapshot rows are shared `Arc<TorrentEntry>`, flatten clones pointers; chunked revision deltas, cold/hot metadata split and compact identities remain SYS-005/SYS-004) |
 | F27 | P1 | dormant estimates incomplete; quadratic timer cancel | SYS-004, SYS-008 | G5 | timer half fixed (lazy deletion + compaction); dormant-estimate half remains SYS-004 |
@@ -334,3 +334,4 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 2026-10-17 | F26 partly: `SessionSnapshot` stores `Arc<TorrentEntry>`; test `changing_one_row_shares_every_other_snapshot_row`. The 711k-allocation probe should be re-run in the bulk pass to quantify. |
 | 2026-10-17 | F13 partly: `enforce_piece_assembly_budget` spills evicted assemblies via `write_block` and marks the piece restored-partial; falls back to reject on write failure. Test `evicted_piece_assembly_is_spilled_to_disk_not_discarded`. |
 | 2026-10-17 | F34: `scripts/memory_roadmap_certification.sh` only accepts source reports whose `- Commit:` matches HEAD, records worktree state, and labels stale evidence; `scripts/test_memory_roadmap_certification.py` (3 cases) passes. Other certification aggregators still select by mtime. |
+| 2026-10-17 | F24 partly: `V2ProofCache`, `v2_proof_layers`, `read_v2_leaf_hashes`; serving now refuses hashes of content that does not match `pieces root` (a behaviour tightening). Tests `proof_layers_are_refused_for_unverified_content_then_cached`, `proof_cache_is_byte_bounded_and_evicts_least_recently_used`; existing v2 hash-exchange tests must be re-run in the bulk pass. |

@@ -70,7 +70,12 @@ const V2_REQUEST_WINDOW: usize = 32;
 // cap and ResourceGovernor still bound the actual retained content.
 const V2_MAX_PIECE_BLOCKS: usize =
     (u32::MAX as usize).div_ceil(rt_peer_wire::message::MAX_BLOCK_SIZE as usize);
-const V2_MAX_HASH_EXCHANGE_FILE_BYTES: u64 = 64 * 1024 * 1024;
+/// Leaf hashes are computed from reads of this size, so a hash request never
+/// holds a file's payload in memory and large files are not rejected for size.
+const V2_HASH_EXCHANGE_READ_BYTES: usize = 256 * 1024;
+/// Bytes of authenticated Merkle layers kept for hash-request serving, shared
+/// by every peer of one torrent (about 0.4% of the covered file bytes).
+const V2_PROOF_CACHE_BYTES: u64 = 64 * 1024 * 1024;
 const V2_MAX_HASH_REQUEST_LENGTH: u32 = 512;
 const STOPPED_TRACKER_CONTROL_ANNOUNCE_DEADLINE: Duration = Duration::from_secs(1);
 
@@ -440,6 +445,74 @@ struct V2PeerContext {
     file_policy: Arc<HashMap<u32, (bool, i64)>>,
     assembly_cap_bytes: usize,
     events: mpsc::Sender<V2PeerEvent>,
+    proof_cache: Arc<V2ProofCache>,
+}
+
+/// Merkle layers of a file, proven against its metainfo `pieces root`.
+type V2ProofLayers = Arc<Vec<Vec<[u8; 32]>>>;
+
+/// Bounded LRU of proven Merkle layers keyed by `pieces root`.
+///
+/// A hash request used to reread the whole file and rebuild its tree. The
+/// layers are derived only from content that hashes to the metainfo root, so
+/// they are authenticated hashes of the torrent rather than of whatever is on
+/// disk, and are safe to keep and share across peers.
+#[derive(Default)]
+struct V2ProofCache {
+    inner: Mutex<V2ProofCacheInner>,
+}
+
+#[derive(Default)]
+struct V2ProofCacheInner {
+    entries: HashMap<[u8; 32], (V2ProofLayers, u64, u64)>,
+    bytes: u64,
+    tick: u64,
+}
+
+impl V2ProofCache {
+    fn lock(&self) -> std::sync::MutexGuard<'_, V2ProofCacheInner> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn get(&self, root: &[u8; 32]) -> Option<V2ProofLayers> {
+        let mut inner = self.lock();
+        inner.tick = inner.tick.wrapping_add(1);
+        let tick = inner.tick;
+        let entry = inner.entries.get_mut(root)?;
+        entry.2 = tick;
+        Some(Arc::clone(&entry.0))
+    }
+
+    /// Keep `layers` if it fits the byte budget, evicting the least recently
+    /// used entries to make room.
+    fn insert(&self, root: [u8; 32], layers: V2ProofLayers, bytes: u64) {
+        if bytes > V2_PROOF_CACHE_BYTES {
+            return;
+        }
+        let mut inner = self.lock();
+        if let Some((_, old_bytes, _)) = inner.entries.remove(&root) {
+            inner.bytes = inner.bytes.saturating_sub(old_bytes);
+        }
+        while inner.bytes.saturating_add(bytes) > V2_PROOF_CACHE_BYTES {
+            let Some(oldest) = inner
+                .entries
+                .iter()
+                .min_by_key(|(_, (_, _, used))| *used)
+                .map(|(key, _)| *key)
+            else {
+                break;
+            };
+            if let Some((_, evicted, _)) = inner.entries.remove(&oldest) {
+                inner.bytes = inner.bytes.saturating_sub(evicted);
+            }
+        }
+        inner.tick = inner.tick.wrapping_add(1);
+        let tick = inner.tick;
+        inner.bytes = inner.bytes.saturating_add(bytes);
+        inner.entries.insert(root, (layers, bytes, tick));
+    }
 }
 
 impl V2PeerContext {
@@ -612,6 +685,7 @@ pub struct V2TorrentTask {
     known_tracker_peers: HashSet<SocketAddr>,
     tracker_peer_cache_drops: u64,
     assembly_cap_bytes: usize,
+    proof_cache: Arc<V2ProofCache>,
     egress_policy: OutboundEgressPolicy,
     _piece_index_memory_lease: Option<MemoryLease>,
     _torrent_metadata_memory_lease: Option<MemoryLease>,
@@ -784,6 +858,7 @@ impl V2TorrentTask {
             known_tracker_peers: HashSet::new(),
             tracker_peer_cache_drops: 0,
             assembly_cap_bytes: piece_assembly_cap_bytes,
+            proof_cache: Arc::new(V2ProofCache::default()),
             egress_policy,
             _piece_index_memory_lease: piece_index_memory_lease,
             _torrent_metadata_memory_lease: torrent_metadata_memory_lease,
@@ -2314,6 +2389,7 @@ impl V2TorrentTask {
             file_policy: Arc::clone(&self.file_policy),
             assembly_cap_bytes: self.assembly_cap_bytes,
             events: self.events_tx.clone(),
+            proof_cache: Arc::clone(&self.proof_cache),
         }
     }
 
@@ -3715,10 +3791,6 @@ async fn serve_v2_hash_request(
         framed.send(reject()).await?;
         return Ok(());
     };
-    if file.length > V2_MAX_HASH_EXCHANGE_FILE_BYTES {
-        framed.send(reject()).await?;
-        return Ok(());
-    }
     let leaf_count = file.length.div_ceil(V2_BLOCK_SIZE as u64).max(1);
     let Some(_) = hash_request_bounds(
         usize::try_from(leaf_count).unwrap_or(usize::MAX),
@@ -3735,44 +3807,32 @@ async fn serve_v2_hash_request(
         framed.send(reject()).await?;
         return Ok(());
     }
-    let hash_memory = leaf_count
-        .saturating_mul(4)
-        .saturating_mul(std::mem::size_of::<[u8; 32]>() as u64);
-    let Some(_hash_memory_lease) = context.resources.try_acquire(
-        MemoryClass::PeerBuffer,
-        file.length.saturating_add(hash_memory),
-    ) else {
-        framed.send(reject()).await?;
-        return Ok(());
+    let layers = match v2_proof_layers(context, file, pieces_root, leaf_count).await {
+        Ok(Some(layers)) => layers,
+        Ok(None) => {
+            framed.send(reject()).await?;
+            return Ok(());
+        }
+        Err(error) => {
+            debug!(
+                component = "torrent_v2",
+                operation = "build_hash_exchange_layers",
+                peer = %context.peer,
+                file = ?file.path,
+                result = "rejected",
+                error = %error,
+                "unable to build v2 hash-exchange layers"
+            );
+            framed.send(reject()).await?;
+            return Ok(());
+        }
     };
-    let leaves = if file.pad {
-        // BEP 47 padding is synthetic zero content. Its hash tree is still
-        // part of the v2 file metadata when a creator included the padding
-        // leaf, so serve it without requiring a local `.pad/*` file.
-        v2_zero_leaf_hashes(file.length)?
-    } else {
-        let data = match read_v2_file(context, file).await {
-            Ok(data) => data,
-            Err(error) => {
-                debug!(
-                    component = "torrent_v2",
-                    operation = "read_hash_exchange_file",
-                    peer = %context.peer,
-                    file = ?file.path,
-                    result = "rejected",
-                    error = %error,
-                    "unable to read v2 hash-exchange data"
-                );
-                framed.send(reject()).await?;
-                return Ok(());
-            }
-        };
-        v2_leaf_hashes(&data)
-    };
-    let layers = merkle_layers(&leaves);
+    let leaves_len = layers.first().map_or(0, Vec::len);
     let Some(hashes) = hashes_for_v2_request(
         &layers,
-        leaves.len(),
+        usize::try_from(leaf_count)
+            .unwrap_or(usize::MAX)
+            .min(leaves_len),
         base_layer,
         index,
         length,
@@ -3918,20 +3978,83 @@ fn hash_request_bounds(
     Some((base, start, count, proof_count))
 }
 
-async fn read_v2_file(context: &V2PeerContext, file: &TorrentFileV2) -> anyhow::Result<Bytes> {
+/// Merkle layers for `file`, from the proof cache or built by hashing the
+/// file in bounded reads. Returns `None` when the content on disk does not
+/// hash to the metainfo `pieces root`: unverified bytes must never be served
+/// as authenticated hashes, and nothing is cached for them.
+async fn v2_proof_layers(
+    context: &V2PeerContext,
+    file: &TorrentFileV2,
+    pieces_root: [u8; 32],
+    leaf_count: u64,
+) -> anyhow::Result<Option<V2ProofLayers>> {
+    if let Some(layers) = context.proof_cache.get(&pieces_root) {
+        return Ok(Some(layers));
+    }
+    // All layers together are about twice the padded leaf layer.
+    let padded_leaves = leaf_count
+        .checked_next_power_of_two()
+        .ok_or_else(|| anyhow::anyhow!("v2 leaf count overflow"))?;
+    let layer_bytes = padded_leaves
+        .saturating_mul(2)
+        .saturating_mul(std::mem::size_of::<[u8; 32]>() as u64);
+    let leaf_bytes = leaf_count.saturating_mul(std::mem::size_of::<[u8; 32]>() as u64);
+    let Some(_hash_memory_lease) = context.resources.try_acquire(
+        MemoryClass::PeerBuffer,
+        layer_bytes
+            .saturating_add(leaf_bytes)
+            .saturating_add(V2_HASH_EXCHANGE_READ_BYTES as u64),
+    ) else {
+        return Ok(None);
+    };
+    let leaves = if file.pad {
+        // BEP 47 padding is synthetic zero content. Its hash tree is still
+        // part of the v2 file metadata when a creator included the padding
+        // leaf, so serve it without requiring a local `.pad/*` file.
+        v2_zero_leaf_hashes(file.length)?
+    } else {
+        read_v2_leaf_hashes(context, file).await?
+    };
+    let layers = merkle_layers(&leaves);
+    drop(leaves);
+    if layers.last().and_then(|layer| layer.first()) != Some(&pieces_root) {
+        return Ok(None);
+    }
+    let layers = Arc::new(layers);
+    context
+        .proof_cache
+        .insert(pieces_root, Arc::clone(&layers), layer_bytes);
+    Ok(Some(layers))
+}
+
+/// Hash `file` into 16 KiB leaf hashes with bounded reads, so the payload is
+/// never held in memory and the engine task yields between reads.
+async fn read_v2_leaf_hashes(
+    context: &V2PeerContext,
+    file: &TorrentFileV2,
+) -> anyhow::Result<Vec<[u8; 32]>> {
     let path = file.path.resolve(&context.save_root);
-    let mut data = Vec::new();
-    data.try_reserve_exact(file.length as usize)
+    let leaf_count = usize::try_from(file.length.div_ceil(V2_BLOCK_SIZE as u64).max(1))
+        .map_err(|error| anyhow::anyhow!("v2 leaf count does not fit usize: {error}"))?;
+    let mut leaves = Vec::new();
+    leaves
+        .try_reserve_exact(leaf_count)
         .map_err(|error| anyhow::anyhow!("v2 hash exchange allocation failed: {error}"))?;
+    if file.length == 0 {
+        leaves.push(BlockHash::of(&[]).0);
+        return Ok(leaves);
+    }
     let mut offset = 0u64;
     while offset < file.length {
-        let length = (file.length - offset).min(V2_BLOCK_SIZE as u64) as usize;
+        let length = (file.length - offset).min(V2_HASH_EXCHANGE_READ_BYTES as u64) as usize;
         let read = scheduled_read_owned(&context.storage, IoClass::PeerRead, &path, offset, length)
             .await?;
-        data.extend_from_slice(read.as_slice());
+        for chunk in read.as_slice().chunks(V2_BLOCK_SIZE) {
+            leaves.push(BlockHash::of(chunk).0);
+        }
         offset += length as u64;
     }
-    Ok(Bytes::from(data))
+    Ok(leaves)
 }
 
 fn v2_leaf_hashes(data: &[u8]) -> Vec<[u8; 32]> {
@@ -5177,5 +5300,55 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[tokio::test]
+    async fn proof_layers_are_refused_for_unverified_content_then_cached() {
+        let case = MultiBlock::new(4 * MB_PIECE, false).await;
+        let file = case.task.meta.files[0].clone();
+        let root = file.pieces_root.expect("layered v2 file has a root");
+        let context = case.task.peer_context("127.0.0.1:6881".parse().unwrap());
+        let leaves = (file.length / V2_BLOCK_SIZE as u64).max(1);
+
+        // The file on disk is still the sentinel fill: it does not hash to the
+        // metainfo root, so nothing may be served or cached.
+        assert!(v2_proof_layers(&context, &file, root, leaves)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(context.proof_cache.get(&root).is_none());
+
+        // Real content proves against the root, is served, and is cached.
+        let path = file.path.resolve(case.fx.temp.path());
+        std::fs::write(&path, &case.content).unwrap();
+        let first = v2_proof_layers(&context, &file, root, leaves)
+            .await
+            .unwrap()
+            .expect("verified content yields layers");
+        assert_eq!(first.last().unwrap()[0], root);
+        let second = v2_proof_layers(&context, &file, root, leaves)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(Arc::ptr_eq(&first, &second), "served from the cache");
+    }
+
+    #[test]
+    fn proof_cache_is_byte_bounded_and_evicts_least_recently_used() {
+        let cache = V2ProofCache::default();
+        let layers = || Arc::new(vec![vec![[0u8; 32]]]);
+        let third = V2_PROOF_CACHE_BYTES / 3 + 1;
+        cache.insert([1; 32], layers(), third);
+        cache.insert([2; 32], layers(), third);
+        assert!(cache.get(&[1; 32]).is_some(), "touch 1 so 2 is the oldest");
+        cache.insert([3; 32], layers(), third);
+        assert!(cache.get(&[2; 32]).is_none(), "oldest entry evicted");
+        assert!(cache.get(&[1; 32]).is_some() && cache.get(&[3; 32]).is_some());
+        cache.insert([4; 32], layers(), V2_PROOF_CACHE_BYTES + 1);
+        assert!(
+            cache.get(&[4; 32]).is_none(),
+            "an oversized entry is not kept"
+        );
+        assert!(cache.lock().bytes <= V2_PROOF_CACHE_BYTES);
     }
 }
