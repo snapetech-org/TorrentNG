@@ -4,6 +4,7 @@
 /// ordering to the `Availability` map. Priority pieces (e.g., file head/tail
 /// for streaming) bypass rarest-first and are selected first.
 use crate::availability::Availability;
+use crate::flags::PieceFlags;
 
 /// Maximum block size enforced by the picker (mirrors BEP 3).
 pub const MAX_BLOCK_SIZE: u32 = 16 * 1024;
@@ -19,6 +20,11 @@ pub const MAX_IN_PROGRESS_PIECES: usize = 16_384;
 /// large protocol-legal piece length cannot multiply into an unbounded
 /// per-torrent allocation when many partial pieces are restored.
 pub const MAX_IN_PROGRESS_PIECE_STATE_BYTES: usize = 64 * 1024 * 1024;
+
+/// Worst-case `BTreeSet<u32>` bucket cost per piece, measured at about
+/// 11.6 bytes per piece when one peer has every piece (11,618,752 bytes for
+/// 1,000,000 pieces); rounded up.
+const BUCKET_BYTES_PER_PIECE: usize = 12;
 
 /// A single block request (piece + byte range).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -151,9 +157,9 @@ pub struct PiecePicker {
     default_piece_length: u32,
     last_piece_length: u32,
     /// Pieces we still need.
-    wanted: Vec<bool>,
+    wanted: PieceFlags,
     /// Pieces eligible to request. Disabled pieces are skipped without being advertised as complete.
-    enabled: Vec<bool>,
+    enabled: PieceFlags,
     /// In-progress pieces (piece index → state).
     in_progress: std::collections::HashMap<usize, PieceState>,
     in_progress_bytes: usize,
@@ -162,7 +168,9 @@ pub struct PiecePicker {
     /// Keep this as packed flags rather than a `Vec<usize>`. A high-priority
     /// file can span every piece in a large torrent, and retaining one usize
     /// per piece would make a policy reload allocate hundreds of MiB.
-    priority: Vec<bool>,
+    priority: PieceFlags,
+    /// Number of set priority flags; zero lets `pick` skip the priority scan.
+    priority_count: usize,
     sequential: bool,
     sequential_start_piece: usize,
     pub availability: Availability,
@@ -175,17 +183,20 @@ pub struct PiecePicker {
 
 impl PiecePicker {
     /// Estimate the backing storage for the persistent per-torrent piece
-    /// index. The three `Vec<bool>` fields are bit-packed, while availability
-    /// stores one `u32` count per piece. Include allocator slack for the
-    /// independent vectors and picker bookkeeping so the engine can reserve
-    /// before constructing a large picker.
+    /// index, counting what the structures actually allocate: four packed
+    /// bitsets (`wanted`, `enabled`, `priority`, and availability's `retired`),
+    /// one `u32` availability count per piece, and the availability buckets.
+    /// The buckets are `BTreeSet<u32>` nodes (roughly a dozen bytes per piece
+    /// at the worst case where one peer has every piece), so they are budgeted
+    /// per piece rather than ignored. Includes slack for bookkeeping.
     pub fn memory_bytes_for_piece_count(piece_count: usize) -> usize {
         let bitset_bytes = piece_count
-            .div_ceil(usize::BITS as usize)
-            .saturating_mul(std::mem::size_of::<usize>());
+            .div_ceil(u64::BITS as usize)
+            .saturating_mul(std::mem::size_of::<u64>());
         bitset_bytes
-            .saturating_mul(3)
+            .saturating_mul(4)
             .saturating_add(piece_count.saturating_mul(std::mem::size_of::<u32>()))
+            .saturating_add(piece_count.saturating_mul(BUCKET_BYTES_PER_PIECE))
             .saturating_add(64 * 1024)
     }
 
@@ -194,11 +205,12 @@ impl PiecePicker {
             piece_count,
             default_piece_length,
             last_piece_length,
-            wanted: vec![true; piece_count],
-            enabled: vec![true; piece_count],
+            wanted: PieceFlags::new(piece_count, true),
+            enabled: PieceFlags::new(piece_count, true),
             in_progress: std::collections::HashMap::new(),
             in_progress_bytes: 0,
-            priority: vec![false; piece_count],
+            priority: PieceFlags::new(piece_count, false),
+            priority_count: 0,
             sequential: false,
             sequential_start_piece: 0,
             availability: Availability::new(piece_count),
@@ -235,9 +247,9 @@ impl PiecePicker {
     /// Mark a piece as already complete (from fastresume).
     pub fn mark_have(&mut self, piece: usize) {
         if piece < self.piece_count {
-            let old_wanted = self.wanted[piece];
-            let enabled = self.enabled[piece];
-            self.wanted[piece] = false;
+            let old_wanted = self.wanted.get(piece);
+            let enabled = self.enabled.get(piece);
+            self.wanted.set(piece, false);
             self.adjust_outstanding(piece, old_wanted, enabled, false, enabled);
             self.remove_in_progress(piece);
         }
@@ -246,9 +258,9 @@ impl PiecePicker {
     /// Mark a piece as needed again after verification failed.
     pub fn reject_piece(&mut self, piece: usize) {
         if piece < self.piece_count {
-            let old_wanted = self.wanted[piece];
-            let enabled = self.enabled[piece];
-            self.wanted[piece] = true;
+            let old_wanted = self.wanted.get(piece);
+            let enabled = self.enabled.get(piece);
+            self.wanted.set(piece, true);
             self.adjust_outstanding(piece, old_wanted, enabled, true, enabled);
             self.remove_in_progress(piece);
         }
@@ -256,9 +268,9 @@ impl PiecePicker {
 
     pub fn set_piece_enabled(&mut self, piece: usize, enabled: bool) {
         if piece < self.piece_count {
-            let wanted = self.wanted[piece];
-            let old_enabled = self.enabled[piece];
-            self.enabled[piece] = enabled;
+            let wanted = self.wanted.get(piece);
+            let old_enabled = self.enabled.get(piece);
+            self.enabled.set(piece, enabled);
             self.adjust_outstanding(piece, wanted, old_enabled, wanted, enabled);
             if !enabled {
                 self.remove_in_progress(piece);
@@ -269,8 +281,8 @@ impl PiecePicker {
     pub fn restore_partial_piece(&mut self, piece: usize, received_blocks: &[u32]) {
         if piece >= self.piece_count
             || received_blocks.is_empty()
-            || !self.wanted[piece]
-            || !self.enabled[piece]
+            || !self.wanted.get(piece)
+            || !self.enabled.get(piece)
             || self.in_progress.contains_key(&piece)
             || !self.can_admit_piece_state(self.piece_length_for(piece))
         {
@@ -300,12 +312,11 @@ impl PiecePicker {
     where
         I: IntoIterator<Item = usize>,
     {
-        let mut priority = vec![false; self.piece_count];
+        let mut priority = PieceFlags::new(self.piece_count, false);
         for piece in pieces {
-            if let Some(flag) = priority.get_mut(piece) {
-                *flag = true;
-            }
+            priority.set(piece, true);
         }
+        self.priority_count = priority.iter().filter(|set| *set).count();
         self.priority = priority;
     }
 
@@ -314,13 +325,14 @@ impl PiecePicker {
     /// file policy to a large torrent.
     pub fn set_priority_mask(&mut self, priority: Vec<bool>) {
         if priority.len() == self.piece_count {
-            self.priority = priority;
+            self.priority = PieceFlags::from_bools(&priority);
+            self.priority_count = priority.iter().filter(|set| **set).count();
         } else {
             self.priority.fill(false);
+            self.priority_count = 0;
         }
     }
 
-    /// Enable or disable sequential piece selection.
     pub fn set_sequential(&mut self, enabled: bool) {
         self.sequential = enabled;
     }
@@ -339,7 +351,7 @@ impl PiecePicker {
     }
 
     pub fn have_piece(&self, piece: usize) -> bool {
-        self.wanted.get(piece).is_some_and(|wanted| !*wanted)
+        piece < self.piece_count && !self.wanted.get(piece)
     }
 
     /// Pick the next block to request from a peer with given bitfield.
@@ -355,9 +367,9 @@ impl PiecePicker {
         }
 
         // Priority pieces first.
-        if let Some(piece) = (0..self.piece_count).find(|&piece| {
-            self.priority[piece] && self.piece_is_requestable(piece) && peer_has.has_piece(piece)
-        }) {
+        if let Some(piece) = self
+            .priority_piece(|piece| self.piece_is_requestable(piece) && peer_has.has_piece(piece))
+        {
             return self.pick_block_from(piece);
         }
 
@@ -383,9 +395,7 @@ impl PiecePicker {
     /// Pick from a source that is known to have every piece but is not counted
     /// in peer availability, such as a BEP19 webseed.
     pub fn pick_from_seed(&mut self) -> Option<BlockRequest> {
-        if let Some(piece) = (0..self.piece_count)
-            .find(|&piece| self.priority[piece] && self.piece_is_requestable(piece))
-        {
+        if let Some(piece) = self.priority_piece(|piece| self.piece_is_requestable(piece)) {
             return self.pick_block_from(piece);
         }
         if self.sequential {
@@ -429,10 +439,19 @@ impl PiecePicker {
         Some(state.block_request_for(piece, block_idx))
     }
 
+    /// First priority piece accepted by `accept`. With no priority flags set
+    /// (the default) this is O(1) instead of a scan of every piece.
+    fn priority_piece(&self, accept: impl Fn(usize) -> bool) -> Option<usize> {
+        if self.priority_count == 0 {
+            return None;
+        }
+        (0..self.piece_count).find(|&piece| self.priority.get(piece) && accept(piece))
+    }
+
     fn piece_is_requestable(&self, piece: usize) -> bool {
         piece < self.piece_count
-            && self.wanted[piece]
-            && self.enabled[piece]
+            && self.wanted.get(piece)
+            && self.enabled.get(piece)
             && self
                 .in_progress
                 .get(&piece)
@@ -461,8 +480,8 @@ impl PiecePicker {
     ) -> Option<usize> {
         let is_candidate = |piece: usize| {
             piece < self.piece_count
-                && self.wanted[piece]
-                && self.enabled[piece]
+                && self.wanted.get(piece)
+                && self.enabled.get(piece)
                 && peer_has.has_piece(piece)
                 && self.in_progress.get(&piece).is_some_and(|state| {
                     state
@@ -473,9 +492,7 @@ impl PiecePicker {
 
         // Preserve the old order's priority-first behavior without cloning
         // the complete priority vector.
-        if let Some(piece) =
-            (0..self.piece_count).find(|&piece| self.priority[piece] && is_candidate(piece))
-        {
+        if let Some(piece) = self.priority_piece(&is_candidate) {
             return Some(piece);
         }
 
@@ -485,24 +502,21 @@ impl PiecePicker {
                 .min(self.piece_count.saturating_sub(1));
             return (start..self.piece_count)
                 .chain(0..start)
-                .find(|&piece| is_candidate(piece) && !self.priority[piece]);
+                .find(|&piece| is_candidate(piece) && !self.priority.get(piece));
         }
 
         // Same bucket-walk as `rarest_requestable_piece`; see its doc comment.
         self.availability
-            .rarest_matching(|piece| !self.priority[piece] && is_candidate(piece))
+            .rarest_matching(|piece| !self.priority.get(piece) && is_candidate(piece))
     }
 
     fn endgame_active(&self) -> bool {
         if self.outstanding_wanted == 0 {
             return false;
         }
-        self.wanted
-            .iter()
-            .zip(self.enabled.iter())
-            .enumerate()
-            .filter(|(_, (wanted, enabled))| **wanted && **enabled)
-            .all(|(piece, _)| {
+        (0..self.piece_count)
+            .filter(|&piece| self.wanted.get(piece) && self.enabled.get(piece))
+            .all(|piece| {
                 self.in_progress
                     .get(&piece)
                     .and_then(PieceState::next_unrequested)
@@ -548,9 +562,9 @@ impl PiecePicker {
             state.mark_received(block_idx);
             if state.is_complete() {
                 self.remove_in_progress(piece);
-                let old_wanted = self.wanted[piece];
-                let enabled = self.enabled[piece];
-                self.wanted[piece] = false;
+                let old_wanted = self.wanted.get(piece);
+                let enabled = self.enabled.get(piece);
+                self.wanted.set(piece, false);
                 self.adjust_outstanding(piece, old_wanted, enabled, false, enabled);
                 return true;
             }
@@ -607,17 +621,14 @@ impl PiecePicker {
     }
 
     pub fn bytes_left(&self) -> u64 {
-        let mut left: u64 = self
-            .wanted
-            .iter()
-            .enumerate()
-            .filter(|&(piece, wanted)| *wanted && self.enabled[piece])
-            .map(|(piece, _)| self.piece_length_for(piece) as u64)
+        let mut left: u64 = (0..self.piece_count)
+            .filter(|&piece| self.wanted.get(piece) && self.enabled.get(piece))
+            .map(|piece| self.piece_length_for(piece) as u64)
             .sum();
         // Subtract bytes already received for in-progress pieces so progress
         // is visible before the first piece finishes hashing.
         for (&piece, state) in &self.in_progress {
-            if piece < self.piece_count && self.wanted[piece] && self.enabled[piece] {
+            if piece < self.piece_count && self.wanted.get(piece) && self.enabled.get(piece) {
                 let received_bytes = state
                     .received
                     .iter()
@@ -638,7 +649,7 @@ impl PiecePicker {
     }
 
     pub fn have_pieces(&self) -> Vec<bool> {
-        self.wanted.iter().map(|wanted| !*wanted).collect()
+        self.wanted.iter().map(|wanted| !wanted).collect()
     }
 
     pub fn partial_pieces(&self) -> Vec<(u32, Vec<u32>)> {
@@ -1220,5 +1231,35 @@ mod tests {
         assert_eq!(seen.len(), PIECE_COUNT);
         assert!(p.is_complete());
         assert!(p.pick(&peer_has_everything).is_none());
+    }
+
+    #[test]
+    fn memory_estimate_covers_the_real_constructed_footprint() {
+        // 1,000,000 pieces: packed flags (3 bitsets + availability's retired
+        // set) and u32 counts are about 4.6 MB; the old estimate was 4.44 MB
+        // against 8 MB actually requested, and ignored the buckets entirely.
+        let estimate = PiecePicker::memory_bytes_for_piece_count(1_000_000);
+        let packed_and_counts = 4 * 1_000_000usize.div_ceil(64) * 8 + 4 * 1_000_000;
+        assert!(estimate >= packed_and_counts + 11_618_752);
+    }
+
+    #[test]
+    fn picker_flags_are_packed_not_one_byte_per_piece() {
+        let picker = PiecePicker::new(1_000_000, 16 * 1024, 16 * 1024);
+        assert_eq!(picker.wanted.memory_bytes(), 125_000);
+        assert_eq!(picker.priority_count, 0);
+    }
+
+    #[test]
+    fn default_priority_never_scans_pieces() {
+        let mut picker = PiecePicker::new(8, 16 * 1024, 16 * 1024);
+        picker.availability.add_bitfield(&[0xFF]);
+        assert!(picker.priority_piece(|_| true).is_none());
+        picker.set_priority([5]);
+        assert_eq!(picker.priority_count, 1);
+        assert_eq!(picker.priority_piece(|_| true), Some(5));
+        picker.set_priority_mask(vec![false; 8]);
+        assert_eq!(picker.priority_count, 0);
+        assert!(picker.priority_piece(|_| true).is_none());
     }
 }

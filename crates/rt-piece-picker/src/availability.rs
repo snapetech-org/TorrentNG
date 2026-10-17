@@ -5,6 +5,8 @@
 /// nonzero bucket upward instead of re-scanning every piece on each pick.
 use std::collections::BTreeSet;
 
+use crate::flags::PieceFlags;
+
 #[derive(Debug, Clone)]
 pub struct Availability {
     /// counts[i] = number of peers that have piece i.
@@ -24,7 +26,7 @@ pub struct Availability {
     /// otherwise drift back toward an O(piece_count) walk. `count()` is
     /// unaffected: retiring a piece never changes the swarm-wide count it
     /// reports.
-    retired: Vec<bool>,
+    retired: PieceFlags,
 }
 
 impl Availability {
@@ -32,7 +34,7 @@ impl Availability {
         Availability {
             counts: vec![0; piece_count],
             buckets: Vec::new(),
-            retired: vec![false; piece_count],
+            retired: PieceFlags::new(piece_count, false),
         }
     }
 
@@ -63,7 +65,7 @@ impl Availability {
         let old = *c;
         let new = c.saturating_add(1);
         *c = new;
-        if new != old && !self.retired.get(piece).copied().unwrap_or(false) {
+        if new != old && !self.retired.get(piece) {
             Self::bucket_remove(&mut self.buckets, old, piece as u32);
             Self::bucket_insert(&mut self.buckets, new, piece as u32);
         }
@@ -77,7 +79,7 @@ impl Availability {
         let old = *c;
         let new = c.saturating_sub(1);
         *c = new;
-        if new != old && !self.retired.get(piece).copied().unwrap_or(false) {
+        if new != old && !self.retired.get(piece) {
             Self::bucket_remove(&mut self.buckets, old, piece as u32);
             Self::bucket_insert(&mut self.buckets, new, piece as u32);
         }
@@ -147,13 +149,10 @@ impl Availability {
     /// only bucket membership (and therefore `rarest_matching`/
     /// `rarest_first` visibility) is affected. Idempotent.
     pub(crate) fn retire(&mut self, piece: usize) {
-        let Some(flag) = self.retired.get_mut(piece) else {
-            return;
-        };
-        if *flag {
+        if piece >= self.retired.len() || self.retired.get(piece) {
             return;
         }
-        *flag = true;
+        self.retired.set(piece, true);
         let count = self.count(piece);
         Self::bucket_remove(&mut self.buckets, count, piece as u32);
     }
@@ -163,13 +162,10 @@ impl Availability {
     /// wanted again (e.g. a failed recheck, or re-enabling a file).
     /// Idempotent.
     pub(crate) fn reinstate(&mut self, piece: usize) {
-        let Some(flag) = self.retired.get_mut(piece) else {
-            return;
-        };
-        if !*flag {
+        if piece >= self.retired.len() || !self.retired.get(piece) {
             return;
         }
-        *flag = false;
+        self.retired.set(piece, false);
         let count = self.count(piece);
         Self::bucket_insert(&mut self.buckets, count, piece as u32);
     }

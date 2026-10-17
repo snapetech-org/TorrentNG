@@ -204,8 +204,8 @@ reproduced).
 | F11 | P1 | no token-ready wakeup for download pacing | SYS-003, NET-107 | G0 | fixed (SYS-003; deadline-driven, not per-peer polling) |
 | F12 | P1 | choker feedback/exploration | NET-111 | G2 | accepted |
 | F13 | P0 | memory pressure discards received data | NET-103 | G2 | accepted |
-| F14 | P0 | picker memory estimate wrong (`Vec<bool>`) | SYS-004, NET-109 | G0 | confirmed (source) |
-| F15 | P1 | picker scans all pieces before rarity buckets | NET-109 | G2 | accepted |
+| F14 | P0 | picker memory estimate wrong (`Vec<bool>`) | SYS-004, NET-109 | G0 | fixed (packed `PieceFlags`; estimate counts bitsets, counts and BTree buckets) |
+| F15 | P1 | picker scans all pieces before rarity buckets | NET-109 | G2 | partly fixed (default no-priority path is O(1); bucket `BTreeSet` allocation storm remains NET-109) |
 | F16 | P0/P1 | buffers lose coherent owner across boundaries | IO-003 | G1 | accepted |
 | F17 | P1 | shared file cache serialises metadata work | IO-004 | G1 | accepted |
 | F18 | P1 | default readahead 16 KiB → 512 KiB | IO-011 | G4 | accepted |
@@ -322,3 +322,4 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 2026-10-17 | SYS-003: F11 fixed. Policy change: code for all tasks first, bulk test pass at the end (owner request). Bulk-test backlog: full `rt-engine` suite on both TMPDIRs, clippy, `--release` webseed test. Known pre-existing load-flaky crash-safety tests (base commit also flakes). |
 | 2026-10-17 | F29 fixed: `StorageRuntime::initialized()`; `/metrics` no longer initialises the global runtime and exports `torrentng_storage_runtime_initialized`. Test deferred to bulk pass. |
 | 2026-10-17 | F35 fixed: `TrackerWorkerEvent::{Announce,Scrape}`; v2 uses `TrackerWorkers::announce_only()` (it never consumed scrape stats). Test `announce_result_is_not_held_back_by_a_stalled_scrape` written, run deferred to bulk pass. |
+| 2026-10-17 | F14 fixed, F15 partly: `rt-piece-picker` uses packed `PieceFlags` (also availability `retired`), `priority_count` skips the priority scan, and `memory_bytes_for_piece_count` now budgets bitsets + u32 counts + 12 B/piece buckets (about 16.6 B/piece, up from 4.4). Engine piece-index leases grow accordingly. |

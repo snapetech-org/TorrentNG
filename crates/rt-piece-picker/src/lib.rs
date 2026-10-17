@@ -1,4 +1,5 @@
 pub mod availability;
+mod flags;
 pub mod picker;
 
 pub use availability::Availability;
