@@ -191,8 +191,8 @@ reproduced).
 
 | ID | P | Finding | Tickets | Gate | Status |
 |---|---|---|---|---|---|
-| F01 | P0 | v2 multi-block completion uses block extent as piece extent | SYS-002, IO-002 | G0 | confirmed (source) |
-| F02 | P0 | v2 request window cannot fill within a piece | SYS-002, NET-104 | G0 | confirmed (source) |
+| F01 | P0 | v2 multi-block completion uses block extent as piece extent | SYS-002, IO-002 | G0 | fixed (SYS-002; typed block/piece extents still IO-002) |
+| F02 | P0 | v2 request window cannot fill within a piece | SYS-002, NET-104 | G0 | fixed locally (SYS-002; shared ledger is NET-104) |
 | F03 | P0 | v2 peers lack shared acquisition state | NET-104, NET-114 | G3 | accepted |
 | F04 | P0 | v1 actor awaits disk/hash/persistence | IO-008, NET-106 | G2 | accepted |
 | F05 | P1 | fixed 512 KiB v1 flight window | NET-108 | G2 | accepted |
@@ -235,11 +235,11 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 
 | Wave | Ticket | P | Work package | Prerequisites | Status | Evidence |
 |---|---|---|---|---|---|---|
-| 1 | SYS-001 | P0 | Pin the reference, capability matrix and shared ownership contracts | none | wip | this document |
+| 1 | SYS-001 | P0 | Pin the reference, capability matrix and shared ownership contracts | none | wip | this document pins the reference and ownership summary; the capability matrix and per-ticket spec template are still to write |
 | 2 | IO-001 | P0 | Define storage evidence contracts and deterministic fault harness | SYS-001 | todo | |
 | 2 | NET-101 | P0 | Define typed transfer coordinates and protocol geometry adapters | SYS-001 | todo | |
 | 2 | PERF-101 | P0 | Commit measurement contract and strict result schemas | SYS-001 | todo | |
-| 2 | SYS-002 | P0 | Land v2 reproductions and a reviewed extent correction | SYS-001 | wip | |
+| 2 | SYS-002 | P0 | Land v2 reproductions and a reviewed extent correction | SYS-001 | done | `torrent_task_v2::tests::v2_*` multi-block tests (5 completion cases x memory/spill, red without fix) + `v2_request_window_pipelines_every_block_of_a_piece` (red: 4 of 8 requests) |
 | 2 | SYS-003 | P0 | Repair immediate release-rate and negotiated-capability behavior | SYS-001 | todo | |
 | 2 | SYS-004 | P0 | Introduce compact identities and honest whole-owner metadata accounting | SYS-001 | todo | |
 | 2 | SYS-009 | P0 | Exercise the production database worker and coalesce progress | SYS-001 | todo | |
@@ -301,9 +301,9 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 
 ### Immediate sequence (G0)
 
-1. **SYS-002** — v2 reproductions + extent correction (this branch). The within-piece request-window regression (F02) is
-   landed as its own test and stays red until its fix lands, marked with its
-   ticket.
+1. **SYS-002** — done. v2 reproductions + extent correction + local
+   request-window repair. The window fix is a local loop repair only; the
+   authoritative shared ledger (F03) remains NET-104.
 2. **SYS-003** — release-rate and negotiated-capability repairs: webseed debit
    out of `debug_assert!` (F10) with a release-mode test, aggregate torrent
    upload cap (F09), explicit token-ready wakeup (F11), Fast lifecycle (F08;
@@ -316,3 +316,4 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | Date | Change |
 |---|---|
 | 2026-10-17 | Plan created from the audit; F01, F02, F10, F14 re-verified in source at local HEAD. |
+| 2026-10-17 | SYS-002 landed: v2 block vs piece extent split in `handle_v2_piece`, multi-block fixture (32 KiB pieces, sentinel payload), within-piece request pipelining. Note: the 5 `storage_jobs`/`update_save_path` move tests fail when `TMPDIR` is on the NFS scratch pool and pass on tmpfs (environmental, unrelated). |

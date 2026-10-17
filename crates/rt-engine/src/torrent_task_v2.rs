@@ -560,14 +560,17 @@ impl V2PieceAssembly {
         self.received_count == self.received.len()
     }
 
-    fn next_begin(&self) -> Option<u32> {
+    /// First block that is neither received nor already requested from this
+    /// peer, so a piece can have several blocks on the wire at once.
+    fn next_unrequested(&self, piece: u32, outstanding: &HashMap<(u32, u32), u32>) -> Option<u32> {
         self.received
             .iter()
-            .position(|received| !received)
-            .and_then(|index| {
-                u32::try_from(index)
-                    .ok()
-                    .and_then(|index| index.checked_mul(rt_peer_wire::message::MAX_BLOCK_SIZE))
+            .enumerate()
+            .find_map(|(index, received)| {
+                let begin = u32::try_from(index)
+                    .ok()?
+                    .checked_mul(rt_peer_wire::message::MAX_BLOCK_SIZE)?;
+                (!received && !outstanding.contains_key(&(piece, begin))).then_some(begin)
             })
     }
 }
@@ -3353,13 +3356,13 @@ async fn fill_v2_requests(
             if let Some(assembly) = assembly {
                 assemblies.insert(piece, assembly);
             }
-            let begin = assemblies
+            let Some(begin) = assemblies
                 .get(&piece)
-                .and_then(V2PieceAssembly::next_begin)
-                .ok_or_else(|| anyhow::anyhow!("v2 piece has no missing block"))?;
-            if outstanding.contains_key(&(piece, begin)) {
+                .and_then(|assembly| assembly.next_unrequested(piece, outstanding))
+            else {
+                // Every missing block is already on the wire; try the next piece.
                 continue;
-            }
+            };
             let length = context
                 .piece_map
                 .validate_request(piece, begin, rt_peer_wire::message::MAX_BLOCK_SIZE)
@@ -3414,9 +3417,16 @@ async fn handle_v2_piece(
     if expected != data.len() as u32 {
         anyhow::bail!("v2 piece response length does not match request");
     }
-    let region = context
+    // `block_region` is the extent of the requested block only; everything that
+    // acts on the whole piece (assembly size, read-back, hashing, persistence,
+    // progress) must use `region`, the complete piece extent.
+    let block_region = context
         .piece_map
         .validate_request(piece, begin, expected)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let region = context
+        .piece_map
+        .piece_to_file(piece)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     if let std::collections::hash_map::Entry::Vacant(entry) = assemblies.entry(piece) {
         entry.insert(V2PieceAssembly::new(
@@ -3442,12 +3452,12 @@ async fn handle_v2_piece(
         .acquire(u64::from(expected))
         .await;
     if !in_memory {
-        let path = region.path.resolve(&context.save_root);
+        let path = block_region.path.resolve(&context.save_root);
         scheduled_write(
             &context.storage,
             IoClass::PeerWrite,
             &path,
-            region.file_offset,
+            block_region.file_offset,
             data.clone(),
             true,
         )
@@ -4267,6 +4277,55 @@ mod tests {
         encode(&BValue::Dict(top))
     }
 
+    /// Single-file pure-v2 torrent with an explicit piece length. Piece layers
+    /// are emitted only when the file spans more than one piece. Use a
+    /// power-of-two piece count so the layer root needs no padding rules.
+    fn v2_raw_with_piece_length(content: &[u8], piece_length: usize) -> Vec<u8> {
+        use rt_bencode::{encode, BValue};
+        use rt_hash::{merkle_root, piece_layer_hash};
+        let layered = content.len() > piece_length;
+        let piece_layers: Vec<[u8; 32]> = content
+            .chunks(piece_length)
+            .map(|chunk| piece_layer_hash(chunk, piece_length).unwrap())
+            .collect();
+        let pieces_root = if layered {
+            merkle_root(&piece_layers)
+        } else {
+            merkle_root(&v2_leaf_hashes(content))
+        };
+        let mut layer_bytes = Vec::new();
+        for hash in &piece_layers {
+            layer_bytes.extend_from_slice(hash);
+        }
+        let leaf = BValue::Dict(vec![
+            (b"length".as_ref(), BValue::Int(content.len() as i64)),
+            (b"pieces root".as_ref(), BValue::Bytes(&pieces_root)),
+        ]);
+        let file_tree = BValue::Dict(vec![(
+            b"data.bin".as_ref(),
+            BValue::Dict(vec![(b"".as_ref(), leaf)]),
+        )]);
+        let mut info: Vec<(&[u8], BValue<'_>)> = vec![
+            (b"file tree", file_tree),
+            (b"meta version", BValue::Int(2)),
+            (b"name", BValue::Bytes(b"v2dir")),
+            (b"piece length", BValue::Int(piece_length as i64)),
+        ];
+        info.sort_by(|a, b| a.0.cmp(b.0));
+        let mut top: Vec<(&[u8], BValue<'_>)> = vec![
+            (b"announce", BValue::Bytes(b"http://tracker.example/v2")),
+            (b"info", BValue::Dict(info)),
+        ];
+        if layered {
+            top.push((
+                b"piece layers",
+                BValue::Dict(vec![(&pieces_root[..], BValue::Bytes(&layer_bytes))]),
+            ));
+        }
+        top.sort_by(|a, b| a.0.cmp(b.0));
+        encode(&BValue::Dict(top))
+    }
+
     struct V2Fixture {
         temp: tempfile::TempDir,
         registry: Arc<RwLock<SessionRegistry>>,
@@ -4274,8 +4333,25 @@ mod tests {
     }
 
     async fn v2_task(runtime: Arc<CrashSafetyRuntime>) -> (V2TorrentTask, V2Fixture) {
-        let temp = tempfile::tempdir().unwrap();
         let raw = v2_raw_with_content(&vec![0x5Au8; 32_768]);
+        let (task, fx) = v2_task_not_started(runtime, &raw, 32_768).await;
+        // Every piece is on disk and verified: the download just finished.
+        let mut have = V2Bitmap::new(task.piece_map.piece_count as usize);
+        for piece in 0..task.piece_map.piece_count as usize {
+            have.set(piece, true);
+        }
+        *task.local_have.write().await = Arc::new(have);
+        (task, fx)
+    }
+
+    /// A downloading task for `raw` with nothing yet on disk or in the bitmap.
+    async fn v2_task_not_started(
+        runtime: Arc<CrashSafetyRuntime>,
+        raw: &[u8],
+        total_length: u64,
+    ) -> (V2TorrentTask, V2Fixture) {
+        let temp = tempfile::tempdir().unwrap();
+        let raw = raw.to_vec();
         let rt_metainfo::TorrentMeta::V2(meta) = rt_metainfo::parse_torrent(&raw).unwrap() else {
             panic!("expected a pure-v2 torrent");
         };
@@ -4287,8 +4363,8 @@ mod tests {
             meta.name.clone(),
             temp.path().to_string_lossy().into_owned(),
         );
-        entry.total_length = 32_768;
-        entry.amount_left = 32_768;
+        entry.total_length = total_length;
+        entry.amount_left = total_length;
         entry.state = TorrentState::Downloading;
         rt_db::upsert(&conn, &crate::engine::row_from_v2_meta(&entry, &meta)).unwrap();
         let registry = Arc::new(RwLock::new(SessionRegistry::new()));
@@ -4318,12 +4394,6 @@ mod tests {
         )
         .await;
         task.attach_crash_safety(runtime);
-        // Every piece is on disk and verified: the download just finished.
-        let mut have = V2Bitmap::new(task.piece_map.piece_count as usize);
-        for piece in 0..task.piece_map.piece_count as usize {
-            have.set(piece, true);
-        }
-        *task.local_have.write().await = Arc::new(have);
         (
             task,
             V2Fixture {
@@ -4862,5 +4932,250 @@ mod tests {
         let (fresh, _fx) = v2_task(Arc::clone(&runtime)).await;
         fresh.report_v2_recheck(&have, "startup").await;
         assert_eq!(runtime.counters().integrity_regressions, 0);
+    }
+
+    // ---- multi-block pieces ------------------------------------------------
+    //
+    // The fixtures above use 16 KiB pieces, where every piece is one block and
+    // a block extent equals a piece extent. These use 32 KiB pieces so the two
+    // differ, with a sentinel-filled payload so a misplaced write is visible.
+
+    const MB_BLOCK: usize = 16_384;
+    const MB_PIECE: usize = 32_768;
+    const MB_SENTINEL: u8 = 0xEE;
+
+    /// Distinct bytes in every block, never equal to the sentinel run.
+    fn mb_content(len: usize) -> Vec<u8> {
+        (0..len)
+            .map(|i| {
+                let byte = ((i / MB_BLOCK) as u8)
+                    .wrapping_mul(31)
+                    .wrapping_add(i as u8);
+                if byte == MB_SENTINEL {
+                    0
+                } else {
+                    byte
+                }
+            })
+            .collect()
+    }
+
+    struct MultiBlock {
+        task: V2TorrentTask,
+        fx: V2Fixture,
+        content: Vec<u8>,
+    }
+
+    impl MultiBlock {
+        async fn new(len: usize, spill_to_disk: bool) -> Self {
+            let content = mb_content(len);
+            let raw = v2_raw_with_piece_length(&content, MB_PIECE);
+            let (mut task, fx) = v2_task_not_started(quiet_v2_runtime(), &raw, len as u64).await;
+            if spill_to_disk {
+                // A zero cap sends every block straight to the file.
+                task.assembly_cap_bytes = 0;
+            }
+            let path = task.meta.files[0].path.resolve(fx.temp.path());
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, vec![MB_SENTINEL; len]).unwrap();
+            Self { task, fx, content }
+        }
+
+        fn piece_len(&self, piece: usize) -> usize {
+            (self.content.len() - piece * MB_PIECE).min(MB_PIECE)
+        }
+
+        fn block(&self, piece: usize, block: usize) -> (u32, Bytes) {
+            let begin = block * MB_BLOCK;
+            let len = (self.piece_len(piece) - begin).min(MB_BLOCK);
+            let start = piece * MB_PIECE + begin;
+            (
+                begin as u32,
+                Bytes::copy_from_slice(&self.content[start..start + len]),
+            )
+        }
+
+        /// Deliver `order` (block indexes within `piece`) through the real
+        /// handler. Returns the peer state so progress can be checked.
+        async fn deliver(
+            &self,
+            piece: usize,
+            order: &[usize],
+        ) -> anyhow::Result<Arc<Mutex<V2PeerState>>> {
+            let context = self.task.peer_context("127.0.0.1:6881".parse().unwrap());
+            let state = Arc::new(Mutex::new(V2PeerState::new(
+                self.task.piece_map.piece_count as usize,
+            )));
+            let mut outstanding = HashMap::new();
+            let mut assemblies = HashMap::new();
+            for &block in order {
+                let (begin, data) = self.block(piece, block);
+                outstanding.insert((piece as u32, begin), data.len() as u32);
+            }
+            for &block in order {
+                let (begin, data) = self.block(piece, block);
+                handle_v2_piece(
+                    &context,
+                    &state,
+                    &mut outstanding,
+                    &mut assemblies,
+                    piece as u32,
+                    begin,
+                    data,
+                )
+                .await?;
+            }
+            Ok(state)
+        }
+
+        async fn have(&self, piece: usize) -> bool {
+            self.task.local_have.read().await.get(piece)
+        }
+
+        /// Bytes on disk equal the content for `done` pieces and are still
+        /// untouched sentinel everywhere else.
+        fn assert_payload(&self, done: &[usize]) {
+            let path = self.task.meta.files[0].path.resolve(self.fx.temp.path());
+            let disk = std::fs::read(path).unwrap();
+            assert_eq!(disk.len(), self.content.len());
+            for piece in 0..self.content.len().div_ceil(MB_PIECE) {
+                let range = piece * MB_PIECE..piece * MB_PIECE + self.piece_len(piece);
+                if done.contains(&piece) {
+                    assert!(
+                        disk[range.clone()] == self.content[range],
+                        "piece {piece} content"
+                    );
+                } else {
+                    assert!(
+                        disk[range].iter().all(|byte| *byte == MB_SENTINEL),
+                        "piece {piece} must be untouched"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Run one delivery order in both assembly modes and check every
+    /// observable of a completed piece.
+    async fn assert_multi_block_piece(len: usize, piece: usize, order: &[usize]) {
+        for spill_to_disk in [false, true] {
+            let mut case = MultiBlock::new(len, spill_to_disk).await;
+            let label = format!("len={len} piece={piece} order={order:?} spill={spill_to_disk}");
+            let state = case
+                .deliver(piece, order)
+                .await
+                .unwrap_or_else(|error| panic!("{label}: {error:#}"));
+            assert!(case.have(piece).await, "{label}: piece marked have");
+            for other in 0..len.div_ceil(MB_PIECE) {
+                if other != piece {
+                    assert!(!case.have(other).await, "{label}: piece {other} untouched");
+                }
+            }
+            case.assert_payload(&[piece]);
+            let piece_len = case.piece_len(piece) as u64;
+            assert_eq!(state.lock().unwrap().downloaded, piece_len, "{label}");
+            match case.task.events_rx.try_recv() {
+                Ok(V2PeerEvent::Downloaded { bytes, .. }) => {
+                    assert_eq!(bytes, piece_len, "{label}: whole-piece progress");
+                }
+                other => panic!("{label}: expected a Downloaded event, got {other:?}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn v2_two_block_piece_completes_in_order() {
+        assert_multi_block_piece(4 * MB_PIECE, 0, &[0, 1]).await;
+    }
+
+    #[tokio::test]
+    async fn v2_piece_at_nonzero_offset_writes_only_its_own_extent() {
+        assert_multi_block_piece(4 * MB_PIECE, 2, &[0, 1]).await;
+    }
+
+    #[tokio::test]
+    async fn v2_piece_completes_when_its_first_block_arrives_last() {
+        assert_multi_block_piece(4 * MB_PIECE, 1, &[1, 0]).await;
+    }
+
+    #[tokio::test]
+    async fn v2_short_final_piece_with_a_short_final_block_completes() {
+        // The last piece is 20,000 bytes: one full block and a 3,616-byte tail.
+        let len = 3 * MB_PIECE + 20_000;
+        assert_multi_block_piece(len, 3, &[0, 1]).await;
+        assert_multi_block_piece(len, 3, &[1, 0]).await;
+    }
+
+    #[tokio::test]
+    async fn v2_partial_piece_is_not_completed_or_counted() {
+        for spill_to_disk in [false, true] {
+            let mut case = MultiBlock::new(4 * MB_PIECE, spill_to_disk).await;
+            let state = case.deliver(1, &[0]).await.unwrap();
+            assert!(!case.have(1).await, "spill={spill_to_disk}");
+            assert_eq!(state.lock().unwrap().downloaded, 0);
+            assert!(case.task.events_rx.try_recv().is_err());
+            if spill_to_disk {
+                // Only the first block has landed, at its own offset.
+                let path = case.task.meta.files[0].path.resolve(case.fx.temp.path());
+                let disk = std::fs::read(path).unwrap();
+                assert_eq!(
+                    disk[MB_PIECE..MB_PIECE + MB_BLOCK],
+                    case.content[MB_PIECE..MB_PIECE + MB_BLOCK]
+                );
+                assert!(disk[MB_PIECE + MB_BLOCK..2 * MB_PIECE]
+                    .iter()
+                    .all(|byte| *byte == MB_SENTINEL));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn v2_request_window_pipelines_every_block_of_a_piece() {
+        // 4 pieces of 2 blocks each: a 32-request window must hold all 8
+        // blocks, not one per piece.
+        let content = mb_content(4 * MB_PIECE);
+        let raw = v2_raw_with_piece_length(&content, MB_PIECE);
+        let (task, _fx) = v2_task_not_started(quiet_v2_runtime(), &raw, content.len() as u64).await;
+        let context = task.peer_context("127.0.0.1:6881".parse().unwrap());
+        let piece_count = task.piece_map.piece_count as usize;
+        let mut remote = V2Bitmap::new(piece_count);
+        for piece in 0..piece_count {
+            remote.set(piece, true);
+        }
+        let mut peer = V2PeerState::new(piece_count);
+        peer.remote_have = Arc::new(remote);
+        peer.choked = false;
+        let state = Arc::new(Mutex::new(peer));
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap());
+        let (client, accepted) = tokio::join!(client, listener.accept());
+        let _server = accepted.unwrap();
+        let mut framed = PeerIo::Tcp(Framed::with_capacity(
+            client.unwrap(),
+            PeerCodec::with_resources(context.resources.clone()),
+            1,
+        ));
+
+        let mut outstanding = HashMap::new();
+        let mut assemblies = HashMap::new();
+        fill_v2_requests(
+            &context,
+            &mut framed,
+            &state,
+            &mut outstanding,
+            &mut assemblies,
+        )
+        .await
+        .unwrap();
+        assert_eq!(outstanding.len(), 8, "{outstanding:?}");
+        for piece in 0..piece_count as u32 {
+            for begin in [0, MB_BLOCK as u32] {
+                assert!(
+                    outstanding.contains_key(&(piece, begin)),
+                    "({piece},{begin})"
+                );
+            }
+        }
     }
 }
