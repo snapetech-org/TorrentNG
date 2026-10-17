@@ -1,0 +1,20 @@
+name: TorrentNG offline fork PR checks
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  unit-tests:
+    name: Offline security and release-note unit tests
+    if: github.event_name == 'pull_request' && github.event.pull_request.base.repo.full_name == 'snapetech-org/TorrentNG'
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true && fromJSON('["self-hosted", "linux", "x64", "public-pr-torrentng"]') || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run offline policy unit tests
+        run: python3 -m unittest scripts.test_protected_target scripts.test_release_notes scripts.test_backend_burndown_api_load
+
