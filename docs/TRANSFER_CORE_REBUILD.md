@@ -208,7 +208,7 @@ reproduced).
 | F15 | P1 | picker scans all pieces before rarity buckets | NET-109 | G2 | partly fixed (default no-priority path is O(1); bucket `BTreeSet` allocation storm remains NET-109) |
 | F16 | P0/P1 | buffers lose coherent owner across boundaries | IO-003 | G1 | accepted |
 | F17 | P1 | shared file cache serialises metadata work | IO-004 | G1 | accepted |
-| F18 | P1 | default readahead 16 KiB → 512 KiB | IO-011 | G4 | accepted |
+| F18 | P1 | default readahead 16 KiB → 512 KiB | IO-011 | G4 | partly fixed (readahead expands only a stream that continues the previous read of that file; reuse-driven sizing and pre-reserved speculative capacity remain IO-011) |
 | F19 | P0 | torrent flush syncs unrelated writable files | IO-009 | G4 | partly fixed (barrier covers only this scheduler's dirty files, marked at write issue; exact file fences/sequence watermarks remain IO-009) |
 | F20 | P1 | io_uring worker is a batch barrier | IO-015 | G6 | accepted |
 | F21 | P0 | cancellation may release admission/dirty evidence early (moderate confidence) | IO-005 | G1 | accepted |
@@ -328,3 +328,5 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 2026-10-17 | F19 partly: `sync_all_open_files` no longer unions the shared pool's writable files; `write_at` marks dirty at issue (also narrows F21's lost-dirty window). Test `checkpoint_sync_covers_only_this_schedulers_files` run deferred. |
 | 2026-10-17 | F06 partly: removed the per-peer requests-per-10-seconds ceiling; admission is the bounded request queue + pending-read cap. |
 | 2026-10-17 | F08 (v1): `UploadContext.fast_negotiated`; rejected requests while choked / piece not held / queue saturated / read failed / choke transition; rate-wait interruptions requeue instead of dropping. Aborting in-flight reads on choke is skipped for Fast peers so their result can be rejected. Test `fast_peer_request_while_choked_is_rejected_not_dropped`. Chose real Reject semantics over the stop-advertising interim. |
+| 2026-10-17 | F18 partly: `PeerReadStreams` gates readahead on sequential continuation. Test `readahead_expands_only_continuing_streams`; existing readahead cache tests may need a sequential first read (check in bulk pass). |
+| 2026-10-17 | F18: gate is runtime-toggleable (`[storage] peer_read_readahead_sequential_only`, default true; documented in CONFIGURATION.md). Existing readahead cache scheduler tests set it to false to keep their expansion semantics. `cargo check --workspace --all-targets` is clean. |

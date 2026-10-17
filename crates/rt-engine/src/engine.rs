@@ -1245,6 +1245,7 @@ fn storage_io_config_from_config(config: &Config) -> StorageIoConfig {
             rt_config::StorageDurabilityMode::Strict => DurabilityMode::Strict,
         },
         peer_read_readahead_bytes: config.storage.peer_read_readahead_bytes,
+        peer_read_readahead_sequential_only: config.storage.peer_read_readahead_sequential_only,
         peer_read_cache_entries: config.storage.peer_read_cache_entries,
         peer_read_elevator_budget_ms: if config.storage.device_elevator_enabled {
             config.storage.peer_read_elevator_budget_ms

@@ -116,6 +116,9 @@ pub struct StorageIoConfig {
     pub preallocation_mode: PreallocationMode,
     pub durability_mode: DurabilityMode,
     pub peer_read_readahead_bytes: usize,
+    /// Expand readahead only for reads that continue the previous read of the
+    /// same file. Off restores unconditional expansion on every miss.
+    pub peer_read_readahead_sequential_only: bool,
     pub peer_read_cache_entries: usize,
     pub peer_read_elevator_budget_ms: u64,
 }
@@ -132,6 +135,7 @@ impl Default for StorageIoConfig {
             preallocation_mode: PreallocationMode::Auto,
             durability_mode: DurabilityMode::Checkpoint,
             peer_read_readahead_bytes: 512 * 1024,
+            peer_read_readahead_sequential_only: true,
             peer_read_cache_entries: 64,
             peer_read_elevator_budget_ms: 25,
         }
@@ -898,6 +902,32 @@ fn local_scheduler_resources(io_config: &StorageIoConfig) -> Arc<SharedScheduler
     create_scheduler_resources(shared_scheduler_key(io_config))
 }
 
+/// Bounded record of where each recently read file's next sequential read
+/// would begin.
+#[derive(Debug, Default)]
+struct PeerReadStreams {
+    next_offset: HashMap<PathBuf, u64>,
+}
+
+impl PeerReadStreams {
+    const MAX_TRACKED_FILES: usize = 1024;
+
+    /// Record a read and report whether it continued the previous one.
+    fn observe(&mut self, key: &Path, offset: u64, len: usize) -> bool {
+        let end = offset.saturating_add(len as u64);
+        if let Some(next) = self.next_offset.get_mut(key) {
+            let sequential = *next == offset;
+            *next = end;
+            return sequential;
+        }
+        if self.next_offset.len() >= Self::MAX_TRACKED_FILES {
+            self.next_offset.clear();
+        }
+        self.next_offset.insert(key.to_path_buf(), end);
+        false
+    }
+}
+
 fn mark_dirty_path(
     dirty_paths: &Mutex<HashMap<PathBuf, u64>>,
     dirty_path_generation: &AtomicU64,
@@ -945,6 +975,9 @@ pub struct MountScheduler {
     dirty_path_generation: Arc<AtomicU64>,
     peer_read_cache: Arc<Mutex<HashMap<PathBuf, PeerReadCacheEntry>>>,
     peer_read_cache_epoch: Arc<AtomicU64>,
+    /// Where each recently read file's next sequential read would start, so
+    /// readahead only expands streams that actually continue.
+    peer_read_streams: Arc<Mutex<PeerReadStreams>>,
     peer_read_elevator: Arc<Mutex<Option<PeerReadElevator>>>,
     peer_read_limit: usize,
     recheck_limit: usize,
@@ -1767,6 +1800,7 @@ impl MountScheduler {
             dirty_path_generation: Arc::new(AtomicU64::new(0)),
             peer_read_cache: Arc::new(Mutex::new(HashMap::new())),
             peer_read_cache_epoch: Arc::new(AtomicU64::new(0)),
+            peer_read_streams: Arc::new(Mutex::new(PeerReadStreams::default())),
             peer_read_elevator,
             peer_read_limit,
             recheck_limit,
@@ -2052,8 +2086,10 @@ impl MountScheduler {
         let counters = self.counters.clone();
         let peer_read_cache = self.peer_read_cache.clone();
         let peer_read_cache_epoch = self.peer_read_cache_epoch.clone();
+        let peer_read_streams = self.peer_read_streams.clone();
         let peer_read_elevator = self.peer_read_elevator();
         let readahead_bytes = self.io_config.peer_read_readahead_bytes;
+        let sequential_only = self.io_config.peer_read_readahead_sequential_only;
         let readahead_cache_entries = self.io_config.peer_read_cache_entries;
         let path = path.to_path_buf();
         let started = Instant::now();
@@ -2089,6 +2125,7 @@ impl MountScheduler {
                     if let Some(bytes) =
                         peer_read_cache_hit(&preparation_peer_read_cache, &key, &file, offset, len)
                     {
+                        lock_recover(&peer_read_streams).observe(&key, offset, len);
                         preparation_counters
                             .peer_read_cache_hits
                             .fetch_add(1, Ordering::Relaxed);
@@ -2117,7 +2154,11 @@ impl MountScheduler {
                         .metadata()
                         .map_err(|e| StorageError::io(&path_str, e))?
                         .len();
-                    if offset >= file_len {
+                    // Expand only a stream that continues the previous read of
+                    // this file. An isolated 16 KiB request stays 16 KiB
+                    // instead of fetching 512 KiB it will never reuse.
+                    let sequential = lock_recover(&peer_read_streams).observe(&key, offset, len);
+                    if offset >= file_len || (sequential_only && !sequential) {
                         len
                     } else {
                         readahead_bytes
@@ -4585,6 +4626,7 @@ mod tests {
                 profile: StorageProfile::Hdd,
                 storage_io: StorageIoConfig {
                     peer_read_readahead_bytes: 16,
+                    peer_read_readahead_sequential_only: false,
                     ..Default::default()
                 },
                 ..Default::default()
@@ -4634,6 +4676,7 @@ mod tests {
                 resources: Some(resources.clone()),
                 storage_io: StorageIoConfig {
                     peer_read_readahead_bytes: 2048,
+                    peer_read_readahead_sequential_only: false,
                     ..Default::default()
                 },
                 ..Default::default()
@@ -4664,6 +4707,7 @@ mod tests {
                 profile: StorageProfile::Hdd,
                 storage_io: StorageIoConfig {
                     peer_read_readahead_bytes: 8,
+                    peer_read_readahead_sequential_only: false,
                     ..Default::default()
                 },
                 ..Default::default()
@@ -4746,6 +4790,7 @@ mod tests {
                 profile: StorageProfile::Hdd,
                 storage_io: StorageIoConfig {
                     peer_read_readahead_bytes: 8,
+                    peer_read_readahead_sequential_only: false,
                     ..Default::default()
                 },
                 ..Default::default()
@@ -4780,6 +4825,7 @@ mod tests {
                 profile: StorageProfile::Hdd,
                 storage_io: StorageIoConfig {
                     peer_read_readahead_bytes: 16,
+                    peer_read_readahead_sequential_only: false,
                     peer_read_cache_entries: 1,
                     ..Default::default()
                 },
@@ -4820,6 +4866,7 @@ mod tests {
                 profile: StorageProfile::Hdd,
                 storage_io: StorageIoConfig {
                     peer_read_readahead_bytes: 16,
+                    peer_read_readahead_sequential_only: false,
                     peer_read_cache_entries: 0,
                     ..Default::default()
                 },
@@ -5105,5 +5152,21 @@ mod tests {
         );
         a.sync_all_open_files().await.unwrap();
         assert_eq!(a.stats().dirty_files, 0);
+    }
+
+    #[test]
+    fn readahead_expands_only_continuing_streams() {
+        let mut streams = PeerReadStreams::default();
+        let file = Path::new("/payload/a.bin");
+        assert!(!streams.observe(file, 0, 16_384), "first read is exact");
+        assert!(
+            streams.observe(file, 16_384, 16_384),
+            "continuation expands"
+        );
+        assert!(!streams.observe(file, 1_048_576, 16_384), "a jump is exact");
+        assert!(
+            !streams.observe(Path::new("/payload/b.bin"), 16_384, 16_384),
+            "another file starts fresh"
+        );
     }
 }

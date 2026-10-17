@@ -123,6 +123,10 @@ pub struct StorageConfig {
     pub preallocation_mode: StoragePreallocationMode,
     pub durability_mode: StorageDurabilityMode,
     pub peer_read_readahead_bytes: usize,
+    /// Expand readahead only for reads that continue the previous read of the
+    /// same file, so isolated block reads are not amplified. `false` restores
+    /// unconditional expansion.
+    pub peer_read_readahead_sequential_only: bool,
     /// Bounded peer-read readahead cache entries per torrent scheduler.
     pub peer_read_cache_entries: usize,
     pub peer_read_elevator_budget_ms: u64,
@@ -569,6 +573,7 @@ impl Default for StorageConfig {
             preallocation_mode: StoragePreallocationMode::Auto,
             durability_mode: StorageDurabilityMode::Checkpoint,
             peer_read_readahead_bytes: 512 * 1024,
+            peer_read_readahead_sequential_only: true,
             peer_read_cache_entries: 64,
             peer_read_elevator_budget_ms: 25,
         }
