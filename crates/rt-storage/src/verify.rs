@@ -270,6 +270,9 @@ pub struct V2FileVerifier<'a> {
 
 impl<'a> V2FileVerifier<'a> {
     pub const LEAF_SIZE: usize = 16 * 1024;
+    /// Leaves read and hashed per round trip (1 MiB). The sparse-extent probe,
+    /// read and hash job are each issued once per chunk instead of per leaf.
+    pub const CHUNK_LEAVES: usize = 64;
 
     pub fn new(
         storage_root: &'a Path,
@@ -338,10 +341,13 @@ impl<'a> V2FileVerifier<'a> {
         }
         let mut accumulator = MerkleAccumulator::new();
         let mut offset = 0u64;
+        let chunk_bytes = (Self::LEAF_SIZE * Self::CHUNK_LEAVES) as u64;
         while offset < file.length {
-            let len = (file.length - offset).min(Self::LEAF_SIZE as u64) as usize;
+            let len = (file.length - offset).min(chunk_bytes) as usize;
             let data = read_sparse_range(self.scheduler, &path, offset, len as u64).await?;
-            accumulator.push(recheck_hash_v2_leaf(self.scheduler, &data).await?);
+            for leaf in recheck_hash_v2_leaves(self.scheduler, &data, Self::LEAF_SIZE).await? {
+                accumulator.push(leaf);
+            }
             offset += len as u64;
         }
         if file.length == 0 {
@@ -418,6 +424,25 @@ async fn recheck_hash_sha1_update(
     loop {
         match scheduler.hash_sha1_update(hasher, data.clone()).await {
             Ok(updated) => return Ok(updated),
+            Err(error @ StorageError::QueueFull { .. }) => {
+                if !retry_recheck_queue_full(&mut attempts).await {
+                    return Err(error);
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+async fn recheck_hash_v2_leaves(
+    scheduler: &MountScheduler,
+    data: &bytes::Bytes,
+    leaf_size: usize,
+) -> Result<Vec<[u8; 32]>, StorageError> {
+    let mut attempts = 0;
+    loop {
+        match scheduler.hash_v2_leaves(data.clone(), leaf_size).await {
+            Ok(hashes) => return Ok(hashes),
             Err(error @ StorageError::QueueFull { .. }) => {
                 if !retry_recheck_queue_full(&mut attempts).await {
                     return Err(error);
@@ -817,6 +842,31 @@ mod tests {
             verifier.verify_all().await,
             vec![(file.file_index, VerifyResult::Valid)]
         );
+    }
+
+    #[tokio::test]
+    async fn v2_file_verify_batches_leaf_hashing_per_chunk() {
+        let dir = tempfile::tempdir().unwrap();
+        // 130 leaves: two full 64-leaf chunks plus a 2-leaf tail.
+        let leaves = V2FileVerifier::CHUNK_LEAVES * 2 + 2;
+        let content: Vec<u8> = (0..leaves * V2FileVerifier::LEAF_SIZE)
+            .map(|idx| (idx % 251) as u8)
+            .collect();
+        std::fs::write(dir.path().join("chunked.bin"), &content).unwrap();
+        let file = V2FileHash {
+            file_index: 0,
+            path: SafeRelPath::from_name("chunked.bin", false).unwrap(),
+            length: content.len() as u64,
+            pieces_root: Some(v2_file_root(&content)),
+        };
+        let sched = ssd_scheduler();
+        let before = sched.stats().hash_ops;
+        let verifier = V2FileVerifier::new(dir.path(), &sched, std::slice::from_ref(&file));
+
+        assert_eq!(verifier.verify_file(&file).await, VerifyResult::Valid);
+        let jobs = sched.stats().hash_ops - before;
+        // Three leaf-batch jobs plus the root job, not 130 per-leaf jobs.
+        assert!(jobs <= 5, "expected batched hashing, saw {jobs} hash jobs");
     }
 
     #[tokio::test]

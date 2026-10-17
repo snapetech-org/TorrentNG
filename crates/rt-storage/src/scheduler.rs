@@ -2819,6 +2819,44 @@ impl MountScheduler {
         result
     }
 
+    /// Hash `data` as consecutive `leaf_size` BEP 52 leaves in one hash-pool
+    /// job. A recheck used to submit one job per 16 KiB leaf (65,536 per GiB);
+    /// batching amortises the queueing and wakeup cost over a whole chunk.
+    pub async fn hash_v2_leaves(
+        &self,
+        data: bytes::Bytes,
+        leaf_size: usize,
+    ) -> Result<Vec<[u8; 32]>, StorageError> {
+        let counters = self.counters.clone();
+        let started = Instant::now();
+        let queued_bytes = QueuedDiskBytes::reserve(
+            counters.clone(),
+            self.resources.as_ref(),
+            data.len() as u64,
+            "rt-storage-hash",
+        )?;
+        let result = self
+            .hash_pool
+            .run(move || {
+                let _queued_bytes = queued_bytes;
+                counters.hash_ops.fetch_add(1, Ordering::Relaxed);
+                let latency_ns = latency_ns_since(started);
+                counters
+                    .hash_latency_ns
+                    .fetch_add(latency_ns, Ordering::Relaxed);
+                record_latency_bucket(&counters.hash_latency_buckets, latency_ns);
+                Ok(data
+                    .chunks(leaf_size.max(1))
+                    .map(|leaf| BlockHash::of(leaf).0)
+                    .collect())
+            })
+            .await;
+        if matches!(result, Err(StorageError::QueueFull { .. })) {
+            self.counters.queue_full.fetch_add(1, Ordering::Relaxed);
+        }
+        result
+    }
+
     pub async fn hash_v2_root(&self, leaves: Vec<[u8; 32]>) -> Result<[u8; 32], StorageError> {
         let counters = self.counters.clone();
         let started = Instant::now();
