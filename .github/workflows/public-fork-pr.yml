@@ -1,6 +1,8 @@
 name: TorrentNG fork PR validation
 on:
   pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
 permissions:
   contents: read
 concurrency:
@@ -9,8 +11,7 @@ concurrency:
 jobs:
   validate:
     name: Run disposable fork validation
-    if: github.event.pull_request.head.repo.fork == true
+    if: github.event.pull_request.head.repo.fork == true && github.event.pull_request.base.repo.full_name == 'snapetech-org/TorrentNG' && github.event.pull_request.base.ref == 'main'
     permissions:
       contents: read
-    uses: snapetech-org/TorrentNG/.github/workflows/fork-safe-validation.yml@refs/heads/main
-
+    uses: snapetech-org/TorrentNG/.github/workflows/fork-safe-validation.yml@4f9f9c53fcf43a09a6a6985bcc8cddbdc6cd8bfe
