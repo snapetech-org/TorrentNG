@@ -217,7 +217,7 @@ reproduced).
 | F24 | P0/P1 | v2 proof serving rereads file; 64 MiB ceiling | IO-013 | G3 | accepted |
 | F25 | P1 | secure copy re-verifies leaves per ancestor | IO-014 | G4 | accepted |
 | F26 | P1 | one row change rebuilds a deep-cloned registry vector | SYS-005, SYS-006 | G5 | accepted |
-| F27 | P1 | dormant estimates incomplete; quadratic timer cancel | SYS-004, SYS-008 | G5 | accepted |
+| F27 | P1 | dormant estimates incomplete; quadratic timer cancel | SYS-004, SYS-008 | G5 | timer half fixed (lazy deletion + compaction); dormant-estimate half remains SYS-004 |
 | F28 | P1 | every engine command scans all task handles | SYS-007 | G5 | accepted |
 | F29 | P0 | metrics scrape builds a shadow storage runtime | SYS-011, PERF-108 | G0 | fixed (scrape uses `StorageRuntime::initialized()`; owner-specific metrics still SYS-011) |
 | F30 | P1 | engine unit tests bypass production DB worker | SYS-009 | G0 | accepted |
@@ -323,3 +323,4 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 2026-10-17 | F29 fixed: `StorageRuntime::initialized()`; `/metrics` no longer initialises the global runtime and exports `torrentng_storage_runtime_initialized`. Test deferred to bulk pass. |
 | 2026-10-17 | F35 fixed: `TrackerWorkerEvent::{Announce,Scrape}`; v2 uses `TrackerWorkers::announce_only()` (it never consumed scrape stats). Test `announce_result_is_not_held_back_by_a_stalled_scrape` written, run deferred to bulk pass. |
 | 2026-10-17 | F14 fixed, F15 partly: `rt-piece-picker` uses packed `PieceFlags` (also availability `retired`), `priority_count` skips the priority scan, and `memory_bytes_for_piece_count` now budgets bitsets + u32 counts + 12 B/piece buckets (about 16.6 B/piece, up from 4.4). Engine piece-index leases grow accordingly. |
+| 2026-10-17 | F27 timer half: `ActivityTimerWheel::cancel` is O(1) with a stale counter and compaction; test `cancelling_a_large_cohort_with_one_deadline_is_linear_and_bounded`. |

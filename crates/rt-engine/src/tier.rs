@@ -493,10 +493,17 @@ impl TierScaleSnapshot {
     }
 }
 
+/// Stale entries tolerated before compaction even when few are live.
+const STALE_COMPACT_FLOOR: usize = 1024;
+
 #[derive(Debug, Clone)]
 pub struct ActivityTimerWheel<K> {
     deadlines: BTreeMap<Instant, VecDeque<K>>,
     scheduled: HashMap<K, Instant>,
+    /// Entries left in `deadlines` by `cancel`/reschedule that no longer match
+    /// `scheduled`. They are skipped when popped and compacted away once they
+    /// outnumber live entries, so cancelling is O(1).
+    stale: usize,
 }
 
 impl<K> Default for ActivityTimerWheel<K>
@@ -507,6 +514,7 @@ where
         Self {
             deadlines: BTreeMap::new(),
             scheduled: HashMap::new(),
+            stale: 0,
         }
     }
 }
@@ -533,23 +541,36 @@ where
     }
 
     pub fn cancel(&mut self, key: &K) -> bool {
-        let Some(deadline) = self.scheduled.remove(key) else {
+        if self.scheduled.remove(key).is_none() {
             return false;
-        };
-        if let Some(keys) = self.deadlines.get_mut(&deadline) {
-            // `schedule` is called repeatedly while an active torrent is
-            // being polled. Removing only the reverse index leaves every old
-            // deadline vector in the BTreeMap until it expires, which turns a
-            // hot-set timer wheel into a delayed allocation leak.
-            keys.retain(|candidate| candidate != key);
-            if keys.is_empty() {
-                self.deadlines.remove(&deadline);
-            }
+        }
+        // Do not search the deadline's queue for the key. With N entries
+        // sharing one deadline, retaining across the queue per cancel made
+        // cancelling all of them quadratic (about five billion comparisons at
+        // 100,000 entries). Leave the old entry behind: `pop_due_limited`
+        // ignores entries that no longer match `scheduled`, and `compact`
+        // bounds how many can accumulate.
+        self.stale += 1;
+        if self.stale > self.scheduled.len().max(STALE_COMPACT_FLOOR) {
+            self.compact();
         }
         true
     }
 
+    fn compact(&mut self) {
+        let scheduled = &self.scheduled;
+        self.deadlines.retain(|deadline, keys| {
+            keys.retain(|key| scheduled.get(key) == Some(deadline));
+            !keys.is_empty()
+        });
+        self.stale = 0;
+    }
+
     pub fn next_deadline(&self) -> Option<Instant> {
+        if self.scheduled.is_empty() {
+            // Only stale entries (if any) remain; there is nothing to wake for.
+            return None;
+        }
         self.deadlines.keys().next().copied()
     }
 
@@ -590,6 +611,8 @@ where
             if self.scheduled.get(&key).copied() == Some(deadline) {
                 self.scheduled.remove(&key);
                 due.push(key);
+            } else {
+                self.stale = self.stale.saturating_sub(1);
             }
         }
         due
@@ -1017,5 +1040,27 @@ mod tests {
         assert!(wheel.cancel(&key));
         assert!(wheel.is_empty());
         assert!(wheel.deadlines.is_empty());
+    }
+
+    #[test]
+    fn cancelling_a_large_cohort_with_one_deadline_is_linear_and_bounded() {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut wheel = ActivityTimerWheel::default();
+        for key in 0..100_000u32 {
+            wheel.schedule(key, deadline);
+        }
+        let started = Instant::now();
+        for key in 0..99_990u32 {
+            assert!(wheel.cancel(&key));
+        }
+        // Quadratic retain would take minutes here; lazy deletion is instant.
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(wheel.len(), 10);
+        // Compaction keeps the stale backlog from outliving the cohort.
+        assert!(wheel.stale <= STALE_COMPACT_FLOOR.max(wheel.len()));
+        let due = wheel.pop_due(deadline);
+        assert_eq!(due.len(), 10);
+        assert!(wheel.is_empty());
+        assert!(wheel.next_deadline().is_none());
     }
 }
