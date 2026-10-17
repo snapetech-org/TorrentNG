@@ -79,6 +79,8 @@ Supported features vary by client; the compatibility guides list the limits.
   storage and memory gaps that still need implementation or hardware evidence.
 - [ENGINE_REWRITE_BURNDOWN.md](ENGINE_REWRITE_BURNDOWN.md) - implementation
   checklist for the TorrentNG client rewrite.
+- [TRANSFER_CORE_REBUILD.md](TRANSFER_CORE_REBUILD.md) - active plan and
+  tracker for the audited transfer-core rebuild (findings, gates, 63 tickets).
 
 ## Performance And Test Evidence
 
