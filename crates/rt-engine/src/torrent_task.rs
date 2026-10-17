@@ -102,13 +102,11 @@ fn lock_prepared_files(files: &Mutex<HashSet<u32>>) -> MutexGuard<'_, HashSet<u3
 }
 const PEER_UPLOAD_READ_TIMEOUT: Duration = Duration::from_secs(30);
 const PEER_SOCKET_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
-const PEER_UPLOAD_REQUEST_WINDOW: Duration = Duration::from_secs(10);
-// A normal client can issue one request per 16 KiB block. The previous 256
-// request limit disconnected a healthy peer halfway through a 16 MiB
-// transfer; keep the guard, but make it large enough for the 64 MiB local
-// compatibility fixture and treat excess requests as bounded drops rather
-// than a connection-fatal protocol error.
-const MAX_PEER_UPLOAD_REQUESTS_PER_WINDOW: u32 = 4_096;
+// Upload demand is bounded by the request queue and the pending-read cap
+// below, with response bytes metered by the torrent and global upload
+// buckets. There is deliberately no requests-per-interval ceiling: a count
+// derived from a 64 MiB test fixture capped a continuously used connection at
+// about 6.4 MiB/s and silently dropped valid requests beyond it.
 const MAX_PENDING_UPLOAD_READS: usize = 16;
 // A 64 MiB fixture at the protocol's 16 KiB block size is 4,096 requests.
 // Requests are only small coordinates; the response data remains bounded by
@@ -6775,8 +6773,6 @@ async fn run_peer_loop(
     let mut upload_choked = true;
     let mut timeout_tick = interval(Duration::from_secs(5));
     let mut last_activity = Instant::now();
-    let mut request_window_started = Instant::now();
-    let mut upload_requests_in_window = 0u32;
     // Disk reads are scheduled through the bounded mount scheduler, but the
     // peer loop must not await one read inline: a slow device otherwise
     // prevents it from processing choke/shutdown/input messages. The loop
@@ -7184,28 +7180,6 @@ async fn run_peer_loop(
                         }
                     }
                     Message::Request { piece, begin, length } => {
-                        let now = Instant::now();
-                        if now.duration_since(request_window_started) >= PEER_UPLOAD_REQUEST_WINDOW {
-                            request_window_started = now;
-                            upload_requests_in_window = 0;
-                        }
-                        upload_requests_in_window = upload_requests_in_window.saturating_add(1);
-                        if upload_requests_in_window > MAX_PEER_UPLOAD_REQUESTS_PER_WINDOW {
-                            upload_request_drops = upload_request_drops.saturating_add(1);
-                            if upload_request_drops == 1 || upload_request_drops.is_multiple_of(256)
-                            {
-                                debug!(
-                                    component = "peer",
-                                    operation = "queue_upload_request",
-                                    peer = %addr,
-                                    result = "dropped",
-                                    reason = "request_rate_limit",
-                                    dropped = upload_request_drops,
-                                    "dropping excess upload requests without terminating peer"
-                                );
-                            }
-                            continue;
-                        }
                         if upload_choked || !upload.have_pieces.get(piece as usize).unwrap_or(false) {
                             continue;
                         }

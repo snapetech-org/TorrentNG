@@ -196,7 +196,7 @@ reproduced).
 | F03 | P0 | v2 peers lack shared acquisition state | NET-104, NET-114 | G3 | accepted |
 | F04 | P0 | v1 actor awaits disk/hash/persistence | IO-008, NET-106 | G2 | accepted |
 | F05 | P1 | fixed 512 KiB v1 flight window | NET-108 | G2 | accepted |
-| F06 | P0 | 4,096 requests/10 s upload guard | NET-110 | G2 | accepted |
+| F06 | P0 | 4,096 requests/10 s upload guard | NET-110 | G2 | partly fixed (count ceiling removed; queue bound remains and still drops silently when saturated; protocol-correct rejection and shared byte-admitted upload service are NET-105/NET-110) |
 | F07 | P0 | uTP writer is stop-and-wait | NET-112, NET-113 | G5 | accepted |
 | F08 | P0 | Fast advertised without full request termination | SYS-003, NET-105 | G0 | accepted |
 | F09 | P0 | torrent upload limit copied into per-peer buckets | SYS-003, NET-107 | G0 | fixed (SYS-003; hierarchical scheduler still NET-107) |
@@ -326,3 +326,4 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 2026-10-17 | F27 timer half: `ActivityTimerWheel::cancel` is O(1) with a stale counter and compaction; test `cancelling_a_large_cohort_with_one_deadline_is_linear_and_bounded`. |
 | 2026-10-17 | F28 fixed: `TaskExits`/`spawn_supervised` in `subsystems.rs`; command path calls `reap_exited_torrent_tasks` (O(exits)), the 1 s health tick keeps the full scan. |
 | 2026-10-17 | F19 partly: `sync_all_open_files` no longer unions the shared pool's writable files; `write_at` marks dirty at issue (also narrows F21's lost-dirty window). Test `checkpoint_sync_covers_only_this_schedulers_files` run deferred. |
+| 2026-10-17 | F06 partly: removed the per-peer requests-per-10-seconds ceiling; admission is the bounded request queue + pending-read cap. |
