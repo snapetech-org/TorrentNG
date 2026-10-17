@@ -33,6 +33,8 @@ const DEFAULT_HANDLE_IDLE_SECS: u64 = 30;
 /// How often the background sweeper closes idle handles.
 const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 
+static GLOBAL_RUNTIME: Lazy<StorageRuntime> = Lazy::new(StorageRuntime::from_env);
+
 /// Shared storage runtime: handle cache + frame pool + disk backend.
 pub struct StorageRuntime {
     handles: HandleCache,
@@ -108,8 +110,17 @@ impl StorageRuntime {
 
     /// The process-wide runtime, initialised on first access.
     pub fn global() -> &'static StorageRuntime {
-        static RT: Lazy<StorageRuntime> = Lazy::new(StorageRuntime::from_env);
-        &RT
+        &GLOBAL_RUNTIME
+    }
+
+    /// The process-wide runtime only if something already created it.
+    ///
+    /// Observers (metrics, diagnostics) must use this instead of
+    /// [`StorageRuntime::global`]: a scrape that initialises the runtime
+    /// builds a handle cache, selects a backend and spawns a sweeper thread,
+    /// then reports on a runtime the live transfer path never used.
+    pub fn initialized() -> Option<&'static StorageRuntime> {
+        Lazy::get(&GLOBAL_RUNTIME)
     }
 
     /// Open file handles currently cached.

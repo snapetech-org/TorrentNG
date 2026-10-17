@@ -8335,83 +8335,7 @@ fn render_metrics_with_health(
             torrent.storage_cache_bytes,
         );
     }
-    let storage = StorageRuntime::global();
     let descriptor_budget = rt_storage::fd_limit::process_descriptor_budget_stats();
-    metric_with_label(
-        &mut out,
-        "torrentng_storage_backend_selected",
-        "gauge",
-        "Selected global storage backend; value is 1 for the active backend",
-        "backend",
-        storage.backend_kind().as_str(),
-        1,
-    );
-    metric(
-        &mut out,
-        "torrentng_storage_backend_fixed_buffers_supported",
-        "gauge",
-        "Whether the selected storage backend supports fixed registered buffers",
-        u64::from(storage.backend_supports_fixed_buffers()),
-    );
-    metric(
-        &mut out,
-        "torrentng_storage_backend_registered_files_supported",
-        "gauge",
-        "Whether the selected storage backend supports registered file slots",
-        u64::from(storage.backend_supports_registered_files()),
-    );
-    metric(
-        &mut out,
-        "torrentng_storage_backend_max_batch_len",
-        "gauge",
-        "Maximum number of storage backend jobs submitted as one batch",
-        storage.backend_max_batch_len() as u64,
-    );
-    metric(
-        &mut out,
-        "torrentng_storage_backend_fixed_buffer_bytes",
-        "gauge",
-        "Bytes in each registered fixed buffer for the selected storage backend",
-        storage.backend_fixed_buffer_len() as u64,
-    );
-    let fixed_buffer_strategy = storage.backend_fixed_buffer_strategy();
-    metric_with_label(
-        &mut out,
-        "torrentng_storage_backend_fixed_buffer_strategy",
-        "gauge",
-        "Selected fixed-buffer strategy; value is 1 for the active strategy",
-        "strategy",
-        fixed_buffer_strategy.as_str(),
-        1,
-    );
-    metric(
-        &mut out,
-        "torrentng_storage_backend_fixed_buffer_worker_copy",
-        "gauge",
-        "Whether fixed-buffer submissions copy through backend-private worker buffers",
-        u64::from(fixed_buffer_strategy.uses_worker_copy()),
-    );
-    metric(
-        &mut out,
-        "torrentng_storage_backend_frame_pool_slots_supported",
-        "gauge",
-        "Whether fixed-buffer submissions use registered storage frame-pool slots directly",
-        u64::from(fixed_buffer_strategy.uses_frame_pool_slots()),
-    );
-    metric(
-        &mut out,
-        "torrentng_storage_handles_open",
-        "gauge",
-        "Cached file entries in the global storage runtime cache",
-        storage.handles_open() as u64,
-    );
-    metric(
-        &mut out,
-        "torrentng_storage_handles_active",
-        "gauge",
-        "Leased descriptor slots for cached files, open attempts, or I/O in the global storage runtime cache",
-        storage.handles_active() as u64,
-    );
     metric(
         &mut out,
         "torrentng_storage_descriptor_leases_active",
@@ -8433,20 +8357,106 @@ fn render_metrics_with_health(
         "Storage descriptor admission attempts delayed by the shared process-level managed-storage quota",
         descriptor_budget.admission_waits_total,
     );
+    // Observe the live runtime only; a scrape must never create a second one.
+    let storage = StorageRuntime::initialized();
     metric(
         &mut out,
-        "torrentng_storage_frame_bytes_in_use",
+        "torrentng_storage_runtime_initialized",
         "gauge",
-        "Frame-pool bytes currently checked out by storage I/O",
-        storage.frame_in_use_bytes(),
+        "Whether the process-wide storage runtime has been created by a live storage path",
+        u64::from(storage.is_some()),
     );
-    metric(
-        &mut out,
-        "torrentng_storage_frame_bytes_cap",
-        "gauge",
-        "Frame-pool byte cap for storage I/O",
-        storage.frame_cap_bytes(),
-    );
+    if let Some(storage) = storage {
+        metric_with_label(
+            &mut out,
+            "torrentng_storage_backend_selected",
+            "gauge",
+            "Selected global storage backend; value is 1 for the active backend",
+            "backend",
+            storage.backend_kind().as_str(),
+            1,
+        );
+        metric(
+            &mut out,
+            "torrentng_storage_backend_fixed_buffers_supported",
+            "gauge",
+            "Whether the selected storage backend supports fixed registered buffers",
+            u64::from(storage.backend_supports_fixed_buffers()),
+        );
+        metric(
+            &mut out,
+            "torrentng_storage_backend_registered_files_supported",
+            "gauge",
+            "Whether the selected storage backend supports registered file slots",
+            u64::from(storage.backend_supports_registered_files()),
+        );
+        metric(
+            &mut out,
+            "torrentng_storage_backend_max_batch_len",
+            "gauge",
+            "Maximum number of storage backend jobs submitted as one batch",
+            storage.backend_max_batch_len() as u64,
+        );
+        metric(
+            &mut out,
+            "torrentng_storage_backend_fixed_buffer_bytes",
+            "gauge",
+            "Bytes in each registered fixed buffer for the selected storage backend",
+            storage.backend_fixed_buffer_len() as u64,
+        );
+        let fixed_buffer_strategy = storage.backend_fixed_buffer_strategy();
+        metric_with_label(
+            &mut out,
+            "torrentng_storage_backend_fixed_buffer_strategy",
+            "gauge",
+            "Selected fixed-buffer strategy; value is 1 for the active strategy",
+            "strategy",
+            fixed_buffer_strategy.as_str(),
+            1,
+        );
+        metric(
+            &mut out,
+            "torrentng_storage_backend_fixed_buffer_worker_copy",
+            "gauge",
+            "Whether fixed-buffer submissions copy through backend-private worker buffers",
+            u64::from(fixed_buffer_strategy.uses_worker_copy()),
+        );
+        metric(
+            &mut out,
+            "torrentng_storage_backend_frame_pool_slots_supported",
+            "gauge",
+            "Whether fixed-buffer submissions use registered storage frame-pool slots directly",
+            u64::from(fixed_buffer_strategy.uses_frame_pool_slots()),
+        );
+        metric(
+            &mut out,
+            "torrentng_storage_handles_open",
+            "gauge",
+            "Cached file entries in the global storage runtime cache",
+            storage.handles_open() as u64,
+        );
+        metric(
+            &mut out,
+            "torrentng_storage_handles_active",
+            "gauge",
+            "Leased descriptor slots for cached files, open attempts, or I/O in the global storage runtime cache",
+            storage.handles_active() as u64,
+        );
+        metric(
+            &mut out,
+            "torrentng_storage_frame_bytes_in_use",
+            "gauge",
+            "Frame-pool bytes currently checked out by storage I/O",
+            storage.frame_in_use_bytes(),
+        );
+        metric(
+            &mut out,
+            "torrentng_storage_frame_bytes_cap",
+            "gauge",
+            "Frame-pool byte cap for storage I/O",
+            storage.frame_cap_bytes(),
+        );
+    }
     let utp = rt_utp::stats_snapshot();
     metric(
         &mut out,

@@ -219,7 +219,7 @@ reproduced).
 | F26 | P1 | one row change rebuilds a deep-cloned registry vector | SYS-005, SYS-006 | G5 | accepted |
 | F27 | P1 | dormant estimates incomplete; quadratic timer cancel | SYS-004, SYS-008 | G5 | accepted |
 | F28 | P1 | every engine command scans all task handles | SYS-007 | G5 | accepted |
-| F29 | P0 | metrics scrape builds a shadow storage runtime | SYS-011, PERF-108 | G0 | accepted |
+| F29 | P0 | metrics scrape builds a shadow storage runtime | SYS-011, PERF-108 | G0 | fixed (scrape uses `StorageRuntime::initialized()`; owner-specific metrics still SYS-011) |
 | F30 | P1 | engine unit tests bypass production DB worker | SYS-009 | G0 | accepted |
 | F31 | P0 | scale checks certify synthetic projections | PERF-109 | G5 | accepted |
 | F32 | P0 | throughput comparisons don't establish capacity | PERF-104..107 | G0 | accepted |
@@ -320,3 +320,4 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 2026-10-17 | SYS-003 started: F10 fixed. Release-mode regression is `cargo test -p rt-engine --lib --release webseed_block_is_debited` (debug builds pass either way, so the release run is the real check). |
 | 2026-10-17 | SYS-003: F09 fixed. Per-peer upload buckets and `PeerCommand::UpdateUploadLimit` removed; peers draw on one shared per-torrent limiter. Test-env note: run `cargo test -p rt-engine` once with `TMPDIR` on NFS and once on tmpfs; 2 v2 crash-safety tests only pass on NFS, 5 storage-move tests only pass on tmpfs. |
 | 2026-10-17 | SYS-003: F11 fixed. Policy change: code for all tasks first, bulk test pass at the end (owner request). Bulk-test backlog: full `rt-engine` suite on both TMPDIRs, clippy, `--release` webseed test. Known pre-existing load-flaky crash-safety tests (base commit also flakes). |
+| 2026-10-17 | F29 fixed: `StorageRuntime::initialized()`; `/metrics` no longer initialises the global runtime and exports `torrentng_storage_runtime_initialized`. Test deferred to bulk pass. |
