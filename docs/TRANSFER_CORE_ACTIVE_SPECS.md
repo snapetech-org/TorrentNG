@@ -3552,9 +3552,10 @@ remain open.
   wire block into path/offset spans while retaining v1 synthetic padding;
   `HybridGeometry::blocks_match_content` identifies equivalent payload when a
   padded v1 block and its v2 block have different lengths, and
-  `canonical_v1_block_for_v2` plus `expand_v2_block_to_v1` provide the mapped
-  ledger extent and zero-filled padding conversion. The live actor ledger does
-  not use these helpers yet.
+  `canonical_v1_block_for_v2`, `canonical_v2_block_for_v1`, and
+  `expand_v2_block_to_v1` provide bidirectional wire projection, mapped ledger
+  extents, and zero-filled padding conversion. The live actor ledger does not
+  use these helpers yet.
 - **Target owner:** each protocol adapter submits candidates to one shared
   content owner, while immutable payload, storage completion, and durability
   evidence retain their existing explicit owners.
@@ -3597,6 +3598,7 @@ remain open.
 
 - **Regression sources:** partial-resume ledger completion and verification
   boundary, padded hybrid block-range projection and zero-fill,
+  reverse mapping from canonical ledger extents to v2 wire actions,
   ledger failure/expiry cancellation, v1 actor lifecycle, webseed ledger
   ownership, and pure-v2
   reservation/response/action-routing/timeout sources are present; hybrid

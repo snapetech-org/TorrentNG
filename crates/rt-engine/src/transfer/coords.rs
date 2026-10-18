@@ -453,6 +453,18 @@ impl HybridGeometry {
             .then_some(v1_block)
     }
 
+    /// Return the v2 wire extent corresponding to a canonical v1 ledger
+    /// extent. A v1 extent may contain synthetic padding, so its length cannot
+    /// be copied directly into a v2 Cancel or request coordinate.
+    pub fn canonical_v2_block_for_v1(&self, v1_block: BlockExtent) -> Option<BlockExtent> {
+        self.v1.validate_request_block(v1_block).ok()?;
+        let v2_block = self
+            .v2
+            .block_extent(v1_block.piece, v1_block.block_index())?;
+        self.blocks_match_content(v1_block, v2_block)
+            .then_some(v2_block)
+    }
+
     /// Expand a v2 payload block into its v1 ledger extent, filling BEP 47
     /// padding with zeros. The caller must hold a lease for the returned
     /// v1-sized buffer before calling this bounded, pure conversion.
@@ -809,8 +821,14 @@ mod tests {
             .expand_v2_block_to_v1(v2_tail, &v2_tail_data)
             .expect("v2 tail maps to its padded v1 wire block");
         assert_eq!(v1_tail, BlockExtent::new(1, 0, BLOCK_SIZE));
+        assert_eq!(hybrid.canonical_v2_block_for_v1(v1_tail), Some(v2_tail));
         assert!(expanded[..8 * 1024].iter().all(|byte| *byte == 0x5a));
         assert!(expanded[8 * 1024..].iter().all(|byte| *byte == 0));
+        assert_eq!(
+            hybrid.canonical_v2_block_for_v1(BlockExtent::new(1, BLOCK_SIZE, BLOCK_SIZE)),
+            None,
+            "a padding-only v1 extent has no v2 wire range"
+        );
         assert!(!hybrid.blocks_match_content(
             BlockExtent::new(1, BLOCK_SIZE, BLOCK_SIZE),
             BlockExtent::new(1, 0, 8 * 1024),
