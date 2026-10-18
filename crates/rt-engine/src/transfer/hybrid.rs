@@ -102,15 +102,19 @@ pub struct HybridLedger {
 }
 
 impl HybridLedger {
-    pub fn new(geometry: HybridGeometry) -> Self {
+    pub fn new(geometry: impl Into<std::sync::Arc<HybridGeometry>>) -> Self {
         Self::new_bounded(geometry, MAX_CONNECTIONS)
     }
 
-    pub fn new_bounded(geometry: HybridGeometry, max_connections: usize) -> Self {
+    pub fn new_bounded(
+        geometry: impl Into<std::sync::Arc<HybridGeometry>>,
+        max_connections: usize,
+    ) -> Self {
         // The ledger's keys are always canonical v1 extents. The geometry's
         // selected download plane must not change that internal coordinate
         // system when an adapter is reused by a v2 wire connection.
-        let geometry = geometry.with_download_plane(Plane::V1);
+        let geometry = geometry.into();
+        let geometry = geometry.as_ref().clone().with_download_plane(Plane::V1);
         Self {
             ledger: Ledger::new(geometry)
                 .with_max_connections(max_connections.min(MAX_CONNECTIONS)),

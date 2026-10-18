@@ -8,6 +8,7 @@
 //! ranges and callers compare those, never indexes.
 
 use std::fmt;
+use std::sync::Arc;
 
 use rt_path::SafeRelPath;
 use rt_piece_map::{PieceMap, V2PieceMap};
@@ -402,17 +403,18 @@ impl PieceGeometry for V2PieceMap {
 /// plane while verification must satisfy both; mixed-plane acquisition is a
 /// later capability gate, so nothing here assumes `v1` piece `n` and `v2`
 /// piece `n` are the same bytes.
+#[derive(Clone)]
 pub struct HybridGeometry {
-    v1: PieceMap,
-    v2: V2PieceMap,
+    v1: Arc<PieceMap>,
+    v2: Arc<V2PieceMap>,
     download_plane: Plane,
 }
 
 impl HybridGeometry {
-    pub fn new(v1: PieceMap, v2: V2PieceMap) -> Self {
+    pub fn new(v1: impl Into<Arc<PieceMap>>, v2: impl Into<Arc<V2PieceMap>>) -> Self {
         Self {
-            v1,
-            v2,
+            v1: v1.into(),
+            v2: v2.into(),
             download_plane: Plane::V1,
         }
     }
@@ -426,11 +428,11 @@ impl HybridGeometry {
     }
 
     pub fn v1(&self) -> &PieceMap {
-        &self.v1
+        self.v1.as_ref()
     }
 
     pub fn v2(&self) -> &V2PieceMap {
-        &self.v2
+        self.v2.as_ref()
     }
 
     /// The plane requests are scheduled in.
@@ -811,6 +813,20 @@ mod tests {
                 .unwrap()
                 .as_display(),
             "b.bin"
+        );
+    }
+
+    #[test]
+    fn hybrid_geometry_shares_prebuilt_piece_maps() {
+        let v1 = Arc::new(v1_map());
+        let v2 = Arc::new(v2_map());
+        let hybrid = HybridGeometry::new(Arc::clone(&v1), Arc::clone(&v2));
+
+        assert_eq!(Arc::strong_count(&v1), 2);
+        assert_eq!(Arc::strong_count(&v2), 2);
+        assert_eq!(
+            hybrid.piece_count(),
+            PieceGeometry::piece_count(v1.as_ref())
         );
     }
 
