@@ -3609,3 +3609,63 @@ remain open.
   this slice.
 - **External evidence:** matched live protocol workloads and efficiency
   comparisons remain pending.
+
+## NET-115 — Unified source scheduling and batched progress
+
+- **Priority / wave:** P1 / 12
+- **Prerequisites:** NET-106, NET-107, NET-108, NET-114, SYS-009
+- **Owning component:** v1 and pure-v2 torrent actors, then the shared transfer
+  scheduler.
+- **Status:** `wip`
+
+### Scope
+
+Schedule peer and webseed work through one bounded ownership and rate-control
+path, then publish transfer progress in bounded batches. The current v1
+webseed implementation is a serial no-peer fallback; pure-v2 has no webseed
+execution. This slice only batches pure-v2 upload/download statistics at the
+existing five-second runtime flush, while completion and lifecycle boundaries
+flush immediately.
+
+### Ownership and invariant
+
+- **Current owner:** peer tasks and the v1 webseed fallback own source work;
+  the pure-v2 actor receives verified-piece transfer totals and persists them
+  through `DbWorker`.
+- **Target owner:** the shared scheduler owns source admission, request
+  ownership, cancellation, rate credit, and bounded retry across peers and
+  webseeds. Torrent actors retain verification, storage publication, and
+  persistence ordering.
+- **Invariant preserved:** every admitted source request has one owner until
+  response, cancellation, or failure. Progress totals advance only after the
+  corresponding database transaction succeeds; a failed transaction restores
+  the registry projection and leaves its pending counters available for retry.
+- **Must not:** let one source bypass the aggregate or torrent rate budget,
+  double-count retries, or hold actor lifecycle commands behind a long source
+  wait.
+
+### Acceptance
+
+- Peers and supported webseeds share bounded per-torrent and process-wide
+  source admission, rate budgets, and cancellation behavior.
+- Source selection preserves protocol geometry, file priorities, and picker
+  ownership while allowing useful sources to make progress concurrently.
+- Transfer events coalesce into bounded progress publications; completion,
+  pause, storage-move, recheck, and shutdown boundaries flush pending totals.
+- A failed progress transaction restores the prior registry projection and
+  retains each pending source total for exactly-once retry.
+- Regression sources cover concurrent peer/webseed ownership, rate waits,
+  cancellation, per-file webseed mapping, progress coalescing, retry, and
+  lifecycle flushes.
+- Matched live-source workloads show no missing or duplicate payload and
+  bounded progress-publication latency.
+
+### Current slice evidence
+
+- **Regression source added or updated:** pure-v2 progress batching and
+  database-failure retry in `torrent_task_v2.rs`.
+- **Command or probe:** run with the requested bulk engine suite; do not run
+  this source independently before that pass.
+- **Executed on exact revision:** no.
+- **Remaining:** peer/webseed shared scheduling, v1 progress batching review,
+  live-source workloads, and the bulk pass.

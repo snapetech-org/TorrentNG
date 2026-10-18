@@ -1421,6 +1421,9 @@ pub struct V2TorrentTask {
     completion_held: std::sync::atomic::AtomicBool,
     /// The save path's filesystem cannot fsync; stop retrying.
     fsync_unsupported: std::sync::atomic::AtomicBool,
+    /// Transfer counters wait here for the next bounded runtime publication.
+    pending_downloaded_bytes: u64,
+    pending_uploaded_bytes: u64,
 }
 
 impl Drop for V2TorrentTask {
@@ -1602,6 +1605,8 @@ impl V2TorrentTask {
             crash_safety: CrashSafetyRuntime::inert(),
             completion_held: std::sync::atomic::AtomicBool::new(false),
             fsync_unsupported: std::sync::atomic::AtomicBool::new(false),
+            pending_downloaded_bytes: 0,
+            pending_uploaded_bytes: 0,
         };
         let (known_tracker_peers, tracker_peer_cache_memory_lease) =
             prepare_tracker_peer_cache(&task.resources, task.max_peers);
@@ -1634,7 +1639,7 @@ impl V2TorrentTask {
     /// torrent as complete before its data has been fsynced and, when
     /// configured (or forced by a weak mount), re-read from disk and verified.
     /// Returns `true` when the completion may be released.
-    async fn completion_may_release(&self) -> bool {
+    async fn completion_may_release(&mut self) -> bool {
         use std::sync::atomic::Ordering;
         let location = self.crash_safety.for_location(&self.save_root);
         let verify = location.completion_verify;
@@ -1669,14 +1674,14 @@ impl V2TorrentTask {
     /// A failure clears the affected pieces so they are downloaded again; a
     /// failed sample escalates to a full verification, since it proves storage
     /// returned data other than what was written.
-    async fn verify_completed_download(&self, mode: rt_config::CompletionVerifyMode) -> bool {
+    async fn verify_completed_download(&mut self, mode: rt_config::CompletionVerifyMode) -> bool {
         use std::sync::atomic::Ordering;
         let sampled = mode == rt_config::CompletionVerifyMode::Sample;
         // Show the hold while the (possibly long) read-back runs.
         if !self.completion_held.swap(true, Ordering::Relaxed) {
             self.crash_safety.record_gate_started();
         }
-        let _ = self.persist_runtime(None, None).await;
+        let _ = self.persist_runtime(None).await;
 
         let mut dropped = 0usize;
         for file in self.meta.files.iter().filter(|file| !file.pad) {
@@ -1983,7 +1988,7 @@ impl V2TorrentTask {
         } else {
             TorrentState::Downloading
         };
-        if let Err(error) = self.persist_runtime(Some(startup_state), None).await {
+        if let Err(error) = self.persist_runtime(Some(startup_state)).await {
             warn!(
                 component = "torrent_v2",
                 operation = "startup_state",
@@ -2006,7 +2011,7 @@ impl V2TorrentTask {
                         self.tracker_workers.cancel();
                         self.announce_stopped_with_control_deadline().await;
                         self.shutdown_peers().await;
-                        let _ = self.persist_runtime(None, None).await;
+                        let _ = self.persist_runtime(None).await;
                         break;
                     };
                     if self.handle_command(command).await {
@@ -2037,7 +2042,7 @@ impl V2TorrentTask {
                         } else {
                             None
                         };
-                        let _ = self.persist_runtime(target, None).await;
+                        let _ = self.persist_runtime(target).await;
                     }
                 }
                 _ = tracker_tick.tick() => {
@@ -2056,7 +2061,7 @@ impl V2TorrentTask {
                 self.tracker_workers.cancel();
                 self.announce_stopped_with_control_deadline().await;
                 self.shutdown_peers().await;
-                let _ = self.persist_runtime(None, None).await;
+                let _ = self.persist_runtime(None).await;
                 true
             }
             TorrentCmd::Pause { reply } => {
@@ -2064,7 +2069,7 @@ impl V2TorrentTask {
                 self.paused = true;
                 self.tracker_workers.cancel();
                 self.shutdown_peers().await;
-                let result = self.persist_runtime(Some(TorrentState::Paused), None).await;
+                let result = self.persist_runtime(Some(TorrentState::Paused)).await;
                 if result.is_err() {
                     self.paused = was_paused;
                 }
@@ -2092,7 +2097,7 @@ impl V2TorrentTask {
                 self.tracker_workers.cancel();
                 self.shutdown_peers().await;
                 let result = self
-                    .persist_runtime(Some(TorrentState::Paused), None)
+                    .persist_runtime(Some(TorrentState::Paused))
                     .await
                     .map(|()| was_paused);
                 if result.is_err() {
@@ -2939,8 +2944,7 @@ impl V2TorrentTask {
                     )
                 })?;
             if state != TorrentState::Checking {
-                self.persist_runtime(Some(TorrentState::Checking), None)
-                    .await?;
+                self.persist_runtime(Some(TorrentState::Checking)).await?;
             }
             Ok::<(), String>(())
         }
@@ -2971,7 +2975,7 @@ impl V2TorrentTask {
         } else {
             TorrentState::Downloading
         };
-        if let Err(error) = self.persist_runtime(Some(target), None).await {
+        if let Err(error) = self.persist_runtime(Some(target)).await {
             warn!(
                 component = "torrent_v2",
                 operation = "recheck_state",
@@ -3052,11 +3056,7 @@ impl V2TorrentTask {
             .sum()
     }
 
-    async fn persist_runtime(
-        &self,
-        target_state: Option<TorrentState>,
-        transfer: Option<(bool, u64)>,
-    ) -> Result<(), String> {
+    async fn persist_runtime(&mut self, target_state: Option<TorrentState>) -> Result<(), String> {
         let have = self.local_have.read().await.clone();
         let mut amount_left = self.bytes_left(have.as_ref());
         let held = self
@@ -3077,16 +3077,11 @@ impl V2TorrentTask {
                 )
             })?;
             let previous = entry.clone();
-            if let Some((upload, bytes)) = transfer {
-                if upload {
-                    entry.stats.add_upload(bytes);
-                } else {
-                    entry.stats.add_download(bytes);
-                }
-            }
             if let Some(state) = target_state {
                 entry.transition(state).map_err(|error| error.to_string())?;
             }
+            entry.stats.add_upload(self.pending_uploaded_bytes);
+            entry.stats.add_download(self.pending_downloaded_bytes);
             entry.total_length = self.meta.total_length();
             entry.amount_left = amount_left;
             entry.finalizing = finalizing;
@@ -3123,39 +3118,34 @@ impl V2TorrentTask {
             }
             return Err(error);
         }
+        self.pending_uploaded_bytes = 0;
+        self.pending_downloaded_bytes = 0;
         Ok(())
     }
 
     async fn handle_peer_event(&mut self, event: V2PeerEvent) {
         match event {
             V2PeerEvent::Downloaded { peer, bytes } => {
+                self.pending_downloaded_bytes = self.pending_downloaded_bytes.saturating_add(bytes);
                 let complete = self.is_complete().await;
                 let release = complete && self.completion_may_release().await;
                 let target = release.then_some(TorrentState::Seeding);
-                if let Err(error) = self.persist_runtime(target, Some((false, bytes))).await {
-                    debug!(
-                        component = "torrent_v2",
-                        operation = "persist_download",
-                        torrent = %self.info_hash_hex,
-                        peer = %peer,
-                        result = "error",
-                        error = %error,
-                        "failed to persist pure-v2 download progress"
-                    );
+                if complete {
+                    if let Err(error) = self.persist_runtime(target).await {
+                        debug!(
+                            component = "torrent_v2",
+                            operation = "persist_download",
+                            torrent = %self.info_hash_hex,
+                            peer = %peer,
+                            result = "error",
+                            error = %error,
+                            "failed to persist pure-v2 download progress"
+                        );
+                    }
                 }
             }
-            V2PeerEvent::Uploaded { peer, bytes } => {
-                if let Err(error) = self.persist_runtime(None, Some((true, bytes))).await {
-                    debug!(
-                        component = "torrent_v2",
-                        operation = "persist_upload",
-                        torrent = %self.info_hash_hex,
-                        peer = %peer,
-                        result = "error",
-                        error = %error,
-                        "failed to persist pure-v2 upload progress"
-                    );
-                }
+            V2PeerEvent::Uploaded { peer: _, bytes } => {
+                self.pending_uploaded_bytes = self.pending_uploaded_bytes.saturating_add(bytes);
             }
             V2PeerEvent::Disconnected {
                 peer,
@@ -7834,7 +7824,7 @@ mod tests {
     #[tokio::test]
     async fn v2_failed_barrier_holds_completion_and_reports_one_byte() {
         let runtime = quiet_v2_runtime();
-        let (task, fx) = v2_task(Arc::clone(&runtime)).await;
+        let (mut task, fx) = v2_task(Arc::clone(&runtime)).await;
         assert!(task.is_complete().await);
 
         // The barrier fails: not releasable, gauge raised once.
@@ -7847,7 +7837,7 @@ mod tests {
         assert_eq!(runtime.counters().completions_gated, 1);
 
         // A held torrent is complete on disk but must not look complete.
-        task.persist_runtime(None, None).await.unwrap();
+        task.persist_runtime(None).await.unwrap();
         let entry = fx.registry.read().await.get(&fx.info_hash).unwrap();
         assert_eq!(entry.state, TorrentState::Downloading);
         assert_eq!(entry.amount_left, 1);
@@ -7858,7 +7848,7 @@ mod tests {
         assert!(task.apply_barrier_result(Ok(())));
         assert_eq!(runtime.counters().completions_pending, 0);
         assert_eq!(runtime.counters().completions_released, 1);
-        task.persist_runtime(Some(TorrentState::Seeding), None)
+        task.persist_runtime(Some(TorrentState::Seeding))
             .await
             .unwrap();
         let entry = fx.registry.read().await.get(&fx.info_hash).unwrap();
@@ -7869,9 +7859,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn v2_peer_transfer_counters_batch_and_survive_a_failed_flush() {
+        let runtime = quiet_v2_runtime();
+        let content = vec![0x5Au8; 32_768];
+        let raw = v2_raw_with_content(&content);
+        let (mut task, fx) =
+            v2_task_not_started(Arc::clone(&runtime), &raw, content.len() as u64).await;
+        let peer = "127.0.0.1:6881".parse().unwrap();
+
+        task.handle_peer_event(V2PeerEvent::Downloaded {
+            peer,
+            bytes: 16_384,
+        })
+        .await;
+        task.handle_peer_event(V2PeerEvent::Downloaded { peer, bytes: 2_048 })
+            .await;
+        task.handle_peer_event(V2PeerEvent::Uploaded { peer, bytes: 1_024 })
+            .await;
+
+        let entry = fx.registry.read().await.get(&fx.info_hash).unwrap();
+        assert_eq!(entry.stats.downloaded, 0);
+        assert_eq!(entry.stats.uploaded, 0);
+        assert_eq!(task.pending_downloaded_bytes, 18_432);
+        assert_eq!(task.pending_uploaded_bytes, 1_024);
+
+        let missing_hash = fx.info_hash.clone();
+        task.db
+            .run("remove_v2_progress_row_for_retry", move |db| {
+                rt_db::delete(db, &missing_hash).map_err(|error| error.to_string())?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        assert!(task.persist_runtime(None).await.is_err());
+        let entry = fx.registry.read().await.get(&fx.info_hash).unwrap();
+        assert_eq!(entry.stats.downloaded, 0);
+        assert_eq!(entry.stats.uploaded, 0);
+        assert_eq!(task.pending_downloaded_bytes, 18_432);
+        assert_eq!(task.pending_uploaded_bytes, 1_024);
+
+        let info_hash = fx.info_hash.clone();
+        let row = {
+            let entry = fx.registry.read().await.get(&fx.info_hash).unwrap();
+            crate::engine::row_from_v2_meta(&entry, &task.meta)
+        };
+        task.db
+            .run("restore_v2_progress_row_for_retry", move |db| {
+                rt_db::upsert(db, &row).map_err(|error| error.to_string())
+            })
+            .await
+            .unwrap();
+        task.persist_runtime(None).await.unwrap();
+
+        let entry = fx.registry.read().await.get(&fx.info_hash).unwrap();
+        assert_eq!(entry.stats.downloaded, 18_432);
+        assert_eq!(entry.stats.uploaded, 1_024);
+        assert_eq!(task.pending_downloaded_bytes, 0);
+        assert_eq!(task.pending_uploaded_bytes, 0);
+
+        let persisted = task
+            .db
+            .run("read_v2_progress_after_retry", move |db| {
+                let row = rt_db::get(db, &info_hash).map_err(|error| error.to_string())?;
+                Ok((row.downloaded, row.uploaded))
+            })
+            .await
+            .unwrap();
+        assert_eq!(persisted, (18_432, 1_024));
+    }
+
+    #[tokio::test]
     async fn v2_filesystem_that_cannot_fsync_is_released_and_rated_weak() {
         let runtime = quiet_v2_runtime();
-        let (task, fx) = v2_task(Arc::clone(&runtime)).await;
+        let (mut task, fx) = v2_task(Arc::clone(&runtime)).await;
         // Hold it first so the unsupported answer must also clear the hold.
         assert!(!task.apply_barrier_result(Err(eio())));
         let unsupported = rt_storage::StorageError::Io {
@@ -7907,7 +7967,7 @@ mod tests {
             },
             true,
         );
-        let (task, _fx) = v2_task(Arc::clone(&runtime)).await;
+        let (mut task, _fx) = v2_task(Arc::clone(&runtime)).await;
         assert!(task.completion_may_release().await);
         assert_eq!(runtime.counters().completions_gated, 0);
     }
@@ -7916,7 +7976,7 @@ mod tests {
     async fn v2_location_policy_applies_only_to_matching_save_roots() {
         // The gate is on globally; the location that holds this torrent opts out.
         let runtime = quiet_v2_runtime();
-        let (task, fx) = v2_task(Arc::clone(&runtime)).await;
+        let (mut task, fx) = v2_task(Arc::clone(&runtime)).await;
         let with_policies = |path: &std::path::Path| rt_config::CrashSafetyConfig {
             weak_mount_escalation: false,
             path_policies: vec![rt_config::PathPolicy {
@@ -7940,7 +8000,7 @@ mod tests {
     #[tokio::test]
     async fn v2_location_policy_can_require_read_back() {
         let runtime = quiet_v2_runtime();
-        let (task, fx) = v2_task(Arc::clone(&runtime)).await;
+        let (mut task, fx) = v2_task(Arc::clone(&runtime)).await;
         runtime.apply_settings(
             rt_config::CrashSafetyConfig {
                 weak_mount_escalation: false,
@@ -7965,9 +8025,9 @@ mod tests {
     #[tokio::test]
     async fn v2_release_with_a_working_disk_needs_no_hold() {
         let runtime = quiet_v2_runtime();
-        let (task, fx) = v2_task(Arc::clone(&runtime)).await;
+        let (mut task, fx) = v2_task(Arc::clone(&runtime)).await;
         assert!(task.completion_may_release().await, "real sync succeeds");
-        task.persist_runtime(Some(TorrentState::Seeding), None)
+        task.persist_runtime(Some(TorrentState::Seeding))
             .await
             .unwrap();
         let entry = fx.registry.read().await.get(&fx.info_hash).unwrap();
@@ -8170,7 +8230,7 @@ mod tests {
     #[tokio::test]
     async fn v2_full_verification_releases_a_clean_download() {
         let runtime = v2_verify_runtime(rt_config::CompletionVerifyMode::Full, 5);
-        let (task, fx) = v2_task(Arc::clone(&runtime)).await;
+        let (mut task, fx) = v2_task(Arc::clone(&runtime)).await;
         let content = vec![0x5Au8; 32_768];
         v2_write_payload(&task, &fx, &[("data.bin", content)]);
 
@@ -8189,7 +8249,7 @@ mod tests {
     #[tokio::test]
     async fn v2_verification_failure_reopens_the_download_and_clears_the_hold() {
         let runtime = v2_verify_runtime(rt_config::CompletionVerifyMode::Full, 5);
-        let (task, fx) = v2_task(Arc::clone(&runtime)).await;
+        let (mut task, fx) = v2_task(Arc::clone(&runtime)).await;
         // The first 16 KiB reached the page cache but never the disk.
         let mut on_disk = vec![0x5Au8; 32_768];
         on_disk[..16_384].fill(0);
@@ -8204,7 +8264,7 @@ mod tests {
         assert_eq!(runtime.counters().completion_verify_failures, 2);
         assert_eq!(runtime.counters().completions_pending, 0, "gauge released");
 
-        task.persist_runtime(None, None).await.unwrap();
+        task.persist_runtime(None).await.unwrap();
         let entry = fx.registry.read().await.get(&fx.info_hash).unwrap();
         assert_eq!(entry.state, TorrentState::Downloading);
         assert!(!entry.finalizing);
@@ -8269,7 +8329,7 @@ mod tests {
         // Damage the sample does not cover: it passes (sampling is a spot
         // check, and the docs say so).
         let runtime = v2_verify_runtime(rt_config::CompletionVerifyMode::Sample, 25);
-        let (task, fx) = v2_task_from_raw(Arc::clone(&runtime), &raw).await;
+        let (mut task, fx) = v2_task_from_raw(Arc::clone(&runtime), &raw).await;
         v2_write_payload(&task, &fx, &corrupt(&[other_file.as_str()]));
         assert!(
             task.completion_may_release().await,
@@ -8280,7 +8340,7 @@ mod tests {
         // Damage the sample covers, plus another file: the failed sample
         // escalates and the full check finds both.
         let runtime = v2_verify_runtime(rt_config::CompletionVerifyMode::Sample, 25);
-        let (task, fx) = v2_task_from_raw(Arc::clone(&runtime), &raw).await;
+        let (mut task, fx) = v2_task_from_raw(Arc::clone(&runtime), &raw).await;
         v2_write_payload(
             &task,
             &fx,
@@ -8305,7 +8365,7 @@ mod tests {
             },
             true,
         );
-        let (task, fx) = v2_task(Arc::clone(&runtime)).await;
+        let (mut task, fx) = v2_task(Arc::clone(&runtime)).await;
         // Declare the save path weak regardless of the temp filesystem.
         let mut settings = (*runtime.settings()).clone();
         settings.weak_mount_paths = vec![fx.temp.path().to_path_buf()];
