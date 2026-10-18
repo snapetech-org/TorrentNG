@@ -1433,12 +1433,21 @@ enum Job {
     },
 }
 
-#[cfg(unix)]
-fn read_exact_at(file: &File, mut buf: &mut [u8], mut offset: u64) -> io::Result<()> {
+fn read_exact_with(
+    mut buf: &mut [u8],
+    mut offset: u64,
+    mut read_at: impl FnMut(&mut [u8], u64) -> io::Result<usize>,
+) -> io::Result<()> {
     while !buf.is_empty() {
-        match file.read_at(buf, offset) {
+        match read_at(buf, offset) {
             Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
             Ok(n) => {
+                if n > buf.len() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "positioned read reported more bytes than requested",
+                    ));
+                }
                 offset = checked_io_offset(offset, n)?;
                 let (_, rest) = buf.split_at_mut(n);
                 buf = rest;
@@ -1450,15 +1459,23 @@ fn read_exact_at(file: &File, mut buf: &mut [u8], mut offset: u64) -> io::Result
     Ok(())
 }
 
-#[cfg(windows)]
-fn read_exact_at(file: &File, mut buf: &mut [u8], mut offset: u64) -> io::Result<()> {
+fn write_all_with(
+    mut buf: &[u8],
+    mut offset: u64,
+    mut write_at: impl FnMut(&[u8], u64) -> io::Result<usize>,
+) -> io::Result<()> {
     while !buf.is_empty() {
-        match file.seek_read(buf, offset) {
-            Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
+        match write_at(buf, offset) {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
             Ok(n) => {
+                if n > buf.len() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "positioned write reported more bytes than requested",
+                    ));
+                }
                 offset = checked_io_offset(offset, n)?;
-                let (_, rest) = buf.split_at_mut(n);
-                buf = rest;
+                buf = &buf[n..];
             }
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
             Err(e) => return Err(e),
@@ -1468,35 +1485,31 @@ fn read_exact_at(file: &File, mut buf: &mut [u8], mut offset: u64) -> io::Result
 }
 
 #[cfg(unix)]
-fn write_all_at(file: &File, mut buf: &[u8], mut offset: u64) -> io::Result<()> {
-    while !buf.is_empty() {
-        match file.write_at(buf, offset) {
-            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
-            Ok(n) => {
-                offset = checked_io_offset(offset, n)?;
-                buf = &buf[n..];
-            }
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-            Err(e) => return Err(e),
-        }
-    }
-    Ok(())
+fn read_exact_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
+    read_exact_with(buf, offset, |buffer, position| {
+        file.read_at(buffer, position)
+    })
 }
 
 #[cfg(windows)]
-fn write_all_at(file: &File, mut buf: &[u8], mut offset: u64) -> io::Result<()> {
-    while !buf.is_empty() {
-        match file.seek_write(buf, offset) {
-            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
-            Ok(n) => {
-                offset = checked_io_offset(offset, n)?;
-                buf = &buf[n..];
-            }
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-            Err(e) => return Err(e),
-        }
-    }
-    Ok(())
+fn read_exact_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
+    read_exact_with(buf, offset, |buffer, position| {
+        file.seek_read(buffer, position)
+    })
+}
+
+#[cfg(unix)]
+fn write_all_at(file: &File, buf: &[u8], offset: u64) -> io::Result<()> {
+    write_all_with(buf, offset, |buffer, position| {
+        file.write_at(buffer, position)
+    })
+}
+
+#[cfg(windows)]
+fn write_all_at(file: &File, buf: &[u8], offset: u64) -> io::Result<()> {
+    write_all_with(buf, offset, |buffer, position| {
+        file.seek_write(buffer, position)
+    })
 }
 
 fn checked_io_offset(offset: u64, bytes: usize) -> io::Result<u64> {
@@ -1899,6 +1912,52 @@ mod tests {
         assert_eq!(checked_io_offset(u64::MAX - 1, 1).unwrap(), u64::MAX);
         let error = checked_io_offset(u64::MAX, 1).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn exact_read_retries_interrupted_and_positive_short_progress() {
+        let expected = b"positioned short reads";
+        let mut output = vec![0; expected.len()];
+        let base = 37_u64;
+        let mut calls = 0;
+
+        read_exact_with(&mut output, base, |buffer, offset| {
+            calls += 1;
+            if calls == 1 {
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            let start = usize::try_from(offset - base).unwrap();
+            let count = buffer.len().min(3);
+            buffer[..count].copy_from_slice(&expected[start..start + count]);
+            Ok(count)
+        })
+        .unwrap();
+
+        assert_eq!(output.as_slice(), &expected[..]);
+        assert_eq!(calls, 1 + expected.len().div_ceil(3));
+    }
+
+    #[test]
+    fn write_all_retries_interrupted_and_positive_short_progress() {
+        let payload = b"positioned short writes";
+        let mut output = vec![0; payload.len()];
+        let base = 53_u64;
+        let mut calls = 0;
+
+        write_all_with(payload, base, |buffer, offset| {
+            calls += 1;
+            if calls == 1 {
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            let start = usize::try_from(offset - base).unwrap();
+            let count = buffer.len().min(2);
+            output[start..start + count].copy_from_slice(&buffer[..count]);
+            Ok(count)
+        })
+        .unwrap();
+
+        assert_eq!(output.as_slice(), &payload[..]);
+        assert_eq!(calls, 1 + payload.len().div_ceil(2));
     }
 
     #[tokio::test]
