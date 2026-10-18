@@ -178,6 +178,8 @@ The live v1/v2 actor integration to the shared ledger remains NET-114.
 ### Acceptance
 
 - Rarity and active-work indexes use dense arrays with swap-remove positions.
+- The picker exposes a constant-time fresh-work query so source schedulers can
+  sleep while all wanted blocks are already requested.
 - Selection chooses uniformly among matching peers in the rarest matching
   bucket; sampling is bounded for the common case and falls back to uniform
   reservoir sampling when matches are sparse.
@@ -211,8 +213,9 @@ The live v1/v2 actor integration to the shared ledger remains NET-114.
 
 - **Regression source added or updated:** availability bucket movement,
   seeded random tie, sparse peer fallback and equal-rarity selection,
-  candidate lifecycle, request cancellation, and picker
-  memory estimate cases; block cursor advancement, cancellation rewind,
+  candidate lifecycle, source-scheduler fresh-work transitions, request
+  cancellation, and picker memory estimate cases; block cursor advancement,
+  cancellation rewind,
   partial restore, and reset cases; packed receipt-bit boundaries, duplicate
   counting, invalid tail indexes, and bitmap memory accounting.
 - **Command or probe to run:** `cargo test -p rt-piece-picker` and the engine
@@ -3751,12 +3754,13 @@ a whole-torrent scan for each requested block.
 
 Schedule peer and webseed work through one bounded ownership and rate-control
 path, then publish transfer progress in bounded batches. The current v1
-webseed implementation dispatches one bounded request at a time, starting
-only while no peer is active. Its HTTP fetch and global-rate wait run in an
-owned task, so peer events and lifecycle commands continue while that request
-is pending; a peer that connects meanwhile competes through the same ledger.
-Canceling the job drops its connection and wakes the webseed deadline so a
-later idle retry does not wait on a stale timer.
+webseed implementation dispatches one bounded request at a time, including
+while peers are active, when the picker has fresh requestable work. Its HTTP
+fetch and global-rate wait run in an owned task, so peer events and lifecycle
+commands continue while that request is pending; peer and webseed responses
+compete through the same ledger. The scheduler sleeps when the picker has no
+fresh work and wakes when ownership or piece policy changes. Canceling the job
+drops its connection and wakes the source deadline.
 It maps multi-file blocks to bounded per-file HTTP ranges and synthesizes BEP
 47 padding locally; each block reuses one DNS-validated, address-pinned HTTP
 client across its file ranges;
@@ -3767,8 +3771,8 @@ lifecycle boundaries flush immediately.
 
 ### Ownership and invariant
 
-- **Current owner:** peer tasks and the v1 webseed fallback own source work;
-  a single in-flight v1 webseed fetch is owned by a cancellable task while the
+- **Current owner:** peer tasks and one bounded v1 webseed request own source
+  work; the in-flight fetch is owned by a cancellable task while the
   torrent actor remains available for peer and lifecycle events. The pure-v2
   actor receives verified-piece transfer totals and persists them through
   `DbWorker`.
@@ -3806,14 +3810,13 @@ lifecycle boundaries flush immediately.
 
 - **Regression source added or updated:** pure-v2 progress batching and
   database-failure retry in `torrent_task_v2.rs`; the v1 actor now owns one
-  bounded cancellable webseed fetch outside its event loop, and a regression
-  source holds the HTTP body while querying and pausing the actor, then
-  releases the body and confirms no payload reached storage. Multi-file
-  URL/range mapping, BEP 47 padding, and excessive file-fanout bounds remain
-  covered in `torrent_task.rs`.
+  bounded cancellable webseed fetch outside its event loop, including with an
+  active peer. A regression source holds the HTTP body while querying and
+  pausing the actor, then releases the body and confirms no payload reaches
+  storage. Multi-file URL/range mapping, BEP 47 padding, and excessive
+  file-fanout bounds remain covered in `torrent_task.rs`.
 - **Command or probe:** run with the requested bulk engine suite; do not run
   this source independently before that pass.
 - **Executed on exact revision:** no.
-- **Remaining:** concurrent webseed dispatch while peers are already active,
-  shared source scheduling, pure-v2 webseed execution, live-source workloads,
-  and the bulk pass.
+- **Remaining:** shared source scheduling, pure-v2 webseed execution,
+  live-source workloads, and the bulk pass.

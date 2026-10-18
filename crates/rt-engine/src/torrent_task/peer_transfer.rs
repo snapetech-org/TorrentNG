@@ -235,7 +235,7 @@ impl TorrentTask {
     }
 
     pub(super) fn close_webseed_transfer_connection(&mut self) {
-        let canceled_fetch = if let Some(fetch) = self.webseed_fetch.take() {
+        if let Some(fetch) = self.webseed_fetch.take() {
             fetch.task.abort();
             self.reconcile_webseed_local_tokens(
                 fetch.reserved_local_bytes,
@@ -244,15 +244,9 @@ impl TorrentTask {
             );
             self.picker
                 .cancel_request(fetch.request.piece as usize, fetch.request.begin);
-            true
-        } else {
-            false
-        };
+        }
         let Some(conn) = self.webseed_transfer_conn.take() else {
             self._webseed_transfer_connection_memory_lease = None;
-            if canceled_fetch {
-                self.webseed_wake_notify.notify_one();
-            }
             return;
         };
         for block in self.transfer_ledger.disconnect(conn) {
@@ -264,7 +258,6 @@ impl TorrentTask {
             }
         }
         self._webseed_transfer_connection_memory_lease = None;
-        self.webseed_wake_notify.notify_one();
     }
 
     pub(super) async fn handle_webseed_block(&mut self, event: LeasedBlockEvent) {

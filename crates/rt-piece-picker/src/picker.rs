@@ -731,6 +731,13 @@ impl PiecePicker {
         self.in_progress.contains_key(&piece)
     }
 
+    /// Whether any enabled, wanted piece still has a fresh block that has not
+    /// been requested. Source schedulers use this to sleep until ownership
+    /// changes instead of polling a torrent whose request windows are full.
+    pub fn has_fresh_requestable(&self) -> bool {
+        self.availability.candidate_count() != 0
+    }
+
     /// Return whether a block has already been accepted for an in-progress
     /// piece. Endgame requests may be sent to multiple peers; a late duplicate
     /// must not overwrite the first response or turn a conflicting duplicate
@@ -1195,6 +1202,24 @@ mod tests {
         assert_eq!(r1.begin, 0);
         assert_eq!(r2.begin, MAX_BLOCK_SIZE);
         assert!(p.pick_from_seed().is_none());
+    }
+
+    #[test]
+    fn fresh_requestability_tracks_seed_dispatch_cancel_and_completion() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE * 2);
+        assert!(p.has_fresh_requestable());
+
+        let first = p.pick_from_seed().unwrap();
+        assert!(p.has_fresh_requestable());
+        let second = p.pick_from_seed().unwrap();
+        assert!(!p.has_fresh_requestable());
+        assert!(p.pick_from_seed().is_none());
+
+        p.cancel_request(first.piece as usize, first.begin);
+        assert!(p.has_fresh_requestable());
+        p.cancel_request(second.piece as usize, second.begin);
+        p.mark_have(0);
+        assert!(!p.has_fresh_requestable());
     }
 
     #[test]

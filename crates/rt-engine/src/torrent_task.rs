@@ -2445,16 +2445,14 @@ pub struct TorrentTask {
     /// received content. The picker still ranks candidates; this ledger
     /// arbitrates cross-source ownership and response lifetimes.
     transfer_ledger: TransferLedger<Arc<PieceMap>>,
-    /// A transient ledger connection for one webseed request. Dispatch starts
-    /// only without active peers, but a peer may connect while its HTTP fetch
-    /// is in flight; the shared ledger arbitrates the two responses.
+    /// A transient ledger connection for one webseed request. It may overlap
+    /// peer transfers; the shared ledger arbitrates ownership and responses.
     webseed_transfer_conn: Option<ConnectionId>,
     _webseed_transfer_connection_memory_lease: Option<MemoryLease>,
     /// One bounded webseed fetch runs outside the torrent actor so a slow
     /// HTTP response cannot delay peer events or lifecycle commands.
     webseed_fetch: Option<WebseedFetchInFlight>,
-    /// Wake the webseed deadline when a fetch is revoked by a peer or
-    /// lifecycle transition.
+    /// Wake source scheduling after policy, recheck, or resume changes.
     webseed_wake_notify: Notify,
     /// Logical ledger-state reservations are charged with peer request state,
     /// separately from the picker's candidate index and payload assemblies.
@@ -3051,11 +3049,9 @@ impl TorrentTask {
         let mut tracker_tick = interval(Duration::from_secs(5));
         let mut peer_retry_tick = interval(Duration::from_secs(30));
         let mut peer_control_retry_tick = interval(Duration::from_secs(1));
-        // Webseeds are a fallback path, not the primary piece scheduler. A
-        // fixed interval would still wake every task even while it is paused,
-        // complete, peer-connected, or webseed-free. A deadline-driven sleep
-        // wakes only when the guarded work can run; after a failure it follows
-        // that seed's exponential retry deadline.
+        // A torrent admits at most one webseed block at a time, alongside
+        // peer work. Sleep until fresh work is requestable; after a source
+        // failure, follow that seed's exponential retry deadline.
         let mut webseed_sleep = Box::pin(sleep(WEBSEED_RETRY_MAX));
         reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
         let global_download_limit_changes = self.network_budget.download_limit_changes();
@@ -3453,8 +3449,23 @@ impl TorrentTask {
                 }
 
                 Some(event) = self.peer_event_rx.recv() => {
+                    let had_fresh_requestable = self.picker.has_fresh_requestable();
+                    let released_request = matches!(
+                        &event,
+                        PeerEvent::Choked { .. }
+                            | PeerEvent::RequestRejected { .. }
+                            | PeerEvent::RequestTimedOut { .. }
+                            | PeerEvent::Disconnected { .. }
+                    );
                     if let Some(event) = peer_event_if_active(self.paused, event) {
                         self.handle_peer_event(event).await;
+                        if released_request
+                            && !had_fresh_requestable
+                            && self.webseed_fetch.is_none()
+                            && self.picker.has_fresh_requestable()
+                        {
+                            reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
+                        }
                     }
                     if self.crash_safety_work_pending() {
                         if !self.drive_crash_safety(&mut cmd_rx, &mut pending_command).await {
@@ -3465,9 +3476,15 @@ impl TorrentTask {
                 }
 
                 Some(event) = self.peer_disconnect_rx.recv() => {
+                    let had_fresh_requestable = self.picker.has_fresh_requestable();
                     if let Some(event) = peer_event_if_active(self.paused, event) {
                         self.handle_peer_event(event).await;
-                        if self.active_peers.is_empty() {
+                        if !had_fresh_requestable
+                            && self.webseed_fetch.is_none()
+                            && self.picker.has_fresh_requestable()
+                        {
+                            reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
+                        } else if self.active_peers.is_empty() {
                             reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
                         }
                     }
@@ -3490,7 +3507,14 @@ impl TorrentTask {
 
                 completion = self.transfer_jobs.next(), if !self.transfer_jobs.is_empty() => {
                     if let Some(completion) = completion {
+                        let had_fresh_requestable = self.picker.has_fresh_requestable();
                         self.handle_transfer_completion(completion).await;
+                        if !had_fresh_requestable
+                            && self.webseed_fetch.is_none()
+                            && self.picker.has_fresh_requestable()
+                        {
+                            reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
+                        }
                     }
                 }
 
@@ -3544,6 +3568,9 @@ impl TorrentTask {
                         for peer in peers {
                             self.refill_peer_requests(peer).await;
                         }
+                        if self.webseed_fetch.is_none() && self.picker.has_fresh_requestable() {
+                            reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
+                        }
                     }
                 }
 
@@ -3554,10 +3581,13 @@ impl TorrentTask {
                         for peer in peers {
                             self.refill_peer_requests(peer).await;
                         }
+                        if self.webseed_fetch.is_none() && self.picker.has_fresh_requestable() {
+                            reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
+                        }
                     }
                 }
 
-                _ = &mut webseed_sleep, if !self.paused && self.active_peers.is_empty() && self.webseed_fetch.is_none() && !self.meta.webseeds.is_empty() && !self.picker.is_complete() => {
+                _ = &mut webseed_sleep, if !self.paused && self.webseed_fetch.is_none() && !self.meta.webseeds.is_empty() && !self.picker.is_complete() => {
                     if self.start_webseed_block() {
                         // The HTTP request and global rate wait now own their
                         // bounded job. The actor remains free to process peer
@@ -3580,9 +3610,9 @@ impl TorrentTask {
 
     fn webseed_wake_delay(&self) -> Duration {
         if self.paused
-            || !self.active_peers.is_empty()
             || self.meta.webseeds.is_empty()
             || self.picker.is_complete()
+            || !self.picker.has_fresh_requestable()
         {
             return WEBSEED_RETRY_MAX;
         }
@@ -3606,7 +3636,10 @@ impl TorrentTask {
             }
         }
         if has_ready_seed {
-            Duration::from_millis(100)
+            self.download_token_wake
+                .map_or(Duration::from_millis(100), |deadline| {
+                    deadline.saturating_duration_since(now)
+                })
         } else {
             earliest_retry
         }
@@ -4304,6 +4337,7 @@ impl TorrentTask {
             self.picker.set_piece_enabled(piece, enabled);
         }
         self.picker.set_priority_mask(priority);
+        self.webseed_wake_notify.notify_one();
     }
 
     async fn apply_torrent_limits_from_db(&mut self) -> Result<(), String> {
@@ -4471,6 +4505,7 @@ impl TorrentTask {
             return Err(format!("failed to persist torrent resume state: {error}"));
         }
         self.recheck_restore_state = None;
+        self.webseed_wake_notify.notify_one();
         Ok(())
     }
 
@@ -4886,6 +4921,7 @@ impl TorrentTask {
             )
             .await;
         }
+        self.webseed_wake_notify.notify_one();
         RecheckOutcome::Complete
     }
 
@@ -5095,6 +5131,7 @@ impl TorrentTask {
                     self.recheck_restore_state = resume_paused.then_some(TorrentState::Paused);
                     if !resume_paused {
                         self.restart_tracker_session();
+                        self.webseed_wake_notify.notify_one();
                     }
                     let _ = reply.send(Ok(()));
                 }
@@ -13179,7 +13216,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn webseed_http_wait_does_not_block_torrent_commands() {
+    async fn webseed_fetch_runs_alongside_active_peers_and_keeps_actor_responsive() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         let temp = tempfile::tempdir().unwrap();
@@ -13248,7 +13285,7 @@ mod tests {
         let (cmd_tx, cmd_rx) = mpsc::channel(4);
         let resources = ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default());
         let budget = GlobalNetworkBudget::unlimited();
-        let task = TorrentTask::new(
+        let mut task = TorrentTask::new(
             meta,
             temp.path().to_path_buf(),
             false,
@@ -13275,6 +13312,12 @@ mod tests {
             None,
         )
         .await;
+        let peer_slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let peer_permit = Arc::clone(&peer_slots).acquire_owned().await.unwrap();
+        let (_peer_id, _peer_commands) = task
+            .register_peer("127.0.0.1:6882".parse().unwrap(), peer_permit)
+            .expect("a test peer should occupy one active slot");
+        assert!(!task.active_peers.is_empty());
         let actor = tokio::spawn(task.run());
 
         timeout(Duration::from_secs(2), request_started_rx)

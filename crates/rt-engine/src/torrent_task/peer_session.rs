@@ -547,8 +547,8 @@ impl TorrentTask {
     pub(super) fn start_webseed_block(&mut self) -> bool {
         if self.webseed_fetch.is_some()
             || self.paused
-            || !self.active_peers.is_empty()
             || self.picker.is_complete()
+            || !self.picker.has_fresh_requestable()
             || self.meta.webseeds.is_empty()
         {
             return false;
