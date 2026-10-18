@@ -2,8 +2,19 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
 };
+use std::time::Instant;
 
 pub const MEMORY_CLASS_COUNT: usize = 10;
+
+static NEXT_MEMORY_LEASE_ID: AtomicU64 = AtomicU64::new(1);
+
+fn allocate_memory_lease_id() -> Option<u64> {
+    NEXT_MEMORY_LEASE_ID
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            current.checked_add(1)
+        })
+        .ok()
+}
 
 /// A deliberately narrow category for a payload copy observed at a known
 /// engine copy site. These counters are not a whole-process copy total.
@@ -186,24 +197,25 @@ impl ResourceGovernor {
     }
 
     pub fn try_acquire(&self, class: MemoryClass, bytes: u64) -> Option<MemoryLease> {
+        self.try_reserve_lease_bytes(class, bytes)
+            .then(|| MemoryLease::new(self.clone(), class, bytes))
+    }
+
+    fn try_reserve_lease_bytes(&self, class: MemoryClass, bytes: u64) -> bool {
         if bytes == 0 {
-            return Some(MemoryLease {
-                governor: self.clone(),
-                class,
-                bytes,
-            });
+            return true;
         }
 
         let class_idx = class.index();
         let class_cap = self.inner.config.class_caps_bytes[class_idx];
         if class_cap == 0 || bytes > class_cap || bytes > self.inner.config.total_cap_bytes {
             self.inner.denied[class_idx].fetch_add(1, Ordering::Relaxed);
-            return None;
+            return false;
         }
 
         if !reserve(&self.inner.class_used[class_idx], bytes, class_cap) {
             self.inner.denied[class_idx].fetch_add(1, Ordering::Relaxed);
-            return None;
+            return false;
         }
 
         if !reserve(
@@ -213,14 +225,10 @@ impl ResourceGovernor {
         ) {
             self.inner.class_used[class_idx].fetch_sub(bytes, Ordering::AcqRel);
             self.inner.denied[class_idx].fetch_add(1, Ordering::Relaxed);
-            return None;
+            return false;
         }
 
-        Some(MemoryLease {
-            governor: self.clone(),
-            class,
-            bytes,
-        })
+        true
     }
 
     pub fn pressure(&self) -> MemoryPressure {
@@ -295,15 +303,72 @@ pub struct MemoryLease {
     governor: ResourceGovernor,
     class: MemoryClass,
     bytes: u64,
+    /// Allocated only while trace logging is enabled. This keeps normal
+    /// admission free of a per-lease heap allocation while giving storage
+    /// evidence a stable identity and complete consumer lifetime when traced.
+    trace: Option<Box<MemoryLeaseTrace>>,
+}
+
+#[derive(Debug)]
+struct MemoryLeaseTrace {
+    id: u64,
+    acquired_at: Instant,
 }
 
 impl MemoryLease {
+    fn new(governor: ResourceGovernor, class: MemoryClass, bytes: u64) -> Self {
+        Self::new_with_trace(
+            governor,
+            class,
+            bytes,
+            tracing::enabled!(tracing::Level::TRACE),
+        )
+    }
+
+    fn new_with_trace(
+        governor: ResourceGovernor,
+        class: MemoryClass,
+        bytes: u64,
+        trace_enabled: bool,
+    ) -> Self {
+        let trace = trace_enabled
+            .then(allocate_memory_lease_id)
+            .flatten()
+            .map(|id| {
+                let acquired_at = Instant::now();
+                let snapshot = governor.snapshot();
+                tracing::trace!(
+                    resource_lease_id = id,
+                    resource_lease_class = class.as_str(),
+                    resource_lease_bytes = bytes,
+                    resource_lease_total_used_bytes_after_acquire = snapshot.total_used_bytes,
+                    resource_lease_class_used_bytes_after_acquire =
+                        snapshot.classes[class.index()].used_bytes,
+                    "resource lease acquired"
+                );
+                Box::new(MemoryLeaseTrace { id, acquired_at })
+            });
+        Self {
+            governor,
+            class,
+            bytes,
+            trace,
+        }
+    }
+
     pub fn class(&self) -> MemoryClass {
         self.class
     }
 
     pub fn bytes(&self) -> u64 {
         self.bytes
+    }
+
+    /// Trace-only identity for correlating a reservation with operation and
+    /// release evidence. Leases created without TRACE logging intentionally
+    /// carry no identity and incur no identity allocation.
+    pub fn identity(&self) -> Option<u64> {
+        self.trace.as_ref().map(|trace| trace.id)
     }
 
     /// Extend an existing reservation while keeping ownership in one lease.
@@ -316,11 +381,28 @@ impl MemoryLease {
         if additional == 0 {
             return true;
         }
-        let Some(lease) = self.governor.try_acquire(self.class, additional) else {
+        if !self
+            .governor
+            .try_reserve_lease_bytes(self.class, additional)
+        {
             return false;
-        };
+        }
+        let previous_bytes = self.bytes;
         self.bytes = new_bytes;
-        std::mem::forget(lease);
+        if let Some(trace) = self.trace.as_ref() {
+            let snapshot = self.governor.snapshot();
+            tracing::trace!(
+                resource_lease_id = trace.id,
+                resource_lease_class = self.class.as_str(),
+                resource_lease_previous_bytes = previous_bytes,
+                resource_lease_growth_bytes = additional,
+                resource_lease_bytes = new_bytes,
+                resource_lease_total_used_bytes_after_growth = snapshot.total_used_bytes,
+                resource_lease_class_used_bytes_after_growth =
+                    snapshot.classes[self.class.index()].used_bytes,
+                "resource lease grown"
+            );
+        }
         true
     }
 }
@@ -328,6 +410,24 @@ impl MemoryLease {
 impl Drop for MemoryLease {
     fn drop(&mut self) {
         self.governor.release(self.class, self.bytes);
+        if let Some(trace) = self.trace.as_ref() {
+            let snapshot = self.governor.snapshot();
+            tracing::trace!(
+                resource_lease_id = trace.id,
+                resource_lease_class = self.class.as_str(),
+                resource_lease_bytes = self.bytes,
+                resource_lease_lifetime_micros = trace
+                    .acquired_at
+                    .elapsed()
+                    .as_micros()
+                    .min(u128::from(u64::MAX))
+                    as u64,
+                resource_lease_total_used_bytes_after_release = snapshot.total_used_bytes,
+                resource_lease_class_used_bytes_after_release =
+                    snapshot.classes[self.class.index()].used_bytes,
+                "resource lease released"
+            );
+        }
     }
 }
 
@@ -381,6 +481,40 @@ mod tests {
         assert!(!lease.try_grow(20));
         assert_eq!(lease.bytes(), 70);
         assert_eq!(governor.snapshot().total_used_bytes, 70);
+        drop(lease);
+        assert_eq!(governor.snapshot().total_used_bytes, 0);
+    }
+
+    #[test]
+    fn traced_lease_identity_is_stable_through_growth_and_release() {
+        let governor = ResourceGovernor::new(config());
+        assert!(governor.try_reserve_lease_bytes(MemoryClass::Metadata, 40));
+        let mut lease =
+            MemoryLease::new_with_trace(governor.clone(), MemoryClass::Metadata, 40, true);
+        let identity = lease.identity().expect("trace lease has an identity");
+
+        assert!(lease.try_grow(30));
+        assert_eq!(lease.identity(), Some(identity));
+        assert_eq!(lease.bytes(), 70);
+
+        drop(lease);
+        assert_eq!(governor.snapshot().total_used_bytes, 0);
+
+        assert!(governor.try_reserve_lease_bytes(MemoryClass::Metadata, 1));
+        let next_lease =
+            MemoryLease::new_with_trace(governor.clone(), MemoryClass::Metadata, 1, true);
+        assert_ne!(next_lease.identity(), Some(identity));
+        drop(next_lease);
+        assert_eq!(governor.snapshot().total_used_bytes, 0);
+    }
+
+    #[test]
+    fn untraced_lease_does_not_allocate_an_identity() {
+        let governor = ResourceGovernor::new(config());
+        assert!(governor.try_reserve_lease_bytes(MemoryClass::Metadata, 1));
+        let lease = MemoryLease::new_with_trace(governor.clone(), MemoryClass::Metadata, 1, false);
+
+        assert_eq!(lease.identity(), None);
         drop(lease);
         assert_eq!(governor.snapshot().total_used_bytes, 0);
     }

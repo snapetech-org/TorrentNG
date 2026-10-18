@@ -1730,6 +1730,7 @@ dependencies = [
  "rt-tracker",
  "tempfile",
  "tokio",
+ "tracing",
  "tower 0.4.13",
 ]
 

@@ -1313,10 +1313,18 @@ impl Drop for DiskSubmission {
             write_payload_owner_released = self._payload_owner.is_some(),
             resource_credit_governor_leases = credit.governor_credit_leases,
             resource_credit_governor_bytes = credit.governor_credit_bytes,
+            resource_credit_governor_lease_id = credit.governor_credit_lease_id,
+            resource_credit_governor_lease_ids_xor = credit.governor_credit_lease_ids_xor,
+            resource_credit_governor_lease_ids_sum = credit.governor_credit_lease_ids_sum,
             resource_credit_logical_queued_bytes = credit.logical_queued_bytes,
             resource_credit_shared_payload_class = ?credit.shared_payload_class,
             resource_credit_shared_payload_classes_mixed = credit.shared_payload_classes_mixed,
             resource_credit_shared_payload_leases = credit.shared_payload_lease_count,
+            resource_credit_shared_payload_lease_id = credit.shared_payload_lease_id,
+            resource_credit_shared_payload_lease_ids_xor =
+                credit.shared_payload_lease_ids_xor,
+            resource_credit_shared_payload_lease_ids_sum =
+                credit.shared_payload_lease_ids_sum,
             resource_credit_shared_payload_lease_bytes = credit.shared_payload_lease_bytes,
             resource_credit_shared_payload_view_bytes = credit.shared_payload_view_bytes,
             resource_credit_frame_pool_charge_bytes_at_dispatch =
@@ -1334,10 +1342,18 @@ impl Drop for DiskSubmission {
 struct StorageCreditEvidence {
     governor_credit_leases: u64,
     governor_credit_bytes: u64,
+    /// Exact ID when one lease is represented. Coalesced operations retain
+    /// lossy, order-independent xor/sum diagnostics over ID contributions.
+    governor_credit_lease_id: Option<u64>,
+    governor_credit_lease_ids_xor: u64,
+    governor_credit_lease_ids_sum: u64,
     logical_queued_bytes: u64,
     shared_payload_class: Option<MemoryClass>,
     shared_payload_classes_mixed: bool,
     shared_payload_lease_count: u64,
+    shared_payload_lease_id: Option<u64>,
+    shared_payload_lease_ids_xor: u64,
+    shared_payload_lease_ids_sum: u64,
     shared_payload_lease_bytes: u64,
     shared_payload_view_bytes: u64,
     frame_pool_charge_bytes_at_dispatch: u64,
@@ -1450,10 +1466,18 @@ impl DiskSubmission {
             write_sequence = ?self.operation.write_sequence,
             resource_credit_governor_bytes = credit.governor_credit_bytes,
             resource_credit_governor_leases = credit.governor_credit_leases,
+            resource_credit_governor_lease_id = credit.governor_credit_lease_id,
+            resource_credit_governor_lease_ids_xor = credit.governor_credit_lease_ids_xor,
+            resource_credit_governor_lease_ids_sum = credit.governor_credit_lease_ids_sum,
             resource_credit_logical_queued_bytes = credit.logical_queued_bytes,
             resource_credit_shared_payload_class = ?credit.shared_payload_class,
             resource_credit_shared_payload_classes_mixed = credit.shared_payload_classes_mixed,
             resource_credit_shared_payload_leases = credit.shared_payload_lease_count,
+            resource_credit_shared_payload_lease_id = credit.shared_payload_lease_id,
+            resource_credit_shared_payload_lease_ids_xor =
+                credit.shared_payload_lease_ids_xor,
+            resource_credit_shared_payload_lease_ids_sum =
+                credit.shared_payload_lease_ids_sum,
             resource_credit_shared_payload_lease_bytes = credit.shared_payload_lease_bytes,
             resource_credit_shared_payload_view_bytes = credit.shared_payload_view_bytes,
             resource_credit_frame_pool_charge_bytes_at_dispatch =
@@ -1597,12 +1621,20 @@ impl QueuedDiskBytes {
 
     fn resource_credit(&self) -> StorageCreditEvidence {
         let shared_payload = self._shared_payload_lease.as_deref();
+        let governor_lease_id = self._lease.as_ref().and_then(MemoryLease::identity);
+        let shared_payload_lease_id = shared_payload.and_then(MemoryLease::identity);
         StorageCreditEvidence {
             governor_credit_leases: if self._lease.is_some() { 1 } else { 0 },
             governor_credit_bytes: self._lease.as_ref().map_or(0, MemoryLease::bytes),
+            governor_credit_lease_id: governor_lease_id,
+            governor_credit_lease_ids_xor: governor_lease_id.unwrap_or_default(),
+            governor_credit_lease_ids_sum: governor_lease_id.unwrap_or_default(),
             logical_queued_bytes: self.bytes,
             shared_payload_class: shared_payload.map(MemoryLease::class),
             shared_payload_lease_count: if shared_payload.is_some() { 1 } else { 0 },
+            shared_payload_lease_id,
+            shared_payload_lease_ids_xor: shared_payload_lease_id.unwrap_or_default(),
+            shared_payload_lease_ids_sum: shared_payload_lease_id.unwrap_or_default(),
             shared_payload_lease_bytes: shared_payload.map_or(0, MemoryLease::bytes),
             shared_payload_view_bytes: self.shared_payload_view_bytes.unwrap_or_default(),
             frame_pool_charge_bytes_at_dispatch: 0,
@@ -1618,6 +1650,32 @@ impl StorageCreditEvidence {
     }
 
     fn include(&mut self, other: Self) {
+        let governor_lease_count = self
+            .governor_credit_leases
+            .saturating_add(other.governor_credit_leases);
+        let shared_payload_lease_count = self
+            .shared_payload_lease_count
+            .saturating_add(other.shared_payload_lease_count);
+        self.governor_credit_lease_id = if governor_lease_count == 1 {
+            self.governor_credit_lease_id
+                .or(other.governor_credit_lease_id)
+        } else {
+            None
+        };
+        self.governor_credit_lease_ids_xor ^= other.governor_credit_lease_ids_xor;
+        self.governor_credit_lease_ids_sum = self
+            .governor_credit_lease_ids_sum
+            .wrapping_add(other.governor_credit_lease_ids_sum);
+        self.shared_payload_lease_id = if shared_payload_lease_count == 1 {
+            self.shared_payload_lease_id
+                .or(other.shared_payload_lease_id)
+        } else {
+            None
+        };
+        self.shared_payload_lease_ids_xor ^= other.shared_payload_lease_ids_xor;
+        self.shared_payload_lease_ids_sum = self
+            .shared_payload_lease_ids_sum
+            .wrapping_add(other.shared_payload_lease_ids_sum);
         self.governor_credit_leases = self
             .governor_credit_leases
             .saturating_add(other.governor_credit_leases);
@@ -1713,10 +1771,18 @@ impl HashJobCreditOwner {
             hash_input_bytes = self.input_bytes,
             resource_credit_governor_leases = credit.governor_credit_leases,
             resource_credit_governor_bytes = credit.governor_credit_bytes,
+            resource_credit_governor_lease_id = credit.governor_credit_lease_id,
+            resource_credit_governor_lease_ids_xor = credit.governor_credit_lease_ids_xor,
+            resource_credit_governor_lease_ids_sum = credit.governor_credit_lease_ids_sum,
             resource_credit_logical_queued_bytes = credit.logical_queued_bytes,
             resource_credit_shared_payload_class = ?credit.shared_payload_class,
             resource_credit_shared_payload_classes_mixed = credit.shared_payload_classes_mixed,
             resource_credit_shared_payload_leases = credit.shared_payload_lease_count,
+            resource_credit_shared_payload_lease_id = credit.shared_payload_lease_id,
+            resource_credit_shared_payload_lease_ids_xor =
+                credit.shared_payload_lease_ids_xor,
+            resource_credit_shared_payload_lease_ids_sum =
+                credit.shared_payload_lease_ids_sum,
             resource_credit_shared_payload_lease_bytes = credit.shared_payload_lease_bytes,
             resource_credit_shared_payload_view_bytes = credit.shared_payload_view_bytes,
             "hash job submission requested"
@@ -1736,10 +1802,18 @@ impl Drop for HashJobCreditOwner {
             hash_input_bytes = self.input_bytes,
             resource_credit_governor_leases = credit.governor_credit_leases,
             resource_credit_governor_bytes = credit.governor_credit_bytes,
+            resource_credit_governor_lease_id = credit.governor_credit_lease_id,
+            resource_credit_governor_lease_ids_xor = credit.governor_credit_lease_ids_xor,
+            resource_credit_governor_lease_ids_sum = credit.governor_credit_lease_ids_sum,
             resource_credit_logical_queued_bytes = credit.logical_queued_bytes,
             resource_credit_shared_payload_class = ?credit.shared_payload_class,
             resource_credit_shared_payload_classes_mixed = credit.shared_payload_classes_mixed,
             resource_credit_shared_payload_leases = credit.shared_payload_lease_count,
+            resource_credit_shared_payload_lease_id = credit.shared_payload_lease_id,
+            resource_credit_shared_payload_lease_ids_xor =
+                credit.shared_payload_lease_ids_xor,
+            resource_credit_shared_payload_lease_ids_sum =
+                credit.shared_payload_lease_ids_sum,
             resource_credit_shared_payload_lease_bytes = credit.shared_payload_lease_bytes,
             resource_credit_shared_payload_view_bytes = credit.shared_payload_view_bytes,
             "hash job credit owner released"
@@ -2565,10 +2639,20 @@ async fn dispatch_peer_read_batch(
                 queued_request_count = batch.requests.len(),
                 resource_credit_governor_leases = credit.governor_credit_leases,
                 resource_credit_governor_bytes = credit.governor_credit_bytes,
+                resource_credit_governor_lease_id = credit.governor_credit_lease_id,
+                resource_credit_governor_lease_ids_xor =
+                    credit.governor_credit_lease_ids_xor,
+                resource_credit_governor_lease_ids_sum =
+                    credit.governor_credit_lease_ids_sum,
                 resource_credit_logical_queued_bytes = credit.logical_queued_bytes,
                 resource_credit_shared_payload_class = ?credit.shared_payload_class,
                 resource_credit_shared_payload_classes_mixed = credit.shared_payload_classes_mixed,
                 resource_credit_shared_payload_leases = credit.shared_payload_lease_count,
+                resource_credit_shared_payload_lease_id = credit.shared_payload_lease_id,
+                resource_credit_shared_payload_lease_ids_xor =
+                    credit.shared_payload_lease_ids_xor,
+                resource_credit_shared_payload_lease_ids_sum =
+                    credit.shared_payload_lease_ids_sum,
                 resource_credit_shared_payload_lease_bytes = credit.shared_payload_lease_bytes,
                 resource_credit_shared_payload_view_bytes = credit.shared_payload_view_bytes,
                 resource_credit_frame_pool_charge_bytes_at_dispatch =
@@ -5181,9 +5265,15 @@ mod tests {
         let governor_and_peer_payload = StorageCreditEvidence {
             governor_credit_leases: 1,
             governor_credit_bytes: 4096,
+            governor_credit_lease_id: Some(11),
+            governor_credit_lease_ids_xor: 11,
+            governor_credit_lease_ids_sum: 11,
             logical_queued_bytes: 8192,
             shared_payload_class: Some(MemoryClass::PeerBuffer),
             shared_payload_lease_count: 1,
+            shared_payload_lease_id: Some(21),
+            shared_payload_lease_ids_xor: 21,
+            shared_payload_lease_ids_sum: 21,
             shared_payload_lease_bytes: 16 * 1024,
             shared_payload_view_bytes: 8192,
             frame_pool_charge_bytes_at_dispatch: 64 * 1024,
@@ -5192,9 +5282,15 @@ mod tests {
         let queue_and_webseed_payload = StorageCreditEvidence {
             governor_credit_leases: 1,
             governor_credit_bytes: 2048,
+            governor_credit_lease_id: Some(12),
+            governor_credit_lease_ids_xor: 12,
+            governor_credit_lease_ids_sum: 12,
             logical_queued_bytes: 4096,
             shared_payload_class: Some(MemoryClass::WebseedBody),
             shared_payload_lease_count: 1,
+            shared_payload_lease_id: Some(22),
+            shared_payload_lease_ids_xor: 22,
+            shared_payload_lease_ids_sum: 22,
             shared_payload_lease_bytes: 4096,
             shared_payload_view_bytes: 4096,
             frame_pool_charge_bytes_at_dispatch: 16 * 1024,
@@ -5209,13 +5305,24 @@ mod tests {
         assert_eq!(forward, reverse);
         assert_eq!(forward.governor_credit_leases, 2);
         assert_eq!(forward.governor_credit_bytes, 6144);
+        assert_eq!(forward.governor_credit_lease_id, None);
+        assert_eq!(forward.governor_credit_lease_ids_xor, 11 ^ 12);
+        assert_eq!(forward.governor_credit_lease_ids_sum, 23);
         assert_eq!(forward.logical_queued_bytes, 12 * 1024);
         assert_eq!(forward.shared_payload_class, None);
         assert!(forward.shared_payload_classes_mixed);
         assert_eq!(forward.shared_payload_lease_count, 2);
+        assert_eq!(forward.shared_payload_lease_id, None);
+        assert_eq!(forward.shared_payload_lease_ids_xor, 21 ^ 22);
+        assert_eq!(forward.shared_payload_lease_ids_sum, 43);
         assert_eq!(forward.shared_payload_lease_bytes, 20 * 1024);
         assert_eq!(forward.shared_payload_view_bytes, 12 * 1024);
         assert_eq!(forward.frame_pool_charge_bytes_at_dispatch, 80 * 1024);
+
+        let mut single = StorageCreditEvidence::default();
+        single.include(governor_and_peer_payload);
+        assert_eq!(single.governor_credit_lease_id, Some(11));
+        assert_eq!(single.shared_payload_lease_id, Some(21));
 
         let mut same_class = governor_and_peer_payload;
         same_class.include(governor_and_peer_payload);
@@ -5224,6 +5331,9 @@ mod tests {
             Some(MemoryClass::PeerBuffer)
         );
         assert!(!same_class.shared_payload_classes_mixed);
+        assert_eq!(same_class.shared_payload_lease_id, None);
+        assert_eq!(same_class.shared_payload_lease_ids_xor, 0);
+        assert_eq!(same_class.shared_payload_lease_ids_sum, 42);
     }
 
     #[test]

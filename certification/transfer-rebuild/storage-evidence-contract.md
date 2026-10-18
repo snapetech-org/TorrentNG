@@ -23,13 +23,20 @@ against the current path at operation boundaries; a mismatch prevents stale
 read bytes from returning and leaves dirty write evidence intact. Held-read,
 held-write, and held-checkpoint-sync replacement regression sources are
 authored but unrun. Frame-pool charge attribution is now present in read
-dispatch traces. Stable lease identities, consumer-lifetime reconciliation,
-crash cuts, and the remaining fault-matrix cases are still open. Data-bearing
-hash jobs retain their queued-byte owners through worker closure completion.
-When TRACE is enabled, they also capture a process-wide operation ID and record
-queue/shared-payload credit at submission and owner release; the untraced hot
-path avoids that ID allocation and snapshot work. These evidence sources are
-authored but unrun.
+dispatch traces. When TRACE is enabled during lease creation, each memory
+lease receives a stable process-wide ID that survives lease growth and is
+included in acquire, growth, release, and storage-operation credit events.
+Lease events record class, byte count, consumer lifetime, and the governor's
+used-byte snapshot after each transition. A storage operation reports an
+exact lease ID for a single contribution; coalesced reads report lossy,
+order-independent xor/sum diagnostics alongside the contribution count.
+Those aggregate diagnostics can collide and are not a complete ID set.
+Untraced leases avoid ID allocation and snapshot work. Data-bearing hash jobs
+retain their queued-byte owners through worker closure completion and record
+the same exact IDs or aggregate diagnostics at submission and release when
+TRACE is enabled. Automated lifetime-to-snapshot reconciliation,
+full-pipeline before/after assertions, crash cuts, and the remaining fault
+matrix cases are still open. These evidence sources are authored but unrun.
 
 ## Evidence states
 
@@ -81,16 +88,22 @@ ID and byte range for tracing. `DiskSubmission` directly retains the opened
 descriptor handle and, for writes, an immutable `Bytes` reference until
 backend completion. Dispatch and owner-drop traces expose logical queued bytes,
 governor-backed queue credit, shared payload class and lease/view byte counts,
-and retained permit/owner counts. Coalesced peer reads report the aggregate
-queued credits of their retained requests and the size-class charge of their
-single shared frame, separately from governor-backed bytes. The device
+and retained permit/owner counts. Trace-enabled lease IDs flow through storage
+operations; a single contribution retains its exact ID, while coalesced peer
+reads retain lossy, order-independent xor/sum diagnostics and a contribution
+count; those diagnostics can collide and are not an exact ID set.
+Lease acquisition, growth, and release events carry the same ID, consumer
+lifetime, and post-transition governor snapshots. Coalesced peer reads report
+the aggregate queued credits of their retained requests and the size-class
+charge of their single shared frame, separately from governor-backed bytes. The device
 admission pool is keyed
 by physical device identity rather than mount profile; unidentified topology
 falls back to a storage-root-scoped pool. Strict writes move the same
 submission through their data sync. Reads recheck the descriptor identity
-against the current path before returning. Stable lease identities,
-deterministic credit before/after assertions,
-crash cuts, and platform fault qualification remain open.
+against the current path before returning. Stable trace identities and lease
+lifetime events are implemented. Automated reconciliation against runtime
+snapshots, deterministic assertions across the complete storage-frame, queue,
+and hash pipeline, crash cuts, and platform fault qualification remain open.
 
 Dirty evidence is tracked per normalized path, write sequence, and file
 identity. A barrier snapshots the dirty files and highest covered sequence for
@@ -121,8 +134,9 @@ relying on filesystem timing:
 Each scenario records the injected event sequence, operation/file generations,
 lease and permit counts before/after, completion state, dirty sequences, and
 recovered content. Current dispatch/drop traces expose submitted credit and
-retained-owner counts; deterministic snapshots and assertions across all
-credit classes are still required. Wall-clock sleeps and “usually happens”
+retained-owner counts; identity/growth/release and order-independent lossy
+coalesced-credit regressions are authored. Deterministic snapshots and
+assertions across all credit classes are still required. Wall-clock sleeps and “usually happens”
 race tests do not satisfy this contract.
 
 ## Qualification boundary

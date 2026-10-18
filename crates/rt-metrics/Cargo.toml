@@ -6,6 +6,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[dependencies]
+tracing.workspace = true
+
 [dev-dependencies]
 rt-session = { path = "../rt-session" }
 rt-api-native = { path = "../rt-api-native" }

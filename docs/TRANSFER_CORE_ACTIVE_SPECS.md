@@ -279,11 +279,15 @@ writes keep dirty evidence intact. Data-bearing hash jobs always retain their
 queued-byte owner through closure completion. When trace-level logging is
 enabled, they also capture a process-wide operation identity and record queue
 and shared-payload credits at submission and release; normal operation avoids
-that ID and snapshot work. Stable lease identities, consumer-lifetime credit
-reconciliation, deterministic credit before/after assertions, restart cuts,
-and platform fault qualification remain open. Frame-pool charge attribution
-is present in read-dispatch traces; consumer-lifetime reconciliation is still
-open.
+that ID and snapshot work. Trace-enabled `MemoryLease` values now receive
+stable process-wide IDs, preserve them across growth, and emit acquire/growth/
+release events with consumer lifetime and post-transition governor snapshots.
+Storage-operation credit records retain an exact lease ID for one contribution
+and lossy, order-independent xor/sum diagnostics when reads coalesce several
+contributions. The aggregate diagnostics can collide and are not an exact ID
+set. Automated snapshot reconciliation, complete-pipeline
+before/after assertions, restart cuts, and platform fault qualification remain
+open. Frame-pool charge attribution is present in read-dispatch traces.
 
 ### Ownership and invariant
 
@@ -315,6 +319,10 @@ open.
   regression sources simulate short reads and writes across multiple calls.
 - Operation-record regressions prove local sequence values from distinct
   device queues remain distinguishable by their stable queue keys.
+- Trace-enabled memory-lease regressions prove the lease ID survives growth,
+  remains unique after release, and the resource snapshot returns to its
+  pre-lease state. Storage-credit merge regressions preserve exact single IDs
+  and lossy, order-independent diagnostics when contributions are coalesced.
 - Path-replacement regressions cover secure open, cached descriptor reopening,
   scheduler snapshots, and peer-read readahead (IO-004), plus held payload
   reads, writes, and checkpoint syncs. Dirty writes remain tied to the original
@@ -328,10 +336,10 @@ open.
   closure; at trace level they also record operation-scoped credit at
   submission and release without a global ID allocation on the untraced hot
   path. Regression sources cover frame-credit separation, rounded frame
-  charge, and hash queue credit lifetime; deterministic before/after
-  assertions across the complete storage-frame, queue, and hash pipeline
-  remain open. Crash cuts and platform-specific fault qualification remain
-  open.
+  charge, hash queue credit lifetime, trace lease identity/lifetime, and
+  coalesced credit diagnostics; deterministic before/after assertions across
+  the complete storage-frame, queue, and hash pipeline remain open. Crash cuts
+  and platform-specific fault qualification remain open.
 
 ### Files and compatibility
 
@@ -362,7 +370,9 @@ open.
   `device_operation_record_disambiguates_local_sequences_by_queue`, plus
   `storage_credit_keeps_frame_pool_charge_separate_from_governor_bytes` and
   `hash_job_owner_retains_queued_credit_until_drop`, plus the size-class charge assertion in
-  `into_bytes_releases_charge_without_copying_payload`.
+  `into_bytes_releases_charge_without_copying_payload`, and
+  `traced_lease_identity_is_stable_through_growth_and_release`; the
+  order-independent credit-merge regression includes lease-ID diagnostics.
 - **Command or probe to run:** `cargo test -p rt-storage` during the requested
   bulk pass.
 - **Expected result:** injected read/write failures are returned; failed reads
