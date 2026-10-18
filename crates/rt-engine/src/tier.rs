@@ -251,6 +251,7 @@ pub struct TierController<K> {
     dormant_heap_bytes: usize,
     idle_checks: ActivityTimerWheel<K>,
     tracker_checks: ActivityTimerWheel<K>,
+    idle_stagger_sequence: u64,
 }
 
 impl<K> TierController<K>
@@ -266,6 +267,7 @@ where
             dormant_heap_bytes: 0,
             idle_checks: ActivityTimerWheel::default(),
             tracker_checks: ActivityTimerWheel::default(),
+            idle_stagger_sequence: 0,
         }
     }
 
@@ -440,10 +442,26 @@ where
             self.clear_dormant_snapshot(&key);
         }
         if let Some(delay) = decision.next_idle_check {
-            self.idle_checks.schedule(key, now + delay);
+            let staggered_delay = self.stagger_idle_delay(delay);
+            self.idle_checks.schedule(key, now + staggered_delay);
         } else {
             self.idle_checks.cancel(&key);
         }
+    }
+
+    /// Spread idle reconciliation deadlines across coarse one-second buckets.
+    /// A bounded 10%-of-delay horizon (capped at 30 seconds) prevents a
+    /// bulk restore from making every promoted torrent due in the same tick,
+    /// while coarse buckets keep the timer wheel compact.
+    fn stagger_idle_delay(&mut self, delay: Duration) -> Duration {
+        let max_stagger_seconds = (delay.as_secs() / 10).min(30);
+        if max_stagger_seconds == 0 {
+            return delay;
+        }
+        let bucket_count = max_stagger_seconds.saturating_add(1);
+        let bucket = self.idle_stagger_sequence % bucket_count;
+        self.idle_stagger_sequence = self.idle_stagger_sequence.wrapping_add(1);
+        delay.saturating_add(Duration::from_secs(bucket))
     }
 }
 
@@ -868,6 +886,35 @@ mod tests {
         assert_eq!(wheel.pop_due_limited(now, 2), vec!["2", "3"]);
         assert_eq!(wheel.pop_due_limited(now, 2), vec!["4"]);
         assert!(wheel.is_empty());
+    }
+
+    #[test]
+    fn bulk_idle_checks_are_spread_across_bounded_deadline_buckets() {
+        let now = Instant::now();
+        let mut controller = TierController::new(TierPolicy::default());
+        for index in 0..1_000 {
+            controller.apply_input(
+                format!("torrent-{index}"),
+                input(TorrentState::Downloading, now),
+            );
+        }
+
+        let deadlines = controller
+            .idle_checks
+            .scheduled
+            .values()
+            .copied()
+            .collect::<std::collections::HashSet<_>>();
+        assert!(
+            deadlines.len() >= 10,
+            "bulk restore should not put every idle check in one deadline bucket"
+        );
+        assert!(deadlines
+            .iter()
+            .all(|deadline| *deadline >= now + Duration::from_secs(2 * 60)));
+        assert!(deadlines
+            .iter()
+            .all(|deadline| *deadline <= now + Duration::from_secs(2 * 60 + 12)));
     }
 
     #[test]
