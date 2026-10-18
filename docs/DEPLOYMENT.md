@@ -6,6 +6,22 @@ client (`torrentngd`), use the [TorrentNG client deployment guide](NATIVE_DEPLOY
 the product model and client comparison workflow, use
 [ENGINE_REWRITE.md](ENGINE_REWRITE.md).
 
+Choose the application that owns transfers before configuring it:
+
+- **TorrentNG Desktop** asks only whether to launch its bundled local Engine
+  or connect to a remote TorrentNG Server. Its settings live in the Desktop
+  user's `torrentng-desktop/config.toml`; a remote Server keeps its own state
+  and storage. See [Desktop first run](DESKTOP.md#first-run).
+- **WebUI Bridge** runs the `torrentng` service with an existing rTorrent,
+  qBittorrent, Transmission, or Deluge client. Configure that adapter in the
+  Bridge's own `torrentng` config and browser UI below. The existing client
+  owns transfers and downloaded files. Desktop's Local/Remote selector does
+  not connect to the Bridge API.
+- **TorrentNG Server** runs the first-party `torrentngd` Engine and owns
+  transfers, storage, and session state. Configure its TOML/API through
+  [native deployment](NATIVE_DEPLOYMENT.md) and
+  [configuration](CONFIGURATION.md#torrentng-client-torrentngd).
+
 ## Phase 1 bundle
 
 The Phase 1 bundle packages rTorrent 0.16.11, libtorrent 0.16.11, ruTorrent 5.3.1, nginx, PHP-FPM, and the TorrentNG engine profile.

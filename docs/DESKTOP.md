@@ -50,11 +50,21 @@ ad-hoc signed (not notarised): on first launch use right-click → Open.
 Choose where torrents run:
 
 - **This computer** starts the bundled engine on `127.0.0.1` (random port,
-  random per-launch token) and stops it when you close the window. Set the
-  download folder and peer port here.
+  random per-launch token) and stops it when you close the window. Choose the
+  finished-download folder; leaving it blank uses the displayed default under
+  `~/Downloads/TorrentNG`. Peer port, memory cap, engine detection, and autostart
+  use their defaults and can be changed later under ⚙ **Settings**. The local
+  engine owns transfers, storage, and files on this computer.
 - **Another machine** takes the Server URL and an API token (the value of
   `auth.api_tokens` / `TORRENTNGD_API_TOKEN` on the server). Put the server
-  behind HTTPS when it is not on a trusted network.
+  behind HTTPS when it is not on a trusted network. The remote Server owns
+  transfers, storage, and files; Desktop stores only its connection details.
+
+This Desktop selector supports the bundled local `torrentngd` or a remote
+TorrentNG Server. It does not connect to the separate **WebUI Bridge** service
+for rTorrent, qBittorrent, Transmission, or Deluge. For those existing clients,
+open the Bridge's browser WebUI and configure its adapter there; the original
+client continues to own transfers and storage. See [deployment paths](DEPLOYMENT.md).
 
 You can change this later under ⚙ Settings. Torrents are added with **Add**
 (magnet links, `.torrent` file picker) or by dropping a `.torrent` file on the
