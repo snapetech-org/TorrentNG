@@ -814,36 +814,38 @@ fn next_saturating_sequence(sequence: &AtomicU64) -> u64 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ContentEpoch(u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DirtyPathState {
-    generation: u64,
+    content_epoch: ContentEpoch,
     identity: FileIdentity,
 }
 
 fn mark_dirty_path(
     dirty_paths: &Mutex<HashMap<PathBuf, DirtyPathState>>,
-    dirty_path_generation: &AtomicU64,
+    dirty_path_epoch: &AtomicU64,
     path: PathBuf,
     identity: FileIdentity,
 ) -> DirtyPathState {
     let mut dirty = lock_recover(dirty_paths);
-    let generation = dirty_path_generation.fetch_add(1, Ordering::Relaxed);
     let state = DirtyPathState {
-        generation,
+        content_epoch: ContentEpoch(dirty_path_epoch.fetch_add(1, Ordering::Relaxed)),
         identity,
     };
     dirty.insert(path, state);
     state
 }
 
-fn clear_dirty_path_if_generation(
+fn clear_dirty_path_if_epoch(
     dirty_paths: &Mutex<HashMap<PathBuf, DirtyPathState>>,
     path: &Path,
-    expected_generation: u64,
+    expected_epoch: ContentEpoch,
 ) {
     let mut dirty = lock_recover(dirty_paths);
     if dirty
         .get(path)
-        .is_some_and(|state| state.generation == expected_generation)
+        .is_some_and(|state| state.content_epoch == expected_epoch)
     {
         dirty.remove(path);
     }
@@ -989,10 +991,10 @@ pub struct MountScheduler {
     hash_pool: Arc<BlockingPool>,
     /// Dirty paths carry both the write generation and descriptor identity.
     /// Per-path fences order admitted writes before fdatasync and keep later
-    /// writes behind the barrier; a sync may clear only the generation and
+    /// writes behind the barrier; a sync may clear only the content epoch and
     /// file identity it actually covered.
     dirty_paths: Arc<Mutex<HashMap<PathBuf, DirtyPathState>>>,
-    dirty_path_generation: Arc<AtomicU64>,
+    dirty_path_epoch: Arc<AtomicU64>,
     file_sync_fences: Arc<FileSyncFenceRegistry>,
     /// Shared write admission lets a full checkpoint take a stable snapshot
     /// across paths while ordinary writes remain concurrent with each other.
@@ -2387,7 +2389,7 @@ impl MountScheduler {
             _shared_resources: shared_resources,
             hash_pool,
             dirty_paths: Arc::new(Mutex::new(HashMap::new())),
-            dirty_path_generation: Arc::new(AtomicU64::new(0)),
+            dirty_path_epoch: Arc::new(AtomicU64::new(0)),
             file_sync_fences: Arc::new(FileSyncFenceRegistry::default()),
             write_admission_gate: Arc::new(AsyncRwLock::new(())),
             write_sequence: Arc::new(AtomicU64::new(0)),
@@ -3208,7 +3210,7 @@ impl MountScheduler {
         let pool = self.file_pool.clone();
         let disk_backend = self.disk_backend.clone();
         let dirty_paths = self.dirty_paths.clone();
-        let dirty_path_generation = self.dirty_path_generation.clone();
+        let dirty_path_epoch = self.dirty_path_epoch.clone();
         let peer_read_cache = self.peer_read_cache.clone();
         let peer_read_cache_epoch = self.peer_read_cache_epoch.clone();
         let counters = self.counters.clone();
@@ -3258,12 +3260,8 @@ impl MountScheduler {
         // failed write costs one redundant fdatasync, which is harmless.
         let write_sequence = file_sync_fence.issue_write_sequence();
         let _write_watermark = next_saturating_sequence(&self.write_sequence);
-        let dirty_state = mark_dirty_path(
-            &dirty_paths,
-            &dirty_path_generation,
-            key.clone(),
-            file_identity,
-        );
+        let dirty_state =
+            mark_dirty_path(&dirty_paths, &dirty_path_epoch, key.clone(), file_identity);
         let (file_write_guard, admission_guard, submission) = match await_backend_io_with_fence(
             &key,
             backend_write_completion_with_cache_invalidation(
@@ -3322,7 +3320,7 @@ impl MountScheduler {
             current_file_identity(&key, file.as_ref(), "strict_data_sync")?;
             record_sync_completion(&counters, sync_started);
             file_sync_fence.mark_synced(write_sequence);
-            clear_dirty_path_if_generation(&dirty_paths, &key, dirty_state.generation);
+            clear_dirty_path_if_epoch(&dirty_paths, &key, dirty_state.content_epoch);
             drop(strict_sync_guard);
             drop(admission_guard);
             submission
@@ -3351,7 +3349,7 @@ impl MountScheduler {
         let write_admission_guard = Arc::clone(&self.write_admission_gate).read_owned().await;
         let pool = self.file_pool.clone();
         let dirty_paths = self.dirty_paths.clone();
-        let dirty_path_generation = self.dirty_path_generation.clone();
+        let dirty_path_epoch = self.dirty_path_epoch.clone();
         let write_sequence = Arc::clone(&self.write_sequence);
         let counters = self.counters.clone();
         let path = path.to_path_buf();
@@ -3372,7 +3370,7 @@ impl MountScheduler {
             if mode != PreallocationMode::Off {
                 let _file_sequence = fence_for_job.issue_write_sequence();
                 let _write_watermark = next_saturating_sequence(&write_sequence);
-                mark_dirty_path(&dirty_paths, &dirty_path_generation, key.clone(), identity);
+                mark_dirty_path(&dirty_paths, &dirty_path_epoch, key.clone(), identity);
             }
             if mode != PreallocationMode::Off {
                 let current_len = file
@@ -3502,7 +3500,7 @@ impl MountScheduler {
         record_sync_completion(&counters, started);
         file_sync_fence.mark_synced(watermark);
         if let Some(expected_state) = expected_state {
-            clear_dirty_path_if_generation(&dirty_paths, &key, expected_state.generation);
+            clear_dirty_path_if_epoch(&dirty_paths, &key, expected_state.content_epoch);
         }
         drop(fence_guard);
         drop(admission_guard);
@@ -3733,7 +3731,7 @@ impl MountScheduler {
         ensure_dirty_identity(&key, "checkpoint_sync", expected_state, completed_identity)?;
         file_sync_fence.mark_synced(watermark);
         if let Some(expected_state) = expected_state {
-            clear_dirty_path_if_generation(&self.dirty_paths, &key, expected_state.generation);
+            clear_dirty_path_if_epoch(&self.dirty_paths, &key, expected_state.content_epoch);
         }
         drop(fence_guard);
         submission.finish_device_operation();
@@ -6594,33 +6592,33 @@ mod tests {
     }
 
     #[test]
-    fn dirty_sync_does_not_clear_a_newer_write_generation() {
+    fn dirty_sync_does_not_clear_a_newer_content_epoch() {
         let dirty_paths = Mutex::new(HashMap::new());
-        let dirty_path_generation = AtomicU64::new(0);
+        let dirty_path_epoch = AtomicU64::new(0);
         let path = PathBuf::from("payload.bin");
         let identity = test_file_identity();
 
-        mark_dirty_path(&dirty_paths, &dirty_path_generation, path.clone(), identity);
-        let first_generation = dirty_paths
+        mark_dirty_path(&dirty_paths, &dirty_path_epoch, path.clone(), identity);
+        let first_epoch = dirty_paths
             .lock()
             .unwrap()
             .get(&path)
             .copied()
             .unwrap()
-            .generation;
-        mark_dirty_path(&dirty_paths, &dirty_path_generation, path.clone(), identity);
+            .content_epoch;
+        mark_dirty_path(&dirty_paths, &dirty_path_epoch, path.clone(), identity);
 
-        clear_dirty_path_if_generation(&dirty_paths, &path, first_generation);
+        clear_dirty_path_if_epoch(&dirty_paths, &path, first_epoch);
         assert_eq!(dirty_paths.lock().unwrap().len(), 1);
 
-        let second_generation = dirty_paths
+        let second_epoch = dirty_paths
             .lock()
             .unwrap()
             .get(&path)
             .copied()
             .unwrap()
-            .generation;
-        clear_dirty_path_if_generation(&dirty_paths, &path, second_generation);
+            .content_epoch;
+        clear_dirty_path_if_epoch(&dirty_paths, &path, second_epoch);
         assert!(dirty_paths.lock().unwrap().is_empty());
     }
 
@@ -6630,7 +6628,7 @@ mod tests {
         let new_path = PathBuf::from("new-dirty.bin");
         let identity = test_file_identity();
         let original_state = DirtyPathState {
-            generation: 7,
+            content_epoch: ContentEpoch(7),
             identity,
         };
         let dirty_paths = Arc::new(Mutex::new(HashMap::from([(

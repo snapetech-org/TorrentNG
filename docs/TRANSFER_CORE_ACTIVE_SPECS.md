@@ -243,13 +243,13 @@ Document storage evidence and introduce deterministic backend faults for the
 portable scheduler. This slice covers cancellation after backend submission,
 injected read/write failures, partial-write failure, retry after a failed data
 barrier, and operation-level file identity fencing. Dirty path state binds each
-write generation to the descriptor identity that received it. Securely opened
-descriptor leases carry that captured identity through queued and submitted
-operations. On Unix and Windows, reads, writes, and sync operations check that
-the descriptor's original identity still matches the current path at their
-completion boundary; a mismatch fails as uncertain, and writes keep dirty
-evidence intact. Full operation-lease accounting, restart cuts, and platform
-fault qualification remain open.
+typed `ContentEpoch` to the descriptor identity that received it. Securely
+opened descriptor leases carry that captured identity through queued and
+submitted operations. On Unix and Windows, reads, writes, and sync operations
+check that the descriptor's original identity still matches the current path
+at their completion boundary; a mismatch fails as uncertain, and writes keep
+dirty evidence intact. Full operation-lease accounting, restart cuts, and
+platform fault qualification remain open.
 
 ### Ownership and invariant
 
@@ -271,7 +271,8 @@ fault qualification remain open.
 - Cancellation while a submitted write is held leaves dirty state until a
   covering barrier completes.
 - Partial-write failure is returned to the caller and remains dirty.
-- Failed data sync leaves the dirty generation intact for a successful retry.
+- Failed data sync leaves the dirty content epoch intact for a successful
+  retry.
 - Regression sources cover strict-write sync failure and a canceled
   multi-path checkpoint waiter whose held sync returns an injected error; a
   later write waits for the barrier to release and dirty evidence remains
@@ -1757,7 +1758,12 @@ watermark fields default to zero when reading existing records.
 
 - **Regression source added or updated:** storage creates evidence only after a
   successful barrier; fast-resume consumes it and persists the diagnostic
-  watermarks. Sources await the requested bulk pass.
+  watermarks. `torrent_task.rs` also has a deterministic `power_cut_walk`
+  model: 12 seeds each exercise checkpointed and fast-mode saves across 40
+  receive/save/idle steps, rebuild the payload from its durable image, and
+  assert that host-crash recovery never trusts missing bytes. A negative
+  control confirms the model detects unsafe state when crash protection is
+  disabled. All sources await the requested bulk pass.
 - **Command or probe to run:** storage barrier-ordering and fast-resume
   durability suites during the bulk pass.
 - **Expected result:** no save claims stable payload data without an opaque
