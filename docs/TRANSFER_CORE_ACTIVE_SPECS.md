@@ -613,7 +613,7 @@ storage-root-scoped fallback. The storage-job dispatcher keeps one stable
 fallback root identity across its copy schedulers, so unsupported platforms
 do not create a fresh, unshared queue for every plan. The queue capacity comes
 from the shared storage I/O depth, while active dispatch uses one slot per
-portable worker or one bounded io_uring submission batch.
+portable worker or a continuously refilled 64-operation io_uring window.
 Queued work uses the `DeviceElevator` class weights with weighted round-robin
 selection across mounts. A unique operation ID and permit travel through the
 existing completion owner. Cache hits and file-open preparation happen before
@@ -3043,3 +3043,81 @@ adopt the proposal in `TRANSFER_CORE_REBUILD.md`.
 - **External evidence still required:** a complete randomized paired workload
   set on the selected comparison host; scorecard source alone is not a
   performance result.
+
+## IO-015 — Continuous io_uring completion and retained registrations
+
+- **Priority / wave:** P1 / 10
+- **Prerequisites:** IO-006, IO-009
+- **Owning component:** `rt-storage::UringBackend` and its device workers.
+- **Finding or capability:** F20; a slow operation must not hold completed
+  I/O or newly admitted work behind a whole-batch wait.
+- **Status:** `wip`
+
+### Scope
+
+Keep each Linux ring and its optional fixed-file and fixed-buffer registrations
+alive for the worker lifetime. Refill a bounded outstanding window as CQEs
+arrive, drain all currently ready completions, and preserve the portable
+`pread` fallback and the existing per-device admission boundary.
+
+### Ownership and invariant
+
+- **Current owner:** each `UringWorker` owns its ring, pending operation map,
+  fixed-file slot references, and any registered read-buffer lease; the
+  `DeviceQueue` owns active and pending admission.
+- **Target owner:** the same worker-local ownership remains, with CQEs driving
+  progress instead of a batch-wide completion barrier.
+- **Invariant preserved:** submitted reads, writes, and syncs retain their
+  file, payload/frame, registration, and device ownership until their own CQE
+  completes or the ring is destroyed after a fatal failure.
+- **Must not:** reuse a registered file/buffer slot while a kernel operation
+  may still reference it, cancel admission ownership when a caller drops its
+  waiter, or raise the existing device and backend queue bounds.
+
+### Acceptance
+
+- A worker waits for at least one CQE, completes every ready CQE, and refills
+  its outstanding set up to the 64-operation window without waiting for the
+  slowest operation from a prior batch.
+- An active worker uses a nonblocking receiver-lock attempt before waiting for
+  ring progress, so an idle worker blocked on input cannot stall another
+  worker's CQE processing.
+- A closed job channel drains all submitted operations before worker exit.
+- Fixed-buffer registration remains within the existing bounded memory-lock
+  budget, and each fixed-file slot is cleared only after its final operation
+  completes.
+- Unsupported kernels, registration failures, and startup failures retain the
+  positioned `pread` fallback. Short reads/writes and fatal-ring errors remain
+  explicit failures with operation owners retained through ring teardown.
+- Regression sources cover more than one outstanding window of concurrent
+  reads, backend shutdown with pending work, fixed-slot reuse, and caller
+  cancellation while an operation remains in flight.
+
+### Files and compatibility
+
+- **Expected code paths:** `crates/rt-storage/src/backend.rs`,
+  `crates/rt-storage/src/device.rs`, `README.md`, and backend regression
+  sources.
+- **State or wire compatibility:** no storage file format or public wire
+  changes; `TNG_STORAGE_BACKEND=auto|pread|uring` and fallback policy remain.
+- **Migration / rollback:** select `pread` to use the existing portable
+  worker pool; no payload or resume migration is involved.
+- **Feature flag or rollout boundary:** the `uring` backend remains opt-in;
+  performance and kernel-compatibility qualification are still required.
+
+### Evidence
+
+- **Regression source added or updated:**
+  `forced_uring_recycles_its_bounded_submission_window`; existing tests cover
+  read/write/sync roundtrips, registration limits, operation-held file slots,
+  submission rejection, and fatal ring ownership.
+- **Command or probe to run:** `cargo test -p rt-storage` during the requested
+  bulk pass, followed by PERF-115 hardware comparison.
+- **Expected result:** every submitted operation completes with exact bytes,
+  registration and queue bounds remain respected, and CQE progress is not
+  serialized behind the slowest operation in a prior batch.
+- **Executed on exact revision:** no.
+- **Artifact or report path:** pending bulk pass and hardware comparison.
+- **External evidence still required:** Linux kernel coverage and paired
+  device workloads demonstrating a benefit without latency or durability
+  regressions.

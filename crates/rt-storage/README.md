@@ -31,12 +31,12 @@ scheduler used by the TorrentNG client.
   per-mount bounded queues and one shared `DeviceQueue` per detected physical
   device, instead of Tokio's shared blocking pool. Unknown device identity uses
   a storage-root-scoped service. The service caps active work to one job per
-  portable worker or one bounded io_uring submission batch, bounds pending
-  admission by the remaining device queue depth, and selects queued classes
-  with the weighted round-robin policy from `DeviceElevator`. Operation IDs
-  stay attached to their permits through backend completion. Cache hits and
-  file-open preparation do not consume a device slot. Scheduler reads, writes,
-  syncs, preallocation and extent probes use the service.
+  portable worker or a continuous 64-operation io_uring window per device,
+  bounds pending admission by the remaining device queue depth, and selects
+  queued classes with the weighted round-robin policy from `DeviceElevator`.
+  Operation IDs stay attached to their permits through backend completion.
+  Cache hits and file-open preparation do not consume a device slot. Scheduler
+  reads, writes, syncs, preallocation and extent probes use the service.
   `MountScheduler::run_device_operation` is the bounded handoff for other
   subsystems that need the same mount/device admission and completion
   ownership. Secure plan steps acquire every touched device in stable order.
@@ -76,8 +76,9 @@ scheduler used by the TorrentNG client.
   selects the conservative portable worker-pool baseline, `pread` requests that
   baseline explicitly, and `uring` uses Linux `io_uring` positioned SQEs when
   the kernel allows it, keeps stable per-worker fixed-file slots by file
-  identity, returns reads from registered frame slots when accepted, and falls back
-  with a diagnostic when it cannot.
+  identity, returns reads from registered frame slots when accepted, drains
+  ready completions without waiting for the slowest operation in a batch, and
+  falls back with a diagnostic when it cannot.
 
 ## Correctness Expectations
 

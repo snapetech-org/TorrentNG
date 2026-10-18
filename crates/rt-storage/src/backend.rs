@@ -51,6 +51,21 @@ fn lock_job_receiver<T>(receiver: &Mutex<T>) -> MutexGuard<'_, T> {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn try_lock_job_receiver<T>(receiver: &Mutex<T>) -> Option<MutexGuard<'_, T>> {
+    match receiver.try_lock() {
+        Ok(guard) => Some(guard),
+        Err(std::sync::TryLockError::WouldBlock) => None,
+        Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+            // The receiver remains authoritative after a worker panic. Do not
+            // block a ring worker behind another thread waiting for new work.
+            let guard = poisoned.into_inner();
+            receiver.clear_poison();
+            Some(guard)
+        }
+    }
+}
+
 const DEFAULT_BACKEND_QUEUE_DEPTH: usize = 1024;
 #[cfg(target_os = "linux")]
 const URING_ENTRIES: u32 = 256;
@@ -302,8 +317,7 @@ impl SelectedDiskBackend {
     /// Bound the active window admitted by the per-device dispatcher while
     /// leaving the remainder of its queue available for class-aware
     /// selection. The portable worker pool progresses one job per worker;
-    /// io_uring uses one bounded submission batch as the current device
-    /// window.
+    /// io_uring continuously refills a bounded set of outstanding operations.
     pub(crate) fn device_dispatch_window(
         &self,
         worker_threads: usize,
@@ -911,25 +925,32 @@ impl UringWorker {
     }
 
     fn run(mut self) {
-        while let Some(jobs) = self.recv_batch() {
-            let mut submitted = 0;
-            for job in jobs {
-                match self.submit_job(job) {
-                    Ok(()) => submitted += 1,
-                    Err(e) => tracing::warn!(
-                        component = "storage",
-                        operation = "io_uring_submit",
-                        result = "error",
-                        error = %e,
-                        "io_uring submission failed"
-                    ),
+        let mut receiver_disconnected = false;
+        loop {
+            if self.pending.is_empty() {
+                if receiver_disconnected {
+                    return;
                 }
+                let Some(jobs) = self.recv_batch() else {
+                    return;
+                };
+                self.submit_jobs(jobs);
+            } else if !receiver_disconnected {
+                let capacity = URING_BATCH_LIMIT.saturating_sub(self.pending.len());
+                let (jobs, disconnected) = self.try_recv_batch(capacity);
+                receiver_disconnected = disconnected;
+                self.submit_jobs(jobs);
             }
-            if submitted == 0 {
+            if self.pending.is_empty() {
                 continue;
             }
+
+            // Wait for the first completion, then drain every CQE already
+            // ready. Waiting for the whole prior batch made one slow disk
+            // operation hold up unrelated completed work and prevented the
+            // ring from accepting newly queued work until the slowest CQE.
             loop {
-                match self.ring.submit_and_wait(submitted) {
+                match self.ring.submit_and_wait(1) {
                     Ok(_) => break,
                     Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                     Err(e) => {
@@ -953,6 +974,50 @@ impl UringWorker {
             }
         }
         Some(jobs)
+    }
+
+    fn try_recv_batch(&self, limit: usize) -> (Vec<Job>, bool) {
+        if limit == 0 {
+            return (Vec::new(), false);
+        }
+        let Some(guard) = try_lock_job_receiver(&self.rx) else {
+            return (Vec::new(), false);
+        };
+        let mut jobs = Vec::with_capacity(limit);
+        let disconnected = match guard.try_recv() {
+            Ok(job) => {
+                jobs.push(job);
+                false
+            }
+            Err(mpsc::TryRecvError::Empty) => return (jobs, false),
+            Err(mpsc::TryRecvError::Disconnected) => return (jobs, true),
+        };
+        let mut disconnected = disconnected;
+        while jobs.len() < limit {
+            match guard.try_recv() {
+                Ok(job) => jobs.push(job),
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    disconnected = true;
+                    break;
+                }
+            }
+        }
+        (jobs, disconnected)
+    }
+
+    fn submit_jobs(&mut self, jobs: Vec<Job>) {
+        for job in jobs {
+            if let Err(error) = self.submit_job(job) {
+                tracing::warn!(
+                    component = "storage",
+                    operation = "io_uring_submit",
+                    result = "error",
+                    error = %error,
+                    "io_uring submission failed"
+                );
+            }
+        }
     }
 
     fn submit_job(&mut self, job: Job) -> io::Result<()> {
@@ -1937,6 +2002,48 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(frame.as_slice(), vec![0_u8; 16 * 1024].as_slice());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn forced_uring_recycles_its_bounded_submission_window() {
+        let probe = UringBackend::probe().unwrap();
+        if !probe.usable {
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("uring-window.bin");
+        let block_len = 4 * 1024;
+        let block_count = URING_BATCH_LIMIT * 2;
+        let mut data = vec![0_u8; block_len * block_count];
+        for index in 0..block_count {
+            let start = index * block_len;
+            data[start..start + block_len].fill(index as u8);
+        }
+        std::fs::write(&path, data).unwrap();
+
+        let backend = SelectedDiskBackend::select(BackendRequest::Uring, 1);
+        if backend.kind() != BackendKind::Uring {
+            return;
+        }
+        let file = Arc::new(crate::open::open_path_no_follow(&path, false, false).unwrap());
+        let pool = FramePool::new((block_len * block_count) as u64);
+        let reads = (0..block_count)
+            .map(|index| {
+                let frame = pool.try_acquire(block_len).unwrap();
+                backend.pread(Arc::clone(&file), frame, (index * block_len) as u64)
+            })
+            .collect::<Vec<_>>();
+
+        for (index, read) in reads.into_iter().enumerate() {
+            let frame = tokio::time::timeout(std::time::Duration::from_secs(5), read)
+                .await
+                .expect("io_uring window refill stalled")
+                .unwrap()
+                .unwrap();
+            assert!(frame.as_slice().iter().all(|byte| *byte == index as u8));
+        }
     }
 
     #[cfg(target_os = "linux")]
