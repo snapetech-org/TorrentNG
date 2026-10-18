@@ -33,6 +33,7 @@ from typing import Any
 
 SCHEMA_VERSION = "transfer-client-observation-v1"
 PINS_SCHEMA_VERSION = "transfer-client-pins-v1"
+PAYLOAD_COPY_SCHEMA_VERSION = "transfer-payload-copy-observation-v1"
 CLIENT_IDS = {
     "torrentngd", "qbittorrent", "transmission", "deluge", "rtorrent", "rqbit", "urtorrent"
 }
@@ -46,6 +47,11 @@ URL_USERINFO_RE = re.compile(r"(?i)(\b[a-z][a-z0-9+.-]*://)[^/\s@]+@")
 URL_SECRET_QUERY_RE = re.compile(
     r"(?i)([?&](?:password|passwd|secret|token|api[_-]?key|apikey)=)[^&#\s]*"
 )
+PAYLOAD_COPY_METRICS = {
+    "peer_v2_assembly": "torrentng_payload_copy_peer_v2_assembly_bytes_total",
+    "peer_file_segment": "torrentng_payload_copy_peer_file_segment_bytes_total",
+    "webseed_reassembly": "torrentng_payload_copy_webseed_reassembly_bytes_total",
+}
 AUTH_VALUE_RE = re.compile(r"(?i)\b(Bearer|Basic)\s+[^\s,;]+")
 SECRET_OPTION_RE = re.compile(r"(?i)(?:password|passwd|secret|token|api[_-]?key|apikey)")
 
@@ -1297,6 +1303,66 @@ def probe_client(client_id: str, profile: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _payload_copy_counters(metrics: str) -> dict[str, int]:
+    metric_names = {metric: name for name, metric in PAYLOAD_COPY_METRICS.items()}
+    values: dict[str, int] = {}
+    for line in metrics.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split()
+        if not fields or fields[0] not in metric_names:
+            continue
+        name = metric_names[fields[0]]
+        if len(fields) != 2 or not fields[1].isdecimal():
+            raise AdapterError(f"native payload-copy metric {fields[0]} is malformed")
+        if name in values:
+            raise AdapterError(f"native payload-copy metric {fields[0]} is duplicated")
+        values[name] = int(fields[1])
+    missing = sorted(set(PAYLOAD_COPY_METRICS) - set(values))
+    if missing:
+        raise AdapterError("native client is missing payload-copy metrics: " + ", ".join(missing))
+    return values
+
+
+def capture_payload_copy_observation(profile: dict[str, Any]) -> dict[str, Any]:
+    """Capture TorrentNG's instrumented-site counters for a trial boundary."""
+    runtime = profile.get("runtime")
+    if runtime == "container":
+        identity = _docker_identity(profile, capture_command=True)
+    elif runtime == "native_binary":
+        identity = _binary_identity(profile)
+    else:
+        raise AdapterError("TorrentNG payload-copy capture requires a pinned client runtime")
+    client = _profile_http(profile, runtime_identity=identity)
+    token = _env_value(profile, "token_env")
+    if token:
+        client.headers["Authorization"] = f"Bearer {token}"
+    metrics = client.text("/metrics")
+    if runtime == "native_binary":
+        _assert_native_process_identity(identity["process_id"], identity)
+    else:
+        current = _docker_identity(profile, capture_command=True)
+        if (
+            current.get("process_id"),
+            current.get("process_start_ticks"),
+            current.get("image_digest"),
+        ) != (
+            identity.get("process_id"),
+            identity.get("process_start_ticks"),
+            identity.get("image_digest"),
+        ):
+            raise AdapterError("TorrentNG container restarted while payload-copy counters were captured")
+    return {
+        "schema_version": PAYLOAD_COPY_SCHEMA_VERSION,
+        "client_id": "torrentngd",
+        "observed_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="microseconds"),
+        "process_id": identity["process_id"],
+        "process_start_ticks": identity["process_start_ticks"],
+        "metrics_sha256": _sha256_bytes(metrics.encode("utf-8")),
+        "counters_bytes": _payload_copy_counters(metrics),
+    }
+
+
 def load_pins(path: Path) -> dict[str, dict[str, Any]]:
     if path.is_symlink() or not path.is_file():
         raise AdapterError("pin file must be an existing regular non-symlink file")
@@ -1504,13 +1570,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("client", choices=sorted(CLIENT_IDS))
     parser.add_argument("--pins", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--payload-copy-snapshot",
+        action="store_true",
+        help="capture TorrentNG's instrumented payload-copy counters at a trial boundary",
+    )
     args = parser.parse_args(argv)
     try:
         profiles = load_pins(args.pins)
         profile = profiles.get(args.client)
         if not isinstance(profile, dict):
             raise AdapterError(f"pin file has no profile for {args.client!r}")
-        observation = probe_client(args.client, profile)
+        if args.payload_copy_snapshot:
+            if args.client != "torrentngd":
+                raise AdapterError("payload-copy snapshots are currently supported only for TorrentNG")
+            observation = capture_payload_copy_observation(profile)
+        else:
+            observation = probe_client(args.client, profile)
         write_new_json(args.output, observation)
     except (AdapterError, OSError, ValueError) as error:
         print(f"adapter {args.client}: {error}", file=sys.stderr)

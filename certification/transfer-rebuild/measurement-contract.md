@@ -111,6 +111,34 @@ were not accepted by the verifier. Report received, written, read, and duplicate
 bytes separately. Goodput is useful payload bytes divided by `transfer_ns`;
 never infer it from process lifetime or bytes offered by a peer.
 
+### Payload-copy accounting
+
+When TorrentNG exposes its instrumented copy counters, capture a
+`transfer-payload-copy-observation-v1` artifact immediately before and after
+the transfer interval. Both observations must identify the same live process
+by PID and process start ticks. `payload.copy_accounting` links the two
+artifact digests and records each nonnegative counter difference; a reset,
+missing counter, process change, or mismatched delta invalidates that
+accounting record.
+
+The current TorrentNG counters cover only three explicit payload-copy sites:
+
+- `peer_v2_assembly`: accepted peer blocks copied into a pure-v2 piece
+  assembly;
+- `peer_file_segment`: peer payload copied into a file-segment buffer when
+  the shared payload lease is unavailable;
+- `webseed_reassembly`: HTTP range bodies copied into a logical webseed block.
+
+They are cumulative process counters exported by TorrentNG's `/metrics`
+endpoint and sampled by `adapters.py --payload-copy-snapshot`. They exclude
+all uninstrumented copies and are not a whole-client or whole-process copy
+total. Leave `copy_accounting` absent when a client has no compatible
+instrumentation; never represent missing coverage as zero or compare these
+partial TorrentNG counts directly with a different client's total-copy
+counter. The counters add an atomic increment at each measured copy site, so
+that instrumentation overhead is part of the measured TorrentNG build and
+must be stated with results.
+
 ## Observer and accounting domains
 
 The observer runs outside the candidate process and samples cumulative resource

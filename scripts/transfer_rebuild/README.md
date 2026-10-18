@@ -285,6 +285,27 @@ establish integrity, or calculate a scorecard.
 Their regression sources are in `scripts/test_transfer_rebuild_measurement.py`
 and belong in the bulk pass.
 
+TorrentNG builds expose three cumulative, site-scoped payload-copy counters on
+`/metrics`. Capture one immutable observation at each trial boundary with the
+pinned client profile:
+
+```sh
+python3 scripts/transfer_rebuild/adapters.py torrentngd \
+  --pins /path/to/task-scratch/client-pins.json \
+  --output /path/to/task-scratch/copy-start.json \
+  --payload-copy-snapshot
+```
+
+Repeat after transfer into a different output path. The observations bind the
+counter values to the process ID and start ticks; trial assembly records the
+per-path differences and links both observation digests. Only the v2 assembly,
+peer file-segment, and webseed reassembly sites listed in the measurement
+contract are counted. This is partial instrumentation, not an estimate of all
+copies or a directly comparable total for other clients.
+Include both JSON files in the manifest with repeated
+`--artifact transfer-payload-copy-observation-v1=PATH` options; the validator
+checks the process identity and recomputes the trial deltas from those records.
+
 ## Deterministic fixtures
 
 `fixtures.py` creates reproducible payload files and a content manifest. It

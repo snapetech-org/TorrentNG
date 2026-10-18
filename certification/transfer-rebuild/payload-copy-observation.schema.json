@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:torrentng:schema:transfer-payload-copy-observation-v1",
+  "title": "TorrentNG instrumented payload-copy observation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "client_id",
+    "observed_at",
+    "process_id",
+    "process_start_ticks",
+    "metrics_sha256",
+    "counters_bytes"
+  ],
+  "properties": {
+    "schema_version": { "const": "transfer-payload-copy-observation-v1" },
+    "client_id": { "const": "torrentngd" },
+    "observed_at": { "type": "string", "format": "date-time" },
+    "process_id": { "type": "integer", "minimum": 1 },
+    "process_start_ticks": { "$ref": "#/$defs/nonnegative_integer" },
+    "metrics_sha256": { "$ref": "#/$defs/sha256" },
+    "counters_bytes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "peer_v2_assembly",
+        "peer_file_segment",
+        "webseed_reassembly"
+      ],
+      "properties": {
+        "peer_v2_assembly": { "$ref": "#/$defs/nonnegative_integer" },
+        "peer_file_segment": { "$ref": "#/$defs/nonnegative_integer" },
+        "webseed_reassembly": { "$ref": "#/$defs/nonnegative_integer" }
+      }
+    }
+  },
+  "$defs": {
+    "nonnegative_integer": { "type": "integer", "minimum": 0 },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

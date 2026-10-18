@@ -11,7 +11,9 @@ impl Engine {
     pub(super) fn request_engine_stats(&mut self) -> CmdResult<EngineStats> {
         if let Some(cache) = self.services.stats_cache.as_ref() {
             if cache.generated_at.elapsed() <= ENGINE_STATS_CACHE_TTL {
-                return Ok(cache.stats.clone());
+                let mut stats = cache.stats.clone();
+                self.apply_payload_copy_stats(&mut stats);
+                return Ok(stats);
             }
         } else {
             let stats = self.fast_engine_stats();
@@ -22,13 +24,22 @@ impl Engine {
             });
         }
         self.start_engine_stats_refresh();
-        Ok(self
+        let mut stats = self
             .services
             .stats_cache
             .as_ref()
             .expect("fast stats initializes the cache")
             .stats
-            .clone())
+            .clone();
+        self.apply_payload_copy_stats(&mut stats);
+        Ok(stats)
+    }
+
+    fn apply_payload_copy_stats(&self, stats: &mut EngineStats) {
+        let copies = self.services.resources.payload_copy_snapshot();
+        stats.payload_copy_peer_v2_assembly_bytes = copies.peer_v2_assembly_bytes;
+        stats.payload_copy_peer_file_segment_bytes = copies.peer_file_segment_bytes;
+        stats.payload_copy_webseed_reassembly_bytes = copies.webseed_reassembly_bytes;
     }
 
     /// Build a bounded first-response snapshot without touching SQLite or
@@ -44,6 +55,7 @@ impl Engine {
             .map(|registry| registry.stats())
             .unwrap_or_default();
         let mut stats = engine_stats_from_registry(registry_stats);
+        self.apply_payload_copy_stats(&mut stats);
         let tier_counts = self.runtime.tier_controller.tier_counts();
         apply_activity_tier_stats(
             &mut stats,

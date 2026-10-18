@@ -7486,6 +7486,27 @@ fn render_metrics_with_health(
     );
     metric(
         &mut out,
+        "torrentng_payload_copy_peer_v2_assembly_bytes_total",
+        "counter",
+        "Bytes copied into pure-v2 peer piece assemblies at instrumented sites",
+        stats.payload_copy_peer_v2_assembly_bytes,
+    );
+    metric(
+        &mut out,
+        "torrentng_payload_copy_peer_file_segment_bytes_total",
+        "counter",
+        "Bytes copied into peer file segments at instrumented sites",
+        stats.payload_copy_peer_file_segment_bytes,
+    );
+    metric(
+        &mut out,
+        "torrentng_payload_copy_webseed_reassembly_bytes_total",
+        "counter",
+        "Bytes copied while reassembling webseed ranges at instrumented sites",
+        stats.payload_copy_webseed_reassembly_bytes,
+    );
+    metric(
+        &mut out,
         "torrentng_download_rate_bytes_per_second",
         "gauge",
         "Aggregate current peer download rate",

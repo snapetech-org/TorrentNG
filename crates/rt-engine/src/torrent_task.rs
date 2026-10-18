@@ -40,7 +40,7 @@ use rt_metainfo::{torrent_info_bytes, TorrentMeta};
 use rt_metainfo::{
     torrent_info_bytes_with_allocation_reservation, TorrentFileV1, TorrentMetaV1, TorrentMetaV2,
 };
-use rt_metrics::{MemoryClass, MemoryLease, ResourceGovernor};
+use rt_metrics::{MemoryClass, MemoryLease, PayloadCopyPath, ResourceGovernor};
 use rt_path::{StorageProfile, StorageRootId};
 use rt_peer_manager::{
     ChokeDecision, ChokeMode, ChokeState, Choker, PeerId, PeerSnapshot, DEFAULT_MAX_UNCHOKED,
@@ -2089,6 +2089,7 @@ struct TransferIoContext {
     storage: MountScheduler,
     prepared_files: Arc<Mutex<HashSet<u32>>>,
     prepared_file_locks: Arc<tokio::sync::Mutex<HashMap<u32, Arc<tokio::sync::Mutex<()>>>>>,
+    resources: ResourceGovernor,
 }
 
 async fn prepare_transfer_file_once(
@@ -2197,6 +2198,10 @@ async fn write_transfer_block(
                 .await?;
             }
             None => {
+                context.resources.record_payload_copy(
+                    PayloadCopyPath::PeerFileSegment,
+                    region_data.len() as u64,
+                );
                 scheduled_write(
                     &context.storage,
                     IoClass::PeerWrite,
@@ -5343,6 +5348,7 @@ impl TorrentTask {
             storage: self.storage.clone(),
             prepared_files: Arc::clone(&self.prepared_files),
             prepared_file_locks: Arc::clone(&self.prepared_file_locks),
+            resources: self.resources.clone(),
         }
     }
 
@@ -5410,6 +5416,10 @@ impl TorrentTask {
                     .await?;
                 }
                 None => {
+                    self.resources.record_payload_copy(
+                        PayloadCopyPath::PeerFileSegment,
+                        region_data.len() as u64,
+                    );
                     scheduled_write(
                         &self.storage,
                         IoClass::PeerWrite,

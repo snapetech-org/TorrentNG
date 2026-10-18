@@ -100,8 +100,10 @@ required result artifacts.
 
 Provide shared measurement primitives for a matched start barrier, unique
 accepted payload range accounting, and separate monotonic barrier, transfer,
-flush, validation, and shutdown intervals. Fixture/client adapters, paired
-trial execution, and artifact assembly remain open.
+flush, validation, and shutdown intervals. Extend the trial artifact with
+optional, observation-linked payload-copy deltas for clients that expose
+instrumented counters. Fixture/client adapters, paired trial execution, and
+artifact assembly remain open.
 
 ### Ownership and invariant
 
@@ -123,6 +125,10 @@ trial execution, and artifact assembly remain open.
   them.
 - Range accounting is per file, merges overlapping ranges, excludes padding,
   and reports new and duplicate bytes.
+- When available, copy accounting links start/end counter observations from
+  the same PID and process start time, and validates each reported delta.
+  Coverage is explicit and site-scoped; missing counters are not zero and
+  partial native counters are not presented as whole-client totals.
 - Timeline markers use a monotonic clock, require all contract phases, and
   reject zero transfer duration and overlapping/out-of-order phases.
 - Regressions cover participant release, symlinked readiness/release markers,
@@ -131,13 +137,15 @@ trial execution, and artifact assembly remain open.
 ### Files and compatibility
 
 - **Expected code paths:** `scripts/transfer_rebuild/measurement.py`, its
-  regression source, and the measurement contract.
+  regression source, `adapters.py`, the payload-copy observation and trial
+  schemas, the artifact validator, and the measurement contract.
 - **State or wire compatibility:** certification artifacts only; the existing
   `transfer-trial-v1` schema now requires an observation-linked client
   identity. No trial evidence has been qualified against the earlier draft.
 - **Migration / rollback:** none.
 - **Feature flag or rollout boundary:** no scorecard or release comparison
-  until the runner and adapters are qualified.
+  until the runner and adapters are qualified; partial copy counters are
+  descriptive until another client reports matching coverage.
 
 ### Evidence
 
@@ -150,7 +158,9 @@ trial execution, and artifact assembly remain open.
 - **Executed on exact revision:** no.
 - **Artifact or report path:** pending bulk pass.
 - **External evidence still required:** cross-process barrier characterization
-  and paired-run reproducibility.
+  and paired-run reproducibility. Payload-copy snapshots and delta validation
+  are authored but have not been exercised; native-only coverage is limited to
+  the three sites named in the measurement contract.
 
 ## NET-109 — Active-candidate piece picker
 

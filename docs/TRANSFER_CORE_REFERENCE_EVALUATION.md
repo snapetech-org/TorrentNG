@@ -117,9 +117,13 @@ correctness and matched whole-client efficiency evidence.
   storage and transfer leases; the bulk pass must establish that the full
   actor paths preserve those charges across late completion.
 - `urtorrent` records payload copies and hash readback bytes as runtime
-  counters and documents expected copy counts by transport. Add equivalent
-  per-path counters to the comparison contract where TorrentNG can observe
-  them, then measure their relationship to CPU and verified goodput.
+  counters and documents expected copy counts by transport. TorrentNG now
+  exposes identity-bound counters for pure-v2 assembly, peer file-segment
+  copying, and webseed range reassembly. These are intentionally scoped to
+  those observed sites; the trial contract must not present them as a complete
+  copy total or compare them with another client's broader counter. Measure
+  their relationship to CPU and verified goodput once paired execution is
+  available.
 
 These are hypotheses and implementation lessons, not claimed TorrentNG wins.
 PERF-103 now includes a direct `urtorrent` 0.14.3 library runner as a

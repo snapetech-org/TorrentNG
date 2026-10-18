@@ -9400,6 +9400,10 @@ async fn collect_engine_stats_background(input: EngineStatsRefreshInput) -> CmdR
     })
     .await;
     stats.torrent_tasks_active = task_count;
+    let payload_copies = input.resources.payload_copy_snapshot();
+    stats.payload_copy_peer_v2_assembly_bytes = payload_copies.peer_v2_assembly_bytes;
+    stats.payload_copy_peer_file_segment_bytes = payload_copies.peer_file_segment_bytes;
+    stats.payload_copy_webseed_reassembly_bytes = payload_copies.webseed_reassembly_bytes;
     apply_activity_tier_stats(
         &mut stats,
         input.tier_counts,

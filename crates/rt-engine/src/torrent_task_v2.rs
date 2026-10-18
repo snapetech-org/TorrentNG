@@ -22,7 +22,7 @@ use rt_hash::{hash_pair, merkle_layers, BlockHash, V2_BLOCK_SIZE};
 #[cfg(test)]
 use rt_hash::{merkle_root, piece_layer_hash};
 use rt_metainfo::{TorrentFileV2, TorrentMetaV2};
-use rt_metrics::{MemoryClass, MemoryLease, ResourceGovernor};
+use rt_metrics::{MemoryClass, MemoryLease, PayloadCopyPath, ResourceGovernor};
 use rt_path::{StorageProfile, StorageRootId};
 use rt_peer_manager::{
     ChokeDecision, ChokeMode, ChokeState, Choker, PeerId, PeerSnapshot, DEFAULT_MAX_UNCHOKED,
@@ -6038,6 +6038,9 @@ async fn handle_v2_piece(
             .ok_or_else(|| anyhow::anyhow!("v2 piece assembly disappeared"))?;
         let accepted = assembly.accept_block(begin, &data)?;
         if accepted {
+            context
+                .resources
+                .record_payload_copy(PayloadCopyPath::PeerV2Assembly, u64::from(expected));
             assembly.pending_blocks = assembly.pending_blocks.saturating_add(1);
             assembly.advance_next_unrequested(piece, outstanding);
         }

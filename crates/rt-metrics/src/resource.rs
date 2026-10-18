@@ -5,6 +5,49 @@ use std::sync::{
 
 pub const MEMORY_CLASS_COUNT: usize = 10;
 
+/// A deliberately narrow category for a payload copy observed at a known
+/// engine copy site. These counters are not a whole-process copy total.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PayloadCopyPath {
+    PeerV2Assembly,
+    PeerFileSegment,
+    WebseedReassembly,
+}
+
+/// Cumulative bytes copied at the currently instrumented transfer sites.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct PayloadCopySnapshot {
+    pub peer_v2_assembly_bytes: u64,
+    pub peer_file_segment_bytes: u64,
+    pub webseed_reassembly_bytes: u64,
+}
+
+#[derive(Debug, Default)]
+struct PayloadCopyCounters {
+    peer_v2_assembly_bytes: AtomicU64,
+    peer_file_segment_bytes: AtomicU64,
+    webseed_reassembly_bytes: AtomicU64,
+}
+
+impl PayloadCopyCounters {
+    fn record(&self, path: PayloadCopyPath, bytes: u64) {
+        let counter = match path {
+            PayloadCopyPath::PeerV2Assembly => &self.peer_v2_assembly_bytes,
+            PayloadCopyPath::PeerFileSegment => &self.peer_file_segment_bytes,
+            PayloadCopyPath::WebseedReassembly => &self.webseed_reassembly_bytes,
+        };
+        counter.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    fn snapshot(&self) -> PayloadCopySnapshot {
+        PayloadCopySnapshot {
+            peer_v2_assembly_bytes: self.peer_v2_assembly_bytes.load(Ordering::Relaxed),
+            peer_file_segment_bytes: self.peer_file_segment_bytes.load(Ordering::Relaxed),
+            webseed_reassembly_bytes: self.webseed_reassembly_bytes.load(Ordering::Relaxed),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(usize)]
 pub enum MemoryClass {
@@ -108,6 +151,7 @@ struct ResourceGovernorInner {
     total_used: AtomicU64,
     class_used: [AtomicU64; MEMORY_CLASS_COUNT],
     denied: [AtomicU64; MEMORY_CLASS_COUNT],
+    payload_copies: PayloadCopyCounters,
 }
 
 #[derive(Debug, Clone)]
@@ -123,8 +167,22 @@ impl ResourceGovernor {
                 total_used: AtomicU64::new(0),
                 class_used: std::array::from_fn(|_| AtomicU64::new(0)),
                 denied: std::array::from_fn(|_| AtomicU64::new(0)),
+                payload_copies: PayloadCopyCounters::default(),
             }),
         }
+    }
+
+    /// Record bytes copied at one of the explicitly instrumented transfer
+    /// sites. This relaxed counter does not participate in ownership or
+    /// synchronization decisions.
+    pub fn record_payload_copy(&self, path: PayloadCopyPath, bytes: u64) {
+        self.inner.payload_copies.record(path, bytes);
+    }
+
+    /// Snapshot cumulative counts from known copy sites. Uninstrumented copies
+    /// elsewhere in the process are intentionally excluded.
+    pub fn payload_copy_snapshot(&self) -> PayloadCopySnapshot {
+        self.inner.payload_copies.snapshot()
     }
 
     pub fn try_acquire(&self, class: MemoryClass, bytes: u64) -> Option<MemoryLease> {

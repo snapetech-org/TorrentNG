@@ -32,6 +32,8 @@ SCHEMAS = {
     "client-observation": ROOT / "certification/transfer-rebuild/client-observation.schema.json",
     "resource-observation": ROOT
     / "certification/transfer-rebuild/resource-observation.schema.json",
+    "payload-copy-observation": ROOT
+    / "certification/transfer-rebuild/payload-copy-observation.schema.json",
     "cache-state": ROOT / "certification/transfer-rebuild/cache-state.schema.json",
     "network-control": ROOT / "certification/transfer-rebuild/network-control.schema.json",
     "ceiling-input": ROOT / "certification/transfer-rebuild/ceiling-input.schema.json",
@@ -48,6 +50,7 @@ CEILING_INPUT_KIND = "transfer-ceiling-input-v1"
 CEILING_KIND = "transfer-ceiling-v1"
 CALIBRATION_RAW_KIND = "transfer-calibration-raw-v1"
 RESOURCE_OBSERVATION_KIND = "transfer-resource-observation-v1"
+PAYLOAD_COPY_OBSERVATION_KIND = "transfer-payload-copy-observation-v1"
 RESOURCE_SAMPLES_KIND = "transfer-resource-samples-v1"
 RESOURCE_SAMPLE_FIELDS = (
     "elapsed_ns",
@@ -637,6 +640,10 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
     client_validator = Draft202012Validator(client_schema, format_checker=FormatChecker())
     resource_schema = _load_json(SCHEMAS["resource-observation"])
     resource_validator = Draft202012Validator(resource_schema, format_checker=FormatChecker())
+    payload_copy_schema = _load_json(SCHEMAS["payload-copy-observation"])
+    payload_copy_validator = Draft202012Validator(
+        payload_copy_schema, format_checker=FormatChecker()
+    )
     cache_schema = _load_json(SCHEMAS["cache-state"])
     cache_validator = Draft202012Validator(cache_schema, format_checker=FormatChecker())
     network_schema = _load_json(SCHEMAS["network-control"])
@@ -648,6 +655,7 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
     client_observations: dict[str, dict[str, Any]] = {}
     resource_observations: dict[str, dict[str, Any]] = {}
     resource_sample_artifacts: dict[str, str] = {}
+    payload_copy_observations: dict[str, dict[str, Any]] = {}
     cache_observations: dict[str, dict[str, Any]] = {}
     network_observations: dict[str, dict[str, Any]] = {}
     ceiling_inputs: dict[str, dict[str, Any]] = {}
@@ -737,6 +745,41 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
             errors.extend(f"{location}.path: {error}" for error in sample_errors)
             continue
         resource_observations[record["sha256"]] = observation
+
+    for index, record in enumerate(manifest.get("artifacts", [])):
+        if record["kind"] != PAYLOAD_COPY_OBSERVATION_KIND:
+            continue
+        location = f"$.artifacts[{index}]"
+        path, path_error = _referenced_file(root, record["path"])
+        if path_error is not None or path is None:
+            errors.append(f"{location}.path: {path_error}")
+            continue
+        try:
+            observed_digest = _sha256(path)
+        except OSError as error:
+            errors.append(f"{location}.path: cannot read payload-copy observation: {error}")
+            continue
+        if observed_digest != record["sha256"]:
+            errors.append(f"{location}.sha256: digest does not match {record['path']}")
+            continue
+        try:
+            observation = _load_strict_json(path)
+        except ValueError as error:
+            errors.append(f"{location}.path: {error}")
+            continue
+        schema_errors = sorted(
+            payload_copy_validator.iter_errors(observation),
+            key=lambda error: (list(map(str, error.absolute_path)), error.message),
+        )
+        if schema_errors:
+            for error in schema_errors[:20]:
+                errors.append(
+                    f"{location}.path: invalid payload-copy observation "
+                    f"{_format_path(error)}: {error.message}"
+                )
+            continue
+        if isinstance(observation, dict):
+            payload_copy_observations[record["sha256"]] = observation
 
     # Client identity artifacts are verified first so trial records can bind to
     # a specific readback by digest and compare their client/settings identity.
@@ -1053,6 +1096,55 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
                     if resources[trial_field] != observed_value:
                         errors.append(
                             f"{location}.resources.{trial_field}: differs from its observation"
+                        )
+
+        copy_accounting = trial["payload"].get("copy_accounting")
+        if copy_accounting is not None:
+            if trial["client_identity"]["client_id"] != "torrentngd":
+                errors.append(
+                    f"{location}.payload.copy_accounting: this observation format is TorrentNG-specific"
+                )
+            start_sha = copy_accounting["start_observation_sha256"]
+            end_sha = copy_accounting["end_observation_sha256"]
+            if start_sha == end_sha:
+                errors.append(
+                    f"{location}.payload.copy_accounting: start and end observations must differ"
+                )
+            start_copy = payload_copy_observations.get(start_sha)
+            end_copy = payload_copy_observations.get(end_sha)
+            if start_copy is None:
+                errors.append(
+                    f"{location}.payload.copy_accounting.start_observation_sha256: "
+                    "no verified payload-copy observation artifact"
+                )
+            if end_copy is None:
+                errors.append(
+                    f"{location}.payload.copy_accounting.end_observation_sha256: "
+                    "no verified payload-copy observation artifact"
+                )
+            if start_copy is not None and end_copy is not None:
+                client = trial["client_identity"]
+                for label, observation in (("start", start_copy), ("end", end_copy)):
+                    if observation["process_id"] != client["process_id"]:
+                        errors.append(
+                            f"{location}.payload.copy_accounting.{label}_observation_sha256: "
+                            "process ID differs from the client identity"
+                        )
+                    if observation["process_start_ticks"] != client["process_start_ticks"]:
+                        errors.append(
+                            f"{location}.payload.copy_accounting.{label}_observation_sha256: "
+                            "process start identity differs from the client identity"
+                        )
+                for counter, end_value in end_copy["counters_bytes"].items():
+                    start_value = start_copy["counters_bytes"][counter]
+                    if end_value < start_value:
+                        errors.append(
+                            f"{location}.payload.copy_accounting: {counter} counter reset during trial"
+                        )
+                    elif copy_accounting["copied_bytes"][counter] != end_value - start_value:
+                        errors.append(
+                            f"{location}.payload.copy_accounting.copied_bytes.{counter}: "
+                            "does not match the start/end counter difference"
                         )
 
         environment = trial["environment"]

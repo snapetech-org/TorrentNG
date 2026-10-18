@@ -295,6 +295,14 @@ pub struct EngineStats {
     pub completed_piece_verify_from_disk: u64,
     pub bytes_uploaded: u64,
     pub bytes_downloaded: u64,
+    /// Cumulative bytes copied into live pure-v2 peer piece assemblies.
+    pub payload_copy_peer_v2_assembly_bytes: u64,
+    /// Cumulative bytes copied when a peer block is split into file-backed
+    /// payload segments because its shared payload lease is unavailable.
+    pub payload_copy_peer_file_segment_bytes: u64,
+    /// Cumulative bytes copied while combining HTTP webseed ranges into a
+    /// logical torrent block.
+    pub payload_copy_webseed_reassembly_bytes: u64,
     pub bytes_left: u64,
     /// Aggregate current peer download rate in bytes per second.
     pub download_rate: i64,

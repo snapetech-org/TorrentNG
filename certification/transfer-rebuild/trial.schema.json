@@ -162,7 +162,36 @@
         "received_bytes": { "$ref": "#/$defs/nonnegative_integer" },
         "written_bytes": { "$ref": "#/$defs/nonnegative_integer" },
         "read_bytes": { "$ref": "#/$defs/nonnegative_integer" },
-        "duplicate_bytes": { "$ref": "#/$defs/nonnegative_integer" }
+        "duplicate_bytes": { "$ref": "#/$defs/nonnegative_integer" },
+        "copy_accounting": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "coverage",
+            "start_observation_sha256",
+            "end_observation_sha256",
+            "copied_bytes"
+          ],
+          "properties": {
+            "coverage": { "const": "instrumented_sites_only" },
+            "start_observation_sha256": { "$ref": "#/$defs/sha256" },
+            "end_observation_sha256": { "$ref": "#/$defs/sha256" },
+            "copied_bytes": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "peer_v2_assembly",
+                "peer_file_segment",
+                "webseed_reassembly"
+              ],
+              "properties": {
+                "peer_v2_assembly": { "$ref": "#/$defs/nonnegative_integer" },
+                "peer_file_segment": { "$ref": "#/$defs/nonnegative_integer" },
+                "webseed_reassembly": { "$ref": "#/$defs/nonnegative_integer" }
+              }
+            }
+          }
+        }
       }
     },
     "resources": {

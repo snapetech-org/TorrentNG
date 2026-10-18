@@ -918,6 +918,7 @@ impl TorrentTask {
             data.get_mut(range.block_offset..data_end)
                 .ok_or_else(|| anyhow::anyhow!("webseed file range exceeds requested block"))?
                 .copy_from_slice(&bytes);
+            resources.record_payload_copy(PayloadCopyPath::WebseedReassembly, range.length as u64);
             network_bytes = network_bytes
                 .checked_add(u64::try_from(range.length)?)
                 .ok_or_else(|| anyhow::anyhow!("webseed network byte count overflow"))?;
