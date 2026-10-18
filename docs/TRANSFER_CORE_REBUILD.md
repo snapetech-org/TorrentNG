@@ -105,15 +105,13 @@ efficiency evidence.
 See [`TRANSFER_CORE_UTP_EVALUATION.md`](TRANSFER_CORE_UTP_EVALUATION.md) for
 the source review and adapter acceptance.
 
-**D3 — integration and rollout:** keep the rebuild on the local
-`feat/transfer-core-rebuild` integration branch while the 14-wave implementation
-and documentation are being completed. Preserve the existing portable path as
-the selectable reference during staged live integration. The owner has since
-directed that reviewed local work be committed, consolidated into `main`, and
-pushed after code and documentation are complete. That source-control cleanup
-does not qualify a release: the exact consolidated revision still needs the
-owner-requested bulk validation and review before any release or capability
-rollout claim.
+**D3 — integration and rollout:** preserve the existing portable path as the
+selectable reference during staged live integration. The owner directed that
+reviewed work be committed to `main` and pushed to both configured remotes. At
+this checkpoint, `main` is the only local or remote branch and the rebuild is
+still in progress. Consolidating source control does not qualify a release: the
+exact revision still needs the owner-requested bulk validation and review
+before any release or capability rollout claim.
 
 **D5 — native engine versus maintained implementation:** continue the current
 native rebuild as a reversible candidate; do not restart or embed a maintained
@@ -324,7 +322,7 @@ the template in SYS-001 when picked up.
 | 6 | SYS-014 | P1 | Qualify complete catalog cost and mixed-load responsiveness | SYS-005, SYS-006, SYS-007, SYS-008, SYS-009, SYS-010, PERF-109 | todo | |
 | 7 | NET-106 | P1 | Separate peer read progress from write and storage waits | NET-103, NET-104, NET-105 | wip | v1 and pure-v2 peer loops now move upload storage reads and rate admission into bounded per-peer work while keeping the protocol loop available for incoming control messages; regression sources cover both paths. Socket writes remain serialized in their owner; actor-side piece writes, verification and persistence waits remain IO-008; bulk pass pending |
 | 7 | PERF-113 | P1 | Implement statistical analysis and explicit scorecard | PERF-101, PERF-102, PERF-104, PERF-110 | wip | descriptive paired scorecard, output schema, validator kind, and regression sources authored; automated paired runner and bulk pass remain open; no thresholds adopted |
-| 8 | IO-008 | P0 | Move transfer actors to completion-driven storage and hashing | IO-002, IO-006, IO-007, NET-104, NET-106 | wip | v1/hybrid received-block writes, verification and aggregate writes now use bounded actor-owned jobs; pure-v2 download-rate admission, direct block writes, complete-piece hashing and aggregate writes use bounded per-peer jobs; generation/failure/reset, disconnect/quiesce coverage and bulk evidence keep this open |
+| 8 | IO-008 | P0 | Move transfer actors to completion-driven storage and hashing | IO-002, IO-006, IO-007, NET-104, NET-106 | wip | v1/hybrid received-block writes, verification and aggregate writes now use bounded actor-owned jobs; pure-v2 download-rate admission, direct block writes, complete-piece hashing and aggregate writes use bounded per-peer jobs; orderly v2 peer exit cancels rate waits and drains admitted storage/verification jobs; explicit generation fencing, actor-level lifecycle regression and bulk evidence keep this open |
 | 8 | NET-107 | P1 | Replace replicated token buckets with hierarchical fair rate scheduling | NET-103, NET-104, NET-106 | wip | pure module landed in `crates/rt-engine/src/transfer/`; weighted peer fairness and earliest wakeups now use ordered per-torrent peer/wait indexes plus a global deadline index instead of scanning peers per grant or on timer selection; fairness waits follow the laggard deadline instead of a fixed 1 ms retry; overflow-safe token arithmetic and regression sources added, live integration and bulk pass pending NET-114 |
 | 8 | NET-113 | P1 | Deliver the bounded windowed uTP transport behind the shared runtime | NET-103, NET-106, NET-112 | wip | `UtpRuntime` now backs production v1, pure-v2, and metadata outbound connects; shared endpoint demultiplexing, bounded window/reorder state, and rebind-retired routes are authored. Central deadline/ready scheduling, aggregate memory qualification, and bulk validation remain open |
 | 8 | PERF-114 | P0 | Replace text-grep qualification with exact artifact manifests | PERF-101, PERF-113 | wip | `memory_roadmap_certification.sh` commit-checked; manifests not started |
@@ -472,6 +470,7 @@ test pass establishes correctness of the landed slices only.
 | 2026-10-17 | NET-106 peer progress: v1 and pure-v2 peer loops now run upload storage reads and upload-rate admission as bounded per-peer work, so a slow disk or bandwidth wait does not stop protocol input from progressing. Add regression sources that send a control message during an exhausted upload budget; writes remain serialized by each peer owner and actor-side piece write/verify/persist waits stay in IO-008. Not run. |
 | 2026-10-17 | IO-008 design: move received-block storage and completion verification out of TorrentTask's peer-event turn into bounded, actor-owned jobs; retain the picker as the sole piece-state owner and keep a piece pending until its write/hash result is applied. Completion generations, memory leases, quiesce/drain ordering, v1/hybrid and pure-v2 paths, and regression sources remain in implementation. No tests run. |
 | 2026-10-17 | IO-008 implementation: v1/hybrid direct block writes, verification and aggregate writes now return through bounded actor-owned completion jobs; pure-v2 download-rate admission, direct block writes, completed-piece storage/hash, and aggregate writes use bounded per-peer jobs. Pieces remain unavailable until results apply. Control-message regressions cover held upload and download rate work; failure/reset, disconnect/quiesce qualification and bulk pass remain open. Regression sources updated; no tests or builds run. |
+| 2026-10-17 | IO-008 lifecycle follow-up: pure-v2 peer removal and orderly torrent shutdown now cancel pending download-rate waits, drain storage jobs already dispatched, apply verified completions, and pump completion events while joining peers. Protocol disconnect/error exit also drains before releasing peer state. The rate-wait regression now covers orderly cancellation; actor-level lifecycle and explicit generation-fence cases remain open. Source and docs only; no tests or builds run. |
 | 2026-10-17 | PERF-102 artifact follow-up: observer CSV and summary outputs now use exclusive mode-0600 creation and file sync, so reruns cannot overwrite prior resource evidence; added output immutability regression source. Not run. |
 | 2026-10-17 | SYS-012 continuation: compatibility fixtures now drive the production v2 piece map as well as the v1 map, checking aligned file offsets, a multi-piece file tail, the short final piece, empty-file omission, and hybrid logical-length parity. The Linux/Windows regression commands remain deferred. |
 | 2026-10-17 | IO-011 continuation: a 1,024-file stream-history table now evicts one least-recently-used entry instead of clearing all histories when a new file arrives. Added a hot-stream retention regression source; no tests run. Cache-hit feedback and a reusable range policy remain open. |

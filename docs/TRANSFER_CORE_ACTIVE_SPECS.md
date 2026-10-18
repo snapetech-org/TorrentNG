@@ -802,10 +802,12 @@ job set; a piece stays unavailable until its completion is applied. Existing
 request and assembly memory leases remain alive through their storage/hash
 consumers.
 
-This is still partial: generation/failure/reset qualification and v2
-disconnect/quiesce coverage are not complete. v1 lifecycle snapshots drain
-accepted work before shutdown, pause, recheck, and storage-move snapshots.
-Bulk validation remains deferred.
+This is still partial: explicit generation fencing and failure/reset
+qualification remain open. v1 lifecycle snapshots drain accepted work before
+shutdown, pause, recheck, and storage-move snapshots. Pure-v2 peer shutdown
+now cancels download-rate waits and drains already-admitted storage and
+verification jobs before the torrent task finishes joining peers; the
+actor-level lifecycle regression and bulk validation remain deferred.
 
 ### Ownership and invariant
 
@@ -818,8 +820,8 @@ Bulk validation remains deferred.
 - **Invariant preserved:** write completion precedes verification; a piece
   remains pending until its integrity result is applied; accepted work is
   serialized with piece reset and drained before v1 quiesce, move, and clean
-  shutdown snapshots. An explicit generation fence and pure-v2 disconnect /
-  quiesce drain are still open.
+  shutdown snapshots. Pure-v2 drains peer-owned work on protocol exit and
+  orderly torrent shutdown. Explicit generation fencing remains open.
 - **Must not:** spawn untracked work, drop a payload lease before backend
   completion, advertise or persist unverified bytes as complete, or let an old
   job commit into a replacement attempt.
@@ -848,8 +850,8 @@ Bulk validation remains deferred.
 - **Migration / rollback:** no runtime flag or persistent-format change has
   been added. The old synchronous helpers remain available for recheck and
   other non-peer paths; reverting the actor job routing remains a source
-  rollback until generation/failure fencing and v2 disconnect/quiesce cases
-  are covered and the bulk evidence is reviewed.
+  rollback until generation/failure fencing, actor-level v2 lifecycle cases,
+  and bulk evidence are reviewed.
 - **Feature flag or rollout boundary:** no separate flag; this is the
   production actor completion contract required before NET-114 integration.
 
@@ -865,9 +867,11 @@ Bulk validation remains deferred.
   job is queued, then publishes after successful hash and write. Existing
   v2 multi-block and request-lease sources were adapted to drain the job;
   `v2_peer_reads_control_messages_while_transfer_jobs_wait_for_rate_budget`
-  covers upload and download budget waits while the peer loop handles controls.
-  These sources are authored but unrun; generation/failure fencing,
-  disconnect/quiesce, and broader lifecycle qualification remain open.
+  covers upload and download budget waits while the peer loop handles controls,
+  then cancels a blocked download-rate wait and confirms shutdown drains without
+  publishing the canceled piece. These sources are authored but unrun;
+  generation/failure fencing, actor-level disconnect/quiesce, and broader
+  lifecycle qualification remain open.
 - **Command or probe to run:** focused actor and picker regressions during the
   requested bulk pass.
 - **Expected result:** actors process controls while accepted transfer work is

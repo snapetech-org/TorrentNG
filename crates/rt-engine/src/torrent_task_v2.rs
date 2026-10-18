@@ -425,17 +425,9 @@ impl V2PeerState {
 struct V2PeerHandle {
     state: Arc<Mutex<V2PeerState>>,
     choker_id: PeerId,
+    download_control: RateLimitCancellation,
     task: tokio::task::JoinHandle<()>,
-    abort: tokio::task::AbortHandle,
     _bitmap_memory_lease: MemoryLease,
-}
-
-async fn join_aborted_v2_peer_task(task: tokio::task::JoinHandle<()>, operation: &'static str) {
-    if let Err(error) = task.await {
-        if error.is_panic() {
-            crate::log_task_join_error("torrent_v2", operation, "peer task", &error);
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -457,6 +449,8 @@ struct V2PeerContext {
     storage: MountScheduler,
     resources: ResourceGovernor,
     network_budget: GlobalNetworkBudget,
+    download_control: RateLimitCancellation,
+    download_generation: u64,
     upload_control: RateLimitCancellation,
     local_have: Arc<RwLock<Arc<V2Bitmap>>>,
     have_updates: watch::Sender<()>,
@@ -557,6 +551,7 @@ struct V2PieceAssembly {
     received_count: usize,
     pending_blocks: usize,
     discard_when_idle: bool,
+    failed: bool,
     data: Option<Vec<u8>>,
     _memory_lease: Option<MemoryLease>,
 }
@@ -609,6 +604,7 @@ struct V2BlockCompletion {
 
 enum V2TransferCompletion {
     BlockStored(V2BlockCompletion),
+    BlockAdmissionCancelled { piece: u32, begin: u32 },
     PieceVerified(V2PieceCompletion),
 }
 
@@ -669,6 +665,7 @@ impl V2PieceAssembly {
             received_count: 0,
             pending_blocks: 0,
             discard_when_idle: false,
+            failed: false,
             data,
             _memory_lease: memory_lease,
         })
@@ -718,7 +715,7 @@ impl V2PieceAssembly {
     }
 
     fn is_ready(&self) -> bool {
-        self.is_complete() && self.pending_blocks == 0
+        self.is_complete() && self.pending_blocks == 0 && !self.failed
     }
 
     /// First block that is neither received nor already requested from this
@@ -798,7 +795,7 @@ pub struct V2TorrentTask {
 impl Drop for V2TorrentTask {
     fn drop(&mut self) {
         for peer in self.peers.values() {
-            peer.abort.abort();
+            peer.download_control.cancel();
         }
     }
 }
@@ -2045,12 +2042,13 @@ impl V2TorrentTask {
     async fn disconnect_private_tracker_peers(&mut self) {
         self.known_tracker_peers.clear();
         let peers = std::mem::take(&mut self.peers);
-        for peer in peers.values() {
-            peer.abort.abort();
-        }
+        let mut tasks = futures::stream::FuturesUnordered::new();
         for (_, peer) in peers {
-            join_aborted_v2_peer_task(peer.task, "disconnect_private_tracker_peers").await;
+            peer.download_control.cancel();
+            tasks.push(peer.task);
         }
+        self.join_v2_peer_tasks(tasks, "disconnect_private_tracker_peers")
+            .await;
     }
 
     async fn announce_stopped(&mut self) {
@@ -2526,6 +2524,8 @@ impl V2TorrentTask {
     }
 
     fn peer_context(&self, peer: SocketAddr, choker_id: PeerId) -> V2PeerContext {
+        let download_control = RateLimitCancellation::default();
+        let download_generation = download_control.generation();
         V2PeerContext {
             info_hash: self.meta.info_hash_v2[..20]
                 .try_into()
@@ -2538,6 +2538,8 @@ impl V2TorrentTask {
             storage: self.storage.clone(),
             resources: self.resources.clone(),
             network_budget: self.network_budget.clone(),
+            download_control,
+            download_generation,
             upload_control: RateLimitCancellation::default(),
             local_have: Arc::clone(&self.local_have),
             have_updates: self.have_updates.clone(),
@@ -2591,6 +2593,7 @@ impl V2TorrentTask {
             )));
             let choker_id = PeerId::new();
             let context = self.peer_context(peer, choker_id);
+            let download_control = context.download_control.clone();
             let event_peer = peer;
             let task_state = Arc::clone(&state);
             let transport_policy = outgoing_transport_policy_for_peer(
@@ -2617,14 +2620,13 @@ impl V2TorrentTask {
                     .send(V2PeerEvent::Disconnected { peer: event_peer })
                     .await;
             });
-            let abort = task.abort_handle();
             self.peers.insert(
                 peer,
                 V2PeerHandle {
                     state,
                     choker_id,
+                    download_control,
                     task,
-                    abort,
                     _bitmap_memory_lease: bitmap_memory_lease,
                 },
             );
@@ -2728,6 +2730,7 @@ impl V2TorrentTask {
         )));
         let choker_id = PeerId::new();
         let context = self.peer_context(peer, choker_id);
+        let download_control = context.download_control.clone();
         let task_state = Arc::clone(&state);
         let task = tokio::spawn(async move {
             let _peer_permit = peer_permit;
@@ -2748,14 +2751,13 @@ impl V2TorrentTask {
                 .send(V2PeerEvent::Disconnected { peer })
                 .await;
         });
-        let abort = task.abort_handle();
         self.peers.insert(
             peer,
             V2PeerHandle {
                 state,
                 choker_id,
+                download_control,
                 task,
-                abort,
                 _bitmap_memory_lease: bitmap_memory_lease,
             },
         );
@@ -2795,6 +2797,7 @@ impl V2TorrentTask {
         )));
         let choker_id = PeerId::new();
         let context = self.peer_context(peer, choker_id);
+        let download_control = context.download_control.clone();
         let task_state = Arc::clone(&state);
         let task = tokio::spawn(async move {
             let _peer_permit = peer_permit;
@@ -2815,14 +2818,13 @@ impl V2TorrentTask {
                 .send(V2PeerEvent::Disconnected { peer })
                 .await;
         });
-        let abort = task.abort_handle();
         self.peers.insert(
             peer,
             V2PeerHandle {
                 state,
                 choker_id,
+                download_control,
                 task,
-                abort,
                 _bitmap_memory_lease: bitmap_memory_lease,
             },
         );
@@ -2832,17 +2834,45 @@ impl V2TorrentTask {
         let Some(handle) = self.peers.remove(&peer) else {
             return;
         };
-        handle.abort.abort();
-        join_aborted_v2_peer_task(handle.task, "remove_peer").await;
+        handle.download_control.cancel();
+        let mut tasks = futures::stream::FuturesUnordered::new();
+        tasks.push(handle.task);
+        self.join_v2_peer_tasks(tasks, "remove_peer").await;
     }
 
     async fn shutdown_peers(&mut self) {
         let peers = std::mem::take(&mut self.peers);
-        for handle in peers.values() {
-            handle.abort.abort();
-        }
+        let mut tasks = futures::stream::FuturesUnordered::new();
         for (_, handle) in peers {
-            join_aborted_v2_peer_task(handle.task, "shutdown_peers").await;
+            handle.download_control.cancel();
+            tasks.push(handle.task);
+        }
+        self.join_v2_peer_tasks(tasks, "shutdown_peers").await;
+    }
+
+    async fn join_v2_peer_tasks(
+        &mut self,
+        mut tasks: futures::stream::FuturesUnordered<tokio::task::JoinHandle<()>>,
+        operation: &'static str,
+    ) {
+        while !tasks.is_empty() {
+            let (joined, event) = tokio::select! {
+                joined = tasks.next() => (Some(joined), None),
+                event = self.events_rx.recv() => (None, event),
+            };
+            if let Some(Some(Err(error))) = joined {
+                if error.is_panic() {
+                    crate::log_task_join_error("torrent_v2", operation, "peer task", &error);
+                }
+            }
+            if let Some(event) = event {
+                match event {
+                    V2PeerEvent::Downloaded { .. } | V2PeerEvent::Uploaded { .. } => {
+                        self.handle_peer_event(event).await;
+                    }
+                    V2PeerEvent::InterestChanged | V2PeerEvent::Disconnected { .. } => {}
+                }
+            }
         }
     }
 
@@ -3289,6 +3319,7 @@ async fn run_v2_peer_protocol(
     remote_supports_fast: bool,
 ) -> anyhow::Result<()> {
     let _upload_control_guard = V2UploadControlGuard(context.upload_control.clone());
+    let shutdown_generation = context.download_generation;
     if remote_supports_extension {
         framed
             .send(Message::Extended {
@@ -3336,8 +3367,13 @@ async fn run_v2_peer_protocol(
     let mut memory_retry = interval(Duration::from_secs(1));
     let mut last_activity = Instant::now();
 
-    loop {
+    let protocol_result = async {
+        loop {
         tokio::select! {
+            biased;
+            _ = context.download_control.wait_for_change(shutdown_generation) => {
+                return Ok(());
+            }
             changed = upload_unchoked.changed() => {
                 if changed.is_err() {
                     return Ok(());
@@ -3701,11 +3737,24 @@ async fn run_v2_peer_protocol(
                 };
                 match completion {
                     V2TransferCompletion::BlockStored(completion) => {
-                        apply_v2_block_completion(
+                        if let Err(error) = apply_v2_block_completion(
                             completion,
                             &mut assemblies,
                             &mut pending_block_completions,
-                        )?;
+                        ) {
+                            return Err(error);
+                        }
+                    }
+                    V2TransferCompletion::BlockAdmissionCancelled { piece, begin } => {
+                        apply_v2_block_admission_cancelled(
+                            piece,
+                            begin,
+                            &mut assemblies,
+                            &mut pending_block_completions,
+                        );
+                        if context.download_control.generation() != shutdown_generation {
+                            return Ok(());
+                        }
                     }
                     V2TransferCompletion::PieceVerified(completion) => {
                         apply_v2_piece_completion(
@@ -3851,6 +3900,34 @@ async fn run_v2_peer_protocol(
                 );
             }
         }
+        }
+    }
+    .await;
+    context.download_control.cancel();
+    let drain_result = drain_v2_transfer_jobs(
+        &context,
+        &state,
+        &mut assemblies,
+        &mut pending_block_completions,
+        &mut pending_piece_completions,
+        &mut transfer_jobs,
+    )
+    .await;
+    match protocol_result {
+        Err(error) => {
+            if let Err(drain_error) = drain_result {
+                debug!(
+                    component = "torrent_v2",
+                    operation = "drain_peer_transfers",
+                    peer = %context.peer,
+                    result = "error",
+                    error = %drain_error,
+                    "peer transfer drain also failed while closing the protocol loop"
+                );
+            }
+            Err(error)
+        }
+        Ok(()) => drain_result,
     }
 }
 
@@ -4077,7 +4154,22 @@ fn apply_v2_block_completion(
     pending_block_completions: &mut HashMap<(u32, u32), u64>,
 ) -> anyhow::Result<()> {
     pending_block_completions.remove(&(completion.piece, completion.begin));
-    if let Err(error) = completion.result {
+    let error = completion.result.err();
+    if let Some(assembly) = assemblies.get_mut(&completion.piece) {
+        assembly.pending_blocks = assembly.pending_blocks.saturating_sub(1);
+        if error.is_some() {
+            assembly.failed = true;
+            assembly.discard_when_idle = true;
+        }
+    }
+    let remove_assembly = assemblies.get(&completion.piece).is_some_and(|assembly| {
+        assembly.pending_blocks == 0
+            && (assembly.failed || (assembly.discard_when_idle && !assembly.is_complete()))
+    });
+    if remove_assembly {
+        assemblies.remove(&completion.piece);
+    }
+    if let Some(error) = error {
         anyhow::bail!(
             "v2 block write failed for piece {} offset {}: {}",
             completion.piece,
@@ -4085,14 +4177,27 @@ fn apply_v2_block_completion(
             error
         );
     }
-    let Some(assembly) = assemblies.get_mut(&completion.piece) else {
-        return Ok(());
-    };
-    assembly.pending_blocks = assembly.pending_blocks.saturating_sub(1);
-    if assembly.pending_blocks == 0 && assembly.discard_when_idle && !assembly.is_complete() {
-        assemblies.remove(&completion.piece);
-    }
     Ok(())
+}
+
+fn apply_v2_block_admission_cancelled(
+    piece: u32,
+    begin: u32,
+    assemblies: &mut HashMap<u32, V2PieceAssembly>,
+    pending_block_completions: &mut HashMap<(u32, u32), u64>,
+) {
+    pending_block_completions.remove(&(piece, begin));
+    if let Some(assembly) = assemblies.get_mut(&piece) {
+        assembly.pending_blocks = assembly.pending_blocks.saturating_sub(1);
+        assembly.failed = true;
+        assembly.discard_when_idle = true;
+    }
+    if assemblies
+        .get(&piece)
+        .is_some_and(|assembly| assembly.pending_blocks == 0 && assembly.failed)
+    {
+        assemblies.remove(&piece);
+    }
 }
 
 fn start_ready_v2_piece_jobs(
@@ -4172,6 +4277,52 @@ async fn apply_v2_piece_completion(
                 "failed to verify or store pure-v2 piece"
             );
         }
+    }
+}
+
+async fn drain_v2_transfer_jobs(
+    context: &V2PeerContext,
+    state: &Arc<Mutex<V2PeerState>>,
+    assemblies: &mut HashMap<u32, V2PieceAssembly>,
+    pending_block_completions: &mut HashMap<(u32, u32), u64>,
+    pending_piece_completions: &mut HashMap<u32, u64>,
+    transfer_jobs: &mut futures::stream::FuturesUnordered<V2TransferTask>,
+) -> anyhow::Result<()> {
+    let mut first_error = None;
+    while let Some(completion) = transfer_jobs.next().await {
+        match completion {
+            V2TransferCompletion::BlockStored(completion) => {
+                if let Err(error) =
+                    apply_v2_block_completion(completion, assemblies, pending_block_completions)
+                {
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                }
+            }
+            V2TransferCompletion::BlockAdmissionCancelled { piece, begin } => {
+                apply_v2_block_admission_cancelled(
+                    piece,
+                    begin,
+                    assemblies,
+                    pending_block_completions,
+                );
+            }
+            V2TransferCompletion::PieceVerified(completion) => {
+                apply_v2_piece_completion(context, state, pending_piece_completions, completion)
+                    .await;
+            }
+        }
+        start_ready_v2_piece_jobs(
+            context,
+            assemblies,
+            pending_piece_completions,
+            transfer_jobs,
+        );
+    }
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(()),
     }
 }
 
@@ -4344,13 +4495,21 @@ async fn handle_v2_piece(
             request_memory_lease,
         ))
     };
+    let download_generation = context.download_generation;
     let job_context = context.clone();
     transfer_jobs.push(Box::pin(async move {
-        job_context
+        if !job_context
             .network_budget
             .download()
-            .acquire(u64::from(expected))
-            .await;
+            .acquire_or_cancelled(
+                u64::from(expected),
+                &job_context.download_control,
+                download_generation,
+            )
+            .await
+        {
+            return V2TransferCompletion::BlockAdmissionCancelled { piece, begin };
+        }
         let result = if let Some((data, path, offset, _memory_lease)) = block_write {
             let result = scheduled_write(
                 &job_context.storage,
@@ -5018,6 +5177,8 @@ mod tests {
             storage: storage.clone(),
             resources,
             network_budget: GlobalNetworkBudget::new(8, Some(1), Some(1)),
+            download_control: RateLimitCancellation::default(),
+            download_generation: 0,
             upload_control: RateLimitCancellation::default(),
             local_have: Arc::new(RwLock::new(Arc::new(local_have))),
             have_updates,
@@ -5124,12 +5285,16 @@ mod tests {
         assert!(!context_for_test.local_have.read().await.get(0));
         assert_eq!(state_for_test.lock().unwrap().downloaded, 0);
 
-        drop(remote);
+        context_for_test.download_control.cancel();
         assert!(timeout(Duration::from_secs(1), peer)
             .await
-            .expect("v2 peer loop did not observe socket shutdown")
+            .expect("v2 shutdown did not cancel a pending download-rate wait")
             .unwrap()
             .is_ok());
+        assert!(!context_for_test.local_have.read().await.get(0));
+        assert_eq!(state_for_test.lock().unwrap().downloaded, 0);
+        assert!(event_rx.try_recv().is_err());
+        drop(remote);
     }
 
     #[test]
@@ -5333,14 +5498,13 @@ mod tests {
 
         let peer: SocketAddr = "127.0.0.1:6881".parse().unwrap();
         let peer_task = tokio::spawn(std::future::pending::<()>());
-        let abort = peer_task.abort_handle();
         task.peers.insert(
             peer,
             V2PeerHandle {
                 state: Arc::new(Mutex::new(V2PeerState::new(0))),
                 choker_id: PeerId::new(),
+                download_control: RateLimitCancellation::default(),
                 task: peer_task,
-                abort,
                 _bitmap_memory_lease: resources.try_acquire(MemoryClass::PeerBuffer, 1).unwrap(),
             },
         );
@@ -6298,39 +6462,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    async fn drain_v2_transfer_jobs(
-        context: &V2PeerContext,
-        state: &Arc<Mutex<V2PeerState>>,
-        assemblies: &mut HashMap<u32, V2PieceAssembly>,
-        pending_block_completions: &mut HashMap<(u32, u32), u64>,
-        pending_piece_completions: &mut HashMap<u32, u64>,
-        transfer_jobs: &mut futures::stream::FuturesUnordered<V2TransferTask>,
-    ) -> anyhow::Result<()> {
-        while let Some(completion) = transfer_jobs.next().await {
-            match completion {
-                V2TransferCompletion::BlockStored(completion) => {
-                    apply_v2_block_completion(completion, assemblies, pending_block_completions)?;
-                }
-                V2TransferCompletion::PieceVerified(completion) => {
-                    apply_v2_piece_completion(
-                        context,
-                        state,
-                        pending_piece_completions,
-                        completion,
-                    )
-                    .await;
-                }
-            }
-            start_ready_v2_piece_jobs(
-                context,
-                assemblies,
-                pending_piece_completions,
-                transfer_jobs,
-            );
-        }
-        Ok(())
     }
 
     /// Run one delivery order in both assembly modes and check every
