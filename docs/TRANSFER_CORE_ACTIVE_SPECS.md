@@ -1368,13 +1368,16 @@ generation cannot be accidentally cleared.
 - **Current owner:** each `MountScheduler` clone shares scheduler-wide write
   admission, a global diagnostic write sequence, weakly registered per-path
   fences, its dirty-generation map, and completion watchers for submitted
-  writes and syncs.
+  writes and syncs. Full checkpoint barriers run in an owned task so dropping
+  a waiter does not cancel a partially completed path snapshot.
 - **Target owner:** IO-006's shared device service batches ready per-file
   fences by device while each path retains its own completion watermark.
 - **Invariant preserved:** a scheduler-wide checkpoint admits no later
   write/preallocation/sync operation until every path in its stable snapshot
-  has completed `fdatasync`; per-file fences and completion watchers retain
-  ownership across caller cancellation.
+  has completed `fdatasync`; per-file fences, the detached barrier task, and
+  completion watchers retain ownership across caller cancellation. A
+  successful result keeps scheduler write admission in its evidence until the
+  resume commit drops it.
 - **Must not:** clear a newer generation, sync a clean unrelated descriptor,
   or let preallocation/write completion pass a barrier queued behind it.
 
@@ -1385,6 +1388,9 @@ generation cannot be accidentally cleared.
 - A checkpoint cannot miss a write admitted on a new path after path
   enumeration begins; that write waits for the returned barrier and remains
   dirty for the next one.
+- Canceling the barrier waiter cannot release write admission while any path
+  in the snapshot is still syncing; the detached barrier finishes the snapshot
+  and returns no evidence to a canceled waiter.
 - A write queued behind a path's exclusive fence waits until its `fdatasync`
   finishes and remains dirty for a later barrier.
 - Failed barriers and partial writes retain dirty evidence; a successful
@@ -1409,8 +1415,9 @@ generation cannot be accidentally cleared.
 ### Evidence
 
 - **Regression source added or updated:** existing canceled-writer,
-  dirty-generation, and failed-barrier retry sources; a held-sync regression
-  now covers a new-path write queued behind the scheduler-wide checkpoint.
+  dirty-generation, and failed-barrier retry sources; held-sync regressions
+  cover a new-path write queued behind the scheduler-wide checkpoint and a
+  canceled waiter whose barrier must finish a multi-path snapshot first.
 - **Command or probe to run:** storage fault matrix and barrier ordering
   regressions during the requested bulk pass.
 - **Expected result:** a returned barrier covers every earlier admitted write

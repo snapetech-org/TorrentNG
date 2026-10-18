@@ -3267,8 +3267,20 @@ impl MountScheduler {
 
     /// Sync every dirty or active file after closing scheduler-wide write
     /// admission. The returned opaque evidence can be attached to durable
-    /// resume state to prove the payload barrier completed.
+    /// resume state to prove the payload barrier completed. The barrier runs
+    /// in an owned task so dropping the caller's future cannot stop a partial
+    /// checkpoint and admit new writes before the complete path snapshot has
+    /// been synced.
     pub async fn sync_all_open_files_with_evidence(
+        &self,
+    ) -> Result<DurabilityBarrierEvidence, StorageError> {
+        let scheduler = self.clone();
+        tokio::spawn(async move { scheduler.sync_all_open_files_with_evidence_inner().await })
+            .await
+            .map_err(|_| StorageError::Cancelled)?
+    }
+
+    async fn sync_all_open_files_with_evidence_inner(
         &self,
     ) -> Result<DurabilityBarrierEvidence, StorageError> {
         let pool = self.file_pool.clone();
@@ -7513,9 +7525,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancelled_checkpoint_barrier_retains_admission_until_sync_completion() {
+    async fn cancelled_checkpoint_waiter_keeps_admission_until_full_barrier_finishes() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("checkpoint-held.bin");
+        let first_path = dir.path().join("a-checkpoint-held.bin");
+        let second_path = dir.path().join("b-checkpoint-held.bin");
+        let later_path = dir.path().join("c-checkpoint-later.bin");
         let resources = queued_disk_governor(QUEUED_DISK_JOB_OVERHEAD_BYTES);
         let mut scheduler = MountScheduler::new(
             StorageRootId::new(),
@@ -7538,14 +7552,24 @@ mod tests {
         scheduler
             .write_at(
                 IoClass::PeerWrite,
-                &path,
+                &first_path,
                 0,
                 bytes::Bytes::from_static(b"checkpoint-payload"),
                 true,
             )
             .await
             .unwrap();
-        assert_eq!(scheduler.stats().dirty_files, 1);
+        scheduler
+            .write_at(
+                IoClass::PeerWrite,
+                &second_path,
+                0,
+                bytes::Bytes::from_static(b"second-checkpoint-payload"),
+                true,
+            )
+            .await
+            .unwrap();
+        assert_eq!(scheduler.stats().dirty_files, 2);
         backend.inject(Operation::Sync, Effect::HoldCompletion);
 
         let barrier_scheduler = scheduler.clone();
@@ -7561,7 +7585,23 @@ mod tests {
         barrier.abort();
         let _ = barrier.await;
 
-        assert_eq!(scheduler.stats().dirty_files, 1);
+        let later_scheduler = scheduler.clone();
+        let (started_tx, started_rx) = oneshot::channel();
+        let later_write = tokio::spawn(async move {
+            started_tx.send(()).unwrap();
+            later_scheduler
+                .write_at(
+                    IoClass::PeerWrite,
+                    &later_path,
+                    0,
+                    bytes::Bytes::from_static(b"later-write"),
+                    true,
+                )
+                .await
+        });
+        started_rx.await.unwrap();
+        tokio::task::yield_now().await;
+        assert_eq!(backend.pending_releases(), 1);
         assert_eq!(scheduler.stats().device_queue_available, capacity - 1);
         assert_eq!(
             queued_disk_used_bytes(&resources),
@@ -7574,6 +7614,14 @@ mod tests {
 
         assert!(backend.release_next());
         tokio::time::timeout(Duration::from_secs(1), async {
+            while scheduler.stats().sync_ops < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("detached checkpoint should finish every path in its snapshot");
+        tokio::time::timeout(Duration::from_secs(1), async {
+            later_write.await.unwrap().unwrap();
             while scheduler.stats().queued_disk_bytes != 0
                 || queued_disk_used_bytes(&resources) != 0
                 || scheduler.stats().device_queue_available != capacity
@@ -7582,11 +7630,15 @@ mod tests {
             }
         })
         .await
-        .expect("canceled checkpoint completion should release its admission");
+        .expect("later write should run after the complete checkpoint releases admission");
 
         assert_eq!(scheduler.stats().dirty_files, 1);
-        scheduler.sync_all_open_files().await.unwrap();
-        assert_eq!(scheduler.stats().dirty_files, 0);
+        assert_eq!(std::fs::read(first_path).unwrap(), b"checkpoint-payload");
+        assert_eq!(
+            std::fs::read(second_path).unwrap(),
+            b"second-checkpoint-payload"
+        );
+        assert_eq!(std::fs::read(later_path).unwrap(), b"later-write");
         assert_storage_admission_released(&scheduler);
     }
 
