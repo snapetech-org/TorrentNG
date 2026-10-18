@@ -1359,7 +1359,8 @@ entries cannot invalidate an active directory cursor. Regular-file
 `CopyVerifyRename` steps and regular-file imports that cannot use a hard link
 now yield device slots between bounded copy and hash quanta. Directory-tree
 copies still hold their admitted device slots for the full secure step;
-same-filesystem `ImportExisting` retains its one-operation hard-link fast path.
+Unix same-filesystem `ImportExisting` retains its one-operation hard-link
+fast path; Windows imports use bounded quanta for regular-file copies.
 Final file sync and recursive directory traversal are not preemptible yet.
 
 ### Ownership and invariant
@@ -1388,7 +1389,7 @@ Final file sync and recursive directory traversal are not preemptible yet.
   next quantum; one-block-per-quantum and cancellation cleanup regressions
   cover Unix and Windows.
 - Directory-tree copies and final syncs remain explicitly identified where a
-  full step can still hold device slots; same-filesystem `ImportExisting`
+  full step can still hold device slots; Unix same-filesystem `ImportExisting`
   retains the single-operation hard-link fast path.
 - Source reads, destination writes, renames, deletes, and rollback mutations
   acquire admission for every touched physical device in a global order.

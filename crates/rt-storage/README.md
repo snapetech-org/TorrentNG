@@ -42,10 +42,10 @@ scheduler used by the TorrentNG client.
   admission, releasing device slots between quanta while retaining their
   root-confined file handles and cancellation cleanup. Their touched-device
   queue set is resolved once and reused across quanta. Directory-tree copies
-  still run as one admitted operation. `ImportExisting` keeps its same-device
-  hard-link fast path and uses bounded quanta when it needs a regular-file
-  copy. Final sync latency, deadline dispatch, and choke-critical dispatch
-  remain open.
+  still run as one admitted operation. On Unix, `ImportExisting` keeps its
+  same-device hard-link fast path and uses bounded quanta when it needs a
+  regular-file copy. Final sync latency, deadline dispatch, and choke-critical
+  dispatch remain open.
 - Piece and BEP52 hashing runs on a separate bounded hashing pool. V1 recheck
   streams SHA-1 updates; v2 recheck hashes up to 64 leaves per job and finishes
   the bounded streaming Merkle accumulator on that pool. A shared immutable
