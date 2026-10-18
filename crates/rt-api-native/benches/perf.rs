@@ -145,7 +145,9 @@ fn run_count(runtime: &Runtime, torrent_count: usize) {
         update_one_torrent(runtime, &state, torrent_count, sample);
         // AppState intentionally serves its current-generation snapshot for
         // up to 750 ms. Wait outside measurement to exercise a real refresh.
-        runtime.block_on(tokio::time::sleep(SNAPSHOT_MAX_AGE_PLUS_MARGIN));
+        runtime.block_on(async {
+            tokio::time::sleep(SNAPSHOT_MAX_AGE_PLUS_MARGIN).await;
+        });
         emit_sample(
             runtime,
             &state,
