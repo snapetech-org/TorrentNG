@@ -114,6 +114,15 @@ impl TorrentTask {
         let mut queue_full = 0u64;
         for action in actions {
             let TransferAction::Cancel { conn, block } = action;
+            if self.webseed_transfer_conn == Some(conn) {
+                // Mark-have and epoch changes can revoke a webseed block just
+                // like a peer request. Abort its bounded HTTP owner and drop
+                // the ledger generation so a late body cannot reach storage.
+                self.close_webseed_transfer_connection();
+                self.picker
+                    .cancel_request(block.piece as usize, block.begin);
+                continue;
+            }
             let Some(handle) = self
                 .active_peers
                 .values()
@@ -226,8 +235,24 @@ impl TorrentTask {
     }
 
     pub(super) fn close_webseed_transfer_connection(&mut self) {
+        let canceled_fetch = if let Some(fetch) = self.webseed_fetch.take() {
+            fetch.task.abort();
+            self.reconcile_webseed_local_tokens(
+                fetch.reserved_local_bytes,
+                fetch.local_tokens_reserved,
+                fetch.observed_network_bytes.load(Ordering::Acquire),
+            );
+            self.picker
+                .cancel_request(fetch.request.piece as usize, fetch.request.begin);
+            true
+        } else {
+            false
+        };
         let Some(conn) = self.webseed_transfer_conn.take() else {
             self._webseed_transfer_connection_memory_lease = None;
+            if canceled_fetch {
+                self.webseed_wake_notify.notify_one();
+            }
             return;
         };
         for block in self.transfer_ledger.disconnect(conn) {
@@ -239,6 +264,7 @@ impl TorrentTask {
             }
         }
         self._webseed_transfer_connection_memory_lease = None;
+        self.webseed_wake_notify.notify_one();
     }
 
     pub(super) async fn handle_webseed_block(&mut self, event: LeasedBlockEvent) {
@@ -1596,6 +1622,17 @@ impl TorrentTask {
         consume_download_tokens(&mut self.download_tokens, limit, u64::from(bytes))
     }
 
+    pub(super) fn refund_download_tokens(&mut self, bytes: u32) {
+        self.refill_download_tokens();
+        let Some(limit) = self.download_limit_bytes_per_sec else {
+            return;
+        };
+        self.download_tokens = self
+            .download_tokens
+            .saturating_add(u64::from(bytes))
+            .min(download_bucket_capacity(limit));
+    }
+
     pub(super) fn refill_download_tokens(&mut self) {
         let now = Instant::now();
         let Some(limit) = self.download_limit_bytes_per_sec else {
@@ -1619,6 +1656,7 @@ impl TorrentTask {
     }
 
     pub(super) async fn shutdown_peers(&mut self) {
+        self.close_webseed_transfer_connection();
         // Accepted transfer writes and hashes own their payload leases and
         // piece generation until completion. Drain them before resetting the
         // picker or changing file policy so no completion can cross that

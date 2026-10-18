@@ -3748,10 +3748,15 @@ a whole-torrent scan for each requested block.
 
 Schedule peer and webseed work through one bounded ownership and rate-control
 path, then publish transfer progress in bounded batches. The current v1
-webseed implementation is a serial no-peer fallback. It now maps multi-file
-blocks to bounded per-file HTTP ranges and synthesizes BEP 47 padding locally;
-each block reuses one DNS-validated, address-pinned HTTP client across its
-file ranges;
+webseed implementation dispatches one bounded request at a time, starting
+only while no peer is active. Its HTTP fetch and global-rate wait run in an
+owned task, so peer events and lifecycle commands continue while that request
+is pending; a peer that connects meanwhile competes through the same ledger.
+Canceling the job drops its connection and wakes the webseed deadline so a
+later idle retry does not wait on a stale timer.
+It maps multi-file blocks to bounded per-file HTTP ranges and synthesizes BEP
+47 padding locally; each block reuses one DNS-validated, address-pinned HTTP
+client across its file ranges;
 pure-v2 still has no webseed execution. v1 already batches progress at its
 five-second dirty-stat flush, and pure-v2 now batches upload/download
 statistics at the existing five-second runtime flush. Completion and
@@ -3760,8 +3765,10 @@ lifecycle boundaries flush immediately.
 ### Ownership and invariant
 
 - **Current owner:** peer tasks and the v1 webseed fallback own source work;
-  the pure-v2 actor receives verified-piece transfer totals and persists them
-  through `DbWorker`.
+  a single in-flight v1 webseed fetch is owned by a cancellable task while the
+  torrent actor remains available for peer and lifecycle events. The pure-v2
+  actor receives verified-piece transfer totals and persists them through
+  `DbWorker`.
 - **Target owner:** the shared scheduler owns source admission, request
   ownership, cancellation, rate credit, and bounded retry across peers and
   webseeds. Torrent actors retain verification, storage publication, and
@@ -3772,7 +3779,8 @@ lifecycle boundaries flush immediately.
   the registry projection and leaves its pending counters available for retry.
 - **Must not:** let one source bypass the aggregate or torrent rate budget,
   double-count retries, or hold actor lifecycle commands behind a long source
-  wait.
+  wait. A fetch revoked by piece completion, pause, recheck, storage move, or
+  shutdown must not publish its late body.
 
 ### Acceptance
 
@@ -3785,18 +3793,23 @@ lifecycle boundaries flush immediately.
 - A failed progress transaction restores the prior registry projection and
   retains each pending source total for exactly-once retry.
 - Regression sources cover concurrent peer/webseed ownership, rate waits,
-  cancellation, per-file webseed mapping and padding synthesis, progress
-  coalescing, retry, and lifecycle flushes.
+  cancellation, actor responsiveness during a held HTTP body, per-file
+  webseed mapping and padding synthesis, progress coalescing, retry, and
+  lifecycle flushes.
 - Matched live-source workloads show no missing or duplicate payload and
   bounded progress-publication latency.
 
 ### Current slice evidence
 
 - **Regression source added or updated:** pure-v2 progress batching and
-  database-failure retry in `torrent_task_v2.rs`; multi-file URL/range mapping,
-  BEP 47 padding, and excessive file-fanout bounds in `torrent_task.rs`.
+  database-failure retry in `torrent_task_v2.rs`; the v1 actor now owns one
+  bounded cancellable webseed fetch outside its event loop, and a regression
+  source holds the HTTP body while querying the actor. Multi-file URL/range
+  mapping, BEP 47 padding, and excessive file-fanout bounds remain covered in
+  `torrent_task.rs`.
 - **Command or probe:** run with the requested bulk engine suite; do not run
   this source independently before that pass.
 - **Executed on exact revision:** no.
-- **Remaining:** concurrent peer/webseed shared scheduling, pure-v2 webseed
-  execution, live-source workloads, and the bulk pass.
+- **Remaining:** concurrent webseed dispatch while peers are already active,
+  shared source scheduling, pure-v2 webseed execution, live-source workloads,
+  and the bulk pass.

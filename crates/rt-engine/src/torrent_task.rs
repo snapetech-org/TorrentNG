@@ -7,6 +7,7 @@ use std::hash::{Hash, Hasher};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -19,7 +20,8 @@ use rusqlite::Connection;
 #[cfg(test)]
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
-use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit, RwLock};
+use tokio::sync::{mpsc, oneshot, Notify, OwnedSemaphorePermit, RwLock};
+use tokio::task::JoinHandle;
 use tokio::time::{interval, sleep, timeout, Instant as TokioInstant, Sleep};
 use tokio_util::codec::Framed;
 use tracing::{debug, info, warn};
@@ -1380,6 +1382,36 @@ struct LeasedBlockEvent {
     network_bytes: Option<u64>,
 }
 
+struct WebseedFetchInFlight {
+    request: BlockRequest,
+    connection: ConnectionId,
+    seed_index: usize,
+    reserved_local_bytes: u32,
+    local_tokens_reserved: bool,
+    observed_network_bytes: Arc<AtomicU64>,
+    task: JoinHandle<Result<WebseedFetchedBlock, String>>,
+}
+
+impl Drop for WebseedFetchInFlight {
+    fn drop(&mut self) {
+        // Dropping a Tokio JoinHandle detaches the task. Keep the HTTP worker
+        // tied to its torrent actor even if an unexpected exit drops state.
+        self.task.abort();
+    }
+}
+
+struct WebseedFetchedBlock {
+    event: LeasedBlockEvent,
+    fetch_elapsed: Duration,
+}
+
+struct PreparedWebseedRange {
+    url: Url,
+    file_offset: u64,
+    block_offset: usize,
+    length: usize,
+}
+
 const MAX_TRANSFER_COMPLETION_JOBS: usize = 64;
 
 #[derive(Debug, Default)]
@@ -2413,11 +2445,17 @@ pub struct TorrentTask {
     /// received content. The picker still ranks candidates; this ledger
     /// arbitrates cross-source ownership and response lifetimes.
     transfer_ledger: TransferLedger<Arc<PieceMap>>,
-    /// A transient ledger connection for the serial webseed path. It is
-    /// admitted only while there are no peer sessions and is released after
-    /// the response is handled or the webseed future is cancelled.
+    /// A transient ledger connection for one webseed request. Dispatch starts
+    /// only without active peers, but a peer may connect while its HTTP fetch
+    /// is in flight; the shared ledger arbitrates the two responses.
     webseed_transfer_conn: Option<ConnectionId>,
     _webseed_transfer_connection_memory_lease: Option<MemoryLease>,
+    /// One bounded webseed fetch runs outside the torrent actor so a slow
+    /// HTTP response cannot delay peer events or lifecycle commands.
+    webseed_fetch: Option<WebseedFetchInFlight>,
+    /// Wake the webseed deadline when a fetch is revoked by a peer or
+    /// lifecycle transition.
+    webseed_wake_notify: Notify,
     /// Logical ledger-state reservations are charged with peer request state,
     /// separately from the picker's candidate index and payload assemblies.
     transfer_piece_memory_leases: HashMap<u32, MemoryLease>,
@@ -2697,8 +2735,8 @@ impl TorrentTask {
         let piece_map = build_piece_map(meta.piece_length, &meta.files)
             .expect("metainfo parser rejects invalid piece maps");
         // The serial webseed fallback owns one transient ledger connection in
-        // addition to the configured peer slots. It never raises the live
-        // peer cap, because webseed work runs only while no peer is active.
+        // addition to the configured peer slots. Dispatch starts while idle,
+        // though a new peer may overlap a fetch already in progress.
         let transfer_ledger = TransferLedger::new(Arc::clone(&piece_map))
             .with_max_connections(max_peers.saturating_add(1));
         let storage = MountScheduler::new_for_path(
@@ -2819,6 +2857,8 @@ impl TorrentTask {
             transfer_ledger,
             webseed_transfer_conn: None,
             _webseed_transfer_connection_memory_lease: None,
+            webseed_fetch: None,
+            webseed_wake_notify: Notify::new(),
             transfer_piece_memory_leases: HashMap::new(),
             transfer_started_at: Instant::now(),
             choker: Choker::new(DEFAULT_MAX_UNCHOKED),
@@ -2913,9 +2953,8 @@ impl TorrentTask {
     }
 
     pub async fn run(mut self) {
-        // Keep the engine command receiver outside the actor while it runs so
-        // a webseed fetch can be selected against lifecycle commands without
-        // borrowing two fields of `self` through overlapping futures. The
+        // Keep the command receiver outside the actor loop so it has one clear
+        // owner while the cancellable webseed worker runs independently. The
         // replacement is never observed: this task owns the real receiver
         // until it exits.
         let (_, replacement_cmd_rx) = mpsc::channel(1);
@@ -3036,6 +3075,7 @@ impl TorrentTask {
                             result = "command_channel_closed",
                             "torrent command channel closed; shutting down"
                         );
+                        self.close_webseed_transfer_connection();
                         self.cancel_tracker_announces();
                         self.announce_stopped_with_control_deadline().await;
                         self.drain_transfer_jobs().await;
@@ -3046,6 +3086,7 @@ impl TorrentTask {
                     };
                     match cmd {
                         TorrentCmd::Shutdown => {
+                            self.close_webseed_transfer_connection();
                             self.cancel_tracker_announces();
                             self.announce_stopped_with_control_deadline().await;
                             self.drain_transfer_jobs().await;
@@ -3057,6 +3098,7 @@ impl TorrentTask {
                         TorrentCmd::Pause { reply } => {
                             let was_paused = self.paused;
                             self.paused = true;
+                            self.close_webseed_transfer_connection();
                             self.cancel_tracker_announces();
                             self.drain_transfer_jobs().await;
                             self.save_fastresume(false).await;
@@ -3145,6 +3187,7 @@ impl TorrentTask {
                         TorrentCmd::QuiesceForStorageMove { reply } => {
                             let was_paused = self.paused;
                             self.paused = true;
+                            self.close_webseed_transfer_connection();
                             self.cancel_tracker_announces();
                             self.drain_transfer_jobs().await;
                             self.save_fastresume(false).await;
@@ -3430,6 +3473,21 @@ impl TorrentTask {
                     }
                 }
 
+                _ = self.webseed_wake_notify.notified() => {
+                    reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
+                }
+
+                result = async {
+                    let fetch = self.webseed_fetch.as_mut().expect("guarded webseed fetch");
+                    (&mut fetch.task).await
+                }, if self.webseed_fetch.is_some() => {
+                    let fetch = self.webseed_fetch.take().expect("completed webseed fetch");
+                    if let Some(fetched) = self.finish_webseed_fetch(fetch, result) {
+                        self.handle_webseed_block(fetched.event).await;
+                    }
+                    reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
+                }
+
                 completion = self.transfer_jobs.next(), if !self.transfer_jobs.is_empty() => {
                     if let Some(completion) = completion {
                         self.handle_transfer_completion(completion).await;
@@ -3499,58 +3557,14 @@ impl TorrentTask {
                     }
                 }
 
-                _ = &mut webseed_sleep, if !self.paused && self.active_peers.is_empty() && !self.meta.webseeds.is_empty() && !self.picker.is_complete() => {
-                    // Webseed response bodies are already bounded, but the
-                    // shared download bucket may be configured far below a
-                    // protocol block size. Waiting for that bucket in the
-                    // actor used to make Pause/Shutdown wait for hours. Keep
-                    // the rate wait cancellable by the command receiver, but
-                    // let disk handling finish once the budget was acquired.
-                    let operation = self.download_next_webseed_block();
-                    let outcome = {
-                        tokio::pin!(operation);
-                        tokio::select! {
-                            result = &mut operation => Ok::<_, Option<TorrentCmd>>(result),
-                            command = cmd_rx.recv() => Err(command),
-                        }
-                    };
-                    match outcome {
-                        Ok(Some(block)) => {
-                            self.handle_webseed_block(block).await;
-                            reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
-                        }
-                        Ok(None) => {
-                            reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
-                        }
-                        Err(Some(command)) => {
-                            // The canceled operation may have reserved a
-                            // picker request before it reached its cleanup
-                            // path. There are no active peers under this
-                            // branch, so reset only the webseed-side request
-                            // state before replaying the command through the
-                            // normal actor path.
-                            self.close_webseed_transfer_connection();
-                            self.picker.reset_outstanding_requests();
-                            pending_command = Some(command);
-                            reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
-                        }
-                        Err(None) => {
-                            self.close_webseed_transfer_connection();
-                            warn!(
-                                component = "torrent",
-                                operation = "run",
-                                torrent = %self.info_hash_hex,
-                                result = "command_channel_closed",
-                                "torrent command channel closed; shutting down"
-                            );
-                            self.cancel_tracker_announces();
-                            self.announce_stopped_with_control_deadline().await;
-                            self.drain_transfer_jobs().await;
-                            self.persist_progress().await;
-                            self.save_fastresume_for_exit().await;
-                            self.shutdown_peers().await;
-                            break;
-                        }
+                _ = &mut webseed_sleep, if !self.paused && self.active_peers.is_empty() && self.webseed_fetch.is_none() && !self.meta.webseeds.is_empty() && !self.picker.is_complete() => {
+                    if self.start_webseed_block() {
+                        // The HTTP request and global rate wait now own their
+                        // bounded job. The actor remains free to process peer
+                        // events and lifecycle commands while it is pending.
+                        reset_webseed_sleep(&mut webseed_sleep, WEBSEED_RETRY_MAX);
+                    } else {
+                        reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
                     }
                 }
             }
@@ -4496,6 +4510,10 @@ impl TorrentTask {
         pending_command: &mut Option<TorrentCmd>,
         mut job_id: Option<String>,
     ) -> RecheckOutcome {
+        // Stop a source fetch before any recheck drain, persistence, or disk
+        // work can hold the actor. Its late response must not cross into the
+        // new verification epoch.
+        self.close_webseed_transfer_connection();
         let mut valid = 0usize;
         // A subset recheck (completion `sample` verification) re-hashes only
         // the chosen pieces and leaves every other piece as it was.
@@ -13157,6 +13175,141 @@ mod tests {
             0,
             "dropping the block event releases its body reservation"
         );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn webseed_http_wait_does_not_block_torrent_commands() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let temp = tempfile::tempdir().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let webseed_addr = listener.local_addr().unwrap();
+        let (request_started_tx, request_started_rx) = oneshot::channel();
+        let (release_response_tx, release_response_rx) = oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 1024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = stream.read(&mut buffer).await.unwrap();
+                if read == 0 {
+                    return;
+                }
+                request.extend_from_slice(&buffer[..read]);
+            }
+            let _ = request_started_tx.send(());
+            if release_response_rx.await.is_err() {
+                return;
+            }
+            let _ = stream
+                .write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Length: 4\r\nContent-Range: bytes 0-3/4\r\nConnection: close\r\n\r\ndata")
+                .await;
+            let _ = stream.shutdown().await;
+        });
+
+        let meta = TorrentMetaV1 {
+            info_hash: [25; 20],
+            announce: None,
+            announce_list: Vec::new(),
+            webseeds: vec![format!("http://{webseed_addr}/payload.bin")],
+            comment: None,
+            created_by: None,
+            creation_date: None,
+            name: "payload.bin".into(),
+            piece_length: 4,
+            pieces: vec![[0; 20]],
+            files: vec![rt_metainfo::TorrentFileV1 {
+                index: 0,
+                length: 4,
+                path: rt_path::SafeRelPath::from_name("payload.bin", false).unwrap(),
+                offset: 0,
+                pad: false,
+            }],
+            private: false,
+            raw: Vec::new(),
+        };
+        let info_hash = hex::encode(meta.info_hash);
+        let conn = Connection::open_in_memory().unwrap();
+        rt_db::migrate(&conn).unwrap();
+        let mut entry = rt_session::TorrentEntry::new(
+            info_hash.clone(),
+            meta.name.clone(),
+            temp.path().to_string_lossy().into_owned(),
+        );
+        entry.total_length = 4;
+        entry.amount_left = 4;
+        entry.transition(TorrentState::Downloading).unwrap();
+        persist_task_row(&conn, &entry, &meta);
+        let registry = Arc::new(RwLock::new(SessionRegistry::new()));
+        registry.write().await.add(entry).unwrap();
+        let db = Arc::new(Mutex::new(conn));
+        let (cmd_tx, cmd_rx) = mpsc::channel(4);
+        let resources = ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default());
+        let budget = GlobalNetworkBudget::unlimited();
+        let task = TorrentTask::new(
+            meta,
+            temp.path().to_path_buf(),
+            false,
+            TorrentState::Downloading,
+            registry,
+            DbExecutor::direct(Arc::clone(&db)),
+            resources,
+            cmd_rx,
+            temp.path().join("fastresume"),
+            8,
+            6881,
+            10,
+            10,
+            60,
+            1024 * 1024,
+            StorageIoConfig::default(),
+            false,
+            OutboundEgressPolicy {
+                allow_loopback: true,
+                ..OutboundEgressPolicy::default()
+            },
+            budget,
+            10_000,
+            None,
+        )
+        .await;
+        let actor = tokio::spawn(task.run());
+
+        timeout(Duration::from_secs(2), request_started_rx)
+            .await
+            .expect("webseed request did not start")
+            .expect("webseed test server dropped before the request");
+        let (reply, result) = oneshot::channel();
+        cmd_tx
+            .send(TorrentCmd::GetWebseeds { reply })
+            .await
+            .unwrap();
+        let snapshots = timeout(Duration::from_secs(1), result)
+            .await
+            .expect("torrent actor should answer while the HTTP body is held")
+            .unwrap();
+        assert_eq!(snapshots.len(), 1);
+        assert!(!snapshots[0].is_downloading);
+
+        let (reply, result) = oneshot::channel();
+        cmd_tx
+            .send(TorrentCmd::Pause { reply: Some(reply) })
+            .await
+            .unwrap();
+        assert_eq!(
+            timeout(Duration::from_secs(1), result)
+                .await
+                .expect("pause should complete after the fetch")
+                .unwrap(),
+            Ok(())
+        );
+        release_response_tx.send(()).unwrap();
+        cmd_tx.send(TorrentCmd::Shutdown).await.unwrap();
+        timeout(Duration::from_secs(1), actor)
+            .await
+            .expect("torrent actor should shut down")
+            .unwrap();
         server.await.unwrap();
     }
 
