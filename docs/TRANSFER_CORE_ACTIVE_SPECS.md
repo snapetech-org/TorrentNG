@@ -1241,9 +1241,11 @@ watermark fields default to zero when reading existing records.
 
 Sequential-only readahead now starts at an exact first read and grows a
 per-file recommendation as subsequent reads continue, bounded by the configured
-maximum. A discontinuity resets it to the requested range. The stored cache is
-still the existing bounded forward-read cache; cache-hit feedback, a full
-useful-range policy, and live-engine qualification remain open.
+maximum. A discontinuity resets it to the requested range. Stream history is
+bounded with single-entry least-recently-used eviction, so admitting a new file
+does not clear every warm stream. The stored cache is still the existing bounded
+forward-read cache; cache-hit feedback, a full useful-range policy, and
+live-engine qualification remain open.
 
 ### Ownership and invariant
 
@@ -1266,8 +1268,9 @@ useful-range policy, and live-engine qualification remain open.
 - Added buffer bytes are charged before allocation/submission and released only
   after completion.
 - Toggle-off preserves the existing unconditional configured range behavior.
-- Regression sources cover one-block start, growth, discontinuity reset, cache
-  behavior, and queue/frame pressure.
+- Regression sources cover one-block start, growth, discontinuity reset,
+  single-entry stream-history eviction, cache behavior, and queue/frame
+  pressure.
 
 ### Files and compatibility
 

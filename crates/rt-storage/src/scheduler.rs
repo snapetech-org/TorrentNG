@@ -924,6 +924,7 @@ fn local_scheduler_resources(io_config: &StorageIoConfig) -> Arc<SharedScheduler
 #[derive(Debug, Default)]
 struct PeerReadStreams {
     files: HashMap<PathBuf, PeerReadStream>,
+    sequence: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -931,6 +932,7 @@ struct PeerReadStream {
     next_offset: u64,
     sequential_reads: u8,
     recommended_bytes: usize,
+    last_used: u64,
 }
 
 impl PeerReadStreams {
@@ -945,6 +947,8 @@ impl PeerReadStreams {
         len: usize,
         max_readahead_bytes: usize,
     ) -> (bool, usize) {
+        self.sequence = self.sequence.saturating_add(1).max(1);
+        let last_used = self.sequence;
         let end = offset.saturating_add(len as u64);
         if let Some(stream) = self.files.get_mut(key) {
             let sequential = stream.next_offset == offset;
@@ -961,10 +965,18 @@ impl PeerReadStreams {
                 stream.recommended_bytes = len;
             }
             stream.next_offset = end;
+            stream.last_used = last_used;
             return (sequential, stream.recommended_bytes);
         }
         if self.files.len() >= Self::MAX_TRACKED_FILES {
-            self.files.clear();
+            if let Some(oldest) = self
+                .files
+                .iter()
+                .min_by_key(|(_, stream)| stream.last_used)
+                .map(|(path, _)| path.clone())
+            {
+                self.files.remove(&oldest);
+            }
         }
         self.files.insert(
             key.to_path_buf(),
@@ -972,6 +984,7 @@ impl PeerReadStreams {
                 next_offset: end,
                 sequential_reads: 0,
                 recommended_bytes: len,
+                last_used,
             },
         );
         (false, len)
@@ -6351,6 +6364,27 @@ mod tests {
             (false, 16_384),
             "another file starts fresh"
         );
+    }
+
+    #[test]
+    fn peer_read_stream_bound_evicts_one_least_recent_stream() {
+        let mut streams = PeerReadStreams::default();
+        let hot = Path::new("/payload/hot.bin");
+        streams.observe(hot, 0, 16, 128);
+        streams.observe(hot, 16, 16, 128);
+
+        for index in 0..PeerReadStreams::MAX_TRACKED_FILES - 1 {
+            let path = PathBuf::from(format!("/payload/{index}.bin"));
+            streams.observe(&path, 0, 16, 128);
+        }
+        assert_eq!(streams.files.len(), PeerReadStreams::MAX_TRACKED_FILES);
+
+        assert!(streams.observe(hot, 32, 16, 128).0);
+        streams.observe(Path::new("/payload/overflow.bin"), 0, 16, 128);
+
+        assert_eq!(streams.files.len(), PeerReadStreams::MAX_TRACKED_FILES);
+        assert!(streams.observe(hot, 48, 16, 128).0);
+        assert!(!streams.observe(Path::new("/payload/0.bin"), 16, 16, 128).0);
     }
 
     #[test]
