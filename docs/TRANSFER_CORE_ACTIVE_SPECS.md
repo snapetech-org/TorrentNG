@@ -1344,12 +1344,13 @@ cancellation/refund, and shared source scheduling.
 
 - **Current owner:** `GlobalNetworkBudget` and torrent/peer actors hold the
   existing process and torrent limit state; the pure `RateTree` is not yet
-  wired to live peers. The existing shared token bucket now settles elapsed
-  credit at the old rate, clamps limited-to-limited updates to the new
-  capacity, and starts empty when changing from unlimited to limited at
-  runtime. Initial torrent construction recreates its limiter from the first
-  persisted rate before peer loops start, retaining the normal one-burst
-  startup behavior. This preserves the no-new-burst rule during the reversible
+  wired to live peers. The existing shared upload limiter and per-torrent
+  download bucket settle elapsed credit at the old rate, clamp limited-rate
+  updates to the new capacity, and start empty when changing from unlimited to
+  limited at runtime. Initial torrent construction initializes both buckets
+  from the first persisted rates before peer loops start, retaining their
+  normal startup bursts. Download-limit changes promptly recalculate active
+  peer requests. This preserves the no-new-burst rule during the reversible
   migration, but does not provide the `RateTree`'s hierarchical peer fairness.
 - **Target owner:** one process-shared tree owns global and per-torrent byte
   credit, peer fairness progress, unsettled grant/refund accounting, and the
@@ -1414,7 +1415,8 @@ cancellation/refund, and shared source scheduling.
   existing credit without granting a fresh burst, accrued old-rate credit is
   clamped to a reduced bucket capacity, runtime unlimited-to-limited begins
   with zero tokens, and a fresh torrent starts with its configured initial
-  bucket capacity.
+  bucket capacity; active download peers recalculate their request budget
+  after limit changes.
 - **Command or probe to run:** pure scheduler regressions and the engine rate
   integration suites during the requested bulk pass.
 - **Expected result:** deterministic grants conserve each configured budget,

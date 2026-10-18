@@ -75,7 +75,9 @@ mod peer_transfer;
 use crate::crash_safety::{self, CrashSafetyRuntime};
 use crate::db_worker::DbExecutor;
 use crate::egress_policy::{OutboundEgressPolicy, OutboundTargetKind};
-use crate::network_budget::{GlobalNetworkBudget, RateLimitCancellation, SharedRateLimiter};
+use crate::network_budget::{
+    refilled_bytes, GlobalNetworkBudget, RateLimitCancellation, SharedRateLimiter,
+};
 use crate::tracker_runtime::{
     announce_tracker, bounded_response_body, first_tracker_key, next_tracker_key, protocol_numwant,
     tracker_keys_for_announce, tracker_keys_for_stopped_announce, url_log_target,
@@ -150,6 +152,29 @@ fn peer_event_channel_capacity(max_peers: usize) -> usize {
 
 fn download_bucket_capacity(limit: u64) -> u64 {
     limit.max(DOWNLOAD_BUCKET_MIN_CAPACITY)
+}
+
+fn download_tokens_after_limit_change(
+    tokens: u64,
+    old_limit: Option<u64>,
+    elapsed: Duration,
+    new_limit: Option<u64>,
+) -> u64 {
+    if old_limit == new_limit {
+        return tokens;
+    }
+
+    let accrued = match old_limit {
+        Some(limit) => tokens
+            .saturating_add(refilled_bytes(elapsed, limit))
+            .min(download_bucket_capacity(limit)),
+        None => 0,
+    };
+    match (old_limit, new_limit) {
+        (None, Some(_)) => 0,
+        (_, None) => u64::MAX,
+        (Some(_), Some(limit)) => accrued.min(download_bucket_capacity(limit)),
+    }
 }
 
 fn consume_download_tokens(tokens: &mut u64, limit: u64, bytes: u64) -> bool {
@@ -2843,6 +2868,11 @@ impl TorrentTask {
         };
         match task.apply_torrent_limits_from_db().await {
             Ok(()) => {
+                task.download_tokens = task
+                    .download_limit_bytes_per_sec
+                    .map(download_bucket_capacity)
+                    .unwrap_or(u64::MAX);
+                task.download_tokens_updated = Instant::now();
                 // The task has not started any peer loops yet. Recreate the
                 // placeholder unlimited bucket from the persisted startup
                 // limit so a new torrent receives the ordinary initial
@@ -4263,8 +4293,15 @@ impl TorrentTask {
                 .ok()
                 .filter(|connections| *connections > 0)
         });
+        let previous_download_limit = self.download_limit_bytes_per_sec;
         self.set_torrent_download_limit(limits.download_limit);
         self.set_torrent_upload_limit(limits.upload_limit);
+        if previous_download_limit != self.download_limit_bytes_per_sec {
+            let peers = self.active_peers.keys().copied().collect::<Vec<_>>();
+            for peer in peers {
+                self.refill_peer_requests(peer).await;
+            }
+        }
         Ok(())
     }
 
@@ -4306,12 +4343,18 @@ impl TorrentTask {
         // The process-wide limiter is shared by every task. Including the
         // global value here would divide the global allowance once per
         // torrent and make the configured limit unusably strict at scale.
-        self.download_limit_bytes_per_sec = self.torrent_download_limit_bytes_per_sec;
-        self.download_tokens_updated = Instant::now();
-        self.download_tokens = self
-            .download_limit_bytes_per_sec
-            .map(download_bucket_capacity)
-            .unwrap_or(u64::MAX);
+        let new_limit = self.torrent_download_limit_bytes_per_sec;
+        let old_limit = self.download_limit_bytes_per_sec;
+        if old_limit == new_limit {
+            return;
+        }
+        let now = Instant::now();
+        let elapsed = now.saturating_duration_since(self.download_tokens_updated);
+        self.download_tokens =
+            download_tokens_after_limit_change(self.download_tokens, old_limit, elapsed, new_limit);
+        self.download_limit_bytes_per_sec = new_limit;
+        self.download_tokens_updated = now;
+        self.download_token_wake = None;
     }
 
     fn set_torrent_upload_limit(&mut self, limit: Option<i64>) {
@@ -11334,6 +11377,35 @@ mod tests {
     }
 
     #[test]
+    fn download_rate_changes_preserve_credit_and_clamp_capacity() {
+        assert_eq!(
+            download_tokens_after_limit_change(
+                10_000,
+                Some(100_000),
+                Duration::from_millis(250),
+                Some(200_000),
+            ),
+            35_000,
+            "elapsed credit uses the old rate without minting a full new burst"
+        );
+        assert_eq!(
+            download_tokens_after_limit_change(90_000, Some(100_000), Duration::ZERO, Some(5_000)),
+            DOWNLOAD_BUCKET_MIN_CAPACITY,
+            "lowering the limit clamps credit to the new bucket capacity"
+        );
+        assert_eq!(
+            download_tokens_after_limit_change(100_000, None, Duration::from_secs(60), Some(1)),
+            0,
+            "enabling a limit at runtime starts without unlimited sentinel credit"
+        );
+        assert_eq!(
+            download_tokens_after_limit_change(0, Some(100_000), Duration::ZERO, None),
+            u64::MAX,
+            "removing the limit restores the unlimited sentinel"
+        );
+    }
+
+    #[test]
     fn parses_outgoing_utp_policy() {
         assert_eq!(
             parse_outgoing_transport_policy("auto"),
@@ -13709,7 +13781,7 @@ mod tests {
             &db.lock().unwrap(),
             &rt_db::TorrentLimitRow {
                 info_hash: hex::encode(meta.info_hash),
-                download_limit: None,
+                download_limit: Some(200_000),
                 upload_limit: Some(200_000),
                 max_connections: None,
                 seed_ratio_limit: None,
@@ -13750,6 +13822,7 @@ mod tests {
         )
         .await;
 
+        assert_eq!(task.download_tokens, 200_000);
         assert_eq!(task.torrent_upload.available_credit_bytes(), Some(200_000));
         let permits = Arc::new(tokio::sync::Semaphore::new(2));
         let mut contexts = Vec::new();
@@ -13814,6 +13887,25 @@ mod tests {
             raw: Vec::new(),
         };
         let db = Arc::new(Mutex::new(conn));
+        rt_db::upsert_torrent_limits(
+            &db.lock().unwrap(),
+            &rt_db::TorrentLimitRow {
+                info_hash: hex::encode(meta.info_hash),
+                download_limit: Some(2),
+                upload_limit: None,
+                max_connections: None,
+                seed_ratio_limit: None,
+                seed_idle_limit: None,
+                sequential_download: false,
+                sequential_download_from_piece: None,
+                first_last_piece_prio: false,
+                force_start: false,
+                super_seeding: false,
+                auto_tmm: false,
+                auto_management: false,
+            },
+        )
+        .unwrap();
         let (_cmd_tx, cmd_rx) = mpsc::channel(1);
         let mut task = TorrentTask::new(
             meta,
@@ -13869,10 +13961,11 @@ mod tests {
             "4 bytes at 2 B/s is ~2 s away, got {wait:?}"
         );
 
-        // Once the tokens exist the same refill sends the request.
-        task.download_token_wake = None;
-        task.download_tokens = 4;
-        task.refill_peer_requests(peer).await;
+        // Removing the rate clears the stale two-second deadline and
+        // immediately retries the active peer with the unlimited budget.
+        task.apply_torrent_limits(&EngineTorrentLimits::default())
+            .await
+            .unwrap();
         let request_command = cmd_rx.try_recv().expect("request should be queued");
         let PeerCommand::Request {
             request,
