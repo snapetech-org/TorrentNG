@@ -52,7 +52,9 @@ use tracing::{debug, warn};
 use crate::crash_safety::CrashSafetyRuntime;
 use crate::db_worker::DbExecutor;
 use crate::egress_policy::OutboundEgressPolicy;
-use crate::network_budget::{GlobalNetworkBudget, RateLimitCancellation};
+use crate::network_budget::{
+    GlobalNetworkBudget, RateAdmissionAttempt, RateAdmissionGrant, RateLimitCancellation,
+};
 use crate::torrent_task::{
     outgoing_transport_policy_configured, outgoing_transport_policy_for_peer,
     prepare_tracker_peer_cache, private_peer_source_allowed, restore_tracker_state_from_rows,
@@ -65,7 +67,9 @@ use crate::tracker_runtime::{
     TrackerAnnounceContext, TrackerAnnounceResult, TrackerAnnounceSpec, TrackerKey, TrackerWorkers,
     MAX_TRACKER_ANNOUNCES_IN_FLIGHT, STOPPED_TRACKER_ANNOUNCE_DEADLINE,
 };
-use crate::transfer::coords::{BlockExtent, ConnectionId, PieceGeometry};
+use crate::transfer::coords::{
+    BlockExtent, ConnectionId, PieceGeometry, TorrentKey, TransferPeerId,
+};
 use crate::transfer::ledger::{
     Action as TransferAction, CommitOutcome, Ledger as TransferLedger, ReceiveOutcome,
 };
@@ -73,6 +77,7 @@ use crate::transfer::obligations::{
     InboundDecision, InboundObligations, Reject as InboundReject,
     RejectReason as InboundRejectReason, Served as InboundServed,
 };
+use crate::transfer::rate::RatePeerId;
 use crate::transfer::window::{rate_credit_blocks, WindowConfig, WindowController, WindowInputs};
 use crate::{EnginePeerSnapshot, EngineTorrentLimits, EngineWebseedSnapshot, TorrentRuntimeStats};
 
@@ -408,6 +413,7 @@ struct V2PeerState {
     rate_window_started: Instant,
     outstanding: usize,
     request_window: WindowController,
+    download_rate_retry_at: Option<Instant>,
     assembly_buffers: u64,
     assembly_bytes: u64,
 }
@@ -433,6 +439,7 @@ impl V2PeerState {
                 max: V2_REQUEST_WINDOW,
                 ..WindowConfig::default()
             }),
+            download_rate_retry_at: None,
             assembly_buffers: 0,
             assembly_bytes: 0,
         }
@@ -527,6 +534,7 @@ struct V2PeerContext {
     peer_control: RateLimitCancellation,
     peer_generation: u64,
     transfer_conn: ConnectionId,
+    rate_peer: RatePeerId,
     transfer_ledger: Arc<Mutex<TransferLedger<Arc<V2PieceMap>>>>,
     transfer_piece_memory_leases: Arc<Mutex<HashMap<u32, MemoryLease>>>,
     transfer_started_at: Instant,
@@ -1205,6 +1213,9 @@ struct V2OutstandingRequest {
     /// Response capacity is reserved before the request reaches the wire and
     /// follows its coordinate until Piece, Reject, Choke, or disconnect.
     _memory_lease: Option<MemoryLease>,
+    /// Shared global/torrent download credit is held from request enqueue
+    /// until payload receipt or a terminal request outcome.
+    rate_grant: Option<RateAdmissionGrant>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1217,6 +1228,7 @@ struct V2UploadRequest {
 struct V2LeasedUploadBlock {
     data: Bytes,
     _lease: MemoryLease,
+    rate_grant: RateAdmissionGrant,
 }
 
 enum V2UploadOutcome {
@@ -1259,6 +1271,12 @@ enum V2TransferCompletion {
         piece: u32,
         generation: u64,
         begin: u32,
+    },
+    BlockAdmissionFailed {
+        piece: u32,
+        generation: u64,
+        begin: u32,
+        error: String,
     },
     PieceVerified(V2PieceCompletion),
 }
@@ -1472,6 +1490,10 @@ pub struct V2TorrentTask {
     db: DbExecutor,
     resources: ResourceGovernor,
     network_budget: GlobalNetworkBudget,
+    transfer_rate_torrent: TorrentKey,
+    torrent_download_limit_bytes_per_sec: Option<u64>,
+    torrent_upload_limit_bytes_per_sec: Option<u64>,
+    rate_limits_restore_failed: bool,
     cmd_rx: mpsc::Receiver<TorrentCmd>,
     events_tx: mpsc::Sender<V2PeerEvent>,
     events_rx: mpsc::Receiver<V2PeerEvent>,
@@ -1522,6 +1544,8 @@ impl Drop for V2TorrentTask {
         for peer in self.peers.values() {
             peer.peer_control.cancel();
         }
+        self.network_budget
+            .remove_transfer_torrent(self.transfer_rate_torrent);
     }
 }
 
@@ -1550,6 +1574,40 @@ impl V2TorrentTask {
         torrent_metadata_memory_lease: Option<MemoryLease>,
     ) -> Self {
         let info_hash_hex = hex::encode(meta.info_hash_v2);
+        let transfer_rate_torrent = network_budget.new_transfer_torrent_key();
+        let restored_rate_limits = db
+            .run("restore_v2_rate_limits", {
+                let info_hash = info_hash_hex.clone();
+                move |db| match rt_db::get_torrent_limits(db, &info_hash) {
+                    Ok(row) => Ok((row.download_limit, row.upload_limit)),
+                    Err(rt_db::DbError::NotFound(_)) => Ok((None, None)),
+                    Err(error) => Err(format!("loading pure-v2 rate limits: {error}")),
+                }
+            })
+            .await;
+        let (
+            torrent_download_limit_bytes_per_sec,
+            torrent_upload_limit_bytes_per_sec,
+            rate_limit_restore_failed,
+        ) = match restored_rate_limits {
+            Ok((download_limit, upload_limit)) => (
+                download_limit
+                    .and_then(|value| u64::try_from(value).ok().filter(|value| *value > 0)),
+                upload_limit.and_then(|value| u64::try_from(value).ok().filter(|value| *value > 0)),
+                false,
+            ),
+            Err(error) => {
+                warn!(
+                    component = "db",
+                    operation = "restore_v2_rate_limits",
+                    torrent = %info_hash_hex,
+                    result = "paused",
+                    error = %error,
+                    "pure-v2 transfer limits could not be restored; task will start paused"
+                );
+                (None, None, true)
+            }
+        };
         let metainfo_files = meta.files.clone();
         let metainfo_trackers = meta.all_trackers();
         let mut tracker_tiers = tracker_tiers_from_meta_v2(&meta);
@@ -1659,6 +1717,10 @@ impl V2TorrentTask {
             db,
             resources,
             network_budget,
+            transfer_rate_torrent,
+            torrent_download_limit_bytes_per_sec,
+            torrent_upload_limit_bytes_per_sec,
+            rate_limits_restore_failed: rate_limit_restore_failed,
             cmd_rx,
             events_tx,
             events_rx,
@@ -1667,7 +1729,7 @@ impl V2TorrentTask {
             upload_unchoked,
             peers: HashMap::new(),
             choker: Choker::new(DEFAULT_MAX_UNCHOKED),
-            paused,
+            paused: paused || rate_limit_restore_failed,
             initial_state,
             stopped_announced: paused,
             max_peers,
@@ -1699,6 +1761,10 @@ impl V2TorrentTask {
             pending_downloaded_bytes: 0,
             pending_uploaded_bytes: 0,
         };
+        task.network_budget
+            .register_download_torrent(transfer_rate_torrent, torrent_download_limit_bytes_per_sec);
+        task.network_budget
+            .register_upload_torrent(transfer_rate_torrent, torrent_upload_limit_bytes_per_sec);
         let (known_tracker_peers, tracker_peer_cache_memory_lease) =
             prepare_tracker_peer_cache(&task.resources, task.max_peers);
         task.known_tracker_peers = known_tracker_peers;
@@ -2363,11 +2429,26 @@ impl V2TorrentTask {
     }
 
     fn apply_limits(&mut self, limits: &EngineTorrentLimits) {
+        self.rate_limits_restore_failed = false;
         self.torrent_max_peers = limits.max_connections.and_then(|value| {
             usize::try_from(value)
                 .ok()
                 .filter(|connections| *connections > 0)
         });
+        self.torrent_upload_limit_bytes_per_sec = limits
+            .upload_limit
+            .and_then(|value| u64::try_from(value).ok().filter(|value| *value > 0));
+        self.torrent_download_limit_bytes_per_sec = limits
+            .download_limit
+            .and_then(|value| u64::try_from(value).ok().filter(|value| *value > 0));
+        self.network_budget.set_download_torrent_limit(
+            self.transfer_rate_torrent,
+            self.torrent_download_limit_bytes_per_sec,
+        );
+        self.network_budget.set_upload_torrent_limit(
+            self.transfer_rate_torrent,
+            self.torrent_upload_limit_bytes_per_sec,
+        );
     }
 
     fn reset_default_file_policy(&mut self) {
@@ -3016,6 +3097,13 @@ impl V2TorrentTask {
     }
 
     async fn resume_runtime(&mut self, _reply_requested: bool) -> Result<(), String> {
+        if self.rate_limits_restore_failed {
+            self.paused = true;
+            return Err(
+                "persisted rate limits could not be restored; update torrent limits before resuming"
+                    .to_owned(),
+            );
+        }
         let was_paused = self.paused;
         self.paused = false;
         self.tracker_event = TrackerEvent::Started;
@@ -3374,6 +3462,8 @@ impl V2TorrentTask {
         choker_id: PeerId,
         transfer_conn: ConnectionId,
     ) -> V2PeerContext {
+        let rate_peer = TransferPeerId::new(self.transfer_rate_torrent, transfer_conn);
+        self.network_budget.register_transfer_peer(rate_peer);
         let peer_control = RateLimitCancellation::default();
         let peer_generation = peer_control.generation();
         let (transfer_commands, transfer_command_rx) = mpsc::channel(V2_TRANSFER_COMMAND_CAPACITY);
@@ -3393,6 +3483,7 @@ impl V2TorrentTask {
             peer_control,
             peer_generation,
             transfer_conn,
+            rate_peer,
             transfer_ledger: Arc::clone(&self.transfer_ledger),
             transfer_piece_memory_leases: Arc::clone(&self.transfer_piece_memory_leases),
             transfer_started_at: self.transfer_started_at,
@@ -3775,6 +3866,11 @@ impl V2TorrentTask {
         let mut tasks = futures::stream::FuturesUnordered::new();
         tasks.push(handle.task);
         self.join_v2_peer_tasks(tasks, "remove_peer").await;
+        self.network_budget
+            .remove_transfer_peer(TransferPeerId::new(
+                self.transfer_rate_torrent,
+                transfer_conn,
+            ));
         if let Ok(mut ledger) = self.transfer_ledger.lock() {
             let _ = ledger.disconnect(transfer_conn);
         }
@@ -3790,6 +3886,13 @@ impl V2TorrentTask {
             tasks.push(handle.task);
         }
         self.join_v2_peer_tasks(tasks, "shutdown_peers").await;
+        for transfer_conn in &transfer_connections {
+            self.network_budget
+                .remove_transfer_peer(TransferPeerId::new(
+                    self.transfer_rate_torrent,
+                    *transfer_conn,
+                ));
+        }
         if let Ok(mut ledger) = self.transfer_ledger.lock() {
             for transfer_conn in transfer_connections {
                 let _ = ledger.disconnect(transfer_conn);
@@ -4327,10 +4430,35 @@ async fn run_v2_peer_protocol(
 
     let protocol_result = async {
         loop {
+            let rate_retry_at = state
+                .lock()
+                .ok()
+                .and_then(|peer| peer.download_rate_retry_at);
         tokio::select! {
             biased;
             _ = context.peer_control.wait_for_change(shutdown_generation) => {
                 return Ok(());
+            }
+            _ = async {
+                if let Some(deadline) = rate_retry_at {
+                    sleep(deadline.saturating_duration_since(Instant::now())).await;
+                } else {
+                    futures::future::pending::<()>().await;
+                }
+            } => {
+                if let Ok(mut peer) = state.lock() {
+                    peer.download_rate_retry_at = None;
+                }
+                fill_v2_requests(
+                    &context,
+                    &mut framed,
+                    &state,
+                    &mut outstanding,
+                    &mut assemblies,
+                    transfer_jobs.len(),
+                    &pending_block_completions,
+                    &pending_piece_completions,
+                ).await?;
             }
             _ = context.download_limit_changes.wait_for_change(download_limit_generation) => {
                 download_limit_generation = context.download_limit_changes.generation();
@@ -4845,6 +4973,21 @@ async fn run_v2_peer_protocol(
                             return Ok(());
                         }
                     }
+                    V2TransferCompletion::BlockAdmissionFailed {
+                        piece,
+                        generation,
+                        begin,
+                        error,
+                    } => {
+                        apply_v2_block_admission_cancelled(
+                            piece,
+                            generation,
+                            begin,
+                            &mut assemblies,
+                            &mut pending_block_completions,
+                        );
+                        return Err(anyhow::anyhow!(error));
+                    }
                     V2TransferCompletion::PieceVerified(completion) => {
                         apply_v2_piece_completion(
                             &context,
@@ -4902,7 +5045,11 @@ async fn run_v2_peer_protocol(
                             allowed_fast_while_choked,
                         ) =>
                     {
-                        let V2LeasedUploadBlock { data, _lease } = upload_block;
+                        let V2LeasedUploadBlock {
+                            data,
+                            _lease,
+                            rate_grant,
+                        } = upload_block;
                         let bytes = data.len() as u64;
                         if !send_v2_peer_message(
                             &context,
@@ -4917,6 +5064,7 @@ async fn run_v2_peer_protocol(
                         {
                             return Ok(());
                         }
+                        rate_grant.settle(bytes);
                         if !finish_v2_upload_obligation(
                             &context,
                             &mut framed,
@@ -5311,7 +5459,13 @@ async fn fill_v2_requests(
     if context.peer_control.generation() != context.peer_generation {
         return Ok(());
     }
-    let choked = state.lock().map(|peer| peer.choked).unwrap_or(true);
+    let choked = state
+        .lock()
+        .map(|mut peer| {
+            peer.download_rate_retry_at = None;
+            peer.choked
+        })
+        .unwrap_or(true);
     if choked {
         return Ok(());
     }
@@ -5348,7 +5502,9 @@ async fn fill_v2_requests(
             / device_queue_capacity as f64
     };
     let global_credit_blocks = rate_credit_blocks(
-        context.network_budget.download().available_credit_bytes(),
+        context
+            .network_budget
+            .download_available_credit_bytes_for(context.rate_peer),
         rt_peer_wire::message::MAX_BLOCK_SIZE,
     );
     let useful_missing = useful_v2_missing_blocks(
@@ -5368,9 +5524,8 @@ async fn fill_v2_requests(
             peer.request_window.window(&WindowInputs {
                 useful_missing,
                 outstanding: pipeline_inflight,
-                // This is an advisory current-credit snapshot, not a
-                // cross-torrent reservation. The peer still pays the shared
-                // bucket when payload bytes arrive.
+                // This snapshot only sizes the window. Each request reserves
+                // its exact global/torrent grant before reaching the wire.
                 credit_blocks: global_credit_blocks,
                 buffer_blocks,
                 device_backlog,
@@ -5499,6 +5654,51 @@ async fn fill_v2_requests(
             );
             break;
         }
+        let rate_grant = match context
+            .network_budget
+            .try_acquire_download(context.rate_peer, u64::from(length))
+        {
+            Ok(RateAdmissionAttempt::Granted(grant)) => grant,
+            Ok(RateAdmissionAttempt::Wait(delay)) => {
+                let piece_released = {
+                    let mut ledger = context
+                        .transfer_ledger
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("v2 transfer ledger lock poisoned"))?;
+                    let _ = ledger.on_reject(context.transfer_conn, block);
+                    ledger.piece_progress(piece).is_none()
+                };
+                if is_new_assembly {
+                    assemblies.remove(&piece);
+                }
+                if piece_released {
+                    release_v2_transfer_piece_memory(context, piece);
+                }
+                drop(memory_lease);
+                if let Ok(mut peer) = state.lock() {
+                    peer.download_rate_retry_at = Some(Instant::now() + delay);
+                }
+                break;
+            }
+            Err(error) => {
+                let piece_released = {
+                    let mut ledger = context
+                        .transfer_ledger
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("v2 transfer ledger lock poisoned"))?;
+                    let _ = ledger.on_reject(context.transfer_conn, block);
+                    ledger.piece_progress(piece).is_none()
+                };
+                if is_new_assembly {
+                    assemblies.remove(&piece);
+                }
+                if piece_released {
+                    release_v2_transfer_piece_memory(context, piece);
+                }
+                drop(memory_lease);
+                return Err(error);
+            }
+        };
         if !send_v2_peer_message(
             context,
             framed,
@@ -5581,6 +5781,7 @@ async fn fill_v2_requests(
                 length,
                 sent_at,
                 _memory_lease: Some(memory_lease),
+                rate_grant: Some(rate_grant),
             },
         );
         if let Some(assembly) = assemblies.get_mut(&piece) {
@@ -5908,6 +6109,23 @@ async fn drain_v2_transfer_jobs(
                     pending_block_completions,
                 );
             }
+            V2TransferCompletion::BlockAdmissionFailed {
+                piece,
+                generation,
+                begin,
+                error,
+            } => {
+                apply_v2_block_admission_cancelled(
+                    piece,
+                    generation,
+                    begin,
+                    assemblies,
+                    pending_block_completions,
+                );
+                if first_error.is_none() {
+                    first_error = Some(anyhow::anyhow!(error));
+                }
+            }
             V2TransferCompletion::PieceVerified(completion) => {
                 apply_v2_piece_completion(context, state, pending_piece_completions, completion)
                     .await;
@@ -6053,9 +6271,15 @@ async fn handle_v2_piece(
         );
         return Ok(());
     };
-    let expected = request.length;
-    let sent_at = request.sent_at;
-    let request_memory_lease = request._memory_lease;
+    let V2OutstandingRequest {
+        length: expected,
+        sent_at,
+        _memory_lease: request_memory_lease,
+        rate_grant,
+    } = request;
+    if let Some(grant) = rate_grant {
+        grant.settle(data.len() as u64);
+    }
     if expected != data.len() as u32 {
         anyhow::bail!("v2 piece response length does not match request");
     }
@@ -6176,22 +6400,34 @@ async fn handle_v2_piece(
     let peer_generation = context.peer_generation;
     let job_context = context.clone();
     transfer_jobs.push(Box::pin(async move {
-        if !job_context
+        let download_grant = match job_context
             .network_budget
-            .download()
-            .acquire_or_cancelled(
+            .acquire_download(
+                job_context.rate_peer,
                 u64::from(expected),
                 &job_context.peer_control,
                 peer_generation,
             )
             .await
         {
-            return V2TransferCompletion::BlockAdmissionCancelled {
-                piece,
-                generation,
-                begin,
-            };
-        }
+            Ok(Some(grant)) => grant,
+            Ok(None) => {
+                return V2TransferCompletion::BlockAdmissionCancelled {
+                    piece,
+                    generation,
+                    begin,
+                };
+            }
+            Err(error) => {
+                return V2TransferCompletion::BlockAdmissionFailed {
+                    piece,
+                    generation,
+                    begin,
+                    error: error.to_string(),
+                };
+            }
+        };
+        download_grant.settle(u64::from(expected));
         let result = if let Some((data, path, offset, _memory_lease)) = block_write {
             let result = scheduled_write(
                 &job_context.storage,
@@ -6323,23 +6559,27 @@ async fn read_v2_upload_block(
     if !v2_upload_can_serve_block(context, state, allowed_fast_while_choked) {
         return V2UploadOutcome::Rejected;
     }
-    let upload_budget = context.network_budget.upload();
-    let admitted = upload_budget
-        .acquire_or_cancelled(
+    let rate_grant = match context
+        .network_budget
+        .acquire_upload(
+            context.rate_peer,
             u64::from(region.length),
             &context.upload_control,
             control_generation,
         )
-        .await;
-    if !admitted {
-        return V2UploadOutcome::RateInterrupted;
-    }
+        .await
+    {
+        Ok(Some(grant)) => grant,
+        Ok(None) => return V2UploadOutcome::RateInterrupted,
+        Err(error) => return V2UploadOutcome::Failed(error),
+    };
     if !v2_upload_can_serve_block(context, state, allowed_fast_while_choked) {
         return V2UploadOutcome::Rejected;
     }
     V2UploadOutcome::Ready(V2LeasedUploadBlock {
         data,
         _lease: lease,
+        rate_grant,
     })
 }
 
@@ -7250,6 +7490,11 @@ mod tests {
             .unwrap();
         let (transfer_commands, transfer_command_rx) = mpsc::channel(V2_TRANSFER_COMMAND_CAPACITY);
         let network_budget = GlobalNetworkBudget::new(8, Some(1), Some(1));
+        let rate_torrent = network_budget.new_transfer_torrent_key();
+        network_budget.register_download_torrent(rate_torrent, None);
+        network_budget.register_upload_torrent(rate_torrent, None);
+        let rate_peer = TransferPeerId::new(rate_torrent, transfer_conn);
+        network_budget.register_transfer_peer(rate_peer);
         let context = V2PeerContext {
             info_hash: [9; 20],
             peer: "127.0.0.1:6881".parse().unwrap(),
@@ -7264,6 +7509,7 @@ mod tests {
             peer_control: RateLimitCancellation::default(),
             peer_generation: 0,
             transfer_conn,
+            rate_peer,
             transfer_ledger,
             transfer_piece_memory_leases: Arc::new(Mutex::new(HashMap::new())),
             transfer_started_at: Instant::now(),
@@ -7280,10 +7526,29 @@ mod tests {
             proof_cache: Arc::new(V2ProofCache::default()),
         };
         let context_for_test = context.clone();
-        let upload_budget = context.network_budget.upload();
-        upload_budget.acquire(64 * 1024).await;
-        let download_budget = context.network_budget.download();
-        download_budget.acquire(64 * 1024).await;
+        let rate_control = RateLimitCancellation::default();
+        let rate_grant = network_budget
+            .acquire_upload(
+                rate_peer,
+                64 * 1024,
+                &rate_control,
+                rate_control.generation(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        rate_grant.settle(64 * 1024);
+        let download_grant = network_budget
+            .acquire_download(
+                rate_peer,
+                64 * 1024,
+                &rate_control,
+                rate_control.generation(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        download_grant.settle(64 * 1024);
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let peer_addr = listener.local_addr().unwrap();
@@ -7665,6 +7930,7 @@ mod tests {
                 length: block_len,
                 sent_at: 0,
                 _memory_lease: None,
+                rate_grant: None,
             },
         );
         assembly.advance_next_unrequested(3, &outstanding);
@@ -7677,6 +7943,7 @@ mod tests {
                 length: block_len,
                 sent_at: 0,
                 _memory_lease: None,
+                rate_grant: None,
             },
         );
         assembly.advance_next_unrequested(3, &outstanding);
@@ -7714,6 +7981,7 @@ mod tests {
                 length: block_len,
                 sent_at: 0,
                 _memory_lease: None,
+                rate_grant: None,
             },
         )]);
 
@@ -7810,6 +8078,7 @@ mod tests {
                 length: 4,
                 sent_at: 0,
                 _memory_lease: Some(resources.try_acquire(MemoryClass::PeerBuffer, 4).unwrap()),
+                rate_grant: None,
             },
         )]);
         let mut assemblies = HashMap::new();
@@ -7857,6 +8126,7 @@ mod tests {
                         .try_acquire(MemoryClass::PeerBuffer, 8_192)
                         .unwrap(),
                 ),
+                rate_grant: None,
             },
         )]);
 
@@ -7882,6 +8152,46 @@ mod tests {
             resources.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
             0,
             "a matching Reject terminates and releases the request lease"
+        );
+    }
+
+    #[test]
+    fn v2_reject_refunds_reserved_download_rate_credit() {
+        let budget = GlobalNetworkBudget::unlimited();
+        let torrent = budget.new_transfer_torrent_key();
+        budget.register_download_torrent(torrent, Some(1));
+        let rate_peer = TransferPeerId::new(
+            torrent,
+            ConnectionId {
+                slot: 0,
+                generation: 1,
+            },
+        );
+        budget.register_transfer_peer(rate_peer);
+        let grant = match budget.try_acquire_download(rate_peer, 4).unwrap() {
+            RateAdmissionAttempt::Granted(grant) => grant,
+            RateAdmissionAttempt::Wait(delay) => {
+                panic!("startup burst unexpectedly waited: {delay:?}")
+            }
+        };
+        assert_eq!(
+            budget.download_available_credit_bytes_for(rate_peer),
+            16 * 1024 - 4
+        );
+
+        let mut outstanding = HashMap::from([(
+            (3, 0),
+            V2OutstandingRequest {
+                length: 4,
+                sent_at: 0,
+                _memory_lease: None,
+                rate_grant: Some(grant),
+            },
+        )]);
+        assert!(release_v2_rejected_request(&mut outstanding, 3, 0, 4));
+        assert_eq!(
+            budget.download_available_credit_bytes_for(rate_peer),
+            16 * 1024
         );
     }
 
@@ -8283,6 +8593,63 @@ mod tests {
                 info_hash,
             },
         )
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn pure_v2_torrent_upload_limit_updates_wake_shared_rate_admission() {
+        let raw = v2_raw_with_content(&vec![0x5Au8; 32_768]);
+        let (mut task, _) = v2_task_not_started(quiet_v2_runtime(), &raw, 32_768).await;
+        task.apply_limits(&EngineTorrentLimits {
+            upload_limit: Some(1),
+            ..EngineTorrentLimits::default()
+        });
+
+        let rate_peer = TransferPeerId::new(
+            task.transfer_rate_torrent,
+            ConnectionId {
+                slot: 0,
+                generation: 1,
+            },
+        );
+        task.network_budget.register_transfer_peer(rate_peer);
+        let budget = task.network_budget.clone();
+        let control = RateLimitCancellation::default();
+        let generation = control.generation();
+        let waiting_control = control.clone();
+        let waiter = tokio::spawn(async move {
+            budget
+                .acquire_upload(rate_peer, 1, &waiting_control, generation)
+                .await
+        });
+
+        tokio::task::yield_now().await;
+        assert!(!waiter.is_finished());
+
+        task.apply_limits(&EngineTorrentLimits::default());
+        waiter
+            .await
+            .unwrap()
+            .unwrap()
+            .expect("removing the torrent upload cap wakes the v2 peer")
+            .settle(1);
+    }
+
+    #[tokio::test]
+    async fn pure_v2_does_not_resume_after_rate_limit_restore_failure() {
+        let raw = v2_raw_with_content(&vec![0x5Au8; 32_768]);
+        let (mut task, _) = v2_task_not_started(quiet_v2_runtime(), &raw, 32_768).await;
+        task.rate_limits_restore_failed = true;
+        task.paused = false;
+
+        let error = task
+            .resume_runtime(true)
+            .await
+            .expect_err("an un-restored rate policy must fail closed");
+
+        assert!(error.contains("update torrent limits"));
+        assert!(task.paused);
+        task.apply_limits(&EngineTorrentLimits::default());
+        assert!(!task.rate_limits_restore_failed);
     }
 
     /// A genuine I/O failure (EIO on Unix, ERROR_CRC on Windows), not an
@@ -8990,6 +9357,7 @@ mod tests {
                         length: data.len() as u32,
                         sent_at: 0,
                         _memory_lease: None,
+                        rate_grant: None,
                     },
                 );
             }
@@ -9105,6 +9473,7 @@ mod tests {
                     length: data.len() as u32,
                     sent_at: 0,
                     _memory_lease: None,
+                    rate_grant: None,
                 },
             );
             handle_v2_piece(

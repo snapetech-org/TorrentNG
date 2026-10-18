@@ -201,9 +201,14 @@ impl TorrentTask {
         for req in handle.requested {
             self.picker.cancel_request(req.piece as usize, req.begin);
         }
-        self.transfer_ledger.disconnect(handle.transfer_conn);
         handle.upload_control.cancel();
         handle.shutdown_control.cancel();
+        self.network_budget
+            .remove_transfer_peer(TransferPeerId::new(
+                self.transfer_rate_torrent,
+                handle.transfer_conn,
+            ));
+        self.transfer_ledger.disconnect(handle.transfer_conn);
         let _ = handle.cmd_tx.try_send(PeerCommand::Shutdown);
         if let Some(abort) = handle.abort {
             abort.abort();

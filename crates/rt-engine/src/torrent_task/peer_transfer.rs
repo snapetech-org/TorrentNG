@@ -1,7 +1,6 @@
 //! Peer protocol events, block scheduling, piece assembly, and transfer accounting.
 //! Torrent state and storage completion remain ordered by the task actor.
 
-use crate::network_budget::{refilled_bytes, token_refill_delay};
 use crate::transfer::window::rate_credit_blocks;
 
 use super::*;
@@ -16,6 +15,11 @@ impl TorrentTask {
             self.picker
                 .cancel_request(request.piece as usize, request.begin);
         }
+        self.network_budget
+            .remove_transfer_peer(TransferPeerId::new(
+                self.transfer_rate_torrent,
+                handle.transfer_conn,
+            ));
         self.transfer_ledger.disconnect(handle.transfer_conn);
     }
 
@@ -162,6 +166,8 @@ impl TorrentTask {
         let conn = self.transfer_ledger.try_connect(1)?;
         self.webseed_transfer_conn = Some(conn);
         self._webseed_transfer_connection_memory_lease = Some(memory_lease);
+        self.network_budget
+            .register_transfer_peer(TransferPeerId::new(self.transfer_rate_torrent, conn));
         Some(conn)
     }
 
@@ -235,11 +241,6 @@ impl TorrentTask {
     pub(super) fn close_webseed_transfer_connection(&mut self) {
         if let Some(fetch) = self.webseed_fetch.take() {
             fetch.task.abort();
-            self.reconcile_webseed_local_tokens(
-                fetch.reserved_local_bytes,
-                fetch.local_tokens_reserved,
-                fetch.observed_network_bytes.load(Ordering::Acquire),
-            );
             self.picker
                 .cancel_request(fetch.request.piece as usize, fetch.request.begin);
         }
@@ -247,6 +248,8 @@ impl TorrentTask {
             self._webseed_transfer_connection_memory_lease = None;
             return;
         };
+        self.network_budget
+            .remove_transfer_peer(TransferPeerId::new(self.transfer_rate_torrent, conn));
         for block in self.transfer_ledger.disconnect(conn) {
             self.picker
                 .cancel_request(block.piece as usize, block.begin);
@@ -463,6 +466,11 @@ impl TorrentTask {
                 };
                 if let Some(handle) = self.active_peers.remove(&peer) {
                     remove_peer_availability(&mut self.picker.availability, &handle.peer_has);
+                    self.network_budget
+                        .remove_transfer_peer(TransferPeerId::new(
+                            self.transfer_rate_torrent,
+                            handle.transfer_conn,
+                        ));
                     self.transfer_ledger.disconnect(handle.transfer_conn);
                 }
                 for req in outstanding {
@@ -618,9 +626,6 @@ impl TorrentTask {
     }
 
     pub(super) async fn refill_peer_requests(&mut self, peer: SocketAddr) {
-        self.refill_download_tokens();
-        let mut download_tokens = self.download_tokens;
-        let download_limited = self.download_limit_bytes_per_sec.is_some();
         let other_peers_outstanding: usize = self
             .active_peers
             .iter()
@@ -665,13 +670,14 @@ impl TorrentTask {
                 / u64::from(MAX_BLOCK_SIZE),
         )
         .unwrap_or(usize::MAX);
-        let torrent_credit_blocks =
-            rate_credit_blocks(download_limited.then_some(download_tokens), MAX_BLOCK_SIZE);
-        let global_credit_blocks = rate_credit_blocks(
-            self.network_budget.download().available_credit_bytes(),
+        let rate_credit_blocks = rate_credit_blocks(
+            self.network_budget
+                .download_available_credit_bytes_for(TransferPeerId::new(
+                    self.transfer_rate_torrent,
+                    handle.transfer_conn,
+                )),
             MAX_BLOCK_SIZE,
         );
-        let credit_blocks = torrent_credit_blocks.min(global_credit_blocks);
         let (device_queue_capacity, device_queue_available) = self.storage.device_queue_load();
         let device_backlog = if device_queue_capacity == 0 {
             f64::NAN
@@ -682,7 +688,7 @@ impl TorrentTask {
         let controlled_window = handle.request_window.window(&WindowInputs {
             useful_missing,
             outstanding: handle.outstanding,
-            credit_blocks,
+            credit_blocks: rate_credit_blocks,
             buffer_blocks,
             device_backlog,
         });
@@ -700,14 +706,16 @@ impl TorrentTask {
 
         let mut queue_full = 0u64;
         let mut memory_retry = false;
-        // Bytes the bucket was short by when refilling had to stop.
-        let mut tokens_missing = None;
+        let mut rate_wait_delay = None;
+        let mut rate_admission_error = None;
         {
             let picker = &mut self.picker;
             let peers = &mut self.active_peers;
             let transfer_ledger = &mut self.transfer_ledger;
             let transfer_piece_memory_leases = &mut self.transfer_piece_memory_leases;
             let resources = &self.resources;
+            let network_budget = &self.network_budget;
+            let rate_peer = TransferPeerId::new(self.transfer_rate_torrent, transfer_conn);
             let Some(handle) = peers.get_mut(&peer) else {
                 return;
             };
@@ -722,11 +730,6 @@ impl TorrentTask {
                         (req, ReserveMode::Endgame)
                     }
                 };
-                if download_limited && download_tokens < u64::from(req.length) {
-                    picker.cancel_request(req.piece as usize, req.begin);
-                    tokens_missing = Some(u64::from(req.length) - download_tokens);
-                    break;
-                }
                 let Some(memory_lease) =
                     resources.try_acquire(MemoryClass::PeerBuffer, u64::from(req.length))
                 else {
@@ -763,12 +766,37 @@ impl TorrentTask {
                     );
                     break;
                 }
+                let rate_grant =
+                    match network_budget.try_acquire_download(rate_peer, u64::from(req.length)) {
+                        Ok(RateAdmissionAttempt::Granted(grant)) => grant,
+                        Ok(RateAdmissionAttempt::Wait(delay)) => {
+                            transfer_ledger.on_reject(transfer_conn, block);
+                            picker.cancel_request(req.piece as usize, req.begin);
+                            if transfer_ledger.piece_progress(req.piece).is_none() {
+                                transfer_piece_memory_leases.remove(&req.piece);
+                            }
+                            drop(memory_lease);
+                            rate_wait_delay = Some(delay);
+                            break;
+                        }
+                        Err(error) => {
+                            transfer_ledger.on_reject(transfer_conn, block);
+                            picker.cancel_request(req.piece as usize, req.begin);
+                            if transfer_ledger.piece_progress(req.piece).is_none() {
+                                transfer_piece_memory_leases.remove(&req.piece);
+                            }
+                            drop(memory_lease);
+                            rate_admission_error = Some(error.to_string());
+                            break;
+                        }
+                    };
                 if handle
                     .cmd_tx
                     .try_send(PeerCommand::Request {
                         request: req,
                         download_generation: handle.download_generation,
                         memory_lease,
+                        rate_grant,
                     })
                     .is_err()
                 {
@@ -777,15 +805,25 @@ impl TorrentTask {
                     picker.cancel_request(req.piece as usize, req.begin);
                     break;
                 }
-                if download_limited {
-                    download_tokens = download_tokens.saturating_sub(u64::from(req.length));
-                }
                 handle.outstanding += 1;
                 handle.requested.push(req);
             }
         }
-        if download_limited {
-            self.download_tokens = download_tokens;
+        if let Some(error) = rate_admission_error {
+            warn!(
+                component = "transfer",
+                operation = "admit_download_request",
+                torrent = %self.info_hash_hex,
+                peer = %peer,
+                result = "deferred",
+                error = %error,
+                "download request could not reserve its rate-tree peer"
+            );
+            let deadline = Instant::now() + Duration::from_secs(1);
+            self.download_rate_wake = Some(
+                self.download_rate_wake
+                    .map_or(deadline, |current| current.min(deadline)),
+            );
         }
         if memory_retry {
             self.peer_request_memory_retry_pending = true;
@@ -794,13 +832,10 @@ impl TorrentTask {
             self.peer_request_window_reductions =
                 self.peer_request_window_reductions.saturating_add(1);
         }
-        if let (Some(missing), Some(limit)) = (tokens_missing, self.download_limit_bytes_per_sec) {
-            // Wake exactly when the missing bytes have refilled, so a rate
-            // below one block per second still makes progress.
-            let wait = token_refill_delay(missing, limit);
+        if let Some(wait) = rate_wait_delay {
             let deadline = Instant::now() + wait;
-            self.download_token_wake = Some(
-                self.download_token_wake
+            self.download_rate_wake = Some(
+                self.download_rate_wake
                     .map_or(deadline, |current| current.min(deadline)),
             );
         }
@@ -1625,49 +1660,6 @@ impl TorrentTask {
         self.peer_command_queue_full = self.peer_command_queue_full.saturating_add(queue_full);
     }
 
-    pub(super) fn download_tokens_available(&mut self, bytes: u32) -> bool {
-        self.refill_download_tokens();
-        if self.download_limit_bytes_per_sec.is_none() {
-            return true;
-        }
-        self.download_tokens >= u64::from(bytes)
-    }
-
-    pub(super) fn try_consume_download_tokens(&mut self, bytes: u32) -> bool {
-        self.refill_download_tokens();
-        let Some(limit) = self.download_limit_bytes_per_sec else {
-            return true;
-        };
-        consume_download_tokens(&mut self.download_tokens, limit, u64::from(bytes))
-    }
-
-    pub(super) fn refund_download_tokens(&mut self, bytes: u32) {
-        self.refill_download_tokens();
-        let Some(limit) = self.download_limit_bytes_per_sec else {
-            return;
-        };
-        self.download_tokens = self
-            .download_tokens
-            .saturating_add(u64::from(bytes))
-            .min(download_bucket_capacity(limit));
-    }
-
-    pub(super) fn refill_download_tokens(&mut self) {
-        let now = Instant::now();
-        let Some(limit) = self.download_limit_bytes_per_sec else {
-            self.download_tokens = u64::MAX;
-            self.download_tokens_updated = now;
-            return;
-        };
-        let elapsed = now.saturating_duration_since(self.download_tokens_updated);
-        self.download_tokens_updated = now;
-        let refill = refilled_bytes(elapsed, limit);
-        self.download_tokens = self
-            .download_tokens
-            .saturating_add(refill)
-            .min(download_bucket_capacity(limit));
-    }
-
     pub(super) async fn drain_transfer_jobs(&mut self) {
         while let Some(completion) = self.transfer_jobs.next().await {
             self.handle_transfer_completion(completion).await;
@@ -1705,9 +1697,14 @@ impl TorrentTask {
             remove_peer_availability(&mut self.picker.availability, &peer.peer_has);
         }
         for (tx, abort, upload_control, shutdown_control, transfer_conn) in handles {
-            self.transfer_ledger.disconnect(transfer_conn);
             upload_control.cancel();
             shutdown_control.cancel();
+            self.network_budget
+                .remove_transfer_peer(TransferPeerId::new(
+                    self.transfer_rate_torrent,
+                    transfer_conn,
+                ));
+            self.transfer_ledger.disconnect(transfer_conn);
             let _ = tx.try_send(PeerCommand::Shutdown);
             if let Some(abort) = abort {
                 abort.abort();

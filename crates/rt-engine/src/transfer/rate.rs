@@ -18,7 +18,7 @@
 //!   queueing, so one fast peer cannot starve the others;
 //! * time is injected (`Nanos`), never read.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::coords::{TorrentKey, TransferPeerId};
 use super::Nanos;
@@ -53,6 +53,10 @@ pub enum Grant {
 #[derive(Debug, Clone)]
 struct Bucket {
     limit: Option<u64>,
+    /// Changes only when the bucket switches between limited and unlimited.
+    /// Outstanding grants can then be refunded after a rate adjustment but
+    /// not into a later bucket epoch that never debited them.
+    epoch: u64,
     /// Credit in bytes scaled by 1e9. May be negative (debt).
     credit: i128,
     last: Nanos,
@@ -63,6 +67,7 @@ impl Bucket {
         let limit = limit.filter(|limit| *limit > 0);
         let mut bucket = Self {
             limit,
+            epoch: 0,
             credit: 0,
             last: now,
         };
@@ -97,6 +102,12 @@ impl Bucket {
         self.refill(now);
         let limit = limit.filter(|limit| *limit > 0);
         let was_limited = self.limit.is_some();
+        if was_limited != limit.is_some() {
+            self.epoch = self
+                .epoch
+                .checked_add(1)
+                .expect("rate bucket epoch space exhausted");
+        }
         self.limit = limit;
         self.credit = if was_limited {
             self.credit.min(self.capacity())
@@ -153,9 +164,29 @@ struct PeerNode {
     vfinish: u128,
     /// Granted bytes that may still be refunded if the payload is not used.
     refundable_bytes: u64,
+    /// Limit levels debited by each unsettled grant, keyed by grant identity.
+    outstanding_grants: BTreeMap<u64, OutstandingGrant>,
     /// Denied and still wanting service.
     waiting: bool,
     wake_at: Nanos,
+}
+
+#[derive(Clone, Copy)]
+struct OutstandingGrant {
+    bytes: u64,
+    fairness_cost: u128,
+    global_epoch: Option<u64>,
+    torrent_epoch: Option<u64>,
+}
+
+impl OutstandingGrant {
+    fn fairness_cost_for(&self, bytes: u64) -> u128 {
+        if bytes >= self.bytes {
+            self.fairness_cost
+        } else {
+            self.fairness_cost.saturating_mul(u128::from(bytes)) / u128::from(self.bytes)
+        }
+    }
 }
 
 pub struct RateTree {
@@ -164,6 +195,7 @@ pub struct RateTree {
     peers: HashMap<RatePeerId, PeerNode>,
     /// Earliest waiting retry is always the first entry.
     wake_queue: BTreeSet<(Nanos, RatePeerId)>,
+    next_grant_id: u64,
 }
 
 impl RateTree {
@@ -173,6 +205,7 @@ impl RateTree {
             torrents: HashMap::new(),
             peers: HashMap::new(),
             wake_queue: BTreeSet::new(),
+            next_grant_id: 1,
         }
     }
 
@@ -224,17 +257,39 @@ impl RateTree {
     }
 
     /// Remove a torrent and all its peer registrations after the caller has
-    /// settled transferred payload and refunded unused grants.
+    /// settled transferred payload. Any unsettled grants are returned to the
+    /// process bucket so task teardown cannot strand global credit.
     pub fn remove_torrent(&mut self, key: TorrentKey) {
-        let Some(torrent) = self.torrents.remove(&key) else {
-            self.peers.retain(|_, peer| peer.torrent != key);
-            return;
-        };
-        for (_, peer_id) in torrent.peers {
+        let peer_ids: Vec<RatePeerId> = self
+            .torrents
+            .remove(&key)
+            .map(|torrent| {
+                torrent
+                    .peers
+                    .into_iter()
+                    .map(|(_, peer_id)| peer_id)
+                    .collect()
+            })
+            .unwrap_or_else(|| {
+                self.peers
+                    .iter()
+                    .filter(|(_, peer)| peer.torrent == key)
+                    .map(|(peer_id, _)| *peer_id)
+                    .collect()
+            });
+        for peer_id in peer_ids {
             if let Some(peer) = self.peers.remove(&peer_id) {
                 if peer.waiting {
                     self.wake_queue.remove(&(peer.wake_at, peer_id));
                 }
+                let refundable_global = peer
+                    .outstanding_grants
+                    .values()
+                    .filter(|grant| {
+                        grant.global_epoch == Some(self.global.epoch) && self.global.limit.is_some()
+                    })
+                    .fold(0u64, |total, grant| total.saturating_add(grant.bytes));
+                self.global.credit_back(refundable_global);
             }
         }
     }
@@ -256,6 +311,7 @@ impl RateTree {
                 weight: weight.max(1),
                 vfinish: floor,
                 refundable_bytes: 0,
+                outstanding_grants: BTreeMap::new(),
                 waiting: false,
                 wake_at: 0,
             },
@@ -265,13 +321,32 @@ impl RateTree {
         }
     }
 
-    /// Remove a registration after settling transferred payload and refunding
-    /// any unused grant bytes.
+    /// Remove a registration after settling transferred payload. Any
+    /// unsettled grants are returned to both applicable buckets.
     pub fn remove_peer(&mut self, peer_id: RatePeerId) {
         let Some(peer) = self.peers.remove(&peer_id) else {
             return;
         };
+        let refundable_global = peer
+            .outstanding_grants
+            .values()
+            .filter(|grant| {
+                grant.global_epoch == Some(self.global.epoch) && self.global.limit.is_some()
+            })
+            .fold(0u64, |total, grant| total.saturating_add(grant.bytes));
+        let torrent_epoch = self
+            .torrents
+            .get(&peer.torrent)
+            .filter(|torrent| torrent.bucket.limit.is_some())
+            .map(|torrent| torrent.bucket.epoch);
+        let refundable_torrent = peer
+            .outstanding_grants
+            .values()
+            .filter(|grant| grant.torrent_epoch == torrent_epoch && torrent_epoch.is_some())
+            .fold(0u64, |total, grant| total.saturating_add(grant.bytes));
+        self.global.credit_back(refundable_global);
         if let Some(torrent) = self.torrents.get_mut(&peer.torrent) {
+            torrent.bucket.credit_back(refundable_torrent);
             torrent.peers.remove(&(peer.vfinish, peer_id));
             if peer.waiting {
                 torrent
@@ -354,13 +429,28 @@ impl RateTree {
 
     /// Try to spend `bytes` for `peer_id` at every level at once.
     pub fn try_grant(&mut self, peer_id: RatePeerId, bytes: u64, now: Nanos) -> Grant {
+        self.try_grant_tracked(peer_id, bytes, now).0
+    }
+
+    /// Try to spend `bytes` and return an identity for any refundable grant.
+    /// The identity preserves which buckets were debited if limits change
+    /// before the caller settles or refunds the payload.
+    pub fn try_grant_tracked(
+        &mut self,
+        peer_id: RatePeerId,
+        bytes: u64,
+        now: Nanos,
+    ) -> (Grant, Option<u64>) {
         let Some(peer) = self.peers.get(&peer_id) else {
-            return Grant::Unknown;
+            return (Grant::Unknown, None);
         };
         let torrent_key = peer_id.torrent;
         let (weight, vfinish) = (peer.weight, peer.vfinish);
         if !self.torrents.contains_key(&torrent_key) {
-            return Grant::Unknown;
+            return (Grant::Unknown, None);
+        }
+        if bytes == 0 {
+            return (Grant::Granted, None);
         }
 
         self.global.refill(now);
@@ -404,9 +494,14 @@ impl RateTree {
 
         if !ready {
             self.mark_waiting(peer_id, wake);
-            return Grant::Wait { until: wake };
+            return (Grant::Wait { until: wake }, None);
         }
 
+        let global_epoch = self.global.limit.map(|_| self.global.epoch);
+        let torrent_epoch = self
+            .torrents
+            .get(&torrent_key)
+            .and_then(|torrent| torrent.bucket.limit.map(|_| torrent.bucket.epoch));
         self.clear_waiting(peer_id);
         self.global.debit(bytes);
         self.torrents
@@ -415,14 +510,28 @@ impl RateTree {
             .bucket
             .debit(bytes);
         let peer = self.peers.get(&peer_id).expect("peer checked above");
-        let next_vfinish = peer
-            .vfinish
-            .saturating_add(u128::from(bytes) * VTIME_SCALE / u128::from(peer.weight));
+        let fairness_cost = u128::from(bytes) * VTIME_SCALE / u128::from(peer.weight);
+        let next_vfinish = peer.vfinish.saturating_add(fairness_cost);
         self.update_peer_vfinish(peer_id, next_vfinish);
+        let grant_id = self.next_grant_id;
+        self.next_grant_id = self
+            .next_grant_id
+            .checked_add(1)
+            .expect("rate grant identity space exhausted");
         if let Some(peer) = self.peers.get_mut(&peer_id) {
             peer.refundable_bytes = peer.refundable_bytes.saturating_add(bytes);
+            peer.outstanding_grants.insert(
+                grant_id,
+                OutstandingGrant {
+                    bytes,
+                    fairness_cost,
+                    global_epoch,
+                    torrent_epoch,
+                },
+            );
+            return (Grant::Granted, Some(grant_id));
         }
-        Grant::Granted
+        (Grant::Unknown, None)
     }
 
     /// Return reserved bytes that will not be used (request cancelled or
@@ -430,39 +539,118 @@ impl RateTree {
     /// raises credit past the bucket capacity. A refund can make parked
     /// requests eligible before their recorded deadlines; the live adapter
     /// must promptly reconsider them.
-    pub fn refund(&mut self, peer_id: RatePeerId, bytes: u64, now: Nanos) {
+    pub fn refund(&mut self, peer_id: RatePeerId, bytes: u64, now: Nanos) -> u64 {
         let Some(peer) = self.peers.get(&peer_id) else {
-            return;
+            return 0;
         };
-        let torrent_key = peer_id.torrent;
-        let refunded = bytes.min(peer.refundable_bytes);
-        if refunded == 0 {
-            return;
+        let grant_ids = peer.outstanding_grants.keys().copied().collect::<Vec<_>>();
+        let mut remaining = bytes;
+        for grant_id in grant_ids {
+            if remaining == 0 {
+                break;
+            }
+            remaining -= self.refund_grant(peer_id, grant_id, remaining, now);
         }
-        let next_vfinish = peer
-            .vfinish
-            .saturating_sub(u128::from(refunded) * VTIME_SCALE / u128::from(peer.weight));
+        bytes - remaining
+    }
+
+    /// Refund bytes from one specific grant without restoring credit to a
+    /// level that was unlimited when that grant was issued.
+    pub fn refund_grant(
+        &mut self,
+        peer_id: RatePeerId,
+        grant_id: u64,
+        bytes: u64,
+        now: Nanos,
+    ) -> u64 {
+        let Some(peer) = self.peers.get(&peer_id) else {
+            return 0;
+        };
+        let Some(grant) = peer.outstanding_grants.get(&grant_id).copied() else {
+            return 0;
+        };
+        let refunded = bytes.min(grant.bytes);
+        if refunded == 0 {
+            return 0;
+        }
+        let torrent_key = peer.torrent;
+        let fairness_cost = grant.fairness_cost_for(refunded);
+        let next_vfinish = peer.vfinish.saturating_sub(fairness_cost);
         if let Some(peer) = self.peers.get_mut(&peer_id) {
             peer.refundable_bytes -= refunded;
+            if refunded == grant.bytes {
+                peer.outstanding_grants.remove(&grant_id);
+            } else if let Some(grant) = peer.outstanding_grants.get_mut(&grant_id) {
+                grant.bytes -= refunded;
+                grant.fairness_cost = grant.fairness_cost.saturating_sub(fairness_cost);
+            }
         }
         self.global.refill(now);
-        self.global.credit_back(refunded);
+        if grant.global_epoch == Some(self.global.epoch) {
+            self.global.credit_back(refunded);
+        }
         if let Some(torrent) = self.torrents.get_mut(&torrent_key) {
             torrent.bucket.refill(now);
-            torrent.bucket.credit_back(refunded);
+            if grant.torrent_epoch == Some(torrent.bucket.epoch) {
+                torrent.bucket.credit_back(refunded);
+            }
         }
         self.update_peer_vfinish(peer_id, next_vfinish);
+        refunded
+    }
+
+    /// Mark bytes from one grant as payload sent. The grant identity keeps
+    /// settlement paired with its own future refund.
+    pub fn settle_grant(&mut self, peer_id: RatePeerId, grant_id: u64, bytes: u64) -> u64 {
+        let Some(peer) = self.peers.get_mut(&peer_id) else {
+            return 0;
+        };
+        let Some(grant) = peer.outstanding_grants.get(&grant_id).copied() else {
+            return 0;
+        };
+        let settled = bytes.min(grant.bytes);
+        let fairness_cost = grant.fairness_cost_for(settled);
+        peer.refundable_bytes -= settled;
+        if settled == grant.bytes {
+            peer.outstanding_grants.remove(&grant_id);
+        } else if let Some(grant) = peer.outstanding_grants.get_mut(&grant_id) {
+            grant.bytes -= settled;
+            grant.fairness_cost = grant.fairness_cost.saturating_sub(fairness_cost);
+        }
+        settled
     }
 
     /// Mark granted bytes as actually used so a later cancellation cannot
     /// refund service already spent on transferred payload.
     pub fn settle(&mut self, peer_id: RatePeerId, bytes: u64) -> u64 {
-        let Some(peer) = self.peers.get_mut(&peer_id) else {
+        let Some(peer) = self.peers.get(&peer_id) else {
             return 0;
         };
-        let settled = bytes.min(peer.refundable_bytes);
-        peer.refundable_bytes -= settled;
-        settled
+        let grant_ids = peer.outstanding_grants.keys().copied().collect::<Vec<_>>();
+        let mut remaining = bytes;
+        for grant_id in grant_ids {
+            if remaining == 0 {
+                break;
+            }
+            remaining -= self.settle_grant(peer_id, grant_id, remaining);
+        }
+        bytes - remaining
+    }
+
+    /// Whole-byte credit at the process and peer's torrent levels. This is an
+    /// advisory value for request-window sizing; payload admission still
+    /// reserves both levels atomically.
+    pub fn available_credit_bytes(&mut self, peer_id: RatePeerId, now: Nanos) -> u64 {
+        let Some(torrent_key) = self.peers.get(&peer_id).map(|peer| peer.torrent) else {
+            return 0;
+        };
+        self.global.refill(now);
+        let global_credit = bucket_available_bytes(&self.global);
+        let Some(torrent) = self.torrents.get_mut(&torrent_key) else {
+            return 0;
+        };
+        torrent.bucket.refill(now);
+        global_credit.min(bucket_available_bytes(&torrent.bucket))
     }
 
     /// Earliest retry deadline among waiting peers, for a single timer;
@@ -494,6 +682,13 @@ impl RateTree {
             .take(limit)
             .map(|(_, peer_id)| *peer_id)
             .collect()
+    }
+}
+
+fn bucket_available_bytes(bucket: &Bucket) -> u64 {
+    match bucket.limit {
+        None => u64::MAX,
+        Some(_) => u64::try_from(bucket.credit.max(0) / NANOS_PER_SEC).unwrap_or(u64::MAX),
     }
 }
 
@@ -760,6 +955,46 @@ mod tests {
     }
 
     #[test]
+    fn an_unlimited_grant_cannot_refund_into_a_new_limited_epoch() {
+        let peer_id = peer(1, 1);
+        let mut tree = RateTree::new(None, 0);
+        tree.add_torrent(TorrentKey(1), None, 0);
+        tree.add_peer(peer_id, 1);
+        let (grant, grant_id) = tree.try_grant_tracked(peer_id, BLOCK, 0);
+        assert_eq!(grant, Grant::Granted);
+
+        tree.set_global_limit(Some(BLOCK), 0);
+        tree.set_torrent_limit(TorrentKey(1), Some(BLOCK), 0);
+        let global_credit = tree.global.credit;
+        let torrent_credit = tree.torrents[&TorrentKey(1)].bucket.credit;
+
+        assert_eq!(
+            tree.refund_grant(peer_id, grant_id.unwrap(), BLOCK, 0),
+            BLOCK
+        );
+        assert_eq!(tree.global.credit, global_credit);
+        assert_eq!(tree.torrents[&TorrentKey(1)].bucket.credit, torrent_credit);
+        assert!(matches!(tree.try_grant(peer_id, BLOCK, 0), Grant::Granted));
+        assert!(matches!(tree.try_grant(peer_id, 1, 0), Grant::Wait { .. }));
+    }
+
+    #[test]
+    fn removing_peer_does_not_refund_old_grants_into_a_new_limit_epoch() {
+        let peer_id = peer(1, 1);
+        let mut tree = RateTree::new(None, 0);
+        tree.add_torrent(TorrentKey(1), None, 0);
+        tree.add_peer(peer_id, 1);
+        assert_eq!(tree.try_grant(peer_id, BLOCK, 0), Grant::Granted);
+
+        tree.set_global_limit(Some(BLOCK), 0);
+        tree.set_torrent_limit(TorrentKey(1), Some(BLOCK), 0);
+        tree.remove_peer(peer_id);
+
+        assert_eq!(tree.global.credit, 0);
+        assert_eq!(tree.torrents[&TorrentKey(1)].bucket.credit, 0);
+    }
+
+    #[test]
     fn readding_a_torrent_limit_does_not_reset_existing_debt() {
         let torrent = TorrentKey(1);
         let mut tree = RateTree::new(None, 0);
@@ -791,6 +1026,7 @@ mod tests {
         assert_eq!(tree.peers[&peer_id].refundable_bytes, BLOCK);
         tree.refund(peer_id, BLOCK, 0);
         assert_eq!(tree.peers[&peer_id].refundable_bytes, 0);
+        assert_eq!(tree.peers[&peer_id].vfinish, 0);
     }
 
     #[test]

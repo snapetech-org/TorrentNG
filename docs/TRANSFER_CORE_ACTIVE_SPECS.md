@@ -204,8 +204,10 @@ assembly/completion limits. Its count stops at the 32-block ceiling.
   its own requests.
 - Pure-v2 counts only eligible blocks, subtracts received and on-wire work,
   and respects assembly and completion caps.
-- Window limits remain 4–128 for v1/hybrid-v1 and 4–32 for pure-v2. Rate
-  changes wake refill; shared credit remains advisory across torrents.
+- Window limits remain 4–128 for v1/hybrid-v1 and 4–32 for pure-v2. The
+  available-credit snapshot is advisory to the window; each actual request
+  separately reserves global and torrent credit before enqueue. Rate changes
+  and first-ready deadlines wake refill.
 - Regression sources cover the picker, packed early-stop traversal, endgame
   duplicate accounting, and pure-v2 availability/assembly counts.
 
@@ -1459,9 +1461,9 @@ progress persistence remain IO-008.
 
 ### Scope
 
-Use one deterministic `RateTree` to admit payload bytes under process-wide and
-per-torrent limits, with weighted per-peer fairness. The core accepts an
-injected monotonic timestamp, keeps
+Use one deterministic `RateTree` per transfer direction to admit payload bytes
+under process-wide and per-torrent limits, with weighted per-peer fairness.
+Each core accepts an injected monotonic timestamp, keeps
 fractional byte-nanosecond credit, and may carry debt so a configured rate
 below one block per second still makes progress. Wait results identify the
 first useful retry deadline, and a bounded due-peer query drains wake work
@@ -1482,21 +1484,24 @@ cancellation/refund, and shared source scheduling.
 
 ### Ownership and invariant
 
-- **Current owner:** `GlobalNetworkBudget` and torrent/peer actors hold the
-  existing process and torrent limit state; the pure `RateTree` is not yet
-  wired to live peers. The existing shared upload limiter and per-torrent
-  download bucket settle elapsed credit at the old rate, clamp limited-rate
-  updates to the new capacity, and start empty when changing from unlimited to
-  limited at runtime. Initial torrent construction initializes both buckets
-  from the first persisted rates before peer loops start, retaining their
-  normal startup bursts. Per-torrent download-limit changes promptly
-  recalculate v1/hybrid peer requests; process-wide changes promptly
-  recalculate active v1/hybrid and pure-v2 peer request windows. This
-  preserves the no-new-burst rule during the reversible migration, but does
-  not provide the `RateTree`'s hierarchical peer fairness.
-- **Target owner:** one process-shared tree owns global and per-torrent byte
-  credit, peer fairness progress, unsettled grant/refund accounting, and the
-  next-wakeup index.
+- **Current owner:** `GlobalNetworkBudget` owns global upload and download
+  `RateTree` instances. v1/hybrid-v1 and pure-v2 peer uploads register
+  generation-safe `(TorrentKey, ConnectionId)` identities, reserve before
+  socket writes, and settle only after successful writes; dropped grants
+  refund unused bytes. Both peer protocol families restore and apply their
+  persisted per-torrent upload and download caps. v1/hybrid-v1 download
+  requests reserve tree credit before enqueue and carry it through the
+  outstanding request until a matching payload settles it; rejects, timeout,
+  choke, cancellation, or teardown refund unused credit. Pure-v2 download
+  requests now reserve tree credit before enqueue and carry it through the
+  outstanding request until Piece receipt settles the bytes received; Reject,
+  Choke, timeout, cancellation, and disconnect refund unused credit. Webseed
+  reserves before HTTP ranges. Peer and torrent teardown remove scheduler
+  identities and return unsettled grants without confusing reused connection
+  slots across torrents. Bulk qualification remains open.
+- **Target owner:** one process-shared upload tree and one process-shared
+  download tree each own global and per-torrent byte credit, peer fairness
+  progress, unsettled grant/refund accounting, and the next-wakeup index.
 - **Invariant preserved:** a grant debits all applicable levels atomically;
   a denial does not partially consume torrent or peer service. A rate update
   clamps existing credit and cannot mint another burst.
@@ -1531,9 +1536,9 @@ cancellation/refund, and shared source scheduling.
   updates its existing deadline index entry.
 - Limit changes and refunds promptly reconsider affected parked requests, so
   an earlier eligibility time is not hidden by a stale timer deadline.
-- Live v1, pure-v2, and webseed adapters use the same service before the
-  scheduler is considered integrated; request admission remains bounded by
-  memory and device capacity.
+- Live v1, pure-v2, and webseed traffic uses the same directional global and
+  per-torrent service. Request admission remains bounded by memory and device
+  capacity.
 
 ### Files and compatibility
 
@@ -1542,29 +1547,36 @@ cancellation/refund, and shared source scheduling.
   `torrent_task_v2.rs`, and NET-114/115 integration.
 - **State or wire compatibility:** no wire or persisted-state change; rates
   continue to count payload bytes at the engine boundary.
-- **Migration / rollback:** retain the existing actor limiters until the
-  shared service has matched behavior and reversible actor coverage.
-- **Feature flag or rollout boundary:** the pure module remains inactive in
-  production until live adapters and bulk regressions are complete.
+- **Migration / rollback:** all live transfer directions use the tree at the
+  applicable global and per-torrent levels. Reverting the actor-adapter
+  changes restores the previous limiter paths.
+- **Feature flag or rollout boundary:** the tree is active without a runtime
+  feature flag. Bulk regressions and mixed-torrent qualification are pending.
 
 ### Evidence
 
 - **Regression sources:** exact deadlines, sub-block progress, shared
   global/torrent budgets, all-or-nothing grants, weighted fairness, no-burst
-  limit updates, unsettled-grant refunds, settled-payload protection, peer
+  limit updates, unsettled-grant refunds tied to the limit epoch that charged
+  them, settled-payload protection, peer
   weight updates, index
   cleanup, deadline-filtered bounded wake batches, unknown peers, repeated
   torrent-limit updates, and
   `reused_ledger_connections_are_isolated_between_torrents`; bounded waiter
   batches also cover immediate reconsideration after a global limit change.
-- **Live limiter regression sources:** a changed limited rate preserves
-  existing credit without granting a fresh burst, accrued old-rate credit is
-  clamped to a reduced bucket capacity, runtime unlimited-to-limited begins
-  with zero tokens, and a fresh torrent starts with its configured initial
-  bucket capacity; active download peers recalculate their request budget
-  after per-torrent and process-wide limit changes; a generation-signal source
-  checks that global limit updates reach actor subscribers. Both v1/hybrid and
-  pure-v2 peer loops subscribe to the process-wide change signal.
+- **Live upload regression sources:** peers across different torrents share
+  global credit; limit changes wake parked uploads; unused grants refund; v1
+  peers share the configured torrent bucket; and pure-v2 per-torrent limit
+  updates wake parked peer admission. These sources are authored but unrun.
+- **Live download regression sources:** the global download tree shares credit
+  across torrents and wakes parked admissions after a limit update; torrent
+  credit constrains peers together and is exposed as request-window advisory.
+  v1 request grants settle on matching payloads and refund on terminal request
+  paths; pure-v2 reserves before request enqueue and settles on Piece receipt,
+  while terminal outcomes refund (`v2_reject_refunds_reserved_download_rate_credit`);
+  webseed reserves before issuing HTTP ranges. These sources are authored but
+  unrun. Both v1/hybrid and pure-v2 peer loops subscribe to process-wide and
+  per-torrent change signals.
 - **Command or probe to run:** pure scheduler regressions and the engine rate
   integration suites during the requested bulk pass.
 - **Expected result:** deterministic grants conserve each configured budget,

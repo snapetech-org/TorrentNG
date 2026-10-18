@@ -1,8 +1,6 @@
 //! Accepted TCP/uTP peer sessions and bounded webseed request handling.
 //! This module owns transport setup while the torrent task owns session state.
 
-use crate::network_budget::token_refill_delay;
-
 use super::*;
 
 impl TorrentTask {
@@ -234,6 +232,7 @@ impl TorrentTask {
         let peer = self.active_peers.get(&peer_addr)?;
         let upload_control = peer.upload_control.clone();
         let shutdown_control = peer.shutdown_control.clone();
+        let rate_peer = TransferPeerId::new(self.transfer_rate_torrent, peer.transfer_conn);
         let piece_count = self.picker.piece_count();
         // Reserve the upload-side dense availability map before constructing
         // it. A torrent with a large piece count must not make every peer
@@ -263,12 +262,13 @@ impl TorrentTask {
             metadata: self.metadata.clone(),
             is_private: self.meta.private,
             pex_enabled: self.pex_enabled,
-            torrent_upload: Arc::clone(&self.torrent_upload),
             fast_negotiated: false,
             upload_control,
             shutdown_control,
-            global_download: self.network_budget.download(),
-            global_upload: self.network_budget.upload(),
+            upload_rate: UploadRateAdmission {
+                network_budget: self.network_budget.clone(),
+                peer: rate_peer,
+            },
         })
     }
 
@@ -293,6 +293,11 @@ impl TorrentTask {
         let transfer_conn = self
             .transfer_ledger
             .try_connect(PEER_REQUEST_PIPELINE_ADAPTIVE_MAX)?;
+        self.network_budget
+            .register_transfer_peer(TransferPeerId::new(
+                self.transfer_rate_torrent,
+                transfer_conn,
+            ));
         let peer_has = PieceBitmap::new(self.meta.pieces.len());
         let pending_have = PieceBitmap::new(self.meta.pieces.len());
         self.active_peers.insert(
@@ -589,23 +594,6 @@ impl TorrentTask {
                 .cancel_request(request.piece as usize, request.begin);
             return false;
         }
-        if !self.download_tokens_available(expected_network_bytes) {
-            if let Some(limit) = self.download_limit_bytes_per_sec {
-                let missing =
-                    u64::from(expected_network_bytes).saturating_sub(self.download_tokens);
-                if missing > 0 {
-                    let deadline = Instant::now() + token_refill_delay(missing, limit);
-                    self.download_token_wake = Some(
-                        self.download_token_wake
-                            .map_or(deadline, |current| current.min(deadline)),
-                    );
-                }
-            }
-            self.picker
-                .cancel_request(request.piece as usize, request.begin);
-            return false;
-        }
-
         let seed_count = self.meta.webseeds.len();
         let now = Instant::now();
         let mut selected = None;
@@ -664,31 +652,12 @@ impl TorrentTask {
                 .cancel_request(request.piece as usize, request.begin);
             return false;
         };
-        let local_tokens_reserved = self.download_limit_bytes_per_sec.is_some();
-        if !self.try_consume_download_tokens(expected_network_bytes) {
-            if let Some(limit) = self.download_limit_bytes_per_sec {
-                let missing =
-                    u64::from(expected_network_bytes).saturating_sub(self.download_tokens);
-                if missing > 0 {
-                    let deadline = Instant::now() + token_refill_delay(missing, limit);
-                    self.download_token_wake = Some(
-                        self.download_token_wake
-                            .map_or(deadline, |current| current.min(deadline)),
-                    );
-                }
-            }
-            self.picker
-                .cancel_request(request.piece as usize, request.begin);
-            return false;
-        }
         let Some(connection) = self.reserve_webseed_block(request) else {
-            self.refund_download_tokens(expected_network_bytes);
             return false;
         };
         if !self.commit_webseed_block(connection, request) {
             self.release_webseed_block(connection, request);
             self.close_webseed_transfer_connection();
-            self.refund_download_tokens(expected_network_bytes);
             return false;
         }
 
@@ -704,10 +673,24 @@ impl TorrentTask {
         let egress_policy = self.egress_policy;
         let http_timeout = self.http_timeout;
         let resources = self.resources.clone();
-        let global_download = self.network_budget.download();
-        let observed_network_bytes = Arc::new(AtomicU64::new(0));
-        let worker_observed_network_bytes = Arc::clone(&observed_network_bytes);
+        let network_budget = self.network_budget.clone();
+        let rate_peer = TransferPeerId::new(self.transfer_rate_torrent, connection);
+        let rate_control = RateLimitCancellation::default();
+        let rate_generation = rate_control.generation();
         let task = tokio::spawn(async move {
+            let rate_grant = match network_budget
+                .acquire_download(
+                    rate_peer,
+                    u64::from(expected_network_bytes),
+                    &rate_control,
+                    rate_generation,
+                )
+                .await
+            {
+                Ok(Some(grant)) => grant,
+                Ok(None) => return Err("webseed rate admission was cancelled".to_owned()),
+                Err(error) => return Err(format!("webseed rate admission failed: {error}")),
+            };
             let fetch_started = TokioInstant::now();
             let event = Self::fetch_prepared_webseed_block(
                 request,
@@ -719,11 +702,15 @@ impl TorrentTask {
             .await
             .map_err(|error| webseed_error_for_log(&error))?;
             let fetch_elapsed = fetch_started.elapsed();
-            let network_bytes = event.network_bytes.unwrap_or(u64::from(request.length));
-            worker_observed_network_bytes.store(network_bytes, Ordering::Release);
-            if network_bytes > 0 {
-                global_download.acquire(network_bytes).await;
+            let network_bytes = event
+                .network_bytes
+                .unwrap_or(u64::from(expected_network_bytes));
+            if network_bytes > u64::from(expected_network_bytes) {
+                return Err(format!(
+                    "webseed returned {network_bytes} network bytes for a {expected_network_bytes}-byte reservation"
+                ));
             }
+            rate_grant.settle(network_bytes);
             Ok(WebseedFetchedBlock {
                 event,
                 fetch_elapsed,
@@ -733,9 +720,6 @@ impl TorrentTask {
             request,
             connection,
             seed_index,
-            reserved_local_bytes: expected_network_bytes,
-            local_tokens_reserved,
-            observed_network_bytes,
             task,
         });
         true
@@ -752,12 +736,6 @@ impl TorrentTask {
                     .event
                     .network_bytes
                     .unwrap_or(u64::from(fetch.request.length));
-                self.reconcile_webseed_local_tokens(
-                    fetch.reserved_local_bytes,
-                    fetch.local_tokens_reserved,
-                    network_bytes,
-                );
-
                 let rate = (network_bytes as f64 / fetched.fetch_elapsed.as_secs_f64().max(0.001))
                     .round() as i64;
                 let seed_count = self.meta.webseeds.len();
@@ -780,11 +758,6 @@ impl TorrentTask {
             }
             Ok(Err(error)) => {
                 self.record_webseed_failure(fetch.seed_index, fetch.request, error);
-                self.reconcile_webseed_local_tokens(
-                    fetch.reserved_local_bytes,
-                    fetch.local_tokens_reserved,
-                    fetch.observed_network_bytes.load(Ordering::Acquire),
-                );
                 self.release_webseed_block(fetch.connection, fetch.request);
                 self.close_webseed_transfer_connection();
                 None
@@ -795,41 +768,10 @@ impl TorrentTask {
                     fetch.request,
                     format!("webseed worker failed: {error}"),
                 );
-                self.reconcile_webseed_local_tokens(
-                    fetch.reserved_local_bytes,
-                    fetch.local_tokens_reserved,
-                    fetch.observed_network_bytes.load(Ordering::Acquire),
-                );
                 self.release_webseed_block(fetch.connection, fetch.request);
                 self.close_webseed_transfer_connection();
                 None
             }
-        }
-    }
-
-    pub(super) fn reconcile_webseed_local_tokens(
-        &mut self,
-        reserved_bytes: u32,
-        had_reservation: bool,
-        observed_network_bytes: u64,
-    ) {
-        let observed_bytes = u32::try_from(observed_network_bytes).unwrap_or(u32::MAX);
-        if had_reservation {
-            if observed_bytes < reserved_bytes {
-                self.refund_download_tokens(reserved_bytes - observed_bytes);
-            } else if observed_bytes > reserved_bytes
-                && !self.try_consume_download_tokens(observed_bytes - reserved_bytes)
-            {
-                // Exact per-file response lengths normally make the
-                // reservation equal this count. Keep the bucket empty if a
-                // future source shape reports more bytes.
-                self.download_tokens = 0;
-            }
-        } else if observed_bytes > 0
-            && self.download_limit_bytes_per_sec.is_some()
-            && !self.try_consume_download_tokens(observed_bytes)
-        {
-            self.download_tokens = 0;
         }
     }
 
