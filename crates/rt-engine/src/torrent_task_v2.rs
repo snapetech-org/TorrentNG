@@ -16,7 +16,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use bytes::Bytes;
 use futures::future::BoxFuture;
 use futures::{FutureExt, StreamExt};
-use rt_hash::{merkle_layers, merkle_root, piece_layer_hash, BlockHash, V2_BLOCK_SIZE};
+use rt_hash::{merkle_layers, BlockHash, V2_BLOCK_SIZE};
+#[cfg(test)]
+use rt_hash::{merkle_root, piece_layer_hash};
 use rt_metainfo::{TorrentFileV2, TorrentMetaV2};
 use rt_metrics::{MemoryClass, MemoryLease, ResourceGovernor};
 use rt_path::{StorageProfile, StorageRootId};
@@ -32,7 +34,7 @@ use rt_peer_wire::{
 use rt_piece_map::{V2FileSpan, V2PieceMap};
 use rt_session::{SessionRegistry, TorrentEntry, TorrentState};
 use rt_storage::{
-    scheduler::{scheduled_read_owned, scheduled_write},
+    scheduler::{scheduled_read_owned, scheduled_write, scheduled_write_with_shared_payload_lease},
     IoClass, MountScheduler, SchedulerConfig, StorageIoConfig, V2FileHash, V2FileVerifier,
     VerifyResult,
 };
@@ -73,6 +75,9 @@ const V2_REQUEST_WINDOW: usize = 32;
 const V2_MAX_PENDING_UPLOAD_READS: usize = 16;
 const V2_MAX_QUEUED_UPLOAD_REQUESTS: usize = 128;
 const V2_MAX_UPLOAD_WORK: usize = V2_MAX_PENDING_UPLOAD_READS + V2_MAX_QUEUED_UPLOAD_REQUESTS;
+const V2_MAX_PENDING_PIECE_JOBS: usize = 16;
+const V2_MAX_PENDING_TRANSFER_JOBS: usize = V2_REQUEST_WINDOW;
+const V2_MAX_TRACKED_PIECES_PER_PEER: usize = V2_REQUEST_WINDOW;
 // `TorrentMetaV2` accepts every piece length representable by the peer-wire
 // u32 coordinates. The old 65,536-block guard silently rejected valid pieces
 // above about 1 GiB. Keep a protocol-derived bound instead; the assembly byte
@@ -550,6 +555,8 @@ struct V2PieceAssembly {
     region_len: u32,
     received: Vec<bool>,
     received_count: usize,
+    pending_blocks: usize,
+    discard_when_idle: bool,
     data: Option<Vec<u8>>,
     _memory_lease: Option<MemoryLease>,
 }
@@ -587,6 +594,25 @@ struct V2UploadCompletion {
 }
 
 type V2UploadReadTask = BoxFuture<'static, V2UploadCompletion>;
+
+struct V2PieceCompletion {
+    piece: u32,
+    bytes: u64,
+    result: anyhow::Result<()>,
+}
+
+struct V2BlockCompletion {
+    piece: u32,
+    begin: u32,
+    result: Result<(), String>,
+}
+
+enum V2TransferCompletion {
+    BlockStored(V2BlockCompletion),
+    PieceVerified(V2PieceCompletion),
+}
+
+type V2TransferTask = BoxFuture<'static, V2TransferCompletion>;
 
 struct V2UploadControlGuard(RateLimitCancellation);
 
@@ -641,6 +667,8 @@ impl V2PieceAssembly {
             region_len,
             received,
             received_count: 0,
+            pending_blocks: 0,
+            discard_when_idle: false,
             data,
             _memory_lease: memory_lease,
         })
@@ -687,6 +715,10 @@ impl V2PieceAssembly {
 
     fn is_complete(&self) -> bool {
         self.received_count == self.received.len()
+    }
+
+    fn is_ready(&self) -> bool {
+        self.is_complete() && self.pending_blocks == 0
     }
 
     /// First block that is neither received nor already requested from this
@@ -3285,6 +3317,9 @@ async fn run_v2_peer_protocol(
 
     let mut outstanding = HashMap::<(u32, u32), V2OutstandingRequest>::new();
     let mut assemblies = HashMap::<u32, V2PieceAssembly>::new();
+    let mut transfer_jobs = futures::stream::FuturesUnordered::<V2TransferTask>::new();
+    let mut pending_block_completions = HashMap::<(u32, u32), u64>::new();
+    let mut pending_piece_completions = HashMap::<u32, u64>::new();
     let mut upload_reads = futures::stream::FuturesUnordered::<V2UploadReadTask>::new();
     let mut pending_upload_requests = VecDeque::new();
     let mut remote_availability_known = false;
@@ -3370,7 +3405,16 @@ async fn run_v2_peer_protocol(
                             &mut local_interested,
                             remote_availability_known,
                         ).await?;
-                        fill_v2_requests(&context, &mut framed, &state, &mut outstanding, &mut assemblies).await?;
+                        fill_v2_requests(
+                            &context,
+                            &mut framed,
+                            &state,
+                            &mut outstanding,
+                            &mut assemblies,
+                            transfer_jobs.len(),
+                            &pending_block_completions,
+                            &pending_piece_completions,
+                        ).await?;
                     }
                     Message::Have(piece) => {
                         if piece >= context.piece_map.piece_count {
@@ -3387,7 +3431,16 @@ async fn run_v2_peer_protocol(
                             &mut local_interested,
                             remote_availability_known,
                         ).await?;
-                        fill_v2_requests(&context, &mut framed, &state, &mut outstanding, &mut assemblies).await?;
+                        fill_v2_requests(
+                            &context,
+                            &mut framed,
+                            &state,
+                            &mut outstanding,
+                            &mut assemblies,
+                            transfer_jobs.len(),
+                            &pending_block_completions,
+                            &pending_piece_completions,
+                        ).await?;
                     }
                     Message::HaveAll => {
                         if let Ok(mut peer) = state.lock() {
@@ -3401,7 +3454,16 @@ async fn run_v2_peer_protocol(
                             &mut local_interested,
                             remote_availability_known,
                         ).await?;
-                        fill_v2_requests(&context, &mut framed, &state, &mut outstanding, &mut assemblies).await?;
+                        fill_v2_requests(
+                            &context,
+                            &mut framed,
+                            &state,
+                            &mut outstanding,
+                            &mut assemblies,
+                            transfer_jobs.len(),
+                            &pending_block_completions,
+                            &pending_piece_completions,
+                        ).await?;
                     }
                     Message::HaveNone => {
                         if let Ok(mut peer) = state.lock() {
@@ -3420,7 +3482,16 @@ async fn run_v2_peer_protocol(
                         if let Ok(mut peer) = state.lock() {
                             peer.choked = false;
                         }
-                        fill_v2_requests(&context, &mut framed, &state, &mut outstanding, &mut assemblies).await?;
+                        fill_v2_requests(
+                            &context,
+                            &mut framed,
+                            &state,
+                            &mut outstanding,
+                            &mut assemblies,
+                            transfer_jobs.len(),
+                            &pending_block_completions,
+                            &pending_piece_completions,
+                        ).await?;
                     }
                     Message::Choke => {
                         apply_v2_remote_choke(
@@ -3431,13 +3502,12 @@ async fn run_v2_peer_protocol(
                         if let Ok(mut peer) = state.lock() {
                             peer.choked = true;
                             peer.outstanding = outstanding.len();
-                            peer.assembly_buffers = assemblies.len() as u64;
-                            peer.assembly_bytes = assemblies
-                                .values()
-                                .filter_map(|assembly| {
-                                    assembly.data.as_ref().map(|data| data.len() as u64)
-                                })
-                                .sum();
+                            update_v2_assembly_stats(
+                                &mut peer,
+                                &assemblies,
+                                &pending_block_completions,
+                                &pending_piece_completions,
+                            );
                         }
                     }
                     Message::Interested => {
@@ -3538,7 +3608,16 @@ async fn run_v2_peer_protocol(
                             begin,
                             length,
                         );
-                        fill_v2_requests(&context, &mut framed, &state, &mut outstanding, &mut assemblies).await?;
+                        fill_v2_requests(
+                            &context,
+                            &mut framed,
+                            &state,
+                            &mut outstanding,
+                            &mut assemblies,
+                            transfer_jobs.len(),
+                            &pending_block_completions,
+                            &pending_piece_completions,
+                        ).await?;
                     }
                     // BEP 6 Fast extension: TorrentNG does not bypass its
                     // normal choke/request policy for this optional hint.
@@ -3549,10 +3628,18 @@ async fn run_v2_peer_protocol(
                             &state,
                             &mut outstanding,
                             &mut assemblies,
+                            &mut transfer_jobs,
+                            &mut pending_block_completions,
                             piece,
                             begin,
                             data,
                         ).await?;
+                        start_ready_v2_piece_jobs(
+                            &context,
+                            &mut assemblies,
+                            &mut pending_piece_completions,
+                            &mut transfer_jobs,
+                        );
                         update_v2_interest(
                             &context,
                             &mut framed,
@@ -3560,7 +3647,16 @@ async fn run_v2_peer_protocol(
                             &mut local_interested,
                             remote_availability_known,
                         ).await?;
-                        fill_v2_requests(&context, &mut framed, &state, &mut outstanding, &mut assemblies).await?;
+                        fill_v2_requests(
+                            &context,
+                            &mut framed,
+                            &state,
+                            &mut outstanding,
+                            &mut assemblies,
+                            transfer_jobs.len(),
+                            &pending_block_completions,
+                            &pending_piece_completions,
+                        ).await?;
                     }
                     Message::HashRequest { pieces_root, base_layer, index, length, proof_layers } => {
                         serve_v2_hash_request(
@@ -3593,8 +3689,64 @@ async fn run_v2_peer_protocol(
                     &state,
                     &mut outstanding,
                     &mut assemblies,
+                    transfer_jobs.len(),
+                    &pending_block_completions,
+                    &pending_piece_completions,
                 )
                 .await?;
+            }
+            transfer_result = transfer_jobs.next(), if !transfer_jobs.is_empty() => {
+                let Some(completion) = transfer_result else {
+                    continue;
+                };
+                match completion {
+                    V2TransferCompletion::BlockStored(completion) => {
+                        apply_v2_block_completion(
+                            completion,
+                            &mut assemblies,
+                            &mut pending_block_completions,
+                        )?;
+                    }
+                    V2TransferCompletion::PieceVerified(completion) => {
+                        apply_v2_piece_completion(
+                            &context,
+                            &state,
+                            &mut pending_piece_completions,
+                            completion,
+                        ).await;
+                    }
+                }
+                start_ready_v2_piece_jobs(
+                    &context,
+                    &mut assemblies,
+                    &mut pending_piece_completions,
+                    &mut transfer_jobs,
+                );
+                if let Ok(mut peer) = state.lock() {
+                    update_v2_assembly_stats(
+                        &mut peer,
+                        &assemblies,
+                        &pending_block_completions,
+                        &pending_piece_completions,
+                    );
+                }
+                update_v2_interest(
+                    &context,
+                    &mut framed,
+                    &state,
+                    &mut local_interested,
+                    remote_availability_known,
+                ).await?;
+                fill_v2_requests(
+                    &context,
+                    &mut framed,
+                    &state,
+                    &mut outstanding,
+                    &mut assemblies,
+                    transfer_jobs.len(),
+                    &pending_block_completions,
+                    &pending_piece_completions,
+                ).await?;
             }
             upload_result = upload_reads.next(), if !upload_reads.is_empty() => {
                 let Some(completion) = upload_result else {
@@ -3775,6 +3927,9 @@ async fn fill_v2_requests(
     state: &Arc<Mutex<V2PeerState>>,
     outstanding: &mut HashMap<(u32, u32), V2OutstandingRequest>,
     assemblies: &mut HashMap<u32, V2PieceAssembly>,
+    active_transfer_jobs: usize,
+    pending_block_completions: &HashMap<(u32, u32), u64>,
+    pending_piece_completions: &HashMap<u32, u64>,
 ) -> anyhow::Result<()> {
     let choked = state.lock().map(|peer| peer.choked).unwrap_or(true);
     if choked {
@@ -3787,9 +3942,26 @@ async fn fill_v2_requests(
     let local_have = context.local_have.read().await.clone();
     while outstanding.len() < V2_REQUEST_WINDOW {
         let mut selected = None;
+        let ready_completions = pending_piece_completions.len()
+            + assemblies
+                .values()
+                .filter(|assembly| assembly.is_ready())
+                .count();
+        let tracked_pieces = assemblies.len() + pending_piece_completions.len();
+        if outstanding
+            .len()
+            .saturating_add(active_transfer_jobs)
+            .saturating_add(ready_completions.saturating_sub(pending_piece_completions.len()))
+            >= V2_REQUEST_WINDOW
+        {
+            break;
+        }
         for piece in 0..context.piece_map.piece_count {
             let piece_index = piece as usize;
-            if local_have.get(piece_index) || !remote_have.get(piece_index) {
+            if local_have.get(piece_index)
+                || !remote_have.get(piece_index)
+                || pending_piece_completions.contains_key(&piece)
+            {
                 continue;
             }
             let Ok(region) = context.piece_map.piece_to_file(piece) else {
@@ -3803,8 +3975,16 @@ async fn fill_v2_requests(
                 if assembly.is_complete() {
                     continue;
                 }
+                if assembly.discard_when_idle {
+                    continue;
+                }
                 None
             } else {
+                if ready_completions >= V2_MAX_PENDING_PIECE_JOBS
+                    || tracked_pieces >= V2_MAX_TRACKED_PIECES_PER_PEER
+                {
+                    continue;
+                }
                 Some(V2PieceAssembly::new(
                     piece,
                     region.length,
@@ -3866,11 +4046,223 @@ async fn fill_v2_requests(
     }
     if let Ok(mut peer) = state.lock() {
         peer.outstanding = outstanding.len();
-        peer.assembly_buffers = assemblies.len() as u64;
-        peer.assembly_bytes = assemblies
-            .values()
-            .filter_map(|assembly| assembly.data.as_ref().map(|data| data.len() as u64))
-            .sum();
+        update_v2_assembly_stats(
+            &mut peer,
+            assemblies,
+            pending_block_completions,
+            pending_piece_completions,
+        );
+    }
+    Ok(())
+}
+
+fn update_v2_assembly_stats(
+    peer: &mut V2PeerState,
+    assemblies: &HashMap<u32, V2PieceAssembly>,
+    pending_block_completions: &HashMap<(u32, u32), u64>,
+    pending_piece_completions: &HashMap<u32, u64>,
+) {
+    peer.assembly_buffers = (assemblies.len() + pending_piece_completions.len()) as u64;
+    peer.assembly_bytes = assemblies
+        .values()
+        .filter_map(|assembly| assembly.data.as_ref().map(|data| data.len() as u64))
+        .sum::<u64>()
+        .saturating_add(pending_block_completions.values().copied().sum())
+        .saturating_add(pending_piece_completions.values().copied().sum());
+}
+
+fn apply_v2_block_completion(
+    completion: V2BlockCompletion,
+    assemblies: &mut HashMap<u32, V2PieceAssembly>,
+    pending_block_completions: &mut HashMap<(u32, u32), u64>,
+) -> anyhow::Result<()> {
+    pending_block_completions.remove(&(completion.piece, completion.begin));
+    if let Err(error) = completion.result {
+        anyhow::bail!(
+            "v2 block write failed for piece {} offset {}: {}",
+            completion.piece,
+            completion.begin,
+            error
+        );
+    }
+    let Some(assembly) = assemblies.get_mut(&completion.piece) else {
+        return Ok(());
+    };
+    assembly.pending_blocks = assembly.pending_blocks.saturating_sub(1);
+    if assembly.pending_blocks == 0 && assembly.discard_when_idle && !assembly.is_complete() {
+        assemblies.remove(&completion.piece);
+    }
+    Ok(())
+}
+
+fn start_ready_v2_piece_jobs(
+    context: &V2PeerContext,
+    assemblies: &mut HashMap<u32, V2PieceAssembly>,
+    pending_piece_completions: &mut HashMap<u32, u64>,
+    transfer_jobs: &mut futures::stream::FuturesUnordered<V2TransferTask>,
+) {
+    while transfer_jobs.len() < V2_MAX_PENDING_TRANSFER_JOBS
+        && pending_piece_completions.len() < V2_MAX_PENDING_PIECE_JOBS
+    {
+        let piece = assemblies
+            .iter()
+            .filter_map(|(piece, assembly)| assembly.is_ready().then_some(*piece))
+            .min();
+        let Some(piece) = piece else {
+            break;
+        };
+        let Some(assembly) = assemblies.remove(&piece) else {
+            continue;
+        };
+        let bytes = u64::from(assembly.region_len);
+        let job_context = context.clone();
+        pending_piece_completions.insert(piece, bytes);
+        transfer_jobs.push(Box::pin(async move {
+            let result = complete_v2_piece_job(&job_context, piece, assembly).await;
+            V2TransferCompletion::PieceVerified(V2PieceCompletion {
+                piece,
+                bytes,
+                result,
+            })
+        }));
+    }
+}
+
+async fn apply_v2_piece_completion(
+    context: &V2PeerContext,
+    state: &Arc<Mutex<V2PeerState>>,
+    pending_piece_completions: &mut HashMap<u32, u64>,
+    completion: V2PieceCompletion,
+) {
+    pending_piece_completions.remove(&completion.piece);
+    match completion.result {
+        Ok(()) => {
+            let newly_available = {
+                let mut local_have = context.local_have.write().await;
+                let local_have = Arc::make_mut(&mut *local_have);
+                if local_have.get(completion.piece as usize) {
+                    false
+                } else {
+                    local_have.set(completion.piece as usize, true);
+                    true
+                }
+            };
+            if newly_available {
+                let _ = context.have_updates.send(());
+                let _ = context
+                    .events
+                    .send(V2PeerEvent::Downloaded {
+                        peer: context.peer,
+                        bytes: completion.bytes,
+                    })
+                    .await;
+                if let Ok(mut peer) = state.lock() {
+                    peer.record_transfer(false, completion.bytes);
+                }
+            }
+        }
+        Err(error) => {
+            warn!(
+                component = "torrent_v2",
+                operation = "verify_and_store_piece",
+                peer = %context.peer,
+                piece = completion.piece,
+                result = "error",
+                error = %error,
+                "failed to verify or store pure-v2 piece"
+            );
+        }
+    }
+}
+
+async fn complete_v2_piece_job(
+    context: &V2PeerContext,
+    piece: u32,
+    mut assembly: V2PieceAssembly,
+) -> anyhow::Result<()> {
+    let extent = PieceGeometry::piece_extent(&context.piece_map, piece)
+        .ok_or_else(|| anyhow::anyhow!("v2 piece {piece} is outside the piece map"))?;
+    if extent.length != assembly.region_len {
+        anyhow::bail!("v2 piece assembly length does not match its mapped extent");
+    }
+    let region = context
+        .piece_map
+        .piece_to_file(piece)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let file = context
+        .meta
+        .files
+        .iter()
+        .find(|file| file.index == region.file_index)
+        .ok_or_else(|| anyhow::anyhow!("v2 file {} not found", region.file_index))?;
+    let expected_hash = expected_v2_piece_hash(&context.meta, file, piece)?
+        .ok_or_else(|| anyhow::anyhow!("v2 piece {piece} has no expected merkle hash"))?;
+    let in_memory = assembly.data.is_some();
+    let memory_lease = assembly
+        ._memory_lease
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("v2 piece assembly lost its memory lease"))?;
+    let (payload_lease, _assembly_lease) = if in_memory {
+        (Some(Arc::new(memory_lease)), None)
+    } else {
+        (None, Some(memory_lease))
+    };
+    let content = if let Some(data) = assembly.data.take() {
+        Bytes::from(data)
+    } else {
+        let path = region.path.resolve(&context.save_root);
+        scheduled_read_owned(
+            &context.storage,
+            IoClass::PeerRead,
+            &path,
+            region.file_offset,
+            extent.length as usize,
+        )
+        .await?
+        .into_bytes()
+    };
+    if content.len() != extent.length as usize {
+        anyhow::bail!("v2 piece read length does not match map");
+    }
+    let mut leaves = context
+        .storage
+        .hash_v2_leaves(content.clone(), V2_BLOCK_SIZE)
+        .await?;
+    if file.length > context.meta.piece_length {
+        let piece_leaf_count = usize::try_from(context.meta.piece_length / V2_BLOCK_SIZE as u64)
+            .map_err(|error| anyhow::anyhow!("v2 piece leaf count does not fit usize: {error}"))?;
+        if leaves.len() > piece_leaf_count {
+            anyhow::bail!("v2 piece has more leaves than its piece length permits");
+        }
+        leaves.resize(piece_leaf_count, [0u8; 32]);
+    }
+    let actual_hash = context.storage.hash_v2_root(leaves).await?;
+    if actual_hash != expected_hash {
+        anyhow::bail!("v2 piece {piece} merkle hash mismatch");
+    }
+    if let Some(payload_lease) = payload_lease {
+        let path = region.path.resolve(&context.save_root);
+        for start in (0..content.len()).step_by(rt_peer_wire::message::MAX_BLOCK_SIZE as usize) {
+            let end = content
+                .len()
+                .min(start.saturating_add(rt_peer_wire::message::MAX_BLOCK_SIZE as usize));
+            let begin = u64::try_from(start)
+                .map_err(|error| anyhow::anyhow!("v2 piece write offset overflow: {error}"))?;
+            let offset = region
+                .file_offset
+                .checked_add(begin)
+                .ok_or_else(|| anyhow::anyhow!("v2 piece write offset overflow"))?;
+            scheduled_write_with_shared_payload_lease(
+                &context.storage,
+                IoClass::PeerWrite,
+                &path,
+                offset,
+                content.slice(start..end),
+                true,
+                Arc::clone(&payload_lease),
+            )
+            .await?;
+        }
     }
     Ok(())
 }
@@ -3881,6 +4273,8 @@ async fn handle_v2_piece(
     state: &Arc<Mutex<V2PeerState>>,
     outstanding: &mut HashMap<(u32, u32), V2OutstandingRequest>,
     assemblies: &mut HashMap<u32, V2PieceAssembly>,
+    transfer_jobs: &mut futures::stream::FuturesUnordered<V2TransferTask>,
+    pending_block_completions: &mut HashMap<(u32, u32), u64>,
     piece: u32,
     begin: u32,
     data: Bytes,
@@ -3889,7 +4283,7 @@ async fn handle_v2_piece(
         anyhow::bail!("unsolicited v2 piece block");
     };
     let expected = request.length;
-    let _memory_lease = request._memory_lease;
+    let request_memory_lease = request._memory_lease;
     if expected != data.len() as u32 {
         anyhow::bail!("v2 piece response length does not match request");
     }
@@ -3922,118 +4316,65 @@ async fn handle_v2_piece(
             &context.resources,
         )?);
     }
-    let (accepted, complete, in_memory) = {
+    let (accepted, in_memory) = {
         let assembly = assemblies
             .get_mut(&piece)
             .ok_or_else(|| anyhow::anyhow!("v2 piece assembly disappeared"))?;
         let accepted = assembly.accept_block(begin, &data)?;
-        (accepted, assembly.is_complete(), assembly.data.is_some())
+        if accepted {
+            assembly.pending_blocks = assembly.pending_blocks.saturating_add(1);
+        }
+        (accepted, assembly.data.is_some())
     };
     if !accepted {
         return Ok(());
     }
-    context
-        .network_budget
-        .download()
-        .acquire(u64::from(expected))
-        .await;
-    if !in_memory {
-        let path = block_region.path.resolve(&context.save_root);
-        scheduled_write(
-            &context.storage,
-            IoClass::PeerWrite,
-            &path,
-            block_region.file_offset,
-            data.clone(),
-            true,
-        )
-        .await?;
-    }
-    if !complete {
-        if let Ok(mut peer) = state.lock() {
-            peer.outstanding = outstanding.len();
-        }
-        return Ok(());
-    }
-    let mut assembly = assemblies
-        .remove(&piece)
-        .ok_or_else(|| anyhow::anyhow!("completed v2 piece assembly disappeared"))?;
-    let content = if let Some(data) = assembly.data.take() {
-        Bytes::from(data)
+    pending_block_completions.insert(
+        (piece, begin),
+        if in_memory { 0 } else { u64::from(expected) },
+    );
+    let block_write = if in_memory {
+        drop(request_memory_lease);
+        None
     } else {
-        let path = region.path.resolve(&context.save_root);
-        scheduled_read_owned(
-            &context.storage,
-            IoClass::PeerRead,
-            &path,
-            region.file_offset,
-            piece_extent.length as usize,
-        )
-        .await?
-        .into_bytes()
+        Some((
+            data,
+            block_region.path.resolve(&context.save_root),
+            block_region.file_offset,
+            request_memory_lease,
+        ))
     };
-    let file = context
-        .meta
-        .files
-        .iter()
-        .find(|file| file.index == region.file_index)
-        .ok_or_else(|| anyhow::anyhow!("v2 file {} not found", region.file_index))?;
-    let expected_hash = expected_v2_piece_hash(&context.meta, file, piece)?;
-    let actual_hash =
-        actual_v2_piece_hash(content.as_ref(), file.length, context.meta.piece_length);
-    if Some(actual_hash) != expected_hash {
-        anyhow::bail!("v2 piece {piece} merkle hash mismatch");
-    }
-    if content.len() as u32 != piece_extent.length {
-        anyhow::bail!("v2 piece read length does not match map");
-    }
-    if in_memory {
-        let path = region.path.resolve(&context.save_root);
-        for (index, chunk) in content
-            .chunks(rt_peer_wire::message::MAX_BLOCK_SIZE as usize)
-            .enumerate()
-        {
-            let begin = u64::try_from(index)
-                .ok()
-                .and_then(|index| {
-                    index.checked_mul(u64::from(rt_peer_wire::message::MAX_BLOCK_SIZE))
-                })
-                .ok_or_else(|| anyhow::anyhow!("v2 piece write offset overflow"))?;
-            scheduled_write(
-                &context.storage,
+    let job_context = context.clone();
+    transfer_jobs.push(Box::pin(async move {
+        job_context
+            .network_budget
+            .download()
+            .acquire(u64::from(expected))
+            .await;
+        let result = if let Some((data, path, offset, _memory_lease)) = block_write {
+            let result = scheduled_write(
+                &job_context.storage,
                 IoClass::PeerWrite,
                 &path,
-                region.file_offset.saturating_add(begin),
-                Bytes::copy_from_slice(chunk),
+                offset,
+                data,
                 true,
             )
-            .await?;
-        }
-    }
-    {
-        let mut local_have = context.local_have.write().await;
-        let local_have = Arc::make_mut(&mut *local_have);
-        if local_have.get(piece as usize) {
-            return Ok(());
-        }
-        local_have.set(piece as usize, true);
-    }
-    let _ = context.have_updates.send(());
-    let _ = context
-        .events
-        .send(V2PeerEvent::Downloaded {
-            peer: context.peer,
-            bytes: u64::from(piece_extent.length),
+            .await
+            .map_err(|error| error.to_string());
+            drop(_memory_lease);
+            result
+        } else {
+            Ok(())
+        };
+        V2TransferCompletion::BlockStored(V2BlockCompletion {
+            piece,
+            begin,
+            result,
         })
-        .await;
+    }));
     if let Ok(mut peer) = state.lock() {
-        peer.record_transfer(false, u64::from(piece_extent.length));
         peer.outstanding = outstanding.len();
-        peer.assembly_buffers = assemblies.len() as u64;
-        peer.assembly_bytes = assemblies
-            .values()
-            .filter_map(|assembly| assembly.data.as_ref().map(|data| data.len() as u64))
-            .sum();
     }
     Ok(())
 }
@@ -4178,10 +4519,19 @@ fn apply_v2_remote_choke(
 ) {
     // BEP 6 no longer treats Choke as a response to outstanding requests.
     // Their Piece/Reject responses remain valid, so keep both the request
-    // coordinates and piece assembly state until each response arrives.
+    // coordinates and piece assembly state for Fast peers. Legacy Choke ends
+    // outstanding obligations, but any accepted block still being admitted or
+    // written keeps its assembly until that bounded job returns.
     if !remote_supports_fast {
         outstanding.clear();
-        assemblies.clear();
+        assemblies.retain(|_, assembly| {
+            if assembly.pending_blocks > 0 {
+                assembly.discard_when_idle = true;
+                true
+            } else {
+                false
+            }
+        });
     }
 }
 
@@ -4496,6 +4846,7 @@ async fn read_v2_leaf_hashes(
     Ok(leaves)
 }
 
+#[cfg(test)]
 fn v2_leaf_hashes(data: &[u8]) -> Vec<[u8; 32]> {
     if data.is_empty() {
         return vec![BlockHash::of(&[]).0];
@@ -4526,6 +4877,7 @@ fn v2_zero_leaf_hashes(length: u64) -> anyhow::Result<Vec<[u8; 32]>> {
     Ok(leaves)
 }
 
+#[cfg(test)]
 fn actual_v2_piece_hash(data: &[u8], file_length: u64, piece_length: u64) -> [u8; 32] {
     if file_length <= piece_length {
         merkle_root(&v2_leaf_hashes(data))
@@ -4594,7 +4946,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn v2_peer_reads_control_messages_while_upload_waits_for_rate_budget() {
+    async fn v2_peer_reads_control_messages_while_transfer_jobs_wait_for_rate_budget() {
         use tokio::net::TcpListener;
 
         let temp = tempfile::tempdir().unwrap();
@@ -4665,7 +5017,7 @@ mod tests {
             save_root: temp.path().to_path_buf(),
             storage: storage.clone(),
             resources,
-            network_budget: GlobalNetworkBudget::new(8, None, Some(1)),
+            network_budget: GlobalNetworkBudget::new(8, Some(1), Some(1)),
             upload_control: RateLimitCancellation::default(),
             local_have: Arc::new(RwLock::new(Arc::new(local_have))),
             have_updates,
@@ -4675,8 +5027,11 @@ mod tests {
             events,
             proof_cache: Arc::new(V2ProofCache::default()),
         };
+        let context_for_test = context.clone();
         let upload_budget = context.network_budget.upload();
         upload_budget.acquire(64 * 1024).await;
+        let download_budget = context.network_budget.download();
+        download_budget.acquire(64 * 1024).await;
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let peer_addr = listener.local_addr().unwrap();
@@ -4684,6 +5039,7 @@ mod tests {
         let (server, _) = listener.accept().await.unwrap();
         let state = Arc::new(Mutex::new(V2PeerState::new(1)));
         state.lock().unwrap().upload_choked = false;
+        let state_for_test = Arc::clone(&state);
         let peer = tokio::spawn(run_v2_peer_protocol(
             context,
             peer_addr,
@@ -4721,6 +5077,52 @@ mod tests {
                 .expect("v2 peer loop stalled behind upload rate admission"),
             Some(V2PeerEvent::InterestChanged)
         ));
+
+        {
+            let mut local_have = context_for_test.local_have.write().await;
+            Arc::make_mut(&mut *local_have).set(0, false);
+        }
+        let _ = context_for_test.have_updates.send(());
+        let mut remote_have = V2Bitmap::new(1);
+        remote_have.set(0, true);
+        remote
+            .send(Message::Bitfield(remote_have.to_bitfield()))
+            .await
+            .unwrap();
+        remote.send(Message::Unchoke).await.unwrap();
+        timeout(Duration::from_secs(1), async {
+            loop {
+                if matches!(
+                    remote.next().await.unwrap().unwrap(),
+                    Message::Request {
+                        piece: 0,
+                        begin: 0,
+                        ..
+                    }
+                ) {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("v2 download request was not issued");
+        remote
+            .send(Message::Piece {
+                piece: 0,
+                begin: 0,
+                data: Bytes::from(vec![7u8; rt_peer_wire::message::MAX_BLOCK_SIZE as usize]),
+            })
+            .await
+            .unwrap();
+        remote.send(Message::NotInterested).await.unwrap();
+        assert!(matches!(
+            timeout(Duration::from_secs(1), event_rx.recv())
+                .await
+                .expect("v2 peer loop stalled behind download rate admission"),
+            Some(V2PeerEvent::InterestChanged)
+        ));
+        assert!(!context_for_test.local_have.read().await.get(0));
+        assert_eq!(state_for_test.lock().unwrap().downloaded, 0);
 
         drop(remote);
         assert!(timeout(Duration::from_secs(1), peer)
@@ -5825,6 +6227,9 @@ mod tests {
             )));
             let mut outstanding = HashMap::new();
             let mut assemblies = HashMap::new();
+            let mut pending_piece_completions = HashMap::new();
+            let mut pending_block_completions = HashMap::new();
+            let mut transfer_jobs = futures::stream::FuturesUnordered::<V2TransferTask>::new();
             for &block in order {
                 let (begin, data) = self.block(piece, block);
                 outstanding.insert(
@@ -5842,12 +6247,29 @@ mod tests {
                     &state,
                     &mut outstanding,
                     &mut assemblies,
+                    &mut transfer_jobs,
+                    &mut pending_block_completions,
                     piece as u32,
                     begin,
                     data,
                 )
                 .await?;
+                start_ready_v2_piece_jobs(
+                    &context,
+                    &mut assemblies,
+                    &mut pending_piece_completions,
+                    &mut transfer_jobs,
+                );
             }
+            drain_v2_transfer_jobs(
+                &context,
+                &state,
+                &mut assemblies,
+                &mut pending_block_completions,
+                &mut pending_piece_completions,
+                &mut transfer_jobs,
+            )
+            .await?;
             Ok(state)
         }
 
@@ -5878,6 +6300,39 @@ mod tests {
         }
     }
 
+    async fn drain_v2_transfer_jobs(
+        context: &V2PeerContext,
+        state: &Arc<Mutex<V2PeerState>>,
+        assemblies: &mut HashMap<u32, V2PieceAssembly>,
+        pending_block_completions: &mut HashMap<(u32, u32), u64>,
+        pending_piece_completions: &mut HashMap<u32, u64>,
+        transfer_jobs: &mut futures::stream::FuturesUnordered<V2TransferTask>,
+    ) -> anyhow::Result<()> {
+        while let Some(completion) = transfer_jobs.next().await {
+            match completion {
+                V2TransferCompletion::BlockStored(completion) => {
+                    apply_v2_block_completion(completion, assemblies, pending_block_completions)?;
+                }
+                V2TransferCompletion::PieceVerified(completion) => {
+                    apply_v2_piece_completion(
+                        context,
+                        state,
+                        pending_piece_completions,
+                        completion,
+                    )
+                    .await;
+                }
+            }
+            start_ready_v2_piece_jobs(
+                context,
+                assemblies,
+                pending_piece_completions,
+                transfer_jobs,
+            );
+        }
+        Ok(())
+    }
+
     /// Run one delivery order in both assembly modes and check every
     /// observable of a completed piece.
     async fn assert_multi_block_piece(len: usize, piece: usize, order: &[usize]) {
@@ -5904,6 +6359,88 @@ mod tests {
                 other => panic!("{label}: expected a Downloaded event, got {other:?}"),
             }
         }
+    }
+
+    #[tokio::test]
+    async fn v2_piece_is_not_available_until_completion_job_finishes() {
+        let case = MultiBlock::new(MB_PIECE, false).await;
+        let context = case
+            .task
+            .peer_context("127.0.0.1:6881".parse().unwrap(), PeerId::new());
+        let state = Arc::new(Mutex::new(V2PeerState::new(
+            case.task.piece_map.piece_count as usize,
+        )));
+        let mut outstanding = HashMap::new();
+        let mut assemblies = HashMap::new();
+        let mut pending_piece_completions = HashMap::new();
+        let mut pending_block_completions = HashMap::new();
+        let mut transfer_jobs = futures::stream::FuturesUnordered::<V2TransferTask>::new();
+
+        for block in 0..MB_PIECE.div_ceil(MB_BLOCK) {
+            let (begin, data) = case.block(0, block);
+            outstanding.insert(
+                (0, begin),
+                V2OutstandingRequest {
+                    length: data.len() as u32,
+                    _memory_lease: None,
+                },
+            );
+            handle_v2_piece(
+                &context,
+                &state,
+                &mut outstanding,
+                &mut assemblies,
+                &mut transfer_jobs,
+                &mut pending_block_completions,
+                0,
+                begin,
+                data,
+            )
+            .await
+            .unwrap();
+            start_ready_v2_piece_jobs(
+                &context,
+                &mut assemblies,
+                &mut pending_piece_completions,
+                &mut transfer_jobs,
+            );
+        }
+
+        while !pending_block_completions.is_empty() {
+            let completion = transfer_jobs
+                .next()
+                .await
+                .expect("queued block-admission work");
+            let V2TransferCompletion::BlockStored(completion) = completion else {
+                panic!("piece verification cannot precede block admission");
+            };
+            apply_v2_block_completion(completion, &mut assemblies, &mut pending_block_completions)
+                .unwrap();
+            start_ready_v2_piece_jobs(
+                &context,
+                &mut assemblies,
+                &mut pending_piece_completions,
+                &mut transfer_jobs,
+            );
+        }
+        assert_eq!(transfer_jobs.len(), 1);
+        assert!(!case.have(0).await, "queued verification is not completion");
+        assert!(case.task.events_rx.try_recv().is_err());
+        case.assert_payload(&[]);
+
+        let Some(V2TransferCompletion::PieceVerified(completion)) = transfer_jobs.next().await
+        else {
+            panic!("piece worker is queued");
+        };
+        apply_v2_piece_completion(&context, &state, &mut pending_piece_completions, completion)
+            .await;
+
+        assert!(case.have(0).await);
+        case.assert_payload(&[0]);
+        assert!(matches!(
+            case.task.events_rx.try_recv(),
+            Ok(V2PeerEvent::Downloaded { bytes, .. }) if bytes == MB_PIECE as u64
+        ));
     }
 
     #[tokio::test]
@@ -5982,12 +6519,17 @@ mod tests {
 
         let mut outstanding = HashMap::new();
         let mut assemblies = HashMap::new();
+        let pending_block_completions = HashMap::new();
+        let pending_piece_completions = HashMap::new();
         fill_v2_requests(
             &context,
             &mut framed,
             &state,
             &mut outstanding,
             &mut assemblies,
+            0,
+            &pending_block_completions,
+            &pending_piece_completions,
         )
         .await
         .unwrap();
@@ -6030,6 +6572,9 @@ mod tests {
         let mut remote = Framed::new(accepted.unwrap().0, PeerCodec::default());
         let mut outstanding = HashMap::new();
         let mut assemblies = HashMap::new();
+        let mut pending_block_completions = HashMap::new();
+        let mut pending_piece_completions = HashMap::new();
+        let mut transfer_jobs = futures::stream::FuturesUnordered::<V2TransferTask>::new();
         let peer_buffer_index = MemoryClass::PeerBuffer as usize;
         let baseline_used = resources.snapshot().classes[peer_buffer_index].used_bytes;
         let snapshot = resources.snapshot();
@@ -6051,6 +6596,9 @@ mod tests {
             &state,
             &mut outstanding,
             &mut assemblies,
+            transfer_jobs.len(),
+            &pending_block_completions,
+            &pending_piece_completions,
         )
         .await
         .unwrap();
@@ -6075,6 +6623,9 @@ mod tests {
             &state,
             &mut outstanding,
             &mut assemblies,
+            transfer_jobs.len(),
+            &pending_block_completions,
+            &pending_piece_completions,
         )
         .await
         .unwrap();
@@ -6120,13 +6671,31 @@ mod tests {
                 &state,
                 &mut outstanding,
                 &mut assemblies,
+                &mut transfer_jobs,
+                &mut pending_block_completions,
                 0,
                 begin,
                 Bytes::copy_from_slice(&content[start..start + MB_BLOCK]),
             )
             .await
             .unwrap();
+            start_ready_v2_piece_jobs(
+                &context,
+                &mut assemblies,
+                &mut pending_piece_completions,
+                &mut transfer_jobs,
+            );
         }
+        drain_v2_transfer_jobs(
+            &context,
+            &state,
+            &mut assemblies,
+            &mut pending_block_completions,
+            &mut pending_piece_completions,
+            &mut transfer_jobs,
+        )
+        .await
+        .unwrap();
         let remaining_bytes = outstanding
             .values()
             .map(|request| u64::from(request.length))

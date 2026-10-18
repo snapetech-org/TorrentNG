@@ -633,21 +633,33 @@ impl PiecePicker {
         request
     }
 
-    /// Record a received block. Returns true if the piece is now complete.
-    pub fn block_received(&mut self, piece: usize, begin: u32) -> bool {
+    /// Record a received block without marking its piece available yet.
+    ///
+    /// Transfer actors use this while storage and hash completions are
+    /// pending. Keeping the fully received piece in `in_progress` prevents
+    /// duplicate requests while preserving the verified-have boundary.
+    /// Returns true when every block has arrived.
+    pub fn block_received_pending(&mut self, piece: usize, begin: u32) -> bool {
         let block_idx = (begin / MAX_BLOCK_SIZE) as usize;
         let complete = self.in_progress.get_mut(&piece).is_some_and(|state| {
             state.mark_received(block_idx);
             state.is_complete()
         });
-        if complete {
-            let old_wanted = self.wanted.get(piece);
-            let enabled = self.enabled.get(piece);
-            self.remove_in_progress(piece);
-            self.wanted.set(piece, false);
-            self.adjust_outstanding(old_wanted && enabled, false);
-        }
         self.refresh_candidate(piece);
+        complete
+    }
+
+    /// Record a received block and immediately publish its piece as complete.
+    ///
+    /// This is for callers whose verification is synchronous with receipt.
+    /// Actors with asynchronous verification must use
+    /// [`Self::block_received_pending`] and call [`Self::mark_have`] only
+    /// after a successful integrity result.
+    pub fn block_received(&mut self, piece: usize, begin: u32) -> bool {
+        let complete = self.block_received_pending(piece, begin);
+        if complete {
+            self.mark_have(piece);
+        }
         complete
     }
 
@@ -829,6 +841,29 @@ mod tests {
         assert!(!p.block_received(0, r1.begin));
         assert!(p.block_received(0, r2.begin));
         assert!(p.is_complete());
+    }
+
+    #[test]
+    fn pending_verification_does_not_publish_piece_as_have() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE * 2);
+        p.availability.add_have(0);
+        let all = peer_has_all(1);
+        let first = p.pick(&all).unwrap();
+        let second = p.pick(&all).unwrap();
+
+        assert!(!p.block_received_pending(0, first.begin));
+        assert!(p.block_received_pending(0, second.begin));
+        assert!(!p.is_complete());
+        assert!(!p.have_piece(0));
+        assert!(p.is_piece_in_progress(0));
+        assert!(p.is_block_received(0, first.begin));
+        assert!(p.is_block_received(0, second.begin));
+        assert!(p.pick(&all).is_none());
+
+        p.mark_have(0);
+        assert!(p.is_complete());
+        assert!(p.have_piece(0));
+        assert!(!p.is_piece_in_progress(0));
     }
 
     #[test]

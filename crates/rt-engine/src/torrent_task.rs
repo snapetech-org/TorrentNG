@@ -1323,6 +1323,40 @@ struct LeasedBlockEvent {
     _memory_lease: Option<Arc<MemoryLease>>,
 }
 
+const MAX_TRANSFER_COMPLETION_JOBS: usize = 64;
+
+#[derive(Debug, Default)]
+struct PendingPieceWork {
+    writes_in_flight: usize,
+    failed: bool,
+    verify_ready: bool,
+    verify_in_flight: bool,
+    aggregate_write: bool,
+    aggregate_write_ready: bool,
+    verified_payload: Option<(bytes::Bytes, Option<Arc<MemoryLease>>)>,
+}
+
+enum TransferCompletion {
+    BlockWritten {
+        piece: u32,
+        offset: u32,
+        length: u64,
+        result: Result<(), String>,
+    },
+    PieceVerified {
+        piece: u32,
+        result: VerifyResult,
+        assembled: Option<(bytes::Bytes, Option<Arc<MemoryLease>>)>,
+    },
+    AggregatePieceWritten {
+        piece: u32,
+        result: Result<(), String>,
+    },
+}
+
+type TransferJobFuture =
+    Pin<Box<dyn std::future::Future<Output = TransferCompletion> + Send + 'static>>;
+
 impl LeasedBlockEvent {
     fn new(block: BlockEvent, memory_lease: MemoryLease) -> anyhow::Result<Self> {
         let payload_bytes = u64::try_from(block.data.len())?;
@@ -1835,7 +1869,7 @@ impl Drop for UploadReadTasks {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct HybridV2Meta {
     piece_length: u64,
     files: Vec<HybridV2File>,
@@ -1843,7 +1877,7 @@ struct HybridV2Meta {
     valid_layout: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct HybridV2File {
     /// The v1 file index used by `PieceMap`; v1 padding entries can make this
     /// differ from the file's v2 index.
@@ -1930,10 +1964,311 @@ impl HybridV2Meta {
     }
 }
 
+#[derive(Clone)]
+struct TransferIoContext {
+    meta: Arc<TorrentMetaV1>,
+    piece_map: Arc<PieceMap>,
+    save_root: PathBuf,
+    storage: MountScheduler,
+    prepared_files: Arc<Mutex<HashSet<u32>>>,
+    prepared_file_locks: Arc<tokio::sync::Mutex<HashMap<u32, Arc<tokio::sync::Mutex<()>>>>>,
+}
+
+async fn prepare_transfer_file_once(
+    context: &TransferIoContext,
+    file_index: u32,
+    path: &std::path::Path,
+    length: u64,
+) -> anyhow::Result<()> {
+    prepare_file_once_with_locks(
+        &context.storage,
+        &context.prepared_files,
+        &context.prepared_file_locks,
+        file_index,
+        path,
+        length,
+    )
+    .await
+}
+
+async fn prepare_file_once_with_locks(
+    storage: &MountScheduler,
+    prepared_files: &Mutex<HashSet<u32>>,
+    prepared_file_locks: &tokio::sync::Mutex<HashMap<u32, Arc<tokio::sync::Mutex<()>>>>,
+    file_index: u32,
+    path: &std::path::Path,
+    length: u64,
+) -> anyhow::Result<()> {
+    let file_lock = {
+        let mut locks = prepared_file_locks.lock().await;
+        Arc::clone(
+            locks
+                .entry(file_index)
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+        )
+    };
+    let _file_guard = file_lock.lock().await;
+    if lock_prepared_files(prepared_files).contains(&file_index) {
+        return Ok(());
+    }
+    storage
+        .prepare_file(path, length, storage.io_config().preallocation_mode)
+        .await?;
+    lock_prepared_files(prepared_files).insert(file_index);
+    Ok(())
+}
+
+async fn write_transfer_block(
+    context: &TransferIoContext,
+    event: LeasedBlockEvent,
+) -> anyhow::Result<()> {
+    let LeasedBlockEvent {
+        block,
+        _memory_lease,
+    } = event;
+    let block_len = u32::try_from(block.data.len())
+        .map_err(|_| anyhow::anyhow!("peer block length does not fit in u32"))?;
+    context.piece_map.validate_request_block(BlockExtent::new(
+        block.piece,
+        block.offset,
+        block_len,
+    ))?;
+    let regions = context
+        .piece_map
+        .validate_request(block.piece, block.offset, block_len)?;
+    let mut data_offset = 0usize;
+
+    for region in regions {
+        let region_len = usize::try_from(region.length)
+            .map_err(|_| anyhow::anyhow!("piece region length does not fit in memory"))?;
+        let start = data_offset;
+        let end = start
+            .checked_add(region_len)
+            .ok_or_else(|| anyhow::anyhow!("piece region data offset overflow"))?;
+        let region_data = block
+            .data
+            .get(start..end)
+            .ok_or_else(|| anyhow::anyhow!("peer block does not cover mapped piece regions"))?;
+        if region.pad {
+            if region_data.iter().any(|byte| *byte != 0) {
+                anyhow::bail!("peer block contains non-zero bytes for BEP 47 padding");
+            }
+            data_offset = end;
+            continue;
+        }
+        let file = context
+            .meta
+            .files
+            .iter()
+            .find(|file| file.index == region.file_index)
+            .ok_or_else(|| anyhow::anyhow!("file index {} out of range", region.file_index))?;
+        let path = file.path.resolve(&context.save_root);
+        prepare_transfer_file_once(context, file.index, &path, file.length).await?;
+        data_offset = end;
+        match _memory_lease.as_ref() {
+            Some(lease) => {
+                scheduled_write_with_shared_payload_lease(
+                    &context.storage,
+                    IoClass::PeerWrite,
+                    &path,
+                    region.file_offset,
+                    block.data.slice(start..end),
+                    true,
+                    Arc::clone(lease),
+                )
+                .await?;
+            }
+            None => {
+                scheduled_write(
+                    &context.storage,
+                    IoClass::PeerWrite,
+                    &path,
+                    region.file_offset,
+                    bytes::Bytes::copy_from_slice(region_data),
+                    true,
+                )
+                .await?;
+            }
+        }
+    }
+
+    if data_offset != block.data.len() {
+        anyhow::bail!("mapped piece regions do not cover the peer block");
+    }
+    Ok(())
+}
+
+async fn write_transfer_piece(
+    context: &TransferIoContext,
+    piece: u32,
+    data: bytes::Bytes,
+    payload_lease: Option<Arc<MemoryLease>>,
+) -> anyhow::Result<()> {
+    let regions = context.piece_map.piece_to_file_regions(piece)?;
+    for region in regions {
+        if region.pad {
+            continue;
+        }
+        let file = context
+            .meta
+            .files
+            .iter()
+            .find(|file| file.index == region.file_index)
+            .ok_or_else(|| anyhow::anyhow!("file index {} out of range", region.file_index))?;
+        let path = file.path.resolve(&context.save_root);
+        prepare_transfer_file_once(context, file.index, &path, file.length).await?;
+        let start = usize::try_from(region.piece_offset)
+            .map_err(|_| anyhow::anyhow!("piece region offset does not fit memory"))?;
+        let region_len = usize::try_from(region.length)
+            .map_err(|_| anyhow::anyhow!("piece region length does not fit memory"))?;
+        let end = start
+            .checked_add(region_len)
+            .ok_or_else(|| anyhow::anyhow!("piece region data offset overflow"))?;
+        anyhow::ensure!(
+            data.get(start..end).is_some(),
+            "piece assembly does not cover mapped region"
+        );
+        let region_data = data.slice(start..end);
+        match payload_lease.as_ref() {
+            Some(lease) => {
+                scheduled_write_with_shared_payload_lease(
+                    &context.storage,
+                    IoClass::PeerWrite,
+                    &path,
+                    region.file_offset,
+                    region_data,
+                    true,
+                    Arc::clone(lease),
+                )
+                .await?;
+            }
+            None => {
+                scheduled_write(
+                    &context.storage,
+                    IoClass::PeerWrite,
+                    &path,
+                    region.file_offset,
+                    region_data,
+                    true,
+                )
+                .await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn verify_transfer_piece(
+    context: TransferIoContext,
+    hybrid_v2: Option<Arc<HybridV2Meta>>,
+    piece: u32,
+    assembled: Option<(bytes::Bytes, Option<Arc<MemoryLease>>)>,
+) -> VerifyResult {
+    if let Some((data, payload_lease)) = assembled {
+        let Some(expected) = context.meta.pieces.get(piece as usize) else {
+            return VerifyResult::Missing {
+                file_index: 0,
+                reason: format!("no hash for piece {piece}"),
+            };
+        };
+        if let Some(hybrid_v2) = hybrid_v2.as_ref() {
+            let Some(expectation) = hybrid_v2.piece_expectation(piece) else {
+                return VerifyResult::Missing {
+                    file_index: 0,
+                    reason: format!("no authenticated v2 file range for hybrid piece {piece}"),
+                };
+            };
+            let Ok(piece_length) = usize::try_from(context.meta.piece_length) else {
+                return VerifyResult::Missing {
+                    file_index: expectation.file_index,
+                    reason: "hybrid piece length does not fit memory address space".to_owned(),
+                };
+            };
+            let Ok(v2_content_len) = usize::try_from(expectation.content_len) else {
+                return VerifyResult::Missing {
+                    file_index: expectation.file_index,
+                    reason: "hybrid content length does not fit memory address space".to_owned(),
+                };
+            };
+            let hashes = match payload_lease.as_ref() {
+                Some(lease) => {
+                    context
+                        .storage
+                        .hash_hybrid_piece_retry_queue_full_with_shared_payload_lease(
+                            data,
+                            v2_content_len,
+                            piece_length,
+                            Arc::clone(lease),
+                        )
+                        .await
+                }
+                None => {
+                    context
+                        .storage
+                        .hash_hybrid_piece_retry_queue_full(data, v2_content_len, piece_length)
+                        .await
+                }
+            };
+            return match hashes {
+                Ok(hashes) if hashes.v1_sha1 == *expected => {
+                    let actual_v2 = match expectation.piece_leaf_count {
+                        Some(_) => hashes.v2_piece_root,
+                        None => hashes.v2_file_root,
+                    };
+                    if actual_v2 == expectation.expected_root {
+                        VerifyResult::Valid
+                    } else {
+                        VerifyResult::Invalid
+                    }
+                }
+                Ok(_) => VerifyResult::Invalid,
+                Err(error) => VerifyResult::Missing {
+                    file_index: expectation.file_index,
+                    reason: error.to_string(),
+                },
+            };
+        }
+        let hash = match payload_lease.as_ref() {
+            Some(lease) => {
+                context
+                    .storage
+                    .hash_sha1_retry_queue_full_with_shared_payload_lease(data, Arc::clone(lease))
+                    .await
+            }
+            None => context.storage.hash_sha1_retry_queue_full(data).await,
+        };
+        return match hash {
+            Ok(actual) if &actual == expected => VerifyResult::Valid,
+            Ok(_) => VerifyResult::Invalid,
+            Err(error) => VerifyResult::Missing {
+                file_index: 0,
+                reason: error.to_string(),
+            },
+        };
+    }
+
+    let verifier = PieceVerifier::new(
+        &context.save_root,
+        &context.storage,
+        &context.piece_map,
+        &context.meta.pieces,
+    );
+    match hybrid_v2.as_ref() {
+        Some(meta) => match meta.piece_expectation(piece) {
+            Some(expectation) => verifier.verify_hybrid_piece(piece, &expectation).await,
+            None => VerifyResult::Missing {
+                file_index: 0,
+                reason: format!("no authenticated v2 file range for hybrid piece {piece}"),
+            },
+        },
+        None => verifier.verify_piece(piece).await,
+    }
+}
+
 pub struct TorrentTask {
     info_hash_hex: String,
-    meta: TorrentMetaV1,
-    hybrid_v2: Option<HybridV2Meta>,
+    meta: Arc<TorrentMetaV1>,
+    hybrid_v2: Option<Arc<HybridV2Meta>>,
     /// Exact bencoded `info` bytes used for BEP 9 upload responses. This is
     /// shared by every peer instead of being rebuilt and copied per
     /// connection. The allocation is retained under the metadata budget for
@@ -2060,7 +2395,11 @@ pub struct TorrentTask {
     torrent_upload_limit_bytes_per_sec: Option<u64>,
     completed_piece_verify_from_memory: u64,
     completed_piece_verify_from_disk: u64,
-    prepared_files: Mutex<HashSet<u32>>,
+    prepared_files: Arc<Mutex<HashSet<u32>>>,
+    prepared_file_locks: Arc<tokio::sync::Mutex<HashMap<u32, Arc<tokio::sync::Mutex<()>>>>>,
+    transfer_jobs: futures::stream::FuturesUnordered<TransferJobFuture>,
+    pending_transfer_blocks: HashSet<(u32, u32)>,
+    pending_transfer_pieces: HashMap<u32, PendingPieceWork>,
     paused: bool,
     /// The lifecycle state to restore when a recheck was requested for a
     /// dormant/paused task. Dormant tasks are constructed with `paused = true`
@@ -2109,7 +2448,7 @@ impl TorrentTask {
                 "hybrid v2 metadata did not match the validated v1 file layout"
             );
         }
-        self.hybrid_v2 = Some(projection);
+        self.hybrid_v2 = Some(Arc::new(projection));
     }
 
     /// Share the engine's crash-safety runtime with this task.
@@ -2338,7 +2677,7 @@ impl TorrentTask {
         };
         let mut task = TorrentTask {
             info_hash_hex,
-            meta,
+            meta: Arc::new(meta),
             hybrid_v2: None,
             metadata,
             _metadata_memory_lease: metadata_memory_lease,
@@ -2420,7 +2759,11 @@ impl TorrentTask {
             torrent_upload_limit_bytes_per_sec: None,
             completed_piece_verify_from_memory: 0,
             completed_piece_verify_from_disk: 0,
-            prepared_files: Mutex::new(HashSet::new()),
+            prepared_files: Arc::new(Mutex::new(HashSet::new())),
+            prepared_file_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            transfer_jobs: futures::stream::FuturesUnordered::new(),
+            pending_transfer_blocks: HashSet::new(),
+            pending_transfer_pieces: HashMap::new(),
             paused,
             recheck_restore_state: match initial_state {
                 TorrentState::Paused => Some(TorrentState::Paused),
@@ -2566,6 +2909,7 @@ impl TorrentTask {
                         );
                         self.cancel_tracker_announces();
                         self.announce_stopped_with_control_deadline().await;
+                        self.drain_transfer_jobs().await;
                         self.persist_progress().await;
                         self.save_fastresume_for_exit().await;
                         self.shutdown_peers().await;
@@ -2575,6 +2919,7 @@ impl TorrentTask {
                         TorrentCmd::Shutdown => {
                             self.cancel_tracker_announces();
                             self.announce_stopped_with_control_deadline().await;
+                            self.drain_transfer_jobs().await;
                             self.persist_progress().await;
                             self.save_fastresume_for_exit().await;
                             self.shutdown_peers().await;
@@ -2584,6 +2929,7 @@ impl TorrentTask {
                             let was_paused = self.paused;
                             self.paused = true;
                             self.cancel_tracker_announces();
+                            self.drain_transfer_jobs().await;
                             self.save_fastresume(false).await;
                             self.shutdown_peers().await;
                             let result = self.set_state_checked(TorrentState::Paused).await;
@@ -2671,6 +3017,7 @@ impl TorrentTask {
                             let was_paused = self.paused;
                             self.paused = true;
                             self.cancel_tracker_announces();
+                            self.drain_transfer_jobs().await;
                             self.save_fastresume(false).await;
                             self.shutdown_peers().await;
                             if let Err(error) = self.set_state_checked(TorrentState::Paused).await {
@@ -2954,6 +3301,12 @@ impl TorrentTask {
                     }
                 }
 
+                completion = self.transfer_jobs.next(), if !self.transfer_jobs.is_empty() => {
+                    if let Some(completion) = completion {
+                        self.handle_transfer_completion(completion).await;
+                    }
+                }
+
                 Some(event) = self.tracker_workers.recv_event() => {
                     match event {
                         TrackerWorkerEvent::Announce(result) => {
@@ -3051,6 +3404,7 @@ impl TorrentTask {
                             );
                             self.cancel_tracker_announces();
                             self.announce_stopped_with_control_deadline().await;
+                            self.drain_transfer_jobs().await;
                             self.persist_progress().await;
                             self.save_fastresume_for_exit().await;
                             self.shutdown_peers().await;
@@ -3720,7 +4074,7 @@ impl TorrentTask {
                     self.restored_partial_pieces.remove(&piece);
                 }
             }
-            self.meta.files = effective_files;
+            Arc::make_mut(&mut self.meta).files = effective_files;
             self.piece_map = piece_map;
             self._file_policy_memory_lease = file_policy_memory_lease;
             lock_prepared_files(&self.prepared_files).clear();
@@ -4004,6 +4358,7 @@ impl TorrentTask {
         // those received blocks first so starting a recheck cannot discard
         // progress that has not yet crossed the normal complete-piece write
         // boundary.
+        self.drain_transfer_jobs().await;
         self.save_fastresume(false).await;
         self.shutdown_peers().await;
         // Do not checkpoint the old fastresume bitmap while this scan is in
@@ -4751,6 +5106,17 @@ impl TorrentTask {
         self.write_block_inner(block, None).await
     }
 
+    pub(super) fn transfer_io_context(&self) -> TransferIoContext {
+        TransferIoContext {
+            meta: Arc::clone(&self.meta),
+            piece_map: Arc::clone(&self.piece_map),
+            save_root: self.save_root.clone(),
+            storage: self.storage.clone(),
+            prepared_files: Arc::clone(&self.prepared_files),
+            prepared_file_locks: Arc::clone(&self.prepared_file_locks),
+        }
+    }
+
     async fn write_leased_block(&self, event: &LeasedBlockEvent) -> anyhow::Result<()> {
         self.write_block_inner(&event.block, event._memory_lease.clone())
             .await
@@ -4909,19 +5275,15 @@ impl TorrentTask {
         path: &std::path::Path,
         len: u64,
     ) -> anyhow::Result<()> {
-        {
-            let prepared = lock_prepared_files(&self.prepared_files);
-            if prepared.contains(&file_index) {
-                return Ok(());
-            }
-        }
-
-        self.storage
-            .prepare_file(path, len, self.storage.io_config().preallocation_mode)
-            .await?;
-
-        let mut prepared = lock_prepared_files(&self.prepared_files);
-        prepared.insert(file_index);
+        prepare_file_once_with_locks(
+            &self.storage,
+            &self.prepared_files,
+            &self.prepared_file_locks,
+            file_index,
+            path,
+            len,
+        )
+        .await?;
         Ok(())
     }
 
@@ -5354,7 +5716,19 @@ impl TorrentTask {
     /// still waiting for durability or read-back verification reports one byte,
     /// so nothing treats it as complete before its data is safe.
     fn reported_bytes_left(&self) -> u64 {
-        let left = self.picker.bytes_left();
+        let pending_verification_bytes = self
+            .pending_transfer_pieces
+            .iter()
+            .filter(|(_, work)| {
+                work.verify_ready || work.verify_in_flight || work.aggregate_write_ready
+            })
+            .filter_map(|(&piece, _)| self.piece_length(piece).ok())
+            .map(u64::from)
+            .fold(0u64, u64::saturating_add);
+        let left = self
+            .picker
+            .bytes_left()
+            .saturating_add(pending_verification_bytes);
         if left == 0 && self.is_finalizing() {
             1
         } else {
@@ -5828,8 +6202,10 @@ impl TorrentTask {
             .partial_pieces_limited(MAX_FASTRESUME_BLOCKS_PER_PARTIAL_PIECE)
             .into_iter()
             .filter(|(piece, _)| {
-                !self.piece_assemblies.contains_key(piece)
-                    || durable_assembly_pieces.contains(piece)
+                !self.pending_transfer_pieces.get(piece).is_some_and(|work| {
+                    work.verify_ready || work.verify_in_flight || work.aggregate_write_ready
+                }) && (!self.piece_assemblies.contains_key(piece)
+                    || durable_assembly_pieces.contains(piece))
             })
             .map(|(piece, received_blocks)| PartialPieceState {
                 piece,
@@ -9564,6 +9940,14 @@ mod tests {
             bytes::Bytes::from(vec![0; request.length as usize]),
         ))
         .await;
+        assert_eq!(task.transfer_jobs.len(), 1);
+        assert!(task
+            .pending_transfer_blocks
+            .contains(&(request.piece, request.begin)));
+        assert!(!task
+            .picker
+            .is_block_received(request.piece as usize, request.begin));
+        task.drain_transfer_jobs().await;
 
         let retry = task
             .picker
@@ -11477,6 +11861,7 @@ mod tests {
             bytes::Bytes::from_static(b"\xA5\xA5\xA5\xA5"),
         ))
         .await;
+        task.drain_transfer_jobs().await;
 
         let state = task.fastresume.load(&info_hash).unwrap();
         assert_eq!(state.pieces, vec![PieceState::Unknown]);
@@ -11779,6 +12164,7 @@ mod tests {
             bytes::Bytes::from(second.clone()),
         ))
         .await;
+        task.drain_transfer_jobs().await;
 
         assert!(task.picker.is_complete());
         assert!(task.piece_assemblies.is_empty());

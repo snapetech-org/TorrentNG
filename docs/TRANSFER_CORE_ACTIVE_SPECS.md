@@ -781,6 +781,102 @@ file indexes because synthetic v1 pad files shift those indexes.
 - **External evidence still required:** none for the bounded hash contract;
   whole-client hash throughput and CPU remain PERF-107/110/113 evidence.
 
+## IO-008 — Completion-driven transfer actors
+
+- **Priority / wave:** P0 / 8
+- **Prerequisites:** IO-002, IO-006, IO-007, NET-104, NET-106
+- **Owning component:** v1/hybrid `TorrentTask` and pure-v2 torrent actor.
+- **Finding or capability:** peer progress must continue while bounded storage
+  writes and piece verification complete; only the actor may apply results to
+  picker, completion, and resume state.
+- **Status:** `wip`
+
+### Scope
+
+The authored v1/hybrid slice moves direct received-block writes, completion
+verification, and aggregate writes into a bounded actor-owned job set. Picker
+and progress state change only when the actor applies the typed completion.
+Pure-v2 moves download-rate admission, direct block writes, complete-piece
+storage reads, Merkle hashing, and aggregate writes into a bounded per-peer
+job set; a piece stays unavailable until its completion is applied. Existing
+request and assembly memory leases remain alive through their storage/hash
+consumers.
+
+This is still partial: generation/failure/reset qualification and v2
+disconnect/quiesce coverage are not complete. v1 lifecycle snapshots drain
+accepted work before shutdown, pause, recheck, and storage-move snapshots.
+Bulk validation remains deferred.
+
+### Ownership and invariant
+
+- **Current owner:** each torrent actor owns its picker and transfer state;
+  v1/hybrid storage and verification results are actor-applied, while pure-v2
+  completed-piece results are applied by the peer loop that owns that peer.
+- **Target owner:** bounded job sets own storage/hash futures and payload
+  leases until completion; each actor remains the sole writer of its piece,
+  peer, lifecycle, and durability state.
+- **Invariant preserved:** write completion precedes verification; a piece
+  remains pending until its integrity result is applied; accepted work is
+  serialized with piece reset and drained before v1 quiesce, move, and clean
+  shutdown snapshots. An explicit generation fence and pure-v2 disconnect /
+  quiesce drain are still open.
+- **Must not:** spawn untracked work, drop a payload lease before backend
+  completion, advertise or persist unverified bytes as complete, or let an old
+  job commit into a replacement attempt.
+
+### Acceptance
+
+- Active peer controls and lifecycle commands continue to progress while a
+  storage write or hash job is held.
+- Per-torrent active work and deferred input have explicit bounds; saturation
+  returns request ownership for retry without losing a valid piece.
+- Direct-write and in-memory assembly paths both apply storage/hash results
+  through the actor; hybrid pieces still verify both roots from shared bytes.
+- Failure, cancellation, retry, piece reset, pause, storage move, and shutdown
+  preserve picker accounting and memory leases through late backend completion.
+- A piece becomes locally available only after verification and, for the
+  aggregate path, successful payload write; fastresume barriers cover all
+  accepted writes that the snapshot claims.
+
+### Files and compatibility
+
+- **Expected code paths:** `torrent_task.rs`,
+  `torrent_task/peer_transfer.rs`, `torrent_task_v2.rs`,
+  `rt-piece-picker`, and the storage completion ownership helpers.
+- **State or wire compatibility:** no wire-format change; resume state keeps
+  the existing format and only records actor-applied piece results.
+- **Migration / rollback:** no runtime flag or persistent-format change has
+  been added. The old synchronous helpers remain available for recheck and
+  other non-peer paths; reverting the actor job routing remains a source
+  rollback until generation/failure fencing and v2 disconnect/quiesce cases
+  are covered and the bulk evidence is reviewed.
+- **Feature flag or rollout boundary:** no separate flag; this is the
+  production actor completion contract required before NET-114 integration.
+
+### Evidence
+
+- **Regression source added or updated:** `pending_verification_does_not_publish_piece_as_have`
+  checks picker state stays pending until verification is applied;
+  `failed_block_write_releases_picker_request`,
+  `hash_failure_does_not_persist_piece_as_valid`, and
+  `restored_partial_piece_writes_new_blocks_directly` cover v1 failure and
+  retry behavior; `v2_piece_is_not_available_until_completion_job_finishes`
+  checks a pure-v2 piece remains unavailable and unwritten while its completion
+  job is queued, then publishes after successful hash and write. Existing
+  v2 multi-block and request-lease sources were adapted to drain the job;
+  `v2_peer_reads_control_messages_while_transfer_jobs_wait_for_rate_budget`
+  covers upload and download budget waits while the peer loop handles controls.
+  These sources are authored but unrun; generation/failure fencing,
+  disconnect/quiesce, and broader lifecycle qualification remain open.
+- **Command or probe to run:** focused actor and picker regressions during the
+  requested bulk pass.
+- **Expected result:** actors process controls while accepted transfer work is
+  pending and publish only verified, fully written pieces.
+- **Executed on exact revision:** no.
+- **Artifact or report path:** pending bulk pass.
+- **External evidence still required:** saturated mixed-peer completion
+  latency and resource bounds.
+
 ## NET-103 — Reserve receive capacity before requests
 
 - **Priority / wave:** P0 / 4

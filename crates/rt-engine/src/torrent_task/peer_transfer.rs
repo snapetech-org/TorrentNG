@@ -393,181 +393,389 @@ impl TorrentTask {
     }
 
     pub(super) async fn handle_block(&mut self, event: LeasedBlockEvent) {
-        let LeasedBlockEvent {
-            block,
-            _memory_lease,
-        } = event;
-        let piece = block.piece;
+        let piece = event.block.piece;
+        let offset = event.block.offset;
         if !self.picker.is_piece_in_progress(piece as usize) {
             debug!(
                 component = "torrent",
                 operation = "receive_block",
                 torrent = %self.info_hash_hex,
                 piece,
-                offset = block.offset,
+                offset,
                 result = "ignored",
                 reason = "piece_not_in_progress",
                 "dropping a late block after the piece request state was released"
             );
             return;
         }
-        if self.picker.is_block_received(piece as usize, block.offset) {
+        if self.picker.is_block_received(piece as usize, offset)
+            || self.pending_transfer_blocks.contains(&(piece, offset))
+        {
             debug!(
                 component = "torrent",
                 operation = "receive_block",
                 torrent = %self.info_hash_hex,
                 piece,
-                offset = block.offset,
+                offset,
                 result = "ignored",
                 reason = "duplicate_block",
                 "dropping a duplicate block already accepted for this piece"
             );
             return;
         }
+        if self
+            .pending_transfer_pieces
+            .get(&piece)
+            .is_some_and(|work| work.failed)
+        {
+            self.picker.cancel_request(piece as usize, offset);
+            return;
+        }
         if let Err(error) =
-            validate_padding_block(&self.piece_map, piece, block.offset, &block.data)
+            validate_padding_block(&self.piece_map, piece, offset, &event.block.data)
         {
             warn!(
                 component = "torrent",
                 operation = "receive_block",
                 torrent = %self.info_hash_hex,
                 piece,
-                offset = block.offset,
+                offset,
                 result = "rejected",
                 error = %error,
                 "peer supplied non-zero or malformed BEP 47 padding data"
             );
-            self.picker.cancel_request(piece as usize, block.offset);
-            self.remove_piece_assembly(piece);
+            self.picker.cancel_request(piece as usize, offset);
+            let has_in_flight_writes =
+                if let Some(work) = self.pending_transfer_pieces.get_mut(&piece) {
+                    work.failed = true;
+                    work.writes_in_flight > 0
+                } else {
+                    false
+                };
+            if !has_in_flight_writes {
+                self.fail_piece_transfer(piece);
+            }
             return;
         }
         let aggregate_piece_write = self.can_aggregate_piece_write(piece);
         if aggregate_piece_write {
-            if let Err(e) = self.record_piece_block(&block).await {
+            if let Err(e) = self.record_piece_block(&event.block).await {
                 warn!(
                     component = "torrent",
                     operation = "assemble_piece",
                     torrent = %self.info_hash_hex,
                     piece,
-                    offset = block.offset,
+                    offset,
                     result = "error",
                     error = %e,
                     "failed to assemble in-memory piece for verification"
                 );
                 self.remove_piece_assembly(piece);
                 self.picker.reject_piece(piece as usize);
+                self.pending_transfer_pieces.remove(&piece);
                 return;
             }
-        }
-        if !aggregate_piece_write {
-            if let Err(e) = self.write_block_inner(&block, _memory_lease.clone()).await {
-                warn!(
-                    component = "storage",
-                    operation = "write_block",
-                    torrent = %self.info_hash_hex,
-                    piece,
-                    offset = block.offset,
-                    result = "error",
-                    error = %e,
-                    "block write failed"
-                );
-                // `handle_peer_event` removes the block from the peer's
-                // request list before handing it here, but the picker still
-                // owns the corresponding in-progress reservation. Release
-                // that reservation when the disk write fails; otherwise the
-                // picker considers the block permanently outstanding even
-                // though no peer will deliver it again.
-                self.picker.cancel_request(piece as usize, block.offset);
-                self.remove_piece_assembly(piece);
-                return;
-            }
-        }
-        self.record_download(block.data.len() as u64).await;
-
-        let complete = self
-            .picker
-            .block_received(block.piece as usize, block.offset);
-        if let Ok(length) = u32::try_from(block.data.len()) {
+            self.record_download(event.block.data.len() as u64).await;
+            let complete = self.picker.block_received_pending(piece as usize, offset);
             self.cancel_endgame_duplicates(BlockRequest {
-                piece: block.piece,
-                begin: block.offset,
-                length,
+                piece,
+                begin: offset,
+                length: event.block.data.len() as u32,
             });
-        }
-        if !complete {
-            // Persist progress periodically so amount_left stays current even
-            // before the first piece verifies. The picker tracks partial
-            // piece bytes so progress is visible as blocks arrive. A complete
-            // piece is deliberately held out until after verification: the
-            // fastresume writer maps picker completion to `Valid` and can
-            // flush an in-memory assembly to disk.
-            self.persist_progress_throttled(false).await;
+            if complete {
+                let work = self.pending_transfer_pieces.entry(piece).or_default();
+                work.aggregate_write = true;
+                work.verify_ready = true;
+            } else {
+                self.pending_transfer_pieces.remove(&piece);
+            }
+            self.start_ready_transfer_jobs();
+            if !complete && !self.picker.is_complete() {
+                self.persist_progress_throttled(false).await;
+            }
             return;
         }
 
-        match self.verify_completed_piece(block.piece).await {
-            VerifyResult::Valid => {
-                if aggregate_piece_write {
-                    if let Err(e) = self.write_completed_piece(block.piece).await {
-                        warn!(
-                            component = "storage",
-                            operation = "write_completed_piece",
-                            piece = block.piece,
-                            torrent = %self.info_hash_hex,
-                            result = "error",
-                            error = %e,
-                            "completed piece write failed"
-                        );
-                        self.picker.reject_piece(block.piece as usize);
-                        self.remove_piece_assembly(block.piece);
-                        return;
+        if self.transfer_jobs.len() >= MAX_TRANSFER_COMPLETION_JOBS {
+            // The peer has already delivered the block, but retaining another
+            // payload would exceed this torrent's storage-work bound. Return
+            // the picker reservation so the block can be requested again.
+            self.picker.cancel_request(piece as usize, offset);
+            return;
+        }
+        let work = self.pending_transfer_pieces.entry(piece).or_default();
+        work.aggregate_write = false;
+        work.writes_in_flight = work.writes_in_flight.saturating_add(1);
+        self.pending_transfer_blocks.insert((piece, offset));
+
+        let length = event.block.data.len() as u64;
+        let context = self.transfer_io_context();
+        self.transfer_jobs.push(Box::pin(async move {
+            let result = write_transfer_block(&context, event)
+                .await
+                .map_err(|error| error.to_string());
+            TransferCompletion::BlockWritten {
+                piece,
+                offset,
+                length,
+                result,
+            }
+        }));
+    }
+
+    pub(super) fn start_ready_transfer_jobs(&mut self) {
+        if self.transfer_jobs.len() >= MAX_TRANSFER_COMPLETION_JOBS {
+            return;
+        }
+        let ready_pieces: Vec<u32> = self
+            .pending_transfer_pieces
+            .iter()
+            .filter_map(|(&piece, work)| {
+                (work.writes_in_flight == 0
+                    && !work.failed
+                    && !work.verify_in_flight
+                    && (work.verify_ready || work.aggregate_write_ready))
+                    .then_some(piece)
+            })
+            .collect();
+        let mut ready_pieces = ready_pieces;
+        ready_pieces.sort_unstable();
+        for piece in ready_pieces {
+            if self.transfer_jobs.len() >= MAX_TRANSFER_COMPLETION_JOBS {
+                break;
+            }
+            let Some(work) = self.pending_transfer_pieces.get(&piece) else {
+                continue;
+            };
+            let writing_aggregate = work.aggregate_write_ready;
+            let aggregate_piece = work.aggregate_write;
+            let verified_payload = work.verified_payload.clone();
+            let assembled = if !writing_aggregate && aggregate_piece {
+                self.piece_assemblies.get(&piece).and_then(|assembly| {
+                    assembly
+                        .completed_data
+                        .as_ref()
+                        .cloned()
+                        .map(|data| (data, assembly._memory_lease.as_ref().map(Arc::clone)))
+                })
+            } else {
+                None
+            };
+            let Some(work) = self.pending_transfer_pieces.get_mut(&piece) else {
+                continue;
+            };
+            if !writing_aggregate && aggregate_piece && assembled.is_none() {
+                // An assembly may have been spilled to disk while waiting for
+                // another bounded job slot. Its bytes are now verified from
+                // the payload files and need no second aggregate write.
+                work.aggregate_write = false;
+            }
+            work.verify_ready = false;
+            work.aggregate_write_ready = false;
+            work.verify_in_flight = true;
+
+            let context = self.transfer_io_context();
+            if writing_aggregate {
+                let Some((data, lease)) = verified_payload else {
+                    self.fail_piece_transfer(piece);
+                    continue;
+                };
+                self.transfer_jobs.push(Box::pin(async move {
+                    let result = write_transfer_piece(&context, piece, data, lease)
+                        .await
+                        .map_err(|error| error.to_string());
+                    TransferCompletion::AggregatePieceWritten { piece, result }
+                }));
+            } else {
+                let hybrid_v2 = self.hybrid_v2.clone();
+                if assembled.is_some() {
+                    self.completed_piece_verify_from_memory =
+                        self.completed_piece_verify_from_memory.saturating_add(1);
+                } else {
+                    self.completed_piece_verify_from_disk =
+                        self.completed_piece_verify_from_disk.saturating_add(1);
+                }
+                self.transfer_jobs.push(Box::pin(async move {
+                    let result = verify_transfer_piece(
+                        context,
+                        hybrid_v2,
+                        piece,
+                        assembled
+                            .clone()
+                            .map(|(data, lease)| (data.clone(), lease.clone())),
+                    )
+                    .await;
+                    TransferCompletion::PieceVerified {
+                        piece,
+                        result,
+                        assembled,
                     }
-                }
-                self.restored_partial_pieces.remove(&block.piece);
-                self.remove_piece_assembly(block.piece);
-                self.dirty_pieces_since_barrier.insert(block.piece);
-                info!(
-                    component = "torrent",
-                    operation = "complete_piece",
-                    torrent = %self.info_hash_hex,
-                    piece = block.piece,
-                    result = "ok",
-                    "piece complete"
-                );
-                self.send_have_to_peers(block.piece).await;
-                if self.picker.is_complete() {
-                    self.on_download_complete().await;
-                }
-            }
-            VerifyResult::Invalid => {
-                warn!(
-                    piece = block.piece,
-                    torrent = %self.info_hash_hex,
-                    "piece verification failed"
-                );
-                self.picker.reject_piece(block.piece as usize);
-                self.restored_partial_pieces.remove(&block.piece);
-                self.remove_piece_assembly(block.piece);
-            }
-            VerifyResult::Missing { file_index, reason } => {
-                warn!(
-                    piece = block.piece,
-                    file_index,
-                    reason = %reason,
-                    torrent = %self.info_hash_hex,
-                    "piece verification could not read data"
-                );
-                self.picker.reject_piece(block.piece as usize);
-                self.restored_partial_pieces.remove(&block.piece);
-                self.remove_piece_assembly(block.piece);
+                }));
             }
         }
-        // A completed piece is persisted only after the hash outcome is
-        // known. If it was rejected, this also records the picker state that
-        // must be recovered after a crash instead of leaving a stale
-        // completion claim on disk.
-        if !self.picker.is_complete() {
-            self.persist_progress_throttled(false).await;
+    }
+
+    pub(super) async fn handle_transfer_completion(&mut self, completion: TransferCompletion) {
+        match completion {
+            TransferCompletion::BlockWritten {
+                piece,
+                offset,
+                length,
+                result,
+            } => {
+                self.pending_transfer_blocks.remove(&(piece, offset));
+                let Some(work) = self.pending_transfer_pieces.get_mut(&piece) else {
+                    return;
+                };
+                let succeeded = result.is_ok();
+                let error = result.err();
+                work.writes_in_flight = work.writes_in_flight.saturating_sub(1);
+                if let Some(error) = error {
+                    work.failed = true;
+                    warn!(
+                        component = "storage",
+                        operation = "write_block",
+                        torrent = %self.info_hash_hex,
+                        piece,
+                        offset,
+                        result = "error",
+                        error = %error,
+                        "block write failed"
+                    );
+                }
+                let accept_written_block = succeeded && !work.failed;
+                let failed_after_drain = work.failed && work.writes_in_flight == 0;
+
+                if succeeded {
+                    self.note_data_write();
+                    self.record_download(length).await;
+                }
+                let mut complete_piece = false;
+                if accept_written_block {
+                    complete_piece = self.picker.block_received_pending(piece as usize, offset);
+                    self.cancel_endgame_duplicates(BlockRequest {
+                        piece,
+                        begin: offset,
+                        length: u32::try_from(length).unwrap_or(u32::MAX),
+                    });
+                    if complete_piece {
+                        if let Some(work) = self.pending_transfer_pieces.get_mut(&piece) {
+                            work.verify_ready = true;
+                        }
+                    }
+                }
+
+                let clear_partial_state =
+                    self.pending_transfer_pieces
+                        .get(&piece)
+                        .is_some_and(|work| {
+                            !work.failed
+                                && work.writes_in_flight == 0
+                                && !work.verify_ready
+                                && !work.verify_in_flight
+                                && !work.aggregate_write_ready
+                        });
+                if clear_partial_state && !complete_piece {
+                    self.pending_transfer_pieces.remove(&piece);
+                }
+
+                if failed_after_drain {
+                    self.fail_piece_transfer(piece);
+                } else {
+                    self.start_ready_transfer_jobs();
+                    if !complete_piece && !self.picker.is_complete() {
+                        self.persist_progress_throttled(false).await;
+                    }
+                }
+            }
+            TransferCompletion::PieceVerified {
+                piece,
+                result,
+                assembled,
+            } => {
+                let Some(work) = self.pending_transfer_pieces.get_mut(&piece) else {
+                    return;
+                };
+                work.verify_in_flight = false;
+                let aggregate_piece = work.aggregate_write;
+                match result {
+                    VerifyResult::Valid if aggregate_piece => {
+                        if let Some(work) = self.pending_transfer_pieces.get_mut(&piece) {
+                            work.aggregate_write_ready = true;
+                            work.verified_payload = assembled;
+                        }
+                        self.start_ready_transfer_jobs();
+                    }
+                    VerifyResult::Valid => self.finish_verified_piece(piece).await,
+                    VerifyResult::Invalid => {
+                        warn!(piece, torrent = %self.info_hash_hex, "piece verification failed");
+                        self.fail_piece_transfer(piece);
+                    }
+                    VerifyResult::Missing { file_index, reason } => {
+                        warn!(
+                            piece,
+                            file_index,
+                            reason = %reason,
+                            torrent = %self.info_hash_hex,
+                            "piece verification could not read data"
+                        );
+                        self.fail_piece_transfer(piece);
+                    }
+                }
+                if !self.picker.is_complete() {
+                    self.persist_progress_throttled(false).await;
+                }
+            }
+            TransferCompletion::AggregatePieceWritten { piece, result } => match result {
+                Ok(()) => {
+                    self.note_data_write();
+                    self.finish_verified_piece(piece).await;
+                    if !self.picker.is_complete() {
+                        self.persist_progress_throttled(false).await;
+                    }
+                }
+                Err(error) => {
+                    warn!(
+                        component = "storage",
+                        operation = "write_completed_piece",
+                        torrent = %self.info_hash_hex,
+                        piece,
+                        result = "error",
+                        error = %error,
+                        "completed piece write failed"
+                    );
+                    self.fail_piece_transfer(piece);
+                    self.persist_progress_throttled(false).await;
+                }
+            },
+        }
+        self.start_ready_transfer_jobs();
+    }
+
+    fn fail_piece_transfer(&mut self, piece: u32) {
+        self.picker.reject_piece(piece as usize);
+        self.restored_partial_pieces.remove(&piece);
+        self.remove_piece_assembly(piece);
+        self.pending_transfer_pieces.remove(&piece);
+    }
+
+    async fn finish_verified_piece(&mut self, piece: u32) {
+        self.picker.mark_have(piece as usize);
+        self.restored_partial_pieces.remove(&piece);
+        self.remove_piece_assembly(piece);
+        self.pending_transfer_pieces.remove(&piece);
+        self.dirty_pieces_since_barrier.insert(piece);
+        info!(
+            component = "torrent",
+            operation = "complete_piece",
+            torrent = %self.info_hash_hex,
+            piece,
+            result = "ok",
+            "piece complete"
+        );
+        self.send_have_to_peers(piece).await;
+        if self.picker.is_complete() {
+            self.on_download_complete().await;
         }
     }
 
@@ -844,7 +1052,18 @@ impl TorrentTask {
             .min(download_bucket_capacity(limit));
     }
 
+    pub(super) async fn drain_transfer_jobs(&mut self) {
+        while let Some(completion) = self.transfer_jobs.next().await {
+            self.handle_transfer_completion(completion).await;
+        }
+    }
+
     pub(super) async fn shutdown_peers(&mut self) {
+        // Accepted transfer writes and hashes own their payload leases and
+        // piece generation until completion. Drain them before resetting the
+        // picker or changing file policy so no completion can cross that
+        // boundary.
+        self.drain_transfer_jobs().await;
         let handles: Vec<(
             mpsc::Sender<PeerCommand>,
             Option<tokio::task::AbortHandle>,
@@ -877,6 +1096,8 @@ impl TorrentTask {
         self.active_peers.clear();
         self.picker.reset_outstanding_requests();
         self.clear_piece_assemblies();
+        self.pending_transfer_blocks.clear();
+        self.pending_transfer_pieces.clear();
         while self.peer_event_rx.try_recv().is_ok() {}
         while self.peer_disconnect_rx.try_recv().is_ok() {}
     }
