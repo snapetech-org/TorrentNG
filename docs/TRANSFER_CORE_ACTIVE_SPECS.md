@@ -3624,6 +3624,8 @@ Schedule peer and webseed work through one bounded ownership and rate-control
 path, then publish transfer progress in bounded batches. The current v1
 webseed implementation is a serial no-peer fallback. It now maps multi-file
 blocks to bounded per-file HTTP ranges and synthesizes BEP 47 padding locally;
+each block reuses one DNS-validated, address-pinned HTTP client across its
+file ranges;
 pure-v2 still has no webseed execution. v1 already batches progress at its
 five-second dirty-stat flush, and pure-v2 now batches upload/download
 statistics at the existing five-second runtime flush. Completion and

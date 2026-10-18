@@ -757,6 +757,23 @@ impl TorrentTask {
         let user_agent = crate::peer_id::user_agent();
         let ranges = webseed_block_ranges(&self.meta, req)
             .ok_or_else(|| anyhow::anyhow!("webseed block has an unsupported file range layout"))?;
+        let client = if let Some(range) = ranges.iter().find(|range| !range.file.pad) {
+            let url = webseed_file_url(&self.meta, range.file, webseed)
+                .ok_or_else(|| anyhow::anyhow!("webseed URL cannot address torrent file"))?;
+            Some(
+                self.egress_policy
+                    .http_client(
+                        OutboundTargetKind::Webseed,
+                        &url,
+                        self.http_timeout,
+                        &user_agent,
+                    )
+                    .await
+                    .map_err(|error| anyhow::anyhow!(error))?,
+            )
+        } else {
+            None
+        };
         let payload_len = usize::try_from(req.length)?;
         let output_lease = reserve_webseed_body_bytes(&self.resources, req.length)?;
         let mut data = Vec::new();
@@ -770,16 +787,9 @@ impl TorrentTask {
             }
             let url = webseed_file_url(&self.meta, range.file, webseed)
                 .ok_or_else(|| anyhow::anyhow!("webseed URL cannot address torrent file"))?;
-            let client = self
-                .egress_policy
-                .http_client(
-                    OutboundTargetKind::Webseed,
-                    &url,
-                    self.http_timeout,
-                    &user_agent,
-                )
-                .await
-                .map_err(|error| anyhow::anyhow!(error))?;
+            let client = client.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("webseed HTTP client missing for a non-padding range")
+            })?;
             let (start, end) = webseed_file_byte_range(range.file_offset, range.length)?;
             let body_lease =
                 reserve_webseed_body_bytes(&self.resources, u32::try_from(range.length)?)?;
