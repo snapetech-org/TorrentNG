@@ -91,6 +91,7 @@ use crate::transfer::obligations::{
     InboundDecision, InboundObligations, Reject as InboundReject,
     RejectReason as InboundRejectReason, Served as InboundServed,
 };
+use crate::transfer::window::{WindowConfig, WindowController, WindowInputs};
 use crate::{EnginePeerSnapshot, EngineTorrentLimits, EngineWebseedSnapshot, TorrentRuntimeStats};
 
 const LOCAL_UT_METADATA_ID: u8 = 1;
@@ -1329,6 +1330,7 @@ pub struct BlockEvent {
 struct LeasedBlockEvent {
     block: BlockEvent,
     _memory_lease: Option<Arc<MemoryLease>>,
+    response_delay_nanos: Option<u64>,
 }
 
 const MAX_TRANSFER_COMPLETION_JOBS: usize = 64;
@@ -1380,6 +1382,7 @@ impl LeasedBlockEvent {
         Ok(Self {
             block,
             _memory_lease: Some(Arc::new(memory_lease)),
+            response_delay_nanos: None,
         })
     }
 
@@ -1387,17 +1390,21 @@ impl LeasedBlockEvent {
         Self {
             block,
             _memory_lease: memory_lease,
+            response_delay_nanos: None,
         }
     }
 
     fn with_optional_lease(
         block: BlockEvent,
         memory_lease: Option<MemoryLease>,
+        response_delay_nanos: Option<u64>,
     ) -> anyhow::Result<Self> {
-        match memory_lease {
+        let mut event = match memory_lease {
             Some(memory_lease) => Self::new(block, memory_lease),
             None => Ok(Self::with_shared_lease(block, None)),
-        }
+        }?;
+        event.response_delay_nanos = response_delay_nanos;
+        Ok(event)
     }
 
     #[cfg(test)]
@@ -1409,6 +1416,7 @@ impl LeasedBlockEvent {
                 data,
             },
             _memory_lease: None,
+            response_delay_nanos: None,
         }
     }
 
@@ -1771,7 +1779,7 @@ struct PeerHandle {
     ut_metadata_id: Option<u8>,
     ut_pex_id: Option<u8>,
     metadata_size: Option<u32>,
-    remote_reqq: Option<usize>,
+    request_window: WindowController,
     _peer_permit: OwnedSemaphorePermit,
     /// Dense per-peer availability maps are sized by the torrent's piece
     /// count. Keep their backing allocation under the process-wide peer
@@ -2046,6 +2054,7 @@ async fn write_transfer_block(
     let LeasedBlockEvent {
         block,
         _memory_lease,
+        ..
     } = event;
     let block_len = u32::try_from(block.data.len())
         .map_err(|_| anyhow::anyhow!("peer block length does not fit in u32"))?;
@@ -8067,6 +8076,11 @@ async fn run_peer_loop(
                             );
                             continue;
                         };
+                        let response_delay_nanos = Instant::now()
+                            .saturating_duration_since(requested.sent_at)
+                            .as_nanos()
+                            .min(u128::from(u64::MAX))
+                            as u64;
                         // Charge the aggregate budget for the payload that
                         // actually arrived, not for a request that might
                         // never have been fulfilled.
@@ -8095,6 +8109,7 @@ async fn run_peer_loop(
                                 data,
                             },
                             requested.memory_lease.take(),
+                            Some(response_delay_nanos),
                         ) {
                             Ok(block) => block,
                             Err(error) => {
@@ -15571,7 +15586,12 @@ mod tests {
                 ut_metadata_id: None,
                 ut_pex_id: None,
                 metadata_size: None,
-                remote_reqq: None,
+                request_window: WindowController::new(WindowConfig {
+                    initial: PEER_REQUEST_PIPELINE_NORMAL,
+                    min: 4,
+                    max: PEER_REQUEST_PIPELINE_ADAPTIVE_MAX,
+                    ..WindowConfig::default()
+                }),
                 _peer_permit: peer_permit,
                 _bitmap_memory_lease: bitmap_memory_lease,
                 pending_have,

@@ -231,7 +231,7 @@ impl TorrentTask {
                     block.block.offset,
                 );
                 record_peer_transfer(handle, false, block.len() as u64);
-                self.handle_block_with_owner(block, Some(transfer_conn))
+                self.handle_block_with_owner(block, Some(transfer_conn), Some(peer))
                     .await;
                 self.refill_peer_requests(peer).await;
             }
@@ -317,7 +317,7 @@ impl TorrentTask {
                     handle.ut_metadata_id = ut_metadata_id;
                     handle.ut_pex_id = ut_pex_id;
                     handle.metadata_size = metadata_size;
-                    handle.remote_reqq = reqq;
+                    handle.request_window.set_remote_reqq(reqq);
                 }
                 self.refill_peer_requests(peer).await;
             }
@@ -443,7 +443,31 @@ impl TorrentTask {
         let transfer_conn = handle.transfer_conn;
         let download_rate = handle.download_rate;
         let download_rate_started = handle.download_rate_window_started;
-        let remote_reqq = handle.remote_reqq;
+        let peer_buffer = self.resources.snapshot().classes[MemoryClass::PeerBuffer as usize];
+        let buffer_blocks = usize::try_from(
+            peer_buffer.cap_bytes.saturating_sub(peer_buffer.used_bytes)
+                / u64::from(MAX_BLOCK_SIZE),
+        )
+        .unwrap_or(usize::MAX);
+        let credit_blocks = if download_limited {
+            usize::try_from(download_tokens / u64::from(MAX_BLOCK_SIZE)).unwrap_or(usize::MAX)
+        } else {
+            usize::MAX
+        };
+        let (device_queue_capacity, device_queue_available) = self.storage.device_queue_load();
+        let device_backlog = if device_queue_capacity == 0 {
+            f64::NAN
+        } else {
+            device_queue_capacity.saturating_sub(device_queue_available) as f64
+                / device_queue_capacity as f64
+        };
+        let controlled_window = handle.request_window.window(&WindowInputs {
+            useful_missing: usize::MAX,
+            outstanding: handle.outstanding,
+            credit_blocks,
+            buffer_blocks,
+            device_backlog,
+        });
 
         let memory_pipeline = memory_aware_request_pipeline(
             self.piece_assembly_bytes,
@@ -454,7 +478,7 @@ impl TorrentTask {
             peer_rate(download_rate, download_rate_started) as f64,
             other_peers_outstanding,
         )
-        .min(remote_reqq.unwrap_or(usize::MAX));
+        .min(controlled_window);
 
         let mut queue_full = 0u64;
         let mut memory_retry = false;
@@ -601,18 +625,21 @@ impl TorrentTask {
     }
 
     pub(super) async fn handle_block(&mut self, event: LeasedBlockEvent) {
-        self.handle_block_with_owner(event, None).await;
+        self.handle_block_with_owner(event, None, None).await;
     }
 
     async fn handle_block_with_owner(
         &mut self,
         event: LeasedBlockEvent,
         transfer_conn: Option<ConnectionId>,
+        peer: Option<SocketAddr>,
     ) {
         let piece = event.block.piece;
         let offset = event.block.offset;
         let block_length = u32::try_from(event.block.data.len()).unwrap_or(u32::MAX);
         let transfer_block = BlockExtent::new(piece, offset, block_length);
+        let accepted_at = self.transfer_now();
+        let response_delay = event.response_delay_nanos;
         if !self.picker.is_piece_in_progress(piece as usize) {
             if let Some(conn) = transfer_conn {
                 self.transfer_ledger.on_reject(conn, transfer_block);
@@ -702,6 +729,16 @@ impl TorrentTask {
             match self.transfer_ledger.on_block(conn, transfer_block) {
                 ReceiveOutcome::Accepted { actions, .. } => {
                     self.apply_transfer_actions(actions);
+                    if let Some(peer) = peer {
+                        if let Some(handle) = self.active_peers.get_mut(&peer) {
+                            if let Some(delay) = response_delay {
+                                handle.request_window.on_response_delay(delay);
+                            }
+                            handle
+                                .request_window
+                                .on_delivery(u64::from(block_length), accepted_at);
+                        }
+                    }
                 }
                 ReceiveOutcome::Duplicate | ReceiveOutcome::IgnoredForPieceAffinity => {
                     self.picker.cancel_request(piece as usize, offset);
