@@ -3741,7 +3741,8 @@ a whole-torrent scan for each requested block.
   `canonical_v1_block_for_v2`, `canonical_v2_block_for_v1`,
   `expand_v2_block_to_v1`, and `project_v1_block_to_v2` provide bidirectional
   wire and payload projection, mapped ledger extents, and zero-filled padding
-  conversion. The pure
+  conversion. Contiguous upload payloads use a shared `Bytes` view; bounded
+  copy is used only when projection spans multiple payload ranges. The pure
   `transfer::hybrid::HybridLedger` adapter now binds each connection to its
   wire plane, arbitrates both coordinate views in one canonical v1 ledger,
   returns accepted v2 bytes with v1 padding synthesized, and projects ledger

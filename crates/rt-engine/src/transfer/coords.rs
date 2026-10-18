@@ -10,6 +10,7 @@
 use std::fmt;
 use std::sync::Arc;
 
+use bytes::Bytes;
 use rt_path::SafeRelPath;
 use rt_piece_map::{PieceMap, V2PieceMap};
 
@@ -532,13 +533,14 @@ impl HybridGeometry {
 
     /// Project a canonical v1 block payload onto the corresponding v2 wire
     /// extent, omitting synthetic BEP 47 padding. The caller must reserve
-    /// capacity for the returned v2 payload before calling; the input and
-    /// output allocations coexist during this bounded one-block conversion.
+    /// capacity for any copied output before calling. When the real v2 bytes
+    /// are contiguous inside the v1 block, the returned `Bytes` is a zero-copy
+    /// view and keeps the original allocation alive.
     pub fn project_v1_block_to_v2(
         &self,
         v1_block: BlockExtent,
-        payload: &[u8],
-    ) -> Option<(BlockExtent, Vec<u8>)> {
+        payload: Bytes,
+    ) -> Option<(BlockExtent, Bytes)> {
         if payload.len() != usize::try_from(v1_block.length).ok()? {
             return None;
         }
@@ -549,7 +551,31 @@ impl HybridGeometry {
             return None;
         }
 
-        let mut projected = vec![0; usize::try_from(v2_block.length).ok()?];
+        let mut source_payload = source_ranges.iter().filter(|range| !range.content.pad);
+        let source_fast = source_payload.next();
+        let source_is_single = source_payload.next().is_none();
+        let mut target_payload = target_ranges.iter().filter(|range| !range.content.pad);
+        let target_fast = target_payload.next();
+        let target_is_single = target_payload.next().is_none();
+        let target_len = usize::try_from(v2_block.length).ok()?;
+        if source_is_single && target_is_single {
+            let source = source_fast?;
+            let target = target_fast?;
+            let source_start = usize::try_from(source.block_offset).ok()?;
+            let target_start = usize::try_from(target.block_offset).ok()?;
+            let source_end = source_start.checked_add(target_len)?;
+            let target_end = target_start.checked_add(target_len)?;
+            if source.content.length == u64::try_from(target_len).ok()?
+                && target.content.length == u64::try_from(target_len).ok()?
+                && target_start == 0
+                && target_end == target_len
+                && source_end <= payload.len()
+            {
+                return Some((v2_block, payload.slice(source_start..source_end)));
+            }
+        }
+
+        let mut projected = vec![0; target_len];
         let mut source_payload = source_ranges.iter().filter(|range| !range.content.pad);
         for target in target_ranges.iter().filter(|range| !range.content.pad) {
             let source = source_payload.next()?;
@@ -565,7 +591,7 @@ impl HybridGeometry {
         if source_payload.next().is_some() {
             return None;
         }
-        Some((v2_block, projected))
+        Some((v2_block, Bytes::from(projected)))
     }
 }
 
@@ -943,20 +969,24 @@ mod tests {
         assert_eq!(hybrid.canonical_v2_block_for_v1(v1_tail), Some(v2_tail));
         assert!(expanded[..8 * 1024].iter().all(|byte| *byte == 0x5a));
         assert!(expanded[8 * 1024..].iter().all(|byte| *byte == 0));
+        let expanded = Bytes::from(expanded);
         let (projected_tail, projected) = hybrid
-            .project_v1_block_to_v2(v1_tail, &expanded)
+            .project_v1_block_to_v2(v1_tail, expanded.clone())
             .expect("padded v1 block projects back to its shorter v2 payload");
         assert_eq!(projected_tail, v2_tail);
-        assert_eq!(projected, v2_tail_data);
+        assert_eq!(projected.as_ref(), v2_tail_data.as_slice());
+        assert_eq!(projected.as_ptr(), expanded.as_ptr());
 
         let second_file_v1 = BlockExtent::new(2, 0, 16 * 1024);
         let second_file_v2 = BlockExtent::new(2, 0, 16 * 1024);
         let second_file_payload = vec![0xA6; 16 * 1024];
+        let second_file_payload = Bytes::from(second_file_payload);
         let (projected_second_file, projected) = hybrid
-            .project_v1_block_to_v2(second_file_v1, &second_file_payload)
+            .project_v1_block_to_v2(second_file_v1, second_file_payload.clone())
             .expect("second-file v1 block projects after the preceding pad extent");
         assert_eq!(projected_second_file, second_file_v2);
-        assert_eq!(projected, second_file_payload);
+        assert_eq!(projected.as_ref(), second_file_payload.as_ref());
+        assert_eq!(projected.as_ptr(), second_file_payload.as_ptr());
         assert_eq!(
             hybrid.canonical_v2_block_for_v1(BlockExtent::new(1, BLOCK_SIZE, BLOCK_SIZE)),
             None,
