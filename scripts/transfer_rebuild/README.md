@@ -360,6 +360,36 @@ still open under PERF-110. Regression sources are in
 `scripts/test_transfer_rebuild_paired_plan.py` and are reserved for the
 requested bulk pass; none have been run.
 
+## PERF-111 picker and changed-snapshot probes
+
+Two standalone benchmark targets emit diagnostic CSV with no pass/fail timing
+thresholds:
+
+```sh
+cargo bench -p rt-piece-picker --bench perf \
+  > /path/to/task-scratch/perf-111-picker.csv
+cargo bench -p rt-api-native --bench perf \
+  > /path/to/task-scratch/perf-111-snapshots.csv
+rustc -Vv > /path/to/task-scratch/perf-111-rustc.txt
+uname -a > /path/to/task-scratch/perf-111-host.txt
+git rev-parse HEAD > /path/to/task-scratch/perf-111-commit.txt
+```
+
+The picker probe times 100k pick/cancel cycles at 1k, 12k, and 100k pieces
+after warming partial-piece state up to the 16,384-piece admission cap; its
+100k case uses a sparse peer bitfield over that admitted subset. The API
+snapshot probe reports the initial `AppState::torrent_snapshot`, 1,000
+unchanged cached reads, and three one-row incremental refreshes at 1k, 10k, and
+100k torrents. It uses a single-thread runtime and a process-local counting
+allocator; allocation
+numbers are requested allocation traffic around the snapshot method, not
+retained heap size. A changed-row sample waits outside the timed region for
+the API's 750 ms snapshot freshness window to expire. The probe does not
+include HTTP routing or JSON serialization. Retain host details and the exact
+commit with the CSV; compare results only on a controlled host and toolchain.
+These probes and the regression sources remain unrun until the requested bulk
+pass.
+
 ## Task-scoped network control
 
 `network_control.py` applies a pinned loss-free egress profile to a `tngt*`

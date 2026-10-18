@@ -8,3 +8,7 @@ license.workspace = true
 
 [dependencies]
 rand.workspace = true
+
+[[bench]]
+name = "perf"
+harness = false

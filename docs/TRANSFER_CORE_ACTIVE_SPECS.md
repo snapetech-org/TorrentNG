@@ -2784,6 +2784,85 @@ for its paired clients.
   candidate slot, actual paired process execution, complete trial records,
   independent resources, and dedicated-host results.
 
+## PERF-111 — Picker and changed-snapshot probes
+
+- **Priority / wave:** P1 / 6
+- **Prerequisites:** PERF-101, PERF-102, PERF-109
+- **Owning component:** picker and native API performance probes.
+- **Finding or capability:** F14's picker memory estimate and large-library
+  snapshot work need repeatable, scale-shaped observations rather than a
+  synthetic allocation claim.
+- **Status:** `wip`
+
+### Scope
+
+Add standalone, dependency-free Rust benchmark targets for two narrow paths.
+The picker probe measures a warmed pick/cancel cycle at increasing piece
+counts. The native API probe measures the initial, unchanged cached, and
+single-row changed `AppState::torrent_snapshot` paths at increasing torrent
+counts, including allocation calls and requested allocation bytes from a
+process-local counting allocator. Results are diagnostic; they are not
+threshold tests or whole-client performance evidence.
+
+### Ownership and invariant
+
+- **Current owner:** `rt-piece-picker` and `rt-api-native` benchmark targets;
+  each prints CSV to standard output for retention in a task-owned artifact
+  directory.
+- **Target owner:** PERF-111 provides repeatable probes for the PERF-102 / PERF-109
+  scale evidence and picker implementation review.
+- **Invariant preserved:** cold/full snapshot, unchanged cache hit, and
+  changed-row refresh remain separately labeled; allocation traffic is never
+  described as retained heap or process RSS.
+- **Must not:** introduce host-dependent pass/fail timing thresholds, mix
+  fixture setup into the timed picker loop, or call a method-only probe a
+  whole-daemon measurement.
+
+### Acceptance
+
+- Picker probe covers 1k, 12k, and 100k pieces with peer availability and
+  prebuilt partial state up to the 16,384-piece in-progress cap; the 100k case
+  uses a sparse peer bitfield over that admitted subset. It records the
+  pick/cancel cycle duration and live picker memory estimate.
+- API probe covers 1k, 10k, and 100k registry rows and separately reports one
+  full initial snapshot, 1,000 unchanged cached reads, and three one-row
+  incremental refreshes. Changed samples wait beyond the API snapshot TTL
+  outside the timed region.
+- The API probe runs on a single-thread runtime with its own counting global
+  allocator, and reports allocation calls/bytes only during each measured
+  snapshot operation. Those numbers mean cumulative allocation traffic.
+- Both probes emit stable CSV headings, have no pass/fail thresholds, and
+  document the need to retain commit, toolchain, and host identity with output.
+- Regression source records the intended probe workloads; the exact commands
+  and bulk measurements remain unrun.
+
+### Files and compatibility
+
+- **Expected code paths:**
+  `crates/rt-piece-picker/benches/perf.rs`,
+  `crates/rt-api-native/benches/perf.rs`, their Cargo benchmark declarations,
+  crate/harness READMEs, and this spec.
+- **State or wire compatibility:** benchmark-only code; no runtime format or
+  behavior changes.
+- **Migration / rollback:** none; delete the standalone benchmark targets if
+  later evidence shows they measure the wrong boundary.
+- **Feature flag or rollout boundary:** no release gate is inferred from the
+  output; whole-client matched trials remain PERF-110/113 and bulk qualification.
+
+### Evidence
+
+- **Regression source added or updated:** standalone picker and native API
+  benchmark targets; no benchmark was executed for this source slice.
+- **Command or probe to run:** both `cargo bench` commands documented in the
+  harness README during the requested bulk pass.
+- **Expected result:** valid CSV rows for each workload and explicitly
+  separated initial/cache-hit/changed snapshot allocation traffic.
+- **Executed on exact revision:** no.
+- **Artifact or report path:** pending a task-owned PERF-111 bulk run.
+- **External evidence still required:** repeat runs on the dedicated,
+  identified hardware; compare exact source/toolchain; independent process RSS
+  and whole-service evidence remain separate.
+
 ## PERF-113 — Descriptive paired scorecard
 
 - **Priority / wave:** P1 / 7
