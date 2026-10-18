@@ -1720,7 +1720,9 @@ dependencies = [
  "bytes",
  "rt-api-native",
  "rt-api-qbit",
+ "rt-config",
  "rt-db",
+ "rt-engine",
  "rt-fastresume",
  "rt-path",
  "rt-piece-map",
@@ -1728,10 +1730,11 @@ dependencies = [
  "rt-storage",
  "rt-testkit",
  "rt-tracker",
+ "serde_json",
  "tempfile",
  "tokio",
- "tracing",
  "tower 0.4.13",
+ "tracing",
 ]
 
 [[package]]
@@ -1840,7 +1843,7 @@ dependencies = [
  "rt-metainfo",
  "rt-piece-map",
  "rusqlite",
- "sha1 0.10.7",
+ "sha1",
  "thiserror 2.0.20",
 ]
 

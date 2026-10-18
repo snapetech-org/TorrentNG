@@ -19,19 +19,31 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
 
     def test_public_jit_runner_is_limited_to_fork_pull_requests(self) -> None:
         source = (WORKFLOW_DIR / PUBLIC_JIT_WORKFLOW).read_text(encoding="utf-8")
-        self.assertIn(
-            "runs-on: ${{ github.event_name == 'pull_request' && "
-            "github.event.pull_request.head.repo.fork == true && "
-            "fromJSON('[\"self-hosted\", \"linux\", \"x64\", \"public-pr-torrentng\"]') "
-            "|| 'ubuntu-latest' }}",
-            source,
+        runs_on = next(
+            line.strip()
+            for line in source.splitlines()
+            if line.strip().startswith("runs-on:")
         )
+        self.assertIn("github.event_name == 'pull_request'", runs_on)
+        self.assertIn("github.event.pull_request.head.repo.fork == true", runs_on)
+        self.assertIn(
+            "fromJSON('{\"group\":\"public-fork-jit\","
+            "\"labels\":[\"self-hosted\",\"linux\",\"x64\",\"public-pr-torrentng\"]}')",
+            runs_on,
+        )
+        self.assertIn("|| 'ubuntu-latest' }}", runs_on)
         self.assertIn(
             "github.event.pull_request.base.repo.full_name == 'snapetech-org/TorrentNG'",
             source,
         )
         self.assertIn("contents: read", source)
         self.assertNotIn("secrets:", source)
+
+        caller = (WORKFLOW_DIR / "public-fork-pr.yml").read_text(encoding="utf-8")
+        self.assertIn("branches: [main]", caller)
+        self.assertIn("github.event.pull_request.head.repo.fork == true", caller)
+        self.assertIn("github.event.pull_request.base.ref == 'main'", caller)
+        self.assertNotIn("pull_request_target", source + caller)
 
     def test_windows_smoke_uses_the_hosted_windows_runner(self) -> None:
         source = (WORKFLOW_DIR / "windows-smoke.yml").read_text(encoding="utf-8")
