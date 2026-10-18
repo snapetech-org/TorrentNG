@@ -1286,6 +1286,7 @@ struct QueuedDiskBytes {
     /// owner (for example a completed piece assembly) while keeping that
     /// owner alive through queued or active backend work.
     _shared_payload_lease: Option<Arc<MemoryLease>>,
+    shared_payload_view_bytes: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -1294,6 +1295,49 @@ struct DiskSubmission {
     _queued_bytes: Arc<QueuedDiskBytes>,
     _queue: OwnedSemaphorePermit,
     _device_operation: Option<DeviceOperationPermit>,
+    _additional_device_operations: Option<Box<[DeviceOperationPermit]>>,
+    _file_owner: Option<Arc<LeasedFileHandle>>,
+    _payload_owner: Option<bytes::Bytes>,
+}
+
+impl Drop for DiskSubmission {
+    fn drop(&mut self) {
+        let credit = self.operation.resource_credit;
+        tracing::trace!(
+            storage_operation_id = ?self.operation.storage_operation_id.map(|id| id.0),
+            device_operation_id = ?self.operation.device_operation_id.map(|id| id.0),
+            device_queue_key = ?self.operation.device_queue_key.as_deref(),
+            mount_queue_permits_released = 1,
+            device_queue_permits_released = self.device_queue_permit_count(),
+            descriptor_owner_released = self._file_owner.is_some(),
+            write_payload_owner_released = self._payload_owner.is_some(),
+            resource_credit_governor_leases = credit.governor_credit_leases,
+            resource_credit_governor_bytes = credit.governor_credit_bytes,
+            resource_credit_logical_queued_bytes = credit.logical_queued_bytes,
+            resource_credit_shared_payload_class = ?credit.shared_payload_class,
+            resource_credit_shared_payload_classes_mixed = credit.shared_payload_classes_mixed,
+            resource_credit_shared_payload_leases = credit.shared_payload_lease_count,
+            resource_credit_shared_payload_lease_bytes = credit.shared_payload_lease_bytes,
+            resource_credit_shared_payload_view_bytes = credit.shared_payload_view_bytes,
+            "storage operation owner released"
+        );
+    }
+}
+
+/// Resource credit attached to a submitted storage operation. Logical queued
+/// bytes are retained for existing scheduler accounting; governor-backed
+/// bytes and any shared immutable payload lease are reported separately so
+/// callers can distinguish a retained view from a second allocation.
+#[derive(Debug, Default, Clone, Copy)]
+struct StorageCreditEvidence {
+    governor_credit_leases: u64,
+    governor_credit_bytes: u64,
+    logical_queued_bytes: u64,
+    shared_payload_class: Option<MemoryClass>,
+    shared_payload_classes_mixed: bool,
+    shared_payload_lease_count: u64,
+    shared_payload_lease_bytes: u64,
+    shared_payload_view_bytes: u64,
 }
 
 /// Evidence carried with an admitted operation until its backend completion.
@@ -1310,6 +1354,7 @@ struct StorageOperationRecord {
     content_epoch: Option<ContentEpoch>,
     byte_range: Option<StorageByteRange>,
     write_sequence: Option<u64>,
+    resource_credit: StorageCreditEvidence,
 }
 
 impl StorageOperationRecord {
@@ -1369,20 +1414,70 @@ impl DiskSubmission {
         self._device_operation.take();
     }
 
-    fn device_operation_id(&self) -> Option<u64> {
-        self.operation.device_operation_id.map(|id| id.0)
+    fn retain_additional_device_operations(&mut self, permits: Vec<DeviceOperationPermit>) {
+        if !permits.is_empty() {
+            self._additional_device_operations = Some(permits.into_boxed_slice());
+        }
     }
 
-    fn storage_operation_id(&self) -> Option<u64> {
-        self.operation.storage_operation_id.map(|id| id.0)
+    fn device_queue_permit_count(&self) -> usize {
+        (if self._device_operation.is_some() {
+            1
+        } else {
+            0
+        })
+        .saturating_add(
+            self._additional_device_operations
+                .as_ref()
+                .map_or(0, |permits| permits.len()),
+        )
     }
 
-    fn device_queue_key(&self) -> Option<&str> {
-        self.operation.device_queue_key.as_deref()
+    fn trace_dispatch(&self, operation_kind: &'static str, class: IoClass, device_count: usize) {
+        let range = self.operation.byte_range;
+        let credit = self.operation.resource_credit;
+        tracing::trace!(
+            storage_operation_id = ?self.operation.storage_operation_id.map(|id| id.0),
+            device_operation_id = ?self.operation.device_operation_id.map(|id| id.0),
+            device_queue_key = ?self.operation.device_queue_key.as_deref(),
+            byte_offset = ?range.map(|range| range.offset),
+            byte_length = ?range.map(|range| range.length),
+            file_identity = ?self.operation.file_identity,
+            content_epoch = ?self.operation.content_epoch,
+            write_sequence = ?self.operation.write_sequence,
+            resource_credit_governor_bytes = credit.governor_credit_bytes,
+            resource_credit_governor_leases = credit.governor_credit_leases,
+            resource_credit_logical_queued_bytes = credit.logical_queued_bytes,
+            resource_credit_shared_payload_class = ?credit.shared_payload_class,
+            resource_credit_shared_payload_classes_mixed = credit.shared_payload_classes_mixed,
+            resource_credit_shared_payload_leases = credit.shared_payload_lease_count,
+            resource_credit_shared_payload_lease_bytes = credit.shared_payload_lease_bytes,
+            resource_credit_shared_payload_view_bytes = credit.shared_payload_view_bytes,
+            descriptor_owner_retained = self._file_owner.is_some(),
+            write_payload_owner_retained = self._payload_owner.is_some(),
+            operation_kind,
+            class = ?class,
+            mount_queue_permits = 1,
+            device_count,
+            "storage operation dispatched"
+        );
     }
 
     fn bind_file_identity(&mut self, identity: FileIdentity) {
         self.operation.bind_file_identity(identity);
+    }
+
+    fn retain_file(&mut self, file: Arc<LeasedFileHandle>) {
+        self.bind_file_identity(file.identity());
+        self._file_owner = Some(file);
+    }
+
+    fn retain_payload(&mut self, payload: bytes::Bytes) {
+        self._payload_owner = Some(payload);
+    }
+
+    fn release_payload(&mut self) {
+        self._payload_owner = None;
     }
 
     fn bind_dirty_path(&mut self, state: DirtyPathState) {
@@ -1441,6 +1536,7 @@ impl QueuedDiskBytes {
             counters,
             _lease: lease,
             _shared_payload_lease: None,
+            shared_payload_view_bytes: None,
         })
     }
 
@@ -1484,7 +1580,57 @@ impl QueuedDiskBytes {
             counters,
             _lease: lease,
             _shared_payload_lease: Some(payload_lease),
+            shared_payload_view_bytes: Some(payload_bytes),
         })
+    }
+
+    fn resource_credit(&self) -> StorageCreditEvidence {
+        let shared_payload = self._shared_payload_lease.as_deref();
+        StorageCreditEvidence {
+            governor_credit_leases: if self._lease.is_some() { 1 } else { 0 },
+            governor_credit_bytes: self._lease.as_ref().map_or(0, MemoryLease::bytes),
+            logical_queued_bytes: self.bytes,
+            shared_payload_class: shared_payload.map(MemoryLease::class),
+            shared_payload_lease_count: if shared_payload.is_some() { 1 } else { 0 },
+            shared_payload_lease_bytes: shared_payload.map_or(0, MemoryLease::bytes),
+            shared_payload_view_bytes: self.shared_payload_view_bytes.unwrap_or_default(),
+        }
+    }
+}
+
+impl StorageCreditEvidence {
+    fn include(&mut self, other: Self) {
+        self.governor_credit_leases = self
+            .governor_credit_leases
+            .saturating_add(other.governor_credit_leases);
+        self.governor_credit_bytes = self
+            .governor_credit_bytes
+            .saturating_add(other.governor_credit_bytes);
+        self.logical_queued_bytes = self
+            .logical_queued_bytes
+            .saturating_add(other.logical_queued_bytes);
+        self.shared_payload_lease_bytes = self
+            .shared_payload_lease_bytes
+            .saturating_add(other.shared_payload_lease_bytes);
+        self.shared_payload_lease_count = self
+            .shared_payload_lease_count
+            .saturating_add(other.shared_payload_lease_count);
+        self.shared_payload_view_bytes = self
+            .shared_payload_view_bytes
+            .saturating_add(other.shared_payload_view_bytes);
+        if self.shared_payload_classes_mixed || other.shared_payload_classes_mixed {
+            self.shared_payload_class = None;
+            self.shared_payload_classes_mixed = true;
+        } else if let (Some(current), Some(next)) =
+            (self.shared_payload_class, other.shared_payload_class)
+        {
+            if current != next {
+                self.shared_payload_class = None;
+                self.shared_payload_classes_mixed = true;
+            }
+        } else if self.shared_payload_class.is_none() {
+            self.shared_payload_class = other.shared_payload_class;
+        }
     }
 }
 
@@ -2270,13 +2416,30 @@ async fn dispatch_peer_read_batch(
             operation_record.device_queue_key = Some(Arc::clone(&_device_queue.queue.key));
             operation_record.bind_file_identity(file.identity());
             operation_record.bind_byte_range(offset, len as u64);
+            for request in &batch.requests {
+                operation_record
+                    .resource_credit
+                    .include(request._queued_bytes.resource_credit());
+            }
+            let credit = operation_record.resource_credit;
             tracing::trace!(
                 storage_operation_id = operation_record.storage_operation_id.unwrap().0,
                 device_operation_id = operation_record.device_operation_id.unwrap().0,
                 device_queue_key = operation_record.device_queue_key.as_deref().unwrap_or("unknown"),
                 byte_offset = offset,
                 byte_length = len as u64,
+                queued_request_count = batch.requests.len(),
+                resource_credit_governor_leases = credit.governor_credit_leases,
+                resource_credit_governor_bytes = credit.governor_credit_bytes,
+                resource_credit_logical_queued_bytes = credit.logical_queued_bytes,
+                resource_credit_shared_payload_class = ?credit.shared_payload_class,
+                resource_credit_shared_payload_classes_mixed = credit.shared_payload_classes_mixed,
+                resource_credit_shared_payload_leases = credit.shared_payload_lease_count,
+                resource_credit_shared_payload_lease_bytes = credit.shared_payload_lease_bytes,
+                resource_credit_shared_payload_view_bytes = credit.shared_payload_view_bytes,
                 class = ?IoClass::PeerRead,
+                mount_queue_permits = 1,
+                device_queue_permits = 1,
                 "dispatching coalesced peer read"
             );
             let frame = match global_frame_pool().try_acquire(len) {
@@ -2730,13 +2893,7 @@ impl MountScheduler {
     {
         let mut submission = self.reserve_mount_submission(queued_bytes)?;
         submission.start_device_operation(self.acquire_device_operation(class).await?);
-        tracing::trace!(
-            storage_operation_id = submission.storage_operation_id().unwrap_or_default(),
-            device_operation_id = submission.device_operation_id().unwrap_or_default(),
-            device_queue_key = submission.device_queue_key().unwrap_or("unknown"),
-            class = ?class,
-            "dispatching storage-side blocking operation"
-        );
+        submission.trace_dispatch("storage_blocking", class, 1);
         let result = self
             .io_pool
             .run(move || {
@@ -2892,19 +3049,16 @@ impl MountScheduler {
         };
         submission.start_device_operation(primary);
         let additional_permits = permits.collect::<Vec<_>>();
-        tracing::trace!(
-            storage_operation_id = submission.storage_operation_id().unwrap_or_default(),
-            device_operation_id = submission.device_operation_id().unwrap_or_default(),
-            device_queue_key = submission.device_queue_key().unwrap_or("unknown"),
-            class = ?class,
-            device_count = additional_permits.len().saturating_add(1),
-            "dispatching multi-device blocking operation"
+        submission.retain_additional_device_operations(additional_permits);
+        submission.trace_dispatch(
+            "multi_device_blocking",
+            class,
+            submission.device_queue_permit_count(),
         );
         let result = self
             .io_pool
             .run(move || {
                 let _submission = submission;
-                let _additional_device_permits = additional_permits;
                 operation()
             })
             .await;
@@ -2970,14 +3124,19 @@ impl MountScheduler {
                 io::Error::other("process-wide storage operation identity space exhausted"),
             )
         })?;
+        let resource_credit = queued_bytes.resource_credit();
         Ok(Some(DiskSubmission {
             operation: StorageOperationRecord {
                 storage_operation_id: Some(storage_operation_id),
+                resource_credit,
                 ..StorageOperationRecord::default()
             },
             _queued_bytes: queued_bytes,
             _queue: queue,
             _device_operation: None,
+            _additional_device_operations: None,
+            _file_owner: None,
+            _payload_owner: None,
         }))
     }
 
@@ -3188,7 +3347,7 @@ impl MountScheduler {
                 file,
                 read_len,
             } => {
-                submission.bind_file_identity(file.identity());
+                submission.retain_file(Arc::clone(&file));
                 submission.bind_byte_range(offset, read_len as u64);
                 let requested_charge = queued_disk_charge(len as u64);
                 let read_buffer_charge = queued_disk_charge(read_len as u64);
@@ -3204,21 +3363,19 @@ impl MountScheduler {
                         )
                     })
                     .transpose()?;
+                if let Some(extra_charge) = read_buffer_queued_bytes.as_ref() {
+                    submission
+                        .operation
+                        .resource_credit
+                        .include(extra_charge.resource_credit());
+                }
                 submission.start_device_operation(self.acquire_device_operation(class).await?);
                 let frame = global_frame_pool().try_acquire(read_len).ok_or_else(|| {
                     StorageError::QueueFull {
                         mount: "scheduler-read-frame".to_string(),
                     }
                 })?;
-                tracing::trace!(
-                    storage_operation_id = submission.storage_operation_id().unwrap_or_default(),
-                    device_operation_id = submission.device_operation_id().unwrap_or_default(),
-                    device_queue_key = submission.device_queue_key().unwrap_or("unknown"),
-                    byte_offset = offset,
-                    byte_length = read_len as u64,
-                    class = ?class,
-                    "dispatching positioned read"
-                );
+                submission.trace_dispatch("positioned_read", class, 1);
                 let frame = match await_backend_io_with_fence(
                     &key,
                     backend_completion_with_fence(
@@ -3411,17 +3568,11 @@ impl MountScheduler {
         };
         let file_identity = current_file_identity(&key, file.as_ref(), "payload_write")?;
         let written = data.len();
+        submission.retain_file(Arc::clone(&file));
+        submission.retain_payload(data.clone());
         submission.bind_byte_range(offset, written as u64);
         submission.start_device_operation(self.acquire_device_operation(class).await?);
-        tracing::trace!(
-            storage_operation_id = submission.storage_operation_id().unwrap_or_default(),
-            device_operation_id = submission.device_operation_id().unwrap_or_default(),
-            device_queue_key = submission.device_queue_key().unwrap_or("unknown"),
-            byte_offset = offset,
-            byte_length = written as u64,
-            class = ?class,
-            "dispatching positioned write"
-        );
+        submission.trace_dispatch("positioned_write", class, 1);
         // Record the path as needing a sync when the write is *issued*, not
         // only after it completes. The backend can finish a submitted write
         // after this future is dropped; marking only afterwards would let a
@@ -3464,6 +3615,7 @@ impl MountScheduler {
         };
         current_file_identity(&key, file.as_ref(), "payload_write")?;
         peer_read_cache_invalidate(&peer_read_cache, &peer_read_cache_epoch, &key);
+        submission.release_payload();
         let submission = if strict {
             let sync_started = Instant::now();
             let strict_sync_guard = match file_write_guard {
@@ -3649,19 +3801,13 @@ impl MountScheduler {
         };
         let opened_identity = current_file_identity(&key, file.as_ref(), "data_sync")?;
         ensure_dirty_identity(&key, "data_sync", expected_state, opened_identity)?;
-        submission.bind_file_identity(opened_identity);
+        submission.retain_file(Arc::clone(&file));
         if let Some(expected_state) = expected_state {
             submission.bind_dirty_path(expected_state);
         }
         submission
             .start_device_operation(self.acquire_device_operation(IoClass::Foreground).await?);
-        tracing::trace!(
-            storage_operation_id = submission.storage_operation_id().unwrap_or_default(),
-            device_operation_id = submission.device_operation_id().unwrap_or_default(),
-            device_queue_key = submission.device_queue_key().unwrap_or("unknown"),
-            class = ?IoClass::Foreground,
-            "dispatching file data sync"
-        );
+        submission.trace_dispatch("file_data_sync", IoClass::Foreground, 1);
         let (fence_guard, admission_guard, submission) = match await_backend_io_with_fence(
             &key,
             backend_completion_with_fence(
@@ -3880,7 +4026,7 @@ impl MountScheduler {
         };
         let opened_identity = current_file_identity(&key, file.as_ref(), "checkpoint_sync")?;
         ensure_dirty_identity(&key, "checkpoint_sync", expected_state, opened_identity)?;
-        submission.bind_file_identity(opened_identity);
+        submission.retain_file(Arc::clone(&file));
         if let Some(expected_state) = expected_state {
             submission.bind_dirty_path(expected_state);
         }
@@ -3895,13 +4041,7 @@ impl MountScheduler {
             }
         };
         submission.start_device_operation(device_operation);
-        tracing::trace!(
-            storage_operation_id = submission.storage_operation_id().unwrap_or_default(),
-            device_operation_id = submission.device_operation_id().unwrap_or_default(),
-            device_queue_key = submission.device_queue_key().unwrap_or("unknown"),
-            class = ?IoClass::Foreground,
-            "dispatching checkpoint file sync"
-        );
+        submission.trace_dispatch("checkpoint_file_sync", IoClass::Foreground, 1);
         let (fence_guard, mut submission) = match await_backend_io_with_fence(
             &key,
             backend_completion_with_fence(

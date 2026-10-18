@@ -263,13 +263,19 @@ device-queue key, the captured file identity and content epoch, the per-file
 write sequence for dirty content, and payload read/write byte ranges where
 applicable through backend completion; only that record can clear the dirty
 state it covered. Coalesced peer reads also receive the sequence/key pair, an
-operation identity, and range for tracing.
+operation identity, and range for tracing. A `DiskSubmission` directly retains
+the opened descriptor handle and an immutable write-payload reference through
+backend completion. Dispatch and owner-drop traces record logical queued bytes,
+governor-backed queue credit, shared payload class/lease/view bytes, permit
+counts, and retained descriptor/payload owners; coalesced peer reads aggregate
+their retained requests' queued credits.
 Securely opened descriptor leases carry that captured identity through queued
 and submitted operations. On Unix and Windows, reads, writes, and sync
 operations check that the descriptor's original identity still matches the
 current path at their completion boundary; a mismatch fails as uncertain, and
-writes keep dirty evidence intact. Full resource-credit accounting, restart
-cuts, and platform fault qualification remain open.
+writes keep dirty evidence intact. Stable lease identities, frame/hash credit
+reconciliation, deterministic credit before/after assertions, restart cuts,
+and platform fault qualification remain open.
 
 ### Ownership and invariant
 
@@ -306,8 +312,11 @@ cuts, and platform fault qualification remain open.
   reads, writes, and checkpoint syncs. Dirty writes remain tied to the original
   file identity; replacement during an operation returns
   `FilesystemStateUncertain` before stale read bytes reach the caller and
-  without clearing dirty evidence. Full
-  operation-lease accounting, crash cuts, and platform-specific fault
+  without clearing dirty evidence. Completion owners retain descriptor and
+  immutable write-payload references; traces expose their queue credit and
+  retained permit/owner counts. Regression sources must still assert credit
+  values before and after cancellation/completion across storage frames,
+  queued work, and hash work. Crash cuts and platform-specific fault
   qualification remain open.
 
 ### Files and compatibility

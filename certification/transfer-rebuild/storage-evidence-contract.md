@@ -4,18 +4,23 @@ Status: design contract for IO-001/IO-005; a test-only scripted backend is
 wired into scheduler tests for held write completions, injected failures, and
 partial-write errors. Scheduler completion watchers now retain queue/device
 permits and queued-byte charges for admitted reads, writes, and syncs if their
-caller is canceled. The helper-level owner regressions are authored but
-unrun. Dropping the scripted backend releases any held test completions to
-avoid leaving a blocked helper thread during failure cleanup. Zero-progress
-read/write error mapping now has authored scheduler regressions. Path identity
-replacement is covered for cached descriptors and readahead entries under
-IO-004. The identity captured by secure open now travels with the leased
-descriptor. On Unix and Windows, payload reads, writes, and data/checkpoint
-syncs verify that identity against the current path at operation boundaries;
-a mismatch prevents stale read bytes from returning and leaves dirty write
-evidence intact. Held-read, held-write, and held-checkpoint-sync replacement
-regression sources are authored but unrun. End-to-end lease accounting, crash
-cuts, and the remaining fault-matrix cases are still open.
+caller is canceled. Disk submissions also retain the opened descriptor handle
+and an immutable write-payload reference until completion. Dispatch and
+owner-drop traces record logical queued bytes, governor-backed queue credit,
+shared payload class/lease/view bytes, permit counts, and retained
+descriptor/payload owners; coalesced peer reads aggregate their queued credits.
+The helper-level owner regressions are authored but unrun. Dropping the
+scripted backend releases any held test completions to avoid leaving a blocked
+helper thread during failure cleanup. Zero-progress read/write error mapping
+now has authored scheduler regressions. Path identity replacement is covered
+for cached descriptors and readahead entries under IO-004. The identity
+captured by secure open now travels with the leased descriptor. On Unix and
+Windows, payload reads, writes, and data/checkpoint syncs verify that identity
+against the current path at operation boundaries; a mismatch prevents stale
+read bytes from returning and leaves dirty write evidence intact. Held-read,
+held-write, and held-checkpoint-sync replacement regression sources are
+authored but unrun. Stable lease identities, frame/hash credit reconciliation,
+crash cuts, and the remaining fault-matrix cases are still open.
 
 ## Evidence states
 
@@ -63,12 +68,18 @@ queued open and backend completion watchers. Dirty clearing requires the
 admitted record and exact file/content/write-sequence identity. The queue key
 distinguishes reused local sequence values from independent physical-device
 queues; coalesced peer reads carry the same sequence/key pair plus a process-wide
-ID and byte range for tracing. The device
-admission pool is keyed by physical device identity rather than mount profile;
-unidentified topology falls back to a storage-root-scoped pool. Strict writes
-move the same submission through their data sync. Reads recheck the descriptor
-identity against the current path before returning. Full cross-boundary
-resource-credit accounting remains open.
+ID and byte range for tracing. `DiskSubmission` directly retains the opened
+descriptor handle and, for writes, an immutable `Bytes` reference until
+backend completion. Dispatch and owner-drop traces expose logical queued bytes,
+governor-backed queue credit, shared payload class and lease/view byte counts,
+and retained permit/owner counts. Coalesced peer reads report the aggregate
+queued credits of their retained requests. The device admission pool is keyed
+by physical device identity rather than mount profile; unidentified topology
+falls back to a storage-root-scoped pool. Strict writes move the same
+submission through their data sync. Reads recheck the descriptor identity
+against the current path before returning. Stable lease identities, frame and
+hash credit reconciliation, deterministic credit before/after assertions,
+crash cuts, and platform fault qualification remain open.
 
 Dirty evidence is tracked per normalized path, write sequence, and file
 identity. A barrier snapshots the dirty files and highest covered sequence for
@@ -87,7 +98,7 @@ relying on filesystem timing:
 | --- | --- |
 | Before admission | No descriptor, lease, dirty marker, or completion is retained |
 | After admission, before submit | Cancellation releases unsubmitted work exactly once; queued blocking preparation retains its admission until it returns |
-| After backend submit, before completion | Caller cancellation does not release the operation owner or hide dirty evidence; queue and byte leases stay attached to the completion watcher |
+| After backend submit, before completion | Caller cancellation does not release the operation owner or hide dirty evidence; descriptor, payload, queue/device admission, and byte credits stay attached to the completion watcher |
 | Short read / short write | Exact loop continues; zero progress or terminal error is surfaced |
 | Partial write then error | Range is not advertised or resume-committed; affected state remains recoverable |
 | Completion after cancel | Late completion releases ownership once and cannot mutate a newer epoch |
@@ -98,8 +109,10 @@ relying on filesystem timing:
 
 Each scenario records the injected event sequence, operation/file generations,
 lease and permit counts before/after, completion state, dirty sequences, and
-recovered content. Wall-clock sleeps and “usually happens” race tests do not
-satisfy this contract.
+recovered content. Current dispatch/drop traces expose submitted credit and
+retained-owner counts; deterministic snapshots and assertions across all
+credit classes are still required. Wall-clock sleeps and “usually happens”
+race tests do not satisfy this contract.
 
 ## Qualification boundary
 
