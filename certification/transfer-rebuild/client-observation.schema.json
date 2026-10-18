@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:torrentng:schema:transfer-client-observation-v1",
+  "title": "Pinned transfer benchmark client identity and settings readback",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "client_id",
+    "observed_at",
+    "version",
+    "runtime_identity",
+    "settings_readback"
+  ],
+  "properties": {
+    "schema_version": { "const": "transfer-client-observation-v1" },
+    "client_id": {
+      "enum": ["torrentngd", "qbittorrent", "transmission", "deluge", "rtorrent", "rqbit", "urtorrent"]
+    },
+    "observed_at": { "type": "string", "format": "date-time" },
+    "version": { "type": "string", "minLength": 1 },
+    "runtime_identity": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "container_id",
+            "image_id",
+            "image_ref",
+            "image_digest",
+            "process_id",
+            "process_start_ticks",
+            "effective_argv_sha256",
+            "effective_argv_count"
+          ],
+          "properties": {
+            "kind": { "const": "container" },
+            "container_id": { "$ref": "#/$defs/sha256" },
+            "image_id": { "$ref": "#/$defs/sha256" },
+            "image_ref": { "type": "string", "pattern": "^.+@sha256:[a-f0-9]{64}$" },
+            "image_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+            "process_id": { "type": "integer", "minimum": 1 },
+            "process_start_ticks": { "$ref": "#/$defs/nonnegative_integer" },
+            "effective_argv_sha256": { "$ref": "#/$defs/sha256" },
+            "effective_argv_count": { "$ref": "#/$defs/nonnegative_integer" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "binary_path",
+            "binary_sha256",
+            "binary_size_bytes",
+            "process_id",
+            "process_start_ticks",
+            "process_exe_device",
+            "process_exe_inode"
+          ],
+          "properties": {
+            "kind": { "const": "native_binary" },
+            "binary_path": { "type": "string", "minLength": 1 },
+            "binary_sha256": { "$ref": "#/$defs/sha256" },
+            "binary_size_bytes": { "$ref": "#/$defs/nonnegative_integer" },
+            "process_id": { "type": "integer", "minimum": 1 },
+            "process_start_ticks": { "$ref": "#/$defs/nonnegative_integer" },
+            "process_exe_device": { "$ref": "#/$defs/nonnegative_integer" },
+            "process_exe_inode": { "$ref": "#/$defs/nonnegative_integer" },
+            "source_commit": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+            "dirty_worktree": { "type": "boolean" },
+            "lockfile_sha256": { "$ref": "#/$defs/sha256" },
+            "toolchain": { "type": "string", "minLength": 1 }
+          },
+          "oneOf": [
+            {
+              "required": ["source_commit", "dirty_worktree", "lockfile_sha256", "toolchain"]
+            },
+            {
+              "not": {
+                "anyOf": [
+                  { "required": ["source_commit"] },
+                  { "required": ["dirty_worktree"] },
+                  { "required": ["lockfile_sha256"] },
+                  { "required": ["toolchain"] }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "settings_readback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["captured", "values", "sha256"],
+      "properties": {
+        "captured": { "const": true },
+        "values": { "type": "object" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "nonnegative_integer": { "type": "integer", "minimum": 0 }
+  }
+}

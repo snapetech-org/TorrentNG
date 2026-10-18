@@ -198,6 +198,16 @@ pub(crate) fn process_descriptor_budget_stats() -> (usize, usize, u64) {
     )
 }
 
+/// Read descriptor-budget state without forcing the process gate to initialize.
+pub(crate) fn try_process_descriptor_budget_stats() -> Option<(usize, usize, u64)> {
+    let gate = Lazy::get(&PROCESS_DESCRIPTOR_GATE)?;
+    Some((
+        gate.lock_state().active,
+        gate.limit,
+        PROCESS_DESCRIPTOR_BUDGET_WAITS.load(Ordering::Relaxed),
+    ))
+}
+
 #[derive(Debug)]
 pub(crate) struct DescriptorPermit {
     limiter: Arc<DescriptorLimiter>,
@@ -338,6 +348,71 @@ mod tests {
             .expect("cross-cache async waiter completes");
         assert_eq!(second.active(), 1);
         drop(second_permit);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn passive_budget_snapshot_does_not_initialize_gate_or_raise_fd_limit() {
+        const CHILD_ENV: &str = "TNG_TEST_PASSIVE_DESCRIPTOR_BUDGET_CHILD";
+
+        if std::env::var_os(CHILD_ENV).is_some() {
+            let read_limit = || {
+                let mut limit = libc::rlimit {
+                    rlim_cur: 0,
+                    rlim_max: 0,
+                };
+                // SAFETY: limit is a valid writable rlimit for getrlimit.
+                assert_eq!(
+                    unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) },
+                    0
+                );
+                limit
+            };
+            let before = read_limit();
+            assert!(try_process_descriptor_budget_stats().is_none());
+            assert_eq!(
+                crate::fd_limit::process_descriptor_budget_stats(),
+                crate::fd_limit::ProcessDescriptorBudgetStats::default()
+            );
+            assert!(try_process_descriptor_budget_stats().is_none());
+            let after = read_limit();
+            assert_eq!(after.rlim_cur, before.rlim_cur);
+            assert_eq!(after.rlim_max, before.rlim_max);
+            return;
+        }
+
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "file_handle::tests::passive_budget_snapshot_does_not_initialize_gate_or_raise_fd_limit",
+                "--nocapture",
+            ])
+            .env(CHILD_ENV, "1")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "passive descriptor-budget child timed out"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        let output = child.wait_with_output().unwrap();
+        let transcript = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            output.status.success() && transcript.contains("1 passed"),
+            "passive descriptor-budget child failed or did not run the test:\n{transcript}"
+        );
     }
 
     #[cfg(target_os = "linux")]

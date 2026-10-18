@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use once_cell::sync::Lazy;
 use tokio::sync::{
     mpsc::{self as tokio_mpsc, error::TrySendError},
-    oneshot, OwnedSemaphorePermit, Semaphore, TryAcquireError,
+    oneshot, OwnedSemaphorePermit, RwLock as AsyncRwLock, Semaphore, TryAcquireError,
 };
 use tracing::instrument;
 
@@ -21,12 +21,16 @@ use sha1::{Digest, Sha1};
 use crate::{
     backend::{BackendRequest, SelectedDiskBackend},
     device::{detect_storage_topology, StorageTopology},
+    elevator::elevator_class_weight,
     error::StorageError,
     fd_limit::process_handle_cache_capacity,
     file_handle::{DescriptorLimiter, DescriptorPermit, LeasedFile, LeasedFileHandle},
     frame::{global_frame_pool, Frame},
     io_class::IoClass,
-    open::{create_dir_all_no_follow, open_path_no_follow},
+    open::{
+        create_dir_all_no_follow, file_identity, open_path_no_follow_current, path_identity,
+        FileIdentity,
+    },
 };
 
 pub const STORAGE_LATENCY_BUCKETS_NS: [u64; 8] = [
@@ -88,6 +92,43 @@ pub struct IoRequest {
     pub file_path: PathBuf,
     pub offset: u64,
     pub len: usize,
+}
+
+/// Opaque evidence that a scheduler-wide payload durability barrier completed.
+///
+/// The evidence can only be created by `MountScheduler` after all writes
+/// admitted before the barrier have completed and every dirty or active path
+/// owned by that scheduler has been synced. It retains write admission until
+/// dropped, so callers can keep later payload writes behind the resume commit
+/// that consumes this evidence.
+#[must_use = "durability evidence should be attached to the state it protects"]
+pub struct DurabilityBarrierEvidence {
+    synced_file_count: u64,
+    write_sequence_watermark: u64,
+    _write_admission_guard: tokio::sync::OwnedRwLockWriteGuard<()>,
+}
+
+impl std::fmt::Debug for DurabilityBarrierEvidence {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DurabilityBarrierEvidence")
+            .field("synced_file_count", &self.synced_file_count)
+            .field("write_sequence_watermark", &self.write_sequence_watermark)
+            .finish_non_exhaustive()
+    }
+}
+
+impl DurabilityBarrierEvidence {
+    /// Number of distinct files synced by this barrier.
+    pub fn synced_file_count(&self) -> u64 {
+        self.synced_file_count
+    }
+
+    /// Highest scheduler-wide payload write sequence admitted before the
+    /// barrier. Sequences are diagnostic watermarks and saturate at `u64::MAX`.
+    pub fn write_sequence_watermark(&self) -> u64 {
+        self.write_sequence_watermark
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,7 +255,9 @@ pub struct StorageIoStats {
     pub file_pool: FilePoolStats,
     pub io_queue_depth: usize,
     pub hash_queue_depth: usize,
+    /// Total device admission slots for the shared per-device service.
     pub device_queue_capacity: usize,
+    /// Slots not held by either an active operation or a queued waiter.
     pub device_queue_available: usize,
     pub queued_disk_bytes: u64,
     pub queue_full: u64,
@@ -370,73 +413,6 @@ enum OpenMode {
     Write,
 }
 
-/// Identity of the filesystem object behind a cached descriptor.
-///
-/// Storage moves and payload cleanup run through a separate plan executor and
-/// can unlink or replace a path while this process still has the old
-/// descriptor open. Comparing the path's current identity before reusing a
-/// cached handle prevents a later torrent from writing to an unlinked inode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct FileIdentity {
-    #[cfg(unix)]
-    device: u64,
-    #[cfg(unix)]
-    inode: u64,
-    #[cfg(windows)]
-    volume_serial: u32,
-    #[cfg(windows)]
-    file_index: u64,
-}
-
-#[cfg(windows)]
-fn file_identity(file: &File) -> io::Result<FileIdentity> {
-    let (volume_serial, file_index) = crate::win32::file_identity(file)?;
-    Ok(FileIdentity {
-        volume_serial,
-        file_index,
-    })
-}
-
-#[cfg(not(windows))]
-fn file_identity(file: &File) -> io::Result<FileIdentity> {
-    metadata_identity(&file.metadata()?)
-}
-
-#[cfg(windows)]
-fn path_identity(path: &Path) -> io::Result<FileIdentity> {
-    let (volume_serial, file_index) = crate::win32::path_identity(path)?;
-    Ok(FileIdentity {
-        volume_serial,
-        file_index,
-    })
-}
-
-#[cfg(not(windows))]
-fn path_identity(path: &Path) -> io::Result<FileIdentity> {
-    // Do not follow a final symlink here. Runtime opens reject symlinks, and a
-    // symlink replacing a cached regular file must force a fresh safe open.
-    metadata_identity(&std::fs::symlink_metadata(path)?)
-}
-
-#[cfg(not(windows))]
-fn metadata_identity(metadata: &std::fs::Metadata) -> io::Result<FileIdentity> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-
-        Ok(FileIdentity {
-            device: metadata.dev(),
-            inode: metadata.ino(),
-        })
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = metadata;
-        Ok(FileIdentity {})
-    }
-}
-
 /// A write descriptor is opened read+write, so it also serves reads; a read
 /// descriptor cannot serve writes.
 fn mode_satisfies(cached: OpenMode, requested: OpenMode) -> bool {
@@ -503,7 +479,7 @@ impl FilePool {
         }
 
         // Open outside the cache lock: `open` is a blocking filesystem call.
-        let file = open_path_no_follow(&key, mode == OpenMode::Write, create)
+        let file = open_path_no_follow_current(&key, mode == OpenMode::Write, create)
             .map_err(|e| StorageError::io(&path_str, e))?;
         let file = Arc::new(LeasedFile::new(file, permit));
         let identity = file_identity(&file).map_err(|e| StorageError::io(&path_str, e))?;
@@ -571,35 +547,16 @@ impl FilePool {
     fn open_for_sync(&self, path: &Path) -> Result<Arc<LeasedFileHandle>, StorageError> {
         let key = normalized_key(path);
         let path_str = key.display().to_string();
-        {
-            let mut entries = lock_reset_derived_cache(&self.entries);
-            if let Some(entry) = entries.get_mut(&key) {
-                if entry.mode == OpenMode::Write && path_identity(&key).ok() == Some(entry.identity)
-                {
-                    entry.last_used = Instant::now();
-                    entry.sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
-                    return Ok(Arc::new(LeasedFileHandle::new(Arc::clone(&entry.file))));
-                }
-            }
-            if entries.remove(&key).is_some() {
-                self.counters.evictions.fetch_add(1, Ordering::Relaxed);
-            }
+        if let Some(handle) = self.lookup_valid(&key, OpenMode::Write) {
+            return Ok(handle);
         }
 
         let permit = self.acquire_descriptor();
-        let mut entries = lock_reset_derived_cache(&self.entries);
-        if let Some(entry) = entries.get_mut(&key) {
-            if entry.mode == OpenMode::Write && path_identity(&key).ok() == Some(entry.identity) {
-                entry.last_used = Instant::now();
-                entry.sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
-                return Ok(Arc::new(LeasedFileHandle::new(Arc::clone(&entry.file))));
-            }
+        if let Some(handle) = self.lookup_valid(&key, OpenMode::Write) {
+            return Ok(handle);
         }
-        if entries.remove(&key).is_some() {
-            self.counters.evictions.fetch_add(1, Ordering::Relaxed);
-        }
-        let file =
-            open_path_no_follow(&key, true, false).map_err(|e| StorageError::io(&path_str, e))?;
+        let file = open_path_no_follow_current(&key, true, false)
+            .map_err(|e| StorageError::io(&path_str, e))?;
         Ok(Arc::new(LeasedFileHandle::new(Arc::new(LeasedFile::new(
             file, permit,
         )))))
@@ -962,40 +919,83 @@ fn local_scheduler_resources(io_config: &StorageIoConfig) -> Arc<SharedScheduler
     create_scheduler_resources(shared_scheduler_key(io_config))
 }
 
-/// Bounded record of where each recently read file's next sequential read
-/// would begin.
+/// Bounded record of sequential peer-read streams and their useful readahead
+/// history.
 #[derive(Debug, Default)]
 struct PeerReadStreams {
-    next_offset: HashMap<PathBuf, u64>,
+    files: HashMap<PathBuf, PeerReadStream>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PeerReadStream {
+    next_offset: u64,
+    sequential_reads: u8,
+    recommended_bytes: usize,
 }
 
 impl PeerReadStreams {
     const MAX_TRACKED_FILES: usize = 1024;
 
-    /// Record a read and report whether it continued the previous one.
-    fn observe(&mut self, key: &Path, offset: u64, len: usize) -> bool {
+    /// Record a read and return whether it continued plus its current
+    /// reuse-driven readahead recommendation.
+    fn observe(
+        &mut self,
+        key: &Path,
+        offset: u64,
+        len: usize,
+        max_readahead_bytes: usize,
+    ) -> (bool, usize) {
         let end = offset.saturating_add(len as u64);
-        if let Some(next) = self.next_offset.get_mut(key) {
-            let sequential = *next == offset;
-            *next = end;
-            return sequential;
+        if let Some(stream) = self.files.get_mut(key) {
+            let sequential = stream.next_offset == offset;
+            if sequential {
+                let next = if stream.sequential_reads == 0 {
+                    len.saturating_mul(2)
+                } else {
+                    stream.recommended_bytes.max(len).saturating_mul(2)
+                };
+                stream.sequential_reads = stream.sequential_reads.saturating_add(1);
+                stream.recommended_bytes = next.min(max_readahead_bytes.max(len));
+            } else {
+                stream.sequential_reads = 0;
+                stream.recommended_bytes = len;
+            }
+            stream.next_offset = end;
+            return (sequential, stream.recommended_bytes);
         }
-        if self.next_offset.len() >= Self::MAX_TRACKED_FILES {
-            self.next_offset.clear();
+        if self.files.len() >= Self::MAX_TRACKED_FILES {
+            self.files.clear();
         }
-        self.next_offset.insert(key.to_path_buf(), end);
-        false
+        self.files.insert(
+            key.to_path_buf(),
+            PeerReadStream {
+                next_offset: end,
+                sequential_reads: 0,
+                recommended_bytes: len,
+            },
+        );
+        (false, len)
     }
+}
+
+fn next_saturating_sequence(sequence: &AtomicU64) -> u64 {
+    sequence
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            Some(current.saturating_add(1))
+        })
+        .unwrap_or(u64::MAX)
+        .saturating_add(1)
 }
 
 fn mark_dirty_path(
     dirty_paths: &Mutex<HashMap<PathBuf, u64>>,
     dirty_path_generation: &AtomicU64,
     path: PathBuf,
-) {
+) -> u64 {
     let mut dirty = lock_recover(dirty_paths);
     let generation = dirty_path_generation.fetch_add(1, Ordering::Relaxed);
     dirty.insert(path, generation);
+    generation
 }
 
 fn clear_dirty_path_if_generation(
@@ -1006,6 +1006,64 @@ fn clear_dirty_path_if_generation(
     let mut dirty = lock_recover(dirty_paths);
     if dirty.get(path).copied() == Some(expected_generation) {
         dirty.remove(path);
+    }
+}
+
+/// Per-path write admission and durability fence. Writers share the gate, so
+/// block writes remain concurrent; a sync takes it exclusively, waits for all
+/// admitted writers, records their sequence watermark, and blocks later
+/// writes until fdatasync completes.
+#[derive(Debug, Default)]
+struct FileSyncFence {
+    gate: Arc<AsyncRwLock<()>>,
+    issued_sequence: AtomicU64,
+    synced_sequence: AtomicU64,
+}
+
+enum FileFenceGuard {
+    Shared(tokio::sync::OwnedRwLockReadGuard<()>),
+    Exclusive(tokio::sync::OwnedRwLockWriteGuard<()>),
+}
+
+impl FileSyncFence {
+    fn issue_write_sequence(&self) -> u64 {
+        next_saturating_sequence(&self.issued_sequence)
+    }
+
+    fn watermark(&self) -> u64 {
+        self.issued_sequence.load(Ordering::Acquire)
+    }
+
+    fn mark_synced(&self, watermark: u64) {
+        let _ = self.synced_sequence.fetch_max(watermark, Ordering::Release);
+    }
+}
+
+/// Weakly retains path fences so a torrent with a large file set does not
+/// keep one lock allocation per path after all I/O and barriers have ended.
+#[derive(Debug, Default)]
+struct FileSyncFenceRegistry {
+    paths: Mutex<HashMap<PathBuf, Weak<FileSyncFence>>>,
+}
+
+impl FileSyncFenceRegistry {
+    fn for_path(&self, path: &Path) -> Arc<FileSyncFence> {
+        let mut paths = lock_recover(&self.paths);
+        if paths.len() >= 256 {
+            paths.retain(|_, fence| fence.strong_count() != 0);
+        }
+        if let Some(fence) = paths.get(path).and_then(Weak::upgrade) {
+            return fence;
+        }
+        let fence = Arc::new(FileSyncFence::default());
+        paths.insert(path.to_path_buf(), Arc::downgrade(&fence));
+        fence
+    }
+
+    fn active_paths(&self) -> Vec<PathBuf> {
+        let mut paths = lock_recover(&self.paths);
+        paths.retain(|_, fence| fence.strong_count() != 0);
+        paths.keys().cloned().collect()
     }
 }
 
@@ -1020,7 +1078,7 @@ pub struct MountScheduler {
     foreground_sem: Arc<Semaphore>,
     metadata_sem: Arc<Semaphore>,
     queue_sem: Arc<Semaphore>,
-    device_queue_sem: Arc<Semaphore>,
+    device_queue: Arc<DeviceQueue>,
     device_queue_capacity: usize,
     io_config: StorageIoConfig,
     _shared_resources: Arc<SharedSchedulerResources>,
@@ -1028,11 +1086,17 @@ pub struct MountScheduler {
     io_pool: Arc<BlockingPool>,
     disk_backend: Arc<SelectedDiskBackend>,
     hash_pool: Arc<BlockingPool>,
-    /// Dirty paths carry a write generation, not just membership. A sync
-    /// operation may overlap a later write; only the generation observed by
-    /// that sync may be cleared when its fdatasync completes.
+    /// Dirty paths carry a write generation, not just membership. Per-path
+    /// fences order admitted writes before fdatasync and keep later writes
+    /// behind the barrier; only the generation observed by that sync may be
+    /// cleared when it completes.
     dirty_paths: Arc<Mutex<HashMap<PathBuf, u64>>>,
     dirty_path_generation: Arc<AtomicU64>,
+    file_sync_fences: Arc<FileSyncFenceRegistry>,
+    /// Shared write admission lets a full checkpoint take a stable snapshot
+    /// across paths while ordinary writes remain concurrent with each other.
+    write_admission_gate: Arc<AsyncRwLock<()>>,
+    write_sequence: Arc<AtomicU64>,
     peer_read_cache: Arc<Mutex<HashMap<PathBuf, PeerReadCacheEntry>>>,
     peer_read_cache_epoch: Arc<AtomicU64>,
     /// Where each recently read file's next sequential read would start, so
@@ -1172,7 +1236,30 @@ struct QueuedDiskBytes {
 struct DiskSubmission {
     _queued_bytes: QueuedDiskBytes,
     _queue: OwnedSemaphorePermit,
-    _device_queue: OwnedSemaphorePermit,
+    _device_operation: Option<DeviceOperationPermit>,
+}
+
+impl DiskSubmission {
+    fn start_device_operation(&mut self, permit: DeviceOperationPermit) {
+        debug_assert!(self._device_operation.is_none());
+        self._device_operation = Some(permit);
+    }
+
+    fn finish_device_operation(&mut self) {
+        self._device_operation.take();
+    }
+
+    fn device_operation_id(&self) -> Option<u64> {
+        self._device_operation
+            .as_ref()
+            .map(|operation| operation.operation_id)
+    }
+}
+
+impl DeviceOperationPermit {
+    fn operation_id(&self) -> u64 {
+        self.operation_id
+    }
 }
 
 #[derive(Debug)]
@@ -1251,12 +1338,14 @@ async fn await_backend_io<T>(
 /// while the dedicated disk worker is still completing the syscall; without
 /// this watcher a concurrent peer read may publish pre-write bytes back into
 /// the cache after the writer's initial invalidation.
-fn backend_write_completion_with_cache_invalidation(
+fn backend_write_completion_with_cache_invalidation<G: Send + 'static, O: Send + 'static>(
     rx: oneshot::Receiver<io::Result<()>>,
     cache: Arc<Mutex<HashMap<PathBuf, PeerReadCacheEntry>>>,
     epoch: Arc<AtomicU64>,
     key: PathBuf,
-) -> oneshot::Receiver<io::Result<()>> {
+    fence_guard: G,
+    operation_owner: O,
+) -> oneshot::Receiver<(io::Result<()>, G, O)> {
     let (completion_tx, completion_rx) = oneshot::channel();
     tokio::spawn(async move {
         let result = rx.await.unwrap_or_else(|_| {
@@ -1266,9 +1355,59 @@ fn backend_write_completion_with_cache_invalidation(
             ))
         });
         peer_read_cache_invalidate(&cache, &epoch, &key);
-        let _ = completion_tx.send(result);
+        let _ = completion_tx.send((result, fence_guard, operation_owner));
     });
     completion_rx
+}
+
+fn backend_completion_with_fence<
+    T: Send + 'static,
+    G: Send + 'static,
+    O: Send + 'static,
+>(
+    rx: oneshot::Receiver<io::Result<T>>,
+    fence_guard: G,
+    operation_owner: O,
+) -> oneshot::Receiver<(io::Result<T>, G, O)> {
+    let (completion_tx, completion_rx) = oneshot::channel();
+    tokio::spawn(async move {
+        let result = rx.await.unwrap_or_else(|_| {
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "storage backend completion channel closed",
+            ))
+        });
+        let _ = completion_tx.send((result, fence_guard, operation_owner));
+    });
+    completion_rx
+}
+
+async fn await_backend_io_with_fence<T, G, O>(
+    path: &Path,
+    rx: oneshot::Receiver<(io::Result<T>, G, O)>,
+    expected_len: Option<usize>,
+) -> Result<(T, G, O), StorageError> {
+    let (result, fence_guard, operation_owner) =
+        rx.await.map_err(|_| StorageError::Cancelled)?;
+    match result {
+        Ok(value) => Ok((value, fence_guard, operation_owner)),
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Err(StorageError::QueueFull {
+            mount: "storage-backend".to_string(),
+        }),
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::UnexpectedEof | io::ErrorKind::WriteZero
+            ) =>
+        {
+            Err(StorageError::ShortIo {
+                path: path.display().to_string(),
+                expected: expected_len.unwrap_or(0),
+                actual: 0,
+            })
+        }
+        Err(error) => Err(StorageError::io(path.display().to_string(), error)),
+    }
 }
 
 async fn await_backend_io_with_expected<T>(
@@ -1300,22 +1439,292 @@ async fn await_backend_io_with_expected<T>(
     }
 }
 
-static DEVICE_QUEUES: Lazy<Mutex<HashMap<String, Weak<Semaphore>>>> =
+const DEVICE_CLASS_ORDER: [IoClass; 6] = [
+    IoClass::Foreground,
+    IoClass::PeerRead,
+    IoClass::PeerWrite,
+    IoClass::MoveCopy,
+    IoClass::Recheck,
+    IoClass::Metadata,
+];
+const DEVICE_DISPATCH_SLOT_COUNT: usize = 32;
+
+struct DeviceWaiter {
+    id: u64,
+    sender: oneshot::Sender<DeviceOperationPermit>,
+}
+
+struct DeviceQueueState {
+    active: usize,
+    pending: [VecDeque<DeviceWaiter>; 6],
+    next_waiter_id: u64,
+    next_operation_id: u64,
+    dispatch_cursor: usize,
+}
+
+struct DeviceQueue {
+    capacity: usize,
+    active_limit: usize,
+    state: Mutex<DeviceQueueState>,
+}
+
+struct DeviceOperationPermit {
+    queue: Arc<DeviceQueue>,
+    operation_id: u64,
+    armed: bool,
+}
+
+struct DeviceWaiterGuard {
+    queue: Weak<DeviceQueue>,
+    id: u64,
+    armed: bool,
+}
+
+impl DeviceQueue {
+    fn new(capacity: usize, active_limit: usize) -> Self {
+        let capacity = capacity.max(1);
+        Self {
+            capacity,
+            active_limit: active_limit.max(1).min(capacity),
+            state: Mutex::new(DeviceQueueState {
+                active: 0,
+                pending: std::array::from_fn(|_| VecDeque::new()),
+                next_waiter_id: 1,
+                next_operation_id: 1,
+                dispatch_cursor: 0,
+            }),
+        }
+    }
+
+    async fn acquire(
+        self: &Arc<Self>,
+        class: IoClass,
+        mount: String,
+    ) -> Result<DeviceOperationPermit, StorageError> {
+        let (sender, receiver) = oneshot::channel();
+        let (waiter_id, immediate, grant) = {
+            let mut state = lock_recover(&self.state);
+            prune_closed_device_waiters(&mut state);
+            let grant = collect_device_grant(self, &mut state);
+
+            if state.active < self.active_limit && device_pending_count(&state) == 0 {
+                state.active += 1;
+                let operation_id = take_device_sequence(&mut state.next_operation_id);
+                (
+                    None,
+                    Some(DeviceOperationPermit {
+                        queue: self.clone(),
+                        operation_id,
+                        armed: true,
+                    }),
+                    grant,
+                )
+            } else {
+                let pending_limit = self.capacity.saturating_sub(self.active_limit);
+                if device_pending_count(&state) >= pending_limit {
+                    drop(state);
+                    dispatch_device_grant(grant);
+                    return Err(StorageError::QueueFull { mount });
+                }
+
+                let id = take_device_sequence(&mut state.next_waiter_id);
+                state.pending[device_class_index(class)].push_back(DeviceWaiter { id, sender });
+                (Some(id), None, grant)
+            }
+        };
+        dispatch_device_grant(grant);
+
+        if let Some(permit) = immediate {
+            return Ok(permit);
+        }
+
+        let waiter_id = waiter_id.expect("queued device admission has an ID");
+        let mut waiter_guard = DeviceWaiterGuard {
+            queue: Arc::downgrade(self),
+            id: waiter_id,
+            armed: true,
+        };
+        let permit = receiver.await.map_err(|_| StorageError::Cancelled)?;
+        waiter_guard.armed = false;
+        Ok(permit)
+    }
+
+    fn available(&self) -> usize {
+        let state = lock_recover(&self.state);
+        self.capacity
+            .saturating_sub(state.active.saturating_add(device_pending_count(&state)))
+    }
+
+    fn cancel_waiter(self: &Arc<Self>, id: u64) {
+        let grant = {
+            let mut state = lock_recover(&self.state);
+            for queue in &mut state.pending {
+                if let Some(position) = queue.iter().position(|waiter| waiter.id == id) {
+                    queue.remove(position);
+                    break;
+                }
+            }
+            collect_device_grant(self, &mut state)
+        };
+        dispatch_device_grant(grant);
+    }
+
+    fn release(self: &Arc<Self>) {
+        dispatch_device_grant(self.release_slot());
+    }
+
+    fn release_slot(self: &Arc<Self>) -> Option<DeviceGrant> {
+        {
+            let mut state = lock_recover(&self.state);
+            state.active = state.active.saturating_sub(1);
+            collect_device_grant(self, &mut state)
+        }
+    }
+}
+
+impl Drop for DeviceOperationPermit {
+    fn drop(&mut self) {
+        if self.armed {
+            self.queue.release();
+        }
+    }
+}
+
+impl DeviceOperationPermit {
+    fn disarm(mut self) -> Arc<DeviceQueue> {
+        self.armed = false;
+        Arc::clone(&self.queue)
+    }
+}
+
+impl Drop for DeviceWaiterGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            if let Some(queue) = self.queue.upgrade() {
+                queue.cancel_waiter(self.id);
+            }
+        }
+    }
+}
+
+type DeviceGrant = (
+    oneshot::Sender<DeviceOperationPermit>,
+    DeviceOperationPermit,
+);
+
+fn dispatch_device_grant(grant: Option<DeviceGrant>) {
+    let mut grant = grant;
+    while let Some((sender, permit)) = grant {
+        // Sending outside the queue mutex matters: a receiver may have been
+        // cancelled after its slot was reserved, and dropping the returned
+        // permit must be able to release that slot without reentrant locking.
+        match sender.send(permit) {
+            Ok(()) => return,
+            Err(permit) => {
+                let queue = permit.disarm();
+                grant = queue.release_slot();
+            }
+        }
+    }
+}
+
+fn collect_device_grant(
+    queue: &Arc<DeviceQueue>,
+    state: &mut DeviceQueueState,
+) -> Option<DeviceGrant> {
+    while state.active < queue.active_limit {
+        let Some((class_index, waiter)) = pop_next_device_waiter(state) else {
+            return None;
+        };
+        if waiter.sender.is_closed() {
+            continue;
+        }
+        state.active += 1;
+        let operation_id = take_device_sequence(&mut state.next_operation_id);
+        let grant = (
+            waiter.sender,
+            DeviceOperationPermit {
+                queue: queue.clone(),
+                operation_id,
+                armed: true,
+            },
+        );
+        state.dispatch_cursor = next_device_cursor(class_index);
+        return Some(grant);
+    }
+    None
+}
+
+fn pop_next_device_waiter(state: &mut DeviceQueueState) -> Option<(usize, DeviceWaiter)> {
+    for offset in 0..DEVICE_DISPATCH_SLOT_COUNT {
+        let slot = (state.dispatch_cursor + offset) % DEVICE_DISPATCH_SLOT_COUNT;
+        let class_index = device_class_index(device_dispatch_class(slot));
+        if let Some(waiter) = state.pending[class_index].pop_front() {
+            return Some((slot, waiter));
+        }
+    }
+    None
+}
+
+fn next_device_cursor(slot: usize) -> usize {
+    (slot + 1) % DEVICE_DISPATCH_SLOT_COUNT
+}
+
+fn device_dispatch_class(slot: usize) -> IoClass {
+    let mut position = slot % DEVICE_DISPATCH_SLOT_COUNT;
+    for class in DEVICE_CLASS_ORDER {
+        let weight = elevator_class_weight(class);
+        if position < weight {
+            return class;
+        }
+        position -= weight;
+    }
+    IoClass::Metadata
+}
+
+fn prune_closed_device_waiters(state: &mut DeviceQueueState) {
+    for queue in &mut state.pending {
+        queue.retain(|waiter| !waiter.sender.is_closed());
+    }
+}
+
+fn device_pending_count(state: &DeviceQueueState) -> usize {
+    state.pending.iter().map(VecDeque::len).sum()
+}
+
+fn device_class_index(class: IoClass) -> usize {
+    match class {
+        IoClass::Metadata => 0,
+        IoClass::Recheck => 1,
+        IoClass::MoveCopy => 2,
+        IoClass::PeerWrite => 3,
+        IoClass::PeerRead => 4,
+        IoClass::Foreground => 5,
+    }
+}
+
+fn take_device_sequence(next: &mut u64) -> u64 {
+    let current = (*next).max(1);
+    *next = current.wrapping_add(1).max(1);
+    current
+}
+
+static DEVICE_QUEUES: Lazy<Mutex<HashMap<String, Weak<DeviceQueue>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 fn device_queue_for(
     storage_root: StorageRootId,
     device_id: Option<&str>,
-    profile: &StorageProfile,
     capacity: usize,
-) -> Arc<Semaphore> {
-    let key = device_queue_key(storage_root, device_id, profile);
+    active_limit: usize,
+) -> Arc<DeviceQueue> {
+    let key = device_queue_key(storage_root, device_id);
     let mut queues = lock_recover(&DEVICE_QUEUES);
     if let Some(queue) = queues.get(&key).and_then(Weak::upgrade) {
         return queue;
     }
     queues.retain(|_, queue| queue.strong_count() > 0);
-    let queue = Arc::new(Semaphore::new(capacity.max(1)));
+    let queue = Arc::new(DeviceQueue::new(capacity, active_limit));
     queues.insert(key, Arc::downgrade(&queue));
     queue
 }
@@ -1323,10 +1732,9 @@ fn device_queue_for(
 fn device_queue_key(
     storage_root: StorageRootId,
     device_id: Option<&str>,
-    profile: &StorageProfile,
 ) -> String {
     match device_id {
-        Some(device_id) => format!("device:{profile:?}:{device_id}"),
+        Some(device_id) => format!("device:{device_id}"),
         None => format!("storage-root:{}", storage_root.0),
     }
 }
@@ -1345,7 +1753,7 @@ impl PeerReadElevator {
         io_pool: Arc<BlockingPool>,
         disk_backend: Arc<SelectedDiskBackend>,
         queue_sem: Arc<Semaphore>,
-        device_queue_sem: Arc<Semaphore>,
+        device_queue: Arc<DeviceQueue>,
         counters: Arc<StorageCounters>,
         resources: Option<ResourceGovernor>,
     ) -> Self {
@@ -1359,7 +1767,7 @@ impl PeerReadElevator {
             io_pool,
             disk_backend,
             queue_sem,
-            device_queue_sem,
+            device_queue,
             counters.clone(),
         ));
         Self {
@@ -1432,7 +1840,7 @@ async fn peer_read_elevator_worker(
     io_pool: Arc<BlockingPool>,
     disk_backend: Arc<SelectedDiskBackend>,
     queue_sem: Arc<Semaphore>,
-    device_queue_sem: Arc<Semaphore>,
+    device_queue: Arc<DeviceQueue>,
     counters: Arc<StorageCounters>,
 ) {
     let inflight = Arc::new(Semaphore::new(inflight_limit.max(1)));
@@ -1448,7 +1856,7 @@ async fn peer_read_elevator_worker(
             let io_pool = io_pool.clone();
             let disk_backend = disk_backend.clone();
             let queue_sem = queue_sem.clone();
-            let device_queue_sem = device_queue_sem.clone();
+            let device_queue = device_queue.clone();
             let counters = counters.clone();
             tokio::spawn(async move {
                 let _permit = permit;
@@ -1458,7 +1866,7 @@ async fn peer_read_elevator_worker(
                     io_pool,
                     disk_backend,
                     queue_sem,
-                    device_queue_sem,
+                    device_queue,
                     counters,
                 )
                 .await;
@@ -1558,7 +1966,7 @@ async fn dispatch_peer_read_batch(
     io_pool: Arc<BlockingPool>,
     disk_backend: Arc<SelectedDiskBackend>,
     queue_sem: Arc<Semaphore>,
-    device_queue_sem: Arc<Semaphore>,
+    device_queue: Arc<DeviceQueue>,
     counters: Arc<StorageCounters>,
 ) -> Vec<(
     oneshot::Sender<Result<bytes::Bytes, StorageError>>,
@@ -1582,22 +1990,6 @@ async fn dispatch_peer_read_batch(
                 .collect();
         }
     };
-    let _device_queue = match device_queue_sem.acquire_owned().await {
-        Ok(permit) => permit,
-        Err(_) => {
-            return batch
-                .requests
-                .into_iter()
-                .map(|request| (request.tx, Err(StorageError::Cancelled)))
-                .collect();
-        }
-    };
-
-    batch.requests.retain(|request| !request.tx.is_closed());
-    if batch.requests.is_empty() {
-        return Vec::new();
-    }
-
     let path = batch.path.clone();
     let offset = batch.offset;
     let len = batch.len;
@@ -1612,6 +2004,34 @@ async fn dispatch_peer_read_batch(
         .await
     {
         Ok((key, file)) => {
+            let _device_queue = match device_queue
+                .acquire(
+                    IoClass::PeerRead,
+                    "storage-peer-read-elevator".to_owned(),
+                )
+                .await
+            {
+                Ok(permit) => permit,
+                Err(error) => {
+                    if matches!(error, StorageError::QueueFull { .. }) {
+                        counters.queue_full.fetch_add(1, Ordering::Relaxed);
+                    }
+                    return batch
+                        .requests
+                        .into_iter()
+                        .map(|request| (request.tx, Err(error.clone())))
+                        .collect();
+                }
+            };
+            tracing::trace!(
+                device_operation_id = _device_queue.operation_id(),
+                class = ?IoClass::PeerRead,
+                "dispatching coalesced peer read"
+            );
+            batch.requests.retain(|request| !request.tx.is_closed());
+            if batch.requests.is_empty() {
+                return Vec::new();
+            }
             let frame = match global_frame_pool().try_acquire(len) {
                 Some(frame) => frame,
                 None => {
@@ -1809,13 +2229,22 @@ impl MountScheduler {
         let device_id = topology
             .as_ref()
             .and_then(|topology| topology.device_id.as_ref().map(|device| device.0.clone()));
-        let device_queue_capacity = config.max_queue.min(io_config.io_queue_depth).max(1);
-        let device_queue_sem = device_queue_for(
+        // Device admission is shared by every mount on the physical device.
+        // Per-mount max_queue remains enforced by queue_sem; it must not split
+        // or resize the shared device service according to which mount starts
+        // first.
+        let requested_device_queue_capacity = io_config.io_queue_depth.max(1);
+        let device_dispatch_window = disk_backend.device_dispatch_window(
+            io_config.io_worker_threads,
+            requested_device_queue_capacity,
+        );
+        let device_queue = device_queue_for(
             storage_root,
             device_id.as_deref(),
-            &profile,
-            device_queue_capacity,
+            requested_device_queue_capacity,
+            device_dispatch_window,
         );
+        let device_queue_capacity = device_queue.capacity;
         let counters = Arc::new(StorageCounters::default());
         let peer_read_elevator_enabled =
             matches!(profile, StorageProfile::Hdd) && io_config.peer_read_elevator_budget_ms > 0;
@@ -1831,7 +2260,7 @@ impl MountScheduler {
                     io_pool.clone(),
                     disk_backend.clone(),
                     queue_sem.clone(),
-                    device_queue_sem.clone(),
+                    device_queue.clone(),
                     counters.clone(),
                     config.resources.clone(),
                 ))
@@ -1849,7 +2278,7 @@ impl MountScheduler {
             foreground_sem: Arc::new(Semaphore::new(fg)),
             metadata_sem: Arc::new(Semaphore::new(md)),
             queue_sem,
-            device_queue_sem,
+            device_queue,
             device_queue_capacity,
             file_pool,
             io_pool,
@@ -1858,6 +2287,9 @@ impl MountScheduler {
             hash_pool,
             dirty_paths: Arc::new(Mutex::new(HashMap::new())),
             dirty_path_generation: Arc::new(AtomicU64::new(0)),
+            file_sync_fences: Arc::new(FileSyncFenceRegistry::default()),
+            write_admission_gate: Arc::new(AsyncRwLock::new(())),
+            write_sequence: Arc::new(AtomicU64::new(0)),
             peer_read_cache: Arc::new(Mutex::new(HashMap::new())),
             peer_read_cache_epoch: Arc::new(AtomicU64::new(0)),
             peer_read_streams: Arc::new(Mutex::new(PeerReadStreams::default())),
@@ -1905,7 +2337,7 @@ impl MountScheduler {
             io_queue_depth: self.io_pool.queued(),
             hash_queue_depth: self.hash_pool.queued(),
             device_queue_capacity: self.device_queue_capacity,
-            device_queue_available: self.device_queue_sem.available_permits(),
+            device_queue_available: self.device_queue.available(),
             queued_disk_bytes: self.counters.queued_disk_bytes.load(Ordering::Relaxed),
             queue_full: self.counters.queue_full.load(Ordering::Relaxed),
             dirty_files,
@@ -2034,12 +2466,23 @@ impl MountScheduler {
         }
     }
 
-    async fn run_queued_blocking<T, F>(&self, queued_bytes: u64, f: F) -> Result<T, StorageError>
+    async fn run_queued_blocking<T, F>(
+        &self,
+        class: IoClass,
+        queued_bytes: u64,
+        f: F,
+    ) -> Result<T, StorageError>
     where
         T: Send + 'static,
         F: FnOnce() -> Result<T, StorageError> + Send + 'static,
     {
-        let submission = self.reserve_submission(queued_bytes)?;
+        let mut submission = self.reserve_mount_submission(queued_bytes)?;
+        submission.start_device_operation(self.acquire_device_operation(class).await?);
+        tracing::trace!(
+            device_operation_id = submission.device_operation_id().unwrap_or_default(),
+            class = ?class,
+            "dispatching storage-side blocking operation"
+        );
         let result = self
             .io_pool
             .run(move || {
@@ -2053,7 +2496,33 @@ impl MountScheduler {
         result
     }
 
-    fn reserve_submission(&self, queued_bytes: u64) -> Result<DiskSubmission, StorageError> {
+    /// Run disk-bound work owned by another subsystem through this mount's
+    /// bounded queue and the shared physical-device dispatcher.
+    ///
+    /// The caller supplies the retained byte charge and an operation class.
+    /// Both the mount and device permits, plus the byte charge, remain owned
+    /// by the blocking operation until it returns, even if this future is
+    /// cancelled after dispatch. Use this handoff for storage work that does
+    /// not naturally enter through `read_at`, `write_at`, or `sync_data`.
+    ///
+    /// The closure runs on the configured storage blocking pool. It must not
+    /// perform asynchronous work or wait for another operation queued on the
+    /// same blocking pool.
+    pub async fn run_device_operation<T, F>(
+        &self,
+        class: IoClass,
+        queued_bytes: u64,
+        operation: F,
+    ) -> Result<T, StorageError>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> Result<T, StorageError> + Send + 'static,
+    {
+        self.run_queued_blocking(class, queued_bytes, operation)
+            .await
+    }
+
+    fn reserve_mount_submission(&self, queued_bytes: u64) -> Result<DiskSubmission, StorageError> {
         let queued_bytes = QueuedDiskBytes::reserve(
             self.counters.clone(),
             self.resources.as_ref(),
@@ -2073,28 +2542,36 @@ impl MountScheduler {
                 }
                 TryAcquireError::Closed => StorageError::Cancelled,
             })?;
-        let device_queue = self
-            .device_queue_sem
-            .clone()
-            .try_acquire_owned()
-            .map_err(|err| match err {
-                TryAcquireError::NoPermits => {
-                    self.counters.queue_full.fetch_add(1, Ordering::Relaxed);
-                    StorageError::QueueFull {
-                        mount: self
-                            .device_id
-                            .as_ref()
-                            .map(|device| format!("storage-device-{device}"))
-                            .unwrap_or_else(|| format!("storage-root-{}", self.storage_root.0)),
-                    }
-                }
-                TryAcquireError::Closed => StorageError::Cancelled,
-            })?;
         Ok(DiskSubmission {
             _queued_bytes: queued_bytes,
             _queue: queue,
-            _device_queue: device_queue,
+            _device_operation: None,
         })
+    }
+
+    async fn acquire_device_operation(
+        &self,
+        class: IoClass,
+    ) -> Result<DeviceOperationPermit, StorageError> {
+        let device_operation = self
+            .device_queue
+            .acquire(
+                class,
+                self.device_id
+                    .as_ref()
+                    .map(|device| format!("storage-device-{device}"))
+                    .unwrap_or_else(|| format!("storage-root-{}", self.storage_root.0)),
+            )
+            .await;
+        match device_operation {
+            Ok(permit) => permit,
+            Err(error) => {
+                if matches!(error, StorageError::QueueFull { .. }) {
+                    self.counters.queue_full.fetch_add(1, Ordering::Relaxed);
+                }
+                return Err(error);
+            }
+        }
     }
 
     fn peer_read_elevator(&self) -> Option<PeerReadElevator> {
@@ -2112,7 +2589,7 @@ impl MountScheduler {
                 self.io_pool.clone(),
                 self.disk_backend.clone(),
                 self.queue_sem.clone(),
-                self.device_queue_sem.clone(),
+                self.device_queue.clone(),
                 self.counters.clone(),
                 self.resources.clone(),
             ));
@@ -2169,79 +2646,99 @@ impl MountScheduler {
                 return Ok(StorageRead::Bytes(bytes));
             }
         }
-        let submission = self.reserve_submission(len as u64)?;
+        let submission = self.reserve_mount_submission(len as u64)?;
         let preparation_counters = counters.clone();
         let preparation_peer_read_cache = peer_read_cache.clone();
         let preparation = self
             .io_pool
             .run(move || {
-                let key = normalized_key(&path);
-                let path_str = key.display().to_string();
-                let file = pool.get_or_open(&key, OpenMode::Read, false)?;
-                if class == IoClass::PeerRead
-                    && readahead_bytes > len
-                    && readahead_cache_entries > 0
-                {
-                    if let Some(bytes) =
-                        peer_read_cache_hit(&preparation_peer_read_cache, &key, &file, offset, len)
+                let prepared = (|| -> Result<ReadPreparation, StorageError> {
+                    let key = normalized_key(&path);
+                    let path_str = key.display().to_string();
+                    let file = pool.get_or_open(&key, OpenMode::Read, false)?;
+                    if class == IoClass::PeerRead
+                        && readahead_bytes > len
+                        && readahead_cache_entries > 0
                     {
-                        lock_recover(&peer_read_streams).observe(&key, offset, len);
+                        if let Some(bytes) = peer_read_cache_hit(
+                            &preparation_peer_read_cache,
+                            &key,
+                            &file,
+                            offset,
+                            len,
+                        ) {
+                            lock_recover(&peer_read_streams).observe(
+                                &key,
+                                offset,
+                                len,
+                                readahead_bytes,
+                            );
+                            preparation_counters
+                                .peer_read_cache_hits
+                                .fetch_add(1, Ordering::Relaxed);
+                            preparation_counters.read_ops_by_class[class_index(class)]
+                                .fetch_add(1, Ordering::Relaxed);
+                            preparation_counters.bytes_read_by_class[class_index(class)]
+                                .fetch_add(len as u64, Ordering::Relaxed);
+                            let latency_ns = latency_ns_since(started);
+                            preparation_counters.read_latency_ns_by_class[class_index(class)]
+                                .fetch_add(latency_ns, Ordering::Relaxed);
+                            record_latency_bucket(
+                                &preparation_counters.read_latency_buckets,
+                                latency_ns,
+                            );
+                            return Ok(ReadPreparation::CacheHit(bytes));
+                        }
                         preparation_counters
-                            .peer_read_cache_hits
+                            .peer_read_cache_misses
                             .fetch_add(1, Ordering::Relaxed);
-                        preparation_counters.read_ops_by_class[class_index(class)]
-                            .fetch_add(1, Ordering::Relaxed);
-                        preparation_counters.bytes_read_by_class[class_index(class)]
-                            .fetch_add(len as u64, Ordering::Relaxed);
-                        let latency_ns = latency_ns_since(started);
-                        preparation_counters.read_latency_ns_by_class[class_index(class)]
-                            .fetch_add(latency_ns, Ordering::Relaxed);
-                        record_latency_bucket(
-                            &preparation_counters.read_latency_buckets,
-                            latency_ns,
-                        );
-                        return Ok(ReadPreparation::CacheHit(bytes));
                     }
-                    preparation_counters
-                        .peer_read_cache_misses
-                        .fetch_add(1, Ordering::Relaxed);
-                }
-                let read_len = if class == IoClass::PeerRead
-                    && readahead_bytes > len
-                    && readahead_cache_entries > 0
-                {
-                    let file_len = file
-                        .metadata()
-                        .map_err(|e| StorageError::io(&path_str, e))?
-                        .len();
-                    // Expand only a stream that continues the previous read of
-                    // this file. An isolated 16 KiB request stays 16 KiB
-                    // instead of fetching 512 KiB it will never reuse.
-                    let sequential = lock_recover(&peer_read_streams).observe(&key, offset, len);
-                    if offset >= file_len || (sequential_only && !sequential) {
-                        len
+                    let read_len = if class == IoClass::PeerRead
+                        && readahead_bytes > len
+                        && readahead_cache_entries > 0
+                    {
+                        let file_len = file
+                            .metadata()
+                            .map_err(|e| StorageError::io(&path_str, e))?
+                            .len();
+                        // Expand only a stream that continues the previous read of
+                        // this file. An isolated 16 KiB request stays 16 KiB
+                        // instead of fetching 512 KiB it will never reuse.
+                        let (sequential, recommended_bytes) = lock_recover(&peer_read_streams)
+                            .observe(&key, offset, len, readahead_bytes);
+                        if offset >= file_len || (sequential_only && !sequential) {
+                            len
+                        } else {
+                            (if sequential_only {
+                                recommended_bytes
+                            } else {
+                                readahead_bytes
+                            })
+                                .min(file_len.saturating_sub(offset) as usize)
+                                .max(len)
+                        }
                     } else {
-                        readahead_bytes
-                            .min(file_len.saturating_sub(offset) as usize)
-                            .max(len)
-                    }
-                } else {
-                    len
-                };
-                advise_for_read_class(&file, class, offset, read_len, &preparation_counters);
-                Ok(ReadPreparation::BackendRead {
-                    key,
-                    file,
-                    read_len,
-                })
+                        len
+                    };
+                    advise_for_read_class(&file, class, offset, read_len, &preparation_counters);
+                    Ok(ReadPreparation::BackendRead {
+                        key,
+                        file,
+                        read_len,
+                    })
+                })();
+                prepared.map(|prepared| (prepared, submission))
             })
             .await;
         if matches!(preparation, Err(StorageError::QueueFull { .. })) {
             self.counters.queue_full.fetch_add(1, Ordering::Relaxed);
         }
-        let preparation = preparation?;
+        let (preparation, mut submission) = preparation?;
         match preparation {
-            ReadPreparation::CacheHit(bytes) => Ok(StorageRead::Bytes(bytes)),
+            ReadPreparation::CacheHit(bytes) => {
+                let _submission = submission;
+                Ok(StorageRead::Bytes(bytes))
+            }
             ReadPreparation::BackendRead {
                 key,
                 file,
@@ -2249,7 +2746,7 @@ impl MountScheduler {
             } => {
                 let requested_charge = queued_disk_charge(len as u64);
                 let read_buffer_charge = queued_disk_charge(read_len as u64);
-                let _read_buffer_queued_bytes = read_buffer_charge
+                let read_buffer_queued_bytes = read_buffer_charge
                     .checked_sub(requested_charge)
                     .filter(|bytes| *bytes > 0)
                     .map(|bytes| {
@@ -2261,19 +2758,32 @@ impl MountScheduler {
                         )
                     })
                     .transpose()?;
+                submission.start_device_operation(self.acquire_device_operation(class).await?);
                 let frame = global_frame_pool().try_acquire(read_len).ok_or_else(|| {
                     StorageError::QueueFull {
                         mount: "scheduler-read-frame".to_string(),
                     }
                 })?;
-                let frame = match await_backend_io_with_expected(
+                tracing::trace!(
+                    device_operation_id = submission.device_operation_id().unwrap_or_default(),
+                    class = ?class,
+                    "dispatching positioned read"
+                );
+                let frame = match await_backend_io_with_fence(
                     &key,
-                    disk_backend.pread_leased(file.clone(), frame, offset),
+                    backend_completion_with_fence(
+                        disk_backend.pread_leased(file.clone(), frame, offset),
+                        (),
+                        (submission, read_buffer_queued_bytes),
+                    ),
                     Some(read_len),
                 )
                 .await
                 {
-                    Ok(frame) => frame,
+                    Ok((frame, (), operation_owner)) => {
+                        drop(operation_owner);
+                        frame
+                    }
                     Err(error) => {
                         if matches!(error, StorageError::QueueFull { .. }) {
                             counters.queue_full.fetch_add(1, Ordering::Relaxed);
@@ -2281,7 +2791,6 @@ impl MountScheduler {
                         return Err(error);
                     }
                 };
-                let _submission = submission;
                 counters.read_ops_by_class[class_index(class)].fetch_add(1, Ordering::Relaxed);
                 counters.bytes_read_by_class[class_index(class)]
                     .fetch_add(len as u64, Ordering::Relaxed);
@@ -2376,8 +2885,17 @@ impl MountScheduler {
         create: bool,
     ) -> Result<(), StorageError> {
         checked_file_range_end(path, offset, data.len() as u64)?;
-        let _permit = self.acquire(class).await?;
+        let write_admission_guard =
+            Arc::clone(&self.write_admission_gate).read_owned().await;
+        let key = normalized_key(path);
         let strict = self.io_config.durability_mode == DurabilityMode::Strict;
+        let file_sync_fence = self.file_sync_fences.for_path(&key);
+        let file_write_guard = if strict {
+            FileFenceGuard::Exclusive(Arc::clone(&file_sync_fence.gate).write_owned().await)
+        } else {
+            FileFenceGuard::Shared(Arc::clone(&file_sync_fence.gate).read_owned().await)
+        };
+        let _permit = self.acquire(class).await?;
         let pool = self.file_pool.clone();
         let disk_backend = self.disk_backend.clone();
         let dirty_paths = self.dirty_paths.clone();
@@ -2387,23 +2905,25 @@ impl MountScheduler {
         let counters = self.counters.clone();
         let path = path.to_path_buf();
         let started = Instant::now();
-        let submission = self.reserve_submission(data.len() as u64)?;
-        let key = normalized_key(&path);
+        let submission = self.reserve_mount_submission(data.len() as u64)?;
         // Invalidate both before and after the write. A concurrent read that
         // started before the write may finish with old bytes after the first
         // invalidation; the epoch check in `peer_read_cache_store` prevents it
         // from repopulating the cache after the second one.
         peer_read_cache_invalidate(&peer_read_cache, &peer_read_cache_epoch, &key);
-        let file = match self
+        let (file, mut submission) = match self
             .io_pool
             .run({
                 let pool = pool.clone();
                 let key = key.clone();
-                move || pool.get_or_open(&key, OpenMode::Write, create)
+                move || {
+                    pool.get_or_open(&key, OpenMode::Write, create)
+                        .map(|file| (file, submission))
+                }
             })
             .await
         {
-            Ok(file) => file,
+            Ok(file_and_submission) => file_and_submission,
             Err(error) => {
                 if matches!(error, StorageError::QueueFull { .. }) {
                     counters.queue_full.fetch_add(1, Ordering::Relaxed);
@@ -2412,45 +2932,86 @@ impl MountScheduler {
             }
         };
         let written = data.len();
+        submission.start_device_operation(self.acquire_device_operation(class).await?);
+        tracing::trace!(
+            device_operation_id = submission.device_operation_id().unwrap_or_default(),
+            class = ?class,
+            "dispatching positioned write"
+        );
         // Record the path as needing a sync when the write is *issued*, not
         // only after it completes. The backend can finish a submitted write
         // after this future is dropped; marking only afterwards would let a
         // cancelled caller leave written bytes that no barrier covers. A
         // failed write costs one redundant fdatasync, which is harmless.
-        if !strict {
+        let write_sequence = file_sync_fence.issue_write_sequence();
+        let _write_watermark = next_saturating_sequence(&self.write_sequence);
+        let write_generation =
             mark_dirty_path(&dirty_paths, &dirty_path_generation, key.clone());
-        }
-        let result = await_backend_io_with_expected(
+        let (file_write_guard, admission_guard, submission) = match await_backend_io_with_fence(
             &key,
             backend_write_completion_with_cache_invalidation(
                 disk_backend.pwrite_leased(file.clone(), data, offset),
                 peer_read_cache.clone(),
                 peer_read_cache_epoch.clone(),
                 key.clone(),
+                (file_write_guard, write_admission_guard),
+                submission,
             ),
             Some(written),
         )
-        .await;
-        if let Err(error) = result {
-            if matches!(error, StorageError::QueueFull { .. }) {
-                counters.queue_full.fetch_add(1, Ordering::Relaxed);
+        .await
+        {
+            Ok(((), (fence_guard, admission_guard), submission)) => {
+                (fence_guard, admission_guard, submission)
             }
-            return Err(error);
-        }
-        peer_read_cache_invalidate(&peer_read_cache, &peer_read_cache_epoch, &key);
-        if strict {
-            let sync_started = Instant::now();
-            let result = await_backend_io(&key, disk_backend.fdatasync_leased(file)).await;
-            if let Err(error) = result {
+            Err(error) => {
                 if matches!(error, StorageError::QueueFull { .. }) {
                     counters.queue_full.fetch_add(1, Ordering::Relaxed);
                 }
                 return Err(error);
             }
+        };
+        peer_read_cache_invalidate(&peer_read_cache, &peer_read_cache_epoch, &key);
+        let submission = if strict {
+            let sync_started = Instant::now();
+            let strict_sync_guard = match file_write_guard {
+                FileFenceGuard::Exclusive(guard) => guard,
+                FileFenceGuard::Shared(_) => {
+                    unreachable!("strict writes hold the exclusive per-file fence")
+                }
+            };
+            let sync_completion = await_backend_io_with_fence(
+                &key,
+                backend_completion_with_fence(
+                    disk_backend.fdatasync_leased(file),
+                    (strict_sync_guard, admission_guard),
+                    submission,
+                ),
+                None,
+            )
+            .await;
+            let (strict_sync_guard, admission_guard, submission) = match sync_completion {
+                Ok(((), (fence_guard, admission_guard), submission)) => {
+                    (fence_guard, admission_guard, submission)
+                }
+                Err(error) => {
+                    if matches!(error, StorageError::QueueFull { .. }) {
+                        counters.queue_full.fetch_add(1, Ordering::Relaxed);
+                    }
+                    return Err(error);
+                }
+            };
             record_sync_completion(&counters, sync_started);
+            file_sync_fence.mark_synced(write_sequence);
+            clear_dirty_path_if_generation(&dirty_paths, &key, write_generation);
+            drop(strict_sync_guard);
+            drop(admission_guard);
+            submission
         } else {
-            mark_dirty_path(&dirty_paths, &dirty_path_generation, key);
-        }
+            drop(file_write_guard);
+            drop(admission_guard);
+            submission
+        };
         counters.write_ops_by_class[class_index(class)].fetch_add(1, Ordering::Relaxed);
         counters.bytes_written_by_class[class_index(class)]
             .fetch_add(written as u64, Ordering::Relaxed);
@@ -2468,12 +3029,20 @@ impl MountScheduler {
         len: u64,
         mode: PreallocationMode,
     ) -> Result<(), StorageError> {
+        let write_admission_guard =
+            Arc::clone(&self.write_admission_gate).read_owned().await;
         let pool = self.file_pool.clone();
         let dirty_paths = self.dirty_paths.clone();
         let dirty_path_generation = self.dirty_path_generation.clone();
+        let write_sequence = Arc::clone(&self.write_sequence);
         let counters = self.counters.clone();
         let path = path.to_path_buf();
-        self.run_queued_blocking(0, move || {
+        let fence = self.file_sync_fences.for_path(&normalized_key(&path));
+        let fence_guard = Arc::clone(&fence.gate).write_owned().await;
+        let fence_for_job = Arc::clone(&fence);
+        self.run_queued_blocking(IoClass::Foreground, 0, move || {
+            let _write_admission_guard = write_admission_guard;
+            let _fence_guard = fence_guard;
             let key = normalized_key(&path);
             let path_str = key.display().to_string();
             if let Some(parent) = key.parent() {
@@ -2481,6 +3050,11 @@ impl MountScheduler {
                     .map_err(|e| StorageError::io(parent.display().to_string(), e))?;
             }
             let file = pool.get_or_open(&key, OpenMode::Write, true)?;
+            if mode != PreallocationMode::Off {
+                let _file_sequence = fence_for_job.issue_write_sequence();
+                let _write_watermark = next_saturating_sequence(&write_sequence);
+                mark_dirty_path(&dirty_paths, &dirty_path_generation, key.clone());
+            }
             if mode != PreallocationMode::Off {
                 let current_len = file
                     .metadata()
@@ -2537,34 +3111,36 @@ impl MountScheduler {
                     }
                 }
             }
-            if mode != PreallocationMode::Off {
-                mark_dirty_path(&dirty_paths, &dirty_path_generation, key);
-            }
             Ok(())
         })
         .await
     }
 
     pub async fn sync_data(&self, path: &Path) -> Result<(), StorageError> {
+        let write_admission_guard =
+            Arc::clone(&self.write_admission_gate).read_owned().await;
         let pool = self.file_pool.clone();
         let disk_backend = self.disk_backend.clone();
         let dirty_paths = self.dirty_paths.clone();
         let counters = self.counters.clone();
         let path = path.to_path_buf();
-        let started = Instant::now();
-        let submission = self.reserve_submission(0)?;
         let key = normalized_key(&path);
+        let file_sync_fence = self.file_sync_fences.for_path(&key);
+        let fence_guard = Arc::clone(&file_sync_fence.gate).write_owned().await;
+        let watermark = file_sync_fence.watermark();
+        let started = Instant::now();
+        let submission = self.reserve_mount_submission(0)?;
         let expected_generation = lock_recover(&dirty_paths).get(&key).copied();
-        let file = match self
+        let (file, mut submission) = match self
             .io_pool
             .run({
                 let pool = pool.clone();
                 let key = key.clone();
-                move || pool.open_for_sync(&key)
+                move || pool.open_for_sync(&key).map(|file| (file, submission))
             })
             .await
         {
-            Ok(file) => file,
+            Ok(file_and_submission) => file_and_submission,
             Err(error) => {
                 if matches!(error, StorageError::QueueFull { .. }) {
                     counters.queue_full.fetch_add(1, Ordering::Relaxed);
@@ -2572,60 +3148,107 @@ impl MountScheduler {
                 return Err(error);
             }
         };
-        let result = await_backend_io(&key, disk_backend.fdatasync_leased(file)).await;
-        if let Err(error) = result {
-            if matches!(error, StorageError::QueueFull { .. }) {
-                counters.queue_full.fetch_add(1, Ordering::Relaxed);
+        submission.start_device_operation(
+            self.acquire_device_operation(IoClass::Foreground).await?,
+        );
+        tracing::trace!(
+            device_operation_id = submission.device_operation_id().unwrap_or_default(),
+            class = ?IoClass::Foreground,
+            "dispatching file data sync"
+        );
+        let (fence_guard, admission_guard, submission) = match await_backend_io_with_fence(
+            &key,
+            backend_completion_with_fence(
+                disk_backend.fdatasync_leased(file),
+                (fence_guard, write_admission_guard),
+                submission,
+            ),
+            None,
+        )
+        .await
+        {
+            Ok(((), (fence_guard, admission_guard), submission)) => {
+                (fence_guard, admission_guard, submission)
             }
-            return Err(error);
-        }
+            Err(error) => {
+                if matches!(error, StorageError::QueueFull { .. }) {
+                    counters.queue_full.fetch_add(1, Ordering::Relaxed);
+                }
+                return Err(error);
+            }
+        };
         record_sync_completion(&counters, started);
+        file_sync_fence.mark_synced(watermark);
         if let Some(expected_generation) = expected_generation {
             clear_dirty_path_if_generation(&dirty_paths, &key, expected_generation);
         }
+        drop(fence_guard);
+        drop(admission_guard);
         drop(submission);
         Ok(())
     }
 
     pub async fn sync_all_open_files(&self) -> Result<(), StorageError> {
+        drop(self.sync_all_open_files_with_evidence().await?);
+        Ok(())
+    }
+
+    /// Sync every dirty or active file after closing scheduler-wide write
+    /// admission. The returned opaque evidence can be attached to durable
+    /// resume state to prove the payload barrier completed.
+    pub async fn sync_all_open_files_with_evidence(
+        &self,
+    ) -> Result<DurabilityBarrierEvidence, StorageError> {
         let pool = self.file_pool.clone();
         let disk_backend = self.disk_backend.clone();
         let dirty_paths = self.dirty_paths.clone();
         let counters = self.counters.clone();
         let started = Instant::now();
-        let submission = self.reserve_submission(0)?;
-        let dirty_snapshot: Vec<(PathBuf, u64)> = {
+        let mut submission = Some(self.reserve_mount_submission(0)?);
+        let write_admission_guard =
+            Arc::clone(&self.write_admission_gate).write_owned().await;
+        let mut paths_to_sync: BTreeSet<PathBuf> = {
             let dirty = lock_recover(&dirty_paths);
             dirty
-                .iter()
-                .map(|(path, generation)| (path.clone(), *generation))
+                .keys()
+                .cloned()
                 .collect()
         };
+        paths_to_sync.extend(self.file_sync_fences.active_paths());
         // Sync exactly the files this scheduler wrote. The descriptor pool is
         // shared across torrents, so enumerating its writable files here used
         // to make one torrent's checkpoint fsync every other torrent's (and
-        // clean) files, serially and possibly across devices. Every write
-        // path through this scheduler marks its file dirty at issue time.
-        let paths_to_sync: Vec<PathBuf> = dirty_snapshot
-            .iter()
-            .map(|(path, _)| path.clone())
-            .collect();
-
+        // clean) files, serially and possibly across devices. Include active
+        // fences as well as dirty paths so a write still opening its file is
+        // ordered before this barrier even though it has not marked dirty yet.
         // Do not open all dirty files at once. The dirty set can be much
         // larger than the descriptor-cache capacity; syncing each path
         // sequentially keeps evicted handles from accumulating in a vector.
+        // Each path's exclusive fence waits for all admitted writes and keeps
+        // later writes behind this file's durable watermark.
+        let mut synced_file_count = 0u64;
         for path in paths_to_sync {
             let key = normalized_key(&path);
-            let file = match self
+            let file_sync_fence = self.file_sync_fences.for_path(&key);
+            let fence_guard = Arc::clone(&file_sync_fence.gate).write_owned().await;
+            let watermark = file_sync_fence.watermark();
+            let expected_generation = lock_recover(&dirty_paths).get(&key).copied();
+            let current_submission = submission
+                .take()
+                .expect("sync-all submission is returned after each file");
+            let (file, mut current_submission) = match self
                 .io_pool
                 .run({
                     let pool = pool.clone();
                     let key = key.clone();
-                    move || pool.open_for_sync(&key)
+                    move || {
+                        pool.open_for_sync(&key)
+                            .map(|file| (file, current_submission))
+                    }
                 })
                 .await
             {
-                Ok(file) => file,
+                Ok(file_and_submission) => file_and_submission,
                 Err(error) => {
                     if matches!(error, StorageError::QueueFull { .. }) {
                         counters.queue_full.fetch_add(1, Ordering::Relaxed);
@@ -2633,23 +3256,53 @@ impl MountScheduler {
                     return Err(error);
                 }
             };
-            let result = await_backend_io(&key, disk_backend.fdatasync_leased(file)).await;
-            if let Err(error) = result {
-                if matches!(error, StorageError::QueueFull { .. }) {
-                    counters.queue_full.fetch_add(1, Ordering::Relaxed);
+            current_submission.start_device_operation(
+                self.acquire_device_operation(IoClass::Foreground).await?,
+            );
+            tracing::trace!(
+                device_operation_id = current_submission
+                    .device_operation_id()
+                    .unwrap_or_default(),
+                class = ?IoClass::Foreground,
+                "dispatching checkpoint file sync"
+            );
+            let (fence_guard, current_submission) = match await_backend_io_with_fence(
+                &key,
+                backend_completion_with_fence(
+                    disk_backend.fdatasync_leased(file),
+                    fence_guard,
+                    current_submission,
+                ),
+                None,
+            )
+            .await
+            {
+                Ok(((), fence_guard, submission)) => (fence_guard, submission),
+                Err(error) => {
+                    if matches!(error, StorageError::QueueFull { .. }) {
+                        counters.queue_full.fetch_add(1, Ordering::Relaxed);
+                    }
+                    return Err(error);
                 }
-                return Err(error);
+            };
+            file_sync_fence.mark_synced(watermark);
+            synced_file_count = synced_file_count.saturating_add(1);
+            if let Some(expected_generation) = expected_generation {
+                clear_dirty_path_if_generation(&dirty_paths, &key, expected_generation);
             }
-        }
-        let mut dirty = lock_recover(&dirty_paths);
-        for (path, expected_generation) in dirty_snapshot {
-            if dirty.get(&path).copied() == Some(expected_generation) {
-                dirty.remove(&path);
-            }
+            drop(fence_guard);
+            let mut current_submission = current_submission;
+            current_submission.finish_device_operation();
+            submission = Some(current_submission);
         }
         record_sync_completion(&counters, started);
+        let write_sequence_watermark = self.write_sequence.load(Ordering::Acquire);
         drop(submission);
-        Ok(())
+        Ok(DurabilityBarrierEvidence {
+            synced_file_count,
+            write_sequence_watermark,
+            _write_admission_guard: write_admission_guard,
+        })
     }
 
     /// Whether this platform has a page-cache drop primitive at all
@@ -2671,7 +3324,7 @@ impl MountScheduler {
             let key = normalized_key(path);
             let counters = self.counters.clone();
             let result = self
-                .run_queued_blocking(0, move || {
+                .run_queued_blocking(IoClass::Recheck, 0, move || {
                     let file = pool.get_or_open(&key, OpenMode::Read, false)?;
                     Ok(advise_page_cache(&file, 0, 0, PageCacheAdvice::DontNeed))
                 })
@@ -2711,7 +3364,7 @@ impl MountScheduler {
         let pool = self.file_pool.clone();
         let counters = self.counters.clone();
         let path = path.to_path_buf();
-        self.run_queued_blocking(0, move || {
+        self.run_queued_blocking(IoClass::Recheck, 0, move || {
             let key = normalized_key(&path);
             let path_str = key.display().to_string();
             let file = pool.get_or_open(&key, OpenMode::Read, false)?;
@@ -2937,6 +3590,34 @@ impl MountScheduler {
                     .fetch_add(latency_ns, Ordering::Relaxed);
                 record_latency_bucket(&counters.hash_latency_buckets, latency_ns);
                 Ok(merkle_root(&leaves))
+            })
+            .await;
+        if matches!(result, Err(StorageError::QueueFull { .. })) {
+            self.counters.queue_full.fetch_add(1, Ordering::Relaxed);
+        }
+        result
+    }
+
+    /// Finish a streaming BEP 52 tree on the shared hash pool. The accumulator
+    /// holds one node per tree level, so retrying a full queue only clones a
+    /// small bounded state rather than retaining a file's leaf hashes.
+    pub async fn finish_v2_merkle_root(
+        &self,
+        accumulator: rt_hash::MerkleAccumulator,
+    ) -> Result<[u8; 32], StorageError> {
+        let counters = self.counters.clone();
+        let started = Instant::now();
+        let result = self
+            .hash_pool
+            .run(move || {
+                let root = accumulator.finish();
+                counters.hash_ops.fetch_add(1, Ordering::Relaxed);
+                let latency_ns = latency_ns_since(started);
+                counters
+                    .hash_latency_ns
+                    .fetch_add(latency_ns, Ordering::Relaxed);
+                record_latency_bucket(&counters.hash_latency_buckets, latency_ns);
+                Ok(root)
             })
             .await;
         if matches!(result, Err(StorageError::QueueFull { .. })) {
@@ -3265,6 +3946,7 @@ mod tests {
 
     use super::*;
     use crate::elevator::DeviceId;
+    use crate::test_support::{Effect, Operation, ScriptedDiskBackend};
     use crate::verify::{PieceVerifier, VerifyResult};
     use rt_path::SafeRelPath;
     use rt_path::StorageRootId;
@@ -3446,7 +4128,7 @@ mod tests {
             let sched = sched.clone();
             async move {
                 sched
-                    .run_queued_blocking(4096, move || {
+                    .run_queued_blocking(IoClass::PeerWrite, 4096, move || {
                         started_tx.send(()).unwrap();
                         release_rx.recv().unwrap();
                         Ok::<_, StorageError>(())
@@ -3570,7 +4252,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn schedulers_on_same_device_share_global_queue() {
+    async fn schedulers_on_same_device_share_global_queue_across_profiles() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("payload.bin");
         std::fs::write(&path, b"payload").unwrap();
@@ -3596,14 +4278,28 @@ mod tests {
             config.storage_io.clone(),
             Some(topology.clone()),
         );
+        let second_config = SchedulerConfig {
+            profile: StorageProfile::Ssd,
+            max_queue: 8,
+            ..config.clone()
+        };
         let second = MountScheduler::new_with_profile_and_io_config(
             StorageRootId::new(),
-            &config,
-            StorageProfile::Hdd,
-            config.storage_io.clone(),
+            &second_config,
+            StorageProfile::Ssd,
+            second_config.storage_io.clone(),
             Some(topology),
         );
-        let _held = first.device_queue_sem.clone().try_acquire_owned().unwrap();
+        assert!(Arc::ptr_eq(
+            &first.device_queue,
+            &second.device_queue
+        ));
+        assert!(!Arc::ptr_eq(&first.queue_sem, &second.queue_sem));
+        let _held = first
+            .device_queue
+            .acquire(IoClass::Foreground, "storage-device-shared-device".to_owned())
+            .await
+            .unwrap();
 
         let err = second
             .read_at(IoClass::Foreground, &path, 0, b"payload".len())
@@ -3618,6 +4314,135 @@ mod tests {
         assert_eq!(stats.queue_full, 1);
         assert_eq!(stats.device_queue_capacity, 1);
         assert_eq!(stats.device_queue_available, 0);
+    }
+
+    #[test]
+    fn device_dispatch_uses_weighted_class_fairness() {
+        let mut state = DeviceQueueState {
+            active: 0,
+            pending: std::array::from_fn(|_| VecDeque::new()),
+            next_waiter_id: 1,
+            next_operation_id: 1,
+            dispatch_cursor: 0,
+        };
+        let mut receivers = Vec::new();
+        for class in [
+            IoClass::Foreground,
+            IoClass::PeerRead,
+            IoClass::PeerWrite,
+            IoClass::MoveCopy,
+            IoClass::Recheck,
+            IoClass::Metadata,
+        ] {
+            for _ in 0..64 {
+                let (sender, receiver) = oneshot::channel();
+                receivers.push(receiver);
+                let id = take_device_sequence(&mut state.next_waiter_id);
+                state.pending[device_class_index(class)]
+                    .push_back(DeviceWaiter { id, sender });
+            }
+        }
+
+        let mut selected = [0usize; 6];
+        for _ in 0..DEVICE_DISPATCH_SLOT_COUNT {
+            let (slot, waiter) = pop_next_device_waiter(&mut state).unwrap();
+            let class = device_dispatch_class(slot);
+            selected[device_class_index(class)] += 1;
+            state.pending[device_class_index(class)].push_back(waiter);
+            state.dispatch_cursor = next_device_cursor(slot);
+        }
+
+        assert_eq!(selected[device_class_index(IoClass::Foreground)], 16);
+        assert_eq!(selected[device_class_index(IoClass::PeerRead)], 8);
+        assert_eq!(selected[device_class_index(IoClass::PeerWrite)], 4);
+        assert_eq!(selected[device_class_index(IoClass::MoveCopy)], 2);
+        assert_eq!(selected[device_class_index(IoClass::Recheck)], 1);
+        assert_eq!(selected[device_class_index(IoClass::Metadata)], 1);
+        drop(receivers);
+    }
+
+    #[tokio::test]
+    async fn cancelled_device_waiter_releases_bounded_queue_capacity() {
+        let queue = Arc::new(DeviceQueue::new(2, 1));
+        let active = queue
+            .acquire(IoClass::Metadata, "device-test".to_owned())
+            .await
+            .unwrap();
+        let waiting_queue = queue.clone();
+        let waiter = tokio::spawn(async move {
+            waiting_queue
+                .acquire(IoClass::Recheck, "device-test".to_owned())
+                .await
+        });
+
+        while queue.available() != 0 {
+            tokio::task::yield_now().await;
+        }
+        waiter.abort();
+        assert!(matches!(waiter.await, Err(error) if error.is_cancelled()));
+        assert_eq!(queue.available(), 1);
+
+        drop(active);
+        assert_eq!(queue.available(), 2);
+    }
+
+    #[tokio::test]
+    async fn external_device_handoff_shares_admission_across_mounts() {
+        let topology = StorageTopology {
+            device_id: Some(DeviceId("external-handoff-device".to_owned())),
+            profile: StorageProfile::Hdd,
+            fs_type: Some("ext4".to_owned()),
+            cow: false,
+        };
+        let config = SchedulerConfig {
+            profile: StorageProfile::Hdd,
+            max_queue: 1,
+            storage_io: StorageIoConfig {
+                io_worker_threads: 1,
+                io_queue_depth: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let first = MountScheduler::new_with_profile_and_io_config(
+            StorageRootId::new(),
+            &config,
+            StorageProfile::Hdd,
+            config.storage_io.clone(),
+            Some(topology.clone()),
+        );
+        let second = MountScheduler::new_with_profile_and_io_config(
+            StorageRootId::new(),
+            &config,
+            StorageProfile::Hdd,
+            config.storage_io.clone(),
+            Some(topology),
+        );
+        assert!(Arc::ptr_eq(&first.device_queue, &second.device_queue));
+
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+        let operation = tokio::spawn(async move {
+            first
+                .run_device_operation(IoClass::MoveCopy, 64, move || {
+                    started_tx.send(()).unwrap();
+                    finish_rx.recv().unwrap();
+                    Ok(())
+                })
+                .await
+        });
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("external operation did not start on the storage pool");
+
+        let rejected = second
+            .run_device_operation(IoClass::PeerRead, 8, || Ok(()))
+            .await;
+        assert!(matches!(rejected, Err(StorageError::QueueFull { .. })));
+
+        finish_tx.send(()).unwrap();
+        operation.await.unwrap().unwrap();
+        assert_eq!(second.device_queue.available(), 1);
     }
 
     #[tokio::test]
@@ -4837,6 +5662,14 @@ mod tests {
 
     #[tokio::test]
     async fn dropped_write_waiter_invalidates_cache_after_backend_completion() {
+        struct CompletionOwner(Arc<AtomicBool>);
+
+        impl Drop for CompletionOwner {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cancelled-write.bin");
         std::fs::write(&path, b"payload").unwrap();
@@ -4853,6 +5686,7 @@ mod tests {
             },
         )])));
         let epoch = Arc::new(AtomicU64::new(0));
+        let owner_dropped = Arc::new(AtomicBool::new(false));
         let (backend_tx, backend_rx) = oneshot::channel();
 
         let completion = backend_write_completion_with_cache_invalidation(
@@ -4860,20 +5694,55 @@ mod tests {
             Arc::clone(&cache),
             Arc::clone(&epoch),
             key.clone(),
+            (),
+            CompletionOwner(Arc::clone(&owner_dropped)),
         );
         // Simulate the writer task being cancelled while the backend still
-        // owns and completes its syscall.
+        // owns and completes its syscall. Queue and byte reservations stay
+        // with the completion watcher until that operation finishes.
         drop(completion);
+        assert!(!owner_dropped.load(Ordering::Acquire));
         backend_tx.send(Ok(())).unwrap();
 
         tokio::time::timeout(Duration::from_secs(1), async {
-            while epoch.load(Ordering::Acquire) == 0 {
+            while epoch.load(Ordering::Acquire) == 0 || !owner_dropped.load(Ordering::Acquire) {
                 tokio::task::yield_now().await;
             }
         })
         .await
         .expect("backend completion watcher did not invalidate the cache");
         assert!(!cache.lock().unwrap().contains_key(&key));
+    }
+
+    #[tokio::test]
+    async fn dropped_backend_waiter_keeps_operation_owner_until_completion() {
+        struct CompletionOwner(Arc<AtomicBool>);
+
+        impl Drop for CompletionOwner {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+
+        let owner_dropped = Arc::new(AtomicBool::new(false));
+        let (backend_tx, backend_rx) = oneshot::channel();
+        let completion = backend_completion_with_fence(
+            backend_rx,
+            (),
+            CompletionOwner(Arc::clone(&owner_dropped)),
+        );
+
+        drop(completion);
+        assert!(!owner_dropped.load(Ordering::Acquire));
+        backend_tx.send(Ok(7_u8)).unwrap();
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !owner_dropped.load(Ordering::Acquire) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("operation owner was not released after backend completion");
     }
 
     #[cfg(unix)]
@@ -5145,7 +6014,7 @@ mod tests {
             sched.io_pool.clone(),
             sched.disk_backend.clone(),
             sched.queue_sem.clone(),
-            sched.device_queue_sem.clone(),
+            sched.device_queue.clone(),
             sched.counters.clone(),
         )
         .await;
@@ -5188,7 +6057,7 @@ mod tests {
             sched.io_pool.clone(),
             sched.disk_backend.clone(),
             sched.queue_sem.clone(),
-            sched.device_queue_sem.clone(),
+            sched.device_queue.clone(),
             sched.counters.clone(),
         )
         .await;
@@ -5252,18 +6121,227 @@ mod tests {
         assert_eq!(a.stats().dirty_files, 0);
     }
 
+    fn scheduler_with_scripted_backend() -> (MountScheduler, Arc<ScriptedDiskBackend>) {
+        let mut scheduler = hdd_scheduler();
+        let backend = Arc::new(ScriptedDiskBackend::new(1, 8));
+        scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(
+            backend.clone(),
+        ));
+        (scheduler, backend)
+    }
+
+    #[tokio::test]
+    async fn cancelled_waiter_keeps_submitted_write_dirty_until_barrier() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("late-write.bin");
+        let (scheduler, backend) = scheduler_with_scripted_backend();
+        backend.inject(Operation::Write, Effect::HoldCompletion);
+
+        let write_scheduler = scheduler.clone();
+        let write_path = path.clone();
+        let write = tokio::spawn(async move {
+            write_scheduler
+                .write_at(
+                    IoClass::PeerWrite,
+                    &write_path,
+                    0,
+                    bytes::Bytes::from_static(b"verified-payload"),
+                    true,
+                )
+                .await
+        });
+
+        backend.wait_until_completion_is_held().await;
+        assert_eq!(backend.pending_releases(), 1);
+        let capacity = scheduler.stats().device_queue_capacity;
+        let available_while_in_flight = scheduler.stats().device_queue_available;
+        assert_eq!(available_while_in_flight, capacity - 1);
+        write.abort();
+        let _ = write.await;
+
+        assert_eq!(
+            scheduler.stats().device_queue_available,
+            available_while_in_flight,
+            "caller cancellation must not release the device slot before backend completion"
+        );
+        assert_eq!(scheduler.stats().dirty_files, 1);
+        assert!(backend.release_next());
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while scheduler.stats().device_queue_available != capacity {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("late backend completion should release the device operation");
+        scheduler.sync_all_open_files().await.unwrap();
+        assert_eq!(scheduler.stats().dirty_files, 0);
+        assert_eq!(std::fs::read(path).unwrap(), b"verified-payload");
+    }
+
+    #[tokio::test]
+    async fn checkpoint_barrier_blocks_new_path_writes_until_evidence_is_returned() {
+        let dir = tempfile::tempdir().unwrap();
+        let first_path = dir.path().join("first.bin");
+        let later_path = dir.path().join("later.bin");
+        let (scheduler, backend) = scheduler_with_scripted_backend();
+
+        scheduler
+            .write_at(
+                IoClass::PeerWrite,
+                &first_path,
+                0,
+                bytes::Bytes::from_static(b"before-barrier"),
+                true,
+            )
+            .await
+            .unwrap();
+        backend.inject(Operation::Sync, Effect::HoldCompletion);
+
+        let barrier_scheduler = scheduler.clone();
+        let barrier = tokio::spawn(async move {
+            barrier_scheduler
+                .sync_all_open_files_with_evidence()
+                .await
+        });
+        backend.wait_until_completion_is_held().await;
+        assert_eq!(backend.pending_releases(), 1);
+
+        let later_scheduler = scheduler.clone();
+        let (started_tx, started_rx) = oneshot::channel();
+        let later_write = tokio::spawn(async move {
+            started_tx.send(()).unwrap();
+            later_scheduler
+                .write_at(
+                    IoClass::PeerWrite,
+                    &later_path,
+                    0,
+                    bytes::Bytes::from_static(b"after-barrier"),
+                    true,
+                )
+                .await
+        });
+        started_rx.await.unwrap();
+        tokio::task::yield_now().await;
+        assert_eq!(
+            backend.pending_releases(),
+            1,
+            "a new path must not reach the backend while the checkpoint owns admission"
+        );
+
+        assert!(backend.release_next());
+        let evidence = barrier.await.unwrap().unwrap();
+        assert_eq!(evidence.synced_file_count(), 1);
+        assert_eq!(evidence.write_sequence_watermark(), 1);
+        tokio::task::yield_now().await;
+        assert_eq!(
+            scheduler.stats().dirty_files,
+            0,
+            "the returned proof must keep later writes out until the resume commit releases it"
+        );
+        drop(evidence);
+        later_write.await.unwrap().unwrap();
+        assert_eq!(scheduler.stats().dirty_files, 1);
+        assert_eq!(std::fs::read(first_path).unwrap(), b"before-barrier");
+        assert_eq!(std::fs::read(later_path).unwrap(), b"after-barrier");
+    }
+
+    #[tokio::test]
+    async fn partial_write_then_error_is_not_reported_as_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("partial-write.bin");
+        let (scheduler, backend) = scheduler_with_scripted_backend();
+        backend.inject(
+            Operation::Write,
+            Effect::WritePrefixThenFail {
+                prefix_bytes: 3,
+                kind: io::ErrorKind::Other,
+            },
+        );
+
+        let write_scheduler = scheduler.clone();
+        let write_path = path.clone();
+        let write = tokio::spawn(async move {
+            write_scheduler
+                .write_at(
+                    IoClass::PeerWrite,
+                    &write_path,
+                    0,
+                    bytes::Bytes::from_static(b"verified-payload"),
+                    true,
+                )
+                .await
+        });
+        backend.wait_until_completion_is_held().await;
+        assert!(backend.release_next());
+
+        assert!(write.await.unwrap().is_err());
+        assert_eq!(std::fs::read(path).unwrap(), b"ver");
+        assert_eq!(scheduler.stats().dirty_files, 1);
+    }
+
+    #[tokio::test]
+    async fn failed_barrier_keeps_dirty_evidence_for_retry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sync-retry.bin");
+        let (scheduler, backend) = scheduler_with_scripted_backend();
+
+        scheduler
+            .write_at(
+                IoClass::PeerWrite,
+                &path,
+                0,
+                bytes::Bytes::from_static(b"durable-later"),
+                true,
+            )
+            .await
+            .unwrap();
+        assert_eq!(scheduler.stats().dirty_files, 1);
+
+        backend.inject(Operation::Sync, Effect::Fail(io::ErrorKind::Other));
+        assert!(scheduler.sync_all_open_files().await.is_err());
+        assert_eq!(scheduler.stats().dirty_files, 1);
+
+        scheduler.sync_all_open_files().await.unwrap();
+        assert_eq!(scheduler.stats().dirty_files, 0);
+    }
+
     #[test]
     fn readahead_expands_only_continuing_streams() {
         let mut streams = PeerReadStreams::default();
         let file = Path::new("/payload/a.bin");
-        assert!(!streams.observe(file, 0, 16_384), "first read is exact");
-        assert!(
-            streams.observe(file, 16_384, 16_384),
-            "continuation expands"
+        assert_eq!(
+            streams.observe(file, 0, 16_384, 128 * 1024),
+            (false, 16_384),
+            "first read is exact"
         );
-        assert!(!streams.observe(file, 1_048_576, 16_384), "a jump is exact");
-        assert!(
-            !streams.observe(Path::new("/payload/b.bin"), 16_384, 16_384),
+        assert_eq!(
+            streams.observe(file, 16_384, 16_384, 128 * 1024),
+            (true, 32_768),
+            "first continuation expands by one block"
+        );
+        assert_eq!(
+            streams.observe(file, 32_768, 16_384, 128 * 1024),
+            (true, 65_536),
+            "continued reuse grows the range"
+        );
+        assert_eq!(
+            streams.observe(file, 49_152, 16_384, 128 * 1024),
+            (true, 128 * 1024),
+            "growth stops at the configured cap"
+        );
+        assert_eq!(
+            streams.observe(file, 65_536, 16_384, 128 * 1024),
+            (true, 128 * 1024),
+            "a stream at its cap stays bounded"
+        );
+        assert_eq!(
+            streams.observe(file, 1_048_576, 16_384, 128 * 1024),
+            (false, 16_384),
+            "a jump resets to an exact read"
+        );
+        assert_eq!(
+            streams.observe(Path::new("/payload/b.bin"), 16_384, 16_384, 128 * 1024),
+            (false, 16_384),
             "another file starts fresh"
         );
     }

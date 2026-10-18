@@ -158,6 +158,8 @@ enum SelectedDiskBackendInner {
     Pread(PreadBackend),
     #[cfg(target_os = "linux")]
     Uring(UringBackend),
+    #[cfg(test)]
+    Injected(Arc<dyn DiskBackend>),
 }
 
 impl fmt::Debug for SelectedDiskBackend {
@@ -226,6 +228,21 @@ impl SelectedDiskBackend {
         &self.selection
     }
 
+    /// Construct a scheduler backend around a scripted test implementation.
+    /// The adapter is test-only so production cannot bypass the selected
+    /// backend or descriptor ownership rules.
+    #[cfg(test)]
+    pub(crate) fn with_test_backend(backend: Arc<dyn DiskBackend>) -> Self {
+        Self {
+            selection: BackendSelection {
+                requested: BackendRequest::Pread,
+                selected: BackendKind::Pread,
+                reason: "scripted test backend".to_string(),
+            },
+            inner: SelectedDiskBackendInner::Injected(backend),
+        }
+    }
+
     pub(crate) fn pread_leased(
         &self,
         file: Arc<LeasedFileHandle>,
@@ -236,6 +253,11 @@ impl SelectedDiskBackend {
             SelectedDiskBackendInner::Pread(backend) => backend.pread_leased(file, frame, offset),
             #[cfg(target_os = "linux")]
             SelectedDiskBackendInner::Uring(backend) => backend.pread_leased(file, frame, offset),
+            #[cfg(test)]
+            SelectedDiskBackendInner::Injected(backend) => match test_file_clone(&file) {
+                Ok(file) => backend.pread(file, frame, offset),
+                Err(error) => completed_error(error),
+            },
         }
     }
 
@@ -249,6 +271,11 @@ impl SelectedDiskBackend {
             SelectedDiskBackendInner::Pread(backend) => backend.pwrite_leased(file, data, offset),
             #[cfg(target_os = "linux")]
             SelectedDiskBackendInner::Uring(backend) => backend.pwrite_leased(file, data, offset),
+            #[cfg(test)]
+            SelectedDiskBackendInner::Injected(backend) => match test_file_clone(&file) {
+                Ok(file) => backend.pwrite(file, data, offset),
+                Err(error) => completed_error(error),
+            },
         }
     }
 
@@ -260,11 +287,42 @@ impl SelectedDiskBackend {
             SelectedDiskBackendInner::Pread(backend) => backend.fdatasync_leased(file),
             #[cfg(target_os = "linux")]
             SelectedDiskBackendInner::Uring(backend) => backend.fdatasync_leased(file),
+            #[cfg(test)]
+            SelectedDiskBackendInner::Injected(backend) => match test_file_clone(&file) {
+                Ok(file) => backend.fdatasync(file),
+                Err(error) => completed_error(error),
+            },
         }
     }
 
     pub fn kind(&self) -> BackendKind {
         self.selection.selected
+    }
+
+    /// Bound the active window admitted by the per-device dispatcher while
+    /// leaving the remainder of its queue available for class-aware
+    /// selection. The portable worker pool progresses one job per worker;
+    /// io_uring uses one bounded submission batch as the current device
+    /// window.
+    pub(crate) fn device_dispatch_window(
+        &self,
+        worker_threads: usize,
+        queue_capacity: usize,
+    ) -> usize {
+        let preferred = match self.kind() {
+            BackendKind::Pread => worker_threads.max(1),
+            BackendKind::Uring => {
+                #[cfg(target_os = "linux")]
+                {
+                    URING_BATCH_LIMIT
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    worker_threads.max(1)
+                }
+            }
+        };
+        preferred.min(queue_capacity.max(1))
     }
 
     fn pread(
@@ -330,6 +388,18 @@ impl SelectedDiskBackend {
     }
 }
 
+#[cfg(test)]
+fn test_file_clone(file: &LeasedFileHandle) -> io::Result<Arc<File>> {
+    file.as_file().try_clone().map(Arc::new)
+}
+
+#[cfg(test)]
+fn completed_error<T>(error: io::Error) -> oneshot::Receiver<io::Result<T>> {
+    let (sender, receiver) = oneshot::channel();
+    let _ = sender.send(Err(error));
+    receiver
+}
+
 impl DiskBackend for SelectedDiskBackend {
     fn pread(
         &self,
@@ -341,6 +411,8 @@ impl DiskBackend for SelectedDiskBackend {
             SelectedDiskBackendInner::Pread(backend) => backend.pread(file, frame, offset),
             #[cfg(target_os = "linux")]
             SelectedDiskBackendInner::Uring(backend) => backend.pread(file, frame, offset),
+            #[cfg(test)]
+            SelectedDiskBackendInner::Injected(backend) => backend.pread(file, frame, offset),
         }
     }
 
@@ -354,6 +426,8 @@ impl DiskBackend for SelectedDiskBackend {
             SelectedDiskBackendInner::Pread(backend) => backend.pwrite(file, data, offset),
             #[cfg(target_os = "linux")]
             SelectedDiskBackendInner::Uring(backend) => backend.pwrite(file, data, offset),
+            #[cfg(test)]
+            SelectedDiskBackendInner::Injected(backend) => backend.pwrite(file, data, offset),
         }
     }
 
@@ -362,6 +436,8 @@ impl DiskBackend for SelectedDiskBackend {
             SelectedDiskBackendInner::Pread(backend) => backend.fdatasync(file),
             #[cfg(target_os = "linux")]
             SelectedDiskBackendInner::Uring(backend) => backend.fdatasync(file),
+            #[cfg(test)]
+            SelectedDiskBackendInner::Injected(backend) => backend.fdatasync(file),
         }
     }
 
@@ -370,6 +446,8 @@ impl DiskBackend for SelectedDiskBackend {
             SelectedDiskBackendInner::Pread(backend) => backend.supports_fixed_buffers(),
             #[cfg(target_os = "linux")]
             SelectedDiskBackendInner::Uring(backend) => backend.supports_fixed_buffers(),
+            #[cfg(test)]
+            SelectedDiskBackendInner::Injected(backend) => backend.supports_fixed_buffers(),
         }
     }
 
@@ -378,6 +456,8 @@ impl DiskBackend for SelectedDiskBackend {
             SelectedDiskBackendInner::Pread(backend) => backend.supports_registered_files(),
             #[cfg(target_os = "linux")]
             SelectedDiskBackendInner::Uring(backend) => backend.supports_registered_files(),
+            #[cfg(test)]
+            SelectedDiskBackendInner::Injected(backend) => backend.supports_registered_files(),
         }
     }
 
@@ -386,6 +466,8 @@ impl DiskBackend for SelectedDiskBackend {
             SelectedDiskBackendInner::Pread(backend) => backend.max_batch_len(),
             #[cfg(target_os = "linux")]
             SelectedDiskBackendInner::Uring(backend) => backend.max_batch_len(),
+            #[cfg(test)]
+            SelectedDiskBackendInner::Injected(backend) => backend.max_batch_len(),
         }
     }
 
@@ -394,6 +476,8 @@ impl DiskBackend for SelectedDiskBackend {
             SelectedDiskBackendInner::Pread(backend) => backend.fixed_buffer_len(),
             #[cfg(target_os = "linux")]
             SelectedDiskBackendInner::Uring(backend) => backend.fixed_buffer_len(),
+            #[cfg(test)]
+            SelectedDiskBackendInner::Injected(backend) => backend.fixed_buffer_len(),
         }
     }
 
@@ -402,6 +486,8 @@ impl DiskBackend for SelectedDiskBackend {
             SelectedDiskBackendInner::Pread(backend) => backend.fixed_buffer_strategy(),
             #[cfg(target_os = "linux")]
             SelectedDiskBackendInner::Uring(backend) => backend.fixed_buffer_strategy(),
+            #[cfg(test)]
+            SelectedDiskBackendInner::Injected(backend) => backend.fixed_buffer_strategy(),
         }
     }
 }

@@ -1114,8 +1114,9 @@ fn resource_config_from_config(config: &Config) -> ResourceGovernorConfig {
 fn reserve_piece_index_memory(
     resources: &ResourceGovernor,
     piece_count: usize,
+    max_peers: usize,
 ) -> CmdResult<MemoryLease> {
-    let bytes = u64::try_from(piece_index_memory_bytes(piece_count))
+    let bytes = u64::try_from(piece_index_memory_bytes(piece_count, max_peers))
         .map_err(|_| "piece index memory estimate does not fit in u64".to_owned())?;
     resources
         .try_acquire(MemoryClass::PieceIndex, bytes)
@@ -1128,6 +1129,7 @@ fn reserve_piece_index_memory_for_hash(
     resources: &ResourceGovernor,
     info_hash_len: usize,
     piece_count: usize,
+    max_peers: usize,
 ) -> CmdResult<MemoryLease> {
     if info_hash_len == 64 {
         let bytes = u64::try_from(v2_piece_index_memory_bytes(piece_count))
@@ -1140,7 +1142,7 @@ fn reserve_piece_index_memory_for_hash(
                 )
             })
     } else {
-        reserve_piece_index_memory(resources, piece_count)
+        reserve_piece_index_memory(resources, piece_count, max_peers)
     }
 }
 
@@ -1151,19 +1153,22 @@ fn reserve_piece_index_memory_for_hash(
 /// before constructing the task; otherwise a large torrent can pass the
 /// piece-index governor while still retaining tens of MiB of unaccounted
 /// metadata for its lifetime.
-fn piece_index_memory_bytes(piece_count: usize) -> usize {
-    PiecePicker::memory_bytes_for_piece_count(piece_count)
+fn piece_index_memory_bytes(piece_count: usize, max_peers: usize) -> usize {
+    PiecePicker::memory_bytes_for_piece_count_with_max_peers(piece_count, max_peers)
         .saturating_add(piece_count.saturating_mul(std::mem::size_of::<[u8; 20]>()))
 }
 
 fn reserve_piece_index_memory_for_meta(
     resources: &ResourceGovernor,
     meta: &TorrentMeta,
+    max_peers: usize,
 ) -> CmdResult<Option<MemoryLease>> {
     match meta {
-        TorrentMeta::V1(meta) => reserve_piece_index_memory(resources, meta.pieces.len()).map(Some),
+        TorrentMeta::V1(meta) => {
+            reserve_piece_index_memory(resources, meta.pieces.len(), max_peers).map(Some)
+        }
         TorrentMeta::Hybrid(meta, _) => {
-            reserve_piece_index_memory(resources, meta.pieces.len()).map(Some)
+            reserve_piece_index_memory(resources, meta.pieces.len(), max_peers).map(Some)
         }
         TorrentMeta::V2(meta) => {
             let piece_count = usize::try_from(meta.piece_count())
@@ -2245,6 +2250,12 @@ impl Engine {
             let endpoint = startup_try!(UtpEndpoint::bind(listen_addr)
                 .await
                 .context("binding uTP peer listener"));
+            startup_try!(engine
+                .services
+                .network_budget
+                .install_utp_endpoint(endpoint.clone())
+                .await
+                .context("installing shared uTP peer endpoint"));
             info!(
                 component = "peer_listener",
                 operation = "listen_utp",
@@ -2329,6 +2340,15 @@ impl Engine {
     async fn shutdown_after_start_failure(mut self) {
         let timeout_budget = Duration::from_secs(self.config.daemon.shutdown_timeout_secs.max(1));
         let tasks_stopped_cleanly = self.shutdown_torrent_tasks().await;
+        if let Err(error) = self.services.network_budget.shutdown_utp().await {
+            warn!(
+                component = "utp",
+                operation = "startup_cleanup",
+                result = "error",
+                error = %error,
+                "shared uTP runtime did not shut down cleanly after startup failure"
+            );
+        }
         self.mark_run_finished(tasks_stopped_cleanly).await;
         self.services.storage_jobs.shutdown(timeout_budget).await;
         if let Some(tx) = self.services.dht_tx.take() {
@@ -2397,6 +2417,15 @@ impl Engine {
         discard_pending_engine_commands(&mut self.cmd_rx);
         let _ = peer_listener_stop.send(true);
         let tasks_stopped_cleanly = self.shutdown_torrent_tasks().await;
+        if let Err(error) = self.services.network_budget.shutdown_utp().await {
+            warn!(
+                component = "utp",
+                operation = "shutdown",
+                result = "error",
+                error = %error,
+                "shared uTP runtime did not shut down cleanly"
+            );
+        }
         self.mark_run_finished(tasks_stopped_cleanly).await;
         self.services
             .storage_jobs
@@ -6681,7 +6710,11 @@ impl Engine {
             parse_memory_lease,
         } = prepared;
         let piece_index_memory_lease =
-            match reserve_piece_index_memory_for_meta(&self.services.resources, &meta) {
+            match reserve_piece_index_memory_for_meta(
+                &self.services.resources,
+                &meta,
+                self.config.network.max_peers,
+            ) {
                 Ok(Some(lease)) => lease,
                 Ok(None) => {
                     self.fail_torrent_promotion_actions(
@@ -7143,7 +7176,11 @@ impl Engine {
         let info_hash = meta_dht_info_hash(&meta);
         let is_private = meta.is_private();
         let piece_index_memory_lease =
-            reserve_piece_index_memory_for_meta(&self.services.resources, &meta)?
+            reserve_piece_index_memory_for_meta(
+                &self.services.resources,
+                &meta,
+                self.config.network.max_peers,
+            )?
                 .ok_or_else(|| "v2 torrent lost its piece-index memory reservation".to_owned())?;
         let torrent_metadata_memory_lease =
             reserve_torrent_metadata_memory_for_meta(&self.services.resources, &meta)?
@@ -11572,9 +11609,11 @@ mod tests {
 
     #[test]
     fn piece_index_memory_reservation_is_bounded_and_released() {
-        let picker_bytes = PiecePicker::memory_bytes_for_piece_count(1_024);
+        let max_peers = 128;
+        let picker_bytes =
+            PiecePicker::memory_bytes_for_piece_count_with_max_peers(1_024, max_peers);
         let hash_bytes = 1_024 * std::mem::size_of::<[u8; 20]>();
-        let bytes = piece_index_memory_bytes(1_024) as u64;
+        let bytes = piece_index_memory_bytes(1_024, max_peers) as u64;
         assert!(bytes >= (picker_bytes + hash_bytes) as u64);
         let mut class_caps_bytes = [0; MEMORY_CLASS_COUNT];
         class_caps_bytes[MemoryClass::PieceIndex as usize] = bytes;
@@ -11585,9 +11624,9 @@ mod tests {
             pressure_critical_pct: 90,
         });
 
-        let lease = reserve_piece_index_memory(&governor, 1_024).unwrap();
+        let lease = reserve_piece_index_memory(&governor, 1_024, max_peers).unwrap();
         assert_eq!(lease.bytes(), bytes);
-        assert!(reserve_piece_index_memory(&governor, 1_024).is_err());
+        assert!(reserve_piece_index_memory(&governor, 1_024, max_peers).is_err());
         drop(lease);
         assert_eq!(
             governor.snapshot().classes[MemoryClass::PieceIndex as usize].used_bytes,

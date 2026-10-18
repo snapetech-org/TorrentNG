@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:torrentng:schema:transfer-network-control-v1",
+  "title": "TorrentNG task-scoped network-control observation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "action",
+    "created_at",
+    "namespace_name",
+    "namespace_device",
+    "namespace_inode",
+    "interface",
+    "ifindex",
+    "profile_id",
+    "settings",
+    "baseline_root_qdisc",
+    "observed_root_qdisc",
+    "ip_version",
+    "tc_version",
+    "toolchain_sha256",
+    "applied_record_sha256",
+    "artifact_sha256"
+  ],
+  "properties": {
+    "format": { "const": "transfer-network-control-v1" },
+    "action": { "enum": ["apply", "reset"] },
+    "created_at": { "type": "string", "format": "date-time" },
+    "namespace_name": { "type": "string", "pattern": "^tngt-[a-z0-9][a-z0-9-]{0,31}$" },
+    "namespace_device": { "$ref": "#/$defs/nonnegative_integer" },
+    "namespace_inode": { "$ref": "#/$defs/positive_integer" },
+    "interface": { "type": "string", "pattern": "^tngt[a-z0-9][a-z0-9_.-]{0,9}$" },
+    "ifindex": { "$ref": "#/$defs/positive_integer" },
+    "profile_id": {
+      "enum": ["lan-1g-1ms-v1", "metro-100m-10ms-v1", "wan-20m-30ms-v1"]
+    },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["delay_ms", "rate_bps", "limit_packets"],
+      "properties": {
+        "delay_ms": { "$ref": "#/$defs/positive_integer" },
+        "rate_bps": { "$ref": "#/$defs/positive_integer" },
+        "limit_packets": { "const": 1000 }
+      }
+    },
+    "baseline_root_qdisc": { "$ref": "#/$defs/default_qdisc" },
+    "observed_root_qdisc": {
+      "oneOf": [
+        { "$ref": "#/$defs/netem_qdisc" },
+        { "$ref": "#/$defs/default_qdisc" }
+      ]
+    },
+    "ip_version": { "type": "string", "minLength": 1 },
+    "tc_version": { "type": "string", "minLength": 1 },
+    "toolchain_sha256": { "$ref": "#/$defs/sha256" },
+    "applied_record_sha256": {
+      "anyOf": [
+        { "$ref": "#/$defs/sha256" },
+        { "type": "null" }
+      ]
+    },
+    "artifact_sha256": { "$ref": "#/$defs/sha256" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "action": { "const": "apply" } }, "required": ["action"] },
+      "then": {
+        "properties": {
+          "baseline_root_qdisc": { "$ref": "#/$defs/default_qdisc" },
+          "observed_root_qdisc": { "$ref": "#/$defs/netem_qdisc" },
+          "applied_record_sha256": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "action": { "const": "reset" } }, "required": ["action"] },
+      "then": {
+        "properties": {
+          "baseline_root_qdisc": { "$ref": "#/$defs/default_qdisc" },
+          "observed_root_qdisc": { "$ref": "#/$defs/default_qdisc" },
+          "applied_record_sha256": { "$ref": "#/$defs/sha256" }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "nonnegative_integer": { "type": "integer", "minimum": 0 },
+    "positive_integer": { "type": "integer", "minimum": 1 },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "default_qdisc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "handle"],
+      "properties": {
+        "kind": { "const": "noqueue" },
+        "handle": { "const": "0:" }
+      }
+    },
+    "netem_qdisc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "handle", "delay_ns", "rate_bps", "limit_packets"],
+      "properties": {
+        "kind": { "const": "netem" },
+        "handle": { "const": "7fff:" },
+        "delay_ns": { "$ref": "#/$defs/positive_integer" },
+        "rate_bps": { "$ref": "#/$defs/positive_integer" },
+        "limit_packets": { "const": 1000 }
+      }
+    }
+  }
+}

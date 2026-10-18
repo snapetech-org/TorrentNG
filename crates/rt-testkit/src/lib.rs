@@ -1,8 +1,16 @@
 //! Shared test fixtures for TorrentNG crates.
 //!
 //! This crate intentionally stays small and dependency-light. It provides
-//! deterministic database and torrent-row fixtures that integration tests can
-//! reuse without copying setup boilerplate between crates.
+//! deterministic database, torrent-row, and production-shaped transfer
+//! fixtures that tests can reuse without copying setup boilerplate between
+//! crates.
+
+pub mod transfer_fixtures;
+
+pub use transfer_fixtures::{
+    transfer_compatibility_fixture, transfer_compatibility_matrix,
+    TransferCompatibilityFixture, TransferProtocol,
+};
 
 use rusqlite::Connection;
 

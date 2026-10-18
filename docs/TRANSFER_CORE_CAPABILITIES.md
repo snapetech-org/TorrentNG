@@ -1,0 +1,48 @@
+# Transfer Core Capability Matrix
+
+This matrix separates the code that exists today from the shared-core
+integration and the evidence needed to qualify it. “Present, unqualified” means
+the implementation or regression source is in this worktree, but the rebuild
+bulk test pass has not run. It is not a passing capability claim.
+
+| Capability | Current native path | Shared-core path | Current state | Qualification gate |
+| --- | --- | --- | --- | --- |
+| v1 peer transfer | `rt-engine` `TorrentTask` and `peer_transfer` | `transfer::Ledger`, `WindowController`, `RateScheduler`, and upload service | Core modules present, not wired into the actor | NET-114, G2, NET-116 |
+| Pure-v2 peer transfer | `torrent_task_v2.rs` | Same ledger and protocol obligations as v1 | Existing actor remains authoritative; receive/serve boundaries now use typed block and piece extents, but shared ledger integration is pending and untested | NET-114, G3, IO-002 |
+| Hybrid content view | Separate v1 and v2 metadata/verification paths | Canonical `ContentRange` adapters; one ownership ledger planned | Geometry adapter present; shared payload ownership pending | IO-007, NET-114, SYS-013 |
+| Request and completion ownership | Actor-local request maps and partial-piece state | Generation-aware `Ledger` with bounded per-connection ownership | Pure ledger present, untested and not live; its early-commit reconciliation history is bounded and invariant-checked; v1 and pure-v2 peer requests reserve response bytes before wire send; v1 moves the lease into matching block events and v2 holds it through piece handling; shared spans, hybrid admission, and device completion ownership remain pending | IO-003, IO-005, NET-103–104, NET-114 |
+| Fast request obligations | Existing peer handlers | `InboundObligations` for negotiated reject/choke/cancel behavior | v1/v2 Reject follows Fast negotiation; v1/v2 preserve on-wire requests across Fast Choke; v1 cancels queued-only work by generation, rejects a canceled queued upload only when Fast is active, and sends endgame Cancel while retaining response leases; these Cancel paths need focused coverage, and v2/shared-core integration remains pending | NET-105, NET-114 |
+| Piece selection | `rt-piece-picker` rarest-first, priorities, sequential mode, endgame | Shared core consumes typed block/piece coordinates | Packed flags, active candidate index, and randomized equal-rarity/seed ties implemented; current edits untested | NET-109, PERF-111 |
+| Upload service | Existing per-peer read and response path | Bounded, byte-admitted round-robin `UploadService` | Pure service validates wire block length, keeps a strict byte cap with a one-block minimum, and holds dispatched reads charged through disconnect; actor wiring pending and regression untested | NET-110, NET-114 |
+| Upload slot policy | v1 mode-aware slots with fair optimistic rotation | Shared `Choker` policy for v1 and pure-v2 actors | Pure-v2 publishes connection-identity-specific slots to peer-owned sockets and rechecks membership after read/rate waits; seeded tie-breaking supports repeatable traces; trace replay and runtime evidence pending | NET-111 |
+| Rate control | Existing actor and torrent limits | Hierarchical global/torrent/peer scheduler | Pure scheduler present; actor wiring pending | NET-107, NET-115 |
+| Request windows | Existing v1 adaptive request pipeline | Delay, delivery rate, buffer, peer queue, and device backlog inputs | Actor has a rate-derived interim; core window present; response-delay feedback pending | NET-108, NET-114 |
+| Peer read/write progress | Peer runtime owns current socket tasks | Independent read and ordered write progress | Existing path remains; split pending | NET-106, IO-008 |
+| Storage admission and completion | `rt-storage` scheduler and file pool | One device service, retained completion ownership, generation fences | Portable reference backend remains; a shared per-device `DeviceQueue` now bounds active and queued submissions across mounts, selects waiters with weighted class fairness, removes canceled waiters, and carries operation IDs through positioned I/O completion; scheduler queue summaries deduplicate by physical ID; cache hits and file-open preparation do not hold device slots. `MountScheduler::run_device_operation` exposes the same bounded handoff to other subsystems, but secure copy-plan adoption is still open. Deadline/choke-critical dispatch, deadline-aware coalescing, grouped barriers, and end-to-end fault accounting remain open; canceled writes and failed barriers retain dirty evidence; scheduler-wide checkpoint admission now prevents new-path writes from passing its snapshot, and successful barriers return opaque evidence consumed by fastresume with persisted file-count/write-sequence watermarks; the new path-ordering and proof-consumption regressions are authored but unrun; scheduler and `HandleCache` share platform file identity checks outside cache mutexes; read/write/sync completion watchers retain `DiskSubmission` owners across caller cancellation; sequential peer reads grow readahead within the configured cap and reserve added bytes/frame before backend dispatch; cache/catalog unification and cache-hit feedback remain open | IO-001, IO-003–010 |
+| Hashing and v2 proof state | Existing verification and proof cache | Batched immutable-segment jobs and shared hybrid views | Matching storage schedulers share a bounded hash pool; v1 SHA-1 updates stream through it, v2 leaf batches use 64 leaves per job, and the streaming Merkle root fold now runs as one pool job. A single immutable dual-view hybrid payload path is not integrated; durable node store also remains open | IO-007, IO-012–013 |
+| Persistence and resume | Supervised ordered `DbWorker` plus current fastresume paths | Resume commit tied to device barrier evidence | `DbWorker` remains the authoritative production writer; storage barriers return opaque evidence that keeps payload write admission closed through the fastresume atomic write, which records additive backward-compatible watermark fields; regression sources are authored but unrun; broader resume/database publication ordering remains open | SYS-009, IO-010, SYS-013 |
+| uTP | TorrentNG-owned `rt-utp` transport routed through engine `GlobalNetworkBudget` | Bounded send window, SACK/reorder state, and shared socket runtime | v1, pure-v2, and metadata outbound paths now use the shared runtime; incoming/outgoing streams share the listener endpoint when enabled. The `urtorrent-utp` reference requires Rust 1.98 vs native 1.88. Code is unbuilt and untested; deadline fairness, aggregate resource evidence, and matched efficiency remain open | NET-112–113 |
+| io_uring | Selectable/probed backend | Continuous device service with retained safe registrations | Current selectable backend is not the continuous target service | IO-015, IO-016 |
+| Simulator | None in live actor | Seeded event replay and ledger invariant oracle | Present in `transfer::sim`; not run | NET-102, NET-116 |
+| Protocol compatibility fixtures | Existing crate-local builders | Shared production-shaped v1/v2/hybrid corpus in `rt-testkit` | Payload-derived metainfo, parser and piece-map regressions are authored; Linux workspace and Windows smoke include them, but this revision is untested | SYS-012 |
+| Performance evidence | Existing certification and benchmark scripts | Immutable manifests, independent observer, pinned client adapters, paired-run scorecard | Measurement contract, trial/manifest/client-observation schemas, process/cgroup observer, timing/accounting primitives, deterministic payload generator, unvalidated adapters for six clients, and a raw-evidence-bound network/disk/hash/pipeline ceiling model are authored; Linux task-namespace egress control and profile evidence linkage are authored but unrun; independent swarm/paired-run fixtures, attributable network counters, and scorecard tooling remain open | PERF-101–116 |
+| Migration and rollback | Existing offline migration plus storage journals | One writer, durable publication, reversible cutover | Shared-core cutover has not started | SYS-013, SYS-015 |
+
+## Evidence labels
+
+- **Integrated and tested**: the production route uses the capability and the
+  required repository tests or probes passed on the exact revision.
+- **Present, unqualified**: source and any regression tests are written, but
+  this rebuild's bulk pass has not run.
+- **Integration pending**: the pure module exists, but production actors still
+  use the reference implementation.
+- **External qualification**: the code is repository-owned, while its required
+  hardware, public-network, real-device, long-soak, or hosted evidence is not
+  available in this worktree.
+- **Deferred**: no capability claim is made and rollout remains disabled or
+  on the reference path.
+
+The work-package status and findings register in
+[`TRANSFER_CORE_REBUILD.md`](TRANSFER_CORE_REBUILD.md) remain authoritative for
+ticket-level progress. This matrix is a capability-oriented view; it does not
+turn implementation into qualification evidence.

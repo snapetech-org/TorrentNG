@@ -21,13 +21,19 @@ metadata paths can actually use those streams.
   - listener bind and accept;
   - client connect;
   - SYN/STATE handshake;
-  - DATA send and ACK wait;
+  - bounded windowed DATA send and cumulative/SACK acknowledgement;
   - payload receive and ACK response;
   - FIN close;
   - bounded retransmission attempts.
-- Shared UDP `UtpEndpoint` acceptor:
+- Shared UDP `UtpEndpoint` and engine-owned `UtpRuntime`:
   - binds one UDP socket for the peer port;
   - demultiplexes packets by remote address and receive connection ID;
+  - multiplexes outbound v1, pure-v2, and metadata streams on one endpoint per
+    address family;
+  - shares the incoming listener endpoint with outbound connections when
+    incoming uTP is enabled;
+  - retains a capped number of retired endpoint generations during listener
+    rebind so established streams can drain;
   - accepts multiple incoming uTP streams without consuming the listener socket;
   - routes DATA/FIN/STATE packets into per-stream bounded queues.
 - Process-level uTP counters and gauges exported through TorrentNG Prometheus
@@ -40,7 +46,7 @@ metadata paths can actually use those streams.
     packet boundaries, which is the bridge needed for peer-wire handshakes and
     length-prefixed messages.
 
-## Tested Behavior
+## Regression Source Inventory
 
 The local `rt-utp` test suite covers:
 
@@ -54,8 +60,34 @@ The local `rt-utp` test suite covers:
 - FIN/RESET state handling through the connection state machine;
 - ACK out-of-window rejection and zero-ACK startup handling;
 - congestion-window growth, reduction, and timeout floor behavior;
-- loopback UDP transport handshake, payload exchange, ACK, and close.
-- byte-stream reads spanning multiple uTP payload chunks.
+- loopback UDP transport handshake, payload exchange, ACK, and close;
+- byte-stream reads spanning multiple uTP payload chunks;
+- capped packet/byte window accounting, cumulative and selective ACK, and
+  wrap-safe sequence handling;
+- bounded out-of-order delivery, multi-packet window fill, and shared-runtime
+  socket reuse across listener rebind.
+
+These regression sources have not been run against the current worktree. The
+updated stream path fills a bounded send window, applies SACK accounting,
+buffers in-window reordered payloads, and retains retransmission bytes across
+canceled writes. Production outbound connects use `UtpRuntime`; standalone
+callers can still use `UtpStream::connect` directly. The central deadline and
+ready-queue scheduler and matched efficiency evidence remain open.
+
+## Transfer Rebuild Backend Decision
+
+NET-112 keeps the protocol core in TorrentNG. The reviewed `urtorrent-utp`
+releases (0.14.2 and 0.14.3) require Rust 1.98 according to Cargo metadata,
+while the native workspace supports Rust 1.88. They are not dependencies.
+Their window, SACK, reorder, timeout, and MTU behavior remain useful protocol
+references. TorrentNG will retain control of UDP sockets, peer scheduling,
+buffer admission, memory accounting, and runtime portability. The full
+`urtorrent` engine is also not selected because its package requires Linux
+6.1+ and io_uring. The owned implementation and shared-socket runtime are not
+qualified yet; correctness and efficiency comparison are deferred to the
+requested bulk pass. See
+[`TRANSFER_CORE_UTP_EVALUATION.md`](../TRANSFER_CORE_UTP_EVALUATION.md) for the
+source comparison and acceptance criteria.
 
 Run:
 

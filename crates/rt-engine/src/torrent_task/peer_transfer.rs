@@ -49,20 +49,38 @@ impl TorrentTask {
                 }
                 self.refill_peer_requests(peer).await;
             }
-            PeerEvent::Unchoked { peer, .. } => {
+            PeerEvent::Unchoked {
+                peer,
+                download_generation,
+                ..
+            } => {
                 if let Some(handle) = self.active_peers.get_mut(&peer) {
+                    handle.download_generation = download_generation;
                     handle.choked = false;
                 }
                 self.refill_peer_requests(peer).await;
             }
             PeerEvent::Choked {
-                peer, outstanding, ..
+                peer,
+                download_generation,
+                fast_negotiated,
+                outstanding,
+                ..
             } => {
                 let outstanding = if let Some(handle) = self.active_peers.get_mut(&peer) {
+                    handle.download_generation = download_generation;
                     handle.choked = true;
-                    handle.outstanding = 0;
                     let requested = std::mem::take(&mut handle.requested);
-                    Self::merge_unique_block_requests(requested, outstanding)
+                    if fast_negotiated {
+                        let (on_wire, not_sent) =
+                            Self::reconcile_fast_choke_requests(requested, outstanding);
+                        handle.outstanding = on_wire.len();
+                        handle.requested = on_wire;
+                        not_sent
+                    } else {
+                        handle.outstanding = 0;
+                        Self::merge_unique_block_requests(requested, outstanding)
+                    }
                 } else {
                     outstanding
                 };
@@ -83,7 +101,6 @@ impl TorrentTask {
             PeerEvent::Piece {
                 peer,
                 block,
-                _memory_lease,
                 ..
             } => {
                 // A peer task can race shutdown and leave one final block in
@@ -94,8 +111,12 @@ impl TorrentTask {
                     return;
                 };
                 handle.outstanding = handle.outstanding.saturating_sub(1);
-                remove_requested_block(&mut handle.requested, block.piece, block.offset);
-                record_peer_transfer(handle, false, block.data.len() as u64);
+                remove_requested_block(
+                    &mut handle.requested,
+                    block.block.piece,
+                    block.block.offset,
+                );
+                record_peer_transfer(handle, false, block.len() as u64);
                 self.handle_block(block).await;
                 self.refill_peer_requests(peer).await;
             }
@@ -317,7 +338,23 @@ impl TorrentTask {
                 tokens_missing = Some(u64::from(req.length) - download_tokens);
                 break;
             }
-            if handle.cmd_tx.try_send(PeerCommand::Request(req)).is_err() {
+            let Some(memory_lease) = self
+                .resources
+                .try_acquire(MemoryClass::PeerBuffer, u64::from(req.length))
+            else {
+                self.peer_request_memory_retry_pending = true;
+                self.picker.cancel_request(req.piece as usize, req.begin);
+                break;
+            };
+            if handle
+                .cmd_tx
+                .try_send(PeerCommand::Request {
+                    request: req,
+                    download_generation: handle.download_generation,
+                    memory_lease,
+                })
+                .is_err()
+            {
                 queue_full = queue_full.saturating_add(1);
                 self.picker.cancel_request(req.piece as usize, req.begin);
                 break;
@@ -345,7 +382,25 @@ impl TorrentTask {
         self.peer_command_queue_full = self.peer_command_queue_full.saturating_add(queue_full);
     }
 
-    pub(super) async fn handle_block(&mut self, block: BlockEvent) {
+    pub(super) async fn retry_memory_denied_peer_requests(&mut self) {
+        if !self.peer_request_memory_retry_pending {
+            return;
+        }
+        self.peer_request_memory_retry_pending = false;
+        if self.paused {
+            return;
+        }
+        let peers: Vec<SocketAddr> = self.active_peers.keys().copied().collect();
+        for peer in peers {
+            self.refill_peer_requests(peer).await;
+        }
+    }
+
+    pub(super) async fn handle_block(&mut self, event: LeasedBlockEvent) {
+        let LeasedBlockEvent {
+            block,
+            _memory_lease,
+        } = event;
         let piece = block.piece;
         if !self.picker.is_piece_in_progress(piece as usize) {
             debug!(
@@ -436,6 +491,13 @@ impl TorrentTask {
         let complete = self
             .picker
             .block_received(block.piece as usize, block.offset);
+        if let Ok(length) = u32::try_from(block.data.len()) {
+            self.cancel_endgame_duplicates(BlockRequest {
+                piece: block.piece,
+                begin: block.offset,
+                length,
+            });
+        }
         if !complete {
             // Persist progress periodically so amount_left stays current even
             // before the first piece verifies. The picker tracks partial
@@ -592,13 +654,24 @@ impl TorrentTask {
             // The picker keeps its received state and the piece completes by
             // verifying from disk.
             let mut spilled = true;
-            for (offset, data) in assembly.received_blocks() {
-                let block = BlockEvent {
-                    piece,
-                    offset,
-                    data,
-                };
-                if let Err(error) = self.write_block(&block).await {
+            let received_blocks = match assembly.into_received_blocks(piece) {
+                Ok(blocks) => blocks,
+                Err(error) => {
+                    warn!(
+                        component = "storage",
+                        operation = "spill_piece_assembly",
+                        torrent = %self.info_hash_hex,
+                        piece,
+                        result = "error",
+                        error = %error,
+                        "could not reserve memory to spill an evicted piece assembly"
+                    );
+                    spilled = false;
+                    Vec::new()
+                }
+            };
+            for (offset, data) in received_blocks {
+                if let Err(error) = self.write_block(&data.block).await {
                     warn!(
                         component = "storage",
                         operation = "spill_piece_assembly",
@@ -688,6 +761,59 @@ impl TorrentTask {
             }
         }
         requests
+    }
+
+    pub(super) fn reconcile_fast_choke_requests(
+        actor_requested: Vec<BlockRequest>,
+        peer_outstanding: Vec<BlockRequest>,
+    ) -> (Vec<BlockRequest>, Vec<BlockRequest>) {
+        let peer_coordinates = peer_outstanding
+            .iter()
+            .map(|request| (request.piece, request.begin))
+            .collect::<std::collections::HashSet<_>>();
+        let actor_coordinates = actor_requested
+            .iter()
+            .map(|request| (request.piece, request.begin))
+            .collect::<std::collections::HashSet<_>>();
+        let mut on_wire = Vec::new();
+        let mut cancel = Vec::new();
+        for request in actor_requested {
+            if peer_coordinates.contains(&(request.piece, request.begin)) {
+                on_wire.push(request);
+            } else {
+                cancel.push(request);
+            }
+        }
+        for request in peer_outstanding {
+            if !actor_coordinates.contains(&(request.piece, request.begin)) {
+                on_wire.push(request);
+            }
+        }
+        (on_wire, cancel)
+    }
+
+    /// Ask every other peer that has this accepted block outstanding to stop
+    /// sending a duplicate. The peer loop retains an on-wire response lease
+    /// until Piece, Reject, timeout, or disconnect because Cancel can race a
+    /// response already in flight.
+    fn cancel_endgame_duplicates(&mut self, accepted: BlockRequest) {
+        let mut queue_full = 0u64;
+        for handle in self.active_peers.values() {
+            let owns_request = handle.requested.iter().any(|request| {
+                request.piece == accepted.piece
+                    && request.begin == accepted.begin
+                    && request.length == accepted.length
+            });
+            if owns_request
+                && handle
+                    .cmd_tx
+                    .try_send(PeerCommand::Cancel { request: accepted })
+                    .is_err()
+            {
+                queue_full = queue_full.saturating_add(1);
+            }
+        }
+        self.peer_command_queue_full = self.peer_command_queue_full.saturating_add(queue_full);
     }
 
     pub(super) fn download_tokens_available(&mut self, bytes: u32) -> bool {

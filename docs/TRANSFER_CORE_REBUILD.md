@@ -3,8 +3,10 @@
 Status: **active**. This is the working plan and tracker for the transfer-core
 rebuild proposed by the external audit
 *TorrentNG Code Audit and Rebuild Blueprint* (17 Oct 2026, audited revision
-`05d5c23886446f380552c73e0be480f03ae2d2ab`; the PDF was dropped into the repo
-root and is not committed). It complements, and does not replace,
+`05d5c23886446f380552c73e0be480f03ae2d2ab`; the source PDF is preserved at
+[`docs/rebuild-pack/TorrentNG_Code_Audit_and_Rebuild_Blueprint.pdf`](rebuild-pack/TorrentNG_Code_Audit_and_Rebuild_Blueprint.pdf),
+SHA-256 `8ec614a08e8bfe9b13b8a9f4494231e282d78e3654f2e4531cb2390b69a2593b`).
+It complements, and does not replace,
 `ENGINE.md`, `ENGINE_REWRITE.md`, `STORAGE_NG.md` and `CRASH_SAFETY.md`.
 
 How to use this file: pick the lowest-numbered ready ticket (all prerequisites
@@ -82,13 +84,54 @@ only marked confirmed (or dropped) in section 5 once that exists.
    ceiling (F05, F06, F07 — illustrations, not measurements). The historical
    14 Oct NFS report (0.49 vs 16.82 MiB/s) is a warning signal, not a ranking.
 
-### Decisions needed from the owner (not blocking G0)
+### Recorded decision
+
+**D2 — uTP backend (NET-112/113):** keep the runtime implementation in
+TorrentNG. The reviewed `urtorrent-utp` releases (0.14.2 and 0.14.3) declare
+Rust 1.98, above TorrentNG's Rust 1.88 floor, so they cannot be workspace
+dependencies without an unjustified MSRV increase. Use their window, SACK,
+reordering, timeout, and MTU behavior as a protocol reference; implement a
+bounded compatible protocol core and shared-socket manager behind the existing
+stream API. The source now wires v1, pure-v2, and metadata outbound paths
+through that manager, with incoming and outgoing peers sharing the listener
+endpoint when incoming uTP is enabled. The protocol/runtime changes remain
+unrun and unqualified. This is an implementation direction, not a performance
+result; keep rollout reversible until bulk correctness and matched whole-client
+efficiency evidence.
+
+See [`TRANSFER_CORE_UTP_EVALUATION.md`](TRANSFER_CORE_UTP_EVALUATION.md) for
+the source review and adapter acceptance.
+
+**D3 — integration and rollout:** keep the rebuild on the local
+`feat/transfer-core-rebuild` integration branch while the 14-wave implementation
+and documentation are being completed. Preserve the existing portable path as
+the selectable reference during staged live integration. The owner has since
+directed that reviewed local work be committed, consolidated into `main`, and
+pushed after code and documentation are complete. That source-control cleanup
+does not qualify a release: the exact consolidated revision still needs the
+owner-requested bulk validation and review before any release or capability
+rollout claim.
+
+**D5 — native engine versus maintained implementation:** continue the current
+native rebuild as a reversible candidate; do not restart or embed a maintained
+client based on code inspection alone. `librqbit` is a serious v1 efficiency
+comparator and possible alternate engine, but its current public feature list
+does not claim BEP 52 and its README describes sequential-only piece selection;
+it is not presently a drop-in match for TorrentNG's v1/v2/hybrid target.
+libtorrent remains a mature behavior and scheduling reference. Compare exact pinned clients with the PERF-101–116
+fixtures and settings, then prefer the smallest subsystem replacement that
+passes correctness, Rust 1.88, storage/persistence ownership, and matched
+whole-client efficiency gates. A full-engine replacement remains on the table
+if the native architecture fails those gates and an alternative preserves the
+product contracts. This is a provisional architecture decision, not a claim
+that the in-house candidate is better. See
+[`TRANSFER_CORE_REFERENCE_EVALUATION.md`](TRANSFER_CORE_REFERENCE_EVALUATION.md).
+
+### Decisions still open with the owner (not blocking G0)
 
 | # | Decision | Needed before |
 |---|---|---|
 | D1 | Adopt, amend, or reject the proposed scorecard numbers | PERF-110 |
-| D2 | uTP: reuse a maintained interoperable implementation vs. repair `rt-utp` | NET-112 |
-| D3 | Whether the 14-wave plan runs on `main` behind a selectable reference path, or on a long-lived integration branch | NET-114 |
 | D4 | Dedicated hardware lane (HDD / NVMe / 10 Gb helper) availability | PERF-115 |
 
 ## 2. Architecture target (summary)
@@ -196,23 +239,23 @@ reproduced).
 | F03 | P0 | v2 peers lack shared acquisition state | NET-104, NET-114 | G3 | accepted |
 | F04 | P0 | v1 actor awaits disk/hash/persistence | IO-008, NET-106 | G2 | accepted |
 | F05 | P1 | fixed 512 KiB v1 flight window | NET-108 | G2 | partly fixed (rate-proportional window, 32..128 blocks, torrent-wide cap of 2,048 requests, never under memory pressure; measured response delay and device-service backlog feedback remain NET-108) |
-| F06 | P0 | 4,096 requests/10 s upload guard | NET-110 | G2 | partly fixed (count ceiling removed; queue bound remains and still drops silently when saturated; protocol-correct rejection and shared byte-admitted upload service are NET-105/NET-110) |
-| F07 | P0 | uTP writer is stop-and-wait | NET-112, NET-113 | G5 | accepted |
-| F08 | P0 | Fast advertised without full request termination | SYS-003, NET-105 | G0 | partly fixed (v1: Reject for every request whose coordinates are known when Fast is negotiated; v2 handler, outgoing Cancel and endgame cancellation remain NET-105) |
+| F06 | P0 | 4,096 requests/10 s upload guard | NET-110 | G2 | partly fixed (count ceiling removed; bounded queue saturation now rejects for Fast and silently drops only for legacy peers; strict byte-admitted service is pure but live integration remains NET-114) |
+| F07 | P0 | uTP writer is stop-and-wait | NET-112, NET-113 | G5 | partly fixed (bounded windowing, SACK accounting, and reorder handling are authored with production shared-runtime wiring; bulk protocol validation and matched efficiency evidence remain open) |
+| F08 | P0 | Fast advertised without full request termination | SYS-003, NET-105 | G0 | partly fixed (v1/v2 Reject behavior honors Fast negotiation; v1/v2 preserve wire requests across Fast Choke; v1 releases queued-only requests and returns Reject for a canceled queued upload when Fast is active; v1 sends best-effort endgame Cancel while retaining wire-response ownership; v2/shared-core cancellation remains NET-105) |
 | F09 | P0 | torrent upload limit copied into per-peer buckets | SYS-003, NET-107 | G0 | fixed (SYS-003; hierarchical scheduler still NET-107) |
 | F10 | P0 | webseed debit inside `debug_assert!` | SYS-003 | G0 | fixed (SYS-003) |
 | F11 | P1 | no token-ready wakeup for download pacing | SYS-003, NET-107 | G0 | fixed (SYS-003; deadline-driven, not per-peer polling) |
-| F12 | P1 | choker feedback/exploration | NET-111 | G2 | partly fixed (v1: mode-aware ranking, staleness decay, fair random optimistic rotation; v2 still unchokes every interested peer, swarm-trace replay remains NET-111) |
-| F13 | P0 | memory pressure discards received data | NET-103 | G2 | partly fixed (evicted assemblies spill to the payload files and the piece verifies from disk; reserve-before-request admission remains NET-103) |
-| F14 | P0 | picker memory estimate wrong (`Vec<bool>`) | SYS-004, NET-109 | G0 | fixed (packed `PieceFlags`; estimate counts bitsets, counts and BTree buckets) |
-| F15 | P1 | picker scans all pieces before rarity buckets | NET-109 | G2 | partly fixed (default no-priority path is O(1); bucket `BTreeSet` allocation storm remains NET-109) |
-| F16 | P0/P1 | buffers lose coherent owner across boundaries | IO-003 | G1 | accepted |
-| F17 | P1 | shared file cache serialises metadata work | IO-004 | G1 | partly fixed (identity stat and file open outside the cache lock, interval-limited idle sweep, write descriptor serves reads; one secure catalog with compact IDs remains IO-004) |
-| F18 | P1 | default readahead 16 KiB → 512 KiB | IO-011 | G4 | partly fixed (readahead expands only a stream that continues the previous read of that file; reuse-driven sizing and pre-reserved speculative capacity remain IO-011) |
-| F19 | P0 | torrent flush syncs unrelated writable files | IO-009 | G4 | partly fixed (barrier covers only this scheduler's dirty files, marked at write issue; exact file fences/sequence watermarks remain IO-009) |
+| F12 | P1 | choker feedback/exploration | NET-111 | G2 | partly fixed (v1 and v2 use mode-aware ranking and fair optimistic slots; seeded tie-breaking supports repeatable policy traces, while the swarm-trace replay harness remains NET-111) |
+| F13 | P0 | memory pressure discards received data | NET-103 | G2 | partly fixed (evicted assemblies spill to payload files; v1 and pure-v2 peer requests reserve response bytes before enqueue and keep leases through block handling; shared spans and hybrid/cross-plane admission remain NET-103) |
+| F14 | P0 | picker memory estimate wrong (`Vec<bool>`) | SYS-004, NET-109 | G0 | fixed (packed `PieceFlags`; estimate counts bitsets, availability arrays, candidate positions and bucket entries) |
+| F15 | P1 | picker scans all pieces before rarity buckets | NET-109 | G2 | partly fixed (active fresh-work index, array-backed rarity buckets, and random tie-breaking are implemented; churn now shrinks over-capacity rarity buckets; regression tests await the bulk pass) |
+| F16 | P0/P1 | buffers lose coherent owner across boundaries | IO-003 | G1 | accepted (v1 peer/webseed receive events now retain their byte lease through actor handling; shared immutable spans and storage-operation ownership remain open) |
+| F17 | P1 | shared file cache serialises metadata work | IO-004 | G1 | partly fixed (scheduler and `HandleCache` identity stats and file opens run outside cache locks, interval-limited idle sweep, write descriptor serves reads; one secure catalog with compact IDs remains IO-004) |
+| F18 | P1 | default readahead 16 KiB → 512 KiB | IO-011 | partly fixed (readahead starts at one block and grows only with sequential continuation, bounded by configuration; speculative bytes/frame are admitted before backend dispatch; cache-hit feedback and a reusable range cache remain IO-011) |
+| F19 | P0 | torrent flush syncs unrelated writable files | IO-009 | G4 | partly fixed (barrier scopes sync to this scheduler and now closes scheduler-wide write admission across its stable dirty/active path snapshot; per-path fences and dirty generations remain; held-sync new-path regression is authored; grouped device batching and bulk evidence remain IO-009) |
 | F20 | P1 | io_uring worker is a batch barrier | IO-015 | G6 | accepted |
-| F21 | P0 | cancellation may release admission/dirty evidence early (moderate confidence) | IO-005 | G1 | accepted |
-| F22 | P1 | several storage schedulers, no fairness authority | IO-006 | G1 | accepted |
+| F21 | P0 | cancellation may release admission/dirty evidence early (moderate confidence) | IO-005 | G1 | partly fixed (read/write/sync watchers retain queue/device/byte admission through backend completion; helper-level regressions are authored; end-to-end cancellation and accounting matrix remains IO-005) |
+| F22 | P1 | several storage schedulers, no fairness authority | IO-006 | G1 | partly addressed (shared per-device weighted class dispatcher now spans mounts; secure copies, deadline promotion, grouped barriers, and qualification remain open) |
 | F23 | P1 | v2 recheck does per-leaf small I/O | IO-012 | G4 | partly fixed (1 MiB chunks: one extent probe, read and hash job per 64 leaves; persistent sparse cursors and hybrid shared read stream remain IO-012/IO-007) |
 | F24 | P0/P1 | v2 proof serving rereads file; 64 MiB ceiling | IO-013 | G3 | partly fixed (64 MiB ceiling removed; leaves hashed in 256 KiB reads; layers proven against the metainfo root and kept in a 64 MiB LRU; persisted node store and subtree-only work remain IO-013) |
 | F25 | P1 | secure copy re-verifies leaves per ancestor | IO-014 | G4 | fixed for hashing (nested entries copy-only; top-level verifies the tree once; scheduling copies through the device service remains IO-014) |
@@ -220,7 +263,7 @@ reproduced).
 | F27 | P1 | dormant estimates incomplete; quadratic timer cancel | SYS-004, SYS-008 | G5 | fixed (lazy-deletion timer; `TierController::estimated_owner_bytes` counts maps, timer wheels and every key copy; compact generational identities remain SYS-004) |
 | F28 | P1 | every engine command scans all task handles | SYS-007 | G5 | fixed (supervised exit queue on the command path; 1 s full scan kept as reconciliation) |
 | F29 | P0 | metrics scrape builds a shadow storage runtime | SYS-011, PERF-108 | G0 | fixed (scrape uses `StorageRuntime::initialized()`; owner-specific metrics still SYS-011) |
-| F30 | P1 | engine unit tests bypass production DB worker | SYS-009 | G0 | accepted |
+| F30 | P1 | engine unit tests bypass production DB worker | SYS-009 | G0 | partly addressed (a file-backed progress-persistence regression now opts into `DbExecutor::Worker`; authored but unrun; most fast fixtures remain direct) |
 | F31 | P0 | scale checks certify synthetic projections | PERF-109 | G5 | accepted |
 | F32 | P0 | throughput comparisons don't establish capacity | PERF-104..107 | G0 | accepted |
 | F33 | P1 | CPU/cache/backend microbenchmarks reward wrong behaviour | PERF-102, PERF-107 | G0 | accepted |
@@ -230,48 +273,49 @@ reproduced).
 ## 6. Work packages
 
 63 packages; ordering is topological. A *wave* is a dependency frontier, not a
-sprint. Status values: `todo`, `wip`, `done`, `blocked`. Detailed per-ticket
-scope/acceptance is created from the template in SYS-001 when picked up.
+sprint. Current snapshot: **4 done, 41 wip, 18 todo**. Status values: `todo`,
+`wip`, `done`, `blocked`. Detailed per-ticket scope/acceptance is created from
+the template in SYS-001 when picked up.
 
 | Wave | Ticket | P | Work package | Prerequisites | Status | Evidence |
 |---|---|---|---|---|---|---|
-| 1 | SYS-001 | P0 | Pin the reference, capability matrix and shared ownership contracts | none | wip | this document pins the reference and ownership summary; the capability matrix and per-ticket spec template are still to write |
-| 2 | IO-001 | P0 | Define storage evidence contracts and deterministic fault harness | SYS-001 | todo | |
+| 1 | SYS-001 | P0 | Pin the reference, capability matrix and shared ownership contracts | none | done | reference and shared ownership are pinned here; capability matrix, ticket template, and active ticket specs added and linked |
+| 2 | IO-001 | P0 | Define storage evidence contracts and deterministic fault harness | SYS-001 | wip | evidence lifecycle and fault matrix documented; test-only scripted backend covers injected errors, held completions, and partial-write errors, and releases held test workers during teardown; cancellation, partial-write, and failed-barrier retry regressions authored, bulk pass pending |
 | 2 | NET-101 | P0 | Define typed transfer coordinates and protocol geometry adapters | SYS-001 | wip | pure module landed in `crates/rt-engine/src/transfer/` with unit tests (compiled and clippy-clean, NOT yet run); live integration pending NET-114 |
-| 2 | PERF-101 | P0 | Commit measurement contract and strict result schemas | SYS-001 | todo | |
+| 2 | PERF-101 | P0 | Commit measurement contract and strict result schemas | SYS-001 | wip | timing/provenance contract, trial/manifest/client-observation schemas, and pinned Draft 2020-12 validator are authored; manifest checks referenced digests, source identity, and trial-to-client observation identity; scorecard and bulk pass remain open |
 | 2 | SYS-002 | P0 | Land v2 reproductions and a reviewed extent correction | SYS-001 | done | `torrent_task_v2::tests::v2_*` multi-block tests (5 completion cases x memory/spill, red without fix) + `v2_request_window_pipelines_every_block_of_a_piece` (red: 4 of 8 requests) |
-| 2 | SYS-003 | P0 | Repair immediate release-rate and negotiated-capability behavior | SYS-001 | done | F10, F09, F11 fixed with tests; F08 for v1 (v2/Cancel remain NET-105) |
+| 2 | SYS-003 | P0 | Repair immediate release-rate and negotiated-capability behavior | SYS-001 | done | F10, F09, F11 fixed with tests; F08 v1/v2 request rejection follows Fast negotiation (outgoing Cancel remains NET-105) |
 | 2 | SYS-004 | P0 | Introduce compact identities and honest whole-owner metadata accounting | SYS-001 | wip | F14 packed flags + honest picker estimate; `TierController::estimated_owner_bytes`; compact generational ids not started |
-| 2 | SYS-009 | P0 | Exercise the production database worker and coalesce progress | SYS-001 | todo | |
-| 2 | SYS-011 | P0 | Make live observability passive and owner-specific | SYS-001 | wip | `/metrics` no longer creates a storage runtime; owner-specific inventory not started |
-| 3 | IO-002 | P0 | Separate block and piece extents and repair multi-block v2 transfers | IO-001, SYS-002, NET-101 | todo | |
-| 3 | IO-003 | P0 | Carry capacity leases through immutable payload ownership | IO-001 | todo | |
-| 3 | IO-004 | P0 | Unify the secure file catalog and descriptor lifecycle | IO-001 | wip | file-cache lock narrowed (F17); no secure catalog yet |
+| 2 | SYS-009 | P0 | Exercise the production database worker and coalesce progress | SYS-001 | wip | one torrent progress-flush regression now uses a real file-backed `DbWorker` through `DbExecutor`, checks the batched transaction metric, and reopens the database; authored but unrun |
+| 2 | SYS-011 | P0 | Make live observability passive and owner-specific | SYS-001 | wip | `/metrics` uses passive storage-runtime and descriptor-budget snapshots (no runtime creation or RLIMIT_NOFILE change); owner inventory and blind spots documented in TRANSFER_CORE_OBSERVABILITY.md; fresh-process and mixed-load evidence pending |
+| 3 | IO-002 | P0 | Separate block and piece extents and repair multi-block v2 transfers | IO-001, SYS-002, NET-101 | wip | v1 peer receive/upload and v2 receive/serve paths validate typed block extents; v2 assembly/read-back/progress use the full typed piece extent; regressions remain unrun pending bulk pass |
+| 3 | IO-003 | P0 | Carry capacity leases through immutable payload ownership | IO-001 | wip | v1 peer and webseed receive events retain reservations through actor/storage waits; assembly spill uses zero-copy slices sharing the assembly lease; tests authored, bulk pass pending |
+| 3 | IO-004 | P0 | Unify the secure file catalog and descriptor lifecycle | IO-001 | wip | platform file identity now lives in `open.rs` and is shared by descriptor and peer-read cache checks; scheduler and `HandleCache` path checks run outside catalog mutexes, and newly opened descriptors are identity-checked before publication with bounded replacement retries; cache/catalog unification and remaining descriptor-lifecycle coverage are open |
 | 3 | NET-102 | P0 | Build a deterministic transfer simulator and invariant oracle | NET-101 | wip | pure module landed in `crates/rt-engine/src/transfer/` with unit tests (compiled and clippy-clean, NOT yet run); live integration pending NET-114 |
-| 3 | PERF-102 | P0 | Build independent cumulative resource observer | PERF-101 | todo | |
-| 3 | PERF-103 | P0 | Implement client adapters with pinned identity and settings readback | PERF-101 | todo | |
-| 3 | PERF-105 | P0 | Build scoped deterministic fixtures and cache controls | PERF-101 | todo | |
+| 3 | PERF-102 | P0 | Build independent cumulative resource observer | PERF-101 | wip | `scripts/transfer_rebuild/observe.py` streams process-tree `/proc` and cgroup v2 samples; follows thread-spawned descendants, keeps unavailable counters null, and creates private immutable CSV/summary outputs; network attribution and schema integration remain open |
+| 3 | PERF-103 | P0 | Implement client adapters with pinned identity and settings readback | PERF-101 | wip | stdlib adapters cover TorrentNG, qBittorrent, Transmission, Deluge, rTorrent, rqbit, and a standalone `urtorrent` 0.14.3 library runner pinned to Rust 1.98.1; runner rejects v2/hybrid input, snapshots effective settings plus separately labeled hash-thread launch input, removes trackers/web seeds from a private fixture, binds only to a task-local IPv4 interface and explicit private IPv4 peer, disables IPv6/discovery, and waits in a named namespace; adapter independently validates both addresses and process-bound snapshot identity; runner unbuilt/unrun, exact profiles, full paired harness, and bulk validation remain open |
+| 3 | PERF-105 | P0 | Build scoped deterministic fixtures and cache controls | PERF-101 | wip | `fixtures.py` writes v1/v2/hybrid metainfo with payload-derived hashes, authenticated v2 piece layers, hybrid BEP 47 alignment pads, and versioned info-hash records; pinned profiles bind protocol/piece geometry into fixture identity; `cache_control.py` requests per-file cold/warm state and records mincore residency without global cache writes; trial records and manifest validation bind achieved cache evidence to the fixture; caller-owned task cleanup policy documented; regressions authored, bulk pass and filesystem cache qualification remain open |
 | 3 | SYS-005 | P1 | Publish registry chunks and revision deltas without global deep clones | SYS-004 | wip | snapshot rows shared (`Arc<TorrentEntry>`); chunked revision deltas not started |
 | 3 | SYS-007 | P1 | Replace per-command task scans with supervised completions | SYS-004 | done | supervised exit queue (`TaskExits`); command path O(exits) |
-| 3 | SYS-008 | P1 | Replace quadratic timer cancellation and stagger bulk work | SYS-004 | done | O(1)/lazy timer cancel + compaction; staggering bulk work not started |
-| 3 | SYS-012 | P0 | Preserve feature and platform compatibility through production fixtures | SYS-001, SYS-002, SYS-003 | todo | |
-| 4 | IO-005 | P0 | Make admission and completion ownership bounded and cancellation-safe | IO-003, IO-004 | todo | |
-| 4 | NET-103 | P0 | Reserve payload capacity before requests and carry leased buffer spans | NET-101, NET-102, IO-003 | wip | evicted assemblies spill to disk (F13); reserve-before-request not started |
-| 4 | NET-112 | P1 | Select a uTP backend using a reproducible integration evaluation | NET-101, NET-102 | todo | |
-| 4 | PERF-104 | P0 | Implement common timing barriers and useful-byte accounting | PERF-101, PERF-102, PERF-103 | todo | |
-| 4 | PERF-106 | P0 | Create deterministic independent swarm and network controls | PERF-101, PERF-105 | todo | |
+| 3 | SYS-008 | P1 | Replace quadratic timer cancellation and stagger bulk work | SYS-004 | wip | O(1)/lazy timer cancel + compaction are implemented; bulk-work staggering remains open |
+| 3 | SYS-012 | P0 | Preserve feature and platform compatibility through production fixtures | SYS-001, SYS-002, SYS-003 | wip | `rt-testkit` now builds deterministic payload-derived v1/v2/hybrid metainfo fixtures with multi-piece, nested, empty-file, piece-layer, and hybrid-padding cases; production parser and piece-map regressions plus Windows smoke wiring are authored, not run |
+| 4 | IO-005 | P0 | Make admission and completion ownership bounded and cancellation-safe | IO-003, IO-004 | wip | `DiskSubmission` queue/device permits and queued-byte charges now travel with blocking preparation and backend completion watchers for reads, writes, and syncs; helper-level owner regression sources added, end-to-end cancellation matrix remains open |
+| 4 | NET-103 | P0 | Reserve payload capacity before requests and carry leased buffer spans | NET-101, NET-102, IO-003 | wip | v1 peer requests reserve PeerBuffer bytes before enqueue and move the lease through outstanding ownership into the block event; pure-v2 requests reserve before wire send and retain leases through block handling; both retry after capacity returns; regression coverage and shared spans/hybrid admission remain open |
+| 4 | NET-112 | P1 | Select and qualify a uTP protocol core using a reproducible integration evaluation | NET-101, NET-102 | wip | Decision recorded: `urtorrent-utp` is a protocol/wire reference, not a dependency (reviewed releases require Rust 1.98 vs native 1.88). TorrentNG-owned bounded window/SACK/reorder code is authored; qualification and matched efficiency remain pending; see TRANSFER_CORE_UTP_EVALUATION.md |
+| 4 | PERF-104 | P0 | Implement common timing barriers and useful-byte accounting | PERF-101, PERF-102, PERF-103 | wip | `measurement.py` provides a file-backed matched-start barrier, per-file unique/duplicate range accounting, and separate monotonic trial phases; paired harness and artifact assembly remain open; regression sources await bulk pass |
+| 4 | PERF-106 | P0 | Create deterministic independent swarm and network controls | PERF-101, PERF-105 | wip | pinned Linux egress shaper and readback artifact for task-owned veths in `tngt-*` namespaces; trial/manifest digest linkage and regression sources authored, bulk pass pending; independent swarm fixture, paired endpoint orchestration, and loss/jitter profiles remain open |
 | 4 | PERF-108 | P0 | Remove metrics-created shadow storage runtime and stabilize accounting | PERF-101, PERF-102, SYS-011 | wip | shadow storage runtime removed from `/metrics`; stable accounting not started |
 | 4 | SYS-006 | P1 | Route APIs through bounded delta, page and sort projections | SYS-005 | todo | |
 | 4 | SYS-010 | P1 | Bound discovery and control I/O and decouple scrape from announce | SYS-004, SYS-008 | wip | announce delivered before scrape; scrape capped process-wide; DNS/DHT/metadata budgets not started |
-| 5 | IO-006 | P0 | Build one device service over the portable reference backend | IO-005 | todo | |
-| 5 | IO-007 | P0 | Create batched hash jobs and shared hybrid content views | IO-002, IO-003, IO-005 | todo | |
-| 5 | NET-104 | P0 | Implement the authoritative request and content ownership ledger | NET-101, NET-102, NET-103, IO-005 | wip | pure module landed in `crates/rt-engine/src/transfer/` with unit tests (compiled and clippy-clean, NOT yet run); live integration pending NET-114 |
-| 5 | PERF-107 | P0 | Implement independent network, hash, disk and pipeline ceilings | PERF-102, PERF-105, PERF-106 | todo | |
+| 5 | IO-006 | P0 | Build one device service over the portable reference backend | IO-005 | wip | bounded `DeviceQueue` is shared by physical ID; active dispatch uses one slot per portable worker or one bounded io_uring batch, and queued operations receive weighted class fairness across mounts; operation IDs travel with completion owners; cache hits/file-open preparation do not hold device slots; scheduler reads/writes/syncs, coalesced peer reads, preallocation, and extent probes are routed; `MountScheduler::run_device_operation` now exposes a reusable handoff that retains mount/device/byte ownership through completion; secure-copy adoption, deadline/choke-critical policy, grouped barriers, and full fault qualification remain open; regression sources authored, not run |
+| 5 | IO-007 | P0 | Create batched hash jobs and shared hybrid content views | IO-002, IO-003, IO-005 | wip | v1 streaming SHA-1 and v2 64-leaf batches already use the bounded hash pool shared by matching storage schedulers; v2 Merkle accumulator finalization now uses that pool too, retaining only bounded accumulator state on queue-full retry. Hybrid metadata still enters the v1 actor without a shared immutable dual-hash view; dual verification and common-view integration remain open. Regression source now asserts three leaf batches plus one root job; not run |
+| 5 | NET-104 | P0 | Implement the authoritative request and content ownership ledger | NET-101, NET-102, NET-103, IO-005 | wip | pure module landed in `crates/rt-engine/src/transfer/`; early commit-response reconciliation history is bounded per connection and invariant-checked; authored regressions await bulk pass; live integration pending NET-114 |
+| 5 | PERF-107 | P0 | Implement independent network, hash, disk and pipeline ceilings | PERF-102, PERF-105, PERF-106 | wip | `ceilings.py` derives directional network/disk/hash/pipeline bounds from identity-pinned independent calibration inputs; versioned schemas, manifest digest/recompute checks, and optional trial linkage bind the host/device/network/protocol and client/version/settings pointer, then verify peer/block/request counts; regression sources authored; no calibration, tests, or qualification run |
 | 5 | PERF-109 | P0 | Replace synthetic capacity proxies with live production fixtures | PERF-102, PERF-103, PERF-104, PERF-105, PERF-108 | todo | |
 | 5 | PERF-112 | P0 | Enforce v2 and persistence invariants in full transfer paths | PERF-104, PERF-105, PERF-106 | todo | |
 | 6 | IO-012 | P1 | Stream recheck through large chunks and persistent sparse cursors | IO-006, IO-007 | wip | 1 MiB chunked v2 verify + batched leaf hashing; persistent sparse cursors not started |
-| 6 | NET-105 | P0 | Implement negotiated peer protocol request semantics | NET-104 | wip | pure module landed in `crates/rt-engine/src/transfer/` with unit tests (compiled and clippy-clean, NOT yet run); live integration pending NET-114 |
-| 6 | NET-109 | P1 | Rebuild piece selection around active candidates and accurate accounting | NET-104 | wip | priority scan O(1) when idle (F15 common path); active-candidate indexes not started |
+| 6 | NET-105 | P0 | Implement negotiated peer protocol request semantics | NET-104 | wip | pure obligations module present; v1/v2 Reject follows negotiated Fast and v1/v2 retain wire requests across Fast Choke; v1 invalidates queued requests by generation, returns queued-only picker slots, rejects canceled queued uploads only for Fast peers, and sends best-effort endgame Cancel without releasing possible late-response leases; focused Cancel regressions and full live-core integration remain pending NET-114 |
+| 6 | NET-109 | P1 | Rebuild piece selection around active candidates and accurate accounting | NET-104 | wip | array-backed rarity buckets, swap-remove positions, fresh-work candidate index, randomized equal-rarity choice, peer-cap-aware capacity accounting, and capacity trimming under availability churn implemented; regression tests authored, bulk pass pending |
 | 6 | PERF-110 | P0 | Automate 28-case catalog and randomized paired execution | PERF-103, PERF-104, PERF-105, PERF-106, PERF-107, PERF-109 | todo | |
 | 6 | PERF-111 | P1 | Add picker timer and changed-snapshot allocation regression probes | PERF-101, PERF-102, PERF-109 | todo | |
 | 6 | SYS-014 | P1 | Qualify complete catalog cost and mixed-load responsiveness | SYS-005, SYS-006, SYS-007, SYS-008, SYS-009, SYS-010, PERF-109 | todo | |
@@ -279,17 +323,17 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 | 7 | PERF-113 | P1 | Implement statistical analysis and explicit scorecard | PERF-101, PERF-102, PERF-104, PERF-110 | todo | |
 | 8 | IO-008 | P0 | Move transfer actors to completion-driven storage and hashing | IO-002, IO-006, IO-007, NET-104, NET-106 | todo | |
 | 8 | NET-107 | P1 | Replace replicated token buckets with hierarchical fair rate scheduling | NET-103, NET-104, NET-106 | wip | pure module landed in `crates/rt-engine/src/transfer/` with unit tests (compiled and clippy-clean, NOT yet run); live integration pending NET-114 |
-| 8 | NET-113 | P1 | Deliver the selected windowed uTP transport behind the shared runtime | NET-103, NET-106, NET-112 | todo | |
+| 8 | NET-113 | P1 | Deliver the bounded windowed uTP transport behind the shared runtime | NET-103, NET-106, NET-112 | wip | `UtpRuntime` now backs production v1, pure-v2, and metadata outbound connects; shared endpoint demultiplexing, bounded window/reorder state, and rebind-retired routes are authored. Central deadline/ready scheduling, aggregate memory qualification, and bulk validation remain open |
 | 8 | PERF-114 | P0 | Replace text-grep qualification with exact artifact manifests | PERF-101, PERF-113 | wip | `memory_roadmap_certification.sh` commit-checked; manifests not started |
-| 9 | IO-009 | P0 | Implement dirty-only generation fences and grouped barriers | IO-004, IO-006, IO-008 | wip | checkpoint sync scoped to the scheduler's dirty files, marked at issue; generation fences not started |
-| 9 | IO-011 | P1 | Replace unconditional readahead with useful range caching | IO-004, IO-006, IO-008 | wip | sequential-only readahead (toggleable); reuse-driven range cache not started |
+| 9 | IO-009 | P0 | Implement dirty-only generation fences and grouped barriers | IO-004, IO-006, IO-008 | wip | checkpoint sync scopes to this scheduler's dirty/active files and takes scheduler-wide write admission so a new-path write cannot pass its snapshot; per-path exclusive fences and dirty generations remain, with a held-sync ordering regression authored; grouped device batching and bulk evidence remain open |
+| 9 | IO-011 | P1 | Replace unconditional readahead with useful range caching | IO-004, IO-006, IO-008 | wip | per-file sequential streak grows readahead from one block to the configured cap; extra queued bytes and the read frame are reserved before backend dispatch; cache-hit feedback and reusable range caching remain open |
 | 9 | NET-108 | P1 | Implement adaptive request windows and deadline-driven refill | NET-104, NET-106, NET-107 | wip | pure module landed in `crates/rt-engine/src/transfer/` with unit tests (compiled and clippy-clean, NOT yet run); live integration pending NET-114 |
-| 9 | NET-110 | P1 | Implement bounded shared upload service and eliminate valid-demand drops | NET-103, NET-105, NET-106, NET-107 | wip | pure module landed in `crates/rt-engine/src/transfer/` with unit tests (compiled and clippy-clean, NOT yet run); live integration pending NET-114 |
+| 9 | NET-110 | P1 | Implement bounded shared upload service and eliminate valid-demand drops | NET-103, NET-105, NET-106, NET-107 | wip | pure module landed in `crates/rt-engine/src/transfer/`; invalid zero/oversized wire blocks are refused, byte cap has a one-block minimum and remains strict, duplicate connection generations cannot replace live reads, and jobs keep their charge across disconnect until backend completion; regression sources await bulk pass; live integration pending NET-114 |
 | 9 | PERF-115 | P1 | Integrate hosted correctness and dedicated hardware regression lanes | PERF-110, PERF-111, PERF-112, PERF-113, PERF-114 | todo | |
-| 10 | IO-010 | P0 | Bind resume persistence and crash recovery to barrier evidence | IO-009, SYS-009 | todo | |
+| 10 | IO-010 | P0 | Bind resume persistence and crash recovery to barrier evidence | IO-009, SYS-009 | wip | storage returns opaque evidence only after a successful scheduler-wide barrier and retains write admission in the proof; `FastresumeStore` writes the evidence-bound state in its blocking atomic writer before releasing admission, including caller cancellation; persisted file-count/write-sequence fields default safely for legacy records; crash-cut qualification and SYS-009 persistence integration remain open |
 | 10 | IO-014 | P1 | Schedule secure copies and verify each leaf once | IO-006, IO-009, IO-012 | wip | each leaf verified once per side; device-scheduled copy not started |
 | 10 | IO-015 | P1 | Add continuous io_uring with retained safe registrations | IO-006, IO-009 | todo | |
-| 10 | NET-111 | P1 | Implement fair seed and download choking policies | NET-104, NET-107, NET-110 | wip | v1 choker modes + fair optimistic rotation (F12); v2 and trace replay not started |
+| 10 | NET-111 | P1 | Implement fair seed and download choking policies | NET-104, NET-107, NET-110 | wip | v1 and v2 use mode-aware regular/optimistic slots; seeded tie-breaking with a caller-supplied monotonic timeline, connection-specific v2 selection, and revoked-slot checks after storage/rate waits are authored, but the full swarm-trace input/output harness and bulk evidence remain open |
 | 11 | IO-013 | P1 | Persist authenticated v2 Merkle nodes and serve bounded proofs | IO-007, IO-010, IO-012 | wip | proof layers proven against root + LRU; persisted node store not started |
 | 11 | NET-114 | P1 | Move v1, pure-v2 and hybrid transfer execution onto the shared core | NET-104, NET-105, NET-108, NET-109, NET-110, IO-008, IO-010 | todo | |
 | 12 | NET-115 | P1 | Unify source scheduling and batch progress publication | NET-106, NET-107, NET-108, NET-114, SYS-009 | todo | |
@@ -301,29 +345,35 @@ scope/acceptance is created from the template in SYS-001 when picked up.
 
 ### Status snapshot (2026-10-17)
 
-4 of 63 tickets `done`, 20 `wip`, 39 `todo`. `wip` means a defined slice
-of the ticket landed with tests (see the Evidence column and the findings
-register) and the rest of its scope has not started. No gate has passed: G0
-still needs SYS-001's capability matrix, SYS-009, SYS-011 and PERF-101 plus a
-valid baseline controller. Nothing here claims a performance result; the
-bulk test pass establishes correctness of the landed slices only.
+4 of 63 tickets `done`, 41 `wip`, 18 `todo`. `wip` means a bounded
+implementation or contract slice landed and the rest of its scope remains;
+applicable regression sources are recorded in Evidence and may be awaiting the
+owner-requested bulk pass. Documentation-only work does not claim runtime
+evidence. No gate has passed: G0
+still needs SYS-009, SYS-011, PERF-101, and a valid baseline controller with
+pinned client profiles. Nothing here claims a performance result; the bulk
+test pass establishes correctness of the landed slices only.
 
-### Immediate sequence (G0)
+### Immediate code sequence
 
-1. **SYS-002** — done. v2 reproductions + extent correction + local
-   request-window repair. The window fix is a local loop repair only; the
-   authoritative shared ledger (F03) remains NET-104.
-2. **SYS-003** (F10, F09, F11 done; F08 v1 done, v2/Cancel remain) — release-rate and negotiated-capability repairs: webseed debit
-   out of `debug_assert!` (F10) with a release-mode test, aggregate torrent
-   upload cap (F09), explicit token-ready wakeup (F11), Fast lifecycle (F08;
-   interim = stop advertising Fast until NET-105).
-3. In parallel (independent owners): **IO-001**, **NET-101/102**,
-   **PERF-101**, **SYS-004/009/011**.
+1. **SYS-012** — add production-shaped compatibility and platform fixtures
+   before the shared actors become the only execution path.
+2. **Close the current P0 contract slices** — finish the open parts of
+   **IO-001/004/005/006/007**, **NET-101–105/110**, and
+   **PERF-101–106**. In particular, IO-007 still needs the live hybrid dual
+   view even though bounded SHA-1/v2 hashing already uses the shared pool.
+3. **Complete integration prerequisites** — finish **SYS-004/005/009/011/012**
+   and the P0 performance ceilings/fixtures needed for honest live comparisons.
+4. Keep the single bulk validation pass deferred until implementation and
+   documentation are complete; then run the required regression and workspace
+   gates against the exact candidate revision.
 
 ### Progress log
 
 | Date | Change |
 |---|---|
+| 2026-10-17 | SYS-012 started: added deterministic payload-derived v1/v2/hybrid fixtures to `rt-testkit`; regression sources exercise production parsing, v1 SHA-1 pieces, v2 roots/layers, hybrid BEP 47 padding, and piece-map content ranges. Wired the fixture suite into Windows smoke; no tests or checks were run. |
+| 2026-10-17 | IO-001 fault harness hardening: scripted backend teardown now releases any held completion workers so an interrupted regression cannot strand a test thread. No tests or checks were run. |
 | 2026-10-17 | Plan created from the audit; F01, F02, F10, F14 re-verified in source at local HEAD. |
 | 2026-10-17 | SYS-002 landed: v2 block vs piece extent split in `handle_v2_piece`, multi-block fixture (32 KiB pieces, sentinel payload), within-piece request pipelining. Note: the 5 `storage_jobs`/`update_save_path` move tests fail when `TMPDIR` is on the NFS scratch pool and pass on tmpfs (environmental, unrelated). |
 | 2026-10-17 | SYS-003 started: F10 fixed. Release-mode regression is `cargo test -p rt-engine --lib --release webseed_block_is_debited` (debug builds pass either way, so the release run is the real check). |
@@ -345,8 +395,57 @@ bulk test pass establishes correctness of the landed slices only.
 | 2026-10-17 | F34: `scripts/memory_roadmap_certification.sh` only accepts source reports whose `- Commit:` matches HEAD, records worktree state, and labels stale evidence; `scripts/test_memory_roadmap_certification.py` (3 cases) passes. Other certification aggregators still select by mtime. |
 | 2026-10-17 | F24 partly: `V2ProofCache`, `v2_proof_layers`, `read_v2_leaf_hashes`; serving now refuses hashes of content that does not match `pieces root` (a behaviour tightening). Tests `proof_layers_are_refused_for_unverified_content_then_cached`, `proof_cache_is_byte_bounded_and_evicts_least_recently_used`; existing v2 hash-exchange tests must be re-run in the bulk pass. |
 | 2026-10-17 | F23 partly: `V2FileVerifier::CHUNK_LEAVES`, `MountScheduler::hash_v2_leaves`. Test `v2_file_verify_batches_leaf_hashing_per_chunk`. |
-| 2026-10-17 | F12 partly: `Choker::run_with_mode(ChokeMode)`, optimistic history + uuid tie-break, engine passes decayed rates. Tests: `downloading_mode_rewards_peers_that_deliver_to_us`, `optimistic_slot_rotates_through_every_waiting_peer`, `optimistic_slot_moves_on_when_its_holder_stops_being_interested`. |
+| 2026-10-17 | F12 partly: `Choker::run_with_mode(ChokeMode)`, optimistic history + seeded tie-break, engine passes decayed rates. Tests include mode ranking and fair rotation; replay coverage is authored but awaits the bulk pass. |
 | 2026-10-17 | F05 partly: `adaptive_request_pipeline` (rate x 0.25 s, bounded). Uses delivery rate rather than measured RTT because the peer loop does not yet report per-request delay. Test `request_window_grows_only_for_fast_peers_and_never_under_pressure`. |
 | 2026-10-17 | F17 partly: `FilePool::lookup_valid`, `sweep_idle_if_due_locked`, `mode_satisfies`; tests `write_descriptor_serves_reads_without_reopening`, `idle_sweep_runs_on_an_interval_not_on_every_lookup`. |
 | 2026-10-17 | F27 estimate half: `TierController::estimated_owner_bytes`; not yet wired into the dormant budget check (PERF-109 live-owner fixtures decide the cap). Test `owner_bytes_cover_maps_and_timers_not_just_the_hash_string`. |
 | 2026-10-17 | Code-first phase: `transfer/` core (coords, ledger, obligations, upload, rate, window, sim) committed. Its tests, and all tests added since the last bulk run, have not been executed. |
+| 2026-10-17 | SYS-001 docs completed: added the native/shared-core capability matrix and a per-ticket specification template; linked both from `docs/README.md`. |
+| 2026-10-17 | NET-109 implementation slice: replaced per-piece `BTreeSet` nodes with swap-remove vector buckets and piece positions, indexed only fresh-work candidates, randomized equal-rarity peer choices, moved endgame traversal to bounded in-progress pieces, and added picker memory accounting that includes bucket capacity and the configured peer ceiling. Regression tests are authored; no tests or checks were run in this code-first stretch. |
+| 2026-10-17 | Architecture review: retained the native rebuild as a reversible candidate after reviewing `librqbit` 9.0.1 and libtorrent as maintained alternatives/references. `librqbit` remains a serious alternate-engine candidate; exact Rust 1.88/dependency compatibility, storage-adapter fit, and matched whole-client results are open. Recorded D5 and added `TRANSFER_CORE_REFERENCE_EVALUATION.md`; no implementation checks or benchmarks were run. |
+| 2026-10-17 | PERF-101 started: added the measurement contract plus strict `transfer-trial-v1` and `transfer-manifest-v1` JSON Schemas under `certification/transfer-rebuild/`. Validation and scorecard tooling remain open; no tests or checks were run. |
+| 2026-10-17 | PERF-102 started: added an independent Linux `/proc`/cgroup-v2 observer with raw CSV samples, separate RSS/PSS/cgroup memory domains, cumulative CPU and disk counters, and a JSON peak summary. No tests or checks were run. |
+| 2026-10-17 | IO-001 started: documented evidence states, per-file sequence barriers, cancellation ownership rules, and deterministic fault cases. Added a test-only scripted backend for read/write/sync errors, held completions, and partial-write failures, with regressions for cancelled waiters, incomplete writes, and a failed barrier retry. Tests are authored but unrun; file-replacement and crash-cut coverage remains open. |
+| 2026-10-17 | NET-109 follow-up: randomized equal candidates from a webseed's zero-availability set, including priority ties; added seeded candidate coverage. Corrected the in-progress state memory comment. Tests remain deferred. |
+| 2026-10-17 | IO-002 started: v1 peer receive/upload and v2 receive/serve paths consume typed block extents for range validation; v2 assembly, read-back, and progress use the full typed piece extent. Existing multi-block regressions remain unrun; broader shared-ledger integration remains open. |
+| 2026-10-17 | PERF-102 follow-up: descendant discovery includes non-leader process threads; missing FD observations remain null instead of partial sums; cgroup `inactive_file` is emitted separately from file-backed memory. Added synthetic thread-child coverage; bulk pass remains deferred. |
+| 2026-10-17 | SYS-009 started: `DbExecutor::Worker` is now available in test builds, and the transfer-stat batching regression uses a file-backed supervised worker, checks the batched transaction metric, and reads the updated row after shutdown/reopen. The actor test and bulk worker suite remain unrun. |
+| 2026-10-17 | IO-003 started: v1 peer and webseed block events now carry a private lease-owning wrapper through the actor's async storage handling; webseed body reservations no longer drop when fetch returns. Partial assembly flush copies take temporary peer-buffer leases, while budget evictions move the assembly allocation into shared immutable block slices so spill does not allocate a second piece-sized copy. Added lease-lifetime regression sources; no tests run. Shared cross-plane payload spans and storage-operation ownership remain open. |
+| 2026-10-17 | SYS-011 continued: added a metric-owner inventory and passive-scrape contract. A descriptor-budget scrape used to initialize its lazy gate and could raise RLIMIT_NOFILE; metrics now use a passive accessor and expose an initialized gauge. Added a fresh-process regression source (unrun) and explicit storage-owner setup in the renderer-output test. Mixed-load evidence remains pending. |
+| 2026-10-17 | NET-103 started: v1 peer request admission now acquires a PeerBuffer lease before queueing the request; the lease moves through the peer command and outstanding request, then into the matching immutable block event. Choke/reject/timeout/disconnect and failed-event paths release or return the coordinate without retaining an unowned payload. A denied reservation returns the picker slot and retries from the existing one-second peer-control tick after capacity becomes available. Added denial/retry and request-to-event lease regression sources; not run. Shared spans and v2/hybrid/webseed request admission remain open. |
+| 2026-10-17 | NET-105 v2 protocol follow-up: pure-v2 upload rejection now emits Reject Request only when Fast was negotiated; Fast Choke preserves outstanding download obligations and their piece assemblies, while legacy Choke clears them. Added focused obligation/choke regression sources; not run. Outgoing Cancel and shared-core integration remain open. |
+| 2026-10-17 | NET-105 v1 Choke follow-up: Fast Choke preserves on-wire requests and their response-byte leases; queued request commands carry a generation so the peer loop discards work queued before Choke, and the actor cancels queued-only picker reservations. Legacy Choke still releases all requests. Added focused lease and queue-reconciliation regression sources; not run. Outgoing Cancel and shared-core integration remain open. |
+| 2026-10-17 | NET-105 v1 Cancel follow-up: a remote Cancel removes a request still waiting in the bounded upload-read queue; if Fast was negotiated it receives Reject, while a read already in service remains obligated to finish through the Piece/Reject path. Dedicated queued/in-service Cancel regression coverage and shared-core integration remain open. |
+| 2026-10-17 | NET-105 v1 endgame follow-up: accepting a block queues Cancel to peers holding duplicate requests. The peer loop sends Cancel only for requests already on wire and retains those response leases until Piece, Reject, timeout, or disconnect. v2 and shared-ledger cancellation integration remain open; no tests run. |
+| 2026-10-17 | IO-009 started: per-path shared write guards and exclusive sync fences now make a barrier wait for admitted backend completions and block later writes until fdatasync. Issued/synced sequence watermarks pair with dirty generations; the backend watcher retains fences if a caller is canceled, and preallocation carries its exclusive fence into the blocking job. New ordering regressions and grouped device batching remain open; no tests run. |
+| 2026-10-17 | NET-103 pure-v2 follow-up: reserve PeerBuffer response capacity before each `Message::Request`, retain it with the outstanding coordinate through piece storage/hash handling, release it on Reject/legacy Choke/disconnect, and retry denied admissions on a one-second peer tick. Focused v2 admission coverage and hybrid/shared-span integration remain open; no tests run. |
+| 2026-10-17 | IO-004 started: centralized platform-specific file identity in `open.rs` so the scheduler descriptor cache and `HandleCache` share replacement checks; both caches now perform path identity I/O outside their mutexes and verify the candidate pointer before refresh/removal. Replacing the two cache/catalog implementations and remaining lifecycle coverage are open; no tests run. |
+| 2026-10-17 | PERF-101 follow-up: added a pinned Draft 2020-12 validator for schemas and manifest references; it checks relative non-symlink paths, artifact/trial SHA-256, trial schema, pair/outcome and commit/worktree identity. Complete-trial, malformed identity, and referenced-file regression sources are authored but unrun; scorecard tooling remains open. |
+| 2026-10-17 | IO-005 started: queue/device permits and queued-byte charges now move into blocking file preparation and backend completion watchers, so canceling the caller cannot free admitted capacity while submitted work remains in flight. Strict writes retain admission through their data sync; helper-level cancellation owner regressions were added but remain unrun; the end-to-end fault/cancellation matrix remains open. |
+| 2026-10-17 | PERF-104 started: added a fresh-directory file barrier, per-file interval-union accounting for unique and duplicate accepted payload bytes, and separate monotonic phase markers for transfer, flush, validation, and shutdown. Harness regression sources and contract notes are authored; client adapters, fixtures, paired execution, and bulk pass remain open. |
+| 2026-10-17 | PERF-105 started: SHAKE-256 counter-based per-file payload generation writes through a private staging directory under a fresh caller-selected output path, records per-file digests plus an aggregate fixture identity, and verifies both manifest and payload content. Torrent metainfo, cache controls, workload profiles, and bulk-pass evidence remain open; no tests were run. |
+| 2026-10-17 | PERF-105 metainfo follow-up: fixture generation can now create deterministic private v1 multi-file metainfo for a caller-supplied tracker URL. `torrent.json` binds tracker, name, piece length, info hash, torrent digest, and fixture digest; verification rebuilds the torrent from payload bytes. Added determinism and tamper regression sources; not run. V2/hybrid metainfo, cache controls and workload profiles remain open. |
+| 2026-10-17 | NET-104 follow-up: bounded early-commit reconciliation history per connection, with a hard cap and simulator invariant checks. Added a regression source for history eviction; shared-core actors remain on their reference paths and the bulk pass is deferred. |
+| 2026-10-17 | NET-110 follow-up: disconnect now ends protocol obligations without releasing capacity for reads already dispatched to storage; their job and byte budget remains charged until completion and the result is discarded. Added a regression source for disconnect/replacement admission; not run. |
+| 2026-10-17 | NET-110 budget follow-up: invalid zero/oversized wire lengths are refused, and configured byte budgets normalize to one legal block then enforce a strict cap. Added Fast/legacy and undersized-budget regression sources; not run. |
+| 2026-10-17 | NET-110 identity follow-up: a connection generation cannot be registered twice or reused while an earlier storage read is still live. Added a regression source for disconnect/reuse/completion ordering; not run. |
+| 2026-10-17 | NET-111 follow-up: `Choker::run_with_mode_at` lets seeded traces replay optimistic rotation on a caller-owned monotonic timeline. Pure-v2 peers receive mode-aware slots from the same policy, selection is keyed by connection ID, and in-flight reads recheck slot membership after storage and rate waits; revoked Fast requests receive Reject. Added seeded replay, reconnect-identity, and v2 transition regression sources; none were run. |
+| 2026-10-17 | IO-011 follow-up: peer-read readahead now grows per file only as sequential requests continue, beginning at one block and respecting the configured maximum; discontinuities reset the recommendation to an exact read. The existing queued-byte lease and frame reservation precede backend dispatch. Added a controller regression source; cache-hit feedback and the full range-cache policy remain open and untested. |
+| 2026-10-17 | NET-112 evaluation update: upstream `urtorrent-utp` remains a protocol/design reference, but Cargo metadata reports both reviewed releases (0.14.2 and 0.14.3) require Rust 1.98, above TorrentNG's Rust 1.88 floor. Do not add the crate or raise the native MSRV for it. Keep the bounded window, SACK, reorder, timeout, and shared-socket scheduling lessons; build the compatible core and manager in `rt-utp`, then compare correctness and whole-client efficiency before rollout. |
+| 2026-10-17 | NET-113 integration update: added `UtpRuntime` with one lazily bound shared endpoint per family, installed the incoming listener endpoint into the runtime, and routed production v1, pure-v2, and metadata outbound connects through it. Listener rebind retires old endpoints so active routes can drain; the retained generation count is capped. Added a shared-socket/rebind regression source. No tests or builds run; deadline/ready scheduling, aggregate memory evidence, and performance qualification remain open. |
+| 2026-10-17 | PERF-103 started: added read-only identity/settings adapters for TorrentNG, qBittorrent, Transmission, Deluge, rTorrent, and rqbit; pins immutable images or a native binary plus its live process/build, redacts credentials, and emits linked client-observation artifacts. Trial schema and manifest validation cross-check observation digest, settings digest, client version/runtime, and process start identity. Regression sources and docs are authored; nothing was run. Exact client profiles, rqbit's launch-configuration boundary, paired-run assembly, and bulk qualification remain open. |
+| 2026-10-17 | PERF-103 hardening: native API ownership now checks the actual loopback listener address; container port publication rejects wildcard/non-loopback host bindings, and host-network containers must expose a loopback listener. Added regression sources for wildcard rejection and loopback acceptance; not run. |
+| 2026-10-17 | PERF-103 identity hardening: native executable and PID-file reads now use no-follow regular-file descriptors; executable metadata is compared before and after hashing before the running process is matched to its inode. Added symlink-rejection regression source; not run. |
+| 2026-10-17 | PERF-103 maintained-engine comparison: added a separate Linux-only `urtorrent = 0.14.3` runner pinned to Rust 1.98.1, process-bound settings snapshot, private v1 isolation, and v2/hybrid rejection. The runner binds to an explicit task-local IPv4 interface, dials one private IPv4 peer, removes trackers/web seeds, disables IPv6/discovery, and waits for the common start gate; the adapter independently validates the listener/peer and snapshot process identity. `hash_threads` is labeled as a launch input because the library settings API does not expose it. Architecture docs keep this a comparator and the native candidate reversible. Regression sources are authored; no build, tests, or benchmark run. Full paired execution and qualification remain open. |
+| 2026-10-17 | IO-007 hash-pool completion: v2 Merkle accumulator finalization now runs as one bounded shared-pool job after the existing 64-leaf hash batches; a queue-full retry clones only the small streaming accumulator. The batch regression asserts exactly three leaf jobs plus the root job. Hybrid dual-view verification remains open because production hybrid metadata still routes through the v1 actor. No tests or checks run. |
+| 2026-10-17 | IO-006 started: device admission is keyed only by physical device ID, so profile differences cannot split the same device's permit pool. Capacity follows shared storage I/O depth while per-mount `max_queue` remains separately enforced; engine queue summaries also deduplicate by device ID rather than profile. Added scheduler and aggregation regression sources; common priority dispatch and end-to-end completion ownership remain open. No tests run. |
+| 2026-10-17 | IO-006 continued: replaced the shared device semaphore with a bounded per-device dispatcher. Active work uses one slot per portable worker or one bounded io_uring submission batch; pending classes use the `DeviceElevator` weights, canceled waiters release pending capacity, and operation IDs remain attached to device permits through completion. Scheduler positioned I/O, peer-read batches, preallocation and extent probes use the service; cache hits and file-open preparation do not occupy device slots. Added weighted-fairness and canceled-waiter sources and extended the held-write completion regression to assert that caller cancellation does not release the device slot early; no tests or checks run. Secure copy plans, explicit deadlines/choke-critical promotion, cross-mount coalescing, grouped barriers and full fault qualification remain open in IO-014, NET-114, IO-009 and the IO-006 bulk matrix. |
+| 2026-10-17 | IO-006 follow-up: added `MountScheduler::run_device_operation` as the reusable bounded handoff for non-scheduler blocking work. It routes through the existing mount queue, byte budget, shared per-device dispatcher, and backend worker, retaining ownership through completion. Added `external_device_handoff_shares_admission_across_mounts` as a regression source. Secure-copy plans have not adopted the handoff; no tests or checks run. |
+| 2026-10-17 | PERF-105 v2/hybrid and cache-control slice: added deterministic BEP 52 file roots and piece layers, BEP 47 hybrid padding, a versioned torrent-record envelope with legacy v1-record verification, strict LAN/v2/hybrid fixture profiles, and Linux per-file cache requests with mincore residency observations. Added bdecode-level regression sources for roots, layers, file ordering, padding, profile identity and cache record ownership. No tests or checks were run; filesystem-specific cache qualification and the requested bulk pass remain open. |
+| 2026-10-17 | PERF-105 evidence linkage: added a strict cache-state result schema; cold/warm trial records now require the observation digest, and manifest validation checks the cache artifact's digest, measured status, fixture identity, requested state, and per-file totals. Added schema and manifest-link regression sources; all remain unrun. |
+| 2026-10-17 | IO-009/IO-010 durability evidence slice: checkpoint sync now closes scheduler-wide write admission before taking its dirty/active path snapshot, so writes to paths first used during the barrier wait. Successful barriers return an opaque proof that retains admission through the fastresume atomic write, including cancellation after the blocking writer starts; the persisted record carries synced-file count and a stable scheduler write-sequence watermark, while fast/unsupported saves remain explicitly unsynced. Added held-sync new-path and real-scheduler fastresume-store regression sources; none were run. Grouped device barriers, crash-cut qualification, and SYS-009 persistence integration remain open. |
+| 2026-10-17 | PERF-106 started: added pinned loss-free Linux egress profiles restricted to task-owned `tngt-*` namespaces and `tngt*` veths, with exact `tc -j` readback, immutable apply/reset artifacts, and identity-checked removal. Trial and manifest schemas now link applied profile evidence by digest. Added shaper and validator regression sources; none were run. Independent-swarm generation, paired endpoint orchestration, and deterministic loss/jitter controls remain open. |
+| 2026-10-17 | PERF-107 started: added versioned independent calibration and ceiling-report schemas, directional network/disk limits, v1/v2/hybrid hash capacity, pipeline math from peer windows and measured RTT, immutable report generation, manifest raw-evidence linkage/recomputation, and optional trial linkage to matching host/device/network/protocol and process-bound client/version/settings readback. Pipeline peer, request-depth, and block counts are checked against the trial and exact settings pointer. Regression sources include invalid and out-of-range numeric inputs; no tests, schema checks, calibration, or benchmark runs. |
+| 2026-10-17 | NET-109 picker memory follow-up: rarity buckets now trim capacity after any removal when retained slack exceeds four times live membership, including swap-removals from the middle; added a high-churn capacity/position regression source. Not run. |
+| 2026-10-17 | IO-004 path-publication follow-up: scheduler and public handle-cache opens now recheck the opened descriptor against the current path before caching or returning it, retrying up to eight concurrent replacements; scheduler sync opens use the same check. Added a deterministic stale-identity regression source. Not run. |
+| 2026-10-17 | PERF-102 artifact follow-up: observer CSV and summary outputs now use exclusive mode-0600 creation and file sync, so reruns cannot overwrite prior resource evidence; added output immutability regression source. Not run. |

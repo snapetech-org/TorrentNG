@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:torrentng:schema:transfer-cache-state-v1",
+  "title": "TorrentNG fixture cache-state observation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "fixture_sha256",
+    "requested_state",
+    "status",
+    "method",
+    "page_bytes",
+    "payload_bytes",
+    "resident_bytes_before",
+    "resident_bytes_after",
+    "files"
+  ],
+  "properties": {
+    "format": { "const": "transfer-cache-control-v1" },
+    "fixture_sha256": { "$ref": "#/$defs/sha256" },
+    "requested_state": { "enum": ["cold", "warm"] },
+    "status": { "enum": ["achieved", "partial", "unsupported"] },
+    "method": { "enum": ["linux-posix-fadvise-mincore", "unavailable"] },
+    "page_bytes": { "type": ["integer", "null"], "minimum": 1 },
+    "payload_bytes": { "$ref": "#/$defs/positive_integer" },
+    "resident_bytes_before": { "anyOf": [{"$ref": "#/$defs/nonnegative_integer"}, {"type": "null"}] },
+    "resident_bytes_after": { "anyOf": [{"$ref": "#/$defs/nonnegative_integer"}, {"type": "null"}] },
+    "files": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/file" }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "unsupported" } } },
+      "then": {
+        "properties": {
+          "page_bytes": { "type": "null" },
+          "resident_bytes_before": { "type": "null" },
+          "resident_bytes_after": { "type": "null" },
+          "files": { "maxItems": 0 },
+          "method": { "const": "unavailable" }
+        }
+      },
+      "else": {
+        "properties": {
+          "page_bytes": { "type": "integer", "minimum": 1 },
+          "resident_bytes_before": { "$ref": "#/$defs/nonnegative_integer" },
+          "resident_bytes_after": { "$ref": "#/$defs/nonnegative_integer" },
+          "files": { "minItems": 1 },
+          "method": { "const": "linux-posix-fadvise-mincore" }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "nonnegative_integer": { "type": "integer", "minimum": 0 },
+    "positive_integer": { "type": "integer", "minimum": 1 },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "payload_bytes",
+        "resident_bytes_before",
+        "resident_bytes_after",
+        "bytes_read_for_warm_state"
+      ],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+        "payload_bytes": { "$ref": "#/$defs/nonnegative_integer" },
+        "resident_bytes_before": { "$ref": "#/$defs/nonnegative_integer" },
+        "resident_bytes_after": { "$ref": "#/$defs/nonnegative_integer" },
+        "bytes_read_for_warm_state": { "$ref": "#/$defs/nonnegative_integer" }
+      }
+    }
+  }
+}

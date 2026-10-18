@@ -1231,10 +1231,17 @@ async fn metadata_fetch_attempt(
                 fetch_from_outgoing_peer(peer, info_hash, resources).await
             }
             MetadataTransportPolicy::UtpOnly => {
-                fetch_from_outgoing_utp_peer(peer, info_hash, resources).await
+                fetch_from_outgoing_utp_peer(peer, info_hash, resources, &network_budget).await
             }
             MetadataTransportPolicy::PreferUtp => {
-                match fetch_from_outgoing_utp_peer(peer, info_hash, resources.clone()).await {
+                match fetch_from_outgoing_utp_peer(
+                    peer,
+                    info_hash,
+                    resources.clone(),
+                    &network_budget,
+                )
+                .await
+                {
                     Ok(info) => Ok(info),
                     Err(e) => {
                         debug!(
@@ -1689,8 +1696,9 @@ async fn fetch_from_outgoing_utp_peer(
     addr: SocketAddr,
     info_hash: MetadataInfoHash,
     resources: ResourceGovernor,
+    network_budget: &GlobalNetworkBudget,
 ) -> anyhow::Result<FetchedMetadata> {
-    let mut stream = UtpStream::connect(addr).await?;
+    let mut stream = network_budget.utp_runtime().connect(addr).await?;
     write_utp_handshake(&mut stream, info_hash).await?;
 
     let remote_hs = read_utp_handshake(&mut stream).await?;

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:torrentng:schema:transfer-ceiling-v1",
+  "title": "TorrentNG independently derived transfer ceilings",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "calibration_id", "input_sha256", "protocol", "environment", "components", "download", "upload", "interpretation"],
+  "properties": {
+    "schema_version": { "const": "transfer-ceiling-v1" },
+    "calibration_id": { "type": "string", "minLength": 1 },
+    "input_sha256": { "$ref": "#/$defs/sha256" },
+    "protocol": { "enum": ["v1", "v2", "hybrid"] },
+    "environment": { "type": "object", "minProperties": 1 },
+    "components": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["network_download", "network_upload", "disk_write", "disk_read", "hash", "pipeline"],
+      "properties": {
+        "network_download": { "$ref": "#/$defs/positive_number" },
+        "network_upload": { "$ref": "#/$defs/positive_number" },
+        "disk_write": { "$ref": "#/$defs/positive_number" },
+        "disk_read": { "$ref": "#/$defs/positive_number" },
+        "hash": { "$ref": "#/$defs/positive_number" },
+        "pipeline": { "$ref": "#/$defs/positive_number" }
+      }
+    },
+    "download": { "$ref": "#/$defs/ceiling" },
+    "upload": { "$ref": "#/$defs/ceiling" },
+    "interpretation": { "const": "diagnostic upper-bound model; not a client measurement or performance claim" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "positive_number": { "type": "number", "exclusiveMinimum": 0 },
+    "ceiling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bytes_per_second", "limiting_components"],
+      "properties": {
+        "bytes_per_second": { "$ref": "#/$defs/positive_number" },
+        "limiting_components": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+      }
+    }
+  }
+}

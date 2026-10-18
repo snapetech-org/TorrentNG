@@ -1,5 +1,6 @@
 use std::{collections::HashMap, marker::PhantomData};
 
+use rt_storage::DurabilityBarrierEvidence;
 use serde::{
     de::{self, SeqAccess, Visitor},
     Deserialize, Deserializer, Serialize,
@@ -166,6 +167,15 @@ pub struct DurabilityWatermark {
     /// generation can be trusted after a clean fastresume load.
     #[serde(default)]
     pub barrier_generation: u64,
+    /// Number of files whose payload data was synced by the most recent
+    /// completed barrier. Zero is retained for legacy records and barriers
+    /// whose evidence predates this field.
+    #[serde(default)]
+    pub last_barrier_synced_files: u64,
+    /// Scheduler-wide write sequence covered by the most recent completed
+    /// barrier. This is diagnostic evidence; it is not a cross-process counter.
+    #[serde(default)]
+    pub last_barrier_write_sequence: u64,
     /// Pieces written or revalidated since the last completed barrier. If the
     /// process crashes before a barrier completes, only these pieces need to be
     /// downgraded for bounded recheck.
@@ -207,6 +217,8 @@ impl Default for DurabilityWatermark {
     fn default() -> Self {
         DurabilityWatermark {
             barrier_generation: 0,
+            last_barrier_synced_files: 0,
+            last_barrier_write_sequence: 0,
             dirty_pieces_since_barrier: Vec::new(),
             synced: true,
             boot_id: None,
@@ -432,11 +444,25 @@ impl FastresumeState {
         self.durability.dirty_pieces_since_barrier = pieces;
     }
 
-    pub fn complete_durability_barrier(&mut self) {
+    pub(crate) fn complete_durability_barrier(&mut self, evidence: &DurabilityBarrierEvidence) {
         self.durability.barrier_generation = self.durability.barrier_generation.saturating_add(1);
+        self.durability.last_barrier_synced_files = evidence.synced_file_count();
+        self.durability.last_barrier_write_sequence = evidence.write_sequence_watermark();
         self.durability.dirty_pieces_since_barrier.clear();
         self.durability.synced = true;
         self.clean_shutdown = true;
+    }
+
+    /// Complete a fast-resume save without claiming that payload data reached
+    /// stable storage. The state remains usable after a process-only crash,
+    /// while host-crash recovery must distrust it.
+    pub fn complete_without_data_sync(&mut self) {
+        self.durability.barrier_generation = self.durability.barrier_generation.saturating_add(1);
+        self.durability.last_barrier_synced_files = 0;
+        self.durability.last_barrier_write_sequence = 0;
+        self.durability.dirty_pieces_since_barrier.clear();
+        self.clean_shutdown = true;
+        self.mark_saved_without_data_sync();
     }
 
     /// Record that this state was written **without** flushing payload data
@@ -757,16 +783,57 @@ mod tests {
     }
 
     #[test]
-    fn durability_barrier_clears_dirty_piece_watermark() {
+    fn unsynced_save_clears_dirty_piece_watermark_without_claiming_sync() {
         let mut state =
             FastresumeState::new_empty(&test_hash(), 5, ImportPolicy::RequireVerification);
         state.clean_shutdown = false;
         state.set_dirty_pieces_since_barrier([3, 1, 3, 99]);
         assert_eq!(state.durability.dirty_pieces_since_barrier, vec![1, 3]);
 
-        state.complete_durability_barrier();
+        state.complete_without_data_sync();
         assert!(state.clean_shutdown);
         assert_eq!(state.durability.barrier_generation, 1);
+        assert!(state.durability.dirty_pieces_since_barrier.is_empty());
+        assert!(!state.durability.synced);
+    }
+
+    #[tokio::test]
+    async fn completed_storage_barrier_supplies_resume_evidence() {
+        let dir = tempfile::tempdir().unwrap();
+        let scheduler = rt_storage::MountScheduler::new(
+            rt_path::StorageRootId::new(),
+            &rt_storage::SchedulerConfig::default(),
+        );
+        scheduler
+            .prepare_file(
+                &dir.path().join("payload.bin"),
+                8,
+                rt_storage::PreallocationMode::Sparse,
+            )
+            .await
+            .unwrap();
+        let evidence = scheduler
+            .sync_all_open_files_with_evidence()
+            .await
+            .unwrap();
+
+        let hash = test_hash();
+        let hash_hex = hex::encode(hash);
+        let mut state =
+            FastresumeState::new_empty(&hash, 5, ImportPolicy::RequireVerification);
+        state.set_dirty_pieces_since_barrier([3, 1, 3, 99]);
+        let store = crate::FastresumeStore::new(dir.path().join("resume"));
+        store
+            .save_async_with_durability_evidence(state, evidence)
+            .await
+            .unwrap();
+        let state = store.load(&hash_hex).unwrap();
+
+        assert!(state.clean_shutdown);
+        assert!(state.durability.synced);
+        assert_eq!(state.durability.barrier_generation, 1);
+        assert_eq!(state.durability.last_barrier_synced_files, 1);
+        assert_eq!(state.durability.last_barrier_write_sequence, 1);
         assert!(state.durability.dirty_pieces_since_barrier.is_empty());
     }
 
@@ -810,15 +877,15 @@ mod tests {
     }
 
     #[test]
-    fn barrier_marks_the_record_synced_and_fast_mode_marks_it_unsynced() {
+    fn unsynced_save_does_not_create_barrier_evidence() {
         let mut state =
             FastresumeState::new_empty(&test_hash(), 2, ImportPolicy::RequireVerification);
         assert!(state.durability.synced, "default is legacy-trusting");
-        state.mark_saved_without_data_sync();
+        state.complete_without_data_sync();
         assert!(!state.durability.synced);
-        state.complete_durability_barrier();
-        assert!(state.durability.synced);
         assert!(state.clean_shutdown);
+        assert_eq!(state.durability.last_barrier_synced_files, 0);
+        assert_eq!(state.durability.last_barrier_write_sequence, 0);
     }
 
     #[test]
@@ -833,6 +900,8 @@ mod tests {
         assert_eq!(watermark.boot_id, None);
         assert_eq!(watermark.last_data_write_unix, 0);
         assert_eq!(watermark.saved_by_run_id, 0);
+        assert_eq!(watermark.last_barrier_synced_files, 0);
+        assert_eq!(watermark.last_barrier_write_sequence, 0);
 
         let empty: DurabilityWatermark = serde_json::from_str("{}").unwrap();
         assert!(empty.synced);
@@ -843,12 +912,16 @@ mod tests {
         let mut state =
             FastresumeState::new_empty(&test_hash(), 2, ImportPolicy::RequireVerification);
         state.durability.synced = false;
+        state.durability.last_barrier_synced_files = 4;
+        state.durability.last_barrier_write_sequence = 12;
         state.durability.boot_id = Some("boot-xyz".to_owned());
         state.durability.last_data_write_unix = 1_700_000_000;
         state.durability.saved_by_run_id = 77;
         let json = serde_json::to_string(&state).unwrap();
         let back: FastresumeState = serde_json::from_str(&json).unwrap();
         assert!(!back.durability.synced);
+        assert_eq!(back.durability.last_barrier_synced_files, 4);
+        assert_eq!(back.durability.last_barrier_write_sequence, 12);
         assert_eq!(back.durability.boot_id.as_deref(), Some("boot-xyz"));
         assert_eq!(back.durability.last_data_write_unix, 1_700_000_000);
         assert_eq!(back.durability.saved_by_run_id, 77);

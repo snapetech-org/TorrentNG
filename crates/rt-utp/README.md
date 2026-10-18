@@ -2,7 +2,7 @@
 
 uTP packet and transport-state primitives for the TorrentNG client.
 
-## Status: Packet codec, UDP stream, and opt-in engine paths implemented
+## Status: Owned windowed transport and shared runtime authored; bulk pass pending
 
 This crate currently provides BEP 29 fixed-header parsing/encoding, full packet
 payload framing, extension-chain parsing/encoding with truncation and
@@ -10,18 +10,22 @@ oversized-extension validation, selective ACK helpers, connection ID derivation,
 state transitions, send-window accounting, RTT sampling, retransmit timeout
 tracking, delay-based congestion-window adjustment, and an async UDP
 `UtpListener`/`UtpStream` transport with SYN/STATE handshake, DATA/ACK exchange,
-FIN close, bounded retransmission attempts, a shared-socket `UtpEndpoint`
-incoming acceptor with connection-ID demux, and byte-stream `read_exact` /
-`write_all` helpers over uTP DATA payloads.
+FIN close, bounded retransmission attempts, a capped packet/byte send window,
+cumulative/SACK accounting, bounded receive reordering, and byte-stream
+`read_exact` / `write_all` helpers over uTP DATA payloads. `UtpRuntime` shares
+one UDP endpoint per address family across production outbound v1, pure-v2,
+and metadata paths; when incoming uTP is enabled, the listener endpoint is
+shared with outgoing streams. Existing routes survive a listener rebind while
+the old endpoint drains, with a cap on retained endpoint generations.
 
 TorrentNG-client uTP integration is partially active: outbound peer-wire sessions
-can use `UtpStream` when enabled by `TNG_UTP_OUTGOING=prefer|only` or the legacy
+use the shared runtime when enabled by `TNG_UTP_OUTGOING=prefer|only` or the legacy
 `TNG_ENABLE_UTP_OUTGOING` flag. Prefer mode attempts uTP first and falls back to
-TCP if the uTP connect fails. Incoming peer-wire sessions can use `UtpEndpoint`
-when enabled by `TNG_UTP_INCOMING=1`. Default transport policy and end-to-end
-Torrent completion certification remains a hardening item, so the TorrentNG-client
-`/health` manifest still reports `networking.utp_transport=false` until the full
-incoming/outgoing app-level path is active by default.
+TCP if the uTP connect fails. Pure-v2 and metadata uTP connects use the same
+runtime. Incoming peer-wire sessions can use the shared listener endpoint when
+enabled by `TNG_UTP_INCOMING=1`. The modified source and regression tests have not
+been built or run in this worktree; protocol, cancellation, rebind, and matched
+efficiency evidence remain open.
 
-See `docs/protocol/UTP.md` for the module inventory, tested behavior, public API
-example, and engine-integration checklist.
+See `docs/protocol/UTP.md` for the module inventory, regression-source
+inventory, public API example, and engine-integration status.

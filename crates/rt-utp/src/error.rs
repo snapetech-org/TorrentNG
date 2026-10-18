@@ -45,6 +45,9 @@ pub enum UtpError {
         newest_sent: u16,
     },
 
+    #[error("uTP send window is full ({packets} packets, {bytes} payload bytes in flight)")]
+    SendWindowFull { packets: usize, bytes: u32 },
+
     #[error("uTP I/O error: {0}")]
     Io(String),
 
@@ -65,4 +68,7 @@ pub enum UtpError {
 
     #[error("invalid uTP transport configuration: {0}")]
     InvalidConfig(&'static str),
+
+    #[error("uTP endpoint connection cap reached ({max})")]
+    ConnectionLimit { max: usize },
 }

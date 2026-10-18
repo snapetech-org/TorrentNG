@@ -13,7 +13,7 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use super::coords::{BlockExtent, ConnectionId};
+use super::coords::{BlockExtent, ConnectionId, BLOCK_SIZE};
 use super::obligations::{InboundDecision, InboundObligations, Reject, Served};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,7 +22,8 @@ pub struct UploadLimits {
     pub max_queue_per_conn: usize,
     /// Reads in flight across all connections.
     pub max_in_flight_jobs: usize,
-    /// Bytes of reads in flight across all connections.
+    /// Bytes of reads in flight across all connections. The effective
+    /// minimum is one legal wire block, so every valid request can run.
     pub max_in_flight_bytes: u64,
     /// Reads in flight for one connection (fairness bound).
     pub max_in_flight_per_conn: usize,
@@ -72,7 +73,10 @@ pub struct UploadService {
 }
 
 impl UploadService {
-    pub fn new(limits: UploadLimits) -> Self {
+    pub fn new(mut limits: UploadLimits) -> Self {
+        limits.max_in_flight_bytes = limits
+            .max_in_flight_bytes
+            .max(u64::from(BLOCK_SIZE));
         Self {
             limits,
             conns: HashMap::new(),
@@ -83,7 +87,12 @@ impl UploadService {
         }
     }
 
-    pub fn register(&mut self, conn: ConnectionId, fast_negotiated: bool) {
+    /// Register one fresh connection generation. Refuse a duplicate live
+    /// identity, including one whose previous storage read has not completed.
+    pub fn register(&mut self, conn: ConnectionId, fast_negotiated: bool) -> bool {
+        if self.conns.contains_key(&conn) || self.jobs.values().any(|job| job.conn == conn) {
+            return false;
+        }
         self.conns.insert(
             conn,
             ConnUpload {
@@ -95,6 +104,7 @@ impl UploadService {
             },
         );
         self.ring.push_back(conn);
+        true
     }
 
     pub fn allow_fast(&mut self, conn: ConnectionId, piece: u32) {
@@ -178,7 +188,6 @@ impl UploadService {
             };
             if self.in_flight_bytes.saturating_add(u64::from(head.length))
                 > self.limits.max_in_flight_bytes
-                && !self.jobs.is_empty()
             {
                 continue;
             }
@@ -218,24 +227,12 @@ impl UploadService {
         })
     }
 
-    /// The connection closed; its obligations end with it and its in-flight
-    /// jobs are forgotten (their results are ignored).
+    /// The connection closed; its protocol obligations end with it. Reads
+    /// already handed to the backend remain charged until `finish`, even
+    /// though their results can no longer be sent.
     pub fn disconnect(&mut self, conn: ConnectionId) {
         if let Some(mut state) = self.conns.remove(&conn) {
             state.obligations.close();
-        }
-        let dead: Vec<JobId> = self
-            .jobs
-            .values()
-            .filter(|job| job.conn == conn)
-            .map(|job| job.id)
-            .collect();
-        for id in dead {
-            if let Some(job) = self.jobs.remove(&id) {
-                self.in_flight_bytes = self
-                    .in_flight_bytes
-                    .saturating_sub(u64::from(job.block.length));
-            }
         }
         self.ring.retain(|candidate| *candidate != conn);
     }
@@ -410,6 +407,27 @@ mod tests {
     }
 
     #[test]
+    fn configured_byte_budget_has_one_block_minimum_and_remains_a_hard_cap() {
+        let mut service = UploadService::new(UploadLimits {
+            max_in_flight_bytes: 1,
+            max_in_flight_per_conn: 100,
+            ..UploadLimits::default()
+        });
+        let conn = ready(&mut service, 1, true);
+        service.admit(conn, block(0, 0), true);
+        service.admit(conn, block(1, 0), true);
+
+        let first = service.next_job().expect("one legal block can be read");
+        assert_eq!(service.in_flight_bytes(), u64::from(BLOCK_SIZE));
+        assert!(service.next_job().is_none(), "the normalized cap is strict");
+        assert_eq!(service.queued(conn), 1);
+
+        service.finish(first.id, Served::Sent);
+        assert!(service.next_job().is_some(), "the completion frees its charge");
+        service.check_invariants().unwrap();
+    }
+
+    #[test]
     fn choking_mid_read_rejects_for_fast_and_blocks_the_send() {
         let mut service = UploadService::new(UploadLimits::default());
         let conn = ready(&mut service, 1, true);
@@ -428,18 +446,47 @@ mod tests {
     }
 
     #[test]
-    fn disconnect_forgets_jobs_and_releases_the_budget() {
-        let mut service = UploadService::new(UploadLimits::default());
+    fn disconnect_keeps_submitted_jobs_charged_until_completion() {
+        let mut service = UploadService::new(UploadLimits {
+            max_in_flight_jobs: 1,
+            max_in_flight_bytes: 16 * 1024,
+            ..UploadLimits::default()
+        });
         let conn = ready(&mut service, 1, true);
         service.admit(conn, block(0, 0), true);
         let job = service.next_job().unwrap();
         assert!(service.in_flight_bytes() > 0);
         service.disconnect(conn);
-        assert_eq!(service.in_flight_bytes(), 0);
+        assert!(!service.may_send(&job), "the disconnected peer is gone");
+        let replacement = ready(&mut service, 2, true);
+        service.admit(replacement, block(1, 0), true);
+        assert_eq!(service.in_flight_jobs(), 1);
+        assert_eq!(service.in_flight_bytes(), 16 * 1024);
+        assert!(service.next_job().is_none(), "the backend read is still charged");
         assert!(
             service.finish(job.id, Served::Sent).is_none(),
             "late result ignored"
         );
+        assert_eq!(service.in_flight_bytes(), 0);
+        assert_eq!(service.next_job().unwrap().conn, replacement);
+        service.check_invariants().unwrap();
+    }
+
+    #[test]
+    fn a_connection_generation_cannot_be_reused_while_its_read_is_live() {
+        let mut service = UploadService::new(UploadLimits::default());
+        let old = ready(&mut service, 1, true);
+        service.admit(old, block(0, 0), true);
+        let job = service.next_job().unwrap();
+        service.disconnect(old);
+
+        assert!(!service.register(old, true));
+        assert_eq!(service.in_flight_jobs(), 1);
+        assert_eq!(service.in_flight_bytes(), u64::from(BLOCK_SIZE));
+        service.check_invariants().unwrap();
+
+        service.finish(job.id, Served::Sent);
+        assert!(service.register(old, true));
         service.check_invariants().unwrap();
     }
 }

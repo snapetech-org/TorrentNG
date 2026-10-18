@@ -1,9 +1,9 @@
 /// Tracks how many peers have each piece (availability count per piece).
 ///
-/// Used by the rarest-first picker. Pieces are kept bucketed by their
-/// current availability count so the picker can walk from the rarest
-/// nonzero bucket upward instead of re-scanning every piece on each pick.
-use std::collections::BTreeSet;
+/// Used by the rarest-first picker. Pieces are kept in compact, array-backed
+/// buckets by availability count so the picker can walk from the rarest
+/// nonzero bucket upward without one tree allocation per piece.
+use rand::Rng;
 
 use crate::flags::PieceFlags;
 
@@ -11,29 +11,33 @@ use crate::flags::PieceFlags;
 pub struct Availability {
     /// counts[i] = number of peers that have piece i.
     counts: Vec<u32>,
-    /// buckets[c] holds every piece index currently at availability count
-    /// `c`, in ascending piece-index order. Zero-availability pieces are
-    /// never requestable so bucket 0 is never populated, but it is kept
-    /// present once any bucket exists so indices line up 1:1 with counts.
-    buckets: Vec<BTreeSet<u32>>,
-    /// Pieces the owning picker has retired from consideration (already
-    /// have, or permanently disabled) via `retire`. Retired pieces are kept
-    /// out of every bucket regardless of swarm count, so a long-lived
-    /// picker doesn't pay to skip over ever more completed pieces in a
-    /// crowded bucket as a download approaches completion — a well-seeded
-    /// swarm tends to give most remaining pieces nearly identical
-    /// availability, so without this a near-finished download would
-    /// otherwise drift back toward an O(piece_count) walk. `count()` is
-    /// unaffected: retiring a piece never changes the swarm-wide count it
-    /// reports.
+    /// buckets[c] holds every active piece index currently at availability
+    /// count `c`. Zero-availability pieces have no rarity-bucket entry.
+    buckets: Vec<Vec<u32>>,
+    /// Piece position in its rarity bucket, or `NO_POSITION` if it has no
+    /// bucket entry.
+    bucket_positions: Vec<u32>,
+    /// Active fresh-request candidates, including pieces at zero peer
+    /// availability (for sources such as webseeds).
+    candidates: Vec<u32>,
+    /// Piece position in `candidates`, or `NO_POSITION` if it is inactive.
+    candidate_positions: Vec<u32>,
+    /// Pieces excluded from candidate indexes. Their swarm counts remain
+    /// live for diagnostics and endgame selection.
     retired: PieceFlags,
 }
+
+const NO_POSITION: u32 = u32::MAX;
+const RANDOM_CANDIDATE_PROBES: usize = 32;
 
 impl Availability {
     pub fn new(piece_count: usize) -> Self {
         Availability {
             counts: vec![0; piece_count],
             buckets: Vec::new(),
+            bucket_positions: vec![NO_POSITION; piece_count],
+            candidates: (0..piece_count).map(|piece| piece as u32).collect(),
+            candidate_positions: (0..piece_count).map(|piece| piece as u32).collect(),
             retired: PieceFlags::new(piece_count, false),
         }
     }
@@ -66,8 +70,18 @@ impl Availability {
         let new = c.saturating_add(1);
         *c = new;
         if new != old && !self.retired.get(piece) {
-            Self::bucket_remove(&mut self.buckets, old, piece as u32);
-            Self::bucket_insert(&mut self.buckets, new, piece as u32);
+            Self::bucket_remove(
+                &mut self.buckets,
+                &mut self.bucket_positions,
+                old,
+                piece as u32,
+            );
+            Self::bucket_insert(
+                &mut self.buckets,
+                &mut self.bucket_positions,
+                new,
+                piece as u32,
+            );
         }
     }
 
@@ -80,8 +94,18 @@ impl Availability {
         let new = c.saturating_sub(1);
         *c = new;
         if new != old && !self.retired.get(piece) {
-            Self::bucket_remove(&mut self.buckets, old, piece as u32);
-            Self::bucket_insert(&mut self.buckets, new, piece as u32);
+            Self::bucket_remove(
+                &mut self.buckets,
+                &mut self.bucket_positions,
+                old,
+                piece as u32,
+            );
+            Self::bucket_insert(
+                &mut self.buckets,
+                &mut self.bucket_positions,
+                new,
+                piece as u32,
+            );
         }
     }
 
@@ -104,7 +128,7 @@ impl Availability {
         self.counts.get(piece).copied().unwrap_or(0)
     }
 
-    /// Pieces sorted by availability ascending (rarest first).
+    /// Pieces grouped by availability ascending (rarest first).
     /// Only returns pieces for which `want[piece]` is true and count > 0.
     ///
     /// Walks the availability buckets (already grouped and ordered by
@@ -122,11 +146,10 @@ impl Availability {
     /// Walk availability buckets from the rarest nonzero count upward,
     /// returning the first piece index accepted by `predicate`.
     ///
-    /// Within a bucket, pieces are visited in ascending index order, so for
-    /// callers that treat "smallest (count, piece index)" as the winning
-    /// candidate, this returns exactly that piece — the same tie-break a
-    /// full linear scan comparing `(count, piece)` tuples would produce —
-    /// without visiting pieces outside the matching bucket.
+    /// Within a bucket, pieces have no stable order because removal uses
+    /// swap-remove. Callers that need fair tie handling should use
+    /// `rarest_matching_random`.
+    #[cfg(test)]
     pub(crate) fn rarest_matching<F>(&self, mut predicate: F) -> Option<usize>
     where
         F: FnMut(usize) -> bool,
@@ -142,24 +165,176 @@ impl Availability {
         None
     }
 
-    /// Pull a piece out of the bucket walk regardless of its swarm count.
-    /// Used by the owning picker once a piece is no longer something it
-    /// will ever request again (already have, or disabled). `count()`
-    /// still reports the piece's true swarm-wide availability afterward —
-    /// only bucket membership (and therefore `rarest_matching`/
-    /// `rarest_first` visibility) is affected. Idempotent.
+    /// Select uniformly from matching candidates in the rarest bucket that
+    /// contains a match. Reservoir sampling avoids allocating a temporary
+    /// candidate list and prevents low piece indexes from winning every tie.
+    pub(crate) fn rarest_matching_random<F, R>(
+        &self,
+        mut predicate: F,
+        rng: &mut R,
+    ) -> Option<usize>
+    where
+        F: FnMut(usize) -> bool,
+        R: Rng + ?Sized,
+    {
+        for bucket in self.buckets.iter().skip(1) {
+            if bucket.is_empty() {
+                continue;
+            }
+            // Most peers advertise a meaningful share of a swarm. Sample
+            // first so a large equal-rarity bucket does not require a full
+            // walk for the common case. If the bounded sample misses, use
+            // reservoir sampling across the bucket; this keeps the result
+            // uniform among matches, including sparse peer bitfields.
+            for _ in 0..bucket.len().min(RANDOM_CANDIDATE_PROBES) {
+                let piece = bucket[rng.random_range(0..bucket.len())] as usize;
+                if predicate(piece) {
+                    return Some(piece);
+                }
+            }
+            let mut matched = 0usize;
+            let mut selected = None;
+            for &piece in bucket {
+                let piece = piece as usize;
+                if predicate(piece) {
+                    matched = matched.saturating_add(1);
+                    if rng.random_range(0..matched) == 0 {
+                        selected = Some(piece);
+                    }
+                }
+            }
+            if selected.is_some() {
+                return selected;
+            }
+        }
+        None
+    }
+
+    /// Select uniformly from matching active candidates. Unlike the rarity
+    /// buckets, this also includes zero-availability pieces for sources whose
+    /// complete inventory is known out of band, such as webseeds.
+    pub(crate) fn candidate_matching_random<F, R>(
+        &self,
+        mut predicate: F,
+        rng: &mut R,
+    ) -> Option<usize>
+    where
+        F: FnMut(usize) -> bool,
+        R: Rng + ?Sized,
+    {
+        if self.candidates.is_empty() {
+            return None;
+        }
+        for _ in 0..self.candidates.len().min(RANDOM_CANDIDATE_PROBES) {
+            let piece = self.candidates[rng.random_range(0..self.candidates.len())] as usize;
+            if predicate(piece) {
+                return Some(piece);
+            }
+        }
+        let mut matched = 0usize;
+        let mut selected = None;
+        for &piece in &self.candidates {
+            let piece = piece as usize;
+            if predicate(piece) {
+                matched = matched.saturating_add(1);
+                if rng.random_range(0..matched) == 0 {
+                    selected = Some(piece);
+                }
+            }
+        }
+        selected
+    }
+
+    /// Return the first active candidate accepted by `predicate` without
+    /// scanning every piece or allocating a filtered list. Used for sources
+    /// with complete availability, such as webseeds.
+    #[cfg(test)]
+    pub(crate) fn first_candidate_matching<F>(&self, mut predicate: F) -> Option<usize>
+    where
+        F: FnMut(usize) -> bool,
+    {
+        self.candidates
+            .iter()
+            .map(|piece| *piece as usize)
+            .find(|piece| predicate(*piece))
+    }
+
+    pub(crate) fn candidate_count(&self) -> usize {
+        self.candidates.len()
+    }
+
+    pub(crate) fn candidate_min_by_key<F>(&self, mut key: F) -> Option<usize>
+    where
+        F: FnMut(usize) -> Option<usize>,
+    {
+        self.candidates
+            .iter()
+            .map(|piece| *piece as usize)
+            .filter_map(|piece| key(piece).map(|key| (key, piece)))
+            .min()
+            .map(|(_, piece)| piece)
+    }
+
+    /// Report the allocated backing storage for availability indexes.
+    /// Capacities are used so owner accounting includes vector growth slack.
+    pub(crate) fn memory_bytes(&self) -> usize {
+        let bucket_entries = self
+            .buckets
+            .iter()
+            .map(|bucket| bucket.capacity().saturating_mul(std::mem::size_of::<u32>()))
+            .fold(0usize, usize::saturating_add);
+        self.counts
+            .capacity()
+            .saturating_mul(std::mem::size_of::<u32>())
+            .saturating_add(
+                self.bucket_positions
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<u32>()),
+            )
+            .saturating_add(bucket_entries)
+            .saturating_add(
+                self.buckets
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<Vec<u32>>()),
+            )
+            .saturating_add(
+                self.candidates
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<u32>()),
+            )
+            .saturating_add(
+                self.candidate_positions
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<u32>()),
+            )
+            .saturating_add(self.retired.memory_bytes())
+    }
+
+    /// Remove a piece from the active candidate indexes while preserving its
+    /// swarm count. The owner calls this when no fresh block can be requested
+    /// for the piece. Idempotent.
     pub(crate) fn retire(&mut self, piece: usize) {
         if piece >= self.retired.len() || self.retired.get(piece) {
             return;
         }
         self.retired.set(piece, true);
         let count = self.count(piece);
-        Self::bucket_remove(&mut self.buckets, count, piece as u32);
+        Self::bucket_remove(
+            &mut self.buckets,
+            &mut self.bucket_positions,
+            count,
+            piece as u32,
+        );
+        Self::candidate_remove(
+            &mut self.candidates,
+            &mut self.candidate_positions,
+            piece as u32,
+        );
     }
 
-    /// Reverse of `retire`: put a piece back into the bucket walk at its
-    /// current swarm count. Used by the owning picker when a piece becomes
-    /// wanted again (e.g. a failed recheck, or re-enabling a file).
+    /// Reverse of `retire`: restore a piece to the active candidate indexes
+    /// at its current swarm count. Used when a piece can accept fresh work
+    /// again (for example after a cancelled request).
     /// Idempotent.
     pub(crate) fn reinstate(&mut self, piece: usize) {
         if piece >= self.retired.len() || !self.retired.get(piece) {
@@ -167,26 +342,94 @@ impl Availability {
         }
         self.retired.set(piece, false);
         let count = self.count(piece);
-        Self::bucket_insert(&mut self.buckets, count, piece as u32);
+        Self::bucket_insert(
+            &mut self.buckets,
+            &mut self.bucket_positions,
+            count,
+            piece as u32,
+        );
+        self.candidate_positions[piece] = self.candidates.len() as u32;
+        self.candidates.push(piece as u32);
     }
 
-    fn bucket_insert(buckets: &mut Vec<BTreeSet<u32>>, count: u32, piece: u32) {
+    fn bucket_insert(
+        buckets: &mut Vec<Vec<u32>>,
+        positions: &mut [u32],
+        count: u32,
+        piece: u32,
+    ) {
         if count == 0 {
             return;
         }
         let idx = count as usize;
         if idx >= buckets.len() {
-            buckets.resize_with(idx + 1, BTreeSet::new);
+            buckets.resize_with(idx + 1, Vec::new);
         }
-        buckets[idx].insert(piece);
+        let Some(position) = positions.get_mut(piece as usize) else {
+            return;
+        };
+        *position = buckets[idx].len() as u32;
+        buckets[idx].push(piece);
     }
 
-    fn bucket_remove(buckets: &mut [BTreeSet<u32>], count: u32, piece: u32) {
+    fn bucket_remove(
+        buckets: &mut [Vec<u32>],
+        positions: &mut [u32],
+        count: u32,
+        piece: u32,
+    ) {
         if count == 0 {
             return;
         }
-        if let Some(bucket) = buckets.get_mut(count as usize) {
-            bucket.remove(&piece);
+        let Some(bucket) = buckets.get_mut(count as usize) else {
+            return;
+        };
+        let Some(position) = positions.get(piece as usize).copied() else {
+            return;
+        };
+        if position == NO_POSITION {
+            return;
+        }
+        let index = position as usize;
+        if index >= bucket.len() || bucket[index] != piece {
+            positions[piece as usize] = NO_POSITION;
+            return;
+        }
+        let moved = bucket.swap_remove(index);
+        positions[piece as usize] = NO_POSITION;
+        if moved != piece {
+            positions[moved as usize] = index as u32;
+        }
+        if bucket.is_empty() {
+            // Empty rarity buckets do not retain an allocation. This keeps
+            // historical availability churn from accumulating one spare
+            // buffer per count level.
+            *bucket = Vec::new();
+        } else if bucket.capacity() > bucket.len().saturating_mul(4) {
+            // A bucket can become much smaller after peer churn. Keep
+            // retained capacity proportional to live membership so moving
+            // pieces among rarity levels cannot retain a torrent-sized
+            // buffer at every historical level.
+            bucket.shrink_to_fit();
+        }
+    }
+
+    fn candidate_remove(candidates: &mut Vec<u32>, positions: &mut [u32], piece: u32) {
+        let Some(position) = positions.get(piece as usize).copied() else {
+            return;
+        };
+        if position == NO_POSITION {
+            return;
+        }
+        let index = position as usize;
+        if index >= candidates.len() || candidates[index] != piece {
+            positions[piece as usize] = NO_POSITION;
+            return;
+        }
+        let moved = candidates.swap_remove(index);
+        positions[piece as usize] = NO_POSITION;
+        if moved != piece {
+            positions[moved as usize] = index as u32;
         }
     }
 }
@@ -286,7 +529,7 @@ mod tests {
     }
 
     #[test]
-    fn rarest_matching_walks_buckets_in_rarity_then_index_order() {
+    fn rarest_matching_walks_buckets_in_rarity_order() {
         let mut av = Availability::new(4);
         av.add_have(0);
         av.add_have(0);
@@ -300,8 +543,12 @@ mod tests {
             piece == 2
         });
         // Rarest bucket (count 1) is piece 1 — visited but rejected.
-        // Next bucket (count 2) is pieces {0, 2} in ascending order.
-        assert_eq!(visited, vec![1, 0, 2]);
+        // The next bucket (count 2) contains pieces 0 and 2. Bucket order is
+        // intentionally unstable after swap-remove.
+        assert_eq!(visited.len(), 3);
+        assert_eq!(visited[0], 1);
+        assert!(visited[1..].contains(&0));
+        assert!(visited[1..].contains(&2));
         assert_eq!(found, Some(2));
     }
 
@@ -385,5 +632,97 @@ mod tests {
         // Piece 0 should show up exactly once (in the count-1 bucket), not
         // linger in a stale count-2 bucket entry.
         assert_eq!(visited, vec![0]);
+    }
+
+    #[test]
+    fn array_bucket_swap_remove_keeps_piece_positions_coherent() {
+        let mut av = Availability::new(4);
+        for piece in 0..4 {
+            av.add_have(piece);
+        }
+
+        // Remove an interior bucket element, causing the tail to move into
+        // its slot, then move that tail piece to a different rarity bucket.
+        av.retire(1);
+        av.add_have(3);
+        let mut found = Vec::new();
+        av.rarest_matching(|piece| {
+            found.push(piece);
+            false
+        });
+
+        assert_eq!(found, vec![0, 2]);
+        assert_eq!(av.count(3), 2);
+        av.reinstate(1);
+        assert_eq!(av.rarest_matching(|piece| piece == 1), Some(1));
+    }
+
+    #[test]
+    fn active_candidate_index_excludes_retired_work_and_restores_it() {
+        let mut av = Availability::new(3);
+        av.add_have(1);
+        assert_eq!(av.candidate_count(), 3);
+
+        av.retire(1);
+        assert_eq!(av.candidate_count(), 2);
+        assert_eq!(av.first_candidate_matching(|piece| piece == 1), None);
+
+        av.reinstate(1);
+        assert_eq!(av.candidate_count(), 3);
+        assert_eq!(av.first_candidate_matching(|piece| piece == 1), Some(1));
+        assert_eq!(av.count(1), 1);
+    }
+
+    #[test]
+    fn random_rarest_tie_break_reaches_each_equal_candidate() {
+        use rand::SeedableRng;
+
+        let mut av = Availability::new(8);
+        for piece in 0..8 {
+            av.add_have(piece);
+        }
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0x5eed);
+        let selected: std::collections::BTreeSet<_> = (0..128)
+            .filter_map(|_| av.rarest_matching_random(|_| true, &mut rng))
+            .collect();
+
+        assert_eq!(selected, (0..8).collect());
+    }
+
+    #[test]
+    fn random_seed_candidate_tie_break_reaches_zero_availability_pieces() {
+        use rand::SeedableRng;
+
+        let av = Availability::new(8);
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0x5eed);
+        let selected: std::collections::BTreeSet<_> = (0..128)
+            .filter_map(|_| av.candidate_matching_random(|_| true, &mut rng))
+            .collect();
+
+        assert_eq!(selected, (0..8).collect());
+    }
+
+    #[test]
+    fn rarity_bucket_capacity_tracks_live_members_after_peer_churn() {
+        let piece_count = 512;
+        let remaining_in_first_bucket = 32;
+        let mut av = Availability::new(piece_count);
+
+        for piece in 0..piece_count {
+            av.add_have(piece);
+        }
+        for _ in remaining_in_first_bucket..piece_count {
+            // Repeatedly remove the first entry. swap_remove fills that slot
+            // from the bucket tail, so this leaves an over-sized allocation
+            // unless trimming considers interior removals too.
+            let piece = av.buckets[1][0] as usize;
+            av.add_have(piece);
+        }
+
+        let rarity_one_bucket = &av.buckets[1];
+        assert_eq!(rarity_one_bucket.len(), remaining_in_first_bucket);
+        assert!(rarity_one_bucket.capacity() <= rarity_one_bucket.len() * 4);
+        assert!(av.bucket_positions.iter().all(|position| *position != NO_POSITION));
+        assert!(av.candidate_positions.iter().all(|position| *position != NO_POSITION));
     }
 }

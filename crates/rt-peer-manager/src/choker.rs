@@ -54,6 +54,7 @@ pub struct Choker {
     last_optimistic_rotate: Instant,
     /// When each peer last held the optimistic slot, for fair rotation.
     optimistic_history: HashMap<PeerId, Instant>,
+    random_state: u64,
 }
 
 impl Choker {
@@ -63,7 +64,31 @@ impl Choker {
             optimistic_id: None,
             last_optimistic_rotate: Instant::now(),
             optimistic_history: HashMap::new(),
+            random_state: Uuid::new_v4().as_u128() as u64,
         }
+    }
+
+    /// Construct a repeatable choker for deterministic swarm-trace replay.
+    pub fn with_seed(max_unchoked: usize, seed: u64) -> Self {
+        Self {
+            max_unchoked,
+            optimistic_id: None,
+            last_optimistic_rotate: Instant::now(),
+            optimistic_history: HashMap::new(),
+            random_state: seed,
+        }
+    }
+
+    fn random_index(&mut self, upper_bound: usize) -> usize {
+        debug_assert!(upper_bound > 0);
+        // SplitMix64 keeps the policy dependency-free and makes seeded traces
+        // replayable across runs.
+        self.random_state = self.random_state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut value = self.random_state;
+        value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        value = (value ^ (value >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        value ^= value >> 31;
+        ((u128::from(value) * upper_bound as u128) >> 64) as usize
     }
 
     /// Run one choking round in seeding mode (rank by upload rate).
@@ -79,6 +104,18 @@ impl Choker {
         &mut self,
         peers: &[PeerSnapshot],
         mode: ChokeMode,
+    ) -> HashMap<PeerId, ChokeDecision> {
+        self.run_with_mode_at(peers, mode, Instant::now())
+    }
+
+    /// Run one round at a caller-supplied monotonic time. Production callers
+    /// use [`run_with_mode`](Self::run_with_mode); trace replayers provide a
+    /// fixed timeline so rotation and fairness decisions are reproducible.
+    pub fn run_with_mode_at(
+        &mut self,
+        peers: &[PeerSnapshot],
+        mode: ChokeMode,
+        now: Instant,
     ) -> HashMap<PeerId, ChokeDecision> {
         // Only interested peers compete.
         let mut interested: Vec<&PeerSnapshot> = peers.iter().filter(|p| p.interested).collect();
@@ -119,23 +156,28 @@ impl Choker {
         let holder_valid = self.optimistic_id.is_some_and(|id| {
             interested.iter().any(|peer| peer.id == id) && !unchoked_ids.contains(&id)
         });
-        if self.last_optimistic_rotate.elapsed() >= OPTIMISTIC_ROTATE_INTERVAL || !holder_valid {
+        if now.saturating_duration_since(self.last_optimistic_rotate)
+            >= OPTIMISTIC_ROTATE_INTERVAL
+            || !holder_valid
+        {
             let candidates: Vec<&PeerSnapshot> =
                 interested.iter().skip(self.max_unchoked).copied().collect();
             // Prefer peers that have never held the slot, then the one that
             // held it longest ago; break remaining ties randomly.
-            let waited = |peer: &PeerSnapshot| self.optimistic_history.get(&peer.id).copied();
-            let oldest = candidates.iter().map(|peer| waited(peer)).min();
+            let oldest = candidates
+                .iter()
+                .map(|peer| self.optimistic_history.get(&peer.id).copied())
+                .min();
             if let Some(oldest) = oldest {
                 let tied: Vec<&PeerSnapshot> = candidates
                     .into_iter()
-                    .filter(|peer| waited(peer) == oldest)
+                    .filter(|peer| self.optimistic_history.get(&peer.id).copied() == oldest)
                     .collect();
-                let pick = (Uuid::new_v4().as_u128() % tied.len() as u128) as usize;
+                let pick = self.random_index(tied.len());
                 let id = tied[pick].id;
                 self.optimistic_id = Some(id);
-                self.optimistic_history.insert(id, Instant::now());
-                self.last_optimistic_rotate = Instant::now();
+                self.optimistic_history.insert(id, now);
+                self.last_optimistic_rotate = now;
             } else {
                 self.optimistic_id = None;
             }
@@ -242,6 +284,41 @@ mod tests {
         let opt_unchoked = decisions[&ids[1]] == ChokeDecision::Unchoke
             || decisions[&ids[2]] == ChokeDecision::Unchoke;
         assert!(opt_unchoked);
+    }
+
+    #[test]
+    fn seeded_optimistic_ties_replay_and_visit_every_candidate() {
+        let ids: Vec<PeerId> = (0..5).map(|_| PeerId::new()).collect();
+        let peers: Vec<PeerSnapshot> = ids.iter().map(|&id| snap(id, true, 1.0)).collect();
+        let mut first = Choker::with_seed(1, 0x5EED);
+        let mut replay = Choker::with_seed(1, 0x5EED);
+        let mut first_trace = Vec::new();
+        let mut replay_trace = Vec::new();
+
+        let start = Instant::now();
+        for round in 0..4 {
+            let at = start + OPTIMISTIC_ROTATE_INTERVAL * round;
+            let first_decisions = first.run_with_mode_at(&peers, ChokeMode::Seeding, at);
+            let replay_decisions = replay.run_with_mode_at(&peers, ChokeMode::Seeding, at);
+            let first_choice = ids
+                .iter()
+                .skip(1)
+                .find(|id| first_decisions[id] == ChokeDecision::Unchoke)
+                .copied()
+                .unwrap();
+            let replay_choice = ids
+                .iter()
+                .skip(1)
+                .find(|id| replay_decisions[id] == ChokeDecision::Unchoke)
+                .copied()
+                .unwrap();
+            first_trace.push(first_choice);
+            replay_trace.push(replay_choice);
+        }
+
+        assert_eq!(first_trace, replay_trace);
+        let visited = first_trace.iter().copied().collect::<std::collections::HashSet<_>>();
+        assert_eq!(visited.len(), 4);
     }
 
     #[test]

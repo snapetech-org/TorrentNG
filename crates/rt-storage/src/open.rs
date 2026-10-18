@@ -25,19 +25,84 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::windows::ffi::OsStrExt;
 #[cfg(windows)]
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
-#[cfg(windows)]
-use std::os::windows::io::AsRawHandle;
 #[cfg(any(unix, windows))]
 use std::path::{Component, PathBuf};
-#[cfg(windows)]
-use windows_sys::Win32::Foundation::HANDLE;
 #[cfg(all(windows, test))]
 use windows_sys::Win32::Storage::FileSystem::MoveFileW;
 #[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::{
-    GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_REPARSE_POINT,
-    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    FILE_SHARE_READ, FILE_SHARE_WRITE,
 };
+
+/// Stable identity of the file currently named by a runtime storage path.
+/// Both descriptor caches and the peer-read cache use this representation so
+/// replacement checks share one platform-specific implementation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FileIdentity {
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+    #[cfg(windows)]
+    volume_serial: u32,
+    #[cfg(windows)]
+    file_index: u64,
+}
+
+#[cfg(unix)]
+pub(crate) fn file_identity(file: &File) -> io::Result<FileIdentity> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = file.metadata()?;
+    Ok(FileIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    })
+}
+
+#[cfg(windows)]
+pub(crate) fn file_identity(file: &File) -> io::Result<FileIdentity> {
+    let (volume_serial, file_index) = crate::win32::file_identity(file)?;
+    Ok(FileIdentity {
+        volume_serial,
+        file_index,
+    })
+}
+
+#[cfg(not(any(unix, windows)))]
+pub(crate) fn file_identity(file: &File) -> io::Result<FileIdentity> {
+    let _ = file.metadata()?;
+    Ok(FileIdentity {})
+}
+
+#[cfg(unix)]
+pub(crate) fn path_identity(path: &Path) -> io::Result<FileIdentity> {
+    use std::os::unix::fs::MetadataExt;
+
+    // Inspect the final component without following a symlink. Runtime opens
+    // reject links, and replacement by one must invalidate a cached file.
+    let metadata = std::fs::symlink_metadata(path)?;
+    Ok(FileIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    })
+}
+
+#[cfg(windows)]
+pub(crate) fn path_identity(path: &Path) -> io::Result<FileIdentity> {
+    let (volume_serial, file_index) = crate::win32::path_identity(path)?;
+    Ok(FileIdentity {
+        volume_serial,
+        file_index,
+    })
+}
+
+#[cfg(not(any(unix, windows)))]
+pub(crate) fn path_identity(path: &Path) -> io::Result<FileIdentity> {
+    let _ = std::fs::symlink_metadata(path)?;
+    Ok(FileIdentity {})
+}
 
 pub(crate) fn open_path_no_follow(path: &Path, write: bool, create: bool) -> io::Result<File> {
     #[cfg(unix)]
@@ -59,6 +124,33 @@ pub(crate) fn open_path_no_follow(path: &Path, write: bool, create: bool) -> io:
         let file = options.open(path)?;
         ensure_regular_file(file)
     }
+}
+
+/// Open a file only when the resulting descriptor still names the requested
+/// path after the secure open has completed. A concurrent rename can replace
+/// the path between directory traversal and the final open; retry a bounded
+/// number of times so callers never publish the stale descriptor from that
+/// race. The identity check is deliberately outside cache locks.
+pub(crate) fn open_path_no_follow_current(
+    path: &Path,
+    write: bool,
+    create: bool,
+) -> io::Result<File> {
+    const MAX_REPLACEMENT_RETRIES: usize = 8;
+
+    for _ in 0..MAX_REPLACEMENT_RETRIES {
+        let file = open_path_no_follow(path, write, create)?;
+        #[cfg(any(unix, windows))]
+        if !file_matches_path(&file, path)? {
+            continue;
+        }
+        return Ok(file);
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::Interrupted,
+        "runtime storage path changed repeatedly while opening",
+    ))
 }
 
 /// Create a new runtime file without following the final component or an
@@ -136,45 +228,20 @@ fn ensure_regular_file(file: File) -> io::Result<File> {
 /// but it no longer represents the path the caller authorized. Final
 /// symlinks are inspected without following them so replacing a regular file
 /// with a symlink cannot make a cached entry look valid.
+#[cfg(any(unix, windows))]
 pub(crate) fn file_matches_path(file: &File, path: &Path) -> io::Result<bool> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
+    Ok(file_identity(file)? == path_identity(path)?)
+}
 
-        let file_metadata = file.metadata()?;
-        let path_metadata = std::fs::symlink_metadata(path)?;
-        Ok(
-            file_metadata.dev() == path_metadata.dev()
-                && file_metadata.ino() == path_metadata.ino(),
-        )
-    }
-
-    // `MetadataExt::{volume_serial_number, file_index}` are still unstable
-    // std API, so identity comes from the handle directly.
-    #[cfg(windows)]
-    {
-        let current = open_path_no_follow_windows(path, false, false)?;
-        return Ok(windows_file_identity(file)? == windows_file_identity(&current)?);
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = (file, path);
-        Ok(false)
-    }
+#[cfg(not(any(unix, windows)))]
+pub(crate) fn file_matches_path(file: &File, path: &Path) -> io::Result<bool> {
+    let _ = (file, path);
+    Ok(false)
 }
 
 #[cfg(windows)]
 pub(crate) fn windows_file_identity(file: &File) -> io::Result<(u32, u64)> {
-    let mut information = BY_HANDLE_FILE_INFORMATION::default();
-    let result =
-        unsafe { GetFileInformationByHandle(file.as_raw_handle() as HANDLE, &mut information) };
-    if result == 0 {
-        return Err(io::Error::last_os_error());
-    }
-    let file_index =
-        (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow);
-    Ok((information.dwVolumeSerialNumber, file_index))
+    crate::win32::file_identity(file)
 }
 
 #[cfg(windows)]
@@ -926,6 +993,22 @@ mod tests {
         let error = create_new_file_no_follow(&path).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(std::fs::read(path).unwrap(), b"existing");
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn current_path_open_rejects_a_replaced_descriptor_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("replaced.bin");
+        std::fs::write(&path, b"old").unwrap();
+        let stale = open_path_no_follow(&path, false, false).unwrap();
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, b"replacement").unwrap();
+
+        assert!(!file_matches_path(&stale, &path).unwrap());
+        let current = open_path_no_follow_current(&path, false, false).unwrap();
+        assert_eq!(current.metadata().unwrap().len(), 11);
     }
 
     #[cfg(windows)]

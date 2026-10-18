@@ -654,7 +654,7 @@ impl EngineStats {
         let shared_device_queue_already_counted =
             storage_device_id.as_deref().is_some_and(|device_id| {
                 self.storage_device_latencies.iter().any(|device| {
-                    device.device_id == device_id && device.profile == storage_profile
+                    device.device_id == device_id
                 })
             });
         if !shared_device_queue_already_counted {
@@ -2001,7 +2001,7 @@ mod tests {
     }
 
     #[test]
-    fn engine_stats_does_not_double_count_shared_device_queue() {
+    fn engine_stats_does_not_double_count_shared_device_queue_across_profiles() {
         let storage = StorageIoStats {
             device_id: Some("nvme0n1".to_string()),
             profile: rt_path::StorageProfile::Nvme,
@@ -2021,7 +2021,10 @@ mod tests {
         stats.add_torrent_runtime(
             "hash-b".to_string(),
             TorrentRuntimeStats {
-                storage,
+                storage: StorageIoStats {
+                    profile: rt_path::StorageProfile::Hdd,
+                    ..storage
+                },
                 ..Default::default()
             },
         );

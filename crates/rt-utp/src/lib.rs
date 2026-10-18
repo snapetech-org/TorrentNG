@@ -4,6 +4,7 @@ pub mod packet;
 pub mod selective_ack;
 pub mod state;
 pub mod transport;
+pub mod window;
 
 pub use congestion::{
     DelaySample, UtpCongestionController, MAX_CONGESTION_WINDOW_BYTES, MIN_CONGESTION_WINDOW_BYTES,
@@ -17,6 +18,7 @@ pub use state::{
     DEFAULT_INITIAL_WINDOW_BYTES, DEFAULT_MTU_PAYLOAD_BYTES, DEFAULT_RETRANSMIT_TIMEOUT_US,
 };
 pub use transport::{
-    stats_snapshot, UtpEndpoint, UtpListener, UtpStats, UtpStream, UtpTransportConfig,
-    MAX_UDP_DATAGRAM_LEN,
+    stats_snapshot, UtpEndpoint, UtpListener, UtpRuntime, UtpStats, UtpStream,
+    UtpTransportConfig, MAX_UDP_DATAGRAM_LEN, MAX_UTP_ENDPOINT_CONNECTIONS,
 };
+pub use window::{SendWindow, MAX_IN_FLIGHT_BYTES, MAX_WINDOW_PACKETS};

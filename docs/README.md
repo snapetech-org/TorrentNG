@@ -81,6 +81,24 @@ Supported features vary by client; the compatibility guides list the limits.
   checklist for the TorrentNG client rewrite.
 - [TRANSFER_CORE_REBUILD.md](TRANSFER_CORE_REBUILD.md) - active plan and
   tracker for the audited transfer-core rebuild (findings, gates, 63 tickets).
+- [Transfer-core audit source](rebuild-pack/TorrentNG_Code_Audit_and_Rebuild_Blueprint.pdf) -
+  original 17 Oct 2026 audit PDF and its audited revision/hash in the plan.
+- [TRANSFER_CORE_REFERENCE_EVALUATION.md](TRANSFER_CORE_REFERENCE_EVALUATION.md) -
+  provisional native-versus-maintained-engine decision and replacement gates.
+- [TRANSFER_CORE_CAPABILITIES.md](TRANSFER_CORE_CAPABILITIES.md) - current
+  native and shared-core capability boundaries, integration state, and evidence
+  gates.
+- [TRANSFER_CORE_TICKET_TEMPLATE.md](TRANSFER_CORE_TICKET_TEMPLATE.md) - scope,
+  ownership, compatibility, and evidence template for rebuild tickets.
+- [TRANSFER_CORE_ACTIVE_SPECS.md](TRANSFER_CORE_ACTIVE_SPECS.md) - detailed
+  acceptance for the picker, storage ownership, geometry, measurement,
+  observability, and worker-backed persistence slices now in progress.
+- [TRANSFER_CORE_OBSERVABILITY.md](TRANSFER_CORE_OBSERVABILITY.md) - current
+  metric owners, scrape passivity contract, and known gaps.
+- [Transfer rebuild measurement contract](../certification/transfer-rebuild/measurement-contract.md) - immutable provenance, client identity, timing boundaries, observer counters, and trial outcomes.
+- [Transfer rebuild harness](../scripts/transfer_rebuild/README.md) - pinned client adapters, fixture controls, independent ceilings, and artifact validation.
+- [Transfer rebuild harness](../scripts/transfer_rebuild/README.md) - independent Linux process observer, pinned client adapters, fixtures, and evidence validation.
+- [Storage evidence contract](../certification/transfer-rebuild/storage-evidence-contract.md) - storage lifecycle states, operation ownership, barriers, and deterministic fault cases.
 
 ## Performance And Test Evidence
 

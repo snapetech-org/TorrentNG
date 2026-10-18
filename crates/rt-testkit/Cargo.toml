@@ -9,4 +9,9 @@ license.workspace = true
 [dependencies]
 thiserror.workspace = true
 rt-db = { path = "../rt-db" }
+rt-bencode = { path = "../rt-bencode" }
+rt-hash = { path = "../rt-hash" }
+rt-metainfo = { path = "../rt-metainfo" }
+rt-piece-map = { path = "../rt-piece-map" }
+sha1.workspace = true
 rusqlite.workspace = true

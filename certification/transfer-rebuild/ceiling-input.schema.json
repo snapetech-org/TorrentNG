@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:torrentng:schema:transfer-ceiling-input-v1",
+  "title": "TorrentNG independent transfer ceiling calibration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "calibration_id", "created_at", "environment", "protocol", "network", "disk", "hash", "pipeline"],
+  "properties": {
+    "schema_version": { "const": "transfer-ceiling-input-v1" },
+    "calibration_id": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host_profile", "os", "kernel", "cpu_model", "filesystem", "device_id", "network_profile_id"],
+      "properties": {
+        "host_profile": { "type": "string", "minLength": 1 },
+        "os": { "type": "string", "minLength": 1 },
+        "kernel": { "type": "string", "minLength": 1 },
+        "cpu_model": { "type": "string", "minLength": 1 },
+        "filesystem": { "type": "string", "minLength": 1 },
+        "device_id": { "type": "string", "minLength": 1 },
+        "network_profile_id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "protocol": { "enum": ["v1", "v2", "hybrid"] },
+    "network": { "$ref": "#/$defs/network_rates" },
+    "disk": { "$ref": "#/$defs/disk_rates" },
+    "hash": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha1_bytes_per_second", "sha256_bytes_per_second", "hybrid_bytes_per_second", "tool", "tool_version", "tool_sha256", "raw_artifact_sha256", "process_id", "process_start_ticks"],
+      "properties": {
+        "sha1_bytes_per_second": { "$ref": "#/$defs/positive_number" },
+        "sha256_bytes_per_second": { "$ref": "#/$defs/positive_number" },
+        "hybrid_bytes_per_second": { "anyOf": [{ "$ref": "#/$defs/positive_number" }, { "type": "null" }] },
+        "tool": { "type": "string", "minLength": 1 },
+        "tool_version": { "type": "string", "minLength": 1 },
+        "tool_sha256": { "$ref": "#/$defs/sha256" },
+        "raw_artifact_sha256": { "$ref": "#/$defs/sha256" },
+        "process_id": { "type": "integer", "minimum": 1 },
+        "process_start_ticks": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "pipeline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["peer_count", "requests_per_peer", "block_bytes", "rtt_ns", "rtt_source", "raw_artifact_sha256", "process_id", "process_start_ticks", "client_id", "client_version", "settings_sha256", "settings_json_pointer"],
+      "properties": {
+        "peer_count": { "type": "integer", "minimum": 1 },
+        "requests_per_peer": { "type": "integer", "minimum": 1 },
+        "block_bytes": { "type": "integer", "minimum": 1 },
+        "rtt_ns": { "type": "integer", "minimum": 1 },
+        "rtt_source": { "type": "string", "minLength": 1 },
+        "raw_artifact_sha256": { "$ref": "#/$defs/sha256" },
+        "process_id": { "type": "integer", "minimum": 1 },
+        "process_start_ticks": { "type": "integer", "minimum": 0 },
+        "client_id": { "enum": ["torrentngd", "qbittorrent", "transmission", "deluge", "rtorrent", "rqbit", "urtorrent"] },
+        "client_version": { "type": "string", "minLength": 1 },
+        "settings_sha256": { "$ref": "#/$defs/sha256" },
+        "settings_json_pointer": { "type": "string", "pattern": "^/" }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "positive_number": { "type": "number", "exclusiveMinimum": 0 },
+    "network_rates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["download_bytes_per_second", "upload_bytes_per_second", "tool", "tool_version", "tool_sha256", "raw_artifact_sha256", "process_id", "process_start_ticks"],
+      "properties": {
+        "download_bytes_per_second": { "$ref": "#/$defs/positive_number" },
+        "upload_bytes_per_second": { "$ref": "#/$defs/positive_number" },
+        "tool": { "type": "string", "minLength": 1 },
+        "tool_version": { "type": "string", "minLength": 1 },
+        "tool_sha256": { "$ref": "#/$defs/sha256" },
+        "raw_artifact_sha256": { "$ref": "#/$defs/sha256" },
+        "process_id": { "type": "integer", "minimum": 1 },
+        "process_start_ticks": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "disk_rates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["read_bytes_per_second", "write_bytes_per_second", "tool", "tool_version", "tool_sha256", "raw_artifact_sha256", "process_id", "process_start_ticks"],
+      "properties": {
+        "read_bytes_per_second": { "$ref": "#/$defs/positive_number" },
+        "write_bytes_per_second": { "$ref": "#/$defs/positive_number" },
+        "tool": { "type": "string", "minLength": 1 },
+        "tool_version": { "type": "string", "minLength": 1 },
+        "tool_sha256": { "$ref": "#/$defs/sha256" },
+        "raw_artifact_sha256": { "$ref": "#/$defs/sha256" },
+        "process_id": { "type": "integer", "minimum": 1 },
+        "process_start_ticks": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

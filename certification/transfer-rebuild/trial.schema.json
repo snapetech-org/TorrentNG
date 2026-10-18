@@ -1,0 +1,336 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:torrentng:schema:transfer-trial-v1",
+  "title": "TorrentNG transfer rebuild trial",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "trial_id",
+    "pair_id",
+    "attempt",
+    "started_at",
+    "finished_at",
+    "identity",
+    "client_identity",
+    "workload",
+    "environment",
+    "settings_readback",
+    "durations_ns",
+    "payload",
+    "resources",
+    "integrity",
+    "outcome"
+  ],
+  "properties": {
+    "schema_version": { "const": "transfer-trial-v1" },
+    "trial_id": { "type": "string", "minLength": 1 },
+    "pair_id": { "type": "string", "minLength": 1 },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": "string", "format": "date-time" },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_commit", "dirty_worktree", "lockfile_sha256", "binary_sha256", "binary_size_bytes"],
+      "properties": {
+        "source_commit": { "$ref": "#/$defs/git_sha" },
+        "dirty_worktree": { "type": "boolean" },
+        "lockfile_sha256": { "$ref": "#/$defs/sha256" },
+        "binary_sha256": { "$ref": "#/$defs/sha256" },
+        "binary_size_bytes": { "$ref": "#/$defs/nonnegative_integer" },
+        "binary_path": { "type": "string", "minLength": 1 },
+        "image_digest": { "type": ["string", "null"], "pattern": "^sha256:[a-f0-9]{64}$" },
+        "toolchain": { "type": "string", "minLength": 1 }
+      }
+    },
+    "client_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "client_id",
+        "version",
+        "runtime_kind",
+        "process_id",
+        "process_start_ticks",
+        "observation_sha256",
+        "settings_sha256"
+      ],
+      "properties": {
+        "client_id": {
+          "enum": ["torrentngd", "qbittorrent", "transmission", "deluge", "rtorrent", "rqbit", "urtorrent"]
+        },
+        "version": { "type": "string", "minLength": 1 },
+        "runtime_kind": { "enum": ["container", "native_binary"] },
+        "process_id": { "type": "integer", "minimum": 1 },
+        "process_start_ticks": { "$ref": "#/$defs/nonnegative_integer" },
+        "observation_sha256": { "$ref": "#/$defs/sha256" },
+        "settings_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "workload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_id", "kind", "fixture_sha256", "expected_payload_bytes"],
+      "properties": {
+        "case_id": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["download", "seed", "catalog", "control", "overload", "soak"] },
+        "protocol": { "enum": ["v1", "v2", "hybrid"] },
+        "fixture_sha256": { "$ref": "#/$defs/sha256" },
+        "expected_payload_bytes": { "$ref": "#/$defs/nonnegative_integer" },
+        "peer_count": { "$ref": "#/$defs/nonnegative_integer" },
+        "block_bytes": { "type": "integer", "minimum": 1 },
+        "duration_seconds": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host_profile", "os", "kernel", "cpu_model", "cgroup_version", "memory_limit_bytes", "storage", "network", "cache_state", "durability_mode"],
+      "properties": {
+        "host_profile": { "type": "string", "minLength": 1 },
+        "os": { "type": "string", "minLength": 1 },
+        "kernel": { "type": "string", "minLength": 1 },
+        "cpu_model": { "type": "string", "minLength": 1 },
+        "cgroup_version": { "enum": ["v1", "v2", "none", "unknown"] },
+        "memory_limit_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "storage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["profile", "filesystem", "device_id"],
+          "properties": {
+            "profile": { "type": "string", "minLength": 1 },
+            "filesystem": { "type": "string", "minLength": 1 },
+            "device_id": { "type": ["string", "null"] },
+            "mount_options": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["link_limit_bps", "rtt_ms"],
+          "properties": {
+            "link_limit_bps": { "type": ["integer", "null"], "minimum": 0 },
+            "rtt_ms": { "type": ["number", "null"], "minimum": 0 },
+            "loss_percent": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+            "control_profile_id": {
+              "type": ["string", "null"],
+              "enum": [null, "lan-1g-1ms-v1", "metro-100m-10ms-v1", "wan-20m-30ms-v1"]
+            },
+            "control_observation_sha256s": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/sha256" }
+            },
+            "network_profile_id": { "type": ["string", "null"] }
+          }
+        },
+        "independent_ceiling_sha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
+        "cache_state": { "enum": ["warm", "cold", "controlled", "unknown"] },
+        "cache_state_observation_sha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
+        "durability_mode": { "type": "string", "minLength": 1 }
+      }
+    },
+    "settings_readback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["captured", "values"],
+      "properties": {
+        "captured": { "type": "boolean" },
+        "values": { "type": "object" },
+        "artifact_sha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null"}] }
+      }
+    },
+    "durations_ns": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["barrier_wait", "transfer", "flush", "validation", "shutdown"],
+      "properties": {
+        "barrier_wait": { "$ref": "#/$defs/nonnegative_integer" },
+        "transfer": { "$ref": "#/$defs/nonnegative_integer" },
+        "flush": { "$ref": "#/$defs/nonnegative_integer" },
+        "validation": { "$ref": "#/$defs/nonnegative_integer" },
+        "shutdown": { "$ref": "#/$defs/nonnegative_integer" }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["useful_bytes", "received_bytes", "written_bytes", "read_bytes", "duplicate_bytes"],
+      "properties": {
+        "useful_bytes": { "$ref": "#/$defs/nonnegative_integer" },
+        "received_bytes": { "$ref": "#/$defs/nonnegative_integer" },
+        "written_bytes": { "$ref": "#/$defs/nonnegative_integer" },
+        "read_bytes": { "$ref": "#/$defs/nonnegative_integer" },
+        "duplicate_bytes": { "$ref": "#/$defs/nonnegative_integer" }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observer_id", "sample_interval_ms", "rss_peak_bytes", "pss_peak_bytes", "cgroup_anon_peak_bytes", "cgroup_file_peak_bytes", "cgroup_reclaimable_cache_peak_bytes", "cgroup_current_peak_bytes", "cpu_time_ns", "threads_peak", "fds_peak", "block_read_bytes", "block_write_bytes", "network_rx_bytes", "network_tx_bytes", "energy_joules"],
+      "properties": {
+        "observer_id": { "type": "string", "minLength": 1 },
+        "sample_interval_ms": { "type": "integer", "minimum": 1 },
+        "rss_peak_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "pss_peak_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "cgroup_anon_peak_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "cgroup_file_peak_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "cgroup_reclaimable_cache_peak_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "cgroup_current_peak_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "cpu_time_ns": { "type": ["integer", "null"], "minimum": 0 },
+        "threads_peak": { "type": ["integer", "null"], "minimum": 0 },
+        "fds_peak": { "type": ["integer", "null"], "minimum": 0 },
+        "block_read_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "block_write_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "network_rx_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "network_tx_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "energy_joules": { "type": ["number", "null"], "minimum": 0 },
+        "raw_artifact_sha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null"}] }
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "expected_sha256", "observed_sha256", "hash_failures", "false_completions"],
+      "properties": {
+        "status": { "enum": ["passed", "failed", "not_applicable", "not_run"] },
+        "expected_sha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null"}] },
+        "observed_sha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null"}] },
+        "hash_failures": { "$ref": "#/$defs/nonnegative_integer" },
+        "false_completions": { "$ref": "#/$defs/nonnegative_integer" }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason"],
+      "properties": {
+        "status": { "enum": ["complete", "incomplete", "invalid", "failed", "unmeasured"] },
+        "reason": { "type": ["string", "null"] },
+        "exit_code": { "type": ["integer", "null"] }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifact" }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "outcome": { "properties": { "status": { "const": "complete" } }, "required": ["status"] } },
+        "required": ["outcome"]
+      },
+      "then": {
+        "properties": {
+          "settings_readback": { "properties": { "captured": { "const": true } } },
+          "durations_ns": { "properties": { "transfer": { "minimum": 1 } } },
+          "integrity": {
+            "properties": {
+              "status": { "enum": ["passed", "not_applicable"] },
+              "hash_failures": { "const": 0 },
+              "false_completions": { "const": 0 }
+            }
+          },
+          "outcome": { "properties": { "reason": { "type": "null" } } }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "environment": {
+            "properties": {
+              "network": {
+                "properties": {
+                  "control_profile_id": { "type": "string" }
+                },
+                "required": ["control_profile_id"]
+              }
+            },
+            "required": ["network"]
+          }
+        },
+        "required": ["environment"]
+      },
+      "then": {
+        "properties": {
+          "environment": {
+            "properties": {
+              "network": {
+                "required": ["control_observation_sha256s"],
+                "properties": {
+                  "control_observation_sha256s": { "minItems": 1 }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "environment": {
+            "properties": {
+              "network": {
+                "properties": {
+                  "control_observation_sha256s": { "minItems": 1 }
+                },
+                "required": ["control_observation_sha256s"]
+              }
+            },
+            "required": ["network"]
+          }
+        },
+        "required": ["environment"]
+      },
+      "then": {
+        "properties": {
+          "environment": {
+            "properties": {
+              "network": { "required": ["control_profile_id"] }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "environment": {
+            "properties": { "cache_state": { "enum": ["cold", "warm"] } },
+            "required": ["cache_state"]
+          }
+        },
+        "required": ["environment"]
+      },
+      "then": {
+        "properties": {
+          "environment": {
+            "required": ["cache_state_observation_sha256"],
+            "properties": {
+              "cache_state_observation_sha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "git_sha": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "nonnegative_integer": { "type": "integer", "minimum": 0 },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "kind"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "kind": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

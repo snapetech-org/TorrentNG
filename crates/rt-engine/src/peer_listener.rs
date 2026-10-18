@@ -79,27 +79,34 @@ pub(crate) async fn run(
                             let incoming_utp = utp_endpoint.is_some();
                             match bind_peer_sockets(request.port, incoming_utp).await {
                                 Ok((replacement_listener, replacement_utp)) => {
-                                    listener = replacement_listener;
-                                    if let Some(previous) =
-                                        std::mem::replace(&mut utp_endpoint, replacement_utp)
-                                    {
-                                        if let Err(error) = previous.shutdown().await {
-                                            warn!(
-                                                component = "peer_listener",
-                                                operation = "rebind_utp_shutdown",
-                                                result = "error",
-                                                error = %error,
-                                                "old uTP listener failed to shut down after rebind"
+                                    let runtime_update = match replacement_utp.as_ref() {
+                                        Some(endpoint) => context
+                                            .network_budget
+                                            .replace_utp_endpoint(endpoint.clone())
+                                            .await
+                                            .map(|_| ())
+                                            .map_err(|error| error.to_string()),
+                                        None => Ok(()),
+                                    };
+                                    match runtime_update {
+                                        Ok(()) => {
+                                            listener = replacement_listener;
+                                            let _previous = std::mem::replace(
+                                                &mut utp_endpoint,
+                                                replacement_utp,
                                             );
+                                            info!(
+                                                component = "peer_listener",
+                                                operation = "rebind",
+                                                port = request.port,
+                                                "peer listener rebound"
+                                            );
+                                            Ok(())
                                         }
+                                        Err(error) => Err(format!(
+                                            "updating shared uTP endpoint after listener rebind: {error}"
+                                        )),
                                     }
-                                    info!(
-                                        component = "peer_listener",
-                                        operation = "rebind",
-                                        port = request.port,
-                                        "peer listener rebound"
-                                    );
-                                    Ok(())
                                 }
                                 Err(error) => Err(error),
                             }

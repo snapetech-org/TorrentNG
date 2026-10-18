@@ -51,6 +51,9 @@ jobs:
       - name: Test TorrentNG storage plan executor
         run: cargo test --locked -p rt-storage
 
+      - name: Test production v1, v2, and hybrid compatibility fixtures
+        run: cargo test --locked -p rt-testkit -p rt-metainfo -p rt-piece-map
+
       - name: Build webui
         working-directory: webui
         run: |

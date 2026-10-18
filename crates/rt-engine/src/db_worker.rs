@@ -230,19 +230,17 @@ pub(crate) struct DbWorker {
 
 /// Database access passed to engine-owned actors.
 ///
-/// Production uses the supervised worker. Tests use their existing in-memory
-/// connection fixtures so they can exercise state transitions without
-/// changing the production ownership model.
+/// Production uses the supervised worker. Most unit fixtures use an in-memory
+/// connection for speed, while selected actor regressions opt into the same
+/// worker path to cover production persistence behavior.
 #[derive(Clone)]
 pub(crate) enum DbExecutor {
-    #[cfg(not(test))]
     Worker(DbWorker),
     #[cfg(test)]
     Direct(Arc<Mutex<Connection>>),
 }
 
 impl DbExecutor {
-    #[cfg(not(test))]
     pub(crate) fn worker(worker: DbWorker) -> Self {
         Self::Worker(worker)
     }
@@ -258,7 +256,6 @@ impl DbExecutor {
         F: FnOnce(&mut Connection) -> Result<T, String> + Send + 'static,
     {
         match self {
-            #[cfg(not(test))]
             Self::Worker(worker) => worker.run(operation, job).await,
             #[cfg(test)]
             Self::Direct(db) => {
@@ -284,7 +281,6 @@ impl DbExecutor {
         F: FnOnce(&rusqlite::Transaction<'_>) -> Result<T, String> + Send + 'static,
     {
         match self {
-            #[cfg(not(test))]
             Self::Worker(worker) => worker.run_batched(operation, job).await,
             #[cfg(test)]
             Self::Direct(db) => {
@@ -317,6 +313,10 @@ impl DbExecutor {
                     .map_err(|_| format!("database mutex poisoned during {operation}"))?;
                 job(&mut db)
             }
+            #[cfg(test)]
+            Self::Worker(_) => Err(format!(
+                "blocking database-worker access is unavailable in test builds during {operation}"
+            )),
         }
     }
 }

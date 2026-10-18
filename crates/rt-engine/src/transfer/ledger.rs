@@ -34,6 +34,9 @@ use super::Nanos;
 pub const DEFAULT_REMOTE_REQQ: usize = 250;
 /// Default bound on pieces being acquired at once.
 pub const DEFAULT_MAX_IN_PROGRESS_PIECES: usize = 1024;
+/// Hard ceiling for per-connection late-event history, even when a peer
+/// advertises an implausibly large request queue.
+const MAX_RECENT_BLOCKS_PER_CONNECTION: usize = 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
@@ -151,8 +154,9 @@ struct ConnState {
     reqq: usize,
     tombstones: VecDeque<BlockExtent>,
     tombstone_set: HashSet<BlockExtent>,
-    /// Blocks whose response was accepted before the writer's commit arrived.
-    pending_commit_ignores: HashSet<BlockExtent>,
+    /// Bounded blocks whose response was accepted before the writer's commit.
+    pending_commit_ignores: VecDeque<BlockExtent>,
+    pending_commit_ignore_set: HashSet<BlockExtent>,
 }
 
 impl ConnState {
@@ -162,12 +166,49 @@ impl ConnState {
             reqq,
             tombstones: VecDeque::new(),
             tombstone_set: HashSet::new(),
-            pending_commit_ignores: HashSet::new(),
+            pending_commit_ignores: VecDeque::new(),
+            pending_commit_ignore_set: HashSet::new(),
         }
     }
 
     fn tombstone_cap(&self) -> usize {
-        self.reqq.saturating_mul(2).max(64)
+        self.reqq
+            .saturating_mul(2)
+            .clamp(64, MAX_RECENT_BLOCKS_PER_CONNECTION)
+    }
+
+    fn add_pending_commit_ignore(&mut self, block: BlockExtent) {
+        if !self.pending_commit_ignore_set.insert(block) {
+            return;
+        }
+        self.pending_commit_ignores.push_back(block);
+        while self.pending_commit_ignores.len() > self.tombstone_cap() {
+            if let Some(old) = self.pending_commit_ignores.pop_front() {
+                self.pending_commit_ignore_set.remove(&old);
+            }
+        }
+    }
+
+    fn take_pending_commit_ignore(&mut self, block: &BlockExtent) -> bool {
+        if self.pending_commit_ignore_set.remove(block) {
+            self.pending_commit_ignores.retain(|candidate| candidate != block);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn trim_history(&mut self) {
+        while self.tombstones.len() > self.tombstone_cap() {
+            if let Some(old) = self.tombstones.pop_front() {
+                self.tombstone_set.remove(&old);
+            }
+        }
+        while self.pending_commit_ignores.len() > self.tombstone_cap() {
+            if let Some(old) = self.pending_commit_ignores.pop_front() {
+                self.pending_commit_ignore_set.remove(&old);
+            }
+        }
     }
 
     fn add_tombstone(&mut self, block: BlockExtent) {
@@ -296,6 +337,7 @@ impl<G: PieceGeometry> Ledger<G> {
     pub fn set_remote_reqq(&mut self, conn: ConnectionId, reqq: usize) {
         if let Some(state) = self.conn_mut(conn) {
             state.reqq = reqq.max(1);
+            state.trim_history();
         }
     }
 
@@ -481,7 +523,7 @@ impl<G: PieceGeometry> Ledger<G> {
         let Some(state) = self.conn_mut(conn) else {
             return (CommitOutcome::StaleConnection, Vec::new());
         };
-        if state.pending_commit_ignores.remove(&block) {
+        if state.take_pending_commit_ignore(&block) {
             return (CommitOutcome::Reconciled, Vec::new());
         }
         if let Some(piece) = self.pieces.get_mut(&block.piece) {
@@ -534,8 +576,10 @@ impl<G: PieceGeometry> Ledger<G> {
             }
             // Not owned and not received: only a tombstoned (recently
             // released) request makes this useful late data.
-            let state = self.conn_mut(conn).expect("connection checked above");
-            if !state.take_tombstone(&block) {
+            let has_tombstone = self
+                .conn_ref(conn)
+                .is_some_and(|state| state.tombstone_set.contains(&block));
+            if !has_tombstone {
                 return ReceiveOutcome::Unsolicited;
             }
             // Re-open the block for this delivery.
@@ -543,9 +587,12 @@ impl<G: PieceGeometry> Ledger<G> {
                 return ReceiveOutcome::Unsolicited;
             }
             let piece = self.pieces.get_mut(&block.piece).expect("opened above");
-            if piece.awaiting_verification || !matches!(piece.slots[index], Slot::Missing) {
+            if piece.awaiting_verification || matches!(piece.slots[index], Slot::Received) {
                 return ReceiveOutcome::Unsolicited;
             }
+            self.conn_mut(conn)
+                .expect("connection checked above")
+                .take_tombstone(&block);
             return self.accept_block(conn, block, true, Vec::new());
         }
         self.accept_block(conn, block, false, Vec::new())
@@ -596,7 +643,7 @@ impl<G: PieceGeometry> Ledger<G> {
         }
         if early_commit {
             if let Some(state) = self.conn_mut(conn) {
-                state.pending_commit_ignores.insert(block);
+                state.add_pending_commit_ignore(block);
             }
         }
         let extent = completed.then(|| {
@@ -803,6 +850,7 @@ impl<G: PieceGeometry> Ledger<G> {
                 state.tombstones.clear();
                 state.tombstone_set.clear();
                 state.pending_commit_ignores.clear();
+                state.pending_commit_ignore_set.clear();
             }
         }
         self.epoch = self.epoch.next();
@@ -903,6 +951,18 @@ impl<G: PieceGeometry> Ledger<G> {
             }
             if state.outstanding.len() > state.reqq {
                 return Err(format!("{conn} exceeds its request queue"));
+            }
+            if state.tombstones.len() != state.tombstone_set.len()
+                || state.tombstones.len() > state.tombstone_cap()
+            {
+                return Err(format!("{conn} has inconsistent or unbounded tombstones"));
+            }
+            if state.pending_commit_ignores.len() != state.pending_commit_ignore_set.len()
+                || state.pending_commit_ignores.len() > state.tombstone_cap()
+            {
+                return Err(format!(
+                    "{conn} has inconsistent or unbounded pending commit history"
+                ));
             }
         }
         if let Some((conn, blocks)) = owned.into_iter().next() {
@@ -1039,6 +1099,36 @@ mod tests {
     }
 
     #[test]
+    fn early_commit_reconciliation_history_is_bounded_per_connection() {
+        let mut ledger = Ledger::new(UniformGeometry::new(32 * KIB, 128));
+        let conn = ledger.connect(1);
+        let first = block(0, 0);
+        let latest = block(99, 0);
+
+        for piece in 0..100 {
+            let request = block(piece, 0);
+            ledger
+                .reserve(conn, request, &ReserveMode::Exclusive)
+                .unwrap();
+            assert!(matches!(
+                ledger.on_block(conn, request),
+                ReceiveOutcome::Accepted { .. }
+            ));
+        }
+
+        assert_eq!(
+            ledger.commit(conn, first, 1).0,
+            CommitOutcome::Orphaned,
+            "evicted commit history degrades to a harmless orphan"
+        );
+        assert_eq!(
+            ledger.commit(conn, latest, 1).0,
+            CommitOutcome::Reconciled
+        );
+        ledger.check_invariants().unwrap();
+    }
+
+    #[test]
     fn piece_completes_verifies_and_failure_refetches_everything() {
         let mut ledger = ledger();
         let a = ledger.connect(8);
@@ -1124,6 +1214,81 @@ mod tests {
             ledger.on_block(conn, block(0, 0)),
             ReceiveOutcome::Duplicate
         );
+        ledger.check_invariants().unwrap();
+    }
+
+    #[test]
+    fn useful_late_data_wins_over_a_replacement_request() {
+        let mut ledger = ledger();
+        let late_peer = ledger.connect(8);
+        let replacement_peer = ledger.connect(8);
+        let requested = block(0, 0);
+
+        ledger
+            .reserve(late_peer, requested, &ReserveMode::Exclusive)
+            .unwrap();
+        ledger.commit(late_peer, requested, 1);
+        ledger.on_choke(late_peer, false);
+        ledger
+            .reserve(replacement_peer, requested, &ReserveMode::Exclusive)
+            .unwrap();
+
+        match ledger.on_block(late_peer, requested) {
+            ReceiveOutcome::Accepted {
+                late: true,
+                actions,
+                ..
+            } => assert_eq!(
+                actions,
+                vec![Action::Cancel {
+                    conn: replacement_peer,
+                    block: requested,
+                }]
+            ),
+            other => panic!("useful late data must replace the new request: {other:?}"),
+        }
+        assert_eq!(ledger.outstanding(replacement_peer), 0);
+        assert_eq!(ledger.in_flight(), 0);
+        ledger.check_invariants().unwrap();
+    }
+
+    #[test]
+    fn late_tombstone_survives_a_temporary_in_progress_piece_limit() {
+        let mut ledger = ledger().with_max_in_progress(1);
+        let late_peer = ledger.connect(8);
+        let busy_peer = ledger.connect(8);
+        let late_block = block(0, 0);
+
+        ledger
+            .reserve(late_peer, late_block, &ReserveMode::Exclusive)
+            .unwrap();
+        ledger.commit(late_peer, late_block, 1);
+        ledger.on_choke(late_peer, false);
+        ledger.piece_failed(0);
+
+        ledger
+            .reserve(busy_peer, block(1, 0), &ReserveMode::Exclusive)
+            .unwrap();
+        assert_eq!(ledger.on_block(late_peer, late_block), ReceiveOutcome::Unsolicited);
+        ledger.check_invariants().unwrap();
+
+        ledger
+            .reserve(busy_peer, block(1, 1), &ReserveMode::Exclusive)
+            .unwrap();
+        ledger.on_block(busy_peer, block(1, 0));
+        assert!(matches!(
+            ledger.on_block(busy_peer, block(1, 1)),
+            ReceiveOutcome::Accepted {
+                completed: Some(_),
+                ..
+            }
+        ));
+        ledger.piece_verified(1);
+
+        assert!(matches!(
+            ledger.on_block(late_peer, late_block),
+            ReceiveOutcome::Accepted { late: true, .. }
+        ));
         ledger.check_invariants().unwrap();
     }
 

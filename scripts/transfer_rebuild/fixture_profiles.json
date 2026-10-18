@@ -1,0 +1,41 @@
+{
+  "format": "transfer-fixture-profiles-v1",
+  "profiles": {
+    "G3/v2-piece-layer": {
+      "files": [
+        {"name": "alpha.bin", "size_bytes": 68157440},
+        {"name": "empty.bin", "size_bytes": 0},
+        {"name": "omega.bin", "size_bytes": 17301504}
+      ],
+      "piece_length": 1048576,
+      "torrent_kind": "v2",
+      "torrent_name": "v2-piece-layer"
+    },
+    "G3/hybrid-padding": {
+      "files": [
+        {"name": "alpha.bin", "size_bytes": 17825793},
+        {"name": "beta.bin", "size_bytes": 9437186},
+        {"name": "gamma.bin", "size_bytes": 1572864}
+      ],
+      "piece_length": 1048576,
+      "torrent_kind": "hybrid",
+      "torrent_name": "hybrid-padding"
+    },
+    "N1/lan_1g": {
+      "files": [
+        {"name": "payload.bin", "size_bytes": 8589934592}
+      ],
+      "piece_length": 1048576,
+      "torrent_kind": "v1",
+      "torrent_name": "lan-1g"
+    },
+    "N1/lan_10g": {
+      "files": [
+        {"name": "payload.bin", "size_bytes": 34359738368}
+      ],
+      "piece_length": 1048576,
+      "torrent_kind": "v1",
+      "torrent_name": "lan-10g"
+    }
+  }
+}

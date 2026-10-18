@@ -354,7 +354,7 @@ impl<'a> V2FileVerifier<'a> {
             let empty = bytes::Bytes::new();
             accumulator.push(recheck_hash_v2_leaf(self.scheduler, &empty).await?);
         }
-        Ok(accumulator.finish())
+        recheck_finish_v2_merkle_root(self.scheduler, accumulator).await
     }
 }
 
@@ -461,6 +461,27 @@ async fn recheck_hash_v2_leaf(
     loop {
         match scheduler.hash_v2_leaf(data.clone()).await {
             Ok(hash) => return Ok(hash),
+            Err(error @ StorageError::QueueFull { .. }) => {
+                if !retry_recheck_queue_full(&mut attempts).await {
+                    return Err(error);
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+async fn recheck_finish_v2_merkle_root(
+    scheduler: &MountScheduler,
+    accumulator: MerkleAccumulator,
+) -> Result<[u8; 32], StorageError> {
+    let mut attempts = 0;
+    loop {
+        match scheduler
+            .finish_v2_merkle_root(accumulator.clone())
+            .await
+        {
+            Ok(root) => return Ok(root),
             Err(error @ StorageError::QueueFull { .. }) => {
                 if !retry_recheck_queue_full(&mut attempts).await {
                     return Err(error);
@@ -865,8 +886,9 @@ mod tests {
 
         assert_eq!(verifier.verify_file(&file).await, VerifyResult::Valid);
         let jobs = sched.stats().hash_ops - before;
-        // Three leaf-batch jobs plus the root job, not 130 per-leaf jobs.
-        assert!(jobs <= 5, "expected batched hashing, saw {jobs} hash jobs");
+        // Three leaf-batch jobs plus the offloaded root fold, not 130
+        // per-leaf jobs or a root fold on the async executor.
+        assert_eq!(jobs, 4, "expected three leaf batches and one root job");
     }
 
     #[tokio::test]

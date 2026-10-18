@@ -9,6 +9,7 @@ use tokio::sync::{mpsc, oneshot, Notify, Semaphore};
 // real wall-clock time regardless of virtual time advances, which live-locks
 // a paused-clock test into an infinite near-zero-wait retry loop.
 use tokio::time::Instant;
+use rt_utp::{UtpEndpoint, UtpRuntime};
 
 const MAX_INITIAL_BURST_BYTES: u64 = 64 * 1024;
 
@@ -25,6 +26,7 @@ pub(crate) struct GlobalNetworkBudget {
     listen_port: Arc<AtomicU16>,
     listener_rebind_tx: mpsc::Sender<PeerListenerRebindRequest>,
     listener_rebind_rx: Arc<Mutex<Option<mpsc::Receiver<PeerListenerRebindRequest>>>>,
+    utp_runtime: UtpRuntime,
 }
 
 pub(crate) struct PeerListenerRebindRequest {
@@ -46,6 +48,7 @@ impl GlobalNetworkBudget {
             listen_port: Arc::new(AtomicU16::new(0)),
             listener_rebind_tx,
             listener_rebind_rx: Arc::new(Mutex::new(Some(listener_rebind_rx))),
+            utp_runtime: UtpRuntime::default(),
         }
     }
 
@@ -106,6 +109,28 @@ impl GlobalNetworkBudget {
 
     pub(crate) fn upload(&self) -> Arc<SharedRateLimiter> {
         Arc::clone(&self.upload)
+    }
+
+    pub(crate) fn utp_runtime(&self) -> UtpRuntime {
+        self.utp_runtime.clone()
+    }
+
+    pub(crate) async fn install_utp_endpoint(
+        &self,
+        endpoint: UtpEndpoint,
+    ) -> Result<(), rt_utp::UtpError> {
+        self.utp_runtime.install_endpoint(endpoint).await
+    }
+
+    pub(crate) async fn replace_utp_endpoint(
+        &self,
+        endpoint: UtpEndpoint,
+    ) -> Result<(), rt_utp::UtpError> {
+        self.utp_runtime.replace_endpoint(endpoint).await
+    }
+
+    pub(crate) async fn shutdown_utp(&self) -> Result<(), rt_utp::UtpError> {
+        self.utp_runtime.shutdown().await
     }
 
     pub(crate) fn set_download_limit(&self, limit: Option<u64>) {

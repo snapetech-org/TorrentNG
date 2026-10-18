@@ -26,12 +26,28 @@ scheduler used by the TorrentNG client.
   use, capacity, and admission waits. Unrelated process descriptors remain
   outside this storage budget.
 - Disk operations are submitted through the selected `DiskBackend`, behind
-  scheduler-owned bounded queues, instead of Tokio's shared blocking pool.
-- Piece and BEP52 hashing runs on a separate bounded hashing pool.
-- `DeviceElevator` captures the per-device Phase B scheduling policy:
-  budgeted queueing, deadline and foreground bypass, choke-critical promotion,
-  class weights, bounded dispatch, offset ordering, and adjacent read
-  coalescing. `MountScheduler` sends peer-read disk misses through it.
+  per-mount bounded queues and one shared `DeviceQueue` per detected physical
+  device, instead of Tokio's shared blocking pool. Unknown device identity uses
+  a storage-root-scoped service. The service caps active work to one job per
+  portable worker or one bounded io_uring submission batch, bounds pending
+  admission by the remaining device queue depth, and selects queued classes
+  with the weighted round-robin policy from `DeviceElevator`. Operation IDs
+  stay attached to their permits through backend completion. Cache hits and
+  file-open preparation do not consume a device slot. Scheduler reads, writes,
+  syncs, preallocation and extent probes use the service.
+  `MountScheduler::run_device_operation` is the bounded handoff for other
+  subsystems that need the same mount/device admission and completion
+  ownership. Secure copy plans have not adopted it yet, and
+  deadline/choke-critical dispatch remains open.
+- Piece and BEP52 hashing runs on a separate bounded hashing pool. V1 recheck
+  streams SHA-1 updates; v2 recheck hashes up to 64 leaves per job and finishes
+  the bounded streaming Merkle accumulator on that pool. A shared immutable
+  dual-view path for live hybrid piece verification remains open under IO-007.
+- `DeviceElevator` captures the remaining per-device Phase B policy: budgeted
+  batching, deadline and foreground bypass, choke-critical promotion, offset
+  ordering, and adjacent read coalescing. Live device admission now uses its
+  class weights and bounded fairness across mounts. HDD peer-read misses still
+  use the separate per-mount `PeerReadElevator` batching path.
 - `prepare_file` creates parent directories and applies preallocation before
   the first write. The default `Auto` policy resolves from mount/sysfs
   topology: full allocation for rotational non-CoW local storage, sparse
@@ -44,9 +60,9 @@ scheduler used by the TorrentNG client.
   exactly the requested block bytes to the caller.
 - `MountScheduler` and `StorageRuntime` use a probe-selected disk backend. The
   path-backed `MountScheduler` instances share the bounded file cache, disk
-  backend, I/O workers, and hash workers for one process/configuration; their
-  mount semaphores, dirty generations, peer-read caches, and counters remain
-  isolated. Set
+  backend, I/O workers, hash workers for one process/configuration, and device
+  admission when topology identifies the same device; per-mount semaphores,
+  dirty generations, peer-read caches, and counters remain isolated. Set
   `TNG_STORAGE_BACKEND=auto|pread|uring` to request a backend. `auto` currently
   selects the conservative portable worker-pool baseline, `pread` requests that
   baseline explicitly, and `uring` uses Linux `io_uring` positioned SQEs when

@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use crate::file_handle::{DescriptorLimiter, DescriptorPermit, LeasedFile, LeasedFileHandle};
-use crate::open::{file_matches_path, open_path_no_follow};
+use crate::open::{file_matches_path, open_path_no_follow_current};
 
 /// Whether the cached handle is read-only or read+write. A path may have
 /// one of each (a reader and a writer fd) live simultaneously.
@@ -185,32 +185,67 @@ impl HandleCache {
         // through directory descriptors with O_NOFOLLOW, so a replaced
         // ancestor cannot redirect peer I/O outside the already-authorized
         // path. The final component is no-follow as well.
-        let file = open_path_no_follow(&key.0, write, create)?;
+        let file = open_path_no_follow_current(&key.0, write, create)?;
         let file = Arc::new(LeasedFile::new(file, permit));
 
-        let mut inner = self.lock_inner();
-        // Another thread may have inserted the same key meanwhile.
-        if let Some(existing) = inner.map.get(&key) {
-            if file_matches_path(&existing.handle, &key.0).unwrap_or(false) {
-                return Ok(Self::operation_handle(Arc::clone(&existing.handle)));
+        loop {
+            let existing = {
+                let inner = self.lock_inner();
+                inner
+                    .map
+                    .get(&key)
+                    .map(|entry| Arc::clone(&entry.handle))
+            };
+            if let Some(existing) = existing {
+                // Path identity is filesystem I/O. Check it without holding
+                // the catalog mutex, then verify the candidate still owns the
+                // key before refreshing or removing it.
+                let still_same_path = file_matches_path(&existing, &key.0).unwrap_or(false);
+                let mut inner = self.lock_inner();
+                let is_current = inner
+                    .map
+                    .get(&key)
+                    .is_some_and(|entry| Arc::ptr_eq(&entry.handle, &existing));
+                if !is_current {
+                    continue;
+                }
+                if still_same_path {
+                    return Ok(Self::operation_handle(existing));
+                }
+                if let Some(entry) = inner.map.remove(&key) {
+                    inner.lru.remove(&entry.tick);
+                }
+                return Ok(self.insert_locked(&mut inner, &key, Arc::clone(&file)));
             }
+
+            let mut inner = self.lock_inner();
+            if inner.map.contains_key(&key) {
+                continue;
+            }
+            return Ok(self.insert_locked(&mut inner, &key, Arc::clone(&file)));
         }
-        if let Some(existing) = inner.map.remove(&key) {
-            inner.lru.remove(&existing.tick);
-        }
+
+    }
+
+    fn insert_locked(
+        &self,
+        inner: &mut Inner,
+        key: &Key,
+        file: Arc<LeasedFile>,
+    ) -> Arc<OpenFile> {
         let tick = inner.next_tick;
         inner.next_tick += 1;
         inner.lru.insert(tick, key.clone());
         inner.map.insert(
-            key,
+            key.clone(),
             Entry {
                 handle: Arc::clone(&file),
                 tick,
                 last_used: Instant::now(),
             },
         );
-        Self::evict_to_cap(&mut inner, self.cap);
-        Ok(Self::operation_handle(file))
+        Self::evict_to_cap(inner, self.cap);
+        Self::operation_handle(file)
     }
 
     fn operation_handle(file: Arc<LeasedFile>) -> Arc<OpenFile> {
@@ -218,12 +253,22 @@ impl HandleCache {
     }
 
     fn touch(&self, key: &Key) -> Option<Arc<LeasedFile>> {
+        let file = {
+            let inner = self.lock_inner();
+            Arc::clone(&inner.map.get(key)?.handle)
+        };
+        // Do not hold the cache mutex across a filesystem identity check; a
+        // slow stat on a network mount must not serialize unrelated paths.
+        let still_same_path = file_matches_path(&file, &key.0).unwrap_or(false);
         let mut inner = self.lock_inner();
-        let current = inner
+        if !inner
             .map
             .get(key)
-            .is_some_and(|entry| file_matches_path(&entry.handle, &key.0).unwrap_or(false));
-        if !current {
+            .is_some_and(|entry| Arc::ptr_eq(&entry.handle, &file))
+        {
+            return None;
+        }
+        if !still_same_path {
             if let Some(entry) = inner.map.remove(key) {
                 inner.lru.remove(&entry.tick);
             }
@@ -234,11 +279,10 @@ impl HandleCache {
         let old_tick = entry.tick;
         entry.tick = new_tick;
         entry.last_used = Instant::now();
-        let handle = Arc::clone(&entry.handle);
         inner.next_tick += 1;
         inner.lru.remove(&old_tick);
         inner.lru.insert(new_tick, key.clone());
-        Some(handle)
+        Some(file)
     }
 
     /// Close handles untouched for longer than the idle TTL. Returns the

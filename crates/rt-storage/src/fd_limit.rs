@@ -33,6 +33,9 @@ pub fn process_handle_cache_capacity() -> usize {
 /// Current use of the shared managed-storage descriptor lease quota.
 ///
 /// This does not count sockets or other descriptors opened outside `rt-storage`.
+/// It never initializes the gate; an uninitialized gate returns default zeros.
+/// Use [`try_process_descriptor_budget_stats`] when that state must be
+/// distinguished from an initialized gate with no leases.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ProcessDescriptorBudgetStats {
     pub active_leases: usize,
@@ -42,13 +45,22 @@ pub struct ProcessDescriptorBudgetStats {
 }
 
 pub fn process_descriptor_budget_stats() -> ProcessDescriptorBudgetStats {
+    try_process_descriptor_budget_stats().unwrap_or_default()
+}
+
+/// Current managed-storage descriptor lease state, if a live storage path
+/// already initialized the shared process gate. Unlike
+/// process_descriptor_budget_stats, this accessor distinguishes an
+/// uninitialized gate from an initialized gate with zero use. It never raises
+/// file limits or creates the gate, so it is safe for metrics and diagnostics.
+pub fn try_process_descriptor_budget_stats() -> Option<ProcessDescriptorBudgetStats> {
     let (active_leases, capacity, admission_waits_total) =
-        crate::file_handle::process_descriptor_budget_stats();
-    ProcessDescriptorBudgetStats {
+        crate::file_handle::try_process_descriptor_budget_stats()?;
+    Some(ProcessDescriptorBudgetStats {
         active_leases,
         capacity,
         admission_waits_total,
-    }
+    })
 }
 
 /// Raise the soft `RLIMIT_NOFILE` to the hard limit and return the soft

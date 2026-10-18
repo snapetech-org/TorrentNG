@@ -100,7 +100,7 @@ pub fn piece_layer_hash(data: &[u8], piece_length: usize) -> Option<[u8; 32]> {
 
 /// Incrementally computes a padded v2 merkle root without retaining every
 /// leaf hash. The accumulator stores at most one subtree per tree level.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MerkleAccumulator {
     levels: Vec<Option<[u8; 32]>>,
     leaf_count: usize,

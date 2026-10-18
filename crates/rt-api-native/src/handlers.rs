@@ -8335,27 +8335,34 @@ fn render_metrics_with_health(
             torrent.storage_cache_bytes,
         );
     }
-    let descriptor_budget = rt_storage::fd_limit::process_descriptor_budget_stats();
+    let descriptor_budget = rt_storage::fd_limit::try_process_descriptor_budget_stats();
+    metric(
+        &mut out,
+        "torrentng_storage_descriptor_budget_initialized",
+        "gauge",
+        "Whether a live storage path has initialized the managed-storage descriptor budget",
+        u64::from(descriptor_budget.is_some()),
+    );
     metric(
         &mut out,
         "torrentng_storage_descriptor_leases_active",
         "gauge",
-        "Active managed-storage descriptor leases across all storage caches, including cached files, open attempts, and in-flight I/O",
-        descriptor_budget.active_leases as u64,
+        "Active managed-storage descriptor leases; zero until the descriptor budget is initialized",
+        descriptor_budget.map_or(0, |stats| stats.active_leases as u64),
     );
     metric(
         &mut out,
         "torrentng_storage_descriptor_leases_capacity",
         "gauge",
-        "Shared process-level descriptor lease capacity reserved for managed storage caches",
-        descriptor_budget.capacity as u64,
+        "Managed-storage descriptor lease capacity; check the initialized gauge before interpreting zero",
+        descriptor_budget.map_or(0, |stats| stats.capacity as u64),
     );
     metric(
         &mut out,
         "torrentng_storage_descriptor_budget_waits_total",
         "counter",
-        "Storage descriptor admission attempts delayed by the shared process-level managed-storage quota",
-        descriptor_budget.admission_waits_total,
+        "Storage descriptor admissions delayed by the shared managed-storage quota; zero until initialized",
+        descriptor_budget.map_or(0, |stats| stats.admission_waits_total),
     );
     // Observe the live runtime only; a scrape must never create a second one.
     let storage = StorageRuntime::initialized();
@@ -10464,6 +10471,58 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn metrics_rendering_does_not_initialize_storage_owners_in_fresh_process() {
+        const CHILD_ENV: &str = "TNG_TEST_METRICS_PASSIVITY_CHILD";
+
+        if std::env::var_os(CHILD_ENV).is_some() {
+            assert!(StorageRuntime::initialized().is_none());
+            assert!(rt_storage::fd_limit::try_process_descriptor_budget_stats().is_none());
+
+            let rendered = render_metrics(&rt_engine::EngineStats::default());
+
+            assert!(rendered.contains("torrentng_storage_runtime_initialized 0"));
+            assert!(rendered.contains("torrentng_storage_descriptor_budget_initialized 0"));
+            assert!(StorageRuntime::initialized().is_none());
+            assert!(rt_storage::fd_limit::try_process_descriptor_budget_stats().is_none());
+            return;
+        }
+
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "handlers::tests::metrics_rendering_does_not_initialize_storage_owners_in_fresh_process",
+                "--nocapture",
+            ])
+            .env(CHILD_ENV, "1")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "metrics-passivity child timed out"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let output = child.wait_with_output().unwrap();
+        let transcript = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            output.status.success() && transcript.contains("1 passed"),
+            "metrics-passivity child failed or did not run the test:\n{transcript}"
+        );
+    }
+
     #[tokio::test]
     async fn diagnostics_without_engine_returns_unavailable() {
         let (app, hash) = setup_app_with_torrent().await;
@@ -10481,6 +10540,11 @@ mod tests {
 
     #[test]
     fn render_metrics_includes_engine_stats() {
+        // This case checks output from live storage owners. Initialize them
+        // explicitly so metric presence does not depend on another test's
+        // process-global storage setup; scrape passivity has a separate
+        // fresh-process regression.
+        let _storage = StorageRuntime::global();
         let mut stats = rt_engine::EngineStats {
             torrents_total: 2,
             torrents_seeding: 1,
@@ -10779,6 +10843,7 @@ mod tests {
         assert!(rendered.contains("torrentng_storage_descriptor_leases_active "));
         assert!(rendered.contains("torrentng_storage_descriptor_leases_capacity "));
         assert!(rendered.contains("torrentng_storage_descriptor_budget_waits_total "));
+        assert!(rendered.contains("torrentng_storage_descriptor_budget_initialized "));
         assert!(rendered.contains("torrentng_storage_frame_bytes_cap "));
         assert!(rendered.contains("torrentng_utp_connects_total "));
         assert!(rendered.contains("torrentng_utp_accepts_total "));

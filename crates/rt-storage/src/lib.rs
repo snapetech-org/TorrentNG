@@ -16,6 +16,9 @@ pub mod runtime;
 pub mod scheduler;
 pub mod verify;
 
+#[cfg(test)]
+pub(crate) mod test_support;
+
 #[cfg(unix)]
 mod secure_fs;
 #[cfg(windows)]
@@ -64,8 +67,8 @@ pub use plan::{
     StoragePlan, StoragePlanExecution, StoragePlanStep,
 };
 pub use scheduler::{
-    preallocation_mode_for_topology, DurabilityMode, FilePoolStats, IoRequest, MountScheduler,
-    PreallocationMode, SchedulerConfig, StorageIoConfig, StorageIoStats, StorageRead,
-    STORAGE_LATENCY_BUCKETS_NS, STORAGE_LATENCY_BUCKET_COUNT,
+    preallocation_mode_for_topology, DurabilityBarrierEvidence, DurabilityMode, FilePoolStats,
+    IoRequest, MountScheduler, PreallocationMode, SchedulerConfig, StorageIoConfig, StorageIoStats,
+    StorageRead, STORAGE_LATENCY_BUCKETS_NS, STORAGE_LATENCY_BUCKET_COUNT,
 };
 pub use verify::{PieceVerifier, V2FileHash, V2FileVerifier, VerifyResult};

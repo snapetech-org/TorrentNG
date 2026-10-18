@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use rt_storage::DurabilityBarrierEvidence;
 use tracing::instrument;
 
 use crate::{
@@ -181,6 +182,27 @@ impl FastresumeStore {
         tokio::task::spawn_blocking(move || FastresumeStore { dir }.save(&state))
             .await
             .unwrap_or_else(|join_error| Err(fastresume_join_error(join_error)))
+    }
+
+    /// Attach successful storage-barrier evidence and persist the resulting
+    /// resume state before releasing scheduler write admission. This keeps a
+    /// later payload write from slipping between the data sync and the saved
+    /// checkpoint.
+    #[instrument(skip(self, state, evidence), fields(info_hash = %state.info_hash))]
+    pub async fn save_async_with_durability_evidence(
+        &self,
+        mut state: FastresumeState,
+        evidence: DurabilityBarrierEvidence,
+    ) -> Result<(), FastresumeError> {
+        state.complete_durability_barrier(&evidence);
+        let dir = self.dir.clone();
+        tokio::task::spawn_blocking(move || {
+            let result = FastresumeStore { dir }.save(&state);
+            drop(evidence);
+            result
+        })
+        .await
+        .unwrap_or_else(|join_error| Err(fastresume_join_error(join_error)))
     }
 
     /// Delete fastresume state (on torrent removal).

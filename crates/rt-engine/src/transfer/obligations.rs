@@ -13,7 +13,7 @@
 
 use std::collections::{HashSet, VecDeque};
 
-use super::coords::BlockExtent;
+use super::coords::{BlockExtent, BLOCK_SIZE};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RejectReason {
@@ -78,7 +78,7 @@ impl InboundObligations {
             queue: VecDeque::new(),
             queued: HashSet::new(),
             in_service: HashSet::new(),
-            max_queue: max_queue.max(1),
+            max_queue,
         }
     }
 
@@ -114,6 +114,9 @@ impl InboundObligations {
     pub fn on_request(&mut self, block: BlockExtent, have_piece: bool) -> InboundDecision {
         if self.queued.contains(&block) || self.in_service.contains(&block) {
             return InboundDecision::Duplicate;
+        }
+        if block.length == 0 || block.length > BLOCK_SIZE {
+            return self.refuse(RejectReason::Unavailable);
         }
         if self.choked && !(self.fast && self.allowed_fast.contains(&block.piece)) {
             return self.refuse(RejectReason::Choked);
@@ -281,6 +284,28 @@ mod tests {
         );
         // A choke clears the queue and sends nothing.
         assert!(legacy.on_local_choke().is_empty());
+        assert_eq!(legacy.queued_len(), 0);
+    }
+
+    #[test]
+    fn invalid_wire_lengths_are_rejected_for_fast_and_dropped_for_legacy() {
+        let mut fast = InboundObligations::new(true, 8);
+        let mut legacy = InboundObligations::new(false, 8);
+        fast.on_local_unchoke();
+        legacy.on_local_unchoke();
+
+        for length in [0, BLOCK_SIZE + 1] {
+            let block = BlockExtent::new(3, 0, length);
+            assert_eq!(
+                fast.on_request(block, true),
+                InboundDecision::Reject(RejectReason::Unavailable)
+            );
+            assert_eq!(
+                legacy.on_request(block, true),
+                InboundDecision::Drop(RejectReason::Unavailable)
+            );
+        }
+        assert_eq!(fast.queued_len(), 0);
         assert_eq!(legacy.queued_len(), 0);
     }
 

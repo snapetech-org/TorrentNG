@@ -3,7 +3,9 @@ use crate::{
     error::UtpError,
     packet::{PacketType, UtpExtension, UtpHeader, UtpPacket},
     selective_ack::SelectiveAck,
+    window::{SendWindow, MAX_WINDOW_PACKETS},
 };
+pub use crate::window::sequence_before;
 
 pub const DEFAULT_INITIAL_WINDOW_BYTES: u32 = 64 * 1024;
 pub const DEFAULT_MTU_PAYLOAD_BYTES: usize = 1_352;
@@ -80,8 +82,97 @@ pub enum InboundAction {
     None,
     SendState,
     DeliverPayload,
+    BufferPayload,
     Close,
     Reset,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReceiveSequenceAction {
+    InOrder,
+    Buffered,
+    DuplicateOrOutsideWindow,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReceiveSequenceWindow {
+    next_sequence: u16,
+    received: Vec<Option<u16>>,
+}
+
+impl ReceiveSequenceWindow {
+    fn new(next_sequence: u16) -> Self {
+        Self {
+            next_sequence,
+            received: vec![None; MAX_WINDOW_PACKETS],
+        }
+    }
+
+    fn reset(&mut self, next_sequence: u16) {
+        self.next_sequence = next_sequence;
+        self.received.fill(None);
+    }
+
+    fn insert(&mut self, sequence: u16) -> ReceiveSequenceAction {
+        let distance = sequence.wrapping_sub(self.next_sequence);
+        if distance >= 0x8000 {
+            return ReceiveSequenceAction::DuplicateOrOutsideWindow;
+        }
+        let distance = usize::from(distance);
+        if distance >= self.received.len() {
+            return ReceiveSequenceAction::DuplicateOrOutsideWindow;
+        }
+
+        let slot = usize::from(sequence) % self.received.len();
+        if self.received[slot] == Some(sequence) {
+            return ReceiveSequenceAction::DuplicateOrOutsideWindow;
+        }
+        if let Some(previous) = self.received[slot] {
+            if !sequence_before(previous, self.next_sequence) {
+                return ReceiveSequenceAction::DuplicateOrOutsideWindow;
+            }
+        }
+        self.received[slot] = Some(sequence);
+
+        if distance != 0 {
+            return ReceiveSequenceAction::Buffered;
+        }
+
+        while self.received[usize::from(self.next_sequence) % self.received.len()]
+            == Some(self.next_sequence)
+        {
+            self.next_sequence = self.next_sequence.wrapping_add(1);
+        }
+        ReceiveSequenceAction::InOrder
+    }
+
+    fn rollback(&mut self, sequence: u16, was_in_order: bool) {
+        let slot = usize::from(sequence) % self.received.len();
+        if self.received[slot] == Some(sequence) {
+            self.received[slot] = None;
+            if was_in_order {
+                self.next_sequence = sequence;
+            }
+        }
+    }
+
+    fn ack_nr(&self) -> u16 {
+        self.next_sequence.wrapping_sub(1)
+    }
+
+    fn selective_ack(&self) -> SelectiveAck {
+        let ack_nr = self.ack_nr();
+        let offsets = self
+            .received
+            .iter()
+            .flatten()
+            .filter_map(|sequence| {
+                let offset = sequence.wrapping_sub(ack_nr);
+                (offset >= 2 && offset <= MAX_WINDOW_PACKETS as u16 + 1).then_some(offset)
+            })
+            .collect();
+        SelectiveAck::from_received_offsets(offsets)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,12 +181,12 @@ pub struct UtpConnection {
     ids: ConnectionIds,
     seq_nr: u16,
     ack_nr: u16,
-    last_received: Option<u16>,
+    receive_sequences: ReceiveSequenceWindow,
     oldest_unacked: u16,
     newest_sent: u16,
     remote_window_bytes: u32,
     local_window_bytes: u32,
-    bytes_in_flight: u32,
+    send_window: SendWindow,
     rtt_us: Option<u32>,
     rtt_var_us: Option<u32>,
     retransmit_timeout_us: u64,
@@ -109,12 +200,12 @@ impl UtpConnection {
             ids: ConnectionIds::new_syn(connection_id),
             seq_nr: initial_seq_nr,
             ack_nr: 0,
-            last_received: None,
+            receive_sequences: ReceiveSequenceWindow::new(1),
             oldest_unacked: initial_seq_nr,
             newest_sent: initial_seq_nr,
             remote_window_bytes: DEFAULT_INITIAL_WINDOW_BYTES,
             local_window_bytes: DEFAULT_INITIAL_WINDOW_BYTES,
-            bytes_in_flight: 0,
+            send_window: SendWindow::default(),
             rtt_us: None,
             rtt_var_us: None,
             retransmit_timeout_us: DEFAULT_RETRANSMIT_TIMEOUT_US,
@@ -134,12 +225,12 @@ impl UtpConnection {
             ids: ConnectionIds::from_syn_for_acceptor(syn.connection_id),
             seq_nr: initial_seq_nr,
             ack_nr: syn.seq_nr,
-            last_received: Some(syn.seq_nr),
+            receive_sequences: ReceiveSequenceWindow::new(syn.seq_nr.wrapping_add(1)),
             oldest_unacked: initial_seq_nr,
             newest_sent: initial_seq_nr,
             remote_window_bytes: syn.wnd_size,
             local_window_bytes: DEFAULT_INITIAL_WINDOW_BYTES,
-            bytes_in_flight: 0,
+            send_window: SendWindow::default(),
             rtt_us: None,
             rtt_var_us: None,
             retransmit_timeout_us: DEFAULT_RETRANSMIT_TIMEOUT_US,
@@ -164,7 +255,7 @@ impl UtpConnection {
     }
 
     pub fn bytes_in_flight(&self) -> u32 {
-        self.bytes_in_flight
+        self.send_window.bytes_in_flight()
     }
 
     pub fn retransmit_timeout_us(&self) -> u64 {
@@ -180,9 +271,13 @@ impl UtpConnection {
     }
 
     pub fn available_send_window(&self) -> u32 {
+        if !self.send_window.can_record_sequence(self.seq_nr, 1) {
+            return 0;
+        }
         self.remote_window_bytes
             .min(self.congestion.cwnd_bytes())
-            .saturating_sub(self.bytes_in_flight)
+            .min(crate::window::MAX_IN_FLIGHT_BYTES)
+            .saturating_sub(self.send_window.bytes_in_flight())
     }
 
     pub(crate) fn set_local_window_bytes(&mut self, bytes: u32) {
@@ -216,33 +311,50 @@ impl UtpConnection {
         };
         // SYN consumes one sequence number, just like the BEP 29 connection
         // setup sequence. The first DATA packet therefore uses ISN + 1.
-        self.mark_sent(0);
+        self.mark_sent(0)
+            .expect("an initial SYN always fits in an empty send window");
         packet
     }
 
     pub fn build_state(&mut self, now_us: u32, timestamp_diff: u32) -> UtpPacket {
-        let packet = UtpPacket {
-            header: self.header(PacketType::State, self.ids.send, now_us, timestamp_diff),
-            extensions: Vec::new(),
-            payload: Vec::new(),
-        };
+        let packet = self.build_state_with_selective_ack(
+            now_us,
+            timestamp_diff,
+            self.receive_sequences.selective_ack(),
+        );
         // The handshake STATE carries the acceptor's initial sequence
         // number. Once the connection is established, ACK-only STATE packets
         // do not consume sequence numbers.
         if self.state == ConnectionState::SynReceived {
-            self.mark_sent(0);
+            self.mark_sent(0)
+                .expect("the handshake STATE fits in an empty send window");
         }
         packet
     }
 
-    pub fn build_data(&mut self, now_us: u32, timestamp_diff: u32, payload: Vec<u8>) -> UtpPacket {
+    pub fn build_data(
+        &mut self,
+        now_us: u32,
+        timestamp_diff: u32,
+        payload: Vec<u8>,
+    ) -> Result<UtpPacket, UtpError> {
+        let payload_len = u32::try_from(payload.len()).unwrap_or(u32::MAX);
+        if !self
+            .send_window
+            .can_record_sequence(self.seq_nr, payload_len)
+        {
+            return Err(UtpError::SendWindowFull {
+                packets: self.send_window.packet_count(),
+                bytes: self.send_window.bytes_in_flight(),
+            });
+        }
         let packet = UtpPacket {
             header: self.header(PacketType::Data, self.ids.send, now_us, timestamp_diff),
             extensions: Vec::new(),
             payload,
         };
-        self.mark_sent(packet.payload.len() as u32);
-        packet
+        self.mark_sent(payload_len)?;
+        Ok(packet)
     }
 
     pub fn build_fin(&mut self, now_us: u32, timestamp_diff: u32) -> UtpPacket {
@@ -251,7 +363,8 @@ impl UtpConnection {
             extensions: Vec::new(),
             payload: Vec::new(),
         };
-        self.mark_sent(0);
+        self.mark_sent(0)
+            .expect("FIN fits after the stream has drained its data window");
         self.state = ConnectionState::FinSent;
         packet
     }
@@ -291,8 +404,7 @@ impl UtpConnection {
             return Ok(InboundAction::Reset);
         }
         self.remote_window_bytes = packet.header.wnd_size;
-        let bytes_acked = self.bytes_in_flight;
-        let ack_advanced = self.apply_ack(packet.header.ack_nr)?;
+        let bytes_acked = self.apply_ack(packet.header.ack_nr, &packet.extensions)?;
         if packet.header.timestamp_diff > 0 {
             self.update_rtt(packet.header.timestamp_diff);
             self.congestion.on_ack(
@@ -303,7 +415,7 @@ impl UtpConnection {
                     // nothing about how many of our bytes its ACK covered.
                     // ACK-only STATE packets are the normal case, so use the
                     // send-side flight that the ACK actually advanced instead.
-                    bytes_acked: if ack_advanced { bytes_acked } else { 0 },
+                    bytes_acked,
                 },
             );
         }
@@ -316,7 +428,8 @@ impl UtpConnection {
             PacketType::State => {
                 if self.state == ConnectionState::SynSent {
                     self.ack_nr = packet.header.seq_nr;
-                    self.last_received = Some(packet.header.seq_nr);
+                    self.receive_sequences
+                        .reset(packet.header.seq_nr.wrapping_add(1));
                     self.state = ConnectionState::Connected;
                 } else if self.state == ConnectionState::FinSent {
                     self.state = ConnectionState::Closing;
@@ -324,18 +437,26 @@ impl UtpConnection {
                 Ok(InboundAction::None)
             }
             PacketType::Data => {
-                if !self.accept_inbound_sequence(packet.header.seq_nr) {
-                    return Ok(InboundAction::SendState);
-                }
+                let action = match self.receive_sequences.insert(packet.header.seq_nr) {
+                    ReceiveSequenceAction::InOrder => {
+                        self.ack_nr = self.receive_sequences.ack_nr();
+                        InboundAction::DeliverPayload
+                    }
+                    ReceiveSequenceAction::Buffered => InboundAction::BufferPayload,
+                    ReceiveSequenceAction::DuplicateOrOutsideWindow => InboundAction::SendState,
+                };
                 if matches!(self.state, ConnectionState::SynReceived) {
                     self.state = ConnectionState::Connected;
                 }
-                Ok(InboundAction::DeliverPayload)
+                Ok(action)
             }
             PacketType::Fin => {
-                if !self.accept_inbound_sequence(packet.header.seq_nr) {
+                if self.receive_sequences.insert(packet.header.seq_nr)
+                    != ReceiveSequenceAction::InOrder
+                {
                     return Ok(InboundAction::SendState);
                 }
+                self.ack_nr = self.receive_sequences.ack_nr();
                 self.state = if self.state == ConnectionState::FinSent {
                     ConnectionState::Closing
                 } else {
@@ -356,19 +477,16 @@ impl UtpConnection {
     }
 
     pub(crate) fn all_sent_packets_acked(&self) -> bool {
-        self.oldest_unacked == self.seq_nr
+        self.send_window.is_empty()
     }
 
-    fn accept_inbound_sequence(&mut self, seq_nr: u16) -> bool {
-        let Some(last_received) = self.last_received else {
-            return false;
-        };
-        if seq_nr != last_received.wrapping_add(1) {
-            return false;
-        }
-        self.ack_nr = seq_nr;
-        self.last_received = Some(seq_nr);
-        true
+    pub(crate) fn packet_is_unacknowledged(&self, sequence: u16) -> bool {
+        self.send_window.contains(sequence)
+    }
+
+    pub(crate) fn reject_inbound_sequence(&mut self, sequence: u16, was_in_order: bool) {
+        self.receive_sequences.rollback(sequence, was_in_order);
+        self.ack_nr = self.receive_sequences.ack_nr();
     }
 
     fn header(
@@ -391,13 +509,18 @@ impl UtpConnection {
         }
     }
 
-    fn mark_sent(&mut self, payload_len: u32) {
+    fn mark_sent(&mut self, payload_len: u32) -> Result<(), UtpError> {
+        self.send_window.record(self.seq_nr, payload_len)?;
         self.newest_sent = self.seq_nr;
         self.seq_nr = self.seq_nr.wrapping_add(1);
-        self.bytes_in_flight = self.bytes_in_flight.saturating_add(payload_len);
+        self.oldest_unacked = self
+            .send_window
+            .oldest_sequence()
+            .unwrap_or(self.seq_nr);
+        Ok(())
     }
 
-    fn apply_ack(&mut self, ack_nr: u16) -> Result<bool, UtpError> {
+    fn apply_ack(&mut self, ack_nr: u16, extensions: &[UtpExtension]) -> Result<u32, UtpError> {
         if sequence_before(self.newest_sent, ack_nr) {
             return Err(UtpError::AckOutOfWindow {
                 ack_nr,
@@ -405,12 +528,16 @@ impl UtpConnection {
                 newest_sent: self.newest_sent,
             });
         }
-        if !sequence_before(self.oldest_unacked, ack_nr) && self.oldest_unacked != ack_nr {
-            return Ok(false);
-        }
-        self.oldest_unacked = ack_nr.wrapping_add(1);
-        self.bytes_in_flight = 0;
-        Ok(true)
+        let selective_ack = extensions
+            .iter()
+            .find(|extension| extension.kind == SelectiveAck::EXTENSION_KIND)
+            .map(|extension| extension.data.as_slice());
+        let bytes_acked = self.send_window.acknowledge(ack_nr, selective_ack);
+        self.oldest_unacked = self
+            .send_window
+            .oldest_sequence()
+            .unwrap_or(self.seq_nr);
+        Ok(bytes_acked)
     }
 
     fn update_rtt(&mut self, measured_us: u32) {
@@ -431,10 +558,6 @@ impl UtpConnection {
         let var = u64::from(self.rtt_var_us.unwrap_or(0));
         self.retransmit_timeout_us = (rtt + 4 * var).max(100_000);
     }
-}
-
-pub fn sequence_before(a: u16, b: u16) -> bool {
-    a != b && a.wrapping_sub(b) > 0x8000
 }
 
 #[cfg(test)]
@@ -524,7 +647,7 @@ mod tests {
     #[test]
     fn data_send_advances_sequence_and_tracks_flight() {
         let mut conn = UtpConnection::connect(1, 10);
-        let data = conn.build_data(1, 0, vec![1, 2, 3, 4]);
+        let data = conn.build_data(1, 0, vec![1, 2, 3, 4]).unwrap();
         assert_eq!(data.header.seq_nr, 10);
         assert_eq!(conn.next_seq_nr(), 11);
         assert_eq!(conn.bytes_in_flight(), 4);
@@ -539,7 +662,7 @@ mod tests {
         conn.on_inbound(&handshake, 0).unwrap();
 
         let before = conn.congestion_window_bytes();
-        let data = conn.build_data(2, 0, vec![0; 4_096]);
+        let data = conn.build_data(2, 0, vec![0; 4_096]).unwrap();
         let mut ack = inbound_state(conn.ids(), 91, data.header.seq_nr);
         ack.header.timestamp_diff = 20_000;
         // This is an ACK-only STATE packet; its empty payload must not make
@@ -595,7 +718,7 @@ mod tests {
         let state = acceptor.build_state(2, 0);
         initiator.on_inbound(&state, 0).unwrap();
 
-        let data = initiator.build_data(3, 0, b"first".to_vec());
+        let data = initiator.build_data(3, 0, b"first".to_vec()).unwrap();
         assert_eq!(
             acceptor.on_inbound(&data, 0).unwrap(),
             InboundAction::DeliverPayload
@@ -609,9 +732,100 @@ mod tests {
         future.header.seq_nr = future.header.seq_nr.wrapping_add(2);
         assert_eq!(
             acceptor.on_inbound(&future, 0).unwrap(),
-            InboundAction::SendState
+            InboundAction::BufferPayload
         );
         assert_eq!(acceptor.ack_nr(), data.header.seq_nr);
+
+        let state = acceptor.build_state(4, 0);
+        assert_eq!(state.extensions.len(), 1);
+        assert_eq!(state.extensions[0].kind, SelectiveAck::EXTENSION_KIND);
+        assert_eq!(state.extensions[0].data, vec![1]);
+
+        let mut missing = data.clone();
+        missing.header.seq_nr = missing.header.seq_nr.wrapping_add(1);
+        assert_eq!(
+            acceptor.on_inbound(&missing, 0).unwrap(),
+            InboundAction::DeliverPayload
+        );
+        assert_eq!(acceptor.ack_nr(), future.header.seq_nr);
+    }
+
+    #[test]
+    fn cumulative_and_selective_acks_account_only_newly_acked_bytes() {
+        let mut conn = UtpConnection::connect(50, 10);
+        conn.build_syn(1);
+        let mut handshake = inbound_state(conn.ids(), 90, 10);
+        handshake.header.timestamp_diff = 0;
+        conn.on_inbound(&handshake, 0).unwrap();
+
+        let first = conn.build_data(2, 0, vec![0; 100]).unwrap();
+        let second = conn.build_data(2, 0, vec![0; 200]).unwrap();
+        let third = conn.build_data(2, 0, vec![0; 300]).unwrap();
+        let mut ack = inbound_state(conn.ids(), 91, first.header.seq_nr);
+        ack.extensions.push(UtpExtension {
+            kind: SelectiveAck::EXTENSION_KIND,
+            data: vec![1],
+        });
+
+        conn.on_inbound(&ack, 0).unwrap();
+        assert_eq!(conn.bytes_in_flight(), 200);
+        assert!(!conn.packet_is_unacknowledged(first.header.seq_nr));
+        assert!(conn.packet_is_unacknowledged(second.header.seq_nr));
+        assert!(!conn.packet_is_unacknowledged(third.header.seq_nr));
+    }
+
+    #[test]
+    fn receive_sequence_window_wraps_and_advances_through_buffered_data() {
+        let syn = UtpHeader {
+            packet_type: PacketType::Syn,
+            version: 1,
+            extension: 0,
+            connection_id: 7,
+            timestamp_us: 0,
+            timestamp_diff: 0,
+            wnd_size: DEFAULT_INITIAL_WINDOW_BYTES,
+            seq_nr: u16::MAX - 1,
+            ack_nr: 0,
+        };
+        let mut conn = UtpConnection::accept(&syn, 100).unwrap();
+        let mut after_wrap = UtpPacket {
+            header: UtpHeader {
+                packet_type: PacketType::Data,
+                version: 1,
+                extension: 0,
+                connection_id: conn.ids().recv,
+                timestamp_us: 1,
+                timestamp_diff: 0,
+                wnd_size: DEFAULT_INITIAL_WINDOW_BYTES,
+                seq_nr: 0,
+                ack_nr: 0,
+            },
+            extensions: Vec::new(),
+            payload: vec![2],
+        };
+        assert_eq!(
+            conn.on_inbound(&after_wrap, 0).unwrap(),
+            InboundAction::BufferPayload
+        );
+        after_wrap.header.seq_nr = u16::MAX;
+        assert_eq!(
+            conn.on_inbound(&after_wrap, 0).unwrap(),
+            InboundAction::DeliverPayload
+        );
+        assert_eq!(conn.ack_nr(), 0);
+    }
+
+    #[test]
+    fn rejecting_an_over_budget_packet_restores_the_gap_and_keeps_later_sack() {
+        let mut window = ReceiveSequenceWindow::new(10);
+        assert_eq!(window.insert(10), ReceiveSequenceAction::InOrder);
+        assert_eq!(window.insert(12), ReceiveSequenceAction::Buffered);
+        assert_eq!(window.insert(11), ReceiveSequenceAction::InOrder);
+        assert_eq!(window.ack_nr(), 12);
+
+        window.rollback(11, true);
+        assert_eq!(window.ack_nr(), 10);
+        assert_eq!(window.selective_ack().as_bytes(), &[1]);
     }
 
     #[test]

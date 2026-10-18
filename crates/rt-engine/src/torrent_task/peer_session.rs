@@ -309,6 +309,7 @@ impl TorrentTask {
                 download_rate_window_started: Instant::now(),
                 upload_rate_window_started: Instant::now(),
                 outstanding: 0,
+                download_generation: 0,
                 requested: Vec::new(),
                 ut_metadata_id: None,
                 ut_pex_id: None,
@@ -535,7 +536,7 @@ impl TorrentTask {
         self.connect_peers(peers, PeerSource::Tracker).await;
     }
 
-    pub(super) async fn download_next_webseed_block(&mut self) -> Option<BlockEvent> {
+    pub(super) async fn download_next_webseed_block(&mut self) -> Option<LeasedBlockEvent> {
         if self.picker.is_complete() {
             return None;
         }
@@ -683,11 +684,7 @@ impl TorrentTask {
                     if let Some(last_success) = self.webseed_last_success.get_mut(idx) {
                         *last_success = Some(Instant::now());
                     }
-                    return Some(BlockEvent {
-                        piece: req.piece,
-                        offset: req.begin,
-                        data,
-                    });
+                    return Some(data);
                 }
                 Err(e) => {
                     let err = webseed_error_for_log(&e);
@@ -727,7 +724,7 @@ impl TorrentTask {
         &self,
         url: &Url,
         req: BlockRequest,
-    ) -> anyhow::Result<bytes::Bytes> {
+    ) -> anyhow::Result<LeasedBlockEvent> {
         let user_agent = crate::peer_id::user_agent();
         let client = self
             .egress_policy
@@ -739,7 +736,7 @@ impl TorrentTask {
             )
             .await
             .map_err(|error| anyhow::anyhow!(error))?;
-        let _lease = reserve_webseed_body_bytes(&self.resources, req.length)?;
+        let lease = reserve_webseed_body_bytes(&self.resources, req.length)?;
         let (start, end) =
             webseed_byte_range(req.piece, self.meta.piece_length, req.begin, req.length)?;
         let response = client
@@ -759,7 +756,14 @@ impl TorrentTask {
                 bytes.len()
             );
         }
-        Ok(bytes.into())
+        LeasedBlockEvent::new(
+            BlockEvent {
+                piece: req.piece,
+                offset: req.begin,
+                data: bytes.into(),
+            },
+            lease,
+        )
     }
 
     pub(super) fn schedule_peerless_reannounce(&mut self) {
