@@ -817,6 +817,9 @@ fn next_saturating_sequence(sequence: &AtomicU64) -> u64 {
 struct ContentEpoch(u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DeviceOperationId(u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DirtyPathState {
     content_epoch: ContentEpoch,
     identity: FileIdentity,
@@ -837,15 +840,21 @@ fn mark_dirty_path(
     state
 }
 
-fn clear_dirty_path_if_epoch(
+fn clear_dirty_path_if_operation(
     dirty_paths: &Mutex<HashMap<PathBuf, DirtyPathState>>,
     path: &Path,
-    expected_epoch: ContentEpoch,
+    operation: &StorageOperationRecord,
 ) {
+    if operation.device_operation_id.is_none()
+        || operation.content_epoch.is_none()
+        || operation.file_identity.is_none()
+    {
+        return;
+    }
     let mut dirty = lock_recover(dirty_paths);
     if dirty
         .get(path)
-        .is_some_and(|state| state.content_epoch == expected_epoch)
+        .is_some_and(|state| operation.covers_dirty_path(*state))
     {
         dirty.remove(path);
     }
@@ -1252,14 +1261,46 @@ struct QueuedDiskBytes {
 
 #[derive(Debug)]
 struct DiskSubmission {
+    operation: StorageOperationRecord,
     _queued_bytes: Arc<QueuedDiskBytes>,
     _queue: OwnedSemaphorePermit,
     _device_operation: Option<DeviceOperationPermit>,
 }
 
+/// Evidence carried with an admitted operation until its backend completion.
+/// The device sequence is local to the retained device queue; the content
+/// epoch and file identity bind any dirty-path clearing to this operation.
+#[derive(Debug, Default)]
+struct StorageOperationRecord {
+    device_operation_id: Option<DeviceOperationId>,
+    file_identity: Option<FileIdentity>,
+    content_epoch: Option<ContentEpoch>,
+}
+
+impl StorageOperationRecord {
+    fn bind_file_identity(&mut self, identity: FileIdentity) {
+        debug_assert!(self.file_identity.is_none_or(|current| current == identity));
+        self.file_identity = Some(identity);
+    }
+
+    fn bind_dirty_path(&mut self, state: DirtyPathState) {
+        self.bind_file_identity(state.identity);
+        debug_assert!(self
+            .content_epoch
+            .is_none_or(|epoch| epoch == state.content_epoch));
+        self.content_epoch = Some(state.content_epoch);
+    }
+
+    fn covers_dirty_path(&self, state: DirtyPathState) -> bool {
+        self.file_identity == Some(state.identity)
+            && self.content_epoch == Some(state.content_epoch)
+    }
+}
+
 impl DiskSubmission {
     fn start_device_operation(&mut self, permit: DeviceOperationPermit) {
         debug_assert!(self._device_operation.is_none());
+        self.operation.device_operation_id = Some(permit.operation_id);
         self._device_operation = Some(permit);
     }
 
@@ -1268,15 +1309,15 @@ impl DiskSubmission {
     }
 
     fn device_operation_id(&self) -> Option<u64> {
-        self._device_operation
-            .as_ref()
-            .map(|operation| operation.operation_id)
+        self.operation.device_operation_id.map(|id| id.0)
     }
-}
 
-impl DeviceOperationPermit {
-    fn operation_id(&self) -> u64 {
-        self.operation_id
+    fn bind_file_identity(&mut self, identity: FileIdentity) {
+        self.operation.bind_file_identity(identity);
+    }
+
+    fn bind_dirty_path(&mut self, state: DirtyPathState) {
+        self.operation.bind_dirty_path(state);
     }
 }
 
@@ -1571,7 +1612,7 @@ pub(crate) struct DeviceQueueSet {
 
 struct DeviceOperationPermit {
     queue: Arc<DeviceQueue>,
-    operation_id: u64,
+    operation_id: DeviceOperationId,
     armed: bool,
 }
 
@@ -1620,7 +1661,8 @@ impl DeviceQueue {
 
             if state.active < self.active_limit && device_pending_count(&state) == 0 {
                 state.active += 1;
-                let operation_id = take_device_sequence(&mut state.next_operation_id);
+                let operation_id =
+                    DeviceOperationId(take_device_sequence(&mut state.next_operation_id));
                 (
                     None,
                     Some(DeviceOperationPermit {
@@ -1751,7 +1793,7 @@ fn collect_device_grant(
             continue;
         }
         state.active += 1;
-        let operation_id = take_device_sequence(&mut state.next_operation_id);
+        let operation_id = DeviceOperationId(take_device_sequence(&mut state.next_operation_id));
         let grant = (
             waiter.sender,
             DeviceOperationPermit {
@@ -2819,6 +2861,7 @@ impl MountScheduler {
             Err(TryAcquireError::Closed) => return Err(StorageError::Cancelled),
         };
         Ok(Some(DiskSubmission {
+            operation: StorageOperationRecord::default(),
             _queued_bytes: queued_bytes,
             _queue: queue,
             _device_operation: None,
@@ -3021,6 +3064,7 @@ impl MountScheduler {
                 identity,
                 bytes,
             } => {
+                submission.bind_file_identity(identity);
                 verify_path_identity(&key, identity, "payload_read")?;
                 let _submission = submission;
                 Ok(StorageRead::Bytes(bytes))
@@ -3030,6 +3074,7 @@ impl MountScheduler {
                 file,
                 read_len,
             } => {
+                submission.bind_file_identity(file.identity());
                 let requested_charge = queued_disk_charge(len as u64);
                 let read_buffer_charge = queued_disk_charge(read_len as u64);
                 let read_buffer_queued_bytes = read_buffer_charge
@@ -3262,6 +3307,7 @@ impl MountScheduler {
         let _write_watermark = next_saturating_sequence(&self.write_sequence);
         let dirty_state =
             mark_dirty_path(&dirty_paths, &dirty_path_epoch, key.clone(), file_identity);
+        submission.bind_dirty_path(dirty_state);
         let (file_write_guard, admission_guard, submission) = match await_backend_io_with_fence(
             &key,
             backend_write_completion_with_cache_invalidation(
@@ -3320,7 +3366,7 @@ impl MountScheduler {
             current_file_identity(&key, file.as_ref(), "strict_data_sync")?;
             record_sync_completion(&counters, sync_started);
             file_sync_fence.mark_synced(write_sequence);
-            clear_dirty_path_if_epoch(&dirty_paths, &key, dirty_state.content_epoch);
+            clear_dirty_path_if_operation(&dirty_paths, &key, &submission.operation);
             drop(strict_sync_guard);
             drop(admission_guard);
             submission
@@ -3467,6 +3513,10 @@ impl MountScheduler {
         };
         let opened_identity = current_file_identity(&key, file.as_ref(), "data_sync")?;
         ensure_dirty_identity(&key, "data_sync", expected_state, opened_identity)?;
+        submission.bind_file_identity(opened_identity);
+        if let Some(expected_state) = expected_state {
+            submission.bind_dirty_path(expected_state);
+        }
         submission
             .start_device_operation(self.acquire_device_operation(IoClass::Foreground).await?);
         tracing::trace!(
@@ -3500,7 +3550,7 @@ impl MountScheduler {
         record_sync_completion(&counters, started);
         file_sync_fence.mark_synced(watermark);
         if let Some(expected_state) = expected_state {
-            clear_dirty_path_if_epoch(&dirty_paths, &key, expected_state.content_epoch);
+            clear_dirty_path_if_operation(&dirty_paths, &key, &submission.operation);
         }
         drop(fence_guard);
         drop(admission_guard);
@@ -3692,6 +3742,10 @@ impl MountScheduler {
         };
         let opened_identity = current_file_identity(&key, file.as_ref(), "checkpoint_sync")?;
         ensure_dirty_identity(&key, "checkpoint_sync", expected_state, opened_identity)?;
+        submission.bind_file_identity(opened_identity);
+        if let Some(expected_state) = expected_state {
+            submission.bind_dirty_path(expected_state);
+        }
         let device_operation = queue.acquire(IoClass::Foreground, mount).await;
         let device_operation = match device_operation {
             Ok(permit) => permit,
@@ -3731,7 +3785,7 @@ impl MountScheduler {
         ensure_dirty_identity(&key, "checkpoint_sync", expected_state, completed_identity)?;
         file_sync_fence.mark_synced(watermark);
         if let Some(expected_state) = expected_state {
-            clear_dirty_path_if_epoch(&self.dirty_paths, &key, expected_state.content_epoch);
+            clear_dirty_path_if_operation(&self.dirty_paths, &key, &submission.operation);
         }
         drop(fence_guard);
         submission.finish_device_operation();
@@ -6592,33 +6646,31 @@ mod tests {
     }
 
     #[test]
-    fn dirty_sync_does_not_clear_a_newer_content_epoch() {
+    fn operation_record_clears_only_its_admitted_content_epoch() {
         let dirty_paths = Mutex::new(HashMap::new());
         let dirty_path_epoch = AtomicU64::new(0);
         let path = PathBuf::from("payload.bin");
         let identity = test_file_identity();
 
-        mark_dirty_path(&dirty_paths, &dirty_path_epoch, path.clone(), identity);
-        let first_epoch = dirty_paths
-            .lock()
-            .unwrap()
-            .get(&path)
-            .copied()
-            .unwrap()
-            .content_epoch;
+        let first_state = mark_dirty_path(&dirty_paths, &dirty_path_epoch, path.clone(), identity);
+        let mut first_operation = StorageOperationRecord::default();
+        first_operation.device_operation_id = Some(DeviceOperationId(1));
+        first_operation.bind_dirty_path(first_state);
         mark_dirty_path(&dirty_paths, &dirty_path_epoch, path.clone(), identity);
 
-        clear_dirty_path_if_epoch(&dirty_paths, &path, first_epoch);
+        clear_dirty_path_if_operation(&dirty_paths, &path, &first_operation);
         assert_eq!(dirty_paths.lock().unwrap().len(), 1);
 
-        let second_epoch = dirty_paths
-            .lock()
-            .unwrap()
-            .get(&path)
-            .copied()
-            .unwrap()
-            .content_epoch;
-        clear_dirty_path_if_epoch(&dirty_paths, &path, second_epoch);
+        let second_state = dirty_paths.lock().unwrap().get(&path).copied().unwrap();
+        let mut unadmitted_operation = StorageOperationRecord::default();
+        unadmitted_operation.bind_dirty_path(second_state);
+        clear_dirty_path_if_operation(&dirty_paths, &path, &unadmitted_operation);
+        assert_eq!(dirty_paths.lock().unwrap().len(), 1);
+
+        let mut second_operation = StorageOperationRecord::default();
+        second_operation.device_operation_id = Some(DeviceOperationId(2));
+        second_operation.bind_dirty_path(second_state);
+        clear_dirty_path_if_operation(&dirty_paths, &path, &second_operation);
         assert!(dirty_paths.lock().unwrap().is_empty());
     }
 

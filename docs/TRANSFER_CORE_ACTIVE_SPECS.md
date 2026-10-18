@@ -243,13 +243,16 @@ Document storage evidence and introduce deterministic backend faults for the
 portable scheduler. This slice covers cancellation after backend submission,
 injected read/write failures, partial-write failure, retry after a failed data
 barrier, and operation-level file identity fencing. Dirty path state binds each
-typed `ContentEpoch` to the descriptor identity that received it. Securely
-opened descriptor leases carry that captured identity through queued and
-submitted operations. On Unix and Windows, reads, writes, and sync operations
-check that the descriptor's original identity still matches the current path
-at their completion boundary; a mismatch fails as uncertain, and writes keep
-dirty evidence intact. Full operation-lease accounting, restart cuts, and
-platform fault qualification remain open.
+typed `ContentEpoch` to the descriptor identity that received it. The admitted
+`DiskSubmission` carries a `StorageOperationRecord` containing the device-local
+operation sequence plus the captured file identity and content epoch through
+backend completion; only that record can clear the dirty state it covered.
+Securely opened descriptor leases carry that captured identity through queued
+and submitted operations. On Unix and Windows, reads, writes, and sync
+operations check that the descriptor's original identity still matches the
+current path at their completion boundary; a mismatch fails as uncertain, and
+writes keep dirty evidence intact. Full operation-lease accounting, restart
+cuts, and platform fault qualification remain open.
 
 ### Ownership and invariant
 
@@ -562,13 +565,15 @@ permits and queued-byte charges if the caller cancels while backend work is
 still running. Strict writes retain the same admission through their own sync.
 
 The elevator worker already owns its independent request, queue, and device
-leases through its backend read. Operation tracking, resource-credit transfer,
-and the full injected-fault matrix remain open.
+leases through its backend read. The operation record binds device-local
+sequence and file/content evidence; shared resource-credit transfer and the
+full injected-fault matrix remain open.
 
 ### Ownership and invariant
 
 - **Current owner:** the scheduler admits queue and device slots plus queued
-  bytes in `DiskSubmission`; completion helpers now can retain that owner.
+  bytes in `DiskSubmission`; its operation record carries the device-local
+  sequence and file/content evidence through completion helpers.
 - **Target owner:** IO-006's device service owns one bounded operation record
   from admission through exactly one backend completion result.
 - **Invariant preserved:** dropping a waiter cannot make a queued slot or
