@@ -697,6 +697,31 @@ mod tests {
         assert_eq!(&data.payload[..8 * 1024], payload.as_ref());
         assert!(data.payload[8 * 1024..].iter().all(|byte| *byte == 0));
         assert_eq!(ledger.piece_progress(1), Some((1, 2)));
+
+        // The second file starts after a v1 padding extent. Its v2 wire
+        // piece index is aligned to the same canonical v1 piece, despite
+        // the preceding file's unpadded length.
+        let next_wire_block = BlockExtent::new(2, 0, BLOCK_SIZE);
+        let next_canonical_block = BlockExtent::new(2, 0, BLOCK_SIZE);
+        assert_eq!(
+            ledger
+                .reserve_piece_affine_on_plane(conn, next_wire_block)
+                .unwrap(),
+            next_canonical_block
+        );
+        assert_eq!(
+            ledger.commit_on_plane(conn, next_wire_block, 2).unwrap().0,
+            CommitOutcome::OnWire
+        );
+        let next_payload = Bytes::from(vec![0x5A; BLOCK_SIZE as usize]);
+        let (outcome, next_data) = ledger
+            .on_block_piece_affine_on_plane(conn, next_wire_block, next_payload.clone())
+            .unwrap();
+        assert!(matches!(outcome, HybridReceiveOutcome::Accepted { .. }));
+        let next_data = next_data.expect("second-file v2 response returns canonical data");
+        assert_eq!(next_data.canonical_extent, next_canonical_block);
+        assert_eq!(next_data.payload, next_payload);
+        assert_eq!(ledger.piece_progress(2), Some((1, 2)));
         ledger.check_invariants().unwrap();
     }
 }
