@@ -698,7 +698,7 @@ injected-backend accounting remain open.
   checks that an external blocking operation shares device admission across
   schedulers; `cancelled_external_handoff_retains_admission_until_completion`
   checks that a canceled external caller retains the shared device permit and
-  queued-byte lease until the blocking closure returns;
+  queued-byte lease until the blocking closure returns an injected error;
   `multi_device_handoff_holds_source_and_destination_until_completion` checks
   both physical-device permits remain held through external work. These sources
   are not run.

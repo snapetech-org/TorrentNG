@@ -5003,7 +5003,10 @@ mod tests {
                 .run_device_operation(IoClass::MoveCopy, 64, move || {
                     started_tx.send(()).unwrap();
                     finish_rx.recv().unwrap();
-                    Ok(())
+                    Err(StorageError::io(
+                        "external-cancel-test",
+                        io::Error::new(io::ErrorKind::Other, "injected external operation fault"),
+                    ))
                 })
                 .await
         });
