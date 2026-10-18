@@ -2023,7 +2023,9 @@ scorecard thresholds.
 
 Sample process-tree RSS/PSS, cgroup memory, CPU, threads, descriptors, and
 `/proc/<pid>/io` counters without retaining the sample series in memory.
-Network attribution, fixture control, and a runner integration remain open.
+For an isolated one-client network namespace, read the named interface from
+`/proc/<pid>/net/dev`, retaining namespace identity and reporting byte deltas.
+Fixture control and runner integration remain open.
 
 ### Ownership and invariant
 
@@ -2033,7 +2035,7 @@ Network attribution, fixture control, and a runner integration remain open.
   I/O remain separate accounting domains; `inactive_file` is kept distinct as
   reclaimable cache, and unavailable values stay null.
 - **Must not:** signal or restart the measured process, or present
-  unattributed network bytes as client traffic.
+  shared-namespace interface bytes as traffic from one client.
 
 ### Acceptance
 
@@ -2042,8 +2044,14 @@ Network attribution, fixture control, and a runner integration remain open.
 - CSV and summary artifacts are created exclusively with private permissions;
   rerunning an observer cannot replace prior raw evidence.
 - Missing process counters do not become partial undercounts.
-- Network counters remain null until a process-attributable independent source
-  is implemented.
+- Optional network counters come from one named interface in the root
+  process's network namespace, not from a sum of process counters. The
+  namespace inode must remain stable and counters must be monotonic across at
+  least two samples; otherwise network totals stay null.
+- The summary repeats that the interface counters include all namespace
+  traffic, and records when network-byte observation was not requested.
+- The interface is eligible as client traffic only when the runner isolates
+  one client in that private namespace and links the network-control evidence.
 - Observer exits clearly when the process was never observable.
 
 ### Files and compatibility
@@ -2058,11 +2066,14 @@ Network attribution, fixture control, and a runner integration remain open.
 ### Evidence
 
 - **Regression source added or updated:** peak/null-counter fixtures and
-  synthetic process-tree descendants, including a non-leader thread child.
+  synthetic process-tree descendants, including a non-leader thread child;
+  named-interface parsing, namespace identity, counter deltas, and reset/null
+  behavior.
 - **Command or probe to run:** `python3 scripts/test_transfer_rebuild_observer.py`
   during the requested bulk pass.
 - **Expected result:** cumulative counters and process-tree attribution match
-  synthetic fixtures without retaining samples.
+  synthetic fixtures without retaining samples; per-interface network deltas
+  are scoped to the observed namespace and fail closed on missing/reset data.
 - **Executed on exact revision:** no.
 - **Artifact or report path:** pending bulk pass.
 - **External evidence still required:** Linux cgroup-v2 permission and overhead

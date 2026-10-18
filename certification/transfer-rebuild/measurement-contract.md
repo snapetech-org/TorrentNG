@@ -122,9 +122,16 @@ Never substitute one accounting domain for another. Record CPU time, file
 descriptors, thread count, block-device reads and writes, and network bytes.
 Uninstrumented energy is `null`, never zero. Missing platform counters are
 `null` with an explanation in the observer artifact. The initial process
-observer does not yet attribute network bytes to a process tree, so those
-fields stay `null` until an independent attributable counter source is
-implemented.
+observer reads optional network bytes from a named interface in the root
+process's network namespace through `/proc/<pid>/net/dev`. It records the
+namespace inode and uses the counter difference between the first and last
+valid samples. A missing interface, namespace change, counter reset, or fewer
+than two valid samples leaves the totals `null`. These counters cover all
+traffic on that interface, not an individual PID, so they count as client
+traffic only when the runner isolates one client in the private namespace and
+links the matching network-control record to the trial. In a shared namespace,
+leave them `null` for client comparisons. The observer summary repeats this
+attribution warning.
 
 ## Independent service ceilings
 

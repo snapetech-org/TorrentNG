@@ -21,6 +21,7 @@ Example:
 python3 scripts/transfer_rebuild/observe.py \
   --pid 12345 \
   --interval-ms 250 \
+  --network-interface tngveth0 \
   --stop-file /path/to/task-scratch/transfer-run/observer.stop \
   --csv /path/to/task-scratch/transfer-run/resources.csv \
   --summary /path/to/task-scratch/transfer-run/resources.json
@@ -28,8 +29,15 @@ python3 scripts/transfer_rebuild/observe.py \
 
 The caller creates the stop file after the measured process exits. The observer
 does not start or signal the client. Its cumulative disk counters are Linux
-`/proc/<pid>/io` task counters; network counters are intentionally absent until
-an independent, attributable source is selected.
+`/proc/<pid>/io` task counters. When `--network-interface` is supplied, network
+bytes are read from that interface in the root process's network namespace via
+`/proc/<pid>/net/dev`. The summary records the namespace inode and RX/TX deltas
+from the first to last valid sample; missing interfaces, namespace changes,
+counter resets, or fewer than two valid samples leave the totals `null`.
+Network counters include every process using that namespace and interface, so
+the runner must isolate exactly one client there before treating them as that
+client's traffic. The summary JSON repeats this scope warning. Link the matching
+network-control record to the trial.
 
 The result schema is described in
 [`measurement-contract.md`](../../certification/transfer-rebuild/measurement-contract.md).

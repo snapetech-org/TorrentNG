@@ -12,6 +12,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -33,7 +34,11 @@ FIELDS = (
     "fds",
     "block_read_bytes",
     "block_write_bytes",
+    "network_namespace_inode",
+    "network_rx_bytes",
+    "network_tx_bytes",
 )
+NETWORK_INTERFACE_RE = re.compile(r"^[A-Za-z0-9_.-]{1,15}$")
 
 
 def _read_text(path: Path) -> str | None:
@@ -183,6 +188,53 @@ def _cgroup_stat(
     return values.get("anon"), values.get("file"), values.get("inactive_file"), current
 
 
+def _network_counters(
+    pid: int,
+    interface: str | None,
+    proc_root: Path,
+) -> tuple[int | None, int | None, int | None]:
+    """Read one interface's counters in the observed process's net namespace."""
+    if interface is None:
+        return None, None, None
+    if NETWORK_INTERFACE_RE.fullmatch(interface) is None:
+        raise ValueError("network interface must be a simple Linux interface name")
+
+    namespace_path = proc_root / str(pid) / "ns" / "net"
+    try:
+        before = namespace_path.stat().st_ino
+    except OSError:
+        return None, None, None
+    data = _read_text(proc_root / str(pid) / "net" / "dev")
+    if data is None:
+        return None, None, None
+
+    matches: list[tuple[int, int]] = []
+    for line in data.splitlines():
+        name, separator, raw = line.partition(":")
+        if not separator or name.strip() != interface:
+            continue
+        values = raw.split()
+        if len(values) < 9:
+            return None, None, None
+        try:
+            received = int(values[0])
+            transmitted = int(values[8])
+        except ValueError:
+            return None, None, None
+        if received < 0 or transmitted < 0:
+            return None, None, None
+        matches.append((received, transmitted))
+
+    try:
+        after = namespace_path.stat().st_ino
+    except OSError:
+        return None, None, None
+    if before != after or len(matches) != 1:
+        return None, None, None
+    received, transmitted = matches[0]
+    return before, received, transmitted
+
+
 def _create_exclusive_text(path: Path, *, newline: str | None = None) -> TextIO:
     """Create a private text artifact without replacing a prior observation."""
     flags = (
@@ -211,6 +263,9 @@ class Sample:
     fds: int | None
     block_read_bytes: int | None
     block_write_bytes: int | None
+    network_namespace_inode: int | None = None
+    network_rx_bytes: int | None = None
+    network_tx_bytes: int | None = None
 
     def as_row(self) -> dict[str, int | None]:
         return {field: getattr(self, field) for field in FIELDS}
@@ -221,6 +276,7 @@ def sample_process_tree(
     start_ns: int,
     proc_root: Path = Path("/proc"),
     cgroup_root: Path = Path("/sys/fs/cgroup"),
+    network_interface: str | None = None,
 ) -> Sample:
     pids = process_tree(root_pid, proc_root)
     rss = [_status_kib(pid, "VmRSS", proc_root) for pid in pids]
@@ -240,6 +296,11 @@ def sample_process_tree(
     cgroup_dirs = {_cgroup_v2_dir(pid, proc_root, cgroup_root) for pid in pids}
     cgroup_dir = next(iter(cgroup_dirs)) if len(cgroup_dirs) == 1 else None
     anon, file_backed, reclaimable_cache, current = _cgroup_stat(cgroup_dir)
+    network_namespace_inode, network_rx_bytes, network_tx_bytes = _network_counters(
+        root_pid,
+        network_interface,
+        proc_root,
+    )
     rss_kib = _sum_available(rss)
     pss_kib = _sum_available(pss)
     return Sample(
@@ -256,20 +317,35 @@ def sample_process_tree(
         fds=_sum_available(fds),
         block_read_bytes=_sum_available(read_values),
         block_write_bytes=_sum_available(write_values),
+        network_namespace_inode=network_namespace_inode,
+        network_rx_bytes=network_rx_bytes,
+        network_tx_bytes=network_tx_bytes,
     )
 
 
 class PeakSummary:
     """Online resource high-water marks with constant memory use."""
 
-    def __init__(self) -> None:
+    def __init__(self, network_interface: str | None = None) -> None:
         self.sample_count = 0
         self.peaks: dict[str, int | None] = {}
+        self.network_interface = network_interface
+        self._network_valid = network_interface is not None
+        self._network_observation_count = 0
+        self._network_namespace_inode: int | None = None
+        self._network_first: tuple[int, int] | None = None
+        self._network_last: tuple[int, int] | None = None
 
     def observe(self, sample: Sample) -> None:
         self.sample_count += 1
         for field in FIELDS:
-            if field in {"elapsed_ns", "processes"}:
+            if field in {
+                "elapsed_ns",
+                "processes",
+                "network_namespace_inode",
+                "network_rx_bytes",
+                "network_tx_bytes",
+            }:
                 continue
             value = getattr(sample, field)
             if value is None:
@@ -277,23 +353,88 @@ class PeakSummary:
             previous = self.peaks.get(field)
             self.peaks[field] = value if previous is None else max(previous, value)
 
+        if self.network_interface is None:
+            return
+        if (
+            sample.network_namespace_inode is None
+            or sample.network_rx_bytes is None
+            or sample.network_tx_bytes is None
+        ):
+            self._network_valid = False
+            return
+        self._network_observation_count += 1
+        if self._network_namespace_inode is None:
+            self._network_namespace_inode = sample.network_namespace_inode
+            self._network_first = (sample.network_rx_bytes, sample.network_tx_bytes)
+            self._network_last = self._network_first
+            return
+        if (
+            sample.network_namespace_inode != self._network_namespace_inode
+            or self._network_last is None
+            or sample.network_rx_bytes < self._network_last[0]
+            or sample.network_tx_bytes < self._network_last[1]
+        ):
+            self._network_valid = False
+            return
+        self._network_last = (sample.network_rx_bytes, sample.network_tx_bytes)
+
     def as_json(self) -> dict[str, Any]:
         peaks = {
             field: self.peaks.get(field)
             for field in FIELDS
-            if field not in {"elapsed_ns", "processes"}
+            if field
+            not in {
+                "elapsed_ns",
+                "processes",
+                "network_namespace_inode",
+                "network_rx_bytes",
+                "network_tx_bytes",
+            }
         }
+        network_observed = (
+            self.network_interface is not None
+            and self._network_valid
+            and self._network_observation_count >= 2
+            and self._network_first is not None
+            and self._network_last is not None
+        )
         return {
-            "observer_id": "transfer-proc-cgroup-v1",
+            "observer_id": "transfer-proc-cgroup-v2",
             "sample_count": self.sample_count,
             "sample_interval_ms": None,
             "peaks": peaks,
             "counter_note": "RSS/PSS are summed across the observed process tree; cgroup values are separate domains.",
+            "network_note": (
+                "Network byte counters were not requested."
+                if self.network_interface is None
+                else (
+                    "RX/TX count all traffic on the named interface in the root "
+                    "process's network namespace; treat them as one client's bytes "
+                    "only when that namespace isolates exactly one client."
+                )
+            ),
+            "network_interface": self.network_interface,
+            "network_namespace_inode": (
+                self._network_namespace_inode if network_observed else None
+            ),
+            "network_rx_bytes": (
+                self._network_last[0] - self._network_first[0]
+                if network_observed
+                else None
+            ),
+            "network_tx_bytes": (
+                self._network_last[1] - self._network_first[1]
+                if network_observed
+                else None
+            ),
         }
 
 
-def peak_summary(samples: list[Sample]) -> dict[str, Any]:
-    summary = PeakSummary()
+def peak_summary(
+    samples: list[Sample],
+    network_interface: str | None = None,
+) -> dict[str, Any]:
+    summary = PeakSummary(network_interface)
     for sample in samples:
         summary.observe(sample)
     return summary.as_json()
@@ -306,6 +447,7 @@ def observe(
     interval_ms: int,
     duration_seconds: float | None,
     stop_file: Path | None,
+    network_interface: str | None = None,
 ) -> int:
     if interval_ms < 1:
         raise ValueError("interval_ms must be at least 1")
@@ -313,6 +455,11 @@ def observe(
         raise ValueError("provide duration_seconds or stop_file")
     if duration_seconds is not None and duration_seconds <= 0:
         raise ValueError("duration_seconds must be positive")
+    if (
+        network_interface is not None
+        and NETWORK_INTERFACE_RE.fullmatch(network_interface) is None
+    ):
+        raise ValueError("network interface must be a simple Linux interface name")
     start_ns = time.monotonic_ns()
     if csv_path.resolve() == summary_path.resolve():
         raise ValueError("CSV and summary outputs must be different files")
@@ -321,7 +468,7 @@ def observe(
         if duration_seconds is None
         else start_ns + int(duration_seconds * 1_000_000_000)
     )
-    summary = PeakSummary()
+    summary = PeakSummary(network_interface)
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     with _create_exclusive_text(csv_path, newline="") as stream:
@@ -330,7 +477,11 @@ def observe(
         while True:
             if not process_tree(root_pid):
                 break
-            sample = sample_process_tree(root_pid, start_ns)
+            sample = sample_process_tree(
+                root_pid,
+                start_ns,
+                network_interface=network_interface,
+            )
             summary.observe(sample)
             writer.writerow(sample.as_row())
             stream.flush()
@@ -365,6 +516,10 @@ def main() -> int:
     parser.add_argument("--interval-ms", type=int, default=250)
     parser.add_argument("--duration-seconds", type=float)
     parser.add_argument("--stop-file", type=Path)
+    parser.add_argument(
+        "--network-interface",
+        help="attribute bytes to this interface in the observed process's network namespace",
+    )
     args = parser.parse_args()
     try:
         return observe(
@@ -374,6 +529,7 @@ def main() -> int:
             args.interval_ms,
             args.duration_seconds,
             args.stop_file,
+            args.network_interface,
         )
     except (OSError, ValueError) as error:
         print(f"observer: {error}", file=sys.stderr)
