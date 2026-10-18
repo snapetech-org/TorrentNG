@@ -186,6 +186,8 @@ The live v1/v2 actor integration to the shared ledger remains NET-114.
 - In-progress pieces keep a forward cursor to the first block that may still
   be requested; cancellation rewinds it, and restore/reset skip received
   blocks without rescanning the requested prefix.
+- Partial-piece receipt flags use a packed bitmap and a maintained count;
+  completion checks stay O(1), and snapshots/bytes-left enumerate set bits.
 - Priority, sequential, cancellation, partial restore, and endgame behavior
   remain covered by regression cases.
 - Static and live estimates include packed flags, index arrays, bucket
@@ -205,7 +207,8 @@ The live v1/v2 actor integration to the shared ledger remains NET-114.
 - **Regression source added or updated:** availability bucket movement,
   seeded random tie, candidate lifecycle, request cancellation, and picker
   memory estimate cases; block cursor advancement, cancellation rewind,
-  partial restore, and reset cases.
+  partial restore, and reset cases; packed receipt-bit boundaries, duplicate
+  counting, invalid tail indexes, and bitmap memory accounting.
 - **Command or probe to run:** `cargo test -p rt-piece-picker` and the engine
   picker/accounting regressions during the requested bulk pass.
 - **Expected result:** all cases pass; no requestable piece is lost from the

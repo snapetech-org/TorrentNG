@@ -14,6 +14,8 @@ Priority pieces always win before sequential or rarest-first ordering. Sequentia
 
 Each in-progress piece keeps a cursor to its first block that may still be requested. Normal request fill advances through the piece without rescanning the requested prefix; cancellation rewinds the cursor when an earlier block becomes requestable, while restore and disconnect reset it around received blocks.
 
+Partial-piece state stores received-block flags as a one-bit-per-block bitmap and maintains an O(1) received count for completion checks. Fastresume snapshots and byte-progress calculations walk set bits directly; the admission estimate and live memory report include the packed bitmap capacity.
+
 ## Picker performance probe
 
 The `benches/perf.rs` probe reports request-selection plus cancellation time at

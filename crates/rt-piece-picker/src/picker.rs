@@ -17,7 +17,7 @@ pub const MAX_BLOCK_SIZE: u32 = 16 * 1024;
 pub const MAX_IN_PROGRESS_PIECES: usize = 16_384;
 
 /// Maximum estimated backing storage for all in-progress piece states in one
-/// picker. The estimate counts the per-block request counters and received
+/// picker. The estimate counts per-block request counters and packed received
 /// flags so a large protocol-legal piece length cannot multiply into an
 /// unbounded per-torrent allocation when many partial pieces are restored.
 pub const MAX_IN_PROGRESS_PIECE_STATE_BYTES: usize = 64 * 1024 * 1024;
@@ -61,10 +61,11 @@ impl<const N: usize> PieceAvailability for [bool; N] {
 #[derive(Debug, Clone)]
 struct PieceState {
     piece_length: u32,
+    received_count: u32,
     /// Blocks that have been requested but not yet received.
     requested: Vec<u16>,
-    /// Blocks that have been received.
-    received: Vec<bool>,
+    /// Packed received-block bitmap (one bit per block).
+    received: Vec<u8>,
     /// First block that may still be requested. Advancing this cursor avoids
     /// rescanning the already requested prefix for every block in a piece.
     next_unrequested_hint: usize,
@@ -75,8 +76,9 @@ impl PieceState {
         let n_blocks = n_blocks(piece_length);
         PieceState {
             piece_length,
+            received_count: 0,
             requested: vec![0; n_blocks],
-            received: vec![false; n_blocks],
+            received: vec![0; n_blocks.div_ceil(u8::BITS as usize)],
             next_unrequested_hint: 0,
         }
     }
@@ -85,13 +87,13 @@ impl PieceState {
         let start = self.next_unrequested_hint.min(self.requested.len());
         (start..self.requested.len())
             .chain(0..start)
-            .find(|&block_idx| self.requested[block_idx] == 0 && !self.received[block_idx])
+            .find(|&block_idx| self.requested[block_idx] == 0 && !self.block_received(block_idx))
     }
 
     fn advance_next_unrequested(&mut self) {
         while self.next_unrequested_hint < self.requested.len()
             && (self.requested[self.next_unrequested_hint] != 0
-                || self.received[self.next_unrequested_hint])
+                || self.block_received(self.next_unrequested_hint))
         {
             self.next_unrequested_hint += 1;
         }
@@ -100,10 +102,9 @@ impl PieceState {
     fn next_requested_not_received(&self, exclude: &[BlockRequest], piece: usize) -> Option<usize> {
         self.requested
             .iter()
-            .zip(self.received.iter())
             .enumerate()
-            .find_map(|(block_idx, (&req, &recv))| {
-                if req == 0 || recv {
+            .find_map(|(block_idx, &requested)| {
+                if requested == 0 || self.block_received(block_idx) {
                     return None;
                 }
                 let candidate = self.block_request_for(piece, block_idx);
@@ -121,8 +122,8 @@ impl PieceState {
     }
 
     fn mark_received(&mut self, block_idx: usize) {
-        if let Some(r) = self.received.get_mut(block_idx) {
-            *r = true;
+        if self.set_block_received(block_idx) {
+            self.received_count = self.received_count.saturating_add(1);
         }
         if let Some(r) = self.requested.get_mut(block_idx) {
             *r = 0; // clear requests — no longer outstanding
@@ -133,16 +134,45 @@ impl PieceState {
     }
 
     fn is_complete(&self) -> bool {
-        self.received.iter().all(|&r| r)
+        self.received_count as usize == n_blocks(self.piece_length)
+    }
+
+    fn block_received(&self, block_idx: usize) -> bool {
+        if block_idx >= self.requested.len() {
+            return false;
+        }
+        self.received
+            .get(block_idx / u8::BITS as usize)
+            .is_some_and(|byte| byte & (1u8 << (block_idx % u8::BITS as usize)) != 0)
+    }
+
+    fn set_block_received(&mut self, block_idx: usize) -> bool {
+        if block_idx >= self.requested.len() {
+            return false;
+        }
+        let Some(byte) = self.received.get_mut(block_idx / u8::BITS as usize) else {
+            return false;
+        };
+        let mask = 1u8 << (block_idx % u8::BITS as usize);
+        let newly_received = *byte & mask == 0;
+        *byte |= mask;
+        newly_received
     }
 
     fn received_blocks_limited(&self, maximum: usize) -> Vec<u32> {
-        self.received
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, received)| received.then_some(idx as u32))
-            .take(maximum)
-            .collect()
+        let mut blocks = Vec::with_capacity(maximum.min(self.received_count as usize));
+        for (byte_index, byte) in self.received.iter().copied().enumerate() {
+            let mut pending = byte;
+            while pending != 0 && blocks.len() < maximum {
+                let bit = pending.trailing_zeros() as usize;
+                blocks.push((byte_index * u8::BITS as usize + bit) as u32);
+                pending &= pending.wrapping_sub(1);
+            }
+            if blocks.len() == maximum {
+                break;
+            }
+        }
+        blocks
     }
 
     fn block_request_for(&self, piece: usize, block_idx: usize) -> BlockRequest {
@@ -165,7 +195,7 @@ fn piece_state_memory_bytes(piece_length: u32) -> usize {
     let blocks = n_blocks(piece_length);
     std::mem::size_of::<PieceState>()
         .saturating_add(blocks.saturating_mul(std::mem::size_of::<u16>()))
-        .saturating_add(blocks.saturating_mul(std::mem::size_of::<bool>()))
+        .saturating_add(blocks.div_ceil(u8::BITS as usize))
 }
 
 /// The piece picker.
@@ -351,9 +381,7 @@ impl PiecePicker {
         let state_bytes = piece_state_memory_bytes(piece_length);
         let mut state = PieceState::new(piece_length);
         for block_idx in received_blocks {
-            if let Some(received) = state.received.get_mut(*block_idx as usize) {
-                *received = true;
-            }
+            state.mark_received(*block_idx as usize);
         }
         state.advance_next_unrequested();
         // A partial-piece record contains bytes that were received but never
@@ -700,9 +728,7 @@ impl PiecePicker {
         let block_idx = (begin / MAX_BLOCK_SIZE) as usize;
         self.in_progress
             .get(&piece)
-            .and_then(|state| state.received.get(block_idx))
-            .copied()
-            .unwrap_or(false)
+            .is_some_and(|state| state.block_received(block_idx))
     }
 
     /// Cancel an outstanding block request (e.g., peer disconnected).
@@ -711,7 +737,7 @@ impl PiecePicker {
         if let Some(state) = self.in_progress.get_mut(&piece) {
             if let Some(r) = state.requested.get_mut(block_idx) {
                 *r = r.saturating_sub(1);
-                if *r == 0 && !state.received.get(block_idx).copied().unwrap_or(false) {
+                if *r == 0 && !state.block_received(block_idx) {
                     state.next_unrequested_hint = state.next_unrequested_hint.min(block_idx);
                 }
             }
@@ -750,19 +776,24 @@ impl PiecePicker {
         // is visible before the first piece finishes hashing.
         for (&piece, state) in &self.in_progress {
             if piece < self.piece_count && self.wanted.get(piece) && self.enabled.get(piece) {
-                let received_bytes = state
-                    .received
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(block_idx, received)| {
-                        received.then_some(u64::from(
-                            state
-                                .piece_length
-                                .saturating_sub(block_idx as u32 * MAX_BLOCK_SIZE)
-                                .min(MAX_BLOCK_SIZE),
-                        ))
-                    })
-                    .fold(0_u64, u64::saturating_add);
+                let mut received_bytes = 0_u64;
+                let block_count = n_blocks(state.piece_length);
+                for (byte_index, byte) in state.received.iter().copied().enumerate() {
+                    let mut pending = byte;
+                    while pending != 0 {
+                        let bit = pending.trailing_zeros() as usize;
+                        let block_idx = byte_index * u8::BITS as usize + bit;
+                        if block_idx < block_count {
+                            received_bytes = received_bytes.saturating_add(u64::from(
+                                state
+                                    .piece_length
+                                    .saturating_sub(block_idx as u32 * MAX_BLOCK_SIZE)
+                                    .min(MAX_BLOCK_SIZE),
+                            ));
+                        }
+                        pending &= pending.wrapping_sub(1);
+                    }
+                }
                 left = left.saturating_sub(received_bytes);
             }
         }
@@ -854,6 +885,33 @@ mod tests {
         assert_ne!(r1.begin, r2.begin);
         // No third block
         assert!(p.pick(&all).is_none());
+    }
+
+    #[test]
+    fn received_block_bitmap_packs_bits_across_byte_boundaries() {
+        let piece_length = MAX_BLOCK_SIZE * 9;
+        let mut state = PieceState::new(piece_length);
+
+        assert_eq!(state.received.len(), 2);
+        assert_eq!(
+            piece_state_memory_bytes(piece_length),
+            std::mem::size_of::<PieceState>() + 9 * std::mem::size_of::<u16>() + 2
+        );
+        state.mark_received(7);
+        state.mark_received(8);
+        state.mark_received(8);
+        state.mark_received(15);
+
+        assert!(state.block_received(7));
+        assert!(state.block_received(8));
+        assert!(!state.block_received(15));
+        assert_eq!(state.received_count, 2);
+        assert_eq!(state.received_blocks_limited(usize::MAX), vec![7, 8]);
+
+        for block in 0..9 {
+            state.mark_received(block);
+        }
+        assert!(state.is_complete());
     }
 
     #[test]
