@@ -325,7 +325,7 @@ impl Availability {
 
     /// Report the allocated backing storage for availability indexes.
     /// Capacities are used so owner accounting includes vector growth slack.
-    pub(crate) fn memory_bytes(&self) -> usize {
+    pub fn memory_bytes(&self) -> usize {
         let bucket_entries = self
             .buckets
             .iter()
