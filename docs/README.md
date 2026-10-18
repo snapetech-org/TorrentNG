@@ -10,6 +10,8 @@ Supported features vary by client; the compatibility guides list the limits.
 
 ## Product arrangements
 
+- [Setup experience contract](development/setup-experience-contract.md) - how
+  Desktop, Server, and WebUI Bridge setup should build on their existing modes.
 - [DESKTOP.md](DESKTOP.md) - TorrentNG Desktop native app: install, Local vs
   remote mode, resource design, and the Desktop / Server / WebUI Bridge naming table.
 - [ENGINE_REWRITE.md](ENGINE_REWRITE.md) - practical guide to compatible-client
