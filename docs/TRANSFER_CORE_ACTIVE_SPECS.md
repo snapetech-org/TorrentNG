@@ -802,12 +802,15 @@ job set; a piece stays unavailable until its completion is applied. Existing
 request and assembly memory leases remain alive through their storage/hash
 consumers.
 
-This is still partial: explicit generation fencing and failure/reset
+This is still partial: piece-attempt generation fencing and failure/reset
 qualification remain open. v1 lifecycle snapshots drain accepted work before
 shutdown, pause, recheck, and storage-move snapshots. Pure-v2 peer shutdown
-now cancels download-rate waits and drains already-admitted storage and
-verification jobs before the torrent task finishes joining peers; the
-actor-level lifecycle regression and bulk validation remain deferred.
+uses a per-peer lifecycle generation to stop new request and upload work,
+cancels download-rate waits, and drains already-admitted storage and
+verification jobs before the torrent task finishes joining peers. The same
+signal preempts framed sends and hash-proof waits owned by the peer loop, so a
+blocked socket writer does not prevent the drain; actor-level lifecycle
+regression and bulk validation remain deferred.
 
 ### Ownership and invariant
 
@@ -836,6 +839,9 @@ actor-level lifecycle regression and bulk validation remain deferred.
   through the actor; hybrid pieces still verify both roots from shared bytes.
 - Failure, cancellation, retry, piece reset, pause, storage move, and shutdown
   preserve picker accounting and memory leases through late backend completion.
+- Pure-v2 shutdown preempts a pending framed send and hash-proof wait, then
+  stops new per-peer work and drains already-admitted writes and verification
+  before releasing peer state.
 - A piece becomes locally available only after verification and, for the
   aggregate path, successful payload write; fastresume barriers cover all
   accepted writes that the snapshot claims.
@@ -869,9 +875,10 @@ actor-level lifecycle regression and bulk validation remain deferred.
   `v2_peer_reads_control_messages_while_transfer_jobs_wait_for_rate_budget`
   covers upload and download budget waits while the peer loop handles controls,
   then cancels a blocked download-rate wait and confirms shutdown drains without
-  publishing the canceled piece. These sources are authored but unrun;
-  generation/failure fencing, actor-level disconnect/quiesce, and broader
-  lifecycle qualification remain open.
+  publishing the canceled piece. `v2_peer_shutdown_cancels_a_backpressured_socket_send`
+  covers a peer writer blocked by a non-reading socket. These sources are
+  authored but unrun; generation/failure fencing, actor-level disconnect/quiesce,
+  and broader lifecycle qualification remain open.
 - **Command or probe to run:** focused actor and picker regressions during the
   requested bulk pass.
 - **Expected result:** actors process controls while accepted transfer work is

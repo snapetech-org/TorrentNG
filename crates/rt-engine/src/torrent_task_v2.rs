@@ -425,7 +425,7 @@ impl V2PeerState {
 struct V2PeerHandle {
     state: Arc<Mutex<V2PeerState>>,
     choker_id: PeerId,
-    download_control: RateLimitCancellation,
+    peer_control: RateLimitCancellation,
     task: tokio::task::JoinHandle<()>,
     _bitmap_memory_lease: MemoryLease,
 }
@@ -449,8 +449,8 @@ struct V2PeerContext {
     storage: MountScheduler,
     resources: ResourceGovernor,
     network_budget: GlobalNetworkBudget,
-    download_control: RateLimitCancellation,
-    download_generation: u64,
+    peer_control: RateLimitCancellation,
+    peer_generation: u64,
     upload_control: RateLimitCancellation,
     local_have: Arc<RwLock<Arc<V2Bitmap>>>,
     have_updates: watch::Sender<()>,
@@ -795,7 +795,7 @@ pub struct V2TorrentTask {
 impl Drop for V2TorrentTask {
     fn drop(&mut self) {
         for peer in self.peers.values() {
-            peer.download_control.cancel();
+            peer.peer_control.cancel();
         }
     }
 }
@@ -2044,7 +2044,7 @@ impl V2TorrentTask {
         let peers = std::mem::take(&mut self.peers);
         let mut tasks = futures::stream::FuturesUnordered::new();
         for (_, peer) in peers {
-            peer.download_control.cancel();
+            peer.peer_control.cancel();
             tasks.push(peer.task);
         }
         self.join_v2_peer_tasks(tasks, "disconnect_private_tracker_peers")
@@ -2524,8 +2524,8 @@ impl V2TorrentTask {
     }
 
     fn peer_context(&self, peer: SocketAddr, choker_id: PeerId) -> V2PeerContext {
-        let download_control = RateLimitCancellation::default();
-        let download_generation = download_control.generation();
+        let peer_control = RateLimitCancellation::default();
+        let peer_generation = peer_control.generation();
         V2PeerContext {
             info_hash: self.meta.info_hash_v2[..20]
                 .try_into()
@@ -2538,8 +2538,8 @@ impl V2TorrentTask {
             storage: self.storage.clone(),
             resources: self.resources.clone(),
             network_budget: self.network_budget.clone(),
-            download_control,
-            download_generation,
+            peer_control,
+            peer_generation,
             upload_control: RateLimitCancellation::default(),
             local_have: Arc::clone(&self.local_have),
             have_updates: self.have_updates.clone(),
@@ -2593,7 +2593,7 @@ impl V2TorrentTask {
             )));
             let choker_id = PeerId::new();
             let context = self.peer_context(peer, choker_id);
-            let download_control = context.download_control.clone();
+            let peer_control = context.peer_control.clone();
             let event_peer = peer;
             let task_state = Arc::clone(&state);
             let transport_policy = outgoing_transport_policy_for_peer(
@@ -2625,7 +2625,7 @@ impl V2TorrentTask {
                 V2PeerHandle {
                     state,
                     choker_id,
-                    download_control,
+                    peer_control,
                     task,
                     _bitmap_memory_lease: bitmap_memory_lease,
                 },
@@ -2730,7 +2730,7 @@ impl V2TorrentTask {
         )));
         let choker_id = PeerId::new();
         let context = self.peer_context(peer, choker_id);
-        let download_control = context.download_control.clone();
+        let peer_control = context.peer_control.clone();
         let task_state = Arc::clone(&state);
         let task = tokio::spawn(async move {
             let _peer_permit = peer_permit;
@@ -2756,7 +2756,7 @@ impl V2TorrentTask {
             V2PeerHandle {
                 state,
                 choker_id,
-                download_control,
+                peer_control,
                 task,
                 _bitmap_memory_lease: bitmap_memory_lease,
             },
@@ -2797,7 +2797,7 @@ impl V2TorrentTask {
         )));
         let choker_id = PeerId::new();
         let context = self.peer_context(peer, choker_id);
-        let download_control = context.download_control.clone();
+        let peer_control = context.peer_control.clone();
         let task_state = Arc::clone(&state);
         let task = tokio::spawn(async move {
             let _peer_permit = peer_permit;
@@ -2823,7 +2823,7 @@ impl V2TorrentTask {
             V2PeerHandle {
                 state,
                 choker_id,
-                download_control,
+                peer_control,
                 task,
                 _bitmap_memory_lease: bitmap_memory_lease,
             },
@@ -2834,7 +2834,7 @@ impl V2TorrentTask {
         let Some(handle) = self.peers.remove(&peer) else {
             return;
         };
-        handle.download_control.cancel();
+        handle.peer_control.cancel();
         let mut tasks = futures::stream::FuturesUnordered::new();
         tasks.push(handle.task);
         self.join_v2_peer_tasks(tasks, "remove_peer").await;
@@ -2844,7 +2844,7 @@ impl V2TorrentTask {
         let peers = std::mem::take(&mut self.peers);
         let mut tasks = futures::stream::FuturesUnordered::new();
         for (_, handle) in peers {
-            handle.download_control.cancel();
+            handle.peer_control.cancel();
             tasks.push(handle.task);
         }
         self.join_v2_peer_tasks(tasks, "shutdown_peers").await;
@@ -3319,14 +3319,20 @@ async fn run_v2_peer_protocol(
     remote_supports_fast: bool,
 ) -> anyhow::Result<()> {
     let _upload_control_guard = V2UploadControlGuard(context.upload_control.clone());
-    let shutdown_generation = context.download_generation;
+    let shutdown_generation = context.peer_generation;
     if remote_supports_extension {
-        framed
-            .send(Message::Extended {
+        if !send_v2_peer_message(
+            &context,
+            &mut framed,
+            Message::Extended {
                 ext_id: EXT_HANDSHAKE_ID,
                 payload: ExtensionHandshake::new(None).encode(),
-            })
-            .await?;
+            },
+        )
+        .await?
+        {
+            return Ok(());
+        }
     }
     let mut have_updates = context.have_updates.subscribe();
     let mut upload_unchoked = context.upload_unchoked.clone();
@@ -3336,13 +3342,9 @@ async fn run_v2_peer_protocol(
     // this peer's Arc reference.
     let mut announced_have = {
         let initial_have = context.local_have.read().await.clone();
-        send_v2_have_bitmap(
-            &mut framed,
-            &initial_have,
-            &context.resources,
-            remote_supports_fast,
-        )
-        .await?;
+        if !send_v2_have_bitmap(&context, &mut framed, &initial_have, remote_supports_fast).await? {
+            return Ok(());
+        }
         (*initial_have).clone()
     };
 
@@ -3371,7 +3373,7 @@ async fn run_v2_peer_protocol(
         loop {
         tokio::select! {
             biased;
-            _ = context.download_control.wait_for_change(shutdown_generation) => {
+            _ = context.peer_control.wait_for_change(shutdown_generation) => {
                 return Ok(());
             }
             changed = upload_unchoked.changed() => {
@@ -3384,7 +3386,9 @@ async fn run_v2_peer_protocol(
                     v2_slot_selected(&**current, context.choker_id)
                 };
                 if let Some(message) = set_v2_upload_unchoked(&state, selected) {
-                    framed.send(message).await?;
+                    if !send_v2_peer_message(&context, &mut framed, message).await? {
+                        return Ok(());
+                    }
                 }
                 if selected {
                     start_v2_upload_reads(
@@ -3396,6 +3400,7 @@ async fn run_v2_peer_protocol(
                 } else {
                     while let Some(request) = pending_upload_requests.pop_front() {
                         reject_v2_request(
+                            &context,
                             &mut framed,
                             remote_supports_fast,
                             request.piece,
@@ -3415,7 +3420,15 @@ async fn run_v2_peer_protocol(
                     if current_have.get(piece_index) && !announced_have.get(piece_index) {
                         let piece = u32::try_from(piece_index)
                             .map_err(|_| anyhow::anyhow!("v2 piece index exceeds wire range"))?;
-                        framed.send(Message::Have(piece)).await?;
+                        if !send_v2_peer_message(
+                            &context,
+                            &mut framed,
+                            Message::Have(piece),
+                        )
+                        .await?
+                        {
+                            return Ok(());
+                        }
                     }
                     announced_have.set(piece_index, current_have.get(piece_index));
                 }
@@ -3584,6 +3597,7 @@ async fn run_v2_peer_protocol(
                         };
                         if !v2_upload_can_serve(&context, &state) {
                             reject_v2_request(
+                                &context,
                                 &mut framed,
                                 remote_supports_fast,
                                 piece,
@@ -3596,6 +3610,7 @@ async fn run_v2_peer_protocol(
                         {
                             if remote_supports_fast {
                                 reject_v2_request(
+                                    &context,
                                     &mut framed,
                                     true,
                                     piece,
@@ -3628,6 +3643,7 @@ async fn run_v2_peer_protocol(
                         {
                             let _ = pending_upload_requests.remove(index);
                             reject_v2_request(
+                                &context,
                                 &mut framed,
                                 remote_supports_fast,
                                 piece,
@@ -3716,7 +3732,9 @@ async fn run_v2_peer_protocol(
                 if last_activity.elapsed() >= V2_PEER_IDLE_TIMEOUT {
                     anyhow::bail!("v2 peer {addr} idle timeout");
                 }
-                framed.send(Message::KeepAlive).await?;
+                if !send_v2_peer_message(&context, &mut framed, Message::KeepAlive).await? {
+                    return Ok(());
+                }
             }
             _ = memory_retry.tick() => {
                 fill_v2_requests(
@@ -3752,7 +3770,7 @@ async fn run_v2_peer_protocol(
                             &mut assemblies,
                             &mut pending_block_completions,
                         );
-                        if context.download_control.generation() != shutdown_generation {
+                        if context.peer_control.generation() != shutdown_generation {
                             return Ok(());
                         }
                     }
@@ -3806,13 +3824,19 @@ async fn run_v2_peer_protocol(
                     V2UploadOutcome::Ready(block) if v2_upload_can_serve(&context, &state) => {
                         let V2LeasedUploadBlock { data, _lease } = block;
                         let bytes = data.len() as u64;
-                        framed
-                            .send(Message::Piece {
+                        if !send_v2_peer_message(
+                            &context,
+                            &mut framed,
+                            Message::Piece {
                                 piece: request.piece,
                                 begin: request.begin,
                                 data,
-                            })
-                            .await?;
+                            },
+                        )
+                        .await?
+                        {
+                            return Ok(());
+                        }
                         drop(_lease);
                         if let Ok(mut peer) = state.lock() {
                             peer.record_transfer(true, bytes);
@@ -3827,6 +3851,7 @@ async fn run_v2_peer_protocol(
                     }
                     V2UploadOutcome::Ready(_) | V2UploadOutcome::Rejected => {
                         reject_v2_request(
+                            &context,
                             &mut framed,
                             remote_supports_fast,
                             request.piece,
@@ -3849,6 +3874,7 @@ async fn run_v2_peer_protocol(
                             // overload response.
                             if remote_supports_fast {
                                 reject_v2_request(
+                                    &context,
                                     &mut framed,
                                     true,
                                     request.piece,
@@ -3861,6 +3887,7 @@ async fn run_v2_peer_protocol(
                             }
                         } else {
                             reject_v2_request(
+                                &context,
                                 &mut framed,
                                 remote_supports_fast,
                                 request.piece,
@@ -3883,6 +3910,7 @@ async fn run_v2_peer_protocol(
                             "failed to read pure-v2 upload block"
                         );
                         reject_v2_request(
+                            &context,
                             &mut framed,
                             remote_supports_fast,
                             request.piece,
@@ -3903,7 +3931,7 @@ async fn run_v2_peer_protocol(
         }
     }
     .await;
-    context.download_control.cancel();
+    context.peer_control.cancel();
     let drain_result = drain_v2_transfer_jobs(
         &context,
         &state,
@@ -3932,31 +3960,56 @@ async fn run_v2_peer_protocol(
 }
 
 async fn send_v2_have_bitmap(
+    context: &V2PeerContext,
     framed: &mut PeerIo,
     have: &V2Bitmap,
-    resources: &ResourceGovernor,
     remote_supports_fast: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let count = have.count_ones();
     if remote_supports_fast && have.len() > 0 && count == have.len() {
-        framed.send(Message::HaveAll).await?;
+        if !send_v2_peer_message(context, framed, Message::HaveAll).await? {
+            return Ok(false);
+        }
     } else if remote_supports_fast && count == 0 {
-        framed.send(Message::HaveNone).await?;
+        if !send_v2_peer_message(context, framed, Message::HaveNone).await? {
+            return Ok(false);
+        }
     } else if count > 0 {
         let bitfield_bytes = u64::try_from(have.len().div_ceil(8))
             .map_err(|_| anyhow::anyhow!("v2 peer bitfield length does not fit in u64"))?;
         // The bitfield is materialized as a Vec, then copied into the framed
         // writer. Reserve the wire peak before creating that peer-controlled
         // allocation; the steady-state bitmap lease does not cover it.
-        let _wire_memory_lease = resources
+        let _wire_memory_lease = context
+            .resources
             .try_acquire(
                 MemoryClass::PeerBuffer,
                 bitfield_bytes.saturating_mul(3).saturating_add(5),
             )
             .ok_or_else(|| anyhow::anyhow!("v2 peer bitfield allocation denied"))?;
-        framed.send(Message::Bitfield(have.to_bitfield())).await?;
+        if !send_v2_peer_message(context, framed, Message::Bitfield(have.to_bitfield())).await? {
+            return Ok(false);
+        }
     }
-    Ok(())
+    Ok(true)
+}
+
+async fn send_v2_peer_message(
+    context: &V2PeerContext,
+    framed: &mut PeerIo,
+    message: Message,
+) -> anyhow::Result<bool> {
+    // A peer removal must be able to drop a pending framed write before
+    // joining this task; the protocol loop then closes the socket and drains
+    // its already-admitted storage work.
+    tokio::select! {
+        biased;
+        _ = context.peer_control.wait_for_change(context.peer_generation) => Ok(false),
+        result = framed.send(message) => {
+            result?;
+            Ok(true)
+        }
+    }
 }
 
 /// Keep the local interest bit synchronized with the pieces this peer can
@@ -3970,6 +4023,9 @@ async fn update_v2_interest(
     local_interested: &mut bool,
     remote_availability_known: bool,
 ) -> anyhow::Result<()> {
+    if context.peer_control.generation() != context.peer_generation {
+        return Ok(());
+    }
     let local_have = context.local_have.read().await.clone();
     let has_missing_wanted = (0..context.piece_map.piece_count)
         .any(|piece| context.piece_is_wanted(piece) && !local_have.get(piece as usize));
@@ -3987,13 +4043,19 @@ async fn update_v2_interest(
     if should_be_interested == *local_interested {
         return Ok(());
     }
-    framed
-        .send(if should_be_interested {
+    if !send_v2_peer_message(
+        context,
+        framed,
+        if should_be_interested {
             Message::Interested
         } else {
             Message::NotInterested
-        })
-        .await?;
+        },
+    )
+    .await?
+    {
+        return Ok(());
+    }
     *local_interested = should_be_interested;
     Ok(())
 }
@@ -4008,6 +4070,9 @@ async fn fill_v2_requests(
     pending_block_completions: &HashMap<(u32, u32), u64>,
     pending_piece_completions: &HashMap<u32, u64>,
 ) -> anyhow::Result<()> {
+    if context.peer_control.generation() != context.peer_generation {
+        return Ok(());
+    }
     let choked = state.lock().map(|peer| peer.choked).unwrap_or(true);
     if choked {
         return Ok(());
@@ -4106,13 +4171,19 @@ async fn fill_v2_requests(
             }
             break;
         };
-        framed
-            .send(Message::Request {
+        if !send_v2_peer_message(
+            context,
+            framed,
+            Message::Request {
                 piece,
                 begin,
                 length,
-            })
-            .await?;
+            },
+        )
+        .await?
+        {
+            return Ok(());
+        }
         outstanding.insert(
             (piece, begin),
             V2OutstandingRequest {
@@ -4430,6 +4501,9 @@ async fn handle_v2_piece(
     begin: u32,
     data: Bytes,
 ) -> anyhow::Result<()> {
+    if context.peer_control.generation() != context.peer_generation {
+        return Ok(());
+    }
     let Some(request) = outstanding.remove(&(piece, begin)) else {
         anyhow::bail!("unsolicited v2 piece block");
     };
@@ -4495,7 +4569,7 @@ async fn handle_v2_piece(
             request_memory_lease,
         ))
     };
-    let download_generation = context.download_generation;
+    let peer_generation = context.peer_generation;
     let job_context = context.clone();
     transfer_jobs.push(Box::pin(async move {
         if !job_context
@@ -4503,8 +4577,8 @@ async fn handle_v2_piece(
             .download()
             .acquire_or_cancelled(
                 u64::from(expected),
-                &job_context.download_control,
-                download_generation,
+                &job_context.peer_control,
+                peer_generation,
             )
             .await
         {
@@ -4552,6 +4626,9 @@ fn start_v2_upload_reads(
     context: &V2PeerContext,
     state: &Arc<Mutex<V2PeerState>>,
 ) {
+    if context.peer_control.generation() != context.peer_generation {
+        return;
+    }
     while upload_reads.len() < V2_MAX_PENDING_UPLOAD_READS
         && !pending.is_empty()
         && v2_upload_can_serve(context, state)
@@ -4645,6 +4722,7 @@ async fn read_v2_upload_block(
 }
 
 async fn reject_v2_request(
+    context: &V2PeerContext,
     framed: &mut PeerIo,
     remote_supports_fast: bool,
     piece: u32,
@@ -4653,7 +4731,7 @@ async fn reject_v2_request(
 ) -> anyhow::Result<()> {
     if let Some(message) = v2_request_rejection_message(remote_supports_fast, piece, begin, length)
     {
-        framed.send(message).await?;
+        let _ = send_v2_peer_message(context, framed, message).await?;
     }
     Ok(())
 }
@@ -4736,7 +4814,7 @@ async fn serve_v2_hash_request(
         .iter()
         .find(|file| file.pieces_root == Some(pieces_root))
     else {
-        framed.send(reject()).await?;
+        let _ = send_v2_peer_message(context, framed, reject()).await?;
         return Ok(());
     };
     let leaf_count = file.length.div_ceil(V2_BLOCK_SIZE as u64).max(1);
@@ -4747,18 +4825,35 @@ async fn serve_v2_hash_request(
         length,
         proof_layers,
     ) else {
-        framed.send(reject()).await?;
+        let _ = send_v2_peer_message(context, framed, reject()).await?;
         return Ok(());
     };
-    if !file.pad && !hash_request_file_is_available(context, file, base_layer, index, length).await
-    {
-        framed.send(reject()).await?;
+    let file_is_available = if file.pad {
+        true
+    } else {
+        tokio::select! {
+            biased;
+            _ = context.peer_control.wait_for_change(context.peer_generation) => {
+                return Ok(());
+            }
+            available = hash_request_file_is_available(context, file, base_layer, index, length) => available,
+        }
+    };
+    if !file_is_available {
+        let _ = send_v2_peer_message(context, framed, reject()).await?;
         return Ok(());
     }
-    let layers = match v2_proof_layers(context, file, pieces_root, leaf_count).await {
+    let layers_result = tokio::select! {
+        biased;
+        _ = context.peer_control.wait_for_change(context.peer_generation) => {
+            return Ok(());
+        }
+        result = v2_proof_layers(context, file, pieces_root, leaf_count) => result,
+    };
+    let layers = match layers_result {
         Ok(Some(layers)) => layers,
         Ok(None) => {
-            framed.send(reject()).await?;
+            let _ = send_v2_peer_message(context, framed, reject()).await?;
             return Ok(());
         }
         Err(error) => {
@@ -4771,7 +4866,7 @@ async fn serve_v2_hash_request(
                 error = %error,
                 "unable to build v2 hash-exchange layers"
             );
-            framed.send(reject()).await?;
+            let _ = send_v2_peer_message(context, framed, reject()).await?;
             return Ok(());
         }
     };
@@ -4786,19 +4881,22 @@ async fn serve_v2_hash_request(
         length,
         proof_layers,
     ) else {
-        framed.send(reject()).await?;
+        let _ = send_v2_peer_message(context, framed, reject()).await?;
         return Ok(());
     };
-    framed
-        .send(Message::Hashes {
+    let _ = send_v2_peer_message(
+        context,
+        framed,
+        Message::Hashes {
             pieces_root,
             base_layer,
             index,
             length,
             proof_layers,
             hashes,
-        })
-        .await?;
+        },
+    )
+    .await?;
     Ok(())
 }
 
@@ -5177,8 +5275,8 @@ mod tests {
             storage: storage.clone(),
             resources,
             network_budget: GlobalNetworkBudget::new(8, Some(1), Some(1)),
-            download_control: RateLimitCancellation::default(),
-            download_generation: 0,
+            peer_control: RateLimitCancellation::default(),
+            peer_generation: 0,
             upload_control: RateLimitCancellation::default(),
             local_have: Arc::new(RwLock::new(Arc::new(local_have))),
             have_updates,
@@ -5285,7 +5383,7 @@ mod tests {
         assert!(!context_for_test.local_have.read().await.get(0));
         assert_eq!(state_for_test.lock().unwrap().downloaded, 0);
 
-        context_for_test.download_control.cancel();
+        context_for_test.peer_control.cancel();
         assert!(timeout(Duration::from_secs(1), peer)
             .await
             .expect("v2 shutdown did not cancel a pending download-rate wait")
@@ -5294,6 +5392,58 @@ mod tests {
         assert!(!context_for_test.local_have.read().await.get(0));
         assert_eq!(state_for_test.lock().unwrap().downloaded, 0);
         assert!(event_rx.try_recv().is_err());
+        drop(remote);
+    }
+
+    #[tokio::test]
+    async fn v2_peer_shutdown_cancels_a_backpressured_socket_send() {
+        use tokio::net::TcpListener;
+
+        let content = vec![0x5Au8; rt_peer_wire::message::MAX_BLOCK_SIZE as usize];
+        let raw = v2_raw_with_piece_length(&content, content.len());
+        let (task, _fixture) =
+            v2_task_not_started(quiet_v2_runtime(), &raw, content.len() as u64).await;
+        let context = task.peer_context("127.0.0.1:6881".parse().unwrap(), PeerId::new());
+        let send_context = context.clone();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (remote, _) = listener.accept().await.unwrap();
+        let mut framed = PeerIo::Tcp(Framed::new(client, PeerCodec::default()));
+        let sender = tokio::spawn(async move {
+            let data = Bytes::from(content);
+            for completed in 0..8_192usize {
+                let sent = send_v2_peer_message(
+                    &send_context,
+                    &mut framed,
+                    Message::Piece {
+                        piece: 0,
+                        begin: 0,
+                        data: data.clone(),
+                    },
+                )
+                .await?;
+                if !sent {
+                    return Ok::<_, anyhow::Error>(Some(completed));
+                }
+            }
+            Ok(None)
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            !sender.is_finished(),
+            "non-reading peer should leave the writer backpressured"
+        );
+        context.peer_control.cancel();
+        let completed = timeout(Duration::from_secs(1), sender)
+            .await
+            .expect("shutdown should release a backpressured peer send")
+            .unwrap()
+            .unwrap();
+        assert!(completed.is_some());
         drop(remote);
     }
 
@@ -5503,7 +5653,7 @@ mod tests {
             V2PeerHandle {
                 state: Arc::new(Mutex::new(V2PeerState::new(0))),
                 choker_id: PeerId::new(),
-                download_control: RateLimitCancellation::default(),
+                peer_control: RateLimitCancellation::default(),
                 task: peer_task,
                 _bitmap_memory_lease: resources.try_acquire(MemoryClass::PeerBuffer, 1).unwrap(),
             },
