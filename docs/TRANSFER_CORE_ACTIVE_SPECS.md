@@ -250,10 +250,12 @@ generation fences remain later IO tickets.
   covering barrier completes.
 - Partial-write failure is returned to the caller and remains dirty.
 - Failed data sync leaves the dirty generation intact for a successful retry.
-- The scripted scheduler regression covers data-sync failure and retry; the
-  broader sync-failure matrix remains open.
-- File replacement, short-I/O, end-to-end operation-lease accounting, and
-  crash-cut cases remain explicitly open until implemented.
+- Regression sources cover strict-write sync failure and a canceled
+  multi-path checkpoint waiter whose held sync returns an injected error; a
+  later write waits for the barrier to release and dirty evidence remains
+  retryable. Platform-specific storage-failure qualification remains open.
+- File replacement, positive-progress short-I/O, end-to-end operation-lease
+  accounting, and crash-cut cases remain explicitly open until implemented.
 
 ### Files and compatibility
 
@@ -268,11 +270,15 @@ generation fences remain later IO tickets.
 
 - **Regression source added or updated:**
   `injected_read_failure_is_returned_without_marking_payload_dirty`,
+  `scripted_zero_progress_read_and_write_are_reported_as_short_io`,
   `pre_submission_open_failures_release_storage_admission`,
   `injected_write_failure_is_returned_and_remains_dirty_until_barrier`,
+  `strict_write_sync_failure_releases_admission_and_preserves_dirty_evidence`,
   `cancelled_waiter_keeps_submitted_write_dirty_until_barrier`,
+  `cancelled_strict_write_retains_admission_until_sync_completion`,
   `partial_write_then_error_is_not_reported_as_success`,
-  `failed_barrier_keeps_dirty_evidence_for_retry`, and
+  `failed_barrier_keeps_dirty_evidence_for_retry`,
+  `cancelled_checkpoint_waiter_keeps_dirty_evidence_after_sync_failure`, and
   `dropping_backend_releases_and_joins_held_completion_workers`.
 - **Command or probe to run:** `cargo test -p rt-storage` during the requested
   bulk pass.

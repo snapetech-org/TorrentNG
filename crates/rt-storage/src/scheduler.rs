@@ -8222,6 +8222,112 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancelled_checkpoint_waiter_keeps_dirty_evidence_after_sync_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let first_path = dir.path().join("a-checkpoint-failure.bin");
+        let second_path = dir.path().join("b-checkpoint-failure.bin");
+        let later_path = dir.path().join("c-checkpoint-after-failure.bin");
+        let resources = queued_disk_governor(QUEUED_DISK_JOB_OVERHEAD_BYTES);
+        let mut scheduler = MountScheduler::new(
+            StorageRootId::new(),
+            &SchedulerConfig {
+                profile: StorageProfile::Hdd,
+                storage_io: StorageIoConfig {
+                    durability_mode: DurabilityMode::Checkpoint,
+                    io_worker_threads: 1,
+                    io_queue_depth: 2,
+                    ..Default::default()
+                },
+                resources: Some(resources.clone()),
+                ..Default::default()
+            },
+        );
+        scheduler.device_queue = Arc::new(DeviceQueue::new(4, 4));
+        scheduler.device_queue_capacity = 4;
+        let backend = Arc::new(ScriptedDiskBackend::new(1, 8));
+        scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(backend.clone()));
+        for (path, payload) in [
+            (&first_path, &b"first-dirty"[..]),
+            (&second_path, &b"second-dirty"[..]),
+        ] {
+            scheduler
+                .write_at(
+                    IoClass::PeerWrite,
+                    path,
+                    0,
+                    bytes::Bytes::copy_from_slice(payload),
+                    true,
+                )
+                .await
+                .unwrap();
+        }
+        assert_eq!(scheduler.stats().dirty_files, 2);
+        backend.inject(
+            Operation::Sync,
+            Effect::HoldCompletionThenFail(io::ErrorKind::Other),
+        );
+
+        let barrier_scheduler = scheduler.clone();
+        let barrier =
+            tokio::spawn(
+                async move { barrier_scheduler.sync_all_open_files_with_evidence().await },
+            );
+        backend.wait_until_completion_is_held().await;
+        let capacity = scheduler.stats().device_queue_capacity;
+        assert_eq!(scheduler.stats().device_queue_available, capacity - 1);
+        assert_eq!(
+            queued_disk_used_bytes(&resources),
+            QUEUED_DISK_JOB_OVERHEAD_BYTES
+        );
+        barrier.abort();
+        let _ = barrier.await;
+
+        let later_scheduler = scheduler.clone();
+        let later_write_path = later_path.clone();
+        let (started_tx, started_rx) = oneshot::channel();
+        let later_write = tokio::spawn(async move {
+            started_tx.send(()).unwrap();
+            later_scheduler
+                .write_at(
+                    IoClass::PeerWrite,
+                    &later_write_path,
+                    0,
+                    bytes::Bytes::from_static(b"after-failure"),
+                    true,
+                )
+                .await
+        });
+        started_rx.await.unwrap();
+        tokio::task::yield_now().await;
+        assert_eq!(backend.pending_releases(), 1);
+        assert_eq!(scheduler.stats().device_queue_available, capacity - 1);
+        assert_eq!(
+            queued_disk_used_bytes(&resources),
+            QUEUED_DISK_JOB_OVERHEAD_BYTES,
+            "the detached barrier must retain its admission through a failed sync"
+        );
+
+        assert!(backend.release_next());
+        tokio::time::timeout(Duration::from_secs(1), later_write)
+            .await
+            .expect("the later write should run after the failed barrier finishes")
+            .unwrap()
+            .unwrap();
+        assert!(
+            scheduler.stats().dirty_files >= 2,
+            "a failed path and the later write must remain dirty"
+        );
+        assert_eq!(std::fs::read(&first_path).unwrap(), b"first-dirty");
+        assert_eq!(std::fs::read(&second_path).unwrap(), b"second-dirty");
+        assert_eq!(std::fs::read(&later_path).unwrap(), b"after-failure");
+
+        scheduler.sync_all_open_files().await.unwrap();
+        assert_eq!(scheduler.stats().dirty_files, 0);
+        assert_storage_admission_released(&scheduler);
+        assert_eq!(queued_disk_used_bytes(&resources), 0);
+    }
+
+    #[tokio::test]
     async fn failed_barrier_keeps_dirty_evidence_for_retry() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("sync-retry.bin");
