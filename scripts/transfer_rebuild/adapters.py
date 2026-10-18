@@ -261,12 +261,19 @@ class HttpJson:
         self.transmission_session_id = ""
 
     def request(self, path: str, *, method: str = "GET", body: Any = None,
-                form: dict[str, str] | None = None,
+                form: dict[str, str] | None = None, raw_body: bytes | None = None,
+                content_type: str | None = None,
                 headers: dict[str, str] | None = None) -> bytes:
         request_headers = dict(self.headers)
         request_headers.update(headers or {})
+        if sum(value is not None for value in (body, form, raw_body)) > 1:
+            raise AdapterError("HTTP request accepts only one body encoding")
         data = None
-        if body is not None:
+        if raw_body is not None:
+            data = raw_body
+            if content_type:
+                request_headers.setdefault("Content-Type", content_type)
+        elif body is not None:
             data = _canonical_json(body)
             request_headers.setdefault("Content-Type", "application/json")
         elif form is not None:
@@ -289,7 +296,10 @@ class HttpJson:
             session_id = error.headers.get("X-Transmission-Session-Id")
             if error.code == 409 and session_id and not self.transmission_session_id:
                 self.transmission_session_id = session_id
-                return self.request(path, method=method, body=body, form=form, headers=headers)
+                return self.request(
+                    path, method=method, body=body, form=form, raw_body=raw_body,
+                    content_type=content_type, headers=headers,
+                )
             raise AdapterError(f"HTTP {error.code} for {path}") from error
         return raw
 
@@ -1316,12 +1326,13 @@ def load_pins_document(data: object) -> dict[str, dict[str, Any]]:
 def _validate_profile(client_id: str, profile: dict[str, Any]) -> None:
     common = {
         "runtime", "expected_version", "expected_settings", "base_url", "timeout_seconds",
+        "preflight_timeout_seconds",
         "username_env", "password_env", "token_env", "container", "image_ref",
         "binary_path", "expected_binary_sha256", "source_root", "expected_source_commit",
         "expected_dirty_worktree", "expected_lockfile_sha256", "expected_toolchain",
         "pid_file", "socket_path", "container_socket_path",
         "settings_methods", "settings_keys", "settings_env_allowlist", "settings_file_allowlist",
-        "settings_file",
+        "settings_file", "preflight_save_path",
     }
     unknown = sorted(set(profile) - common)
     if unknown:
@@ -1341,6 +1352,30 @@ def _validate_profile(client_id: str, profile: dict[str, Any]) -> None:
         or not math.isfinite(timeout)
     ):
         raise AdapterError(f"pin profile for {client_id!r} timeout_seconds must be finite and within (0, 120]")
+    preflight_timeout = profile.get("preflight_timeout_seconds", 60)
+    if (
+        isinstance(preflight_timeout, bool)
+        or not isinstance(preflight_timeout, (int, float))
+        or preflight_timeout <= 0
+        or preflight_timeout > 300
+        or not math.isfinite(preflight_timeout)
+    ):
+        raise AdapterError(
+            f"pin profile for {client_id!r} preflight_timeout_seconds must be finite and within (0, 300]"
+        )
+    preflight_save_path = profile.get("preflight_save_path")
+    if preflight_save_path is not None:
+        preflight_path = Path(preflight_save_path) if isinstance(preflight_save_path, str) else Path()
+        if (
+            not isinstance(preflight_save_path, str)
+            or not preflight_save_path
+            or not preflight_path.is_absolute()
+            or ".." in preflight_path.parts
+            or len(preflight_path.parts) < 2
+        ):
+            raise AdapterError(
+                f"pin profile for {client_id!r} preflight_save_path must be a safe absolute disposable path"
+            )
 
     runtime = profile["runtime"]
     if runtime == "container":

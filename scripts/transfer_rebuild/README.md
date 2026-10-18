@@ -170,6 +170,11 @@ commit, dirty state, lockfile digest, and toolchain are also pinned when a
 source checkout is available. HTTP credentials
 come from named environment variables and are never copied to the observation.
 The output is created exclusively with mode `0600`.
+PERF-110 profiles also declare an absolute `preflight_save_path` that is
+available inside the client as a disposable base directory; the preflight adds
+a unique child path for each case. For the direct `urtorrent` runner, that base
+directory must already exist on the host. `preflight_timeout_seconds` optionally
+sets its bounded runner timeout (default 60 seconds, maximum 300).
 
 Example invocation:
 
@@ -394,12 +399,49 @@ catalog digest and seeded schedule, so edits to the plan are rejected.
 `candidate` means the checked-in catalog does not already know that a slot is
 unsupported; it does not prove the pinned client can run that protocol. A
 compatibility preflight must qualify every candidate before the runner starts
-measurements. The current source creates the plan only: it does not generate
-large payload fixtures, create namespaces, launch clients, observe their
-process trees, or emit trial records. Those parts and all runtime results are
-still open under PERF-110. Regression sources are in
-`scripts/test_transfer_rebuild_paired_plan.py` and are reserved for the
-requested bulk pass; none have been run.
+measurements. Each pinned profile must provide an absolute, client-side
+`preflight_save_path` reserved for disposable qualification files. Run the
+preflight against disposable client instances. It adds a unique private probe,
+checks that pause-on-add clients first report the torrent paused/stopped,
+removes the exact info hash and local data where the API supports it, and
+records the pinned client identity/settings and exact result. rqbit has no
+pause-on-add option in this adapter, so it is added and immediately paused; the
+artifact records that as `pause_mode: after_add`. Failed add responses are
+reconciled by querying the unique info hash and attempting cleanup if the
+server accepted the mutation. An unreadable add outcome or failed cleanup
+blocks readiness.
+
+Probes retain each profile's protocol shape, including a v2 piece layer and
+hybrid padding, while keeping payloads below 3 MiB. Their only tracker is
+`127.0.0.1:9`, and the pinned private-torrent settings keep them isolated.
+TorrentNG, qBittorrent, Transmission, Deluge and rTorrent are checked in their
+paused/stopped-on-add state. Deluge also has automatic management disabled.
+rqbit is paused immediately after add and remains labeled `after_add`.
+urtorrent uses its pinned native runner for v1 probes and remains explicitly
+unsupported for v2 and hybrid.
+
+```sh
+python3 scripts/transfer_rebuild/compatibility.py \
+  --plan /path/to/task-scratch/transfer-run/paired-plan.json \
+  --pins /path/to/task-scratch/client-pins.json \
+  --output /path/to/task-scratch/transfer-run/compatibility-preflight.json \
+  --scratch-parent /path/to/task-scratch/transfer-run
+
+python3 scripts/transfer_rebuild/validate_artifact.py compatibility-preflight \
+  /path/to/task-scratch/transfer-run/compatibility-preflight.json
+```
+
+The command refuses a changed plan/pin/profile digest and records all 28 slots,
+including unpinned, statically unsupported, failed, and cleanup-failed cases.
+A scheduled comparison is excluded when fewer than two clients pass; every
+failed case remains visible in the artifact. The artifact is exclusive, mode
+`0600`, and contains no API credentials. The runner still has
+to create the full payload fixtures, isolate and launch clients, execute paired
+trials, observe their process trees independently, and emit trial/manifest
+records. Regression sources are in
+`scripts/test_transfer_rebuild_paired_plan.py` and
+`scripts/test_transfer_rebuild_compatibility.py`; both remain reserved for the
+requested bulk pass and have not been run.
 
 ## PERF-111 picker and changed-snapshot probes
 

@@ -38,6 +38,8 @@ SCHEMAS = {
     "ceiling": ROOT / "certification/transfer-rebuild/ceiling-report.schema.json",
     "scorecard": ROOT / "certification/transfer-rebuild/scorecard.schema.json",
     "paired-plan": ROOT / "certification/transfer-rebuild/paired-plan.schema.json",
+    "compatibility-preflight": ROOT
+    / "certification/transfer-rebuild/compatibility-preflight.schema.json",
 }
 CLIENT_OBSERVATION_KIND = "transfer-client-observation-v1"
 CACHE_STATE_KIND = "transfer-cache-state-v1"
@@ -209,6 +211,141 @@ def _client_observation_errors(observation: dict[str, Any]) -> list[str]:
     settings = observation["settings_readback"]
     if settings["sha256"] != _settings_digest(settings["values"]):
         errors.append("settings_readback.sha256 does not match canonical settings values")
+    return errors
+
+
+def _compatibility_preflight_errors(artifact: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    unsigned = {key: value for key, value in artifact.items() if key != "preflight_id"}
+    if _settings_digest(unsigned)[:20] != artifact["preflight_id"]:
+        errors.append("preflight_id does not match the artifact contents")
+
+    clients = (
+        "deluge", "qbittorrent", "rtorrent", "torrentngd", "transmission", "rqbit", "urtorrent"
+    )
+    profiles = {
+        "G3/hybrid-padding": "hybrid",
+        "G3/v2-piece-layer": "v2",
+        "N1/lan_1g": "v1",
+        "N1/lan_10g": "v1",
+    }
+    pinned = artifact["pinned_client_ids"]
+    if pinned != sorted(set(pinned)):
+        errors.append("pinned_client_ids must be sorted and unique")
+    pinned_set = set(pinned)
+    expected_case_ids = {f"{client}:{profile}" for client in clients for profile in profiles}
+    results = artifact["results"]
+    seen: set[str] = set()
+    for index, result in enumerate(results):
+        location = f"results[{index}]"
+        client = result["client_id"]
+        profile = result["profile_id"]
+        case_id = result["case_id"]
+        if case_id != f"{client}:{profile}":
+            errors.append(f"{location} has an invalid case identity")
+            continue
+        if case_id in seen:
+            errors.append(f"{location} duplicates case_id {case_id}")
+        seen.add(case_id)
+        protocol = profiles[profile]
+        if result["protocol"] != protocol:
+            errors.append(f"{location}.protocol does not match its profile")
+        expected_hash_length = 64 if protocol == "v2" else 40
+        if len(result["info_hash"]) != expected_hash_length:
+            errors.append(f"{location}.info_hash has the wrong length for {protocol}")
+        statically_unsupported = client == "urtorrent" and protocol in {"v2", "hybrid"}
+        expected_applicability = "unsupported" if statically_unsupported else "candidate"
+        if result["applicability"] != expected_applicability:
+            errors.append(f"{location}.applicability does not match the PERF-110 catalog")
+        status = result["status"]
+        if statically_unsupported:
+            if status != "unsupported":
+                errors.append(f"{location}.status must preserve the urtorrent protocol exclusion")
+        elif client not in pinned_set:
+            if status != "not_pinned":
+                errors.append(f"{location}.status must be not_pinned for an absent client pin")
+        elif status not in {"passed", "failed", "cleanup_failed"}:
+            errors.append(f"{location}.status is invalid for a pinned candidate")
+        if status == "passed":
+            if not all(result[field] is True for field in ("added", "paused_verified", "removed")):
+                errors.append(f"{location} passed without add, paused-state, and removal evidence")
+            expected_pause_mode = "after_add" if client == "rqbit" else "on_add"
+            if result["pause_mode"] != expected_pause_mode:
+                errors.append(f"{location}.pause_mode does not match the client admission behavior")
+            if not result["observed_version"] or not result["client_identity_sha256"]:
+                errors.append(f"{location} passed without pinned client identity")
+            if not result["settings_sha256"]:
+                errors.append(f"{location} passed without settings readback identity")
+            if result["reason"] is not None:
+                errors.append(f"{location}.reason must be null for a passed probe")
+        elif status == "cleanup_failed":
+            if result["added"] not in (True, None) or result["removed"] is not False:
+                errors.append(f"{location} cleanup_failed requires a present or uncertain, unremoved probe")
+            if not result["reason"]:
+                errors.append(f"{location}.reason is required when cleanup failed")
+        elif not result["reason"]:
+            errors.append(f"{location}.reason is required for {status}")
+        if status in {"unsupported", "not_pinned"} and result["pause_mode"] is not None:
+            errors.append(f"{location}.pause_mode must be null when no probe was attempted")
+    if seen != expected_case_ids:
+        errors.append("results must contain exactly the 28 PERF-110 client/profile slots")
+
+    expected_eligible = sorted(
+        result["case_id"] for result in results if result["status"] == "passed"
+    )
+    if artifact["eligible_case_ids"] != expected_eligible:
+        errors.append("eligible_case_ids does not match passed case results")
+
+    pair_ids: set[str] = set()
+    expected_excluded: set[str] = set()
+    for index, pair in enumerate(artifact["scheduled_pairs"]):
+        pair_id = pair["pair_id"]
+        case_ids = pair["case_ids"]
+        if pair_id in pair_ids:
+            errors.append(f"scheduled_pairs[{index}] duplicates pair_id")
+        pair_ids.add(pair_id)
+        if len(case_ids) != len(set(case_ids)):
+            errors.append(f"scheduled_pairs[{index}].case_ids contains duplicates")
+        if any(
+            case_id not in expected_case_ids or not case_id.endswith(f":{pair['profile_id']}")
+            for case_id in case_ids
+        ):
+            errors.append(f"scheduled_pairs[{index}] references an invalid case")
+        expected_pair_cases = {
+            f"{client}:{pair['profile_id']}"
+            for client in pinned_set
+            if not (
+                client == "urtorrent"
+                and profiles[pair["profile_id"]] in {"v2", "hybrid"}
+            )
+        }
+        if len(expected_pair_cases) < 2 or set(case_ids) != expected_pair_cases:
+            errors.append(f"scheduled_pairs[{index}] does not contain every pinned candidate for its profile")
+        if sum(case_id in expected_eligible for case_id in case_ids) < 2:
+            expected_excluded.add(pair_id)
+
+    excluded_ids: set[str] = set()
+    for index, pair in enumerate(artifact["excluded_pairs"]):
+        pair_id = pair["pair_id"]
+        if pair_id is not None:
+            if pair_id not in pair_ids or pair_id in excluded_ids:
+                errors.append(f"excluded_pairs[{index}].pair_id is unknown or duplicated")
+            excluded_ids.add(pair_id)
+    if not expected_excluded.issubset(excluded_ids):
+        errors.append("excluded_pairs omits a scheduled pair with fewer than two eligible clients")
+
+    candidates = [
+        result for result in results
+        if result["applicability"] == "candidate" and result["client_id"] in pinned_set
+    ]
+    expected_ready = (
+        bool(candidates)
+        and bool(artifact["scheduled_pairs"])
+        and all(result["status"] == "passed" for result in candidates)
+        and not artifact["excluded_pairs"]
+    )
+    if artifact["ready"] is not expected_ready:
+        errors.append("ready does not match candidate and pair preflight outcomes")
     return errors
 
 
@@ -1122,7 +1259,7 @@ def validate(
     schema = _load_json(SCHEMAS[kind])
     artifact = (
         _load_strict_json(artifact_path)
-        if kind == "paired-plan"
+        if kind in {"paired-plan", "compatibility-preflight"}
         else _load_json(artifact_path)
     )
     try:
@@ -1150,6 +1287,8 @@ def validate(
         from paired_plan import paired_plan_errors
 
         formatted.extend(f"$.{error}" for error in paired_plan_errors(artifact))
+    if kind == "compatibility-preflight" and not formatted and isinstance(artifact, dict):
+        formatted.extend(f"$.{error}" for error in _compatibility_preflight_errors(artifact))
     if (
         verify_referenced_files
         and kind == "manifest"

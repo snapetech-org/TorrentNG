@@ -6,7 +6,7 @@ compile_error!("the pinned urtorrent comparator is Linux-only");
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::net::{Ipv4Addr, SocketAddr};
-use std::os::unix::fs::{OpenOptionsExt, MetadataExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -48,7 +48,35 @@ fn usage() -> &'static str {
      --save-path DIR --pid-file FILE --settings-file FILE --start-gate FILE \
      --listen-v4 IP --peer IPv4:PORT [--max-connections N] [--max-peers N] \
      [--unchoke-slots N] [--hash-threads N] [--upload-limit BPS] \
-     [--download-limit BPS] [--timeout-seconds N] [--seed-seconds N]"
+     [--download-limit BPS] [--timeout-seconds N] [--seed-seconds N]\n\
+     urtorrent-runner preflight --torrent FILE --save-path EMPTY_DIR"
+}
+
+fn parse_preflight_args(
+    values: impl IntoIterator<Item = String>,
+) -> anyhow::Result<(PathBuf, PathBuf)> {
+    let mut values = values.into_iter();
+    let mut torrent = None;
+    let mut save_path = None;
+    while let Some(name) = values.next() {
+        let value = values
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("missing value for {name}"))?;
+        match name.as_str() {
+            "--torrent" => torrent = Some(PathBuf::from(value)),
+            "--save-path" => save_path = Some(PathBuf::from(value)),
+            _ => bail!("unknown preflight argument {name}"),
+        }
+    }
+    let torrent = torrent.ok_or_else(|| anyhow::anyhow!("--torrent is required"))?;
+    let save_path = save_path.ok_or_else(|| anyhow::anyhow!("--save-path is required"))?;
+    if !torrent.is_absolute() || !save_path.is_absolute() {
+        bail!("preflight torrent and save paths must be absolute");
+    }
+    if torrent == save_path {
+        bail!("preflight torrent and save paths must be distinct");
+    }
+    Ok((torrent, save_path))
 }
 
 fn parse_value<T: std::str::FromStr>(name: &str, value: &str) -> anyhow::Result<T>
@@ -177,9 +205,9 @@ fn parse_args() -> anyhow::Result<Args> {
         || !(namespace_suffix.as_bytes()[0].is_ascii_lowercase()
             || namespace_suffix.as_bytes()[0].is_ascii_digit())
         || namespace_suffix.ends_with('-')
-        || !namespace_suffix.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'
-        })
+        || !namespace_suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
     {
         bail!("--namespace must be a task-owned tngt-* namespace");
     }
@@ -205,7 +233,8 @@ fn assert_task_namespace(name: &str) -> anyhow::Result<()> {
         bail!("task namespace handle must be a regular non-symlink file");
     }
     let expected = fs::metadata(&path).context("cannot stat task namespace handle")?;
-    let current = fs::metadata("/proc/self/ns/net").context("cannot stat current network namespace")?;
+    let current =
+        fs::metadata("/proc/self/ns/net").context("cannot stat current network namespace")?;
     if expected.dev() != current.dev() || expected.ino() != current.ino() {
         bail!("runner is not executing inside the declared task network namespace");
     }
@@ -213,9 +242,14 @@ fn assert_task_namespace(name: &str) -> anyhow::Result<()> {
 }
 
 fn process_start_ticks() -> anyhow::Result<u64> {
-    let stat = fs::read_to_string("/proc/self/stat").context("cannot read runner process identity")?;
+    let stat =
+        fs::read_to_string("/proc/self/stat").context("cannot read runner process identity")?;
     let fields = stat
-        .get(stat.rfind(')').ok_or_else(|| anyhow::anyhow!("malformed process stat"))? + 2..)
+        .get(
+            stat.rfind(')')
+                .ok_or_else(|| anyhow::anyhow!("malformed process stat"))?
+                + 2..,
+        )
         .ok_or_else(|| anyhow::anyhow!("malformed process stat fields"))?;
     fields
         .split_whitespace()
@@ -276,7 +310,9 @@ fn write_identity_files(args: &Args, settings: Value) -> anyhow::Result<()> {
 async fn wait_for_gate(path: &Path, deadline: Instant) -> anyhow::Result<()> {
     loop {
         match fs::symlink_metadata(path) {
-            Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => return Ok(()),
+            Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                return Ok(());
+            }
             Ok(_) => bail!("start gate must be a regular non-symlink file"),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error).context("cannot inspect start gate"),
@@ -288,7 +324,7 @@ async fn wait_for_gate(path: &Path, deadline: Instant) -> anyhow::Result<()> {
     }
 }
 
-async fn run() -> anyhow::Result<()> {
+async fn run_trial() -> anyhow::Result<()> {
     let args = parse_args()?;
     assert_task_namespace(&args.namespace)?;
     match fs::symlink_metadata(&args.start_gate) {
@@ -310,8 +346,12 @@ async fn run() -> anyhow::Result<()> {
     if !metainfo.info.private {
         bail!("benchmark torrent metainfo must carry the private flag");
     }
-    let save_metadata = fs::symlink_metadata(&args.save_path)
-        .with_context(|| format!("cannot inspect task-owned save directory {}", args.save_path.display()))?;
+    let save_metadata = fs::symlink_metadata(&args.save_path).with_context(|| {
+        format!(
+            "cannot inspect task-owned save directory {}",
+            args.save_path.display()
+        )
+    })?;
     if save_metadata.file_type().is_symlink() || !save_metadata.is_dir() {
         bail!("save path must be an existing non-symlink directory owned by this trial");
     }
@@ -453,7 +493,10 @@ async fn run() -> anyhow::Result<()> {
         Ok::<_, anyhow::Error>((final_status, barrier_released_at.elapsed()))
     }
     .await;
-    let shutdown_result = session.shutdown().await.context("urtorrent shutdown failed");
+    let shutdown_result = session
+        .shutdown()
+        .await
+        .context("urtorrent shutdown failed");
     let (final_status, barrier_to_trial_end) = trial_result?;
     shutdown_result?;
     println!(
@@ -473,6 +516,160 @@ async fn run() -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn run_preflight(values: Vec<String>) -> anyhow::Result<()> {
+    let (torrent_path, save_path) = parse_preflight_args(values)?;
+    let torrent_metadata = fs::symlink_metadata(&torrent_path).with_context(|| {
+        format!(
+            "cannot inspect preflight torrent {}",
+            torrent_path.display()
+        )
+    })?;
+    if torrent_metadata.file_type().is_symlink() || !torrent_metadata.is_file() {
+        bail!("preflight torrent must be a regular non-symlink file");
+    }
+    if torrent_metadata.len() > 8 * 1024 * 1024 {
+        bail!("preflight torrent exceeds the 8 MiB limit");
+    }
+    let torrent_bytes = fs::read(&torrent_path).context("cannot read preflight metainfo")?;
+    let metainfo = urtorrent::Torrent::parse(&torrent_bytes)
+        .context("urtorrent could not parse preflight metainfo")?;
+    if metainfo.info.has_v2 {
+        bail!("urtorrent preflight supports private v1 metainfo only");
+    }
+    if !metainfo.info.private {
+        bail!("preflight torrent must carry the private flag");
+    }
+
+    let save_metadata = fs::symlink_metadata(&save_path).with_context(|| {
+        format!(
+            "cannot inspect preflight save directory {}",
+            save_path.display()
+        )
+    })?;
+    if save_metadata.file_type().is_symlink() || !save_metadata.is_dir() {
+        bail!("preflight save path must be an existing non-symlink directory");
+    }
+    if fs::read_dir(&save_path)
+        .context("cannot inspect preflight save directory")?
+        .next()
+        .is_some()
+    {
+        bail!("preflight save directory must be empty");
+    }
+
+    let session = Session::builder()
+        .listen_port(0)
+        .listen_v4(Some(Ipv4Addr::LOCALHOST))
+        .listen_v6(None)
+        .dht(false)
+        .dht_bootstrap_nodes(Vec::new())
+        .pex(false)
+        .lsd(false)
+        .max_connections(1)
+        .max_peers_per_torrent(1)
+        .hash_threads(1)
+        .build()
+        .await
+        .context("urtorrent could not start the isolated preflight session")?;
+
+    let mut added_id = None;
+    let setup_result = async {
+        let id = session
+            .add_torrent(
+                AddTorrent::metainfo(torrent_bytes, &save_path)
+                    .paused(true)
+                    .max_peers(1)
+                    .hold_after_metadata(true),
+            )
+            .await
+            .context("urtorrent rejected preflight metainfo")?;
+        added_id = Some(id);
+        session
+            .release(id)
+            .await
+            .context("urtorrent could not prepare the paused preflight torrent")?;
+        let status = session
+            .status(id)
+            .await
+            .context("urtorrent could not read preflight torrent status")?;
+        if status.state != TorrentState::Paused {
+            bail!("urtorrent preflight torrent did not remain paused");
+        }
+        if !status.private {
+            bail!("urtorrent preflight torrent lost its private flag");
+        }
+        let tracker_urls = session
+            .trackers(id)
+            .await
+            .context("cannot inspect urtorrent preflight trackers")?
+            .into_iter()
+            .map(|tracker| tracker.url)
+            .collect::<Vec<_>>();
+        if tracker_urls.len() != 1 || tracker_urls[0] != "http://127.0.0.1:9/announce" {
+            bail!("urtorrent preflight tracker is not the pinned loopback endpoint");
+        }
+        if !status.web_seed_urls.is_empty() {
+            bail!("urtorrent preflight must not contain web seeds");
+        }
+        let effective_session = session
+            .settings()
+            .await
+            .context("cannot read urtorrent preflight session settings")?;
+        Ok::<_, anyhow::Error>(json!({
+            "session": session_settings(&effective_session),
+            "runner": {
+                "hash_threads": 1,
+                "dht_bootstrap_nodes": [],
+            },
+            "probe": {
+                "paused": status.state == TorrentState::Paused,
+                "private": status.private,
+                "max_peers": status.max_peers,
+                "tracker_urls": tracker_urls,
+                "web_seed_urls": status.web_seed_urls,
+            },
+        }))
+    }
+    .await;
+    let removal_result = if let Some(id) = added_id {
+        session
+            .remove_torrent_with_files(id)
+            .await
+            .context("urtorrent could not remove preflight torrent and payload")
+    } else {
+        Ok(())
+    };
+    let shutdown = session
+        .shutdown()
+        .await
+        .context("urtorrent preflight shutdown failed");
+    let settings = setup_result?;
+    removal_result?;
+    shutdown?;
+    fs::remove_dir(&save_path).context("preflight save directory was not empty after removal")?;
+    println!(
+        "{}",
+        serde_json::to_string(&json!({
+            "format": "transfer-urtorrent-preflight-v1",
+            "version": urtorrent::VERSION,
+            "added": true,
+            "paused": true,
+            "removed": true,
+            "settings": settings,
+        }))?
+    );
+    Ok(())
+}
+
+async fn run() -> anyhow::Result<()> {
+    let mut values = std::env::args().skip(1);
+    if values.next().as_deref() == Some("preflight") {
+        run_preflight(values.collect()).await
+    } else {
+        run_trial().await
+    }
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     if let Err(error) = run().await {
@@ -483,9 +680,37 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::is_task_local_ip;
+    use super::{is_task_local_ip, parse_preflight_args};
     use std::net::Ipv4Addr;
+    use std::path::PathBuf;
     use std::str::FromStr;
+
+    #[test]
+    fn preflight_requires_distinct_absolute_paths() {
+        let parsed = parse_preflight_args([
+            "--torrent".to_owned(),
+            "/tmp/probe.torrent".to_owned(),
+            "--save-path".to_owned(),
+            "/tmp/probe-data".to_owned(),
+        ])
+        .expect("valid preflight paths");
+        assert_eq!(
+            parsed,
+            (
+                PathBuf::from("/tmp/probe.torrent"),
+                PathBuf::from("/tmp/probe-data")
+            )
+        );
+        assert!(
+            parse_preflight_args([
+                "--torrent".to_owned(),
+                "relative.torrent".to_owned(),
+                "--save-path".to_owned(),
+                "/tmp/probe-data".to_owned(),
+            ])
+            .is_err()
+        );
+    }
 
     #[test]
     fn task_peer_policy_accepts_private_and_loopback_ranges_only() {
@@ -496,14 +721,14 @@ mod tests {
             "192.168.4.9",
             "169.254.2.3",
         ] {
-            assert!(is_task_local_ip(Ipv4Addr::from_str(address).expect("valid test IP")));
+            assert!(is_task_local_ip(
+                Ipv4Addr::from_str(address).expect("valid test IP")
+            ));
         }
-        for address in [
-            "8.8.8.8",
-            "100.96.0.2",
-            "203.0.113.9",
-        ] {
-            assert!(!is_task_local_ip(Ipv4Addr::from_str(address).expect("valid test IP")));
+        for address in ["8.8.8.8", "100.96.0.2", "203.0.113.9"] {
+            assert!(!is_task_local_ip(
+                Ipv4Addr::from_str(address).expect("valid test IP")
+            ));
         }
     }
 }

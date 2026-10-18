@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:torrentng:schema:transfer-compatibility-preflight-v1",
+  "title": "TorrentNG pinned-client protocol compatibility preflight",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "preflight_id", "plan_id", "plan_sha256", "pins_sha256",
+    "catalog_sha256", "created_at", "pinned_client_ids", "ready",
+    "eligible_case_ids", "scheduled_pairs", "excluded_pairs", "results"
+  ],
+  "properties": {
+    "schema_version": { "const": "transfer-compatibility-preflight-v1" },
+    "preflight_id": { "type": "string", "pattern": "^[a-f0-9]{20}$" },
+    "plan_id": { "type": "string", "pattern": "^[a-f0-9]{20}$" },
+    "plan_sha256": { "$ref": "#/$defs/sha256" },
+    "pins_sha256": { "$ref": "#/$defs/sha256" },
+    "catalog_sha256": { "$ref": "#/$defs/sha256" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "pinned_client_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/client_id" }
+    },
+    "ready": { "type": "boolean" },
+    "eligible_case_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "scheduled_pairs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/scheduled_pair" }
+    },
+    "excluded_pairs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/excluded_pair" }
+    },
+    "results": {
+      "type": "array",
+      "minItems": 28,
+      "maxItems": 28,
+      "items": { "$ref": "#/$defs/result" }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "client_id": {
+      "enum": ["deluge", "qbittorrent", "rtorrent", "torrentngd", "transmission", "rqbit", "urtorrent"]
+    },
+    "profile_id": {
+      "enum": ["G3/hybrid-padding", "G3/v2-piece-layer", "N1/lan_1g", "N1/lan_10g"]
+    },
+    "protocol": { "enum": ["v1", "v2", "hybrid"] },
+    "scheduled_pair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pair_id", "profile_id", "repetition", "case_ids"],
+      "properties": {
+        "pair_id": { "type": "string", "minLength": 1 },
+        "profile_id": { "$ref": "#/$defs/profile_id" },
+        "repetition": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "case_ids": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "excluded_pair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pair_id", "profile_id", "repetition", "reason"],
+      "properties": {
+        "pair_id": { "type": ["string", "null"] },
+        "profile_id": { "$ref": "#/$defs/profile_id" },
+        "repetition": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_id", "client_id", "profile_id", "protocol", "applicability", "status",
+        "fixture_sha256", "torrent_sha256", "info_hash", "observed_version",
+        "client_identity_sha256", "settings_sha256", "added", "paused_verified",
+        "pause_mode", "removed", "reason"
+      ],
+      "properties": {
+        "case_id": { "type": "string", "minLength": 1 },
+        "client_id": { "$ref": "#/$defs/client_id" },
+        "profile_id": { "$ref": "#/$defs/profile_id" },
+        "protocol": { "$ref": "#/$defs/protocol" },
+        "applicability": { "enum": ["candidate", "unsupported"] },
+        "status": { "enum": ["passed", "failed", "cleanup_failed", "unsupported", "not_pinned"] },
+        "fixture_sha256": { "$ref": "#/$defs/sha256" },
+        "torrent_sha256": { "$ref": "#/$defs/sha256" },
+        "info_hash": { "type": "string", "pattern": "^[a-f0-9]{40}([a-f0-9]{24})?$" },
+        "observed_version": { "type": ["string", "null"] },
+        "client_identity_sha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
+        "settings_sha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
+        "added": { "type": ["boolean", "null"] },
+        "paused_verified": { "type": ["boolean", "null"] },
+        "pause_mode": { "enum": ["on_add", "after_add", null] },
+        "removed": { "type": ["boolean", "null"] },
+        "reason": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

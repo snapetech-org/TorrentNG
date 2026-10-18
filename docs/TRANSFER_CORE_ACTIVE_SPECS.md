@@ -3131,8 +3131,10 @@ for its paired clients.
 ### Ownership and invariant
 
 - **Current owner:** `paired_plan.py` builds the catalog, seed-bound plan, and
-  immutable output; `validate_artifact.py paired-plan` validates its schema,
-  catalog digest, and deterministic schedule.
+  immutable output. `compatibility.py` probes each pinned candidate with a
+  small private fixture, records add/paused/remove outcomes, and binds them to
+  client identity and settings readback. `validate_artifact.py` validates both
+  plan and preflight artifacts.
 - **Target owner:** PERF-110's process runner consumes the plan, performs
   compatibility preflight, prepares shared fixtures and network state, starts
   each client, observes independent resources, and emits PERF-101 trial and
@@ -3159,6 +3161,17 @@ for its paired clients.
 - Unsupported and unpinned catalog slots are listed with reasons. A runtime
   compatibility preflight must reject or explicitly exclude unsupported
   candidates before any measurements begin.
+- The compatibility preflight uses a private, profile-shaped probe under 3 MiB
+  and a pin-declared disposable save path. It verifies paused/stopped state at
+  admission for clients with pause-on-add behavior; rqbit is recorded as
+  `after_add` because this adapter pauses it immediately after adding. It
+  reconciles uncertain add responses by exact info hash, removes admitted
+  probes, and preserves cleanup failures as blocking outcomes. The plan, pin
+  file, profile digest, client identity, settings digest, pause mode, and all 28
+  case outcomes are bound to an exclusive mode-`0600` artifact.
+- A passed case is eligible only when add, paused-state verification, and exact
+  removal all succeed. A scheduled pair is excluded when fewer than two of its
+  clients pass. No failed or cleanup-failed case is silently dropped.
 - Plan output is exclusive, mode `0600`, schema-validated, and rejected if its
   catalog digest or deterministic schedule no longer matches its identity.
 - Regression sources cover the 28 slots, balanced pairs, stable scheduling,
@@ -3167,33 +3180,38 @@ for its paired clients.
 ### Files and compatibility
 
 - **Expected code paths:** `scripts/transfer_rebuild/paired_plan.py`,
+  `scripts/transfer_rebuild/compatibility.py`,
   `scripts/transfer_rebuild/fixtures.py`,
   `scripts/transfer_rebuild/validate_artifact.py`,
-  `certification/transfer-rebuild/paired-plan.schema.json`, harness README,
-  and `scripts/test_transfer_rebuild_paired_plan.py`.
-- **State or wire compatibility:** additive `transfer-paired-plan-v1`
-  certification artifact; no runtime product format changes.
+  `certification/transfer-rebuild/{paired-plan,compatibility-preflight}.schema.json`,
+  harness README, and the paired-plan and compatibility regression sources.
+- **State or wire compatibility:** additive `transfer-paired-plan-v1` and
+  `transfer-compatibility-preflight-v1` certification artifacts; no runtime
+  product format changes.
 - **Migration / rollback:** none; plans are standalone artifacts and can be
   regenerated from pinned inputs and the recorded seed.
 - **Feature flag or rollout boundary:** no comparison or performance claim is
-  permitted from the schedule alone. Compatibility preflight, process launch,
-  trial/manifest production, independent observation, and bulk validation
-  remain required.
+  permitted from a plan or preflight alone. Process launch, trial/manifest
+  production, independent observation, and bulk validation remain required.
 
 ### Evidence
 
 - **Regression source added or updated:**
-  `scripts/test_transfer_rebuild_paired_plan.py` and paired-plan semantic
-  validation in `scripts/transfer_rebuild/validate_artifact.py`.
-- **Command or probe to run:** planner, schema-validator, and regression cases
-  during the requested bulk pass.
+  `scripts/test_transfer_rebuild_paired_plan.py`,
+  `scripts/test_transfer_rebuild_compatibility.py`, and semantic validation
+  for both artifacts.
+- **Command or probe to run:** planner, compatibility preflight, schema
+  validators, and regression cases during the requested bulk pass.
 - **Expected result:** byte-identical plan content for identical inputs;
-  schema-valid catalog and schedule; tampered identity or ordering rejected;
-  no output overwrite.
+  schema-valid catalog/schedule; compatibility records retain every case,
+  identify rqbit's after-add pause mode, reconcile uncertain adds, and reject
+  incomplete removal evidence; tampered identity or ordering rejected; no
+  output overwrite.
 - **Executed on exact revision:** no.
-- **Artifact or report path:** none; generation and validation source only.
-- **External evidence still required:** pinned compatibility preflight for each
-  candidate slot, actual paired process execution, complete trial records,
+- **Artifact or report path:** none; planner, preflight, and validator source
+  only. No runtime preflight has been executed.
+- **External evidence still required:** successful pinned compatibility
+  preflights, actual paired process execution, complete trial records,
   independent resources, and dedicated-host results.
 
 ## PERF-111 — Picker and changed-snapshot probes
