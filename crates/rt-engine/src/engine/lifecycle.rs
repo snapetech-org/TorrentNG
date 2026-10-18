@@ -16,7 +16,7 @@ impl Engine {
                 .send(Err(format!("torrent {info_hash} already added")));
             return;
         }
-        self.runtime.pending_torrent_adds.insert(info_hash.clone());
+        self.runtime.pending_torrent_adds.insert(&info_hash);
         if !self.start_torrent_add_from_meta(request) {
             self.runtime.pending_torrent_adds.remove(&info_hash);
         }

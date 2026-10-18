@@ -32,8 +32,8 @@ pub(super) struct EngineRuntimeState {
     pub(super) torrent_tasks: RuntimeTorrentMap<JoinHandle<()>>,
     pub(super) tier_controller: TierController<String>,
     pub(super) tier_last_active: RuntimeTorrentMap<Instant>,
-    pub(super) pending_torrent_adds: HashSet<String>,
-    pub(super) pending_torrent_deletes: HashSet<String>,
+    pub(super) pending_torrent_adds: RuntimeTorrentSet,
+    pub(super) pending_torrent_deletes: RuntimeTorrentSet,
     pub(super) pending_torrent_promotions: RuntimeTorrentMap<Vec<TorrentPromotionAction>>,
     /// Exit notifications from supervised torrent actors, so reaping does not
     /// have to scan every active task handle on each engine command.
@@ -179,6 +179,53 @@ impl<V> RuntimeTorrentMap<V> {
     }
 }
 
+/// Set counterpart to [`RuntimeTorrentMap`] for engine-owned pending work.
+pub(super) struct RuntimeTorrentSet {
+    entries: HashSet<RuntimeTorrentKey>,
+}
+
+impl Default for RuntimeTorrentSet {
+    fn default() -> Self {
+        Self {
+            entries: HashSet::new(),
+        }
+    }
+}
+
+impl RuntimeTorrentSet {
+    pub(super) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(super) fn insert<K: AsRef<str>>(&mut self, info_hash: K) -> bool {
+        self.entries
+            .insert(RuntimeTorrentKey::from_info_hash(info_hash.as_ref()))
+    }
+
+    pub(super) fn contains(&self, info_hash: &str) -> bool {
+        self.entries
+            .contains(&RuntimeTorrentKey::from_info_hash(info_hash))
+    }
+
+    pub(super) fn remove(&mut self, info_hash: &str) -> bool {
+        self.entries
+            .remove(&RuntimeTorrentKey::from_info_hash(info_hash))
+    }
+}
+
+impl<K, const N: usize> From<[K; N]> for RuntimeTorrentSet
+where
+    K: AsRef<str>,
+{
+    fn from(info_hashes: [K; N]) -> Self {
+        let mut set = Self::new();
+        for info_hash in info_hashes {
+            set.insert(info_hash);
+        }
+        set
+    }
+}
+
 impl<K, V, const N: usize> From<[(K, V); N]> for RuntimeTorrentMap<V>
 where
     K: AsRef<str>,
@@ -270,8 +317,8 @@ impl EngineRuntimeState {
             torrent_tasks: RuntimeTorrentMap::new(),
             tier_controller,
             tier_last_active: RuntimeTorrentMap::new(),
-            pending_torrent_adds: HashSet::new(),
-            pending_torrent_deletes: HashSet::new(),
+            pending_torrent_adds: RuntimeTorrentSet::new(),
+            pending_torrent_deletes: RuntimeTorrentSet::new(),
             pending_torrent_promotions: RuntimeTorrentMap::new(),
             task_exits: TaskExits::default(),
         }
@@ -391,5 +438,33 @@ mod task_exit_tests {
         map.insert(placeholder, 11);
         assert_eq!(map.get(placeholder), Some(&11));
         assert_eq!(map.get("NOT-A-CANONICAL-HASH"), None);
+    }
+
+    #[test]
+    fn runtime_torrent_sets_keep_canonical_keys_inline_and_accept_hash_strings() {
+        let mut set = RuntimeTorrentSet::new();
+        let v1_hash = "cd".repeat(20);
+        let v2_hash = "ab".repeat(32);
+        assert!(set.insert(&v1_hash));
+        assert!(set.insert(&v2_hash));
+        assert!(!set.insert(&v1_hash));
+        assert!(set.contains(&v1_hash));
+        assert!(set.contains(&v2_hash));
+        assert!(set
+            .entries
+            .iter()
+            .any(|key| matches!(key, RuntimeTorrentKey::Compact { byte_len: 20, .. })));
+        assert!(set
+            .entries
+            .iter()
+            .any(|key| matches!(key, RuntimeTorrentKey::Compact { byte_len: 32, .. })));
+        assert!(set.remove(&v1_hash));
+        assert!(set.remove(&v2_hash));
+        assert!(!set.contains(&v1_hash));
+
+        let placeholder = "not-a-canonical-hash";
+        assert!(set.insert(placeholder));
+        assert!(set.contains(placeholder));
+        assert!(!set.contains("NOT-A-CANONICAL-HASH"));
     }
 }

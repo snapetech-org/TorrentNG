@@ -2037,10 +2037,10 @@ compact identities while retaining the canonical info hash at string-facing
 boundaries. `TierController` uses owner-local slot/generation IDs: its tier
 maps and timer wheels use an 8-byte ID, while one interned `Arc<str>` identity
 supports lookups. `EngineRuntimeState` channel, task, activity, and pending-
-promotion maps plus supervised task-exit events use an inline 20/32-byte
-decoded key for canonical v1/v2 hashes; the map adapter keeps `&str` lookup
-boundaries, and noncanonical placeholder keys retain exact text. No database,
-API, or wire representation changes.
+promotion maps, pending-add/delete sets, and supervised task-exit events use
+inline decoded keys for canonical v1/v2 hashes; the map and set adapters keep
+`&str` lookup boundaries, and noncanonical placeholder keys retain exact
+text. No database, API, or wire representation changes.
 
 ### Ownership and invariant
 
@@ -2067,10 +2067,11 @@ API, or wire representation changes.
   and separately owned dormant snapshot strings.
 - Regression sources cover generation-safe slot reuse, dormant projection
   accounting, and whole-owner memory accounting.
-- Task-exit IDs and the four `EngineRuntimeState` maps above keep canonical
-  hashes inline and preserve their existing string-facing lookup behavior.
-- Pending add/delete sets and explicit runtime-map retained-capacity accounting
-  remain open; compact keys do not close the ticket without bulk evidence.
+- Task-exit IDs, the four `EngineRuntimeState` maps, and the pending add/delete
+  sets keep canonical hashes inline and preserve their existing string-facing
+  lookup behavior.
+- Explicit runtime map/set retained-capacity accounting remains open; compact
+  keys do not close the ticket without bulk evidence.
 
 ### Files and compatibility
 
@@ -2088,7 +2089,8 @@ API, or wire representation changes.
   `dormant_snapshot_is_accounted_and_cleared_on_promotion`, and
   `owner_bytes_cover_maps_and_timers_not_just_the_hash_string`, plus
   `compact_exit_ids_roundtrip_v1_v2_and_keep_non_hash_test_keys` and
-  `runtime_torrent_maps_keep_canonical_keys_inline_and_accept_hash_strings`.
+  `runtime_torrent_maps_keep_canonical_keys_inline_and_accept_hash_strings`
+  and `runtime_torrent_sets_keep_canonical_keys_inline_and_accept_hash_strings`.
 - **Command or probe to run:** `cargo test -p rt-engine tier::tests` during
   the requested bulk pass.
 - **Expected result:** stale timer IDs never resolve after slot reuse and the
