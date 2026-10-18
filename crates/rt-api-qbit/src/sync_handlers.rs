@@ -1,6 +1,7 @@
 use super::*;
 use crate::model::QbServerState;
 use rt_api_model::ChunkedVec;
+use rt_session::REGISTRY_DELTA_PAGE_MAX;
 use serde::ser::{SerializeMap, Serializer};
 #[derive(Debug, Deserialize)]
 pub struct MaindataQuery {
@@ -60,33 +61,28 @@ pub async fn handle_sync_maindata(
             requested_revision.filter(|requested| *requested <= current_revision)
         {
             let registry = state.registry.read().await;
-            registry.changes_since(requested_revision).map(|changes| {
-                let mut changed = HashSet::new();
-                let mut removed = HashSet::new();
-                for change in changes {
-                    if change.removed {
-                        changed.remove(&change.info_hash);
-                        removed.insert(change.info_hash);
-                    } else {
-                        removed.remove(&change.info_hash);
-                        changed.insert(change.info_hash);
-                    }
-                }
-                let entries = changed
-                    .into_iter()
-                    .filter_map(|hash| registry.get(&hash))
-                    .collect::<Vec<_>>();
-                let mut removed = removed
-                    .into_iter()
-                    .filter(|hash| registry.get(hash).is_none())
-                    .collect::<Vec<_>>();
-                removed.sort_unstable();
-                (
-                    registry.revision(),
-                    Arc::new(ChunkedVec::from_vec(entries)),
-                    removed,
-                )
-            })
+            // qBittorrent's RID is the continuation cursor. Returning the
+            // page cursor lets the next sync request drain a large backlog
+            // without constructing one oversized delta response.
+            registry
+                .delta_since_page(requested_revision, REGISTRY_DELTA_PAGE_MAX)
+                .map(|page| {
+                    let entries = page
+                        .changed
+                        .into_iter()
+                        .filter_map(|hash| registry.get(&hash))
+                        .collect::<Vec<_>>();
+                    let removed = page
+                        .removed
+                        .into_iter()
+                        .filter(|hash| registry.get(hash).is_none())
+                        .collect::<Vec<_>>();
+                    (
+                        page.through_revision,
+                        Arc::new(ChunkedVec::from_vec(entries)),
+                        removed,
+                    )
+                })
         } else {
             None
         };

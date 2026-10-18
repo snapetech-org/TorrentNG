@@ -5,8 +5,8 @@ pub mod torrent;
 
 pub use error::SessionError;
 pub use registry::{
-    RegistryChange, SessionRegistry, SessionRegistryEntryMut, SessionRegistryStats,
-    SessionSnapshot, MAX_BANNED_PEERS,
+    RegistryChange, RegistryDeltaPage, SessionRegistry, SessionRegistryEntryMut,
+    SessionRegistryStats, SessionSnapshot, MAX_BANNED_PEERS, REGISTRY_DELTA_PAGE_MAX,
 };
 pub use state::TorrentState;
 pub use torrent::{DormantTorrent, TorrentEntry, TorrentHandle, TransferStats};

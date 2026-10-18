@@ -7030,18 +7030,16 @@ async fn torrent_delta_for_stream(stream_state: &mut EventStreamState) -> Torren
 
         let (current_revision, torrents, removed) = {
             let registry = stream_state.state.registry.read().await;
-            let current_revision = registry.revision();
-            let Some(changes) = registry.changes_since(last_revision) else {
+            let Some(page) = registry.delta_since_page(last_revision, SSE_DELTA_MAX_ENTRIES) else {
                 stream_state.state.api_metrics.record_sse_resync();
                 stream_state.registry_revision = None;
                 continue;
             };
-            if changes.len() > SSE_DELTA_MAX_ENTRIES {
-                stream_state.state.api_metrics.record_sse_resync();
-                stream_state.registry_revision = None;
-                continue;
-            }
-            if changes.is_empty() {
+            if page.changed.is_empty() && page.removed.is_empty() {
+                stream_state.registry_revision = Some(page.through_revision);
+                if page.has_more {
+                    continue;
+                }
                 return TorrentDelta {
                     torrents: Vec::new(),
                     removed: Vec::new(),
@@ -7050,31 +7048,22 @@ async fn torrent_delta_for_stream(stream_state: &mut EventStreamState) -> Torren
                 };
             }
 
-            // Resolve the final entry state while holding the same read lock
-            // used to obtain the journal. This keeps the payload and cursor
-            // on one coherent registry generation; a later mutation is left
-            // for the next delta instead of being mislabeled as this one.
-            let mut changed = BTreeSet::new();
-            let mut removed = BTreeSet::new();
-            for change in changes {
-                if change.removed {
-                    changed.remove(&change.info_hash);
-                    removed.insert(change.info_hash);
-                } else {
-                    removed.remove(&change.info_hash);
-                    changed.insert(change.info_hash);
-                }
-            }
-
-            let torrents = changed
+            // Resolve rows while holding the same read lock used for the
+            // journal page. The cursor advances only through this page; if a
+            // selected row changed after that cursor, a later page may
+            // repeat its latest projection, which is safe for this upsert
+            // stream.
+            let torrents = page
+                .changed
                 .into_iter()
                 .filter_map(|hash| registry.get(&hash).map(|entry| torrent_summary(&entry)))
                 .collect::<Vec<_>>();
-            let removed = removed
+            let removed = page
+                .removed
                 .into_iter()
                 .filter(|hash| registry.get(hash).is_none())
                 .collect::<Vec<_>>();
-            (current_revision, torrents, removed)
+            (page.through_revision, torrents, removed)
         };
         stream_state.registry_revision = Some(current_revision);
         return TorrentDelta {

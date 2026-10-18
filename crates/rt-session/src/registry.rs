@@ -117,6 +117,9 @@ type SharedEntry = Arc<TorrentEntry>;
 type SnapshotCache = Mutex<Option<(u64, Arc<Vec<SharedEntry>>)>>;
 
 const CHANGE_LOG_CAPACITY: usize = 16_384;
+/// Hard upper bound for any one delta-page projection, even when a caller
+/// accidentally asks for an unbounded or oversized page.
+pub const REGISTRY_DELTA_PAGE_MAX: usize = 1_024;
 pub const MAX_BANNED_PEERS: usize = 65_536;
 
 /// Number of independent revision/cache shards `SessionRegistry` partitions
@@ -170,6 +173,21 @@ pub struct RegistryChange {
     pub revision: u64,
     pub info_hash: String,
     pub removed: bool,
+}
+
+/// Bounded, coalesced view of one slice of the mutation journal.
+///
+/// `through_revision` is the last journal revision represented by this page.
+/// Consumers can request the next page from that cursor without cloning the
+/// rest of the journal. Repeated changes to one torrent within a page are
+/// folded into either `changed` or `removed`, according to the last change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegistryDeltaPage {
+    pub through_revision: u64,
+    pub current_revision: u64,
+    pub changed: Vec<String>,
+    pub removed: Vec<String>,
+    pub has_more: bool,
 }
 
 /// O(1) aggregate counters for hot API and engine-stat paths. The counters
@@ -933,6 +951,86 @@ impl SessionRegistry {
         )
     }
 
+    /// Return one bounded page of coalesced changes after `revision`.
+    ///
+    /// The journal may contain many updates for a hot torrent. This method
+    /// processes at most `limit` journal records and copies each affected
+    /// infohash once per page, rather than cloning every record and string.
+    /// A stale cursor returns `None` so the caller can rebuild from a
+    /// snapshot. Requests larger than `REGISTRY_DELTA_PAGE_MAX` are capped.
+    pub fn delta_since_page(
+        &self,
+        revision: u64,
+        limit: usize,
+    ) -> Option<RegistryDeltaPage> {
+        let current_revision = self.revision;
+        if revision >= current_revision {
+            return Some(RegistryDeltaPage {
+                through_revision: current_revision,
+                current_revision,
+                changed: Vec::new(),
+                removed: Vec::new(),
+                has_more: false,
+            });
+        }
+        if self
+            .changes
+            .front()
+            .is_none_or(|first| revision.saturating_add(1) < first.revision)
+        {
+            return None;
+        }
+
+        let limit = limit.clamp(1, REGISTRY_DELTA_PAGE_MAX);
+        let mut start = 0usize;
+        let mut end = self.changes.len();
+        while start < end {
+            let middle = start + (end - start) / 2;
+            if self
+                .changes
+                .get(middle)
+                .is_some_and(|change| change.revision <= revision)
+            {
+                start = middle + 1;
+            } else {
+                end = middle;
+            }
+        }
+        if start == self.changes.len() {
+            return None;
+        }
+        let end = start.saturating_add(limit).min(self.changes.len());
+        let mut changed = HashSet::new();
+        let mut removed = HashSet::new();
+        let mut through_revision = revision;
+        for index in start..end {
+            let change = self.changes.get(index)?;
+            let info_hash = change.info_hash.as_str();
+            if change.removed {
+                changed.remove(info_hash);
+                removed.insert(info_hash);
+            } else {
+                removed.remove(info_hash);
+                changed.insert(info_hash);
+            }
+            through_revision = change.revision;
+        }
+
+        let has_more = end < self.changes.len();
+        let mut changed = changed.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        let mut removed = removed.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        changed.sort_unstable();
+        removed.sort_unstable();
+
+        Some(RegistryDeltaPage {
+            through_revision,
+            current_revision,
+            changed,
+            removed,
+            has_more,
+        })
+    }
+
     /// Return a notifier that fires whenever the registry revision advances.
     /// API consumers can wait on this instead of polling the registry once per
     /// second while idle. The notifier is owned by the registry so every
@@ -1196,6 +1294,51 @@ mod tests {
         assert_eq!(changes[0].info_hash, "a");
         assert!(!changes[0].removed);
         assert!(changes[2].removed);
+    }
+
+    #[test]
+    fn delta_pages_are_bounded_and_coalesce_hot_torrent_changes() {
+        let mut reg = SessionRegistry::new();
+        let initial = reg.revision();
+        reg.add(entry("a")).unwrap();
+        reg.get_mut("a").unwrap().name = "renamed once".to_owned();
+        reg.add(entry("b")).unwrap();
+        reg.remove("b").unwrap();
+        reg.get_mut("a").unwrap().name = "renamed twice".to_owned();
+
+        let first = reg.delta_since_page(initial, 2).unwrap();
+        assert_eq!(first.through_revision, initial + 2);
+        assert_eq!(first.current_revision, reg.revision());
+        assert_eq!(first.changed, vec!["a".to_owned()]);
+        assert!(first.removed.is_empty());
+        assert!(first.has_more);
+
+        let second = reg.delta_since_page(first.through_revision, 2).unwrap();
+        assert_eq!(second.through_revision, initial + 4);
+        assert!(second.changed.is_empty());
+        assert_eq!(second.removed, vec!["b".to_owned()]);
+        assert!(second.has_more);
+
+        let third = reg.delta_since_page(second.through_revision, 2).unwrap();
+        assert_eq!(third.through_revision, reg.revision());
+        assert_eq!(third.changed, vec!["a".to_owned()]);
+        assert!(third.removed.is_empty());
+        assert!(!third.has_more);
+    }
+
+    #[test]
+    fn delta_page_caps_oversized_requests() {
+        let mut reg = SessionRegistry::new();
+        let initial = reg.revision();
+        for index in 0..(REGISTRY_DELTA_PAGE_MAX + 1) {
+            reg.add(entry(&format!("{index:040x}"))).unwrap();
+        }
+
+        let page = reg
+            .delta_since_page(initial, usize::MAX)
+            .expect("journal remains inside its retention window");
+        assert_eq!(page.changed.len(), REGISTRY_DELTA_PAGE_MAX);
+        assert!(page.has_more);
     }
 
     #[test]

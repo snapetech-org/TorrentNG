@@ -9,7 +9,9 @@ use tokio::sync::{Mutex, Notify, RwLock};
 
 use rt_api_model::{ApiRuntimeMetrics, ChunkedBitSet, ChunkedVec, IdempotencyStore};
 use rt_engine::{EngineGlobalLimits, EngineHandle, OutboundEgressPolicy};
-use rt_session::{RegistryChange, SessionRegistry, TorrentEntry};
+#[cfg(test)]
+use rt_session::RegistryChange;
+use rt_session::{SessionRegistry, TorrentEntry, REGISTRY_DELTA_PAGE_MAX};
 
 pub type JsonMap = serde_json::Map<String, serde_json::Value>;
 
@@ -540,16 +542,15 @@ impl AppState {
             let incremental = previous
                 .filter(|cached| cached.snapshot.revision < revision)
                 .and_then(|cached| {
-                    registry
-                        .changes_since(cached.snapshot.revision)
-                        .map(|changes| (cached.snapshot, changes))
+                    changed_hashes_since(&registry, cached.snapshot.revision)
+                        .map(|changed_hashes| (cached.snapshot, changed_hashes))
                 });
-            if let Some((previous, changes)) = incremental {
+            if let Some((previous, changed_hashes)) = incremental {
                 (
                     revision,
                     {
                         let (entries, filters) =
-                            apply_snapshot_changes(&registry, &previous, &changes);
+                            apply_snapshot_hashes(&registry, &previous, &changed_hashes);
                         (Arc::new(entries), Arc::new(filters))
                     },
                     true,
@@ -587,6 +588,7 @@ impl AppState {
     }
 }
 
+#[cfg(test)]
 fn apply_snapshot_changes(
     registry: &SessionRegistry,
     previous: &TorrentSnapshot,
@@ -596,9 +598,31 @@ fn apply_snapshot_changes(
         .iter()
         .map(|change| change.info_hash.clone())
         .collect::<HashSet<_>>();
+    apply_snapshot_hashes(registry, previous, &changed_hashes)
+}
+
+fn changed_hashes_since(registry: &SessionRegistry, revision: u64) -> Option<HashSet<String>> {
+    let mut cursor = revision;
+    let mut changed_hashes = HashSet::new();
+    loop {
+        let page = registry.delta_since_page(cursor, REGISTRY_DELTA_PAGE_MAX)?;
+        changed_hashes.extend(page.changed);
+        changed_hashes.extend(page.removed);
+        cursor = page.through_revision;
+        if !page.has_more {
+            return (cursor == page.current_revision).then_some(changed_hashes);
+        }
+    }
+}
+
+fn apply_snapshot_hashes(
+    registry: &SessionRegistry,
+    previous: &TorrentSnapshot,
+    changed_hashes: &HashSet<String>,
+) -> (ChunkedVec<TorrentEntry>, TorrentFilterIndex) {
     let mut replacements = Vec::new();
     let mut structural_change = false;
-    for info_hash in &changed_hashes {
+    for info_hash in changed_hashes {
         match registry.get(info_hash) {
             Some(entry) => {
                 if let Some(index) = previous.filters.by_hash.get(info_hash).copied() {
