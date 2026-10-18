@@ -2841,11 +2841,22 @@ impl TorrentTask {
             pex_enabled,
             event_retention,
         };
-        if let Err(error) = task.apply_torrent_limits_from_db().await {
-            // Starting with an unbounded picker after a persisted-policy
-            // read failed is unsafe: a damaged or unavailable database must
-            // not silently widen the set of pieces we may write.
-            task.fail_closed_runtime_policy("restore_runtime_policy", &error);
+        match task.apply_torrent_limits_from_db().await {
+            Ok(()) => {
+                // The task has not started any peer loops yet. Recreate the
+                // placeholder unlimited bucket from the persisted startup
+                // limit so a new torrent receives the ordinary initial
+                // burst; subsequent runtime limit changes preserve credit.
+                task.torrent_upload = Arc::new(SharedRateLimiter::new(
+                    task.torrent_upload_limit_bytes_per_sec,
+                ));
+            }
+            Err(error) => {
+                // Starting with an unbounded picker after a persisted-policy
+                // read failed is unsafe: a damaged or unavailable database
+                // must not silently widen the set of pieces we may write.
+                task.fail_closed_runtime_policy("restore_runtime_policy", &error);
+            }
         }
         task
     }
@@ -13694,6 +13705,25 @@ mod tests {
             raw: Vec::new(),
         };
         let db = Arc::new(Mutex::new(conn));
+        rt_db::upsert_torrent_limits(
+            &db.lock().unwrap(),
+            &rt_db::TorrentLimitRow {
+                info_hash: hex::encode(meta.info_hash),
+                download_limit: None,
+                upload_limit: Some(200_000),
+                max_connections: None,
+                seed_ratio_limit: None,
+                seed_idle_limit: None,
+                sequential_download: false,
+                sequential_download_from_piece: None,
+                first_last_piece_prio: false,
+                force_start: false,
+                super_seeding: false,
+                auto_tmm: false,
+                auto_management: false,
+            },
+        )
+        .unwrap();
         let (_cmd_tx, cmd_rx) = mpsc::channel(1);
         let mut task = TorrentTask::new(
             meta,
@@ -13720,7 +13750,7 @@ mod tests {
         )
         .await;
 
-        task.set_torrent_upload_limit(Some(200_000));
+        assert_eq!(task.torrent_upload.available_credit_bytes(), Some(200_000));
         let permits = Arc::new(tokio::sync::Semaphore::new(2));
         let mut contexts = Vec::new();
         let mut _rxs = Vec::new();
