@@ -7,14 +7,15 @@
 //! actor separate prevents a v2 compatibility path from silently changing v1
 //! semantics.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
-use futures::StreamExt;
+use futures::future::BoxFuture;
+use futures::{FutureExt, StreamExt};
 use rt_hash::{merkle_layers, merkle_root, piece_layer_hash, BlockHash, V2_BLOCK_SIZE};
 use rt_metainfo::{TorrentFileV2, TorrentMetaV2};
 use rt_metrics::{MemoryClass, MemoryLease, ResourceGovernor};
@@ -47,7 +48,7 @@ use tracing::{debug, warn};
 use crate::crash_safety::CrashSafetyRuntime;
 use crate::db_worker::DbExecutor;
 use crate::egress_policy::OutboundEgressPolicy;
-use crate::network_budget::GlobalNetworkBudget;
+use crate::network_budget::{GlobalNetworkBudget, RateLimitCancellation};
 use crate::torrent_task::{
     outgoing_transport_policy_configured, outgoing_transport_policy_for_peer,
     prepare_tracker_peer_cache, private_peer_source_allowed, restore_tracker_state_from_rows,
@@ -69,6 +70,9 @@ const V2_PEER_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 const V2_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(60);
 const V2_CHOKE_INTERVAL: Duration = Duration::from_secs(10);
 const V2_REQUEST_WINDOW: usize = 32;
+const V2_MAX_PENDING_UPLOAD_READS: usize = 16;
+const V2_MAX_QUEUED_UPLOAD_REQUESTS: usize = 128;
+const V2_MAX_UPLOAD_WORK: usize = V2_MAX_PENDING_UPLOAD_READS + V2_MAX_QUEUED_UPLOAD_REQUESTS;
 // `TorrentMetaV2` accepts every piece length representable by the peer-wire
 // u32 coordinates. The old 65,536-block guard silently rejected valid pieces
 // above about 1 GiB. Keep a protocol-derived bound instead; the assembly byte
@@ -448,6 +452,7 @@ struct V2PeerContext {
     storage: MountScheduler,
     resources: ResourceGovernor,
     network_budget: GlobalNetworkBudget,
+    upload_control: RateLimitCancellation,
     local_have: Arc<RwLock<Arc<V2Bitmap>>>,
     have_updates: watch::Sender<()>,
     upload_unchoked: watch::Receiver<Arc<HashSet<PeerId>>>,
@@ -555,6 +560,40 @@ struct V2OutstandingRequest {
     /// Response capacity is reserved before the request reaches the wire and
     /// follows its coordinate until Piece, Reject, Choke, or disconnect.
     _memory_lease: Option<MemoryLease>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct V2UploadRequest {
+    piece: u32,
+    begin: u32,
+    length: u32,
+}
+
+struct V2LeasedUploadBlock {
+    data: Bytes,
+    _lease: MemoryLease,
+}
+
+enum V2UploadOutcome {
+    Ready(V2LeasedUploadBlock),
+    RateInterrupted,
+    Rejected,
+    Failed(anyhow::Error),
+}
+
+struct V2UploadCompletion {
+    request: V2UploadRequest,
+    outcome: V2UploadOutcome,
+}
+
+type V2UploadReadTask = BoxFuture<'static, V2UploadCompletion>;
+
+struct V2UploadControlGuard(RateLimitCancellation);
+
+impl Drop for V2UploadControlGuard {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
 }
 
 impl V2PieceAssembly {
@@ -2467,6 +2506,7 @@ impl V2TorrentTask {
             storage: self.storage.clone(),
             resources: self.resources.clone(),
             network_budget: self.network_budget.clone(),
+            upload_control: RateLimitCancellation::default(),
             local_have: Arc::clone(&self.local_have),
             have_updates: self.have_updates.clone(),
             upload_unchoked: self.upload_unchoked.subscribe(),
@@ -3216,6 +3256,7 @@ async fn run_v2_peer_protocol(
     remote_supports_extension: bool,
     remote_supports_fast: bool,
 ) -> anyhow::Result<()> {
+    let _upload_control_guard = V2UploadControlGuard(context.upload_control.clone());
     if remote_supports_extension {
         framed
             .send(Message::Extended {
@@ -3244,6 +3285,8 @@ async fn run_v2_peer_protocol(
 
     let mut outstanding = HashMap::<(u32, u32), V2OutstandingRequest>::new();
     let mut assemblies = HashMap::<u32, V2PieceAssembly>::new();
+    let mut upload_reads = futures::stream::FuturesUnordered::<V2UploadReadTask>::new();
+    let mut pending_upload_requests = VecDeque::new();
     let mut remote_availability_known = false;
     let mut local_interested = false;
     update_v2_interest(
@@ -3264,12 +3307,32 @@ async fn run_v2_peer_protocol(
                 if changed.is_err() {
                     return Ok(());
                 }
+                context.upload_control.cancel();
                 let selected = {
                     let current = upload_unchoked.borrow();
                     v2_slot_selected(&**current, context.choker_id)
                 };
                 if let Some(message) = set_v2_upload_unchoked(&state, selected) {
                     framed.send(message).await?;
+                }
+                if selected {
+                    start_v2_upload_reads(
+                        &mut upload_reads,
+                        &mut pending_upload_requests,
+                        &context,
+                        &state,
+                    );
+                } else {
+                    while let Some(request) = pending_upload_requests.pop_front() {
+                        reject_v2_request(
+                            &mut framed,
+                            remote_supports_fast,
+                            request.piece,
+                            request.begin,
+                            request.length,
+                        )
+                        .await?;
+                    }
                 }
             }
             changed = have_updates.changed() => {
@@ -3408,18 +3471,66 @@ async fn run_v2_peer_protocol(
                         }
                     }
                     Message::Request { piece, begin, length } => {
-                        serve_v2_request(
-                            &context,
-                            &mut framed,
-                            &state,
-                            remote_supports_fast,
+                        let request = V2UploadRequest {
                             piece,
                             begin,
                             length,
-                        )
-                        .await?;
+                        };
+                        if !v2_upload_can_serve(&context, &state) {
+                            reject_v2_request(
+                                &mut framed,
+                                remote_supports_fast,
+                                piece,
+                                begin,
+                                length,
+                            )
+                            .await?;
+                        } else if pending_upload_requests.len() + upload_reads.len()
+                            >= V2_MAX_UPLOAD_WORK
+                        {
+                            if remote_supports_fast {
+                                reject_v2_request(
+                                    &mut framed,
+                                    true,
+                                    piece,
+                                    begin,
+                                    length,
+                                )
+                                .await?;
+                            } else {
+                                anyhow::bail!("v2 peer exceeded the bounded upload queue");
+                            }
+                        } else {
+                            pending_upload_requests.push_back(request);
+                            start_v2_upload_reads(
+                                &mut upload_reads,
+                                &mut pending_upload_requests,
+                                &context,
+                                &state,
+                            );
+                        }
                     }
-                    Message::Cancel { .. } => {}
+                    Message::Cancel { piece, begin, length } => {
+                        let request = V2UploadRequest {
+                            piece,
+                            begin,
+                            length,
+                        };
+                        if let Some(index) = pending_upload_requests
+                            .iter()
+                            .position(|pending| *pending == request)
+                        {
+                            let _ = pending_upload_requests.remove(index);
+                            reject_v2_request(
+                                &mut framed,
+                                remote_supports_fast,
+                                piece,
+                                begin,
+                                length,
+                            )
+                            .await?;
+                        }
+                    }
                     Message::Reject { piece, begin, length } => {
                         release_v2_rejected_request(
                             &mut outstanding,
@@ -3484,6 +3595,108 @@ async fn run_v2_peer_protocol(
                     &mut assemblies,
                 )
                 .await?;
+            }
+            upload_result = upload_reads.next(), if !upload_reads.is_empty() => {
+                let Some(completion) = upload_result else {
+                    continue;
+                };
+                let request = completion.request;
+                match completion.outcome {
+                    V2UploadOutcome::Ready(block) if v2_upload_can_serve(&context, &state) => {
+                        let V2LeasedUploadBlock { data, _lease } = block;
+                        let bytes = data.len() as u64;
+                        framed
+                            .send(Message::Piece {
+                                piece: request.piece,
+                                begin: request.begin,
+                                data,
+                            })
+                            .await?;
+                        drop(_lease);
+                        if let Ok(mut peer) = state.lock() {
+                            peer.record_transfer(true, bytes);
+                        }
+                        let _ = context
+                            .events
+                            .send(V2PeerEvent::Uploaded {
+                                peer: context.peer,
+                                bytes,
+                            })
+                            .await;
+                    }
+                    V2UploadOutcome::Ready(_) | V2UploadOutcome::Rejected => {
+                        reject_v2_request(
+                            &mut framed,
+                            remote_supports_fast,
+                            request.piece,
+                            request.begin,
+                            request.length,
+                        )
+                        .await?;
+                    }
+                    V2UploadOutcome::RateInterrupted => {
+                        if v2_upload_can_serve(&context, &state)
+                            && pending_upload_requests.len() + upload_reads.len()
+                                < V2_MAX_UPLOAD_WORK
+                        {
+                            pending_upload_requests.push_front(request);
+                        } else if v2_upload_can_serve(&context, &state) {
+                            // The active job was just removed, so this can
+                            // only occur if the total-work invariant drifted.
+                            // End a legacy connection rather than silently
+                            // losing its request; Fast peers get the defined
+                            // overload response.
+                            if remote_supports_fast {
+                                reject_v2_request(
+                                    &mut framed,
+                                    true,
+                                    request.piece,
+                                    request.begin,
+                                    request.length,
+                                )
+                                .await?;
+                            } else {
+                                anyhow::bail!("v2 upload work accounting exceeded its bound");
+                            }
+                        } else {
+                            reject_v2_request(
+                                &mut framed,
+                                remote_supports_fast,
+                                request.piece,
+                                request.begin,
+                                request.length,
+                            )
+                            .await?;
+                        }
+                    }
+                    V2UploadOutcome::Failed(error) => {
+                        warn!(
+                            component = "torrent_v2",
+                            operation = "read_upload_block",
+                            peer = %addr,
+                            piece = request.piece,
+                            begin = request.begin,
+                            length = request.length,
+                            result = "error",
+                            error = %error,
+                            "failed to read pure-v2 upload block"
+                        );
+                        reject_v2_request(
+                            &mut framed,
+                            remote_supports_fast,
+                            request.piece,
+                            request.begin,
+                            request.length,
+                        )
+                        .await?;
+                    }
+                }
+                start_v2_upload_reads(
+                    &mut upload_reads,
+                    &mut pending_upload_requests,
+                    &context,
+                    &state,
+                );
             }
         }
     }
@@ -3825,118 +4038,110 @@ async fn handle_v2_piece(
     Ok(())
 }
 
-async fn serve_v2_request(
+fn v2_upload_can_serve(context: &V2PeerContext, state: &Arc<Mutex<V2PeerState>>) -> bool {
+    state
+        .lock()
+        .map(|peer| !peer.upload_choked)
+        .unwrap_or(false)
+        && v2_upload_slot_selected(context)
+}
+
+fn start_v2_upload_reads(
+    upload_reads: &mut futures::stream::FuturesUnordered<V2UploadReadTask>,
+    pending: &mut VecDeque<V2UploadRequest>,
     context: &V2PeerContext,
-    framed: &mut PeerIo,
     state: &Arc<Mutex<V2PeerState>>,
-    remote_supports_fast: bool,
-    piece: u32,
-    begin: u32,
-    length: u32,
-) -> anyhow::Result<()> {
-    let block_extent = BlockExtent::new(piece, begin, length);
-    if PieceGeometry::validate_served_block(&context.piece_map, block_extent).is_err() {
-        reject_v2_request(framed, remote_supports_fast, piece, begin, length).await?;
-        return Ok(());
-    }
-    let region = match context.piece_map.validate_request(piece, begin, length) {
-        Ok(region) => region,
-        Err(_) => {
-            reject_v2_request(framed, remote_supports_fast, piece, begin, length).await?;
-            return Ok(());
-        }
-    };
-    if state.lock().map(|peer| peer.upload_choked).unwrap_or(true)
-        || !v2_upload_slot_selected(context)
+) {
+    while upload_reads.len() < V2_MAX_PENDING_UPLOAD_READS
+        && !pending.is_empty()
+        && v2_upload_can_serve(context, state)
     {
-        reject_v2_request(framed, remote_supports_fast, piece, begin, length).await?;
-        return Ok(());
-    }
-    if region.pad {
-        // BEP 47 permits an implementation to omit padding files locally,
-        // but it still has to answer a legacy peer that requests their
-        // synthetic zero bytes.
-        let Some(_upload_memory_lease) = reserve_v2_upload_bytes(&context.resources, region.length)
-        else {
-            reject_v2_request(framed, remote_supports_fast, piece, begin, length).await?;
-            return Ok(());
+        let Some(request) = pending.pop_front() else {
+            break;
         };
-        let data = Bytes::from(vec![0u8; region.length as usize]);
-        context
-            .network_budget
-            .upload()
-            .acquire(u64::from(region.length))
-            .await;
-        if !v2_upload_slot_selected(context) {
-            reject_v2_request(framed, remote_supports_fast, piece, begin, length).await?;
-            return Ok(());
-        }
-        framed.send(Message::Piece { piece, begin, data }).await?;
-        return Ok(());
+        let context = context.clone();
+        let state = Arc::clone(state);
+        upload_reads.push(
+            async move {
+                let outcome = read_v2_upload_block(&context, &state, request).await;
+                V2UploadCompletion { request, outcome }
+            }
+            .boxed(),
+        );
     }
-    if !context.local_have.read().await.get(piece as usize) {
-        reject_v2_request(framed, remote_supports_fast, piece, begin, length).await?;
-        return Ok(());
+}
+
+async fn read_v2_upload_block(
+    context: &V2PeerContext,
+    state: &Arc<Mutex<V2PeerState>>,
+    request: V2UploadRequest,
+) -> V2UploadOutcome {
+    let block_extent = BlockExtent::new(request.piece, request.begin, request.length);
+    if PieceGeometry::validate_served_block(&context.piece_map, block_extent).is_err() {
+        return V2UploadOutcome::Rejected;
     }
-    let Some(_upload_memory_lease) = reserve_v2_upload_bytes(&context.resources, region.length)
-    else {
-        reject_v2_request(framed, remote_supports_fast, piece, begin, length).await?;
-        return Ok(());
+    let region =
+        match context
+            .piece_map
+            .validate_request(request.piece, request.begin, request.length)
+        {
+            Ok(region) => region,
+            Err(_) => return V2UploadOutcome::Rejected,
+        };
+    if !v2_upload_can_serve(context, state) {
+        return V2UploadOutcome::Rejected;
+    }
+    if !region.pad && !context.local_have.read().await.get(request.piece as usize) {
+        return V2UploadOutcome::Rejected;
+    }
+    let Some(lease) = reserve_v2_upload_bytes(&context.resources, region.length) else {
+        return V2UploadOutcome::Rejected;
     };
-    let path = region.path.resolve(&context.save_root);
-    let data = match scheduled_read_owned(
-        &context.storage,
-        IoClass::PeerRead,
-        &path,
-        region.file_offset,
-        region.length as usize,
-    )
-    .await
-    {
-        Ok(data) => data.into_bytes(),
-        Err(error) => {
-            debug!(
-                component = "torrent_v2",
-                operation = "read_upload_block",
-                peer = %context.peer,
-                piece,
-                begin,
-                length,
-                result = "rejected",
-                error = %error,
-                "unable to read requested pure-v2 block"
-            );
-            reject_v2_request(framed, remote_supports_fast, piece, begin, length).await?;
-            return Ok(());
+
+    let data = if region.pad {
+        // BEP 47 padding is synthetic but still consumes a bounded upload
+        // buffer until the serialized peer writer finishes with this block.
+        Bytes::from(vec![0u8; region.length as usize])
+    } else {
+        let path = region.path.resolve(&context.save_root);
+        match scheduled_read_owned(
+            &context.storage,
+            IoClass::PeerRead,
+            &path,
+            region.file_offset,
+            region.length as usize,
+        )
+        .await
+        {
+            Ok(data) => data.into_bytes(),
+            Err(error) => return V2UploadOutcome::Failed(error.into()),
         }
     };
-    context
-        .network_budget
-        .upload()
-        .acquire(u64::from(region.length))
-        .await;
-    if !v2_upload_slot_selected(context) {
-        reject_v2_request(framed, remote_supports_fast, piece, begin, length).await?;
-        return Ok(());
+
+    // Capture before the final slot check: a choke that races between the
+    // check and the wait changes this generation and wakes the waiter.
+    let control_generation = context.upload_control.generation();
+    if !v2_upload_can_serve(context, state) {
+        return V2UploadOutcome::Rejected;
     }
-    framed
-        .send(Message::Piece {
-            piece,
-            begin,
-            data: data.clone(),
-        })
-        .await?;
-    if let Ok(mut peer) = state.lock() {
-        peer.record_transfer(true, u64::from(region.length));
-    }
-    let _ = context
-        .events
-        .send(V2PeerEvent::Uploaded {
-            peer: context.peer,
-            bytes: u64::from(region.length),
-        })
+    let upload_budget = context.network_budget.upload();
+    let admitted = upload_budget
+        .acquire_or_cancelled(
+            u64::from(region.length),
+            &context.upload_control,
+            control_generation,
+        )
         .await;
-    Ok(())
+    if !admitted {
+        return V2UploadOutcome::RateInterrupted;
+    }
+    if !v2_upload_can_serve(context, state) {
+        return V2UploadOutcome::Rejected;
+    }
+    V2UploadOutcome::Ready(V2LeasedUploadBlock {
+        data,
+        _lease: lease,
+    })
 }
 
 async fn reject_v2_request(
@@ -4386,6 +4591,143 @@ mod tests {
 
         assert!(v2_slot_selected(&selected, prior_connection));
         assert!(!v2_slot_selected(&selected, replacement_connection));
+    }
+
+    #[tokio::test]
+    async fn v2_peer_reads_control_messages_while_upload_waits_for_rate_budget() {
+        use tokio::net::TcpListener;
+
+        let temp = tempfile::tempdir().unwrap();
+        let file_name = rt_path::SafeRelPath::from_name("payload.bin", false).unwrap();
+        std::fs::write(
+            file_name.resolve(temp.path()),
+            vec![7u8; rt_peer_wire::message::MAX_BLOCK_SIZE as usize],
+        )
+        .unwrap();
+        let piece_map = Arc::new(
+            V2PieceMap::new(
+                u64::from(rt_peer_wire::message::MAX_BLOCK_SIZE),
+                vec![V2FileSpan {
+                    file_index: 0,
+                    path: file_name.clone(),
+                    piece_offset: 0,
+                    length: u64::from(rt_peer_wire::message::MAX_BLOCK_SIZE),
+                    pad: false,
+                }],
+            )
+            .unwrap(),
+        );
+        let meta = Arc::new(TorrentMetaV2 {
+            info_hash_v2: [9; 32],
+            announce: None,
+            announce_list: Vec::new(),
+            webseeds: Vec::new(),
+            comment: None,
+            created_by: None,
+            creation_date: None,
+            name: "upload-progress".to_owned(),
+            piece_length: u64::from(rt_peer_wire::message::MAX_BLOCK_SIZE),
+            files: vec![TorrentFileV2 {
+                index: 0,
+                length: u64::from(rt_peer_wire::message::MAX_BLOCK_SIZE),
+                path: file_name,
+                offset: 0,
+                piece_offset: 0,
+                pieces_root: None,
+                pad: false,
+            }],
+            piece_layers: HashMap::new(),
+            private: false,
+            raw: Vec::new(),
+        });
+        let choker_id = PeerId::new();
+        let (_slot_tx, slot_rx) = watch::channel(Arc::new(HashSet::from([choker_id])));
+        let (have_updates, _) = watch::channel(());
+        let resources = ResourceGovernor::new(Default::default());
+        let storage = MountScheduler::new_for_path(
+            StorageRootId::new(),
+            temp.path(),
+            &SchedulerConfig {
+                profile: StorageProfile::Unknown,
+                resources: Some(resources.clone()),
+                ..Default::default()
+            },
+        );
+        let mut local_have = V2Bitmap::new(1);
+        local_have.set(0, true);
+        let (events, mut event_rx) = mpsc::channel(8);
+        let context = V2PeerContext {
+            info_hash: [9; 20],
+            peer: "127.0.0.1:6881".parse().unwrap(),
+            choker_id,
+            meta,
+            piece_map,
+            save_root: temp.path().to_path_buf(),
+            storage: storage.clone(),
+            resources,
+            network_budget: GlobalNetworkBudget::new(8, None, Some(1)),
+            upload_control: RateLimitCancellation::default(),
+            local_have: Arc::new(RwLock::new(Arc::new(local_have))),
+            have_updates,
+            upload_unchoked: slot_rx,
+            file_policy: Arc::new(HashMap::new()),
+            assembly_cap_bytes: 1024 * 1024,
+            events,
+            proof_cache: Arc::new(V2ProofCache::default()),
+        };
+        let upload_budget = context.network_budget.upload();
+        upload_budget.acquire(64 * 1024).await;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = listener.local_addr().unwrap();
+        let remote = TcpStream::connect(peer_addr).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let state = Arc::new(Mutex::new(V2PeerState::new(1)));
+        state.lock().unwrap().upload_choked = false;
+        let peer = tokio::spawn(run_v2_peer_protocol(
+            context,
+            peer_addr,
+            PeerIo::Tcp(Framed::new(server, PeerCodec::default())),
+            state,
+            false,
+            false,
+        ));
+        let mut remote = Framed::new(remote, PeerCodec::default());
+        assert!(matches!(
+            remote.next().await.unwrap().unwrap(),
+            Message::Bitfield(_)
+        ));
+        remote
+            .send(Message::Request {
+                piece: 0,
+                begin: 0,
+                length: rt_peer_wire::message::MAX_BLOCK_SIZE,
+            })
+            .await
+            .unwrap();
+
+        timeout(Duration::from_secs(2), async {
+            while storage.stats().backend_read_ops_by_class[IoClass::PeerRead as usize] == 0 {
+                tokio::task::yield_now().await;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        })
+        .await
+        .expect("v2 upload storage read did not complete");
+        remote.send(Message::Interested).await.unwrap();
+        assert!(matches!(
+            timeout(Duration::from_secs(1), event_rx.recv())
+                .await
+                .expect("v2 peer loop stalled behind upload rate admission"),
+            Some(V2PeerEvent::InterestChanged)
+        ));
+
+        drop(remote);
+        assert!(timeout(Duration::from_secs(1), peer)
+            .await
+            .expect("v2 peer loop did not observe socket shutdown")
+            .unwrap()
+            .is_ok());
     }
 
     #[test]

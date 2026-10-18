@@ -1787,6 +1787,9 @@ struct UploadReadContext {
     piece_map: Arc<PieceMap>,
     storage: MountScheduler,
     resources: ResourceGovernor,
+    torrent_upload: Arc<SharedRateLimiter>,
+    global_upload: Arc<SharedRateLimiter>,
+    upload_control: RateLimitCancellation,
 }
 
 struct LeasedUploadBlock {
@@ -1801,7 +1804,7 @@ struct UploadRequest {
     length: u32,
 }
 
-type UploadReadResult = (UploadRequest, anyhow::Result<LeasedUploadBlock>);
+type UploadReadResult = (UploadRequest, anyhow::Result<LeasedUploadBlock>, bool);
 
 /// Own the join handles for detached upload reads and abort them if the peer
 /// loop is cancelled. Dropping a `JoinHandle` detaches its child task, so a
@@ -7976,7 +7979,7 @@ async fn run_peer_loop(
                 let Some(upload_result) = upload_result else {
                     continue;
                 };
-                let (request, result) = match upload_result {
+                let (request, result, rate_interrupted) = match upload_result {
                     Ok(result) => result,
                     Err(error) => {
                         warn!(
@@ -8000,41 +8003,20 @@ async fn run_peer_loop(
                     }
                 };
                 match result {
+                    Ok(_block) if rate_interrupted => {
+                        // Rate admission runs with the bounded read task, so
+                        // a slow limit cannot stop this loop from consuming
+                        // peer input or control messages. If the peer remains
+                        // unchoked, retry valid demand after the control wake;
+                        // otherwise terminate it according to Fast semantics.
+                        if upload_choked {
+                            reject_upload_request(&mut peer_io, &upload, request).await?;
+                        } else {
+                            pending_upload_requests.push_front(request);
+                        }
+                    }
                     Ok(block) if !upload_choked => {
                         let bytes = block.data.len() as u64;
-                        let control_generation = upload.upload_control.generation();
-                        let budget_available = upload
-                            .torrent_upload
-                            .acquire_or_cancelled(bytes, &upload.upload_control, control_generation)
-                            .await
-                            && upload
-                                .global_upload
-                                .acquire_or_cancelled(
-                                    bytes,
-                                    &upload.upload_control,
-                                    control_generation,
-                                )
-                                .await
-                            && upload.upload_control.generation() == control_generation;
-                        if !budget_available {
-                            // The rate wait was interrupted by a control
-                            // change. If we are still unchoked this is valid
-                            // demand (for example a limit update): serve it
-                            // next instead of dropping it. Otherwise it is
-                            // rejected like any other discarded request.
-                            if upload_choked {
-                                reject_upload_request(&mut peer_io, &upload, request).await?;
-                            } else {
-                                pending_upload_requests.push_front(request);
-                            }
-                            start_upload_reads(
-                                &mut upload_reads,
-                                &mut pending_upload_requests,
-                                &upload,
-                                upload_choked,
-                            );
-                            continue;
-                        }
                         peer_io
                             .send(Message::Piece {
                                 piece: request.piece,
@@ -8324,6 +8306,9 @@ fn start_upload_reads(
         piece_map: upload.piece_map.clone(),
         storage: upload.storage.clone(),
         resources: upload.resources.clone(),
+        torrent_upload: Arc::clone(&upload.torrent_upload),
+        global_upload: Arc::clone(&upload.global_upload),
+        upload_control: upload.upload_control.clone(),
     };
     while upload_reads.len() < MAX_PENDING_UPLOAD_READS {
         let Some(request) = pending_upload_requests.pop_front() else {
@@ -8355,7 +8340,32 @@ fn start_upload_reads(
                     PEER_UPLOAD_READ_TIMEOUT.as_secs()
                 )),
             };
-            (request, result)
+            let (result, rate_interrupted) = match result {
+                Ok(block) => {
+                    let bytes = block.data.len() as u64;
+                    let control_generation = read_context_for_task.upload_control.generation();
+                    let admitted = read_context_for_task
+                        .torrent_upload
+                        .acquire_or_cancelled(
+                            bytes,
+                            &read_context_for_task.upload_control,
+                            control_generation,
+                        )
+                        .await
+                        && read_context_for_task
+                            .global_upload
+                            .acquire_or_cancelled(
+                                bytes,
+                                &read_context_for_task.upload_control,
+                                control_generation,
+                            )
+                            .await
+                        && read_context_for_task.upload_control.generation() == control_generation;
+                    (Ok(block), !admitted)
+                }
+                Err(error) => (Err(error), false),
+            };
+            (request, result, rate_interrupted)
         }));
     }
 }
@@ -13321,6 +13331,9 @@ mod tests {
             piece_map: upload.piece_map.clone(),
             storage: upload.storage.clone(),
             resources: upload.resources.clone(),
+            torrent_upload: Arc::clone(&upload.torrent_upload),
+            global_upload: Arc::clone(&upload.global_upload),
+            upload_control: upload.upload_control.clone(),
         };
         let block = read_upload_block(&read_context, 0, 0, 16 * 1024)
             .await
@@ -13369,6 +13382,9 @@ mod tests {
                 },
             ),
             resources: ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default()),
+            torrent_upload: Arc::new(SharedRateLimiter::new(None)),
+            global_upload: GlobalNetworkBudget::unlimited().upload(),
+            upload_control: RateLimitCancellation::default(),
         };
 
         let block = read_upload_block(&upload, 0, 0, 16).await.unwrap();
@@ -13813,6 +13829,119 @@ mod tests {
             peer_event_rx.recv().await,
             Some(PeerEvent::Disconnected { peer, .. }) if peer == peer_addr
         ));
+    }
+
+    #[tokio::test]
+    async fn peer_loop_keeps_reading_while_upload_waits_for_rate_budget() {
+        let temp = tempfile::tempdir().unwrap();
+        let payload = vec![7u8; MAX_BLOCK_SIZE as usize];
+        std::fs::write(temp.path().join("peer.bin"), &payload).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = listener.local_addr().unwrap();
+        let remote = TcpStream::connect(peer_addr).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+
+        let piece_map = Arc::new(
+            PieceMap::new(
+                u64::from(MAX_BLOCK_SIZE),
+                vec![FileSpan {
+                    file_index: 0,
+                    path: rt_path::SafeRelPath::from_name("peer.bin", false).unwrap(),
+                    content_offset: 0,
+                    length: u64::from(MAX_BLOCK_SIZE),
+                }],
+            )
+            .unwrap(),
+        );
+        let slow_upload = Arc::new(SharedRateLimiter::new(Some(1)));
+        slow_upload.acquire(64 * 1024).await;
+        let storage = MountScheduler::new_for_path(
+            StorageRootId::new(),
+            temp.path(),
+            &SchedulerConfig {
+                profile: StorageProfile::Unknown,
+                ..Default::default()
+            },
+        );
+        let control = RateLimitCancellation::default();
+        let shutdown_control = RateLimitCancellation::default();
+        let upload = UploadContext {
+            save_root: temp.path().to_path_buf(),
+            piece_map,
+            storage: storage.clone(),
+            resources: ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default()),
+            have_pieces: PieceBitmap::from_bools(&[true]),
+            _bitmap_memory_lease: None,
+            metadata: None,
+            is_private: false,
+            pex_enabled: true,
+            torrent_upload: Arc::clone(&slow_upload),
+            fast_negotiated: false,
+            upload_control: control.clone(),
+            shutdown_control: shutdown_control.clone(),
+            global_download: GlobalNetworkBudget::unlimited().download(),
+            global_upload: GlobalNetworkBudget::unlimited().upload(),
+        };
+        let (peer_event_tx, mut peer_event_rx) = mpsc::channel(4);
+        let (peer_cmd_tx, peer_cmd_rx) = mpsc::channel(4);
+        let loop_task = tokio::spawn(run_peer_loop(
+            peer_addr,
+            PeerId::new(),
+            PeerIo::Tcp(Framed::new(server, PeerCodec::default())),
+            peer_event_tx,
+            peer_cmd_rx,
+            upload,
+            true,
+        ));
+        let mut remote = Framed::new(remote, PeerCodec::default());
+
+        peer_cmd_tx.send(PeerCommand::Unchoke).await.unwrap();
+        assert!(matches!(
+            remote.next().await.unwrap().unwrap(),
+            Message::Unchoke
+        ));
+        remote
+            .send(Message::Request {
+                piece: 0,
+                begin: 0,
+                length: MAX_BLOCK_SIZE,
+            })
+            .await
+            .unwrap();
+        let peer_read_index = IoClass::PeerRead as usize;
+        timeout(Duration::from_secs(2), async {
+            while storage.stats().backend_read_ops_by_class[peer_read_index] == 0 {
+                tokio::task::yield_now().await;
+            }
+            // Let the completed storage task advance into its deliberately
+            // blocked rate admission before sending the next peer message.
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        })
+        .await
+        .expect("upload storage read did not complete");
+
+        remote.send(Message::Interested).await.unwrap();
+        let event = timeout(Duration::from_secs(1), async {
+            loop {
+                if let Some(event) = peer_event_rx.recv().await {
+                    if matches!(event, PeerEvent::Interested { peer, .. } if peer == peer_addr) {
+                        break event;
+                    }
+                }
+            }
+        })
+        .await
+        .expect("the peer loop stalled behind upload rate admission");
+        assert!(matches!(event, PeerEvent::Interested { .. }));
+
+        control.cancel();
+        shutdown_control.cancel();
+        peer_cmd_tx.send(PeerCommand::Shutdown).await.unwrap();
+        let exit = timeout(Duration::from_secs(1), loop_task)
+            .await
+            .expect("shutdown must interrupt the upload wait")
+            .unwrap();
+        assert!(exit.result.is_ok());
     }
 
     #[tokio::test]

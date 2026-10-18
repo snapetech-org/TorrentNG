@@ -1024,6 +1024,75 @@ v2 currently have actor-local request state.
 - **Artifact or report path:** pending bulk pass.
 - **External evidence still required:** public-client interoperability.
 
+## NET-106 — Independent peer progress during upload work
+
+- **Priority / wave:** P1 / 7
+- **Prerequisites:** NET-103, NET-104, NET-105
+- **Owning component:** v1 and pure-v2 peer protocol loops.
+- **Finding or capability:** keep protocol input and control handling responsive
+  while bounded upload work waits on storage or rate admission.
+- **Status:** `wip`
+
+### Scope
+
+Move peer-requested upload reads and rate-budget waits into bounded per-peer
+work. The owning protocol loop continues to read and process incoming control
+messages while those jobs wait. Socket writes remain serialized by the
+connection owner; actor-side received-block writes, verification, and
+progress persistence remain IO-008.
+
+### Ownership and invariant
+
+- **Current owner:** each protocol loop owns its socket and upload response
+  ordering; bounded worker futures own storage payloads and leases until the
+  loop sends or rejects the response.
+- **Target owner:** NET-110/114 move admission and request obligations into the
+  shared upload service while preserving a single socket writer per peer.
+- **Invariant preserved:** each peer has bounded active upload reads and a
+  bounded pending request queue; storage/rate waits never hold the protocol
+  loop's message-polling future; choke or shutdown wakes rate waiters and
+  invalidates stale responses before they are sent.
+- **Must not:** release a payload lease while storage completion still owns
+  the read, or send a block after its upload slot was revoked.
+
+### Acceptance
+
+- v1 and pure-v2 continue to process incoming interest/control messages while
+  an upload read or rate-budget wait is pending.
+- Active read count and pending request count have explicit per-peer bounds.
+- Choke, slot revocation, cancellation, and shutdown release or reject work
+  according to negotiated Fast semantics.
+- A deterministic regression holds upload rate admission after the storage
+  read completes, sends a control message, and observes that message before
+  the budget is released.
+- NET-114 later adopts the shared upload service without adding a second
+  socket writer or bypassing its ownership accounting.
+
+### Files and compatibility
+
+- **Expected code paths:** `crates/rt-engine/src/torrent_task.rs`,
+  `torrent_task_v2.rs`, and the NET-114 peer adapters.
+- **State or wire compatibility:** no wire-format change; only scheduling
+  between already bounded local jobs changes.
+- **Migration / rollback:** retain the per-actor worker path until shared
+  upload-service parity and rollback coverage exist.
+- **Feature flag or rollout boundary:** none; the shared core remains inactive
+  until NET-114.
+
+### Evidence
+
+- **Regression source added or updated:**
+  `peer_loop_keeps_reading_while_upload_waits_for_rate_budget` and
+  `v2_peer_reads_control_messages_while_upload_waits_for_rate_budget`.
+- **Command or probe to run:** targeted v1/v2 peer-loop regressions during the
+  requested bulk pass.
+- **Expected result:** each loop processes control input while its upload
+  worker remains rate-limited, and shutdown releases all worker-owned state.
+- **Executed on exact revision:** no.
+- **Artifact or report path:** pending bulk pass.
+- **External evidence still required:** mixed-speed peer control latency and
+  bounded resource use under a saturated upload queue.
+
 ## NET-111 — Fair seed and download choking policies
 
 - **Priority / wave:** P1 / 10
