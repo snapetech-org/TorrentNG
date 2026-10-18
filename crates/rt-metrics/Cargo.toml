@@ -12,12 +12,15 @@ rt-api-native = { path = "../rt-api-native" }
 rt-api-qbit = { path = "../rt-api-qbit" }
 rt-db = { path = "../rt-db" }
 rt-fastresume = { path = "../rt-fastresume" }
+rt-config = { path = "../rt-config" }
+rt-engine = { path = "../rt-engine" }
 rt-piece-map = { path = "../rt-piece-map" }
 rt-testkit = { path = "../rt-testkit" }
 rt-tracker = { path = "../rt-tracker" }
 rt-storage = { path = "../rt-storage" }
 rt-path = { path = "../rt-path" }
 bytes.workspace = true
+serde_json.workspace = true
 tempfile.workspace = true
 tokio = { version = "1", features = ["full"] }
 tower.workspace = true

@@ -87,6 +87,21 @@ pub fn transfer_compatibility_matrix() -> Vec<TransferCompatibilityFixture> {
     .collect()
 }
 
+/// Build valid, deterministic one-file v1 metainfo for a dormant production
+/// catalog fixture. The info dictionary contains a unique display name and a
+/// content-derived piece hash, so each result has a distinct real info hash.
+/// The one-byte payload keeps large catalog setup bounded; these fixtures are
+/// for metadata, persistence, restore, and API paths rather than transfer-rate
+/// measurements.
+pub fn production_catalog_metainfo(index: usize) -> Vec<u8> {
+    let name = format!("catalog-{index:010}");
+    let payload_files = [TransferFixtureFile {
+        path: vec!["payload.bin"],
+        bytes: deterministic_payload(index, 1),
+    }];
+    build_torrent_named(TransferProtocol::V1, name.as_bytes(), &payload_files)
+}
+
 #[derive(Debug)]
 struct V1FileEntry {
     path: Vec<String>,
@@ -107,8 +122,16 @@ fn deterministic_payload(file_index: usize, length: usize) -> Vec<u8> {
 }
 
 fn build_torrent(protocol: TransferProtocol, payload_files: &[TransferFixtureFile]) -> Vec<u8> {
+    build_torrent_named(protocol, b"transfer-compatibility", payload_files)
+}
+
+fn build_torrent_named(
+    protocol: TransferProtocol,
+    torrent_name: &[u8],
+    payload_files: &[TransferFixtureFile],
+) -> Vec<u8> {
     let mut info_fields = vec![
-        (b"name".as_slice(), BValue::Bytes(b"transfer-compatibility")),
+        (b"name".as_slice(), BValue::Bytes(torrent_name)),
         (
             b"piece length".as_slice(),
             BValue::Int(TRANSFER_FIXTURE_PIECE_LENGTH as i64),
@@ -425,6 +448,28 @@ mod tests {
                 (protocol, parsed) => panic!("fixture {protocol:?} parsed as {parsed:?}"),
             }
         }
+    }
+
+    #[test]
+    fn production_catalog_metainfo_has_unique_content_derived_identity() {
+        let first = production_catalog_metainfo(0);
+        let repeated = production_catalog_metainfo(0);
+        let second = production_catalog_metainfo(1);
+
+        assert_eq!(first, repeated);
+        let first_meta = parse_torrent(&first).expect("first catalog metainfo parses");
+        let second_meta = parse_torrent(&second).expect("second catalog metainfo parses");
+
+        assert_eq!(first_meta.name(), "catalog-0000000000");
+        assert_eq!(first_meta.v1_info_hash().unwrap().len(), 20);
+        assert_ne!(first_meta.v1_info_hash(), second_meta.v1_info_hash());
+        assert!(first_meta.is_private());
+        let TorrentMeta::V1(first_v1) = first_meta else {
+            panic!("catalog fixture must be v1");
+        };
+        assert_eq!(first_v1.total_length(), 1);
+        assert_eq!(first_v1.files.len(), 1);
+        assert_eq!(first_v1.pieces.len(), 1);
     }
 
     fn piece_map_from_v1(files: &[rt_metainfo::TorrentFileV1], piece_length: u64) -> PieceMap {

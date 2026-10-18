@@ -290,6 +290,34 @@ preparation happen outside the transfer measurement interval.
 Regression sources are in `scripts/test_transfer_rebuild_fixtures.py` and
 belong in the requested bulk pass; none have been run for this slice.
 
+## Live native dormant-catalog observation
+
+`rt-testkit::production_catalog_metainfo()` produces deterministic, private
+v1 metainfo with a unique info hash, one tracker, one file, and a one-byte
+content-derived piece hash. The `rt-metrics` live catalog case adds each record
+through the production engine's raw-metainfo API. That path parses the torrent,
+writes its metadata blob, persists its database row, and registers it paused.
+The harness shuts down that engine, restarts from the database and blobs, then
+measures the native API list route over the restored registry. It records
+fixture-generation, engine-admission, restore, first-list, and cached-list
+timings, drains each API response, and checks the API's reported catalog total.
+First/cached refer to the API snapshot, not filesystem cache state.
+
+The ordinary 1k live case and the opt-in 100k case are regression and
+qualification sources, not results. The 100k case is ignored by default due to
+its resource cost. Run them during the requested bulk scale pass:
+
+```sh
+cargo test -p rt-metrics --test scale live_native_engine_catalog_1k_uses_valid_persisted_metainfo -- --nocapture
+cargo test -p rt-metrics --test scale live_native_engine_catalog_100k_uses_valid_persisted_metainfo -- --ignored --nocapture
+```
+
+The one-byte paused catalog does not measure payload I/O, hashing throughput,
+peer activity, or useful goodput. In-process test measurements are not
+production-daemon RSS or descriptor evidence; PERF-102 and PERF-110 own those
+separate-process trials. Existing direct-registry and synthetic-database cases
+remain useful for lower-level regressions and are explicitly named as proxies.
+
 ## Task-scoped network control
 
 `network_control.py` applies a pinned loss-free egress profile to a `tngt*`

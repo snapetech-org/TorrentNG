@@ -2596,6 +2596,98 @@ unrelated hosts, or replace the matched whole-client trials.
 - **External evidence still required:** repeated network, disk, hash, and RTT
   calibration on the dedicated comparison host.
 
+## PERF-109 — Live production catalog fixtures
+
+- **Priority / wave:** P0 / 5
+- **Prerequisites:** PERF-102, PERF-103, PERF-104, PERF-105, PERF-108
+- **Owning component:** `rt-testkit` catalog metainfo fixtures and
+  `rt-metrics/tests/scale.rs`.
+- **Finding or capability:** current scale proxies populate API registries and
+  databases with fabricated rows. Add a path through valid metainfo, engine
+  persistence, runtime registry, and the native API before describing a
+  catalog observation as production-shaped.
+- **Status:** `wip`
+
+### Scope
+
+Generate deterministic, unique, valid private v1 metainfo with a real
+content-derived piece hash. Populate an isolated engine with paused torrents
+through `EngineHandle::add_torrent_raw_with_labels`, which parses the metainfo,
+writes the torrent blob, persists the row, and registers the runtime entry.
+Shut down the ingest engine cleanly, restart it from the same isolated database
+and metadata blobs, then measure fixture generation, engine admission, restore,
+and first/cached native API list requests while draining the response body.
+Keep smaller direct-registry and synthetic-database cases as explicitly named
+lower-level proxies.
+
+The catalog fixture is metadata and persistence coverage. Its one-byte payload
+does not exercise payload I/O, hashing throughput, swarm activity, or useful
+goodput. The 100k live-engine case is opt-in and remains unrun until the bulk
+scale pass; its source is not capacity evidence.
+
+### Ownership and invariant
+
+- **Current owner:** `production_catalog_metainfo` builds deterministic
+  bencoded metainfo; the scale harness sends it through the public engine API
+  and observes the native API router.
+- **Target owner:** PERF-110 launches the exact daemon and adapters as separate
+  processes for resource-attributed, paired catalog and transfer trials.
+- **Invariant preserved:** a live catalog observation contains distinct,
+  parseable info hashes and paused entries admitted by the engine; synthetic
+  registry and row tests remain labeled as proxies.
+- **Must not:** treat in-process test RSS as daemon RSS, label a one-byte
+  catalog as transfer capacity, or infer 100k success before the ignored case
+  runs on the exact source-bound binary.
+
+### Acceptance
+
+- Catalog metainfo is repeatable for one index, parseable as v1, private, and
+  content-hash consistent; adjacent indexes have different info hashes.
+- The live 1k case starts the production engine in task-owned temporary paths,
+  admits each raw metainfo record through the engine API, verifies registry
+  count and paused state, then calls the native list route and drains its
+  response while checking the reported total.
+- The 100k case uses the same fixture and engine path, is opt-in due to its
+  resource cost, and reports an explicit setup failure if the production
+  admission or restore path cannot reach the target count.
+- Observations report fixture-generation, engine-admission, restore,
+  first-list, and cached-list timings without applying a capacity threshold or
+  claiming a performance win. “First” and “cached” describe the API snapshot;
+  they do not imply cold or warm filesystem cache state.
+- Synthetic API and database test names include `proxy`; comments and the
+  harness documentation state that they are not production-capacity evidence.
+- The audit, active specification, harness README, and ticket ledger distinguish
+  authored source from executed evidence. PERF-102 and PERF-110 remain
+  responsible for independent process resources and matched mixed-load trials.
+
+### Files and compatibility
+
+- **Expected code paths:** `crates/rt-testkit/src/transfer_fixtures.rs`,
+  `crates/rt-metrics/tests/scale.rs`, `scripts/transfer_rebuild/README.md`,
+  and the scale-claims audit.
+- **State or wire compatibility:** test-fixture and regression-source changes
+  only; no product data format or runtime behavior changes.
+- **Migration / rollback:** none.
+- **Feature flag or rollout boundary:** the 100k observation remains ignored
+  by default and is invoked explicitly during scale qualification.
+
+### Evidence
+
+- **Regression source added or updated:** `rt-testkit` verifies deterministic
+  parseable catalog metainfo; `rt-metrics/tests/scale.rs` exercises 1k and
+  opt-in 100k engine-backed API paths and labels synthetic cases as proxies.
+- **Command or probe to run:** the live 1k case and the explicit ignored 100k
+  case during the requested bulk scale pass.
+- **Expected result:** each admitted fixture has a unique valid info hash and
+  paused registry entry; restart restores the full catalog; API requests return
+  successfully with separate setup, restore, first-page, and cached-page
+  timings.
+- **Executed on exact revision:** no.
+- **Artifact or report path:** none until PERF-110 writes source-bound trial
+  records and independent process observations.
+- **External evidence still required:** production-binary 10k/100k restore,
+  process-attributed resource samples, mixed activity, and repeated trials.
+
 ## PERF-113 — Descriptive paired scorecard
 
 - **Priority / wave:** P1 / 7

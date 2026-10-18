@@ -37,6 +37,20 @@ See the [resource report](../certification/reports/backend-engine-benchmark-2026
 [random-read latency report](../certification/reports/storage-random-latency-20261012T175749Z.md),
 and [benchmark plan](BACKEND_PERFORMANCE_BENCHMARKS.md).
 
+## Live-catalog harness update — 2026-10-18
+
+`rt-testkit` now has source for deterministic, parseable v1 catalog metainfo
+with distinct content-derived info hashes. `rt-metrics/tests/scale.rs` now has
+a live 1k case and an opt-in 100k case that add those records through
+`EngineHandle::add_torrent_raw_with_labels`, persist blobs and database rows,
+restart the engine from that state, then query the native API over the restored
+registry. Existing direct-registry and synthetic-row cases are labeled as
+proxies. These regression sources have
+not been run. The one-byte paused fixtures do not exercise payload transfer,
+resource use is not independently attributed to a daemon process, and no new
+capacity claim is supported until the bulk scale pass and PERF-102/PERF-110
+trials produce source-bound evidence.
+
 ## Verdict
 
 TorrentNG has real performance work and several useful measured outcomes. The

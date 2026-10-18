@@ -1,9 +1,12 @@
-/// Scale certification tests.
+/// Scale-shaped regressions and live native-engine catalog observations.
 ///
-/// These tests verify that the TorrentNG API meets throughput targets from
-/// docs/ENGINE.md at synthetic load levels.
+/// Tests prefixed `synthetic_` exercise API and database object shapes only;
+/// they are not production-capacity evidence. The live catalog cases below
+/// add valid metainfo through the production engine and then query the native
+/// API over its populated registry.
 ///
-/// Targets (from CLAUDE.md benchmarks section):
+/// Legacy synthetic proxy envelopes (from CLAUDE.md benchmarks section;
+/// they are not production capacity targets):
 ///   - 1k torrents:  GET /api/v1/torrents < 100ms
 ///   - 10k torrents: GET /api/v1/torrents < 200ms
 ///   - 15k torrents: GET /api/v1/torrents < 500ms
@@ -11,20 +14,24 @@
 ///   - TorrentNG-client filter/sort over 15k torrents < 250ms
 ///   - sync/maindata delta < 50ms (at normal churn)
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::{body::Body, http::Request};
 use rt_api_native::{build_router, AppState};
 use rt_api_qbit::AppState as QbState;
+use rt_config::Config;
+use rt_engine::Engine;
 use rt_fastresume::{FastresumeState, ImportPolicy, PieceState};
 use rt_path::{SafeRelPath, StorageProfile, StorageRootId};
 use rt_piece_map::{FileSpan, PieceMap};
-use rt_session::TorrentEntry;
+use rt_session::{SessionRegistry, TorrentEntry, TorrentState};
 use rt_storage::{
     IoClass, MountScheduler, PreallocationMode, SchedulerConfig, StorageError, StorageIoConfig,
     VerifyResult,
 };
 use rt_tracker::backoff::jitter_interval;
+use tokio::sync::RwLock;
 use tower::ServiceExt;
 
 /// Build a TorrentNG API app populated with `n` synthetic torrents.
@@ -126,8 +133,33 @@ async fn get_ms(app: axum::Router, uri: &str) -> u128 {
     elapsed_ms
 }
 
+async fn native_list_ms_and_total(app: axum::Router, uri: &str) -> Result<(u128, usize), String> {
+    let started = Instant::now();
+    let response = app
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+        .await
+        .map_err(|error| format!("native API request failed: {error}"))?;
+    let status = response.status();
+    if status.as_u16() != 200 {
+        return Err(format!("native API returned HTTP {status}"));
+    }
+    let body = axum::body::to_bytes(response.into_body(), 64 * 1024 * 1024)
+        .await
+        .map_err(|error| format!("native API response body failed: {error}"))?;
+    let elapsed_ms = started.elapsed().as_millis();
+    let payload: serde_json::Value = serde_json::from_slice(&body)
+        .map_err(|error| format!("native API returned invalid JSON: {error}"))?;
+    let total = payload
+        .get("total")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "native API list response omitted its total".to_owned())?
+        as usize;
+    println!("scale uri={uri} elapsed_ms={elapsed_ms}");
+    Ok((elapsed_ms, total))
+}
+
 #[tokio::test]
-async fn list_1k_torrents_under_100ms() {
+async fn synthetic_registry_list_1k_proxy_under_100ms() {
     let app = torrentng_app_with(1_000).await;
     let ms = get_ms(app, "/api/v1/torrents").await;
     let limit = threshold(100);
@@ -135,7 +167,7 @@ async fn list_1k_torrents_under_100ms() {
 }
 
 #[tokio::test]
-async fn list_10k_torrents_under_200ms() {
+async fn synthetic_registry_list_10k_proxy_under_200ms() {
     let app = torrentng_app_with(10_000).await;
     let ms = get_ms(app, "/api/v1/torrents").await;
     let limit = threshold(200);
@@ -143,7 +175,7 @@ async fn list_10k_torrents_under_200ms() {
 }
 
 #[tokio::test]
-async fn list_15k_torrents_under_500ms() {
+async fn synthetic_registry_list_15k_proxy_under_500ms() {
     let app = torrentng_app_with(15_000).await;
     let ms = get_ms(app, "/api/v1/torrents").await;
     let limit = threshold(500);
@@ -151,7 +183,7 @@ async fn list_15k_torrents_under_500ms() {
 }
 
 #[tokio::test]
-async fn cold_db_load_15k_under_120s() {
+async fn synthetic_database_seed_15k_proxy_under_120s() {
     let dataset = rt_testkit::SyntheticTorrentDataset::new(15_000);
     let conn = rt_testkit::memory_db().unwrap();
 
@@ -166,7 +198,7 @@ async fn cold_db_load_15k_under_120s() {
 }
 
 #[tokio::test]
-async fn torrentng_filter_sort_15k_under_250ms() {
+async fn synthetic_registry_filter_sort_15k_proxy_under_250ms() {
     let app = torrentng_app_with(15_000).await;
     let ms = get_ms(
         app,
@@ -181,7 +213,7 @@ async fn torrentng_filter_sort_15k_under_250ms() {
 }
 
 #[tokio::test]
-async fn qbit_info_50k_under_500ms() {
+async fn synthetic_qbit_info_50k_proxy_under_500ms() {
     let app = qbit_app_with(50_000).await;
     let ms = get_ms(app, "/api/qb/v2/torrents/info").await;
     let limit = threshold(500);
@@ -189,7 +221,7 @@ async fn qbit_info_50k_under_500ms() {
 }
 
 #[tokio::test]
-async fn sync_maindata_15k_under_50ms() {
+async fn synthetic_qbit_sync_maindata_15k_proxy_under_50ms() {
     let app = qbit_app_with(15_000).await;
     let ms = get_ms(app, "/api/qb/v2/sync/maindata").await;
     let limit = threshold(50);
@@ -197,7 +229,7 @@ async fn sync_maindata_15k_under_50ms() {
 }
 
 #[tokio::test]
-async fn idle_memory_15k_under_2_5gb() {
+async fn synthetic_qbit_idle_memory_15k_proxy_under_2_5gb() {
     let before = current_rss_bytes();
     let app = qbit_app_with(15_000).await;
     let _ = get_ms(app, "/api/qb/v2/torrents/info?limit=200").await;
@@ -209,7 +241,7 @@ async fn idle_memory_15k_under_2_5gb() {
 }
 
 #[tokio::test]
-async fn idle_memory_100k_keeps_fixed_rss_task_fd_budget() {
+async fn synthetic_qbit_idle_memory_100k_proxy_keeps_fixed_task_fd_budget() {
     // This reads process-wide /proc/self/task counts. CI serializes tests within
     // each binary so unrelated test-harness threads do not consume the budget.
     let before_rss = current_rss_bytes();
@@ -239,6 +271,157 @@ async fn idle_memory_100k_keeps_fixed_rss_task_fd_budget() {
             "100k idle task count grew from {before} to {after}"
         );
     }
+}
+
+struct LiveEngineCatalog {
+    _temp: tempfile::TempDir,
+    engine: rt_engine::EngineHandle,
+    registry: Arc<RwLock<SessionRegistry>>,
+    router: axum::Router,
+    fixture_generation_ns: u128,
+    engine_admission_ns: u128,
+    restore_ns: u128,
+}
+
+impl LiveEngineCatalog {
+    async fn build(count: usize) -> Result<Self, String> {
+        let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let download_dir = temp.path().join("downloads");
+        std::fs::create_dir_all(&download_dir).map_err(|error| error.to_string())?;
+
+        let mut config = Config::default();
+        config.daemon.session_dir = temp.path().join("session");
+        config.daemon.shutdown_timeout_secs = 30;
+        config.db.path = temp.path().join("state.sqlite");
+        config.storage.download_dir = download_dir.clone();
+        config.network.listen_port = 0;
+        config.dht.enabled = false;
+
+        let registry = Arc::new(RwLock::new(SessionRegistry::new()));
+        let ingest_engine = Engine::start(Arc::new(config.clone()), Arc::clone(&registry))
+            .await
+            .map_err(|error| error.to_string())?;
+
+        let mut fixture_generation_ns = 0_u128;
+        let mut engine_admission_ns = 0_u128;
+        for index in 0..count {
+            let fixture_started = Instant::now();
+            let metainfo = rt_testkit::production_catalog_metainfo(index);
+            fixture_generation_ns =
+                fixture_generation_ns.saturating_add(fixture_started.elapsed().as_nanos());
+            let admission_started = Instant::now();
+            let result = ingest_engine
+                .add_torrent_raw_with_labels(
+                    metainfo,
+                    Some(download_dir.clone()),
+                    true,
+                    None,
+                    Vec::new(),
+                )
+                .await;
+            engine_admission_ns =
+                engine_admission_ns.saturating_add(admission_started.elapsed().as_nanos());
+            if let Err(error) = result {
+                ingest_engine.shutdown().await;
+                return Err(format!("engine rejected catalog fixture {index}: {error}"));
+            }
+        }
+
+        let (registered, all_paused) = {
+            let registry = registry.read().await;
+            (
+                registry.len(),
+                registry
+                    .iter()
+                    .all(|torrent| torrent.state == TorrentState::Paused),
+            )
+        };
+        if registered != count {
+            ingest_engine.shutdown().await;
+            return Err(format!(
+                "engine registered {registered} of {count} catalog fixtures"
+            ));
+        }
+        if !all_paused {
+            ingest_engine.shutdown().await;
+            return Err("catalog fixture unexpectedly started a torrent".to_owned());
+        }
+
+        ingest_engine.shutdown().await;
+        let restored_registry = Arc::new(RwLock::new(SessionRegistry::new()));
+        let restore_started = Instant::now();
+        let engine = Engine::start(Arc::new(config), Arc::clone(&restored_registry))
+            .await
+            .map_err(|error| error.to_string())?;
+        let restore_ns = restore_started.elapsed().as_nanos();
+        let (restored_count, restored_all_paused) = {
+            let registry = restored_registry.read().await;
+            (
+                registry.len(),
+                registry
+                    .iter()
+                    .all(|torrent| torrent.state == TorrentState::Paused),
+            )
+        };
+        if restored_count != count {
+            engine.shutdown().await;
+            return Err(format!(
+                "engine restored {restored_count} of {count} catalog fixtures"
+            ));
+        }
+        if !restored_all_paused {
+            engine.shutdown().await;
+            return Err("restored catalog fixture unexpectedly started a torrent".to_owned());
+        }
+
+        let router = build_router(AppState::with_engine(
+            Arc::clone(&restored_registry),
+            engine.clone(),
+        ));
+        Ok(Self {
+            _temp: temp,
+            engine,
+            registry: restored_registry,
+            router,
+            fixture_generation_ns,
+            engine_admission_ns,
+            restore_ns,
+        })
+    }
+}
+
+async fn observe_live_native_engine_catalog(count: usize) {
+    let fixture = LiveEngineCatalog::build(count)
+        .await
+        .unwrap_or_else(|error| panic!("live native catalog setup failed: {error}"));
+    let registered = fixture.registry.read().await.len();
+    let query = "/api/v1/torrents?limit=200&sort=name&reverse=true";
+    let first_list = native_list_ms_and_total(fixture.router.clone(), query).await;
+    let cached_list = native_list_ms_and_total(fixture.router.clone(), query).await;
+    fixture.engine.shutdown().await;
+    let (first_list_ms, first_total) =
+        first_list.unwrap_or_else(|error| panic!("first native list observation failed: {error}"));
+    let (cached_list_ms, cached_total) = cached_list
+        .unwrap_or_else(|error| panic!("cached native list observation failed: {error}"));
+    assert_eq!(first_total, count, "first native list total");
+    assert_eq!(cached_total, count, "cached native list total");
+    println!(
+        "scale live_native_engine_catalog count={registered} valid_metainfo=true paused=true fixture_generation_ns={} engine_admission_ns={} restore_ns={} first_list_ms={first_list_ms} cached_list_ms={cached_list_ms}",
+        fixture.fixture_generation_ns,
+        fixture.engine_admission_ns,
+        fixture.restore_ns,
+    );
+}
+
+#[tokio::test]
+async fn live_native_engine_catalog_1k_uses_valid_persisted_metainfo() {
+    observe_live_native_engine_catalog(1_000).await;
+}
+
+#[tokio::test]
+#[ignore = "100k live-engine catalog qualification belongs in the bulk scale pass"]
+async fn live_native_engine_catalog_100k_uses_valid_persisted_metainfo() {
+    observe_live_native_engine_catalog(100_000).await;
 }
 
 #[test]
