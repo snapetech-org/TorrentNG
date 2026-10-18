@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import re
+import stat
 import sys
 import time
 from dataclasses import dataclass
@@ -112,6 +114,20 @@ def _cpu_ticks(pid: int, proc_root: Path) -> int | None:
     fields = stat[end + 2 :].split()  # starts at field 3 (state)
     try:
         return int(fields[11]) + int(fields[12])  # fields 14 and 15
+    except (IndexError, ValueError):
+        return None
+
+
+def _process_start_ticks(pid: int, proc_root: Path) -> int | None:
+    stat = _read_text(proc_root / str(pid) / "stat")
+    if stat is None:
+        return None
+    end = stat.rfind(")")
+    if end < 0:
+        return None
+    fields = stat[end + 2 :].split()
+    try:
+        return int(fields[19])  # field 22, after state (field 3)
     except (IndexError, ValueError):
         return None
 
@@ -248,6 +264,38 @@ def _create_exclusive_text(path: Path, *, newline: str | None = None) -> TextIO:
     return os.fdopen(descriptor, "w", encoding="utf-8", newline=newline)
 
 
+def _sha256_regular_file_nofollow(path: Path) -> str:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    digest = hashlib.sha256()
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError("resource samples must be a regular file")
+        while chunk := os.read(descriptor, 1024 * 1024):
+            digest.update(chunk)
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    before_identity = (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    )
+    after_identity = (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    )
+    if before_identity != after_identity:
+        raise ValueError("resource samples changed while their digest was captured")
+    return digest.hexdigest()
+
+
 @dataclass
 class Sample:
     elapsed_ns: int
@@ -329,6 +377,18 @@ class PeakSummary:
     def __init__(self, network_interface: str | None = None) -> None:
         self.sample_count = 0
         self.peaks: dict[str, int | None] = {}
+        self._peak_valid = {
+            field: True
+            for field in FIELDS
+            if field
+            not in {
+                "elapsed_ns",
+                "processes",
+                "network_namespace_inode",
+                "network_rx_bytes",
+                "network_tx_bytes",
+            }
+        }
         self.network_interface = network_interface
         self._network_valid = network_interface is not None
         self._network_observation_count = 0
@@ -349,6 +409,7 @@ class PeakSummary:
                 continue
             value = getattr(sample, field)
             if value is None:
+                self._peak_valid[field] = False
                 continue
             previous = self.peaks.get(field)
             self.peaks[field] = value if previous is None else max(previous, value)
@@ -380,7 +441,11 @@ class PeakSummary:
 
     def as_json(self) -> dict[str, Any]:
         peaks = {
-            field: self.peaks.get(field)
+            field: (
+                self.peaks.get(field)
+                if self._peak_valid.get(field, True)
+                else None
+            )
             for field in FIELDS
             if field
             not in {
@@ -403,7 +468,10 @@ class PeakSummary:
             "sample_count": self.sample_count,
             "sample_interval_ms": None,
             "peaks": peaks,
-            "counter_note": "RSS/PSS are summed across the observed process tree; cgroup values are separate domains.",
+            "counter_note": (
+                "RSS/PSS are summed across the observed process tree; cgroup values "
+                "are separate domains."
+            ),
             "network_note": (
                 "Network byte counters were not requested."
                 if self.network_interface is None
@@ -469,19 +537,29 @@ def observe(
         else start_ns + int(duration_seconds * 1_000_000_000)
     )
     summary = PeakSummary(network_interface)
+    root_process_start_ticks = _process_start_ticks(root_pid, Path("/proc"))
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.parent.mkdir(parents=True, exist_ok=True)
+    if csv_path.parent.resolve() != summary_path.parent.resolve():
+        raise ValueError("CSV and summary outputs must share a directory")
     with _create_exclusive_text(csv_path, newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=FIELDS)
         writer.writeheader()
         while True:
-            if not process_tree(root_pid):
+            if (
+                root_process_start_ticks is None
+                or _process_start_ticks(root_pid, Path("/proc"))
+                != root_process_start_ticks
+                or not process_tree(root_pid)
+            ):
                 break
             sample = sample_process_tree(
                 root_pid,
                 start_ns,
                 network_interface=network_interface,
             )
+            if _process_start_ticks(root_pid, Path("/proc")) != root_process_start_ticks:
+                break
             summary.observe(sample)
             writer.writerow(sample.as_row())
             stream.flush()
@@ -493,11 +571,14 @@ def observe(
         stream.flush()
         os.fsync(stream.fileno())
     payload = summary.as_json()
+    payload["schema_version"] = "transfer-resource-observation-v1"
     payload["root_pid"] = root_pid
+    payload["root_process_start_ticks"] = root_process_start_ticks
     payload["sample_interval_ms"] = interval_ms
     payload["started_monotonic_ns"] = start_ns
     payload["finished_monotonic_ns"] = time.monotonic_ns()
     payload["samples_csv"] = csv_path.name
+    payload["samples_csv_sha256"] = _sha256_regular_file_nofollow(csv_path)
     with _create_exclusive_text(summary_path) as stream:
         stream.write(json.dumps(payload, indent=2) + "\n")
         stream.flush()

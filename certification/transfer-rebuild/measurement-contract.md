@@ -21,6 +21,12 @@ time, plus source commit, lockfile, and toolchain when a source checkout is
 available. Mutable tags and filenames are descriptive only.
 A result is not comparable when source, binary, fixture, environment, client
 process, or settings identity is missing or differs from its declared pair.
+New complete trials link a `transfer-resource-observation-v1` summary through
+`resources.raw_artifact_sha256`. The summary binds the root PID and process
+start time to `client_identity`, carries the digest of its streamed CSV, and
+is checked against the trial's resource totals. The manifest validator also
+recomputes peak and network totals from the CSV rows. Historical trial-v1
+records without this link remain readable, but the scorecard excludes them.
 
 The canonical `manifest.py` writer accepts only a clean committed worktree and
 records `worktree_dirty: false`; commit the measured source before publishing
@@ -131,7 +137,11 @@ traffic on that interface, not an individual PID, so they count as client
 traffic only when the runner isolates one client in the private namespace and
 links the matching network-control record to the trial. In a shared namespace,
 leave them `null` for client comparisons. The observer summary repeats this
-attribution warning.
+attribution warning. If any sample lacks a process counter, that summary peak
+is `null` rather than a maximum from only the remaining samples. A linked
+observation must contain at least one row, each row must report a live process
+tree, and elapsed times must increase strictly within the summary's monotonic
+start/finish interval.
 
 ## Independent service ceilings
 

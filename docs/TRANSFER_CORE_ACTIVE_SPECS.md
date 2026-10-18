@@ -2025,7 +2025,9 @@ Sample process-tree RSS/PSS, cgroup memory, CPU, threads, descriptors, and
 `/proc/<pid>/io` counters without retaining the sample series in memory.
 For an isolated one-client network namespace, read the named interface from
 `/proc/<pid>/net/dev`, retaining namespace identity and reporting byte deltas.
-Fixture control and runner integration remain open.
+The versioned summary binds its CSV digest and root process start identity;
+manifest validation checks trial totals against the summary and recomputes
+values from the CSV. Fixture control and paired runner integration remain open.
 
 ### Ownership and invariant
 
@@ -2044,6 +2046,15 @@ Fixture control and runner integration remain open.
 - CSV and summary artifacts are created exclusively with private permissions;
   rerunning an observer cannot replace prior raw evidence.
 - Missing process counters do not become partial undercounts.
+- A linked observation contains at least one sample; every sample has a live
+  process tree and strictly increasing monotonic elapsed time within the
+  summary's start/finish interval.
+- New manifests require a linked observer summary for every complete trial;
+  validation verifies the root PID/start-time identity, CSV digest, row count,
+  and resource totals. Historical trial-v1 records without this link remain
+  readable but are excluded from scorecards. The observer checks the same PID
+  start time before and after each sample so PID reuse cannot extend the
+  observation into another process instance.
 - Optional network counters come from one named interface in the root
   process's network namespace, not from a sum of process counters. The
   namespace inode must remain stable and counters must be monotonic across at
@@ -2056,10 +2067,14 @@ Fixture control and runner integration remain open.
 
 ### Files and compatibility
 
-- **Expected code paths:** `scripts/transfer_rebuild/observe.py`, observer
-  README, and trial schema.
-- **State or wire compatibility:** certification artifact format only.
-- **Migration / rollback:** none.
+- **Expected code paths:** `scripts/transfer_rebuild/observe.py`,
+  `validate_artifact.py`, the resource-observation schema, trial schema,
+  observer README, and measurement contract.
+- **State or wire compatibility:** adds the
+  `transfer-resource-observation-v1` certification artifact; existing
+  trial-v1 records remain readable.
+- **Migration / rollback:** historical complete trials without observer
+  provenance remain valid records but cannot enter a scorecard.
 - **Feature flag or rollout boundary:** Linux process and cgroup v2 only;
   observer does not claim support for other platforms.
 
@@ -2068,9 +2083,12 @@ Fixture control and runner integration remain open.
 - **Regression source added or updated:** peak/null-counter fixtures and
   synthetic process-tree descendants, including a non-leader thread child;
   named-interface parsing, namespace identity, counter deltas, and reset/null
-  behavior.
-- **Command or probe to run:** `python3 scripts/test_transfer_rebuild_observer.py`
-  during the requested bulk pass.
+  behavior; unavailable-sample peak invalidation; observer CSV digest, schema,
+  process identity/reuse fencing, and manifest-to-summary/CSV reconciliation.
+- **Command or probe to run:** `python3 scripts/test_transfer_rebuild_observer.py`,
+  `python3 scripts/test_transfer_rebuild_validator.py`, and
+  `python3 scripts/test_transfer_rebuild_scorecard.py` during the requested
+  bulk pass.
 - **Expected result:** cumulative counters and process-tree attribution match
   synthetic fixtures without retaining samples; per-interface network deltas
   are scoped to the observed namespace and fail closed on missing/reset data.

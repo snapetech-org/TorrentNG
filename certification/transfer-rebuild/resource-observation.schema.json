@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:torrentng:schema:transfer-resource-observation-v1",
+  "title": "Independent transfer resource observation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "observer_id",
+    "sample_count",
+    "sample_interval_ms",
+    "peaks",
+    "counter_note",
+    "network_note",
+    "network_interface",
+    "network_namespace_inode",
+    "network_rx_bytes",
+    "network_tx_bytes",
+    "root_pid",
+    "root_process_start_ticks",
+    "started_monotonic_ns",
+    "finished_monotonic_ns",
+    "samples_csv",
+    "samples_csv_sha256"
+  ],
+  "properties": {
+    "schema_version": { "const": "transfer-resource-observation-v1" },
+    "observer_id": { "const": "transfer-proc-cgroup-v2" },
+    "sample_count": { "type": "integer", "minimum": 1 },
+    "sample_interval_ms": { "type": "integer", "minimum": 1 },
+    "peaks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rss_bytes",
+        "pss_bytes",
+        "cgroup_anon_bytes",
+        "cgroup_file_bytes",
+        "cgroup_reclaimable_cache_bytes",
+        "cgroup_current_bytes",
+        "cpu_time_ns",
+        "threads",
+        "fds",
+        "block_read_bytes",
+        "block_write_bytes"
+      ],
+      "properties": {
+        "rss_bytes": { "$ref": "#/$defs/nullable_nonnegative_integer" },
+        "pss_bytes": { "$ref": "#/$defs/nullable_nonnegative_integer" },
+        "cgroup_anon_bytes": { "$ref": "#/$defs/nullable_nonnegative_integer" },
+        "cgroup_file_bytes": { "$ref": "#/$defs/nullable_nonnegative_integer" },
+        "cgroup_reclaimable_cache_bytes": { "$ref": "#/$defs/nullable_nonnegative_integer" },
+        "cgroup_current_bytes": { "$ref": "#/$defs/nullable_nonnegative_integer" },
+        "cpu_time_ns": { "$ref": "#/$defs/nullable_nonnegative_integer" },
+        "threads": { "$ref": "#/$defs/nullable_nonnegative_integer" },
+        "fds": { "$ref": "#/$defs/nullable_nonnegative_integer" },
+        "block_read_bytes": { "$ref": "#/$defs/nullable_nonnegative_integer" },
+        "block_write_bytes": { "$ref": "#/$defs/nullable_nonnegative_integer" }
+      }
+    },
+    "counter_note": { "type": "string", "minLength": 1 },
+    "network_note": { "type": "string", "minLength": 1 },
+    "network_interface": {
+      "anyOf": [
+        { "type": "null" },
+        { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,15}$" }
+      ]
+    },
+    "network_namespace_inode": { "$ref": "#/$defs/nullable_nonnegative_integer" },
+    "network_rx_bytes": { "$ref": "#/$defs/nullable_nonnegative_integer" },
+    "network_tx_bytes": { "$ref": "#/$defs/nullable_nonnegative_integer" },
+    "root_pid": { "type": "integer", "minimum": 1 },
+    "root_process_start_ticks": { "$ref": "#/$defs/nullable_nonnegative_integer" },
+    "started_monotonic_ns": { "$ref": "#/$defs/nonnegative_integer" },
+    "finished_monotonic_ns": { "$ref": "#/$defs/nonnegative_integer" },
+    "samples_csv": {
+      "type": "string",
+      "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_.-]{1,255}$"
+    },
+    "samples_csv_sha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "nonnegative_integer": { "type": "integer", "minimum": 0 },
+    "nullable_nonnegative_integer": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import csv
 import subprocess
 import sys
 import tempfile
@@ -11,7 +12,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "transfer_rebuild"))
-from validate_artifact import validate  # noqa: E402
+from validate_artifact import _resource_samples_errors, validate  # noqa: E402
 from ceilings import calculate_report  # noqa: E402
 from manifest import ManifestError, create_manifest  # noqa: E402
 
@@ -22,6 +23,24 @@ SETTINGS_VALUES = {"request_queue_size": 32}
 SETTINGS_SHA = hashlib.sha256(
     json.dumps(SETTINGS_VALUES, sort_keys=True, separators=(",", ":")).encode()
 ).hexdigest()
+RESOURCE_SAMPLE_FIELDS = (
+    "elapsed_ns",
+    "processes",
+    "rss_bytes",
+    "pss_bytes",
+    "cgroup_anon_bytes",
+    "cgroup_file_bytes",
+    "cgroup_reclaimable_cache_bytes",
+    "cgroup_current_bytes",
+    "cpu_time_ns",
+    "threads",
+    "fds",
+    "block_read_bytes",
+    "block_write_bytes",
+    "network_namespace_inode",
+    "network_rx_bytes",
+    "network_tx_bytes",
+)
 
 
 def valid_trial() -> dict[str, object]:
@@ -88,7 +107,7 @@ def valid_trial() -> dict[str, object]:
             "duplicate_bytes": 0,
         },
         "resources": {
-            "observer_id": "observer-1",
+            "observer_id": "transfer-proc-cgroup-v2",
             "sample_interval_ms": 250,
             "rss_peak_bytes": 1,
             "pss_peak_bytes": None,
@@ -104,6 +123,7 @@ def valid_trial() -> dict[str, object]:
             "network_rx_bytes": None,
             "network_tx_bytes": None,
             "energy_joules": None,
+            "raw_artifact_sha256": SHA,
         },
         "integrity": {
             "status": "passed",
@@ -114,6 +134,81 @@ def valid_trial() -> dict[str, object]:
         },
         "outcome": {"status": "complete", "reason": None, "exit_code": 0},
     }
+
+
+def attach_resource_artifacts(root: Path, trial: dict[str, object]) -> list[dict[str, str]]:
+    artifacts_dir = root / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    trial_id = trial["trial_id"]
+    resources = trial["resources"]
+    if not isinstance(resources, dict):
+        raise AssertionError("trial resources fixture must be an object")
+    metric_fields = {
+        "rss_bytes": "rss_peak_bytes",
+        "pss_bytes": "pss_peak_bytes",
+        "cgroup_anon_bytes": "cgroup_anon_peak_bytes",
+        "cgroup_file_bytes": "cgroup_file_peak_bytes",
+        "cgroup_reclaimable_cache_bytes": "cgroup_reclaimable_cache_peak_bytes",
+        "cgroup_current_bytes": "cgroup_current_peak_bytes",
+        "cpu_time_ns": "cpu_time_ns",
+        "threads": "threads_peak",
+        "fds": "fds_peak",
+        "block_read_bytes": "block_read_bytes",
+        "block_write_bytes": "block_write_bytes",
+    }
+    peaks = {field: resources[trial_field] for field, trial_field in metric_fields.items()}
+    sample = {field: "" for field in RESOURCE_SAMPLE_FIELDS}
+    sample.update({"elapsed_ns": 0, "processes": 1})
+    for field, value in peaks.items():
+        sample[field] = "" if value is None else int(value)
+    csv_name = f"resources-{trial_id}.csv"
+    csv_path = artifacts_dir / csv_name
+    with csv_path.open("w", encoding="utf-8", newline="") as output:
+        writer = csv.DictWriter(output, fieldnames=RESOURCE_SAMPLE_FIELDS)
+        writer.writeheader()
+        writer.writerow(sample)
+    csv_bytes = csv_path.read_bytes()
+    csv_sha = hashlib.sha256(csv_bytes).hexdigest()
+
+    observation = {
+        "schema_version": "transfer-resource-observation-v1",
+        "observer_id": "transfer-proc-cgroup-v2",
+        "sample_count": 1,
+        "sample_interval_ms": resources["sample_interval_ms"],
+        "peaks": peaks,
+        "counter_note": (
+            "RSS/PSS are summed across the observed process tree; cgroup values "
+            "are separate domains."
+        ),
+        "network_note": "Network byte counters were not requested.",
+        "network_interface": None,
+        "network_namespace_inode": None,
+        "network_rx_bytes": None,
+        "network_tx_bytes": None,
+        "root_pid": trial["client_identity"]["process_id"],
+        "root_process_start_ticks": trial["client_identity"]["process_start_ticks"],
+        "started_monotonic_ns": 1,
+        "finished_monotonic_ns": 2,
+        "samples_csv": csv_name,
+        "samples_csv_sha256": csv_sha,
+    }
+    observation_path = artifacts_dir / f"resources-{trial_id}.json"
+    observation_bytes = json.dumps(observation, sort_keys=True, indent=2).encode() + b"\n"
+    observation_path.write_bytes(observation_bytes)
+    observation_sha = hashlib.sha256(observation_bytes).hexdigest()
+    resources["raw_artifact_sha256"] = observation_sha
+    return [
+        {
+            "path": f"artifacts/{csv_name}",
+            "sha256": csv_sha,
+            "kind": "transfer-resource-samples-v1",
+        },
+        {
+            "path": f"artifacts/{observation_path.name}",
+            "sha256": observation_sha,
+            "kind": "transfer-resource-observation-v1",
+        },
+    ]
 
 
 def validate_document(kind: str, document: object) -> list[str]:
@@ -280,6 +375,12 @@ class TransferRebuildValidatorTests(unittest.TestCase):
     def test_complete_trial_with_integrity_and_settings_is_valid(self) -> None:
         self.assertEqual(validate_document("trial", valid_trial()), [])
 
+    def test_historical_trial_without_resource_link_remains_schema_valid(self) -> None:
+        trial = valid_trial()
+        trial["resources"].pop("raw_artifact_sha256")  # type: ignore[index]
+
+        self.assertEqual(validate_document("trial", trial), [])
+
     def test_client_observation_requires_pinned_runtime_and_settings(self) -> None:
         self.assertEqual(validate_document("client-observation", valid_client_observation()), [])
         observation = valid_client_observation()
@@ -291,6 +392,97 @@ class TransferRebuildValidatorTests(unittest.TestCase):
         tampered["settings_readback"]["values"] = {"download_limit": 1}  # type: ignore[index]
         errors = validate_document("client-observation", tampered)
         self.assertTrue(any("canonical settings values" in error for error in errors))
+
+    def test_resource_observation_requires_bound_namespace_scope(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="tng-transfer-resource-schema-") as directory:
+            root = Path(directory)
+            trial = valid_trial()
+            resource_artifacts = attach_resource_artifacts(root, trial)
+            summary_path = root / resource_artifacts[1]["path"]
+
+            self.assertEqual(validate("resource-observation", summary_path), [])
+
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            summary["network_interface"] = "veth0"
+            summary_path.write_text(json.dumps(summary), encoding="utf-8")
+            errors = validate("resource-observation", summary_path)
+            self.assertTrue(any("network_note" in error for error in errors))
+
+    def test_resource_samples_require_live_processes_and_monotonic_elapsed_time(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="tng-transfer-resource-samples-") as directory:
+            root = Path(directory)
+            trial = valid_trial()
+            resource_artifacts = attach_resource_artifacts(root, trial)
+            summary_path = root / resource_artifacts[1]["path"]
+            csv_path = root / resource_artifacts[0]["path"]
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+
+            with csv_path.open("r", encoding="utf-8", newline="") as source:
+                reader = csv.DictReader(source)
+                sample = next(reader)
+            sample["processes"] = "0"
+            with csv_path.open("w", encoding="utf-8", newline="") as output:
+                writer = csv.DictWriter(output, fieldnames=RESOURCE_SAMPLE_FIELDS)
+                writer.writeheader()
+                writer.writerow(sample)
+            errors = _resource_samples_errors(csv_path, summary)
+            self.assertTrue(any("no observed processes" in error for error in errors))
+
+            sample["processes"] = "1"
+            sample["elapsed_ns"] = "2"
+            with csv_path.open("w", encoding="utf-8", newline="") as output:
+                writer = csv.DictWriter(output, fieldnames=RESOURCE_SAMPLE_FIELDS)
+                writer.writeheader()
+                writer.writerow(sample)
+            errors = _resource_samples_errors(csv_path, summary)
+            self.assertTrue(any("exceeds the observation interval" in error for error in errors))
+
+            sample["elapsed_ns"] = "0"
+            with csv_path.open("w", encoding="utf-8", newline="") as output:
+                writer = csv.DictWriter(output, fieldnames=RESOURCE_SAMPLE_FIELDS)
+                writer.writeheader()
+                writer.writerow(sample)
+                writer.writerow(sample)
+            summary["sample_count"] = 2
+            errors = _resource_samples_errors(csv_path, summary)
+            self.assertTrue(any("not strictly increasing" in error for error in errors))
+
+    def test_resource_observation_requires_at_least_one_sample(self) -> None:
+        observation = {
+            "schema_version": "transfer-resource-observation-v1",
+            "observer_id": "transfer-proc-cgroup-v2",
+            "sample_count": 0,
+            "sample_interval_ms": 250,
+            "peaks": {
+                "rss_bytes": None,
+                "pss_bytes": None,
+                "cgroup_anon_bytes": None,
+                "cgroup_file_bytes": None,
+                "cgroup_reclaimable_cache_bytes": None,
+                "cgroup_current_bytes": None,
+                "cpu_time_ns": None,
+                "threads": None,
+                "fds": None,
+                "block_read_bytes": None,
+                "block_write_bytes": None,
+            },
+            "counter_note": "Counters are scoped by source.",
+            "network_note": "Network byte counters were not requested.",
+            "network_interface": None,
+            "network_namespace_inode": None,
+            "network_rx_bytes": None,
+            "network_tx_bytes": None,
+            "root_pid": 1,
+            "root_process_start_ticks": None,
+            "started_monotonic_ns": 1,
+            "finished_monotonic_ns": 2,
+            "samples_csv": "resources.csv",
+            "samples_csv_sha256": SHA,
+        }
+
+        errors = validate_document("resource-observation", observation)
+
+        self.assertTrue(any("sample_count" in error for error in errors))
 
     def test_cache_state_schema_checks_observed_outcome(self) -> None:
         observation = valid_cache_state_observation()
@@ -364,6 +556,7 @@ class TransferRebuildValidatorTests(unittest.TestCase):
             observation_sha = hashlib.sha256(observation_bytes).hexdigest()
             trial["client_identity"]["observation_sha256"] = observation_sha  # type: ignore[index]
             trial["client_identity"]["settings_sha256"] = SETTINGS_SHA  # type: ignore[index]
+            resource_artifacts = attach_resource_artifacts(root, trial)
             trial_path = root / "trials" / "trial.json"
             trial_bytes = json.dumps(trial).encode("utf-8")
             trial_path.write_bytes(trial_bytes)
@@ -387,12 +580,31 @@ class TransferRebuildValidatorTests(unittest.TestCase):
                         "path": "artifacts/client-observation.json",
                         "sha256": observation_sha,
                         "kind": "transfer-client-observation-v1",
-                    }
+                    },
+                    *resource_artifacts,
                 ],
             }
             manifest_path = root / "manifest.json"
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
+            self.assertEqual(
+                validate("manifest", manifest_path, verify_referenced_files=True), []
+            )
+
+            trial["resources"]["cpu_time_ns"] = 99  # type: ignore[index]
+            altered_trial = json.dumps(trial).encode("utf-8")
+            trial_path.write_bytes(altered_trial)
+            manifest["trial_files"][0]["sha256"] = hashlib.sha256(altered_trial).hexdigest()  # type: ignore[index]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            errors = validate("manifest", manifest_path, verify_referenced_files=True)
+            self.assertTrue(any("resources.cpu_time_ns: differs" in error for error in errors))
+
+            trial["resources"].pop("raw_artifact_sha256")  # type: ignore[index]
+            legacy_bytes = json.dumps(trial).encode("utf-8")
+            trial_path.write_bytes(legacy_bytes)
+            manifest["trial_files"][0]["sha256"] = hashlib.sha256(legacy_bytes).hexdigest()  # type: ignore[index]
+            manifest["artifacts"] = manifest["artifacts"][:1]  # type: ignore[index]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             self.assertEqual(
                 validate("manifest", manifest_path, verify_referenced_files=True), []
             )
@@ -414,6 +626,7 @@ class TransferRebuildValidatorTests(unittest.TestCase):
             trial["client_identity"]["observation_sha256"] = observation_sha  # type: ignore[index]
             trial["environment"]["cache_state"] = "cold"  # type: ignore[index]
             trial["environment"]["cache_state_observation_sha256"] = cache_sha  # type: ignore[index]
+            resource_artifacts = attach_resource_artifacts(root, trial)
             trial_bytes = json.dumps(trial).encode("utf-8")
             (root / "trials" / "trial.json").write_bytes(trial_bytes)
             manifest = {
@@ -442,6 +655,7 @@ class TransferRebuildValidatorTests(unittest.TestCase):
                         "sha256": cache_sha,
                         "kind": "transfer-cache-state-v1",
                     },
+                    *resource_artifacts,
                 ],
             }
             manifest_path = root / "manifest.json"
@@ -471,6 +685,7 @@ class TransferRebuildValidatorTests(unittest.TestCase):
             trial = valid_trial()
             trial["client_identity"]["observation_sha256"] = observation_sha  # type: ignore[index]
             trial["client_identity"]["version"] = "other"  # type: ignore[index]
+            resource_artifacts = attach_resource_artifacts(root, trial)
             trial_bytes = json.dumps(trial).encode("utf-8")
             (root / "trials" / "trial.json").write_bytes(trial_bytes)
             manifest = {
@@ -493,7 +708,8 @@ class TransferRebuildValidatorTests(unittest.TestCase):
                         "path": "artifacts/client.json",
                         "sha256": observation_sha,
                         "kind": "transfer-client-observation-v1",
-                    }
+                    },
+                    *resource_artifacts,
                 ],
             }
             manifest_path = root / "manifest.json"
@@ -536,6 +752,7 @@ class TransferRebuildValidatorTests(unittest.TestCase):
                     "control_observation_sha256s": [network_sha],
                 }
             )
+            resource_artifacts = attach_resource_artifacts(root, trial)
             trial_bytes = json.dumps(trial).encode("utf-8")
             (root / "trials" / "trial.json").write_bytes(trial_bytes)
             manifest = {
@@ -569,6 +786,7 @@ class TransferRebuildValidatorTests(unittest.TestCase):
                         "sha256": reset_sha,
                         "kind": "transfer-network-control-v1",
                     },
+                    *resource_artifacts,
                 ],
             }
             manifest_path = root / "manifest.json"
@@ -623,6 +841,7 @@ class TransferRebuildValidatorTests(unittest.TestCase):
             trial["environment"]["storage"]["device_id"] = "8:1"  # type: ignore[index]
             trial["environment"]["network"]["network_profile_id"] = "lan-1g-1ms-v1"  # type: ignore[index]
             trial["environment"]["independent_ceiling_sha256"] = report_sha  # type: ignore[index]
+            resource_artifacts = attach_resource_artifacts(root, trial)
             trial_bytes = json.dumps(trial).encode("utf-8")
             (root / "trials" / "trial.json").write_bytes(trial_bytes)
 
@@ -646,6 +865,7 @@ class TransferRebuildValidatorTests(unittest.TestCase):
                     {"path": "artifacts/ceiling-input.json", "sha256": input_sha, "kind": "transfer-ceiling-input-v1"},
                     *raw_records,
                     {"path": "artifacts/client.json", "sha256": client_sha, "kind": "transfer-client-observation-v1"},
+                    *resource_artifacts,
                 ],
             }
             manifest_path = root / "manifest.json"
@@ -801,6 +1021,9 @@ class TransferManifestWriterTests(unittest.TestCase):
                 trial["outcome"]["reason"] = "preserved regression fixture"  # type: ignore[index]
                 trial["outcome"]["exit_code"] = None  # type: ignore[index]
                 trial["integrity"]["status"] = "not_run"  # type: ignore[index]
+            resource_artifacts = attach_resource_artifacts(evidence, trial)
+            for artifact in resource_artifacts:
+                artifact_specs.append((artifact["kind"], evidence / artifact["path"]))
             trial_path = trials_dir / f"trial-{index}.json"
             trial_path.write_text(json.dumps(trial, sort_keys=True), encoding="utf-8")
             trial_paths.append(trial_path)
@@ -822,6 +1045,20 @@ class TransferManifestWriterTests(unittest.TestCase):
         )
         self.assertEqual(validate("manifest", output, verify_referenced_files=True), [])
         self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+
+    def test_manifest_writer_requires_resource_observer_for_new_complete_trials(self) -> None:
+        evidence, trials, artifacts = self._evidence_bundle()
+        trial = json.loads(trials[0].read_text(encoding="utf-8"))
+        trial["resources"].pop("raw_artifact_sha256")
+        trials[0].write_text(json.dumps(trial), encoding="utf-8")
+
+        with self.assertRaisesRegex(ManifestError, "must link a verified"):
+            create_manifest(
+                evidence / "manifest.json",
+                trials,
+                artifacts,
+                repo=self.repo,
+            )
 
     def test_manifest_rejects_dirty_source(self) -> None:
         evidence = self.root / "evidence"

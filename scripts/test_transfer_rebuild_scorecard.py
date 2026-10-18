@@ -48,7 +48,7 @@ def trial(
         "integrity": {"status": integrity},
         "payload": {"useful_bytes": useful_bytes},
         "durations_ns": {"transfer": transfer_ns},
-        "resources": {"rss_peak_bytes": rss_peak_bytes},
+        "resources": {"rss_peak_bytes": rss_peak_bytes, "raw_artifact_sha256": "a" * 64},
     }
 
 
@@ -88,6 +88,19 @@ class PairedScorecardTests(unittest.TestCase):
                 self.assertEqual(group["valid_pair_count"], 0)
                 self.assertEqual(group["clients"], [])
                 self.assertIn(reason, group["excluded_pairs"][0]["reason"])
+
+    def test_legacy_complete_pair_without_resource_provenance_is_excluded(self) -> None:
+        records = [trial("torrentngd"), trial("qbittorrent")]
+        for record in records:
+            record["resources"].pop("raw_artifact_sha256")
+
+        group = analyze_trials(records, bootstrap_samples=1_000)[0]
+
+        self.assertEqual(group["valid_pair_count"], 0)
+        self.assertIn(
+            "resource observer artifact is not linked",
+            group["excluded_pairs"][0]["reason"],
+        )
 
     def test_duplicate_client_record_excludes_pair(self) -> None:
         records = [trial("torrentngd"), trial("torrentngd")]

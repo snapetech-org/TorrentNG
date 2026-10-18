@@ -92,6 +92,8 @@ def _client_key(trial: dict[str, Any]) -> str:
 def _eligibility_reason(trial: dict[str, Any]) -> str | None:
     if trial["outcome"]["status"] != "complete":
         return f"outcome is {trial['outcome']['status']}"
+    if trial["resources"].get("raw_artifact_sha256") is None:
+        return "resource observer artifact is not linked"
     kind = trial["workload"]["kind"]
     expected = trial["workload"]["expected_payload_bytes"]
     useful = trial["payload"]["useful_bytes"]

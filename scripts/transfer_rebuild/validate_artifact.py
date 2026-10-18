@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import sys
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from stat import S_ISREG
 from typing import Any
 
@@ -29,6 +30,8 @@ SCHEMAS = {
     "trial": ROOT / "certification/transfer-rebuild/trial.schema.json",
     "manifest": ROOT / "certification/transfer-rebuild/manifest.schema.json",
     "client-observation": ROOT / "certification/transfer-rebuild/client-observation.schema.json",
+    "resource-observation": ROOT
+    / "certification/transfer-rebuild/resource-observation.schema.json",
     "cache-state": ROOT / "certification/transfer-rebuild/cache-state.schema.json",
     "network-control": ROOT / "certification/transfer-rebuild/network-control.schema.json",
     "ceiling-input": ROOT / "certification/transfer-rebuild/ceiling-input.schema.json",
@@ -42,6 +45,39 @@ NETWORK_CONTROL_KIND = "transfer-network-control-v1"
 CEILING_INPUT_KIND = "transfer-ceiling-input-v1"
 CEILING_KIND = "transfer-ceiling-v1"
 CALIBRATION_RAW_KIND = "transfer-calibration-raw-v1"
+RESOURCE_OBSERVATION_KIND = "transfer-resource-observation-v1"
+RESOURCE_SAMPLES_KIND = "transfer-resource-samples-v1"
+RESOURCE_SAMPLE_FIELDS = (
+    "elapsed_ns",
+    "processes",
+    "rss_bytes",
+    "pss_bytes",
+    "cgroup_anon_bytes",
+    "cgroup_file_bytes",
+    "cgroup_reclaimable_cache_bytes",
+    "cgroup_current_bytes",
+    "cpu_time_ns",
+    "threads",
+    "fds",
+    "block_read_bytes",
+    "block_write_bytes",
+    "network_namespace_inode",
+    "network_rx_bytes",
+    "network_tx_bytes",
+)
+RESOURCE_PEAK_FIELDS = {
+    "rss_bytes": "rss_bytes",
+    "pss_bytes": "pss_bytes",
+    "cgroup_anon_bytes": "cgroup_anon_bytes",
+    "cgroup_file_bytes": "cgroup_file_bytes",
+    "cgroup_reclaimable_cache_bytes": "cgroup_reclaimable_cache_bytes",
+    "cgroup_current_bytes": "cgroup_current_bytes",
+    "cpu_time_ns": "cpu_time_ns",
+    "threads": "threads",
+    "fds": "fds",
+    "block_read_bytes": "block_read_bytes",
+    "block_write_bytes": "block_write_bytes",
+}
 NETWORK_PROFILES = {
     "lan-1g-1ms-v1": {"delay_ms": 1, "rate_bps": 1_000_000_000, "limit_packets": 1000},
     "metro-100m-10ms-v1": {"delay_ms": 10, "rate_bps": 100_000_000, "limit_packets": 1000},
@@ -176,6 +212,172 @@ def _client_observation_errors(observation: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _resource_observation_errors(observation: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    if observation["finished_monotonic_ns"] < observation["started_monotonic_ns"]:
+        errors.append("finished_monotonic_ns precedes started_monotonic_ns")
+
+    network_values = (
+        observation["network_namespace_inode"],
+        observation["network_rx_bytes"],
+        observation["network_tx_bytes"],
+    )
+    if any(value is not None for value in network_values) and not all(
+        value is not None for value in network_values
+    ):
+        errors.append("network namespace and RX/TX counters must be present together")
+    if all(value is not None for value in network_values):
+        if observation["network_interface"] is None:
+            errors.append("network counters require a named interface")
+        if observation["sample_count"] < 2:
+            errors.append("network counters require at least two samples")
+    if (
+        observation["network_interface"] is None
+        and any(value is not None for value in network_values)
+    ):
+        errors.append("network counters were reported without requesting an interface")
+    network_note = observation["network_note"].lower()
+    if observation["network_interface"] is None:
+        if "not requested" not in network_note:
+            errors.append("network_note does not say that network observation was not requested")
+    elif "isolates exactly one client" not in network_note:
+        errors.append("network_note omits the one-client namespace requirement")
+    return errors
+
+
+def _resource_samples_errors(path: Path, observation: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    peaks: dict[str, int | None] = {field: None for field in RESOURCE_PEAK_FIELDS}
+    peak_valid = {field: True for field in RESOURCE_PEAK_FIELDS}
+    sample_count = 0
+    previous_elapsed_ns: int | None = None
+    observation_duration_ns = (
+        observation["finished_monotonic_ns"] - observation["started_monotonic_ns"]
+    )
+    interface = observation["network_interface"]
+    network_valid = interface is not None
+    network_count = 0
+    namespace_inode: int | None = None
+    first_network: tuple[int, int] | None = None
+    last_network: tuple[int, int] | None = None
+    network_values_without_interface = False
+
+    try:
+        with path.open("r", encoding="utf-8", newline="") as source:
+            reader = csv.DictReader(source)
+            if tuple(reader.fieldnames or ()) != RESOURCE_SAMPLE_FIELDS:
+                return ["CSV header does not match transfer resource samples v1"]
+            for row in reader:
+                sample_count += 1
+                if None in row:
+                    return [f"CSV row {sample_count} has extra fields"]
+                values: dict[str, int | None] = {}
+                for field in RESOURCE_SAMPLE_FIELDS:
+                    raw = row.get(field)
+                    if raw is None:
+                        return [f"CSV row {sample_count} is missing {field}"]
+                    if raw == "":
+                        values[field] = None
+                        continue
+                    if not raw.isascii() or not raw.isdecimal():
+                        return [f"CSV row {sample_count} has a non-canonical {field}"]
+                    try:
+                        value = int(raw)
+                    except ValueError:
+                        return [f"CSV row {sample_count} has a non-integer {field}"]
+                    if str(value) != raw:
+                        return [f"CSV row {sample_count} has a non-canonical {field}"]
+                    if value < 0:
+                        return [f"CSV row {sample_count} has a negative {field}"]
+                    values[field] = value
+                elapsed_ns = values["elapsed_ns"]
+                process_count = values["processes"]
+                if elapsed_ns is None or process_count is None:
+                    return [f"CSV row {sample_count} is missing elapsed_ns or processes"]
+                if process_count < 1:
+                    return [f"CSV row {sample_count} has no observed processes"]
+                if previous_elapsed_ns is not None and elapsed_ns <= previous_elapsed_ns:
+                    return [f"CSV row {sample_count} elapsed_ns is not strictly increasing"]
+                if elapsed_ns > observation_duration_ns:
+                    return [f"CSV row {sample_count} elapsed_ns exceeds the observation interval"]
+                previous_elapsed_ns = elapsed_ns
+
+                for field in RESOURCE_PEAK_FIELDS:
+                    value = values[field]
+                    if value is None:
+                        peak_valid[field] = False
+                    else:
+                        previous = peaks[field]
+                        peaks[field] = value if previous is None else max(previous, value)
+
+                sample_network = (
+                    values["network_namespace_inode"],
+                    values["network_rx_bytes"],
+                    values["network_tx_bytes"],
+                )
+                if interface is None:
+                    if any(value is not None for value in sample_network):
+                        network_values_without_interface = True
+                        network_valid = False
+                    continue
+                if any(value is None for value in sample_network):
+                    network_valid = False
+                    continue
+                sample_inode, received, transmitted = sample_network
+                assert sample_inode is not None and received is not None and transmitted is not None
+                network_count += 1
+                if namespace_inode is None:
+                    namespace_inode = sample_inode
+                    first_network = (received, transmitted)
+                    last_network = first_network
+                    continue
+                if (
+                    sample_inode != namespace_inode
+                    or last_network is None
+                    or received < last_network[0]
+                    or transmitted < last_network[1]
+                ):
+                    network_valid = False
+                    continue
+                last_network = (received, transmitted)
+    except (OSError, UnicodeDecodeError, csv.Error) as error:
+        return [f"cannot read resource samples CSV: {error}"]
+
+    if sample_count != observation["sample_count"]:
+        errors.append("CSV row count differs from sample_count")
+    if network_values_without_interface:
+        errors.append("CSV has network values although network observation was not requested")
+    for field, observed in observation["peaks"].items():
+        expected = peaks[field] if peak_valid[field] else None
+        if observed != expected:
+            errors.append(f"peaks.{field} differs from the CSV samples")
+
+    network_observed = (
+        interface is not None
+        and network_valid
+        and network_count >= 2
+        and first_network is not None
+        and last_network is not None
+    )
+    expected_network = (
+        (
+            namespace_inode,
+            last_network[0] - first_network[0],
+            last_network[1] - first_network[1],
+        )
+        if network_observed
+        else (None, None, None)
+    )
+    actual_network = (
+        observation["network_namespace_inode"],
+        observation["network_rx_bytes"],
+        observation["network_tx_bytes"],
+    )
+    if actual_network != expected_network:
+        errors.append("network summary differs from the CSV samples")
+    return errors
+
+
 def _cache_state_errors(observation: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     if observation["status"] == "unsupported":
@@ -296,6 +498,8 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
     trial_validator = Draft202012Validator(trial_schema, format_checker=FormatChecker())
     client_schema = _load_json(SCHEMAS["client-observation"])
     client_validator = Draft202012Validator(client_schema, format_checker=FormatChecker())
+    resource_schema = _load_json(SCHEMAS["resource-observation"])
+    resource_validator = Draft202012Validator(resource_schema, format_checker=FormatChecker())
     cache_schema = _load_json(SCHEMAS["cache-state"])
     cache_validator = Draft202012Validator(cache_schema, format_checker=FormatChecker())
     network_schema = _load_json(SCHEMAS["network-control"])
@@ -305,6 +509,8 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
     ceiling_schema = _load_json(SCHEMAS["ceiling"])
     ceiling_validator = Draft202012Validator(ceiling_schema, format_checker=FormatChecker())
     client_observations: dict[str, dict[str, Any]] = {}
+    resource_observations: dict[str, dict[str, Any]] = {}
+    resource_sample_artifacts: dict[str, str] = {}
     cache_observations: dict[str, dict[str, Any]] = {}
     network_observations: dict[str, dict[str, Any]] = {}
     ceiling_inputs: dict[str, dict[str, Any]] = {}
@@ -314,7 +520,7 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
     pending_ceiling_reports: list[tuple[int, dict[str, Any]]] = []
 
     for index, record in enumerate(manifest.get("artifacts", [])):
-        if record["kind"] != CALIBRATION_RAW_KIND:
+        if record["kind"] not in {CALIBRATION_RAW_KIND, RESOURCE_SAMPLES_KIND}:
             continue
         location = f"$.artifacts[{index}]"
         path, path_error = _referenced_file(root, record["path"])
@@ -324,12 +530,76 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
         try:
             observed_digest = _sha256(path)
         except OSError as error:
-            errors.append(f"{location}.path: cannot read raw calibration artifact: {error}")
+            errors.append(f"{location}.path: cannot read raw evidence artifact: {error}")
             continue
         if observed_digest != record["sha256"]:
-            errors.append(f"{location}.sha256: raw calibration digest does not match {record['path']}")
+            errors.append(f"{location}.sha256: raw evidence digest does not match {record['path']}")
             continue
-        verified_raw_digests.add(observed_digest)
+        if record["kind"] == CALIBRATION_RAW_KIND:
+            verified_raw_digests.add(observed_digest)
+        else:
+            resource_sample_artifacts[record["path"]] = observed_digest
+
+    for index, record in enumerate(manifest.get("artifacts", [])):
+        if record["kind"] != RESOURCE_OBSERVATION_KIND:
+            continue
+        location = f"$.artifacts[{index}]"
+        path, path_error = _referenced_file(root, record["path"])
+        if path_error is not None or path is None:
+            errors.append(f"{location}.path: {path_error}")
+            continue
+        try:
+            observed_digest = _sha256(path)
+        except OSError as error:
+            errors.append(f"{location}.path: cannot read resource observation: {error}")
+            continue
+        if observed_digest != record["sha256"]:
+            errors.append(f"{location}.sha256: digest does not match {record['path']}")
+            continue
+        try:
+            observation = _load_strict_json(path)
+        except ValueError as error:
+            errors.append(f"{location}.path: {error}")
+            continue
+        schema_errors = sorted(
+            resource_validator.iter_errors(observation),
+            key=lambda error: (list(map(str, error.absolute_path)), error.message),
+        )
+        if schema_errors:
+            for error in schema_errors[:20]:
+                errors.append(
+                    f"{location}.path: invalid resource observation "
+                    f"{_format_path(error)}: {error.message}"
+                )
+            continue
+        if not isinstance(observation, dict):
+            errors.append(f"{location}.path: resource observation must be an object")
+            continue
+        semantic_errors = _resource_observation_errors(observation)
+        if semantic_errors:
+            errors.extend(f"{location}.path: {error}" for error in semantic_errors)
+            continue
+        csv_relative = (
+            PurePosixPath(record["path"]).parent / observation["samples_csv"]
+        ).as_posix()
+        csv_digest = resource_sample_artifacts.get(csv_relative)
+        if csv_digest is None:
+            errors.append(
+                f"{location}.path: linked samples CSV is not a verified manifest artifact"
+            )
+            continue
+        if csv_digest != observation["samples_csv_sha256"]:
+            errors.append(f"{location}.path: samples CSV digest differs from its summary")
+            continue
+        csv_path, csv_path_error = _referenced_file(root, csv_relative)
+        if csv_path_error is not None or csv_path is None:
+            errors.append(f"{location}.path: {csv_path_error}")
+            continue
+        sample_errors = _resource_samples_errors(csv_path, observation)
+        if sample_errors:
+            errors.extend(f"{location}.path: {error}" for error in sample_errors)
+            continue
+        resource_observations[record["sha256"]] = observation
 
     # Client identity artifacts are verified first so trial records can bind to
     # a specific readback by digest and compare their client/settings identity.
@@ -594,6 +864,60 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
         if trial["identity"]["dirty_worktree"] != manifest["worktree_dirty"]:
             errors.append(f"{location}.dirty_worktree: differs from the manifest")
 
+        resources = trial["resources"]
+        resource_digest = resources.get("raw_artifact_sha256")
+        if resource_digest is not None:
+            resource_observation = resource_observations.get(resource_digest)
+            if resource_observation is None:
+                errors.append(
+                    f"{location}.resources.raw_artifact_sha256: "
+                    "no verified resource observation artifact"
+                )
+            else:
+                if resources["observer_id"] != resource_observation["observer_id"]:
+                    errors.append(f"{location}.resources.observer_id: differs from its observation")
+                if resources["sample_interval_ms"] != resource_observation["sample_interval_ms"]:
+                    errors.append(
+                        f"{location}.resources.sample_interval_ms: differs from its observation"
+                    )
+                if resource_observation["root_pid"] != trial["client_identity"]["process_id"]:
+                    errors.append(
+                        f"{location}.resources.raw_artifact_sha256: observer root PID "
+                        "differs from the client process"
+                    )
+                if resource_observation["root_process_start_ticks"] != trial[
+                    "client_identity"
+                ]["process_start_ticks"]:
+                    errors.append(
+                        f"{location}.resources.raw_artifact_sha256: observer root process "
+                        "start identity differs from the client process"
+                    )
+                resource_fields = {
+                    "rss_peak_bytes": "rss_bytes",
+                    "pss_peak_bytes": "pss_bytes",
+                    "cgroup_anon_peak_bytes": "cgroup_anon_bytes",
+                    "cgroup_file_peak_bytes": "cgroup_file_bytes",
+                    "cgroup_reclaimable_cache_peak_bytes": "cgroup_reclaimable_cache_bytes",
+                    "cgroup_current_peak_bytes": "cgroup_current_bytes",
+                    "cpu_time_ns": "cpu_time_ns",
+                    "threads_peak": "threads",
+                    "fds_peak": "fds",
+                    "block_read_bytes": "block_read_bytes",
+                    "block_write_bytes": "block_write_bytes",
+                    "network_rx_bytes": "network_rx_bytes",
+                    "network_tx_bytes": "network_tx_bytes",
+                }
+                for trial_field, observation_field in resource_fields.items():
+                    observed_value = (
+                        resource_observation["peaks"][observation_field]
+                        if observation_field in resource_observation["peaks"]
+                        else resource_observation[observation_field]
+                    )
+                    if resources[trial_field] != observed_value:
+                        errors.append(
+                            f"{location}.resources.{trial_field}: differs from its observation"
+                        )
+
         environment = trial["environment"]
         network = environment["network"]
         ceiling_digest = environment.get("independent_ceiling_sha256")
@@ -766,7 +1090,13 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
 
     # Validate the remaining artifact file references and digests as before.
     for index, record in enumerate(manifest.get("artifacts", [])):
-        if record["kind"] in {CLIENT_OBSERVATION_KIND, CACHE_STATE_KIND, NETWORK_CONTROL_KIND}:
+        if record["kind"] in {
+            CLIENT_OBSERVATION_KIND,
+            CACHE_STATE_KIND,
+            NETWORK_CONTROL_KIND,
+            RESOURCE_OBSERVATION_KIND,
+            RESOURCE_SAMPLES_KIND,
+        }:
             continue
         location = f"$.artifacts[{index}]"
         path, path_error = _referenced_file(root, record["path"])
@@ -807,6 +1137,8 @@ def validate(
     formatted = [f"{_format_path(error)}: {error.message}" for error in errors]
     if kind == "client-observation" and not formatted and isinstance(artifact, dict):
         formatted.extend(f"$.{error}" for error in _client_observation_errors(artifact))
+    if kind == "resource-observation" and not formatted and isinstance(artifact, dict):
+        formatted.extend(f"$.{error}" for error in _resource_observation_errors(artifact))
     if kind == "cache-state" and not formatted and isinstance(artifact, dict):
         formatted.extend(f"$.{error}" for error in _cache_state_errors(artifact))
     if kind == "network-control" and not formatted and isinstance(artifact, dict):

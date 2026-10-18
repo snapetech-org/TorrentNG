@@ -1,6 +1,8 @@
 """Unit tests for the transfer rebuild's bounded resource observer."""
 
 import importlib.util
+import hashlib
+import json
 import os
 import sys
 import tempfile
@@ -38,6 +40,16 @@ class PeakSummaryTests(unittest.TestCase):
         self.assertIsNone(summary.as_json()["peaks"]["cgroup_anon_bytes"])
         self.assertIsNone(summary.as_json()["peaks"]["cgroup_reclaimable_cache_bytes"])
         self.assertIsNone(summary.as_json()["peaks"]["block_read_bytes"])
+
+    def test_one_missing_sample_keeps_a_peak_null_instead_of_using_a_partial_maximum(self):
+        summary = observer.PeakSummary()
+        summary.observe(observer.Sample(0, 1, 100, 70, 60, 20, 10, 100, 4, 2, 3, 10, 11))
+        summary.observe(observer.Sample(1, 1, None, 80, 55, 25, 15, 95, None, 2, 4, 8, 15))
+
+        peaks = summary.as_json()["peaks"]
+        self.assertIsNone(peaks["rss_bytes"])
+        self.assertIsNone(peaks["cpu_time_ns"])
+        self.assertEqual(peaks["pss_bytes"], 80)
 
 
 class NetworkObservationTests(unittest.TestCase):
@@ -167,10 +179,19 @@ class OutputArtifactTests(unittest.TestCase):
 
             with mock.patch.object(observer, "process_tree", side_effect=[[123], []]):
                 with mock.patch.object(observer, "sample_process_tree", return_value=sample):
-                    self.assertEqual(
-                        observer.observe(123, csv_path, summary_path, 1, 1, None),
-                        0,
-                    )
+                    with mock.patch.object(observer, "_process_start_ticks", return_value=987):
+                        self.assertEqual(
+                            observer.observe(123, csv_path, summary_path, 1, 1, None),
+                            0,
+                        )
+
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            self.assertEqual(summary["schema_version"], "transfer-resource-observation-v1")
+            self.assertEqual(summary["root_process_start_ticks"], 987)
+            self.assertEqual(
+                summary["samples_csv_sha256"],
+                hashlib.sha256(csv_path.read_bytes()).hexdigest(),
+            )
 
             csv_before = csv_path.read_bytes()
             summary_before = summary_path.read_bytes()

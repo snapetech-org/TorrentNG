@@ -13,7 +13,9 @@ as separate values. It also records cgroup file-backed and `inactive_file`
 reclaimable-cache counters separately when the kernel exposes them. Unavailable
 counters remain `null`; failed per-process descriptor reads do not produce a
 partial FD total. CSV and summary artifacts are created exclusively with mode
-`0600` and are never overwritten by a later observer run.
+`0600` and are never overwritten by a later observer run. The CSV and summary
+must share a directory. The `transfer-resource-observation-v1` summary records
+the CSV digest and binds the observed root PID and process start time.
 
 Example:
 
@@ -50,6 +52,7 @@ to a manifest:
 ```sh
 python3 -m pip install -r scripts/transfer_rebuild/requirements.txt
 python3 scripts/transfer_rebuild/validate_artifact.py trial /path/to/trial.json
+python3 scripts/transfer_rebuild/validate_artifact.py resource-observation /path/to/resources.json
 python3 scripts/transfer_rebuild/validate_artifact.py manifest /path/to/manifest.json
 python3 scripts/transfer_rebuild/validate_artifact.py cache-state /path/to/cache-state.json
 ```
@@ -59,7 +62,12 @@ formats and the rules that apply when a trial claims a complete outcome. For a
 manifest, it also resolves trial and artifact paths beneath the manifest
 directory, rejects symlinks and path escapes, checks SHA-256 values, validates
 each referenced trial record, and compares its pair/outcome/source identity to
-the manifest. It reports field paths and returns nonzero for malformed JSON,
+the manifest. The writer requires a resource-observation digest for newly
+published complete trials; validation matches linked summaries to the trial's
+process and resource totals, checks the CSV digest, and recomputes peak and
+network totals from the streamed rows. Historical complete trial-v1 records
+without that link remain readable, but the scorecard excludes them. It reports
+field paths and returns nonzero for malformed JSON,
 schemas, records, or referenced files. The focused validator regressions are in
 `scripts/test_transfer_rebuild_validator.py` and belong in the bulk pass.
 Cold/warm trials must link a verified `transfer-cache-state-v1` artifact;
@@ -76,7 +84,9 @@ python3 scripts/transfer_rebuild/manifest.py \
   --repo /path/to/clean/TorrentNG \
   --output /path/to/task-scratch/run-01/manifest.json \
   --trial /path/to/task-scratch/run-01/trials/trial-01.json \
-  --artifact transfer-client-observation-v1=/path/to/task-scratch/run-01/artifacts/client.json
+  --artifact transfer-client-observation-v1=/path/to/task-scratch/run-01/artifacts/client.json \
+  --artifact transfer-resource-observation-v1=/path/to/task-scratch/run-01/artifacts/resources.json \
+  --artifact transfer-resource-samples-v1=/path/to/task-scratch/run-01/artifacts/resources.csv
 ```
 
 The evidence files must be regular files below the manifest directory and

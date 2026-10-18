@@ -25,6 +25,7 @@ SCHEMA_PATH = ROOT / "certification/transfer-rebuild/manifest.schema.json"
 TRIAL_SCHEMA_PATH = ROOT / "certification/transfer-rebuild/trial.schema.json"
 MANIFEST_VERSION = "transfer-manifest-v1"
 TRIAL_VERSION = "transfer-trial-v1"
+RESOURCE_OBSERVATION_KIND = "transfer-resource-observation-v1"
 ARTIFACT_KIND_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,95}$")
 MAX_JSON_BYTES = 16 * 1024 * 1024
 READ_CHUNK_BYTES = 1024 * 1024
@@ -328,6 +329,30 @@ def create_manifest(
         seen_paths.add(record["path"])
         input_digests[record["path"]] = record["sha256"]
         artifact_records.append(record)
+
+    resource_observation_digests = {
+        record["sha256"]
+        for record in artifact_records
+        if record["kind"] == RESOURCE_OBSERVATION_KIND
+    }
+    for trial_record in trial_records:
+        if trial_record["outcome"] != "complete":
+            continue
+        trial_data, _ = _read_and_hash(
+            parent, trial_record["path"], max_bytes=MAX_JSON_BYTES
+        )
+        if trial_data is None:
+            raise ManifestError(f"complete trial was not read: {trial_record['path']}")
+        trial = _load_json(trial_data, f"trial {trial_record['path']}")
+        resource_digest = trial.get("resources", {}).get("raw_artifact_sha256")
+        if (
+            not isinstance(resource_digest, str)
+            or resource_digest not in resource_observation_digests
+        ):
+            raise ManifestError(
+                f"complete trial {trial_record['path']} must link a verified "
+                "transfer-resource-observation-v1 artifact"
+            )
 
     trial_records.sort(
         key=lambda item: (item["pair_id"], item["trial_id"], item["path"])
