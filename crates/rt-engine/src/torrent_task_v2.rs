@@ -1162,6 +1162,9 @@ struct V2PieceAssembly {
     region_len: u32,
     received: Vec<bool>,
     received_count: usize,
+    /// First block that may still be requested by this peer. The per-piece
+    /// request window advances this past received and on-wire blocks.
+    next_unrequested_hint: usize,
     pending_blocks: usize,
     discard_when_idle: bool,
     failed: bool,
@@ -1258,7 +1261,8 @@ impl V2PieceAssembly {
             anyhow::bail!("v2 piece {piece} has too many blocks");
         }
         let bookkeeping_bytes = u64::try_from(block_count)
-            .map_err(|_| anyhow::anyhow!("v2 piece bookkeeping size overflow"))?;
+            .map_err(|_| anyhow::anyhow!("v2 piece bookkeeping size overflow"))?
+            .saturating_add(std::mem::size_of::<usize>() as u64);
         let mut received = Vec::new();
         received
             .try_reserve_exact(block_count)
@@ -1291,6 +1295,7 @@ impl V2PieceAssembly {
             region_len,
             received,
             received_count: 0,
+            next_unrequested_hint: 0,
             pending_blocks: 0,
             discard_when_idle: false,
             failed: false,
@@ -1353,15 +1358,45 @@ impl V2PieceAssembly {
         piece: u32,
         outstanding: &HashMap<(u32, u32), V2OutstandingRequest>,
     ) -> Option<u32> {
-        self.received
-            .iter()
-            .enumerate()
-            .find_map(|(index, received)| {
+        (self.next_unrequested_hint.min(self.received.len())..self.received.len()).find_map(
+            |index| {
                 let begin = u32::try_from(index)
                     .ok()?
                     .checked_mul(rt_peer_wire::message::MAX_BLOCK_SIZE)?;
-                (!received && !outstanding.contains_key(&(piece, begin))).then_some(begin)
-            })
+                (!self.received[index] && !outstanding.contains_key(&(piece, begin)))
+                    .then_some(begin)
+            },
+        )
+    }
+
+    fn advance_next_unrequested(
+        &mut self,
+        piece: u32,
+        outstanding: &HashMap<(u32, u32), V2OutstandingRequest>,
+    ) {
+        while self.next_unrequested_hint < self.received.len() {
+            let index = self.next_unrequested_hint;
+            let Some(begin) = u32::try_from(index)
+                .ok()
+                .and_then(|index| index.checked_mul(rt_peer_wire::message::MAX_BLOCK_SIZE))
+            else {
+                break;
+            };
+            if self.received[index] || outstanding.contains_key(&(piece, begin)) {
+                self.next_unrequested_hint += 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn rewind_next_unrequested(&mut self, begin: u32) {
+        let Ok(index) = self.block_index(begin) else {
+            return;
+        };
+        if !self.received[index] {
+            self.next_unrequested_hint = self.next_unrequested_hint.min(index);
+        }
     }
 }
 
@@ -4248,6 +4283,9 @@ async fn run_v2_peer_protocol(
                     .is_some_and(|request| request.length == block.length);
                 if matching {
                     outstanding.remove(&(block.piece, block.begin));
+                    if let Some(assembly) = assemblies.get_mut(&block.piece) {
+                        assembly.rewind_next_unrequested(block.begin);
+                    }
                     if !send_v2_peer_message(
                         &context,
                         &mut framed,
@@ -4575,6 +4613,9 @@ async fn run_v2_peer_protocol(
                             length,
                         );
                         if released {
+                            if let Some(assembly) = assemblies.get_mut(&piece) {
+                                assembly.rewind_next_unrequested(begin);
+                            }
                             if let Ok(mut ledger) = context.transfer_ledger.lock() {
                                 let _ = ledger.on_reject(
                                     context.transfer_conn,
@@ -5324,6 +5365,9 @@ async fn fill_v2_requests(
                 _memory_lease: Some(memory_lease),
             },
         );
+        if let Some(assembly) = assemblies.get_mut(&piece) {
+            assembly.advance_next_unrequested(piece, outstanding);
+        }
     }
     if let Ok(mut peer) = state.lock() {
         peer.outstanding = outstanding.len();
@@ -5814,8 +5858,16 @@ async fn handle_v2_piece(
     };
     let (actions, accepted_at) = match receive {
         ReceiveOutcome::Accepted { actions, .. } => (actions, v2_transfer_now(context)),
-        ReceiveOutcome::Duplicate => return Ok(()),
+        ReceiveOutcome::Duplicate => {
+            if let Some(assembly) = assemblies.get_mut(&piece) {
+                assembly.rewind_next_unrequested(begin);
+            }
+            return Ok(());
+        }
         ReceiveOutcome::IgnoredForPieceAffinity => {
+            if let Some(assembly) = assemblies.get_mut(&piece) {
+                assembly.rewind_next_unrequested(begin);
+            }
             discard_v2_empty_assembly_if_idle(
                 context,
                 piece,
@@ -5871,6 +5923,7 @@ async fn handle_v2_piece(
         let accepted = assembly.accept_block(begin, &data)?;
         if accepted {
             assembly.pending_blocks = assembly.pending_blocks.saturating_add(1);
+            assembly.advance_next_unrequested(piece, outstanding);
         }
         (accepted, assembly.data.is_some())
     };
@@ -7263,6 +7316,58 @@ mod tests {
         assert!(result.is_ok());
         assert!(assemblies.is_empty());
         assert_eq!(task.transfer_ledger.lock().unwrap().in_flight(), 0);
+    }
+
+    #[test]
+    fn v2_piece_request_cursor_skips_live_blocks_and_rewinds_on_cancel() {
+        let resources = ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default());
+        let block_len = rt_peer_wire::message::MAX_BLOCK_SIZE;
+        let mut assembly = V2PieceAssembly::new(3, 1, block_len * 3, 0, &resources).unwrap();
+        let mut outstanding = HashMap::new();
+
+        assert_eq!(assembly.next_unrequested(3, &outstanding), Some(0));
+        outstanding.insert(
+            (3, 0),
+            V2OutstandingRequest {
+                length: block_len,
+                sent_at: 0,
+                _memory_lease: None,
+            },
+        );
+        assembly.advance_next_unrequested(3, &outstanding);
+        assert_eq!(assembly.next_unrequested_hint, 1);
+
+        let second_begin = block_len;
+        outstanding.insert(
+            (3, second_begin),
+            V2OutstandingRequest {
+                length: block_len,
+                sent_at: 0,
+                _memory_lease: None,
+            },
+        );
+        assembly.advance_next_unrequested(3, &outstanding);
+        assert_eq!(assembly.next_unrequested_hint, 2);
+        assert_eq!(
+            assembly.next_unrequested(3, &outstanding),
+            Some(block_len * 2)
+        );
+
+        outstanding.remove(&(3, 0));
+        assembly.rewind_next_unrequested(0);
+        assert_eq!(assembly.next_unrequested_hint, 0);
+        assert_eq!(assembly.next_unrequested(3, &outstanding), Some(0));
+
+        assembly
+            .accept_block(0, &vec![0; block_len as usize])
+            .unwrap();
+        assembly.advance_next_unrequested(3, &outstanding);
+        assert_eq!(assembly.next_unrequested_hint, 2);
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::PieceAssembly as usize].used_bytes,
+            3 + std::mem::size_of::<usize>() as u64,
+            "the assembly lease includes the added cursor bookkeeping"
+        );
     }
 
     #[tokio::test]

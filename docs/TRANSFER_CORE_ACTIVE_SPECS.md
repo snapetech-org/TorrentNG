@@ -3541,6 +3541,9 @@ piece. A centralized 60-second ledger expiry routes Cancel actions to peer
 tasks and drops matching actor requests. Hybrid dual-view arbitration,
 concurrent shared source scheduling, and shared rate/window/upload services
 remain open.
+Each pure-v2 assembly also keeps a forward request cursor over received and
+on-wire blocks. Matching Cancel and Reject responses rewind the cursor, and
+its bookkeeping is included in the PieceAssembly memory lease.
 
 ### Ownership and invariant
 
@@ -3552,6 +3555,8 @@ remain open.
   slots under an explicit PeerBuffer lease; the picker retains its candidate
   and resume projection. V2 actor maps retain response leases and peer-local
   assemblies.
+  Pure-v2 assemblies advance a request cursor past received/on-wire blocks and
+  rewind it on Cancel/Reject.
 - **Geometry foundation:** `PieceGeometry::block_content_ranges` projects a
   wire block into path/offset spans while retaining v1 synthetic padding;
   `HybridGeometry::blocks_match_content` identifies equivalent payload when a
@@ -3571,7 +3576,9 @@ remain open.
   releases ownership.
 - **Memory bound:** connection slots and per-piece ledger state are charged to
   `MemoryClass::PeerBuffer`; per-request response capacity remains charged by
-  its existing lease. The picker stays independently charged to PieceIndex.
+  its existing lease. Pure-v2 cursor bookkeeping is included in the
+  `MemoryClass::PieceAssembly` lease. The picker stays independently charged to
+  PieceIndex.
 - **Rollback:** remove the actor adapter and restore picker-owned request
   admission. No resume format or wire protocol change is required.
 
@@ -3581,6 +3588,8 @@ remain open.
   timeout, disconnect, and piece completion/failure. Pure-v2 uses it for
   reserve, wire commit, response, Reject, Choke, 60-second timeout expiry,
   disconnect, and piece completion/failure.
+- Pure-v2 request cursors skip received/on-wire blocks and rewind on matching
+  Cancel/Reject responses.
 - Serial v1 webseed requests reserve before fetch, commit after a validated
   response, and release on fetch failure, cancellation, or response handling;
   temporary connection and piece-state allocations are charged to
@@ -3605,8 +3614,9 @@ remain open.
   reverse mapping from canonical ledger extents to v2 wire actions,
   ledger failure/expiry cancellation, v1 actor lifecycle, webseed ledger
   ownership, and pure-v2
-  reservation/response/action-routing/timeout sources are present; hybrid
-  dual-view cases remain open.
+  reservation/response/action-routing/timeout sources and a request-cursor
+  source covering live-block skips, cancellation rewind, received-block skips,
+  and cursor memory accounting are present; hybrid dual-view cases remain open.
 - **Command or probe:** run transfer-core simulator and engine regression
   suites only during the owner-requested bulk pass.
 - **Executed on exact revision:** no. No build or test commands were run for
