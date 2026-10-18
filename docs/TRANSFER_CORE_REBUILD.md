@@ -16,13 +16,16 @@ Never tick a row on the strength of a design alone.
 
 ## 1. Review of the audit
 
-### What was verified here, against local HEAD
+### Baseline source review
 
-The audit's line references were checked against this checkout. The
-`rt-engine`, `rt-piece-map`, `rt-piece-picker`, `rt-storage`, `rt-utp` and
-`rt-session` sources are byte-identical between the audited revision and local
-`main` (the 33 commits local `main` lacks relative to `origin/main` touch
-workflows/scripts only), so the pinned line numbers apply.
+The audit's line references and initial finding checks describe the audited
+baseline `05d5c23886446f380552c73e0be480f03ae2d2ab`. That source review
+predates the later mainline changes now included in this rebuild branch; the
+old byte-identity and commit-count note no longer describes the current
+checkout. Treat those line references as historical. The ticket table and each
+ticket's current scope/evidence are authoritative for the implementation
+status here, and no audit finding is considered closed solely because its
+original line reference changed.
 
 | Finding | Re-verified in source | Result |
 |---|---|---|
