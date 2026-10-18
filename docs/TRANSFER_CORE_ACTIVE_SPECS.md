@@ -1018,20 +1018,23 @@ cross-plane immutable spans, or integrate hybrid payload ownership.
 
 ### Scope
 
-The pure `Ledger` owns per-piece block state and per-connection reservations,
+The `Ledger` owns per-piece block state and per-connection reservations,
 reconciles response/commit event reordering, accepts useful late data, and
 returns bounded protocol actions. A conservative 64 MiB logical piece-state
 budget, a 4,096-live-connection ceiling, a 1,024-request per-peer ceiling, a
 65,536-owner torrent ceiling, and a four-owner endgame cap keep its principal
-retained collections bounded. v1, pure-v2, hybrid, and storage execution
-remain on their reference paths until NET-114.
+retained collections bounded. NET-114 now uses it for live v1 and hybrid-v1
+request/content ownership; pure-v2 remains on its actor-local reference path.
 
 ### Ownership and invariant
 
-- **Current owner:** actor-local maps and piece assemblies remain authoritative
-  in production; the pure ledger owns only simulator/replay state.
-- **Target owner:** NET-114 makes this ledger authoritative for all protocol
-  planes, with storage retaining payload bytes until verification commits.
+- **Current owner:** the ledger owns live v1/hybrid-v1 request reservations,
+  connection generations, received-block arbitration, and cross-peer endgame
+  actions. `PiecePicker` remains the candidate-ranking and restored-partial
+  projection; pure-v2 still owns requests in its actor-local maps.
+- **Target owner:** NET-114 extends the same ownership contract to pure-v2,
+  hybrid dual-view transfers, restored partial state, and storage completion,
+  with storage retaining payload bytes until verification commits.
 - **Invariant preserved:** each missing block is reserved once outside
   endgame; connection generations isolate stale events; received blocks are
   verified as complete pieces before `have` is set.
@@ -1057,13 +1060,17 @@ remain on their reference paths until NET-114.
 
 ### Files and compatibility
 
-- **Expected code paths:** `crates/rt-engine/src/transfer/{ledger,sim}.rs`.
-- **State or wire compatibility:** pure module only; no live protocol behavior
-  changes until NET-114.
-- **Migration / rollback:** keep actor-local reference paths selectable while
-  NET-114 rolls protocol planes over.
-- **Feature flag or rollout boundary:** not live; simulator and bulk pass must
-  qualify before actors rely on the ledger.
+- **Expected code paths:** `crates/rt-engine/src/transfer/{ledger,sim}.rs`,
+  `crates/rt-engine/src/torrent_task/peer_transfer.rs`, and
+  `crates/rt-engine/src/torrent_task/peer_session.rs`.
+- **State or wire compatibility:** the ledger is in-memory only; no wire or
+  fastresume format changed. The live request adapter is staged per protocol
+  plane.
+- **Migration / rollback:** the picker remains the selection/resume projection;
+  reverting the actor adapter returns request ownership to the prior actor path.
+- **Feature flag or rollout boundary:** v1 and hybrid-v1 requests are wired but
+  unqualified; pure-v2 and hybrid dual-view integration remain open, and the
+  simulator plus bulk pass must qualify before the architecture is accepted.
 
 ### Evidence
 
@@ -3121,3 +3128,63 @@ arrive, drain all currently ready completions, and preserve the portable
 - **External evidence still required:** Linux kernel coverage and paired
   device workloads demonstrating a benefit without latency or durability
   regressions.
+
+## NET-114 — Live transfer actor ownership migration
+
+- **Priority / wave:** P1 / 11
+- **Prerequisites:** NET-104, NET-105, NET-108, NET-109, NET-110,
+  IO-008, IO-010
+- **Owning component:** `rt-engine/src/transfer/` with v1, pure-v2, and
+  hybrid peer-runtime adapters.
+- **Status:** `wip`
+
+### Scope
+
+Move request reservation, response arbitration, and terminal request cleanup
+from actor-local state into the shared transfer core in reversible protocol
+slices. The current slice wires the ledger into v1 and hybrid-v1 acquisition;
+pure-v2 ownership, shared source scheduling, shared rate/window/upload
+services, and hybrid dual-view arbitration remain open.
+
+### Ownership and invariant
+
+- **Current owner:** the generation-aware ledger owns live v1/hybrid-v1
+  reservations, socket-write commits, received-block arbitration, and
+  completion/failure cleanup. `PiecePicker` still ranks candidates and holds
+  restored-partial projection state. Pure-v2 continues to use its actor-local
+  request maps.
+- **Target owner:** each protocol adapter submits candidates to one shared
+  content owner, while immutable payload, storage completion, and durability
+  evidence retain their existing explicit owners.
+- **Invariant preserved:** a request is reserved before it can enter the peer
+  command queue, committed only after its wire write succeeds, and reconciled
+  against a response from the same connection generation. Duplicate or stale
+  blocks cannot enter storage; every lifecycle exit releases ownership.
+- **Memory bound:** connection slots and per-piece ledger state are charged to
+  `MemoryClass::PeerBuffer`; per-request response capacity remains charged by
+  its existing lease. The picker stays independently charged to PieceIndex.
+- **Rollback:** remove the actor adapter and restore picker-owned request
+  admission. No resume format or wire protocol change is required.
+
+### Acceptance
+
+- v1 and pure-v2 each use the ledger for reserve, wire commit, response,
+  Reject, Choke, timeout, disconnect, and piece completion/failure.
+- Hybrid v1/v2 views arbitrate the same payload without duplicate writes or
+  mismatched piece geometry.
+- Peer request, ledger connection, piece state, source jobs, rate queues, and
+  upload obligations stay within measured resource caps.
+- Simulator and actor regressions pass, then matched v1/v2/hybrid live
+  workloads show correct payload and lifecycle parity before the reference
+  paths are removed.
+
+### Evidence
+
+- **Regression sources:** ledger failure cancellation and v1 actor lifecycle
+  sources are present; pure-v2 and hybrid dual-view cases remain open.
+- **Command or probe:** run transfer-core simulator and engine regression
+  suites only during the owner-requested bulk pass.
+- **Executed on exact revision:** no. No build or test commands were run for
+  this slice.
+- **External evidence:** matched live protocol workloads and efficiency
+  comparisons remain pending.

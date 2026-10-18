@@ -236,6 +236,24 @@ impl PieceGeometry for PieceMap {
     }
 }
 
+impl<G: PieceGeometry + ?Sized> PieceGeometry for std::sync::Arc<G> {
+    fn plane(&self) -> Plane {
+        self.as_ref().plane()
+    }
+
+    fn piece_count(&self) -> u32 {
+        self.as_ref().piece_count()
+    }
+
+    fn piece_len(&self, piece: u32) -> Option<u32> {
+        self.as_ref().piece_len(piece)
+    }
+
+    fn content_ranges(&self, piece: u32) -> Vec<ContentRange> {
+        self.as_ref().content_ranges(piece)
+    }
+}
+
 impl PieceGeometry for V2PieceMap {
     fn plane(&self) -> Plane {
         Plane::V2

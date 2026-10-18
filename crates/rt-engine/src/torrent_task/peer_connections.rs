@@ -69,7 +69,7 @@ impl TorrentTask {
             let peer_event_tx = self.peer_event_tx.clone();
             let peer_disconnect_tx = self.peer_disconnect_tx.clone();
             let Some(upload) = self.upload_context(addr) else {
-                self.active_peers.remove(&addr);
+                self.discard_registered_peer(addr);
                 debug!(
                     component = "peer",
                     operation = "allocate_outgoing_state",
@@ -201,6 +201,7 @@ impl TorrentTask {
         for req in handle.requested {
             self.picker.cancel_request(req.piece as usize, req.begin);
         }
+        self.transfer_ledger.disconnect(handle.transfer_conn);
         handle.upload_control.cancel();
         handle.shutdown_control.cancel();
         let _ = handle.cmd_tx.try_send(PeerCommand::Shutdown);

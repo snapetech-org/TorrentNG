@@ -83,7 +83,10 @@ use crate::tracker_runtime::{
     TrackerScrapeResult, TrackerWorkerEvent, TrackerWorkers, MAX_TRACKER_ANNOUNCES_IN_FLIGHT,
     STOPPED_TRACKER_ANNOUNCE_DEADLINE,
 };
-use crate::transfer::coords::{BlockExtent, PieceGeometry};
+use crate::transfer::coords::{BlockExtent, ConnectionId, PieceGeometry};
+use crate::transfer::ledger::{
+    Action as TransferAction, CommitOutcome, Ledger as TransferLedger, ReceiveOutcome, ReserveMode,
+};
 use crate::transfer::obligations::{
     InboundDecision, InboundObligations, Reject as InboundReject,
     RejectReason as InboundRejectReason, Served as InboundServed,
@@ -1672,6 +1675,11 @@ enum PeerEvent {
         id: PeerId,
         block: LeasedBlockEvent,
     },
+    RequestSent {
+        peer: SocketAddr,
+        id: PeerId,
+        request: BlockRequest,
+    },
     RequestRejected {
         peer: SocketAddr,
         id: PeerId,
@@ -1718,6 +1726,7 @@ impl PeerEvent {
             | Self::Interested { peer, id }
             | Self::NotInterested { peer, id }
             | Self::Piece { peer, id, .. }
+            | Self::RequestSent { peer, id, .. }
             | Self::RequestRejected { peer, id, .. }
             | Self::Uploaded { peer, id, .. }
             | Self::Disconnected { peer, id, .. }
@@ -1731,6 +1740,7 @@ impl PeerEvent {
 #[derive(Debug)]
 struct PeerHandle {
     id: PeerId,
+    transfer_conn: ConnectionId,
     cmd_tx: mpsc::Sender<PeerCommand>,
     upload_control: RateLimitCancellation,
     shutdown_control: RateLimitCancellation,
@@ -2332,6 +2342,14 @@ pub struct TorrentTask {
     peer_disconnect_rx: mpsc::Receiver<PeerEvent>,
     tracker_workers: TrackerWorkers,
     picker: PiecePicker,
+    /// Shared owner of live v1/hybrid requests and received blocks. The
+    /// picker still ranks candidates; this ledger arbitrates cross-peer
+    /// ownership and wire-response lifetimes.
+    transfer_ledger: TransferLedger<Arc<PieceMap>>,
+    /// Logical ledger-state reservations are charged with peer request state,
+    /// separately from the picker's candidate index and payload assemblies.
+    transfer_piece_memory_leases: HashMap<u32, MemoryLease>,
+    transfer_started_at: Instant,
     choker: Choker,
     /// active peer addresses
     active_peers: HashMap<SocketAddr, PeerHandle>,
@@ -2606,6 +2624,8 @@ impl TorrentTask {
         }
         let piece_map = build_piece_map(meta.piece_length, &meta.files)
             .expect("metainfo parser rejects invalid piece maps");
+        let transfer_ledger =
+            TransferLedger::new(Arc::clone(&piece_map)).with_max_connections(max_peers);
         let storage = MountScheduler::new_for_path(
             StorageRootId::new(),
             &save_root,
@@ -2721,6 +2741,9 @@ impl TorrentTask {
             peer_disconnect_rx,
             tracker_workers: TrackerWorkers::new(),
             picker,
+            transfer_ledger,
+            transfer_piece_memory_leases: HashMap::new(),
+            transfer_started_at: Instant::now(),
             choker: Choker::new(DEFAULT_MAX_UNCHOKED),
             active_peers: HashMap::new(),
             known_tracker_peers,
@@ -4081,6 +4104,9 @@ impl TorrentTask {
             // serve data from an unverified path.
             for (first, last) in changed_piece_ranges {
                 for piece in first..last {
+                    let (_, actions) = self.transfer_ledger.piece_failed_with_actions(piece);
+                    self.apply_transfer_actions(actions);
+                    self.transfer_piece_memory_leases.remove(&piece);
                     self.picker.reject_piece(piece as usize);
                     self.restored_partial_pieces.remove(&piece);
                 }
@@ -4149,6 +4175,11 @@ impl TorrentTask {
 
     fn apply_piece_policy(&mut self, enabled: &[bool], priority: Vec<bool>) {
         for (piece, enabled) in enabled.iter().copied().enumerate() {
+            if !enabled && !self.picker.have_piece(piece) {
+                let (_, actions) = self.transfer_ledger.piece_failed_with_actions(piece as u32);
+                self.apply_transfer_actions(actions);
+                self.transfer_piece_memory_leases.remove(&(piece as u32));
+            }
             self.picker.set_piece_enabled(piece, enabled);
         }
         self.picker.set_priority_mask(priority);
@@ -4196,6 +4227,11 @@ impl TorrentTask {
     fn fail_closed_runtime_policy(&mut self, operation: &str, error: &str) {
         for piece in 0..self.piece_map.piece_count {
             self.picker.set_piece_enabled(piece as usize, false);
+            if !self.picker.have_piece(piece as usize) {
+                let (_, actions) = self.transfer_ledger.piece_failed_with_actions(piece);
+                self.apply_transfer_actions(actions);
+                self.transfer_piece_memory_leases.remove(&piece);
+            }
         }
         self.picker.set_priority(Vec::new());
         self.paused = true;
@@ -4378,6 +4414,9 @@ impl TorrentTask {
         if subset.is_none() {
             for piece in 0..self.piece_map.piece_count {
                 self.picker.reject_piece(piece as usize);
+                let (_, actions) = self.transfer_ledger.piece_failed_with_actions(piece);
+                self.apply_transfer_actions(actions);
+                self.transfer_piece_memory_leases.remove(&piece);
             }
         }
         if let Err(error) = self.set_state_checked(TorrentState::Checking).await {
@@ -4587,14 +4626,23 @@ impl TorrentTask {
                         self.piece_length(piece).map(u64::from).unwrap_or_default(),
                     );
                     self.picker.mark_have(piece as usize);
+                    let actions = self.transfer_ledger.mark_have(piece);
+                    self.apply_transfer_actions(actions);
+                    self.transfer_piece_memory_leases.remove(&piece);
                 }
                 VerifyResult::Invalid => {
                     invalid_pieces.record(piece);
                     self.picker.reject_piece(piece as usize);
+                    let (_, actions) = self.transfer_ledger.piece_failed_with_actions(piece);
+                    self.apply_transfer_actions(actions);
+                    self.transfer_piece_memory_leases.remove(&piece);
                 }
                 VerifyResult::Missing { .. } => {
                     invalid_pieces.record(piece);
                     self.picker.reject_piece(piece as usize);
+                    let (_, actions) = self.transfer_ledger.piece_failed_with_actions(piece);
+                    self.apply_transfer_actions(actions);
+                    self.transfer_piece_memory_leases.remove(&piece);
                 }
             }
 
@@ -5070,9 +5118,17 @@ impl TorrentTask {
 
         for (piece, piece_state) in state.pieces.iter().copied().enumerate() {
             match piece_state {
-                PieceState::Valid => self.picker.mark_have(piece),
+                PieceState::Valid => {
+                    self.picker.mark_have(piece);
+                    let actions = self.transfer_ledger.mark_have(piece as u32);
+                    self.apply_transfer_actions(actions);
+                    self.transfer_piece_memory_leases.remove(&(piece as u32));
+                }
                 PieceState::Invalid | PieceState::Missing | PieceState::Unknown => {
-                    self.picker.reject_piece(piece)
+                    self.picker.reject_piece(piece);
+                    let (_, actions) = self.transfer_ledger.piece_failed_with_actions(piece as u32);
+                    self.apply_transfer_actions(actions);
+                    self.transfer_piece_memory_leases.remove(&(piece as u32));
                 }
             }
         }
@@ -7766,6 +7822,18 @@ async fn run_peer_loop(
                             return Err(error);
                         }
                         outstanding.push(OutstandingRequest::new(req, Some(memory_lease)));
+                        if !send_peer_event(
+                            &peer_event_tx,
+                            PeerEvent::RequestSent {
+                                peer: addr,
+                                id: peer_id,
+                                request: req,
+                            },
+                        )
+                        .await
+                        {
+                            break;
+                        }
                     }
                     PeerCommand::Cancel { request } => {
                         if outstanding.iter().any(|outstanding| {
@@ -13440,10 +13508,15 @@ mod tests {
             private: false,
             raw: Vec::new(),
         };
-        let peer_state_bytes = PieceBitmap::memory_bytes_for_len(1).saturating_mul(2);
+        let peer_state_bytes = PieceBitmap::memory_bytes_for_len(1)
+            .saturating_mul(2)
+            .saturating_add(TransferLedger::<Arc<PieceMap>>::estimated_connection_state_bytes());
+        let ledger_piece_bytes =
+            TransferLedger::<Arc<PieceMap>>::estimated_piece_state_bytes_for_block_count(1);
         let mut resource_config = rt_metrics::ResourceGovernorConfig::default();
-        resource_config.class_caps_bytes[MemoryClass::PeerBuffer as usize] =
-            peer_state_bytes.saturating_add(4);
+        resource_config.class_caps_bytes[MemoryClass::PeerBuffer as usize] = peer_state_bytes
+            .saturating_add(ledger_piece_bytes)
+            .saturating_add(4);
         let resources = ResourceGovernor::new(resource_config);
         let db = Arc::new(Mutex::new(conn));
         let (_cmd_tx, cmd_rx) = mpsc::channel(1);
@@ -13484,10 +13557,13 @@ mod tests {
         }
         task.picker.availability.add_bitfield(&[0x80]);
 
-        // The peer's retained maps use `peer_state_bytes`; this lease fills
-        // the remaining capacity so the 4-byte response cannot be admitted.
+        // The peer maps and one ledger piece fit, but this blocker leaves no
+        // room for the 4-byte response until capacity returns.
         let blocker = resources
-            .try_acquire(MemoryClass::PeerBuffer, 4)
+            .try_acquire(
+                MemoryClass::PeerBuffer,
+                u64::try_from(ledger_piece_bytes.saturating_add(4)).unwrap(),
+            )
             .expect("test blocker should consume the remaining capacity");
         task.refill_peer_requests(peer).await;
         assert!(peer_commands.try_recv().is_err());
@@ -15466,6 +15542,10 @@ mod tests {
             peer_addr,
             PeerHandle {
                 id: PeerId::new(),
+                transfer_conn: task
+                    .transfer_ledger
+                    .try_connect(PEER_REQUEST_PIPELINE_ADAPTIVE_MAX)
+                    .unwrap(),
                 cmd_tx: peer_cmd_tx,
                 upload_control: RateLimitCancellation::default(),
                 shutdown_control: RateLimitCancellation::default(),

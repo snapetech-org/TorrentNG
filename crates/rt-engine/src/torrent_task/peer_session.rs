@@ -64,7 +64,7 @@ impl TorrentTask {
         let peer_event_tx = self.peer_event_tx.clone();
         let peer_disconnect_tx = self.peer_disconnect_tx.clone();
         let Some(upload) = self.upload_context(peer_addr) else {
-            self.active_peers.remove(&peer_addr);
+            self.discard_registered_peer(peer_addr);
             debug!(
                 component = "peer",
                 operation = "allocate_incoming_state",
@@ -176,7 +176,7 @@ impl TorrentTask {
         let peer_event_tx = self.peer_event_tx.clone();
         let peer_disconnect_tx = self.peer_disconnect_tx.clone();
         let Some(upload) = self.upload_context(peer_addr) else {
-            self.active_peers.remove(&peer_addr);
+            self.discard_registered_peer(peer_addr);
             debug!(
                 component = "peer",
                 operation = "allocate_incoming_utp_state",
@@ -278,20 +278,26 @@ impl TorrentTask {
         // Must hold a full adaptive request window plus control messages.
         let (cmd_tx, cmd_rx) = mpsc::channel(PEER_REQUEST_PIPELINE_ADAPTIVE_MAX * 2);
         let id = PeerId::new();
-        // Both dense availability maps are retained for the peer lifetime.
-        // Acquire their combined budget before allocating either map so a
-        // rejected peer never creates a large temporary bitmap.
-        let bitmap_bytes =
-            PieceBitmap::memory_bytes_for_len(self.meta.pieces.len()).saturating_mul(2);
+        // Both dense availability maps and the fixed transfer-ledger
+        // connection state live for the peer lifetime. Acquire their
+        // combined budget before allocating either map so a rejected peer
+        // never creates a large temporary bitmap.
+        let bitmap_bytes = PieceBitmap::memory_bytes_for_len(self.meta.pieces.len())
+            .saturating_mul(2)
+            .saturating_add(TransferLedger::<Arc<PieceMap>>::estimated_connection_state_bytes());
         let bitmap_memory_lease = self
             .resources
             .try_acquire(MemoryClass::PeerBuffer, bitmap_bytes)?;
+        let transfer_conn = self
+            .transfer_ledger
+            .try_connect(PEER_REQUEST_PIPELINE_ADAPTIVE_MAX)?;
         let peer_has = PieceBitmap::new(self.meta.pieces.len());
         let pending_have = PieceBitmap::new(self.meta.pieces.len());
         self.active_peers.insert(
             addr,
             PeerHandle {
                 id,
+                transfer_conn,
                 cmd_tx,
                 upload_control: RateLimitCancellation::default(),
                 shutdown_control: RateLimitCancellation::default(),

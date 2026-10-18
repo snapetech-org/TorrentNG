@@ -319,6 +319,15 @@ pub struct Ledger<G: PieceGeometry> {
 }
 
 impl<G: PieceGeometry> Ledger<G> {
+    /// Conservative fixed state for one live connection slot. Per-request
+    /// owner and tombstone entries are covered by the peer response leases;
+    /// runtime adapters can include this baseline in their peer admission.
+    pub fn estimated_connection_state_bytes() -> usize {
+        std::mem::size_of::<ConnEntry>()
+            .saturating_add(std::mem::size_of::<ConnState>())
+            .saturating_add(std::mem::size_of::<u32>())
+    }
+
     pub fn new(geometry: G) -> Self {
         let pieces = geometry.piece_count();
         Self {
@@ -363,6 +372,19 @@ impl<G: PieceGeometry> Ledger<G> {
 
     pub fn geometry(&self) -> &G {
         &self.geometry
+    }
+
+    /// Conservative logical allocation for the block state of `piece`.
+    /// Runtime adapters can reserve this amount with their memory governor
+    /// before the first request opens the piece in the ledger.
+    pub fn estimated_piece_state_bytes(&self, piece: u32) -> Option<usize> {
+        self.geometry
+            .block_count(piece)
+            .map(Self::estimated_piece_state_bytes_for_block_count)
+    }
+
+    pub fn estimated_piece_state_bytes_for_block_count(block_count: u32) -> usize {
+        PieceState::estimated_bytes(block_count as usize)
     }
 
     pub fn epoch(&self) -> Epoch {
@@ -882,12 +904,39 @@ impl<G: PieceGeometry> Ledger<G> {
     }
 
     /// Verification failed: every block returns to `Missing` so it is fetched
-    /// again. Returns the contributors for blame.
+    /// again. Returns the contributors for blame. Reserved owners are removed
+    /// from their connection indexes and receive Cancel actions before the
+    /// piece state is discarded.
     pub fn piece_failed(&mut self, piece: u32) -> Vec<ConnectionId> {
+        self.piece_failed_with_actions(piece).0
+    }
+
+    pub fn piece_failed_with_actions(&mut self, piece: u32) -> (Vec<ConnectionId>, Vec<Action>) {
         let sources = self.contributors(piece);
-        self.take_piece_state(piece);
+        let mut actions = Vec::new();
+        if let Some(state) = self.take_piece_state(piece) {
+            for (index, slot) in state.slots.into_iter().enumerate() {
+                let Slot::Reserved(owners) = slot else {
+                    continue;
+                };
+                let Some(block) = self.geometry.block_extent(piece, index as u32) else {
+                    continue;
+                };
+                for owner in owners {
+                    self.in_flight = self.in_flight.saturating_sub(1);
+                    if let Some(conn_state) = self.conn_mut(owner.conn) {
+                        conn_state.outstanding.remove(&block);
+                        conn_state.add_tombstone(block);
+                    }
+                    actions.push(Action::Cancel {
+                        conn: owner.conn,
+                        block,
+                    });
+                }
+            }
+        }
         self.have.clear(piece);
-        sources
+        (sources, actions)
     }
 
     /// Mark a piece already held (resume data, recheck result).
@@ -1406,6 +1455,39 @@ mod tests {
             .reserve(a, block(2, 0), &ReserveMode::Exclusive)
             .unwrap();
         assert_eq!(ledger.piece_progress(2), Some((0, 2)));
+        ledger.check_invariants().unwrap();
+    }
+
+    #[test]
+    fn failed_piece_releases_all_reserved_owners_and_emits_cancels() {
+        let mut ledger = ledger();
+        let first = ledger.connect(8);
+        let second = ledger.connect(8);
+        let requested = block(0, 0);
+        ledger
+            .reserve(first, requested, &ReserveMode::Exclusive)
+            .unwrap();
+        ledger
+            .reserve(second, requested, &ReserveMode::Endgame)
+            .unwrap();
+
+        let (_, actions) = ledger.piece_failed_with_actions(0);
+        assert_eq!(ledger.in_flight(), 0);
+        assert_eq!(ledger.outstanding(first), 0);
+        assert_eq!(ledger.outstanding(second), 0);
+        assert_eq!(
+            actions,
+            vec![
+                Action::Cancel {
+                    conn: first,
+                    block: requested,
+                },
+                Action::Cancel {
+                    conn: second,
+                    block: requested,
+                },
+            ]
+        );
         ledger.check_invariants().unwrap();
     }
 
