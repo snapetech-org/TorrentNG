@@ -4016,10 +4016,11 @@ Requests use the DNS-validated, address-pinned HTTP client and require an
 exact partial-content range response. Cancellation and the 60-second ledger
 timeout revoke the matching fetch and release its request ownership; timeout
 processing wakes source selection when a peer's expired reservation makes a
-piece available. Candidate traversal skips full local-have bitmap words and
-advances fairly when a selected file cannot use a webseed. All blocks in one
-active piece stay with one selected seed, and a typed Merkle mismatch backs
-that seed off before retrying the piece elsewhere.
+piece available. Pure-v2 peer and webseed paths share a cyclic sparse-index
+traversal with independent cursors and active-piece priority. v1/hybrid-v1
+retain the rarest-first picker. All blocks in one active piece stay with one
+selected seed, and a typed Merkle mismatch backs that seed off before retrying
+the piece elsewhere.
 
 v1 progress already batches at its five-second dirty-stat flush, and pure-v2
 batches upload/download statistics at its existing five-second runtime flush.
@@ -4081,12 +4082,15 @@ Completion and lifecycle boundaries flush immediately.
   into a deliberately unwriteable file target and checks the failed piece
   releases ledger and assembly ownership without publishing local-have state.
   `network_budget.rs` covers common per-torrent/process request caps and
-  revocation of cached admission handles after torrent removal. All these
+  revocation of cached admission handles after torrent removal.
+  `transfer/selection.rs` covers cyclic wrap and unusable sparse candidates;
+  both pure-v2 source paths use this policy with their own cursors. All these
   sources remain authored but unrun.
 - **Command or probe:** run with the requested bulk engine suite; do not run
   this source independently before that pass.
 - **Executed on exact revision:** no.
-- **Remaining:** one cross-actor candidate-selection policy, live-source
-  workloads, and the bulk pass. Peer and webseed candidate traversal still
-  follows protocol-specific actor logic; the common ledger, hierarchical rate
-  tree, and bounded source-request admission are shared.
+- **Remaining:** source prioritisation across v1/hybrid-v1 and pure-v2 actor
+  adapters, live-source workloads, and the bulk pass. Pure-v2 peers and
+  webseeds share sparse-index traversal, while v1/hybrid-v1 keep their
+  rarest-first picker; the common ledger, hierarchical rate tree, and bounded
+  source-request admission are shared.

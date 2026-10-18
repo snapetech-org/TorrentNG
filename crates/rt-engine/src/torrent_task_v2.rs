@@ -84,6 +84,7 @@ use crate::transfer::obligations::{
     RejectReason as InboundRejectReason, Served as InboundServed,
 };
 use crate::transfer::rate::RatePeerId;
+use crate::transfer::selection::first_cyclic_candidate;
 use crate::transfer::window::{rate_credit_blocks, WindowConfig, WindowController, WindowInputs};
 use crate::{EnginePeerSnapshot, EngineTorrentLimits, EngineWebseedSnapshot, TorrentRuntimeStats};
 
@@ -438,6 +439,7 @@ impl V2Bitmap {
 #[derive(Debug)]
 struct V2PeerState {
     remote_have: Arc<V2Bitmap>,
+    next_piece_cursor: usize,
     choked: bool,
     upload_choked: bool,
     interested: bool,
@@ -459,6 +461,7 @@ impl V2PeerState {
     fn new(piece_count: usize) -> Self {
         Self {
             remote_have: Arc::new(V2Bitmap::new(piece_count)),
+            next_piece_cursor: 0,
             choked: true,
             upload_choked: true,
             interested: false,
@@ -2612,12 +2615,13 @@ impl V2TorrentTask {
                     let first = webseed.next_piece_cursor as usize % piece_count;
                     // The local-have bitmap is the v2 source candidate index:
                     // skip completed words instead of scanning every piece.
-                    for (start, end) in [(first, piece_count), (0, first)] {
-                        let mut piece_index = local_have.next_unset_from(start);
-                        while let Some(index) = piece_index.filter(|index| *index < end) {
-                            piece_index = local_have.next_unset_from(index.saturating_add(1));
+                    let _candidate = first_cyclic_candidate(
+                        piece_count,
+                        first,
+                        |start| local_have.next_unset_from(start),
+                        |index| -> anyhow::Result<bool> {
                             let Ok(piece) = u32::try_from(index) else {
-                                continue;
+                                return Ok(false);
                             };
                             if webseed.assemblies.contains_key(&piece)
                                 || webseed.pending_piece_completions.contains_key(&piece)
@@ -2628,21 +2632,17 @@ impl V2TorrentTask {
                                 || !context.piece_is_wanted(piece)
                                 || ledger.piece_has_foreign_activity(context.transfer_conn, piece)
                             {
-                                continue;
+                                return Ok(false);
                             }
-                            if let Some(block) = ledger.next_block(
+                            selected = ledger.next_block(
                                 context.transfer_conn,
                                 piece,
                                 &ReserveMode::Exclusive,
-                            ) {
-                                selected = Some(block);
-                                break;
-                            }
-                        }
-                        if selected.is_some() {
-                            break;
-                        }
-                    }
+                            );
+                            Ok(selected.is_some())
+                        },
+                    )
+                    .expect("v2 webseed candidate filtering is infallible");
                 }
             }
         }
@@ -6367,6 +6367,7 @@ fn useful_v2_missing_blocks(
     assemblies: &HashMap<u32, V2PieceAssembly>,
     outstanding: &HashMap<(u32, u32), V2OutstandingRequest>,
     ready_completions: usize,
+    start_cursor: usize,
     maximum: usize,
 ) -> usize {
     if maximum == 0 {
@@ -6374,40 +6375,54 @@ fn useful_v2_missing_blocks(
     }
     let tracked_pieces = assemblies.len() + pending_piece_completions.len();
     let mut useful = 0usize;
-    let mut piece_index = remote_have.next_set_from(0);
-    while let Some(index) = piece_index {
-        piece_index = remote_have.next_set_from(index.saturating_add(1));
-        let Ok(piece) = u32::try_from(index) else {
-            continue;
-        };
-        if local_have.get(index)
-            || pending_piece_completions.contains_key(&piece)
-            || foreign_activity.binary_search(&piece).is_ok()
-        {
-            continue;
-        }
-        let Ok(region) = context.piece_map.piece_to_file(piece) else {
-            continue;
-        };
-        if region.pad || !context.file_is_wanted(region.file_index) {
-            continue;
-        }
+    let mut cursor = start_cursor;
+    while useful < maximum {
+        let mut candidate_blocks = 0usize;
+        let candidate = first_cyclic_candidate(
+            remote_have.len(),
+            cursor,
+            |start| remote_have.next_set_from(start),
+            |index| -> anyhow::Result<bool> {
+                let Ok(piece) = u32::try_from(index) else {
+                    return Ok(false);
+                };
+                if local_have.get(index)
+                    || pending_piece_completions.contains_key(&piece)
+                    || foreign_activity.binary_search(&piece).is_ok()
+                {
+                    return Ok(false);
+                }
+                let Ok(region) = context.piece_map.piece_to_file(piece) else {
+                    return Ok(false);
+                };
+                if region.pad || !context.file_is_wanted(region.file_index) {
+                    return Ok(false);
+                }
 
-        let available = if let Some(assembly) = assemblies.get(&piece) {
-            assembly.fresh_unrequested_count(piece, outstanding, maximum.saturating_sub(useful))
-        } else if ready_completions < V2_MAX_PENDING_PIECE_JOBS
-            && tracked_pieces < V2_MAX_TRACKED_PIECES_PER_PEER
-        {
-            (region.length as usize)
-                .div_ceil(rt_peer_wire::message::MAX_BLOCK_SIZE as usize)
-                .min(maximum.saturating_sub(useful))
-        } else {
-            0
-        };
-        useful = useful.saturating_add(available);
-        if useful >= maximum {
+                candidate_blocks = if let Some(assembly) = assemblies.get(&piece) {
+                    assembly.fresh_unrequested_count(
+                        piece,
+                        outstanding,
+                        maximum.saturating_sub(useful),
+                    )
+                } else if ready_completions < V2_MAX_PENDING_PIECE_JOBS
+                    && tracked_pieces < V2_MAX_TRACKED_PIECES_PER_PEER
+                {
+                    (region.length as usize)
+                        .div_ceil(rt_peer_wire::message::MAX_BLOCK_SIZE as usize)
+                        .min(maximum.saturating_sub(useful))
+                } else {
+                    0
+                };
+                Ok(candidate_blocks > 0)
+            },
+        )
+        .expect("v2 useful-work candidate filtering is infallible");
+        let Some(index) = candidate else {
             break;
-        }
+        };
+        useful = useful.saturating_add(candidate_blocks);
+        cursor = index.saturating_add(1) % remote_have.len();
     }
     useful
 }
@@ -6436,9 +6451,9 @@ async fn fill_v2_requests(
     if choked {
         return Ok(());
     }
-    let remote_have = state
+    let (remote_have, mut next_piece_cursor) = state
         .lock()
-        .map(|peer| Arc::clone(&peer.remote_have))
+        .map(|peer| (Arc::clone(&peer.remote_have), peer.next_piece_cursor))
         .map_err(|_| anyhow::anyhow!("v2 peer state lock poisoned"))?;
     let local_have = context.local_have.read().await.clone();
     let ready_completions = pending_piece_completions.len()
@@ -6485,6 +6500,7 @@ async fn fill_v2_requests(
         assemblies,
         outstanding,
         ready_completions,
+        next_piece_cursor,
         V2_REQUEST_WINDOW,
     );
     let request_window = state
@@ -6558,26 +6574,34 @@ async fn fill_v2_requests(
         }
         if selected.is_none() {
             // Availability is a packed bitmap. Walk only the peer's set bits
-            // rather than visiting every piece the peer does not have.
-            let mut piece_index = remote_have.next_set_from(0);
-            while let Some(index) = piece_index {
-                piece_index = remote_have.next_set_from(index.saturating_add(1));
-                let piece = u32::try_from(index)
-                    .map_err(|_| anyhow::anyhow!("v2 piece index exceeds wire range"))?;
-                selected = next_v2_request_candidate(
-                    context,
-                    piece,
-                    &local_have,
-                    &remote_have,
-                    pending_piece_completions,
-                    &foreign_activity,
-                    assemblies,
-                    outstanding,
-                    ready_completions,
-                    tracked_pieces,
-                )?;
-                if selected.is_some() {
-                    break;
+            // rather than visiting every piece the peer does not have. The
+            // cursor rotates the start point across refill batches.
+            let candidate = first_cyclic_candidate(
+                remote_have.len(),
+                next_piece_cursor,
+                |start| remote_have.next_set_from(start),
+                |index| -> anyhow::Result<bool> {
+                    let piece = u32::try_from(index)
+                        .map_err(|_| anyhow::anyhow!("v2 piece index exceeds wire range"))?;
+                    selected = next_v2_request_candidate(
+                        context,
+                        piece,
+                        &local_have,
+                        &remote_have,
+                        pending_piece_completions,
+                        &foreign_activity,
+                        assemblies,
+                        outstanding,
+                        ready_completions,
+                        tracked_pieces,
+                    )?;
+                    Ok(selected.is_some())
+                },
+            )?;
+            if let Some(index) = candidate {
+                next_piece_cursor = index.saturating_add(1) % remote_have.len();
+                if let Ok(mut peer) = state.lock() {
+                    peer.next_piece_cursor = next_piece_cursor;
                 }
             }
         }
@@ -8747,6 +8771,7 @@ mod tests {
                 &assemblies,
                 &outstanding,
                 0,
+                0,
                 2,
             ),
             2
@@ -8761,6 +8786,7 @@ mod tests {
                 &foreign_activity,
                 &assemblies,
                 &outstanding,
+                0,
                 0,
                 V2_REQUEST_WINDOW,
             ),

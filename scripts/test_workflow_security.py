@@ -86,7 +86,8 @@ class WorkflowSecurityTests(unittest.TestCase):
         public_jit_runner = (
             "runs-on: ${{ github.event_name == 'pull_request' && "
             "github.event.pull_request.head.repo.fork == true && "
-            "fromJSON('[\"self-hosted\", \"linux\", \"x64\", \"public-pr-torrentng\"]') "
+            "fromJSON('{\"group\":\"public-fork-jit\","
+            "\"labels\":[\"self-hosted\",\"linux\",\"x64\",\"public-pr-torrentng\"]}') "
             "|| 'ubuntu-latest' }}"
         )
         for workflow_path in WORKFLOWS.glob("*.y*"):

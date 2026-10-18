@@ -14,6 +14,7 @@
 //! * [`upload`]      bounded, fair, byte-admitted upload service keyed by the
 //!   shared torrent/connection identity
 //! * [`rate`]        hierarchical global/torrent/peer rate scheduler
+//! * [`selection`]   cyclic traversal of sparse source-candidate indexes
 //! * [`window`]      adaptive request windows and refill deadlines
 //! * [`sim`]         deterministic simulator and invariant oracle
 //!
@@ -24,8 +25,10 @@
 //! temporary source connection. Peer and webseed blocks now also hold common
 //! process/torrent request permits and hierarchical download credit until the
 //! response or a terminal outcome. V1/hybrid-v1 and pure-v2 use [`window`]
-//! for bounded per-peer request admission, while cross-actor candidate
-//! selection, hybrid dual-view arbitration, and shared content completion
+//! for bounded per-peer request admission. Pure-v2 peers and webseeds share
+//! [`selection::first_cyclic_candidate`] over their sparse bitmaps; v1/hybrid-v1
+//! preserve the picker's rarest-first order. Cross-protocol source
+//! prioritisation, hybrid dual-view arbitration, and shared content completion
 //! remain open. Hybrid v2 verification now resolves piece file ranges through
 //! [`coords::HybridGeometry`], and live hybrid-v1 tasks use `HybridLedger` as
 //! their single v1-coordinate owner. Hybrid v2-plane handshake/scheduling and
@@ -42,6 +45,7 @@ pub(crate) mod ledger;
 pub(crate) mod live;
 pub(crate) mod obligations;
 pub(crate) mod rate;
+pub(crate) mod selection;
 #[cfg(test)]
 pub(crate) mod sim;
 pub(crate) mod upload;
