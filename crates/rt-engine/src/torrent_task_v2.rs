@@ -1347,6 +1347,24 @@ impl V2PieceAssembly {
         (self.region_len as usize).div_ceil(rt_peer_wire::message::MAX_BLOCK_SIZE as usize)
     }
 
+    fn fresh_unrequested_count(
+        &self,
+        piece: u32,
+        outstanding: &HashMap<(u32, u32), V2OutstandingRequest>,
+        maximum: usize,
+    ) -> usize {
+        if maximum == 0 || self.is_complete() || self.discard_when_idle {
+            return 0;
+        }
+        let on_wire = outstanding
+            .keys()
+            .filter(|(outstanding_piece, _)| *outstanding_piece == piece)
+            .count();
+        self.block_count()
+            .saturating_sub(self.received_count.saturating_add(on_wire))
+            .min(maximum)
+    }
+
     fn block_received(&self, index: usize) -> bool {
         self.received[index / u64::BITS as usize] & (1u64 << (index % u64::BITS as usize)) != 0
     }
@@ -5226,6 +5244,60 @@ fn next_v2_request_candidate(
     Ok(Some((piece, begin, length, is_new_assembly)))
 }
 
+fn useful_v2_missing_blocks(
+    context: &V2PeerContext,
+    local_have: &V2Bitmap,
+    remote_have: &V2Bitmap,
+    pending_piece_completions: &HashMap<u32, V2PendingCompletion>,
+    foreign_activity: &[u32],
+    assemblies: &HashMap<u32, V2PieceAssembly>,
+    outstanding: &HashMap<(u32, u32), V2OutstandingRequest>,
+    ready_completions: usize,
+    maximum: usize,
+) -> usize {
+    if maximum == 0 {
+        return 0;
+    }
+    let tracked_pieces = assemblies.len() + pending_piece_completions.len();
+    let mut useful = 0usize;
+    let mut piece_index = remote_have.next_set_from(0);
+    while let Some(index) = piece_index {
+        piece_index = remote_have.next_set_from(index.saturating_add(1));
+        let Ok(piece) = u32::try_from(index) else {
+            continue;
+        };
+        if local_have.get(index)
+            || pending_piece_completions.contains_key(&piece)
+            || foreign_activity.binary_search(&piece).is_ok()
+        {
+            continue;
+        }
+        let Ok(region) = context.piece_map.piece_to_file(piece) else {
+            continue;
+        };
+        if region.pad || !context.file_is_wanted(region.file_index) {
+            continue;
+        }
+
+        let available = if let Some(assembly) = assemblies.get(&piece) {
+            assembly.fresh_unrequested_count(piece, outstanding, maximum.saturating_sub(useful))
+        } else if ready_completions < V2_MAX_PENDING_PIECE_JOBS
+            && tracked_pieces < V2_MAX_TRACKED_PIECES_PER_PEER
+        {
+            (region.length as usize)
+                .div_ceil(rt_peer_wire::message::MAX_BLOCK_SIZE as usize)
+                .min(maximum.saturating_sub(useful))
+        } else {
+            0
+        };
+        useful = useful.saturating_add(available);
+        if useful >= maximum {
+            break;
+        }
+    }
+    useful
+}
+
 async fn fill_v2_requests(
     context: &V2PeerContext,
     framed: &mut PeerIo,
@@ -5253,6 +5325,11 @@ async fn fill_v2_requests(
             .values()
             .filter(|assembly| assembly.is_ready())
             .count();
+    let window_foreign_activity = context
+        .transfer_ledger
+        .lock()
+        .map_err(|_| anyhow::anyhow!("v2 transfer ledger lock poisoned"))?
+        .foreign_activity_pieces(context.transfer_conn);
     let pipeline_inflight = outstanding
         .len()
         .saturating_add(active_transfer_jobs)
@@ -5274,11 +5351,22 @@ async fn fill_v2_requests(
         context.network_budget.download().available_credit_bytes(),
         rt_peer_wire::message::MAX_BLOCK_SIZE,
     );
+    let useful_missing = useful_v2_missing_blocks(
+        context,
+        &local_have,
+        &remote_have,
+        pending_piece_completions,
+        &window_foreign_activity,
+        assemblies,
+        outstanding,
+        ready_completions,
+        V2_REQUEST_WINDOW,
+    );
     let request_window = state
         .lock()
         .map(|peer| {
             peer.request_window.window(&WindowInputs {
-                useful_missing: usize::MAX,
+                useful_missing,
                 outstanding: pipeline_inflight,
                 // This is an advisory current-credit snapshot, not a
                 // cross-torrent reservation. The peer still pays the shared
@@ -6974,6 +7062,58 @@ mod tests {
         assert_eq!(bitmap.next_set_from(130), None);
     }
 
+    #[tokio::test]
+    async fn v2_useful_missing_counts_only_remote_available_wanted_pieces() {
+        let block_len = rt_peer_wire::message::MAX_BLOCK_SIZE as usize;
+        let content = vec![0x37; block_len * 3];
+        let raw = v2_raw_with_piece_length(&content, block_len * 2);
+        let (task, _fixture) =
+            v2_task_not_started(quiet_v2_runtime(), &raw, content.len() as u64).await;
+        let context = task.peer_context("127.0.0.1:6881".parse().unwrap(), PeerId::new());
+        let mut local_have = V2Bitmap::new(task.piece_map.piece_count as usize);
+        let mut remote_have = V2Bitmap::new(task.piece_map.piece_count as usize);
+        remote_have.set(0, true);
+        remote_have.set(1, true);
+        let pending = HashMap::new();
+        let foreign_activity = [];
+        let assemblies = HashMap::new();
+        let outstanding = HashMap::new();
+
+        assert_eq!(
+            useful_v2_missing_blocks(
+                &context,
+                &local_have,
+                &remote_have,
+                &pending,
+                &foreign_activity,
+                &assemblies,
+                &outstanding,
+                0,
+                2,
+            ),
+            2
+        );
+        local_have.set(0, true);
+        assert_eq!(
+            useful_v2_missing_blocks(
+                &context,
+                &local_have,
+                &remote_have,
+                &pending,
+                &foreign_activity,
+                &assemblies,
+                &outstanding,
+                0,
+                V2_REQUEST_WINDOW,
+            ),
+            1
+        );
+        task.transfer_ledger
+            .lock()
+            .unwrap()
+            .disconnect(context.transfer_conn);
+    }
+
     #[test]
     fn v2_remote_reqq_bounds_the_peer_window_and_shared_ledger() {
         let piece_length = u64::from(rt_peer_wire::message::MAX_BLOCK_SIZE) * 2;
@@ -7561,6 +7701,30 @@ mod tests {
             std::mem::size_of::<u64>() as u64 + std::mem::size_of::<usize>() as u64,
             "the assembly lease includes the packed bitmap and cursor"
         );
+    }
+
+    #[test]
+    fn v2_useful_missing_counts_only_unreceived_blocks_without_wire_requests() {
+        let resources = ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default());
+        let block_len = rt_peer_wire::message::MAX_BLOCK_SIZE;
+        let mut assembly = V2PieceAssembly::new(3, 1, block_len * 4, 0, &resources).unwrap();
+        let mut outstanding = HashMap::from([(
+            (3, 0),
+            V2OutstandingRequest {
+                length: block_len,
+                sent_at: 0,
+                _memory_lease: None,
+            },
+        )]);
+
+        assembly
+            .accept_block(block_len, &vec![0; block_len as usize])
+            .unwrap();
+        assert_eq!(assembly.fresh_unrequested_count(3, &outstanding, 8), 2);
+        assert_eq!(assembly.fresh_unrequested_count(3, &outstanding, 1), 1);
+
+        outstanding.remove(&(3, 0));
+        assert_eq!(assembly.fresh_unrequested_count(3, &outstanding, 8), 3);
     }
 
     #[test]

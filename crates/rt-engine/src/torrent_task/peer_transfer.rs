@@ -636,6 +636,29 @@ impl TorrentTask {
         let transfer_conn = handle.transfer_conn;
         let download_rate = handle.download_rate;
         let download_rate_started = handle.download_rate_window_started;
+        let useful_fresh = self
+            .picker
+            .useful_missing_for_peer(&handle.peer_has, PEER_REQUEST_PIPELINE_ADAPTIVE_MAX);
+        let useful_missing = if useful_fresh >= PEER_REQUEST_PIPELINE_ADAPTIVE_MAX
+            || !self.picker.endgame_active()
+        {
+            useful_fresh
+        } else {
+            let mut duplicate_candidates = self
+                .active_peers
+                .iter()
+                .filter(|(addr, _)| **addr != peer)
+                .flat_map(|(_, other)| other.requested.iter().copied())
+                .collect::<Vec<_>>();
+            duplicate_candidates.sort_unstable_by_key(|request| (request.piece, request.begin));
+            duplicate_candidates.dedup_by_key(|request| (request.piece, request.begin));
+            useful_fresh.saturating_add(self.picker.endgame_duplicate_work_for_peer(
+                &handle.peer_has,
+                &handle.requested,
+                &duplicate_candidates,
+                PEER_REQUEST_PIPELINE_ADAPTIVE_MAX.saturating_sub(useful_fresh),
+            ))
+        };
         let peer_buffer = self.resources.snapshot().classes[MemoryClass::PeerBuffer as usize];
         let buffer_blocks = usize::try_from(
             peer_buffer.cap_bytes.saturating_sub(peer_buffer.used_bytes)
@@ -657,7 +680,7 @@ impl TorrentTask {
                 / device_queue_capacity as f64
         };
         let controlled_window = handle.request_window.window(&WindowInputs {
-            useful_missing: usize::MAX,
+            useful_missing,
             outstanding: handle.outstanding,
             credit_blocks,
             buffer_blocks,

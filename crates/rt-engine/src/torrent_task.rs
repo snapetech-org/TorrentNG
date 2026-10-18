@@ -610,6 +610,13 @@ impl PieceAvailability for PieceBitmap {
     }
 
     fn for_each_set_piece(&self, piece_count: usize, visitor: &mut dyn FnMut(usize)) {
+        self.for_each_set_piece_while(piece_count, &mut |piece| {
+            visitor(piece);
+            true
+        });
+    }
+
+    fn for_each_set_piece_while(&self, piece_count: usize, visitor: &mut dyn FnMut(usize) -> bool) {
         let piece_count = piece_count.min(self.len);
         for (word_index, word) in self.words.iter().copied().enumerate() {
             let base = word_index.saturating_mul(u64::BITS as usize);
@@ -624,7 +631,9 @@ impl PieceAvailability for PieceBitmap {
             };
             while pending != 0 {
                 let piece = base + pending.trailing_zeros() as usize;
-                visitor(piece);
+                if !visitor(piece) {
+                    return;
+                }
                 pending &= pending - 1;
             }
         }
@@ -11440,6 +11449,13 @@ mod tests {
         visited.clear();
         pieces.for_each_set_piece(65, &mut |piece| visited.push(piece));
         assert_eq!(visited, [0, 63, 64]);
+
+        visited.clear();
+        pieces.for_each_set_piece_while(65, &mut |piece| {
+            visited.push(piece);
+            false
+        });
+        assert_eq!(visited, [0], "bounded work stops at the first set bit");
     }
 
     #[test]

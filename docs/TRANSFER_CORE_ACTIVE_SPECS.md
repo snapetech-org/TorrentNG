@@ -162,6 +162,66 @@ artifact assembly remain open.
   are authored but have not been exercised; native-only coverage is limited to
   the three sites named in the measurement contract.
 
+## NET-108 — Adaptive peer request windows
+
+- **Priority / wave:** P1 / 9
+- **Prerequisites:** NET-104, NET-106, NET-107
+- **Owning component:** v1, hybrid-v1, and pure-v2 peer actors.
+- **Finding or capability:** size request windows by measured delivery and
+  available useful work while preserving bounded resource admission.
+- **Status:** `wip`
+
+### Scope
+
+Both live actor paths use the shared adaptive controller. Its window is now
+bounded by the number of fresh blocks this peer can supply, in addition to
+rate credit, response buffers, device backlog, and negotiated `reqq`. V1 and
+hybrid-v1 count picker-owned fresh blocks through packed peer availability;
+the bitmap walk stops once the local 128-block ceiling is met. When fresh
+work is exhausted, v1 endgame counts distinct outstanding coordinates held by
+other peers so duplicate requests remain possible without reopening ordinary
+work. Pure-v2 counts fresh blocks in active assemblies and eligible remote
+pieces, excluding received and on-wire blocks, local completion, padding,
+unwanted files, pending completion, foreign piece ownership, and per-peer
+assembly/completion limits. Its count stops at the 32-block ceiling.
+
+### Ownership and invariant
+
+- **Current owner:** `PiecePicker` tracks distinct fresh v1 blocks; each
+  pure-v2 peer owns its assembly, response map, and request cursor.
+- **Invariant preserved:** the controller never admits more new requests than
+  fresh blocks available from that peer. Endgame duplicates remain a separate
+  bounded path and do not count blocks already requested by the same peer.
+- **Must not:** count received data or another peer's on-wire request as fresh
+  work, or remove the one-block progress path used while rate credit refills.
+
+### Acceptance
+
+- Fresh v1 block counts stay correct through request, receipt, cancel, partial
+  restore, and outstanding-request reset; peer availability traversal stops at
+  the configured local ceiling.
+- Endgame counts distinct unreceived blocks available to the peer and excludes
+  its own requests.
+- Pure-v2 counts only eligible blocks, subtracts received and on-wire work,
+  and respects assembly and completion caps.
+- Window limits remain 4–128 for v1/hybrid-v1 and 4–32 for pure-v2. Rate
+  changes wake refill; shared credit remains advisory across torrents.
+- Regression sources cover the picker, packed early-stop traversal, endgame
+  duplicate accounting, and pure-v2 availability/assembly counts.
+
+### Evidence
+
+- **Regression sources:** `useful_missing_counts_only_fresh_peer_owned_enabled_blocks`,
+  `useful_missing_preserves_peer_specific_endgame_duplicates`,
+  `peer_bitmap_set_iteration_visits_only_valid_set_pieces`, and
+  `v2_useful_missing_counts_only_remote_available_wanted_pieces` plus
+  `v2_useful_missing_counts_only_unreceived_blocks_without_wire_requests`.
+- **Command or probe:** run with the owner-requested bulk pass.
+- **Executed on exact revision:** no.
+- **Artifact or report path:** pending bulk pass.
+- **External evidence still required:** bulk correctness and matched whole-client
+  measurements.
+
 ## NET-109 — Active-candidate piece picker
 
 - **Priority / wave:** P1 / 6
