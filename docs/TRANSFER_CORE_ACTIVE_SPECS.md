@@ -1072,9 +1072,9 @@ reservations use piece affinity because those assemblies are not shared.
 - **Migration / rollback:** the picker remains the selection/resume projection;
   reverting the actor adapter returns request ownership to the prior actor path.
 - **Feature flag or rollout boundary:** v1, hybrid-v1, and pure-v2 outbound
-  request ownership are wired but unqualified; pure-v2 timeout handling,
-  hybrid dual-view integration, and the simulator plus bulk pass remain open
-  before the architecture is accepted.
+  request ownership, including pure-v2 timeout expiry, are wired but
+  unqualified; hybrid dual-view integration, the simulator, and the bulk pass
+  remain open before the architecture is accepted.
 
 ### Evidence
 
@@ -1107,16 +1107,17 @@ Honor negotiated BEP 6 behavior in the existing handlers while moving the
 complete obligation state machine into the live shared runtime. The
 `transfer::InboundObligations` module owns the v1 and pure-v2 inbound upload
 queue/service lifecycle. The generation-aware ledger also owns live
-v1/hybrid-v1 and pure-v2 outbound reservations and received-block arbitration;
-pure-v2 timeout handling and hybrid dual-view ownership remain open.
+v1/hybrid-v1 and pure-v2 outbound reservations, received-block arbitration,
+and pure-v2's 60-second request expiry; hybrid dual-view ownership remains
+open.
 
 ### Ownership and invariant
 
 - **Current owner:** v1 and pure-v2 inbound upload queue, in-service, Cancel,
   choke, and completion transitions use `InboundObligations`; the peer loops
   own storage futures and wire writes. The ledger owns v1/hybrid-v1 and
-  pure-v2 outbound reservation and response arbitration; v2 timeout handling
-  and hybrid dual-view ownership remain open.
+  pure-v2 outbound reservation and response arbitration, including v2 timeout
+  expiry; hybrid dual-view ownership remains open.
 - **Target owner:** `InboundObligations` and the shared ledger own response
   obligations and outbound request state across both protocol planes.
 - **Invariant preserved:** when Fast is negotiated, a request already
@@ -1149,8 +1150,9 @@ pure-v2 timeout handling and hybrid dual-view ownership remain open.
   queued reads, in-flight work, Piece delivery, and Reject delivery.
 - Stale, duplicate, and unsolicited responses cannot mutate current content.
 - Both v1 and pure-v2 inbound upload paths use the shared obligation owner.
-  Hybrid and outbound request ownership must also move to the shared runtime
-  before this ticket closes; pure-module tests alone do not close it.
+  v1/hybrid-v1 and pure-v2 outbound ownership now uses the ledger, including
+  v2 timeout expiry; hybrid dual-view arbitration and bulk qualification must
+  still close before this ticket is done.
 
 ### Files and compatibility
 
@@ -1160,7 +1162,7 @@ pure-v2 timeout handling and hybrid dual-view ownership remain open.
   behavior follows the peer's handshake capabilities.
 - **Migration / rollback:** no persisted state changes. The inbound owner is
   per connection and is cleared on disconnect; the v1/v2 adapters remain
-  independently reversible while outbound, hybrid, and shared-runtime parity
+  independently reversible while hybrid dual-view and shared-runtime parity
   are unfinished.
 - **Feature flag or rollout boundary:** no new advertisement or capability
   until the applicable live path satisfies its obligations.
@@ -3149,16 +3151,17 @@ arrive, drain all currently ready completions, and preserve the portable
 Move request reservation, response arbitration, and terminal request cleanup
 from actor-local state into the shared transfer core in reversible protocol
 slices. The live ledger now owns v1/hybrid-v1 and pure-v2 outbound acquisition.
-Pure-v2 retains peer-local piece assembly and uses an atomic affinity check so
-one connection owns each active piece. Hybrid dual-view arbitration, shared
-source scheduling, shared rate/window/upload services, and pure-v2 timeout
-integration remain open.
+Pure-v2 retains peer-local piece assembly and uses atomic affinity checks so
+one connection owns each active piece. A centralized 60-second ledger expiry
+routes Cancel actions to peer tasks and drops matching actor requests. Hybrid
+dual-view arbitration, shared source scheduling, and shared
+rate/window/upload services remain open.
 
 ### Ownership and invariant
 
 - **Current owner:** the generation-aware ledger owns live v1/hybrid-v1 and
-  pure-v2 reservations, socket-write commits, received-block arbitration, and
-  completion/failure cleanup. Pure-v2 timeout integration remains open.
+  pure-v2 reservations, socket-write commits, received-block arbitration,
+  timeout expiry, and completion/failure cleanup.
   `PiecePicker` still ranks candidates and holds restored-partial projection
   state; v2 actor maps retain response leases and peer-local assemblies.
 - **Target owner:** each protocol adapter submits candidates to one shared
@@ -3178,8 +3181,8 @@ integration remain open.
 
 - v1 uses the ledger for reserve, wire commit, response, Reject, Choke,
   timeout, disconnect, and piece completion/failure. Pure-v2 uses it for
-  reserve, wire commit, response, Reject, Choke, disconnect, and piece
-  completion/failure; timeout integration remains open.
+  reserve, wire commit, response, Reject, Choke, 60-second timeout expiry,
+  disconnect, and piece completion/failure.
 - Hybrid v1/v2 views arbitrate the same payload without duplicate writes or
   mismatched piece geometry.
 - Peer request, ledger connection, piece state, source jobs, rate queues, and
@@ -3190,9 +3193,9 @@ integration remain open.
 
 ### Evidence
 
-- **Regression sources:** ledger failure cancellation, v1 actor lifecycle, and
-  pure-v2 reservation/response/action-routing sources are present; hybrid
-  dual-view and timeout cases remain open.
+- **Regression sources:** ledger failure/expiry cancellation, v1 actor
+  lifecycle, and pure-v2 reservation/response/action-routing/timeout sources
+  are present; hybrid dual-view cases remain open.
 - **Command or probe:** run transfer-core simulator and engine regression
   suites only during the owner-requested bulk pass.
 - **Executed on exact revision:** no. No build or test commands were run for

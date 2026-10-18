@@ -698,7 +698,7 @@ impl TorrentTask {
                 ReceiveOutcome::Accepted { actions, .. } => {
                     self.apply_transfer_actions(actions);
                 }
-                ReceiveOutcome::Duplicate => {
+                ReceiveOutcome::Duplicate | ReceiveOutcome::IgnoredForPieceAffinity => {
                     self.picker.cancel_request(piece as usize, offset);
                     return;
                 }

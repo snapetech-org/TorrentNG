@@ -79,6 +79,8 @@ const V2_SOCKET_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const V2_PEER_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 const V2_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(60);
 const V2_CHOKE_INTERVAL: Duration = Duration::from_secs(10);
+const V2_REQUEST_TIMEOUT_TICK: Duration = Duration::from_secs(5);
+const V2_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const V2_REQUEST_WINDOW: usize = 32;
 const V2_TRANSFER_COMMAND_CAPACITY: usize = V2_REQUEST_WINDOW * 2;
 const V2_MAX_PENDING_UPLOAD_READS: usize = 16;
@@ -1506,6 +1508,7 @@ impl V2TorrentTask {
         let mut flush_tick = interval(Duration::from_secs(5));
         let mut tracker_tick = interval(Duration::from_secs(5));
         let mut choke_tick = interval(V2_CHOKE_INTERVAL);
+        let mut request_timeout_tick = interval(V2_REQUEST_TIMEOUT_TICK);
         loop {
             tokio::select! {
                 command = self.cmd_rx.recv() => {
@@ -1527,6 +1530,9 @@ impl V2TorrentTask {
                     if !self.paused {
                         self.run_choker().await;
                     }
+                }
+                _ = request_timeout_tick.tick() => {
+                    self.expire_v2_transfer_requests();
                 }
                 Some(result) = self.tracker_workers.recv() => {
                     self.handle_tracker_result(result).await;
@@ -2713,6 +2719,33 @@ impl V2TorrentTask {
         }
     }
 
+    fn expire_v2_transfer_requests(&self) {
+        let now = self
+            .transfer_started_at
+            .elapsed()
+            .as_nanos()
+            .min(u128::from(u64::MAX)) as u64;
+        self.expire_v2_transfer_requests_at(now, V2_REQUEST_TIMEOUT);
+    }
+
+    fn expire_v2_transfer_requests_at(&self, now: u64, timeout: Duration) {
+        let timeout = timeout.as_nanos().min(u128::from(u64::MAX)) as u64;
+        let Ok(mut ledger) = self.transfer_ledger.lock() else {
+            warn!(
+                component = "transfer",
+                operation = "expire_v2_requests",
+                torrent = %self.info_hash_hex,
+                result = "error",
+                reason = "ledger_lock_poisoned",
+                "failed to expire pure-v2 transfer requests"
+            );
+            return;
+        };
+        let (_, actions) = ledger.expire(now, timeout);
+        drop(ledger);
+        self.apply_v2_transfer_actions(actions);
+    }
+
     /// Apply the same mode-aware regular and optimistic upload slots used by
     /// the v1 actor. Peer loops own their sockets; this task publishes only
     /// the selected connection IDs through a watch channel.
@@ -3748,6 +3781,21 @@ async fn run_v2_peer_protocol(
                     }
                     if let Ok(mut peer) = state.lock() {
                         peer.outstanding = outstanding.len();
+                    }
+                    discard_v2_empty_assembly_if_idle(
+                        &context,
+                        block.piece,
+                        &outstanding,
+                        &mut assemblies,
+                        &pending_block_completions,
+                    );
+                    if let Ok(mut peer) = state.lock() {
+                        update_v2_assembly_stats(
+                            &mut peer,
+                            &assemblies,
+                            &pending_block_completions,
+                            &pending_piece_completions,
+                        );
                     }
                     fill_v2_requests(
                         &context,
@@ -4842,6 +4890,34 @@ async fn fail_v2_discarded_piece_if_idle(
     }
 }
 
+fn discard_v2_empty_assembly_if_idle(
+    context: &V2PeerContext,
+    piece: u32,
+    outstanding: &HashMap<(u32, u32), V2OutstandingRequest>,
+    assemblies: &mut HashMap<u32, V2PieceAssembly>,
+    pending_block_completions: &HashMap<(u32, u32), V2PendingCompletion>,
+) {
+    let has_local_work = outstanding
+        .keys()
+        .any(|(active_piece, _)| *active_piece == piece)
+        || pending_block_completions
+            .keys()
+            .any(|(active_piece, _)| *active_piece == piece);
+    let is_empty = assemblies
+        .get(&piece)
+        .is_some_and(|assembly| assembly.received_count == 0 && assembly.pending_blocks == 0);
+    if has_local_work || !is_empty {
+        return;
+    }
+    assemblies.remove(&piece);
+    if let Ok(mut ledger) = context.transfer_ledger.lock() {
+        let _ = ledger.discard_empty_piece(piece);
+        if ledger.piece_progress(piece).is_none() {
+            release_v2_transfer_piece_memory(context, piece);
+        }
+    }
+}
+
 fn apply_v2_block_admission_cancelled(
     piece: u32,
     generation: u64,
@@ -5166,7 +5242,18 @@ async fn handle_v2_piece(
         return Ok(());
     }
     let Some(request) = outstanding.remove(&(piece, begin)) else {
-        anyhow::bail!("unsolicited v2 piece block");
+        debug!(
+            component = "torrent_v2",
+            operation = "receive_piece",
+            peer = %context.peer,
+            piece,
+            begin,
+            length = data.len(),
+            result = "ignored",
+            reason = "no_matching_outstanding_request",
+            "ignoring pure-v2 Piece without a matching outstanding request"
+        );
+        return Ok(());
     };
     let expected = request.length;
     let request_memory_lease = request._memory_lease;
@@ -5186,11 +5273,21 @@ async fn handle_v2_piece(
             .transfer_ledger
             .lock()
             .map_err(|_| anyhow::anyhow!("v2 transfer ledger lock poisoned"))?;
-        ledger.on_block(context.transfer_conn, block_extent)
+        ledger.on_block_piece_affine(context.transfer_conn, block_extent)
     };
     let actions = match receive {
         ReceiveOutcome::Accepted { actions, .. } => actions,
         ReceiveOutcome::Duplicate => return Ok(()),
+        ReceiveOutcome::IgnoredForPieceAffinity => {
+            discard_v2_empty_assembly_if_idle(
+                context,
+                piece,
+                outstanding,
+                assemblies,
+                pending_block_completions,
+            );
+            return Ok(());
+        }
         ReceiveOutcome::StaleConnection
         | ReceiveOutcome::Unsolicited
         | ReceiveOutcome::Invalid(_) => anyhow::bail!("unsolicited v2 piece block"),
@@ -6314,6 +6411,112 @@ mod tests {
 
         task.remove_peer(peer).await;
         assert!(!task.transfer_ledger.lock().unwrap().is_live(transfer_conn));
+    }
+
+    #[tokio::test]
+    async fn v2_request_timeout_routes_a_cancel_to_its_connection() {
+        let content = vec![0x42u8; rt_peer_wire::message::MAX_BLOCK_SIZE as usize];
+        let raw = v2_raw_with_piece_length(&content, content.len());
+        let (mut task, _fixture) =
+            v2_task_not_started(quiet_v2_runtime(), &raw, content.len() as u64).await;
+        let peer = "127.0.0.1:6881".parse().unwrap();
+        let transfer_conn = task
+            .transfer_ledger
+            .lock()
+            .unwrap()
+            .try_connect(V2_REQUEST_WINDOW)
+            .unwrap();
+        let block = BlockExtent::new(0, 0, rt_peer_wire::message::MAX_BLOCK_SIZE);
+        {
+            let mut ledger = task.transfer_ledger.lock().unwrap();
+            ledger.reserve_piece_affine(transfer_conn, block).unwrap();
+            assert_eq!(
+                ledger.commit(transfer_conn, block, 0).0,
+                CommitOutcome::OnWire
+            );
+        }
+
+        let (transfer_commands, mut transfer_command_rx) =
+            mpsc::channel(V2_TRANSFER_COMMAND_CAPACITY);
+        let peer_control = RateLimitCancellation::default();
+        let peer_generation = peer_control.generation();
+        let task_control = peer_control.clone();
+        let peer_task = tokio::spawn(async move {
+            task_control.wait_for_change(peer_generation).await;
+        });
+        task.peers.insert(
+            peer,
+            V2PeerHandle {
+                state: Arc::new(Mutex::new(V2PeerState::new(
+                    task.piece_map.piece_count as usize,
+                ))),
+                choker_id: PeerId::new(),
+                transfer_conn,
+                transfer_commands,
+                peer_control,
+                task: peer_task,
+                _bitmap_memory_lease: task
+                    .resources
+                    .try_acquire(MemoryClass::PeerBuffer, 1)
+                    .unwrap(),
+            },
+        );
+
+        let timeout_nanos = V2_REQUEST_TIMEOUT.as_nanos().min(u128::from(u64::MAX)) as u64;
+        task.expire_v2_transfer_requests_at(timeout_nanos, V2_REQUEST_TIMEOUT);
+        assert!(matches!(
+            transfer_command_rx.try_recv(),
+            Ok(V2PeerCommand::Cancel(actual)) if actual == block
+        ));
+        assert!(!task
+            .transfer_ledger
+            .lock()
+            .unwrap()
+            .owns(transfer_conn, block));
+
+        task.remove_peer(peer).await;
+    }
+
+    #[tokio::test]
+    async fn late_v2_piece_after_expiry_is_ignored_without_ending_the_peer() {
+        let content = vec![0x43u8; rt_peer_wire::message::MAX_BLOCK_SIZE as usize];
+        let raw = v2_raw_with_piece_length(&content, content.len());
+        let (task, _fixture) =
+            v2_task_not_started(quiet_v2_runtime(), &raw, content.len() as u64).await;
+        let context = task.peer_context("127.0.0.1:6881".parse().unwrap(), PeerId::new());
+        let block = BlockExtent::new(0, 0, rt_peer_wire::message::MAX_BLOCK_SIZE);
+        {
+            let mut ledger = context.transfer_ledger.lock().unwrap();
+            ledger
+                .reserve_piece_affine(context.transfer_conn, block)
+                .unwrap();
+            ledger.commit(context.transfer_conn, block, 0);
+            ledger.expire(
+                V2_REQUEST_TIMEOUT.as_nanos().min(u128::from(u64::MAX)) as u64,
+                V2_REQUEST_TIMEOUT.as_nanos().min(u128::from(u64::MAX)) as u64,
+            );
+        }
+        let state = Arc::new(Mutex::new(V2PeerState::new(1)));
+        let mut outstanding = HashMap::new();
+        let mut assemblies = HashMap::new();
+        let mut transfer_jobs = futures::stream::FuturesUnordered::<V2TransferTask>::new();
+        let mut pending_block_completions = HashMap::new();
+
+        let result = handle_v2_piece(
+            &context,
+            &state,
+            &mut outstanding,
+            &mut assemblies,
+            &mut transfer_jobs,
+            &mut pending_block_completions,
+            0,
+            0,
+            Bytes::from(content),
+        )
+        .await;
+        assert!(result.is_ok());
+        assert!(assemblies.is_empty());
+        assert_eq!(task.transfer_ledger.lock().unwrap().in_flight(), 0);
     }
 
     #[tokio::test]

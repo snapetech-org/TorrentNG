@@ -93,6 +93,10 @@ pub enum ReceiveOutcome {
     },
     /// Valid, but the block was already received: wasted traffic.
     Duplicate,
+    /// A valid late response was dropped to preserve a protocol adapter's
+    /// connection-affine whole-piece assembly while another connection owns
+    /// activity in that piece.
+    IgnoredForPieceAffinity,
     /// Nobody asked this connection for it.
     Unsolicited,
     StaleConnection,
@@ -729,6 +733,28 @@ impl<G: PieceGeometry> Ledger<G> {
         self.accept_block(conn, block, false, Vec::new())
     }
 
+    /// Receive a block for an adapter that cannot merge partial piece
+    /// assemblies across connections. Normal ownership follows `on_block`;
+    /// a useful tombstoned late block is ignored when another connection has
+    /// since taken activity in the piece, preventing the ledger from mixing
+    /// connections that have separate payload assemblies.
+    pub fn on_block_piece_affine(
+        &mut self,
+        conn: ConnectionId,
+        block: BlockExtent,
+    ) -> ReceiveOutcome {
+        if !self.is_live(conn) {
+            return ReceiveOutcome::StaleConnection;
+        }
+        if let Err(error) = self.geometry.validate_served_block(block) {
+            return ReceiveOutcome::Invalid(error);
+        }
+        if self.piece_has_foreign_activity(conn, block.piece) {
+            return ReceiveOutcome::IgnoredForPieceAffinity;
+        }
+        self.on_block(conn, block)
+    }
+
     fn accept_block(
         &mut self,
         conn: ConnectionId,
@@ -1053,6 +1079,17 @@ impl<G: PieceGeometry> Ledger<G> {
         self.pieces
             .get(&piece)
             .map(|state| (state.received, state.slots.len() as u32))
+    }
+
+    /// Remove an unused piece shell after its last request expires or is
+    /// canceled. Any received block or live reservation keeps the state.
+    pub fn discard_empty_piece(&mut self, piece: u32) -> bool {
+        let empty = self.pieces.get(&piece).is_some_and(|state| {
+            state.received == 0
+                && !state.awaiting_verification
+                && state.slots.iter().all(|slot| matches!(slot, Slot::Missing))
+        });
+        empty && self.take_piece_state(piece).is_some()
     }
 
     /// Whether `piece` has received blocks or live reservations from a
@@ -1799,6 +1836,51 @@ mod tests {
             ledger.on_block(conn, block(0, 0)),
             ReceiveOutcome::Accepted { late: true, .. }
         ));
+        ledger.check_invariants().unwrap();
+    }
+
+    #[test]
+    fn piece_affine_adapter_ignores_late_block_after_another_peer_takes_piece() {
+        let mut ledger = ledger();
+        let (first, second) = (ledger.connect(8), ledger.connect(8));
+        let late = block(0, 0);
+        ledger.reserve_piece_affine(first, late).unwrap();
+        ledger.commit(first, late, 100);
+        let (expired, actions) = ledger.expire(160, 60);
+        assert_eq!(expired, vec![(first, late)]);
+        assert_eq!(
+            actions,
+            vec![Action::Cancel {
+                conn: first,
+                block: late
+            }]
+        );
+
+        let active = block(0, 1);
+        ledger.reserve_piece_affine(second, active).unwrap();
+        assert_eq!(
+            ledger.on_block_piece_affine(first, late),
+            ReceiveOutcome::IgnoredForPieceAffinity
+        );
+        assert!(ledger.owns(second, active));
+        assert_eq!(ledger.piece_progress(0), Some((0, 2)));
+        ledger.check_invariants().unwrap();
+    }
+
+    #[test]
+    fn empty_piece_shell_can_be_released_without_touching_foreign_ownership() {
+        let mut ledger = ledger();
+        let (first, second) = (ledger.connect(8), ledger.connect(8));
+        let expired = block(0, 0);
+        ledger.reserve_piece_affine(first, expired).unwrap();
+        ledger.commit(first, expired, 100);
+        ledger.expire(160, 60);
+        assert!(ledger.discard_empty_piece(0));
+        assert_eq!(ledger.pieces_in_progress(), 0);
+
+        ledger.reserve_piece_affine(second, block(1, 0)).unwrap();
+        assert!(!ledger.discard_empty_piece(1));
+        assert_eq!(ledger.pieces_in_progress(), 1);
         ledger.check_invariants().unwrap();
     }
 

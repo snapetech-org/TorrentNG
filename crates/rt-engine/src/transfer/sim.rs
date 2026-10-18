@@ -245,6 +245,9 @@ pub fn run(config: SimConfig) -> SimReport {
                             }
                         }
                         ReceiveOutcome::Duplicate => report.duplicates += 1,
+                        ReceiveOutcome::IgnoredForPieceAffinity => {
+                            unreachable!("simulator uses the non-affine receive path")
+                        }
                         ReceiveOutcome::Unsolicited => report.unsolicited += 1,
                         ReceiveOutcome::StaleConnection => report.stale += 1,
                         ReceiveOutcome::Invalid(error) => panic!("invalid block from sim: {error}"),
