@@ -4952,6 +4952,7 @@ mod tests {
         .await;
         assert!(result.is_err());
         assert!(!path.exists());
+        assert_storage_admission_released(&sched);
     }
 
     #[tokio::test]
@@ -6499,6 +6500,12 @@ mod tests {
             .used_bytes
     }
 
+    fn assert_storage_admission_released(scheduler: &MountScheduler) {
+        let stats = scheduler.stats();
+        assert_eq!(stats.queued_disk_bytes, 0);
+        assert_eq!(stats.device_queue_available, stats.device_queue_capacity);
+    }
+
     #[tokio::test]
     async fn injected_read_failure_is_returned_without_marking_payload_dirty() {
         let dir = tempfile::tempdir().unwrap();
@@ -6511,6 +6518,7 @@ mod tests {
 
         assert!(read.is_err());
         assert_eq!(scheduler.stats().dirty_files, 0);
+        assert_storage_admission_released(&scheduler);
     }
 
     #[tokio::test]
@@ -6532,6 +6540,7 @@ mod tests {
 
         assert!(write.is_err());
         assert_eq!(scheduler.stats().dirty_files, 1);
+        assert_storage_admission_released(&scheduler);
         scheduler.sync_all_open_files().await.unwrap();
         assert_eq!(scheduler.stats().dirty_files, 0);
     }
@@ -7079,6 +7088,7 @@ mod tests {
         assert!(write.await.unwrap().is_err());
         assert_eq!(std::fs::read(path).unwrap(), b"ver");
         assert_eq!(scheduler.stats().dirty_files, 1);
+        assert_storage_admission_released(&scheduler);
     }
 
     #[tokio::test]
@@ -7102,6 +7112,7 @@ mod tests {
         backend.inject(Operation::Sync, Effect::Fail(io::ErrorKind::Other));
         assert!(scheduler.sync_all_open_files().await.is_err());
         assert_eq!(scheduler.stats().dirty_files, 1);
+        assert_storage_admission_released(&scheduler);
 
         scheduler.sync_all_open_files().await.unwrap();
         assert_eq!(scheduler.stats().dirty_files, 0);

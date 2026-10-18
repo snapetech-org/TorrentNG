@@ -520,6 +520,8 @@ and the full injected-fault matrix remain open.
   backend completion.
 - Strict writes hold admission through their fdatasync; checkpoint writes
   release it only after the write completion.
+- Pre-submission open failures and injected read, write, partial-write, and
+  barrier failures assert that queued bytes and device slots are returned.
 - End-to-end scheduler regressions cancel submitted writes while completion is
   held, prove queue slots and queued-disk memory leases stay charged, verify
   later admission is rejected at each limit, and prove admission returns after
@@ -545,7 +547,7 @@ and the full injected-fault matrix remain open.
   `cancelled_submitted_readahead_read_retains_extra_bytes_until_completion`,
   `cancelled_strict_write_retains_admission_until_sync_completion`,
   plus helper-level completion-owner lifetime cases for canceled read/write
-  waiters.
+  waiters and admission-release assertions for open and injected I/O failures.
 - **Command or probe to run:** `cargo test -p rt-storage` and the scripted
   backend cancellation matrix during the requested bulk pass.
 - **Expected result:** accepted work holds its queue/device/byte owner until
