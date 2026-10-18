@@ -86,7 +86,6 @@ impl PieceState {
     fn next_unrequested(&self) -> Option<usize> {
         let start = self.next_unrequested_hint.min(self.requested.len());
         (start..self.requested.len())
-            .chain(0..start)
             .find(|&block_idx| self.requested[block_idx] == 0 && !self.block_received(block_idx))
     }
 
