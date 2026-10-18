@@ -64,7 +64,10 @@ use crate::tracker_runtime::{
     TrackerAnnounceContext, TrackerAnnounceResult, TrackerAnnounceSpec, TrackerKey, TrackerWorkers,
     MAX_TRACKER_ANNOUNCES_IN_FLIGHT, STOPPED_TRACKER_ANNOUNCE_DEADLINE,
 };
-use crate::transfer::coords::{BlockExtent, PieceGeometry};
+use crate::transfer::coords::{BlockExtent, ConnectionId, PieceGeometry};
+use crate::transfer::ledger::{
+    Action as TransferAction, CommitOutcome, Ledger as TransferLedger, ReceiveOutcome,
+};
 use crate::transfer::obligations::{
     InboundDecision, InboundObligations, Reject as InboundReject,
     RejectReason as InboundRejectReason, Served as InboundServed,
@@ -77,6 +80,7 @@ const V2_PEER_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 const V2_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(60);
 const V2_CHOKE_INTERVAL: Duration = Duration::from_secs(10);
 const V2_REQUEST_WINDOW: usize = 32;
+const V2_TRANSFER_COMMAND_CAPACITY: usize = V2_REQUEST_WINDOW * 2;
 const V2_MAX_PENDING_UPLOAD_READS: usize = 16;
 const V2_MAX_QUEUED_UPLOAD_REQUESTS: usize = 128;
 const V2_MAX_UPLOAD_WORK: usize = V2_MAX_PENDING_UPLOAD_READS + V2_MAX_QUEUED_UPLOAD_REQUESTS;
@@ -430,6 +434,8 @@ impl V2PeerState {
 struct V2PeerHandle {
     state: Arc<Mutex<V2PeerState>>,
     choker_id: PeerId,
+    transfer_conn: ConnectionId,
+    transfer_commands: mpsc::Sender<V2PeerCommand>,
     peer_control: RateLimitCancellation,
     task: tokio::task::JoinHandle<()>,
     _bitmap_memory_lease: MemoryLease,
@@ -437,10 +443,27 @@ struct V2PeerHandle {
 
 #[derive(Debug)]
 enum V2PeerEvent {
-    Downloaded { peer: SocketAddr, bytes: u64 },
-    Uploaded { peer: SocketAddr, bytes: u64 },
+    Downloaded {
+        peer: SocketAddr,
+        bytes: u64,
+    },
+    Uploaded {
+        peer: SocketAddr,
+        bytes: u64,
+    },
     InterestChanged,
-    Disconnected { peer: SocketAddr },
+    TransferActions {
+        actions: Vec<TransferAction>,
+    },
+    Disconnected {
+        peer: SocketAddr,
+        transfer_conn: ConnectionId,
+    },
+}
+
+#[derive(Debug)]
+enum V2PeerCommand {
+    Cancel(BlockExtent),
 }
 
 #[derive(Clone)]
@@ -456,6 +479,12 @@ struct V2PeerContext {
     network_budget: GlobalNetworkBudget,
     peer_control: RateLimitCancellation,
     peer_generation: u64,
+    transfer_conn: ConnectionId,
+    transfer_ledger: Arc<Mutex<TransferLedger<Arc<V2PieceMap>>>>,
+    transfer_piece_memory_leases: Arc<Mutex<HashMap<u32, MemoryLease>>>,
+    transfer_started_at: Instant,
+    transfer_commands: mpsc::Sender<V2PeerCommand>,
+    transfer_command_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<V2PeerCommand>>>,
     upload_control: RateLimitCancellation,
     piece_attempt_generation: Arc<AtomicU64>,
     local_have: Arc<RwLock<Arc<V2Bitmap>>>,
@@ -558,6 +587,84 @@ impl V2PeerContext {
         };
         !region.pad && self.file_is_wanted(region.file_index)
     }
+}
+
+fn ensure_v2_transfer_piece_memory(context: &V2PeerContext, piece: u32) -> bool {
+    if context
+        .transfer_piece_memory_leases
+        .lock()
+        .is_ok_and(|leases| leases.contains_key(&piece))
+    {
+        return true;
+    }
+    let Some(bytes) = context
+        .transfer_ledger
+        .lock()
+        .ok()
+        .and_then(|ledger| ledger.estimated_piece_state_bytes(piece))
+    else {
+        return false;
+    };
+    let Ok(bytes) = u64::try_from(bytes) else {
+        return false;
+    };
+    let Some(lease) = context
+        .resources
+        .try_acquire(MemoryClass::PeerBuffer, bytes)
+    else {
+        return false;
+    };
+    let Ok(mut leases) = context.transfer_piece_memory_leases.lock() else {
+        return false;
+    };
+    if leases.contains_key(&piece) {
+        return true;
+    }
+    if leases.try_reserve(1).is_err() {
+        return false;
+    }
+    leases.insert(piece, lease);
+    true
+}
+
+fn release_v2_transfer_piece_memory(context: &V2PeerContext, piece: u32) {
+    if let Ok(mut leases) = context.transfer_piece_memory_leases.lock() {
+        leases.remove(&piece);
+    }
+}
+
+fn fail_v2_transfer_piece(context: &V2PeerContext, piece: u32) {
+    let Ok(mut ledger) = context.transfer_ledger.lock() else {
+        return;
+    };
+    let actions = ledger.piece_failed_with_actions(piece).1;
+    drop(ledger);
+    if !actions.is_empty() {
+        if context
+            .events
+            .try_send(V2PeerEvent::TransferActions { actions })
+            .is_err()
+        {
+            debug!(
+                component = "transfer",
+                operation = "fail_v2_piece",
+                peer = %context.peer,
+                piece,
+                result = "deferred",
+                reason = "action_queue_full",
+                "v2 piece failure could not queue peer cancellation actions"
+            );
+        }
+    }
+    release_v2_transfer_piece_memory(context, piece);
+}
+
+fn v2_transfer_now(context: &V2PeerContext) -> u64 {
+    context
+        .transfer_started_at
+        .elapsed()
+        .as_nanos()
+        .min(u128::from(u64::MAX)) as u64
 }
 
 struct V2PieceAssembly {
@@ -775,6 +882,9 @@ pub struct V2TorrentTask {
     metainfo_files: Vec<TorrentFileV2>,
     save_root: PathBuf,
     piece_map: Arc<V2PieceMap>,
+    transfer_ledger: Arc<Mutex<TransferLedger<Arc<V2PieceMap>>>>,
+    transfer_piece_memory_leases: Arc<Mutex<HashMap<u32, MemoryLease>>>,
+    transfer_started_at: Instant,
     storage: MountScheduler,
     registry: Arc<RwLock<SessionRegistry>>,
     db: DbExecutor,
@@ -927,6 +1037,11 @@ impl V2TorrentTask {
             V2PieceMap::new(meta.piece_length, spans)
                 .expect("metainfo parser rejects invalid v2 piece maps"),
         );
+        let transfer_ledger = Arc::new(Mutex::new(
+            TransferLedger::new(Arc::clone(&piece_map)).with_max_connections(max_peers),
+        ));
+        let transfer_piece_memory_leases = Arc::new(Mutex::new(HashMap::new()));
+        let transfer_started_at = Instant::now();
         let peer_event_capacity = max_peers.clamp(64, 512);
         let (events_tx, events_rx) = mpsc::channel(peer_event_capacity);
         let local_have = Arc::new(RwLock::new(Arc::new(V2Bitmap::new(
@@ -950,6 +1065,9 @@ impl V2TorrentTask {
             metainfo_files,
             save_root,
             piece_map,
+            transfer_ledger,
+            transfer_piece_memory_leases,
+            transfer_started_at,
             storage,
             registry,
             db,
@@ -1189,23 +1307,39 @@ impl V2TorrentTask {
             return 0;
         }
         let mut cleared = 0usize;
-        let mut have = self.local_have.write().await;
-        let have = Arc::make_mut(&mut have);
-        if let Ok(ranges) = self.piece_map.piece_ranges_for_file_indices(&{
-            let mut sorted = files.to_vec();
-            sorted.sort_unstable();
-            sorted.dedup();
-            sorted
-        }) {
-            for (first, last) in ranges {
-                for piece in first..last {
-                    if have.get(piece as usize) {
-                        have.set(piece as usize, false);
-                        cleared += 1;
+        let mut cleared_pieces = Vec::new();
+        {
+            let mut have = self.local_have.write().await;
+            let have = Arc::make_mut(&mut have);
+            if let Ok(ranges) = self.piece_map.piece_ranges_for_file_indices(&{
+                let mut sorted = files.to_vec();
+                sorted.sort_unstable();
+                sorted.dedup();
+                sorted
+            }) {
+                for (first, last) in ranges {
+                    for piece in first..last {
+                        if have.get(piece as usize) {
+                            have.set(piece as usize, false);
+                            cleared += 1;
+                            cleared_pieces.push(piece);
+                        }
                     }
                 }
             }
         }
+        let mut transfer_actions = Vec::new();
+        if let Ok(mut ledger) = self.transfer_ledger.lock() {
+            for piece in &cleared_pieces {
+                transfer_actions.extend(ledger.piece_failed_with_actions(*piece).1);
+            }
+        }
+        if let Ok(mut leases) = self.transfer_piece_memory_leases.lock() {
+            for piece in cleared_pieces {
+                leases.remove(&piece);
+            }
+        }
+        self.apply_v2_transfer_actions(transfer_actions);
         cleared
     }
 
@@ -1341,6 +1475,7 @@ impl V2TorrentTask {
     pub async fn run(mut self) {
         let new_have = self.recheck_files().await;
         self.report_v2_recheck(&new_have, "startup").await;
+        self.sync_transfer_have(&new_have);
         *self.local_have.write().await = Arc::new(new_have);
         self.notify_local_have_changed();
 
@@ -1815,6 +1950,13 @@ impl V2TorrentTask {
             }
             Arc::make_mut(&mut self.meta).files = effective_files;
             self.piece_map = piece_map;
+            self.transfer_ledger = Arc::new(Mutex::new(
+                TransferLedger::new(Arc::clone(&self.piece_map))
+                    .with_max_connections(self.max_peers),
+            ));
+            self.transfer_piece_memory_leases = Arc::new(Mutex::new(HashMap::new()));
+            let have = self.local_have.read().await.clone();
+            self.sync_transfer_have(&have);
             self._file_policy_memory_lease = file_policy_memory_lease;
         } else if policy_changed {
             // Peer contexts hold an immutable snapshot of this policy.  Tear
@@ -1841,6 +1983,33 @@ impl V2TorrentTask {
 
     fn notify_local_have_changed(&self) {
         let _ = self.have_updates.send(());
+    }
+
+    fn sync_transfer_have(&self, have: &V2Bitmap) {
+        let Ok(mut ledger) = self.transfer_ledger.lock() else {
+            warn!(
+                component = "transfer",
+                operation = "sync_v2_have",
+                torrent = %self.info_hash_hex,
+                result = "error",
+                reason = "ledger_lock_poisoned",
+                "failed to synchronize v2 have state with the transfer ledger"
+            );
+            return;
+        };
+        let mut transfer_actions = Vec::new();
+        for piece in 0..self.piece_map.piece_count {
+            if have.get(piece as usize) {
+                transfer_actions.extend(ledger.mark_have(piece));
+            } else {
+                transfer_actions.extend(ledger.piece_failed_with_actions(piece).1);
+            }
+        }
+        drop(ledger);
+        if let Ok(mut leases) = self.transfer_piece_memory_leases.lock() {
+            leases.clear();
+        }
+        self.apply_v2_transfer_actions(transfer_actions);
     }
 
     fn schedule_trackers_now(&mut self) {
@@ -2296,6 +2465,7 @@ impl V2TorrentTask {
         self.shutdown_peers().await;
         let new_have = self.recheck_files().await;
         self.report_v2_recheck(&new_have, "recheck").await;
+        self.sync_transfer_have(&new_have);
         *self.local_have.write().await = Arc::new(new_have);
         self.notify_local_have_changed();
         let target = if self.paused {
@@ -2491,14 +2661,55 @@ impl V2TorrentTask {
                     );
                 }
             }
-            V2PeerEvent::Disconnected { peer } => {
-                self.peers.remove(&peer);
+            V2PeerEvent::Disconnected {
+                peer,
+                transfer_conn,
+            } => {
+                let still_current = self
+                    .peers
+                    .get(&peer)
+                    .is_some_and(|handle| handle.transfer_conn == transfer_conn);
+                if still_current {
+                    self.peers.remove(&peer);
+                    if let Ok(mut ledger) = self.transfer_ledger.lock() {
+                        let _ = ledger.disconnect(transfer_conn);
+                    }
+                }
+            }
+            V2PeerEvent::TransferActions { actions } => {
+                self.apply_v2_transfer_actions(actions);
             }
             V2PeerEvent::InterestChanged => {
                 if !self.paused {
                     self.run_choker().await;
                 }
             }
+        }
+    }
+
+    fn apply_v2_transfer_actions(&self, actions: Vec<TransferAction>) {
+        let mut failed = 0u64;
+        for action in actions {
+            let TransferAction::Cancel { conn, block } = action;
+            let Some(peer) = self.peers.values().find(|peer| peer.transfer_conn == conn) else {
+                continue;
+            };
+            if peer
+                .transfer_commands
+                .try_send(V2PeerCommand::Cancel(block))
+                .is_err()
+            {
+                failed = failed.saturating_add(1);
+            }
+        }
+        if failed > 0 {
+            debug!(
+                component = "transfer",
+                operation = "dispatch_v2_actions",
+                torrent = %self.info_hash_hex,
+                failed,
+                "some v2 peer cancellation actions could not enter their bounded control queues"
+            );
         }
     }
 
@@ -2553,9 +2764,15 @@ impl V2TorrentTask {
             .unwrap_or(self.max_peers)
     }
 
-    fn peer_context(&self, peer: SocketAddr, choker_id: PeerId) -> V2PeerContext {
+    fn peer_context_with_connection(
+        &self,
+        peer: SocketAddr,
+        choker_id: PeerId,
+        transfer_conn: ConnectionId,
+    ) -> V2PeerContext {
         let peer_control = RateLimitCancellation::default();
         let peer_generation = peer_control.generation();
+        let (transfer_commands, transfer_command_rx) = mpsc::channel(V2_TRANSFER_COMMAND_CAPACITY);
         V2PeerContext {
             info_hash: self.meta.info_hash_v2[..20]
                 .try_into()
@@ -2570,6 +2787,12 @@ impl V2TorrentTask {
             network_budget: self.network_budget.clone(),
             peer_control,
             peer_generation,
+            transfer_conn,
+            transfer_ledger: Arc::clone(&self.transfer_ledger),
+            transfer_piece_memory_leases: Arc::clone(&self.transfer_piece_memory_leases),
+            transfer_started_at: self.transfer_started_at,
+            transfer_commands,
+            transfer_command_rx: Arc::new(tokio::sync::Mutex::new(transfer_command_rx)),
             upload_control: RateLimitCancellation::default(),
             piece_attempt_generation: Arc::new(AtomicU64::new(0)),
             local_have: Arc::clone(&self.local_have),
@@ -2580,6 +2803,17 @@ impl V2TorrentTask {
             events: self.events_tx.clone(),
             proof_cache: Arc::clone(&self.proof_cache),
         }
+    }
+
+    #[cfg(test)]
+    fn peer_context(&self, peer: SocketAddr, choker_id: PeerId) -> V2PeerContext {
+        let transfer_conn = self
+            .transfer_ledger
+            .lock()
+            .unwrap()
+            .try_connect(V2_REQUEST_WINDOW)
+            .expect("test transfer ledger has connection capacity");
+        self.peer_context_with_connection(peer, choker_id, transfer_conn)
     }
 
     async fn connect_peers(&mut self, peers: Vec<SocketAddr>, source: PeerSource) {
@@ -2611,7 +2845,14 @@ impl V2TorrentTask {
             // V2PeerState retains remote_have and the protocol loop retains
             // announced_have, so charge both packed maps before spawning it.
             let bitmap_bytes = V2Bitmap::memory_bytes_for_len(self.piece_map.piece_count as usize)
-                .saturating_mul(2);
+                .saturating_mul(2)
+                .saturating_add(
+                    TransferLedger::<Arc<V2PieceMap>>::estimated_connection_state_bytes(),
+                )
+                .saturating_add(
+                    V2_TRANSFER_COMMAND_CAPACITY
+                        .saturating_mul(std::mem::size_of::<V2PeerCommand>()),
+                );
             let Some(bitmap_memory_lease) = self
                 .resources
                 .try_acquire(MemoryClass::PeerBuffer, bitmap_bytes)
@@ -2619,13 +2860,25 @@ impl V2TorrentTask {
                 drop(peer_permit);
                 break;
             };
+            let transfer_conn = self
+                .transfer_ledger
+                .lock()
+                .ok()
+                .and_then(|mut ledger| ledger.try_connect(V2_REQUEST_WINDOW));
+            let Some(transfer_conn) = transfer_conn else {
+                drop(bitmap_memory_lease);
+                drop(peer_permit);
+                break;
+            };
             let state = Arc::new(Mutex::new(V2PeerState::new(
                 self.piece_map.piece_count as usize,
             )));
             let choker_id = PeerId::new();
-            let context = self.peer_context(peer, choker_id);
+            let context = self.peer_context_with_connection(peer, choker_id, transfer_conn);
             let peer_control = context.peer_control.clone();
+            let transfer_commands = context.transfer_commands.clone();
             let event_peer = peer;
+            let event_transfer_conn = transfer_conn;
             let task_state = Arc::clone(&state);
             let transport_policy = outgoing_transport_policy_for_peer(
                 outgoing_transport_policy_configured(),
@@ -2648,7 +2901,10 @@ impl V2TorrentTask {
                 }
                 let _ = context
                     .events
-                    .send(V2PeerEvent::Disconnected { peer: event_peer })
+                    .send(V2PeerEvent::Disconnected {
+                        peer: event_peer,
+                        transfer_conn: event_transfer_conn,
+                    })
                     .await;
             });
             self.peers.insert(
@@ -2656,6 +2912,8 @@ impl V2TorrentTask {
                 V2PeerHandle {
                     state,
                     choker_id,
+                    transfer_conn,
+                    transfer_commands,
                     peer_control,
                     task,
                     _bitmap_memory_lease: bitmap_memory_lease,
@@ -2747,8 +3005,12 @@ impl V2TorrentTask {
         }
         // V2PeerState retains remote_have and the protocol loop retains
         // announced_have, so charge both packed maps before spawning it.
-        let bitmap_bytes =
-            V2Bitmap::memory_bytes_for_len(self.piece_map.piece_count as usize).saturating_mul(2);
+        let bitmap_bytes = V2Bitmap::memory_bytes_for_len(self.piece_map.piece_count as usize)
+            .saturating_mul(2)
+            .saturating_add(TransferLedger::<Arc<V2PieceMap>>::estimated_connection_state_bytes())
+            .saturating_add(
+                V2_TRANSFER_COMMAND_CAPACITY.saturating_mul(std::mem::size_of::<V2PeerCommand>()),
+            );
         let Some(bitmap_memory_lease) = self
             .resources
             .try_acquire(MemoryClass::PeerBuffer, bitmap_bytes)
@@ -2756,13 +3018,25 @@ impl V2TorrentTask {
             drop(peer_permit);
             return;
         };
+        let transfer_conn = self
+            .transfer_ledger
+            .lock()
+            .ok()
+            .and_then(|mut ledger| ledger.try_connect(V2_REQUEST_WINDOW));
+        let Some(transfer_conn) = transfer_conn else {
+            drop(bitmap_memory_lease);
+            drop(peer_permit);
+            return;
+        };
         let state = Arc::new(Mutex::new(V2PeerState::new(
             self.piece_map.piece_count as usize,
         )));
         let choker_id = PeerId::new();
-        let context = self.peer_context(peer, choker_id);
+        let context = self.peer_context_with_connection(peer, choker_id, transfer_conn);
         let peer_control = context.peer_control.clone();
+        let transfer_commands = context.transfer_commands.clone();
         let task_state = Arc::clone(&state);
+        let event_transfer_conn = transfer_conn;
         let task = tokio::spawn(async move {
             let _peer_permit = peer_permit;
             if let Err(error) =
@@ -2779,7 +3053,10 @@ impl V2TorrentTask {
             }
             let _ = context
                 .events
-                .send(V2PeerEvent::Disconnected { peer })
+                .send(V2PeerEvent::Disconnected {
+                    peer,
+                    transfer_conn: event_transfer_conn,
+                })
                 .await;
         });
         self.peers.insert(
@@ -2787,6 +3064,8 @@ impl V2TorrentTask {
             V2PeerHandle {
                 state,
                 choker_id,
+                transfer_conn,
+                transfer_commands,
                 peer_control,
                 task,
                 _bitmap_memory_lease: bitmap_memory_lease,
@@ -2814,8 +3093,12 @@ impl V2TorrentTask {
         }
         // V2PeerState retains remote_have and the protocol loop retains
         // announced_have, so charge both packed maps before spawning it.
-        let bitmap_bytes =
-            V2Bitmap::memory_bytes_for_len(self.piece_map.piece_count as usize).saturating_mul(2);
+        let bitmap_bytes = V2Bitmap::memory_bytes_for_len(self.piece_map.piece_count as usize)
+            .saturating_mul(2)
+            .saturating_add(TransferLedger::<Arc<V2PieceMap>>::estimated_connection_state_bytes())
+            .saturating_add(
+                V2_TRANSFER_COMMAND_CAPACITY.saturating_mul(std::mem::size_of::<V2PeerCommand>()),
+            );
         let Some(bitmap_memory_lease) = self
             .resources
             .try_acquire(MemoryClass::PeerBuffer, bitmap_bytes)
@@ -2823,13 +3106,25 @@ impl V2TorrentTask {
             drop(peer_permit);
             return;
         };
+        let transfer_conn = self
+            .transfer_ledger
+            .lock()
+            .ok()
+            .and_then(|mut ledger| ledger.try_connect(V2_REQUEST_WINDOW));
+        let Some(transfer_conn) = transfer_conn else {
+            drop(bitmap_memory_lease);
+            drop(peer_permit);
+            return;
+        };
         let state = Arc::new(Mutex::new(V2PeerState::new(
             self.piece_map.piece_count as usize,
         )));
         let choker_id = PeerId::new();
-        let context = self.peer_context(peer, choker_id);
+        let context = self.peer_context_with_connection(peer, choker_id, transfer_conn);
         let peer_control = context.peer_control.clone();
+        let transfer_commands = context.transfer_commands.clone();
         let task_state = Arc::clone(&state);
+        let event_transfer_conn = transfer_conn;
         let task = tokio::spawn(async move {
             let _peer_permit = peer_permit;
             if let Err(error) =
@@ -2846,7 +3141,10 @@ impl V2TorrentTask {
             }
             let _ = context
                 .events
-                .send(V2PeerEvent::Disconnected { peer })
+                .send(V2PeerEvent::Disconnected {
+                    peer,
+                    transfer_conn: event_transfer_conn,
+                })
                 .await;
         });
         self.peers.insert(
@@ -2854,6 +3152,8 @@ impl V2TorrentTask {
             V2PeerHandle {
                 state,
                 choker_id,
+                transfer_conn,
+                transfer_commands,
                 peer_control,
                 task,
                 _bitmap_memory_lease: bitmap_memory_lease,
@@ -2865,20 +3165,31 @@ impl V2TorrentTask {
         let Some(handle) = self.peers.remove(&peer) else {
             return;
         };
+        let transfer_conn = handle.transfer_conn;
         handle.peer_control.cancel();
         let mut tasks = futures::stream::FuturesUnordered::new();
         tasks.push(handle.task);
         self.join_v2_peer_tasks(tasks, "remove_peer").await;
+        if let Ok(mut ledger) = self.transfer_ledger.lock() {
+            let _ = ledger.disconnect(transfer_conn);
+        }
     }
 
     async fn shutdown_peers(&mut self) {
         let peers = std::mem::take(&mut self.peers);
         let mut tasks = futures::stream::FuturesUnordered::new();
+        let mut transfer_connections = Vec::with_capacity(peers.len());
         for (_, handle) in peers {
             handle.peer_control.cancel();
+            transfer_connections.push(handle.transfer_conn);
             tasks.push(handle.task);
         }
         self.join_v2_peer_tasks(tasks, "shutdown_peers").await;
+        if let Ok(mut ledger) = self.transfer_ledger.lock() {
+            for transfer_conn in transfer_connections {
+                let _ = ledger.disconnect(transfer_conn);
+            }
+        }
     }
 
     async fn join_v2_peer_tasks(
@@ -2900,6 +3211,9 @@ impl V2TorrentTask {
                 match event {
                     V2PeerEvent::Downloaded { .. } | V2PeerEvent::Uploaded { .. } => {
                         self.handle_peer_event(event).await;
+                    }
+                    V2PeerEvent::TransferActions { actions } => {
+                        self.apply_v2_transfer_actions(actions);
                     }
                     V2PeerEvent::InterestChanged | V2PeerEvent::Disconnected { .. } => {}
                 }
@@ -3410,6 +3724,44 @@ async fn run_v2_peer_protocol(
             _ = context.peer_control.wait_for_change(shutdown_generation) => {
                 return Ok(());
             }
+            command = receive_v2_peer_command(&context) => {
+                let Some(V2PeerCommand::Cancel(block)) = command else {
+                    return Ok(());
+                };
+                let matching = outstanding
+                    .get(&(block.piece, block.begin))
+                    .is_some_and(|request| request.length == block.length);
+                if matching {
+                    outstanding.remove(&(block.piece, block.begin));
+                    if !send_v2_peer_message(
+                        &context,
+                        &mut framed,
+                        Message::Cancel {
+                            piece: block.piece,
+                            begin: block.begin,
+                            length: block.length,
+                        },
+                    )
+                    .await?
+                    {
+                        return Ok(());
+                    }
+                    if let Ok(mut peer) = state.lock() {
+                        peer.outstanding = outstanding.len();
+                    }
+                    fill_v2_requests(
+                        &context,
+                        &mut framed,
+                        &state,
+                        &mut outstanding,
+                        &mut assemblies,
+                        transfer_jobs.len(),
+                        &pending_block_completions,
+                        &pending_piece_completions,
+                    )
+                    .await?;
+                }
+            }
             changed = upload_unchoked.changed() => {
                 if changed.is_err() {
                     return Ok(());
@@ -3578,11 +3930,27 @@ async fn run_v2_peer_protocol(
                         ).await?;
                     }
                     Message::Choke => {
+                        let abandoned_pieces = if remote_supports_fast {
+                            Vec::new()
+                        } else {
+                            assemblies
+                                .iter()
+                                .filter_map(|(&piece, assembly)| {
+                                    (assembly.pending_blocks == 0).then_some(piece)
+                                })
+                                .collect::<Vec<_>>()
+                        };
+                        if let Ok(mut ledger) = context.transfer_ledger.lock() {
+                            let _ = ledger.on_choke(context.transfer_conn, remote_supports_fast);
+                        }
                         apply_v2_remote_choke(
                             remote_supports_fast,
                             &mut outstanding,
                             &mut assemblies,
                         );
+                        for piece in abandoned_pieces {
+                            fail_v2_transfer_piece(&context, piece);
+                        }
                         if let Ok(mut peer) = state.lock() {
                             peer.choked = true;
                             peer.outstanding = outstanding.len();
@@ -3670,12 +4038,20 @@ async fn run_v2_peer_protocol(
                         }
                     }
                     Message::Reject { piece, begin, length } => {
-                        release_v2_rejected_request(
+                        let released = release_v2_rejected_request(
                             &mut outstanding,
                             piece,
                             begin,
                             length,
                         );
+                        if released {
+                            if let Ok(mut ledger) = context.transfer_ledger.lock() {
+                                let _ = ledger.on_reject(
+                                    context.transfer_conn,
+                                    BlockExtent::new(piece, begin, length),
+                                );
+                            }
+                        }
                         fill_v2_requests(
                             &context,
                             &mut framed,
@@ -3771,6 +4147,7 @@ async fn run_v2_peer_protocol(
                 };
                 match completion {
                     V2TransferCompletion::BlockStored(completion) => {
+                        let piece = completion.piece;
                         if let Err(error) = apply_v2_block_completion(
                             completion,
                             &mut assemblies,
@@ -3778,6 +4155,13 @@ async fn run_v2_peer_protocol(
                         ) {
                             return Err(error);
                         }
+                        fail_v2_discarded_piece_if_idle(
+                            &context,
+                            piece,
+                            &assemblies,
+                            &pending_piece_completions,
+                        )
+                        .await;
                     }
                     V2TransferCompletion::BlockAdmissionCancelled {
                         piece,
@@ -3990,6 +4374,12 @@ async fn run_v2_peer_protocol(
         &mut transfer_jobs,
     )
     .await;
+    let mut abandoned_pieces = assemblies.keys().copied().collect::<HashSet<_>>();
+    abandoned_pieces.extend(pending_block_completions.keys().map(|(piece, _)| *piece));
+    abandoned_pieces.extend(pending_piece_completions.keys().copied());
+    for piece in abandoned_pieces {
+        fail_v2_transfer_piece(&context, piece);
+    }
     match protocol_result {
         Err(error) => {
             if let Err(drain_error) = drain_result {
@@ -4059,6 +4449,10 @@ async fn send_v2_peer_message(
             Ok(true)
         }
     }
+}
+
+async fn receive_v2_peer_command(context: &V2PeerContext) -> Option<V2PeerCommand> {
+    context.transfer_command_rx.lock().await.recv().await
 }
 
 /// Keep the local interest bit synchronized with the pieces this peer can
@@ -4132,6 +4526,11 @@ async fn fill_v2_requests(
         .map_err(|_| anyhow::anyhow!("v2 peer state lock poisoned"))?;
     let local_have = context.local_have.read().await.clone();
     while outstanding.len() < V2_REQUEST_WINDOW {
+        let foreign_activity = context
+            .transfer_ledger
+            .lock()
+            .map_err(|_| anyhow::anyhow!("v2 transfer ledger lock poisoned"))?
+            .foreign_activity_pieces(context.transfer_conn);
         let mut selected = None;
         let ready_completions = pending_piece_completions.len()
             + assemblies
@@ -4152,6 +4551,7 @@ async fn fill_v2_requests(
             if local_have.get(piece_index)
                 || !remote_have.get(piece_index)
                 || pending_piece_completions.contains_key(&piece)
+                || foreign_activity.binary_search(&piece).is_ok()
             {
                 continue;
             }
@@ -4221,6 +4621,43 @@ async fn fill_v2_requests(
             }
             break;
         };
+        if !ensure_v2_transfer_piece_memory(context, piece) {
+            drop(memory_lease);
+            if is_new_assembly {
+                assemblies.remove(&piece);
+            }
+            break;
+        }
+        let block = BlockExtent::new(piece, begin, length);
+        let reserve = context
+            .transfer_ledger
+            .lock()
+            .map_err(|_| anyhow::anyhow!("v2 transfer ledger lock poisoned"))?
+            .reserve_piece_affine(context.transfer_conn, block);
+        if let Err(error) = reserve {
+            drop(memory_lease);
+            if is_new_assembly {
+                assemblies.remove(&piece);
+            }
+            if context
+                .transfer_ledger
+                .lock()
+                .is_ok_and(|ledger| ledger.piece_progress(piece).is_none())
+            {
+                release_v2_transfer_piece_memory(context, piece);
+            }
+            debug!(
+                component = "transfer",
+                operation = "reserve_v2_download_block",
+                peer = %context.peer,
+                piece,
+                begin,
+                result = "deferred",
+                reason = ?error,
+                "shared transfer ledger refused a v2 candidate"
+            );
+            break;
+        }
         if !send_v2_peer_message(
             context,
             framed,
@@ -4232,7 +4669,69 @@ async fn fill_v2_requests(
         )
         .await?
         {
+            if let Ok(mut ledger) = context.transfer_ledger.lock() {
+                let _ = ledger.on_reject(context.transfer_conn, block);
+                if ledger.piece_progress(piece).is_none() {
+                    release_v2_transfer_piece_memory(context, piece);
+                }
+            }
+            drop(memory_lease);
             return Ok(());
+        }
+        let (commit, actions) = context
+            .transfer_ledger
+            .lock()
+            .map_err(|_| anyhow::anyhow!("v2 transfer ledger lock poisoned"))?
+            .commit(context.transfer_conn, block, v2_transfer_now(context));
+        if commit == CommitOutcome::StaleConnection {
+            drop(memory_lease);
+            context.peer_control.cancel();
+            return Ok(());
+        }
+        if commit == CommitOutcome::Orphaned {
+            let mut foreign_actions = Vec::new();
+            for action in actions {
+                let crate::transfer::ledger::Action::Cancel { conn, block } = action;
+                if conn == context.transfer_conn {
+                    let _ = send_v2_peer_message(
+                        context,
+                        framed,
+                        Message::Cancel {
+                            piece: block.piece,
+                            begin: block.begin,
+                            length: block.length,
+                        },
+                    )
+                    .await?;
+                } else {
+                    foreign_actions.push(TransferAction::Cancel { conn, block });
+                }
+            }
+            if !foreign_actions.is_empty() {
+                context
+                    .events
+                    .send(V2PeerEvent::TransferActions {
+                        actions: foreign_actions,
+                    })
+                    .await
+                    .map_err(|_| anyhow::anyhow!("v2 transfer event channel closed"))?;
+            }
+            drop(memory_lease);
+            if is_new_assembly {
+                assemblies.remove(&piece);
+            }
+            if context
+                .transfer_ledger
+                .lock()
+                .is_ok_and(|ledger| ledger.piece_progress(piece).is_none())
+            {
+                release_v2_transfer_piece_memory(context, piece);
+            }
+            continue;
+        }
+        if commit == CommitOutcome::Reconciled {
+            drop(memory_lease);
+            continue;
         }
         outstanding.insert(
             (piece, begin),
@@ -4329,6 +4828,20 @@ fn apply_v2_block_completion(
     Ok(())
 }
 
+async fn fail_v2_discarded_piece_if_idle(
+    context: &V2PeerContext,
+    piece: u32,
+    assemblies: &HashMap<u32, V2PieceAssembly>,
+    pending_piece_completions: &HashMap<u32, V2PendingCompletion>,
+) {
+    if assemblies.contains_key(&piece) || pending_piece_completions.contains_key(&piece) {
+        return;
+    }
+    if !context.local_have.read().await.get(piece as usize) {
+        fail_v2_transfer_piece(context, piece);
+    }
+}
+
 fn apply_v2_block_admission_cancelled(
     piece: u32,
     generation: u64,
@@ -4416,6 +4929,30 @@ async fn apply_v2_piece_completion(
     pending_piece_completions.remove(&completion.piece);
     match completion.result {
         Ok(()) => {
+            let mut ledger = context
+                .transfer_ledger
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let actions = ledger.mark_have(completion.piece);
+            drop(ledger);
+            if !actions.is_empty() {
+                if context
+                    .events
+                    .try_send(V2PeerEvent::TransferActions { actions })
+                    .is_err()
+                {
+                    debug!(
+                        component = "transfer",
+                        operation = "complete_v2_piece",
+                        peer = %context.peer,
+                        piece = completion.piece,
+                        result = "deferred",
+                        reason = "action_queue_full",
+                        "v2 piece completion could not queue peer cancellation actions"
+                    );
+                }
+            }
+            release_v2_transfer_piece_memory(context, completion.piece);
             let newly_available = {
                 let mut local_have = context.local_have.write().await;
                 let local_have = Arc::make_mut(&mut *local_have);
@@ -4441,6 +4978,7 @@ async fn apply_v2_piece_completion(
             }
         }
         Err(error) => {
+            fail_v2_transfer_piece(context, completion.piece);
             warn!(
                 component = "torrent_v2",
                 operation = "verify_and_store_piece",
@@ -4466,12 +5004,21 @@ async fn drain_v2_transfer_jobs(
     while let Some(completion) = transfer_jobs.next().await {
         match completion {
             V2TransferCompletion::BlockStored(completion) => {
+                let piece = completion.piece;
                 if let Err(error) =
                     apply_v2_block_completion(completion, assemblies, pending_block_completions)
                 {
                     if first_error.is_none() {
                         first_error = Some(error);
                     }
+                } else {
+                    fail_v2_discarded_piece_if_idle(
+                        context,
+                        piece,
+                        assemblies,
+                        pending_piece_completions,
+                    )
+                    .await;
                 }
             }
             V2TransferCompletion::BlockAdmissionCancelled {
@@ -4634,6 +5181,27 @@ async fn handle_v2_piece(
         .piece_map
         .validate_request_block(block_extent)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let receive = {
+        let mut ledger = context
+            .transfer_ledger
+            .lock()
+            .map_err(|_| anyhow::anyhow!("v2 transfer ledger lock poisoned"))?;
+        ledger.on_block(context.transfer_conn, block_extent)
+    };
+    let actions = match receive {
+        ReceiveOutcome::Accepted { actions, .. } => actions,
+        ReceiveOutcome::Duplicate => return Ok(()),
+        ReceiveOutcome::StaleConnection
+        | ReceiveOutcome::Unsolicited
+        | ReceiveOutcome::Invalid(_) => anyhow::bail!("unsolicited v2 piece block"),
+    };
+    if !actions.is_empty() {
+        context
+            .events
+            .send(V2PeerEvent::TransferActions { actions })
+            .await
+            .map_err(|_| anyhow::anyhow!("v2 transfer event channel closed"))?;
+    }
     let piece_extent = PieceGeometry::piece_extent(&context.piece_map, piece)
         .ok_or_else(|| anyhow::anyhow!("v2 piece {piece} is outside the piece map"))?;
     let block_region = context
@@ -5447,6 +6015,13 @@ mod tests {
         let mut local_have = V2Bitmap::new(1);
         local_have.set(0, true);
         let (events, mut event_rx) = mpsc::channel(8);
+        let transfer_ledger = Arc::new(Mutex::new(TransferLedger::new(Arc::clone(&piece_map))));
+        let transfer_conn = transfer_ledger
+            .lock()
+            .unwrap()
+            .try_connect(V2_REQUEST_WINDOW)
+            .unwrap();
+        let (transfer_commands, transfer_command_rx) = mpsc::channel(V2_TRANSFER_COMMAND_CAPACITY);
         let context = V2PeerContext {
             info_hash: [9; 20],
             peer: "127.0.0.1:6881".parse().unwrap(),
@@ -5459,6 +6034,12 @@ mod tests {
             network_budget: GlobalNetworkBudget::new(8, Some(1), Some(1)),
             peer_control: RateLimitCancellation::default(),
             peer_generation: 0,
+            transfer_conn,
+            transfer_ledger,
+            transfer_piece_memory_leases: Arc::new(Mutex::new(HashMap::new())),
+            transfer_started_at: Instant::now(),
+            transfer_commands,
+            transfer_command_rx: Arc::new(tokio::sync::Mutex::new(transfer_command_rx)),
             upload_control: RateLimitCancellation::default(),
             piece_attempt_generation: Arc::new(AtomicU64::new(0)),
             local_have: Arc::new(RwLock::new(Arc::new(local_have))),
@@ -5653,11 +6234,20 @@ mod tests {
             .resources
             .try_acquire(MemoryClass::PeerBuffer, 1)
             .unwrap();
+        let transfer_conn = task
+            .transfer_ledger
+            .lock()
+            .unwrap()
+            .try_connect(V2_REQUEST_WINDOW)
+            .unwrap();
+        let (transfer_commands, _transfer_command_rx) = mpsc::channel(V2_TRANSFER_COMMAND_CAPACITY);
         task.peers.insert(
             peer_addr,
             V2PeerHandle {
                 state: peer_state,
                 choker_id,
+                transfer_conn,
+                transfer_commands,
                 peer_control,
                 task: peer_task,
                 _bitmap_memory_lease: bitmap_memory_lease,
@@ -5671,6 +6261,59 @@ mod tests {
             .await
             .expect("peer task should observe cancellation before join completes");
         assert!(task.peers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn v2_transfer_cancel_actions_route_to_the_matching_connection() {
+        let content = vec![0x31u8; rt_peer_wire::message::MAX_BLOCK_SIZE as usize];
+        let raw = v2_raw_with_piece_length(&content, content.len());
+        let (mut task, _fixture) =
+            v2_task_not_started(quiet_v2_runtime(), &raw, content.len() as u64).await;
+        let peer = "127.0.0.1:6881".parse().unwrap();
+        let transfer_conn = task
+            .transfer_ledger
+            .lock()
+            .unwrap()
+            .try_connect(V2_REQUEST_WINDOW)
+            .unwrap();
+        let (transfer_commands, mut transfer_command_rx) =
+            mpsc::channel(V2_TRANSFER_COMMAND_CAPACITY);
+        let peer_control = RateLimitCancellation::default();
+        let peer_generation = peer_control.generation();
+        let task_control = peer_control.clone();
+        let peer_task = tokio::spawn(async move {
+            task_control.wait_for_change(peer_generation).await;
+        });
+        task.peers.insert(
+            peer,
+            V2PeerHandle {
+                state: Arc::new(Mutex::new(V2PeerState::new(
+                    task.piece_map.piece_count as usize,
+                ))),
+                choker_id: PeerId::new(),
+                transfer_conn,
+                transfer_commands,
+                peer_control,
+                task: peer_task,
+                _bitmap_memory_lease: task
+                    .resources
+                    .try_acquire(MemoryClass::PeerBuffer, 1)
+                    .unwrap(),
+            },
+        );
+
+        let block = BlockExtent::new(0, 0, rt_peer_wire::message::MAX_BLOCK_SIZE);
+        task.apply_v2_transfer_actions(vec![TransferAction::Cancel {
+            conn: transfer_conn,
+            block,
+        }]);
+        assert!(matches!(
+            transfer_command_rx.try_recv(),
+            Ok(V2PeerCommand::Cancel(actual)) if actual == block
+        ));
+
+        task.remove_peer(peer).await;
+        assert!(!task.transfer_ledger.lock().unwrap().is_live(transfer_conn));
     }
 
     #[tokio::test]
@@ -5906,11 +6549,20 @@ mod tests {
 
         let peer: SocketAddr = "127.0.0.1:6881".parse().unwrap();
         let peer_task = tokio::spawn(std::future::pending::<()>());
+        let transfer_conn = task
+            .transfer_ledger
+            .lock()
+            .unwrap()
+            .try_connect(V2_REQUEST_WINDOW)
+            .unwrap();
+        let (transfer_commands, _transfer_command_rx) = mpsc::channel(V2_TRANSFER_COMMAND_CAPACITY);
         task.peers.insert(
             peer,
             V2PeerHandle {
                 state: Arc::new(Mutex::new(V2PeerState::new(0))),
                 choker_id: PeerId::new(),
+                transfer_conn,
+                transfer_commands,
                 peer_control: RateLimitCancellation::default(),
                 task: peer_task,
                 _bitmap_memory_lease: resources.try_acquire(MemoryClass::PeerBuffer, 1).unwrap(),
@@ -6733,6 +7385,19 @@ mod tests {
     const MB_PIECE: usize = 32_768;
     const MB_SENTINEL: u8 = 0xEE;
 
+    fn reserve_v2_test_request(context: &V2PeerContext, block: BlockExtent) {
+        assert!(ensure_v2_transfer_piece_memory(context, block.piece));
+        let (outcome, actions) = {
+            let mut ledger = context.transfer_ledger.lock().unwrap();
+            ledger
+                .reserve_piece_affine(context.transfer_conn, block)
+                .unwrap();
+            ledger.commit(context.transfer_conn, block, 0)
+        };
+        assert_eq!(outcome, CommitOutcome::OnWire);
+        assert!(actions.is_empty());
+    }
+
     /// Distinct bytes in every block, never equal to the sentinel run.
     fn mb_content(len: usize) -> Vec<u8> {
         (0..len)
@@ -6804,6 +7469,10 @@ mod tests {
             let mut transfer_jobs = futures::stream::FuturesUnordered::<V2TransferTask>::new();
             for &block in order {
                 let (begin, data) = self.block(piece, block);
+                reserve_v2_test_request(
+                    &context,
+                    BlockExtent::new(piece as u32, begin, data.len() as u32),
+                );
                 outstanding.insert(
                     (piece as u32, begin),
                     V2OutstandingRequest {
@@ -6917,6 +7586,7 @@ mod tests {
 
         for block in 0..MB_PIECE.div_ceil(MB_BLOCK) {
             let (begin, data) = case.block(0, block);
+            reserve_v2_test_request(&context, BlockExtent::new(0, begin, data.len() as u32));
             outstanding.insert(
                 (0, begin),
                 V2OutstandingRequest {
@@ -7262,6 +7932,17 @@ mod tests {
             .values()
             .map(|request| u64::from(request.length))
             .sum::<u64>();
+        let ledger_piece_bytes = [0, 1]
+            .into_iter()
+            .filter_map(|piece| {
+                context
+                    .transfer_ledger
+                    .lock()
+                    .ok()?
+                    .estimated_piece_state_bytes(piece)
+                    .and_then(|bytes| u64::try_from(bytes).ok())
+            })
+            .sum::<u64>();
         let owned_bytes = outstanding
             .values()
             .map(|request| request._memory_lease.as_ref().map_or(0, MemoryLease::bytes))
@@ -7269,7 +7950,7 @@ mod tests {
         assert_eq!(owned_bytes, request_bytes);
         assert_eq!(
             resources.snapshot().classes[peer_buffer_index].used_bytes,
-            baseline_used + request_bytes
+            baseline_used + request_bytes + ledger_piece_bytes
         );
 
         for begin in [0, MB_BLOCK as u32] {
@@ -7308,12 +7989,19 @@ mod tests {
             .values()
             .map(|request| u64::from(request.length))
             .sum::<u64>();
+        let remaining_ledger_piece_bytes = context
+            .transfer_ledger
+            .lock()
+            .unwrap()
+            .estimated_piece_state_bytes(1)
+            .and_then(|bytes| u64::try_from(bytes).ok())
+            .unwrap();
         assert!(!outstanding.contains_key(&(0, 0)));
         assert!(!outstanding.contains_key(&(0, MB_BLOCK as u32)));
         assert_eq!(remaining_bytes, (2 * MB_BLOCK) as u64);
         assert_eq!(
             resources.snapshot().classes[peer_buffer_index].used_bytes,
-            baseline_used + remaining_bytes,
+            baseline_used + remaining_bytes + remaining_ledger_piece_bytes,
             "full piece storage and verification releases each response lease"
         );
         assert!(context.local_have.read().await.get(0));
@@ -7324,6 +8012,12 @@ mod tests {
         );
 
         drop(outstanding); // peer disconnect releases the remaining requests
+        fail_v2_transfer_piece(&context, 1);
+        let _ = context
+            .transfer_ledger
+            .lock()
+            .unwrap()
+            .disconnect(context.transfer_conn);
         assert_eq!(
             resources.snapshot().classes[peer_buffer_index].used_bytes,
             baseline_used

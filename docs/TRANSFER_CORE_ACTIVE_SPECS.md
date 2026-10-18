@@ -1023,18 +1023,21 @@ reconciles response/commit event reordering, accepts useful late data, and
 returns bounded protocol actions. A conservative 64 MiB logical piece-state
 budget, a 4,096-live-connection ceiling, a 1,024-request per-peer ceiling, a
 65,536-owner torrent ceiling, and a four-owner endgame cap keep its principal
-retained collections bounded. NET-114 now uses it for live v1 and hybrid-v1
-request/content ownership; pure-v2 remains on its actor-local reference path.
+retained collections bounded. NET-114 now uses it for live v1, hybrid-v1, and
+pure-v2 outbound request ownership and received-block arbitration. Pure-v2
+still keeps protocol-local response leases and per-peer piece assemblies; its
+reservations use piece affinity because those assemblies are not shared.
 
 ### Ownership and invariant
 
-- **Current owner:** the ledger owns live v1/hybrid-v1 request reservations,
-  connection generations, received-block arbitration, and cross-peer endgame
-  actions. `PiecePicker` remains the candidate-ranking and restored-partial
-  projection; pure-v2 still owns requests in its actor-local maps.
-- **Target owner:** NET-114 extends the same ownership contract to pure-v2,
-  hybrid dual-view transfers, restored partial state, and storage completion,
-  with storage retaining payload bytes until verification commits.
+- **Current owner:** the ledger owns live v1/hybrid-v1 and pure-v2 outbound
+  reservations, connection generations, received-block arbitration, and
+  applicable cancellation actions. `PiecePicker` remains the candidate-ranking
+  and restored-partial projection. Pure-v2 actor maps retain response leases
+  and per-peer assembly state, with atomic piece-affinity reservation.
+- **Target owner:** NET-114 extends the same ownership contract to hybrid
+  dual-view transfers, restored partial state, and storage completion, with
+  storage retaining payload bytes until verification commits.
 - **Invariant preserved:** each missing block is reserved once outside
   endgame; connection generations isolate stale events; received blocks are
   verified as complete pieces before `have` is set.
@@ -1068,9 +1071,10 @@ request/content ownership; pure-v2 remains on its actor-local reference path.
   plane.
 - **Migration / rollback:** the picker remains the selection/resume projection;
   reverting the actor adapter returns request ownership to the prior actor path.
-- **Feature flag or rollout boundary:** v1 and hybrid-v1 requests are wired but
-  unqualified; pure-v2 and hybrid dual-view integration remain open, and the
-  simulator plus bulk pass must qualify before the architecture is accepted.
+- **Feature flag or rollout boundary:** v1, hybrid-v1, and pure-v2 outbound
+  request ownership are wired but unqualified; pure-v2 timeout handling,
+  hybrid dual-view integration, and the simulator plus bulk pass remain open
+  before the architecture is accepted.
 
 ### Evidence
 
@@ -1101,18 +1105,20 @@ request/content ownership; pure-v2 remains on its actor-local reference path.
 
 Honor negotiated BEP 6 behavior in the existing handlers while moving the
 complete obligation state machine into the live shared runtime. The
-`transfer::InboundObligations` module now owns the v1 and pure-v2 inbound
-upload queue/service lifecycle; hybrid and outbound request state remain on
-their reference paths.
+`transfer::InboundObligations` module owns the v1 and pure-v2 inbound upload
+queue/service lifecycle. The generation-aware ledger also owns live
+v1/hybrid-v1 and pure-v2 outbound reservations and received-block arbitration;
+pure-v2 timeout handling and hybrid dual-view ownership remain open.
 
 ### Ownership and invariant
 
 - **Current owner:** v1 and pure-v2 inbound upload queue, in-service, Cancel,
   choke, and completion transitions use `InboundObligations`; the peer loops
-  own storage futures and wire writes. Outbound request state remains
-  actor-local.
+  own storage futures and wire writes. The ledger owns v1/hybrid-v1 and
+  pure-v2 outbound reservation and response arbitration; v2 timeout handling
+  and hybrid dual-view ownership remain open.
 - **Target owner:** `InboundObligations` and the shared ledger own response
-  obligations across both protocol planes.
+  obligations and outbound request state across both protocol planes.
 - **Invariant preserved:** when Fast is negotiated, a request already
   accepted for processing remains owed a Piece or Reject response across
   Choke and Cancel; Reject is sent only when the peer negotiated Fast.
@@ -3142,17 +3148,19 @@ arrive, drain all currently ready completions, and preserve the portable
 
 Move request reservation, response arbitration, and terminal request cleanup
 from actor-local state into the shared transfer core in reversible protocol
-slices. The current slice wires the ledger into v1 and hybrid-v1 acquisition;
-pure-v2 ownership, shared source scheduling, shared rate/window/upload
-services, and hybrid dual-view arbitration remain open.
+slices. The live ledger now owns v1/hybrid-v1 and pure-v2 outbound acquisition.
+Pure-v2 retains peer-local piece assembly and uses an atomic affinity check so
+one connection owns each active piece. Hybrid dual-view arbitration, shared
+source scheduling, shared rate/window/upload services, and pure-v2 timeout
+integration remain open.
 
 ### Ownership and invariant
 
-- **Current owner:** the generation-aware ledger owns live v1/hybrid-v1
-  reservations, socket-write commits, received-block arbitration, and
-  completion/failure cleanup. `PiecePicker` still ranks candidates and holds
-  restored-partial projection state. Pure-v2 continues to use its actor-local
-  request maps.
+- **Current owner:** the generation-aware ledger owns live v1/hybrid-v1 and
+  pure-v2 reservations, socket-write commits, received-block arbitration, and
+  completion/failure cleanup. Pure-v2 timeout integration remains open.
+  `PiecePicker` still ranks candidates and holds restored-partial projection
+  state; v2 actor maps retain response leases and peer-local assemblies.
 - **Target owner:** each protocol adapter submits candidates to one shared
   content owner, while immutable payload, storage completion, and durability
   evidence retain their existing explicit owners.
@@ -3168,8 +3176,10 @@ services, and hybrid dual-view arbitration remain open.
 
 ### Acceptance
 
-- v1 and pure-v2 each use the ledger for reserve, wire commit, response,
-  Reject, Choke, timeout, disconnect, and piece completion/failure.
+- v1 uses the ledger for reserve, wire commit, response, Reject, Choke,
+  timeout, disconnect, and piece completion/failure. Pure-v2 uses it for
+  reserve, wire commit, response, Reject, Choke, disconnect, and piece
+  completion/failure; timeout integration remains open.
 - Hybrid v1/v2 views arbitrate the same payload without duplicate writes or
   mismatched piece geometry.
 - Peer request, ledger connection, piece state, source jobs, rate queues, and
@@ -3180,8 +3190,9 @@ services, and hybrid dual-view arbitration remain open.
 
 ### Evidence
 
-- **Regression sources:** ledger failure cancellation and v1 actor lifecycle
-  sources are present; pure-v2 and hybrid dual-view cases remain open.
+- **Regression sources:** ledger failure cancellation, v1 actor lifecycle, and
+  pure-v2 reservation/response/action-routing sources are present; hybrid
+  dual-view and timeout cases remain open.
 - **Command or probe:** run transfer-core simulator and engine regression
   suites only during the owner-requested bulk pass.
 - **Executed on exact revision:** no. No build or test commands were run for

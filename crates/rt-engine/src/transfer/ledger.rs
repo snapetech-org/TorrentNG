@@ -66,6 +66,9 @@ pub enum ReserveError {
     AlreadyReceived,
     /// Another connection owns it and this reservation is not endgame.
     OwnedByOther,
+    /// Another connection has activity in this piece. Protocol adapters with
+    /// peer-local whole-piece assemblies must keep the piece on that peer.
+    PieceOwnedByOther,
     /// This connection already owns the block.
     AlreadyOwned,
     ConnectionFull,
@@ -572,6 +575,27 @@ impl<G: PieceGeometry> Ledger<G> {
         Ok(())
     }
 
+    /// Reserve a block while keeping all activity for its piece on one
+    /// connection. This check and reservation happen under the same mutable
+    /// ledger borrow, so peer-local piece assemblers cannot race into a split
+    /// piece when two peers select it at once.
+    pub fn reserve_piece_affine(
+        &mut self,
+        conn: ConnectionId,
+        block: BlockExtent,
+    ) -> Result<(), ReserveError> {
+        if self.conn_ref(conn).is_none() {
+            return Err(ReserveError::UnknownConnection);
+        }
+        self.geometry
+            .validate_request_block(block)
+            .map_err(ReserveError::Invalid)?;
+        if self.piece_has_foreign_activity(conn, block.piece) {
+            return Err(ReserveError::PieceOwnedByOther);
+        }
+        self.reserve(conn, block, &ReserveMode::Exclusive)
+    }
+
     /// The first block of `piece` this connection could take: `Missing`, or
     /// (endgame) requested elsewhere but not from `conn`. This is the repair
     /// for the audit's F02: a block that is already on the wire from this
@@ -1031,6 +1055,38 @@ impl<G: PieceGeometry> Ledger<G> {
             .map(|state| (state.received, state.slots.len() as u32))
     }
 
+    /// Whether `piece` has received blocks or live reservations from a
+    /// different connection. Protocol adapters with peer-local piece
+    /// assemblies can use this to keep all blocks for a piece on one peer
+    /// while still sharing request ownership across the torrent.
+    pub fn piece_has_foreign_activity(&self, conn: ConnectionId, piece: u32) -> bool {
+        self.pieces
+            .get(&piece)
+            .is_some_and(|state| Self::has_foreign_activity(state, conn))
+    }
+
+    /// Snapshot pieces that a peer-local assembly must leave to another
+    /// connection. The ledger bounds this result by its in-progress piece
+    /// ceiling, so adapters can avoid locking or scanning the whole torrent
+    /// once per candidate piece.
+    pub fn foreign_activity_pieces(&self, conn: ConnectionId) -> Vec<u32> {
+        let mut pieces = self
+            .pieces
+            .iter()
+            .filter_map(|(&piece, state)| Self::has_foreign_activity(state, conn).then_some(piece))
+            .collect::<Vec<_>>();
+        pieces.sort_unstable();
+        pieces
+    }
+
+    fn has_foreign_activity(state: &PieceState, conn: ConnectionId) -> bool {
+        state.sources.iter().flatten().any(|source| *source != conn)
+            || state.slots.iter().any(|slot| match slot {
+                Slot::Reserved(owners) => owners.iter().any(|owner| owner.conn != conn),
+                Slot::Missing | Slot::Received => false,
+            })
+    }
+
     /// Verify the ledger's internal consistency. Used by the simulator's
     /// oracle after every step; cheap enough for tests, not for hot paths.
     pub fn check_invariants(&self) -> Result<(), String> {
@@ -1488,6 +1544,40 @@ mod tests {
                 },
             ]
         );
+        ledger.check_invariants().unwrap();
+    }
+
+    #[test]
+    fn peer_local_assembly_can_detect_foreign_piece_activity() {
+        let mut ledger = ledger();
+        let first = ledger.connect(8);
+        let second = ledger.connect(8);
+        let requested = block(0, 0);
+        assert!(!ledger.piece_has_foreign_activity(first, 0));
+        ledger
+            .reserve(first, requested, &ReserveMode::Exclusive)
+            .unwrap();
+        assert!(!ledger.piece_has_foreign_activity(first, 0));
+        assert!(ledger.piece_has_foreign_activity(second, 0));
+        assert_eq!(ledger.foreign_activity_pieces(second), vec![0]);
+
+        ledger.on_block(first, requested);
+        assert!(!ledger.piece_has_foreign_activity(first, 0));
+        assert!(ledger.piece_has_foreign_activity(second, 0));
+    }
+
+    #[test]
+    fn piece_affinity_reservation_is_atomic_across_connections() {
+        let mut ledger = ledger();
+        let first = ledger.connect(8);
+        let second = ledger.connect(8);
+
+        ledger.reserve_piece_affine(first, block(0, 0)).unwrap();
+        assert_eq!(
+            ledger.reserve_piece_affine(second, block(0, 1)),
+            Err(ReserveError::PieceOwnedByOther)
+        );
+        ledger.reserve_piece_affine(first, block(0, 1)).unwrap();
         ledger.check_invariants().unwrap();
     }
 

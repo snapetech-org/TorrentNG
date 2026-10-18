@@ -16,11 +16,11 @@
 //! * [`sim`]         deterministic simulator and invariant oracle
 //!
 //! Integration into the live torrent actors is staged (NET-114). v1 and
-//! pure-v2 inbound upload requests now use
-//! [`obligations::InboundObligations`]; hybrid, outbound ownership, and shared
-//! content completion remain on their reference paths until their actor
-//! adapters are migrated. Unused-code lints are allowed for the parts that
-//! are still only exercised by replay tests.
+//! pure-v2 inbound upload requests use [`obligations::InboundObligations`],
+//! and v1/hybrid-v1 plus pure-v2 outbound acquisition use the generation-aware
+//! ledger. Pure-v2 retains peer-local piece assembly, while hybrid dual-view
+//! arbitration and shared content completion remain open. Unused-code lints
+//! are allowed for the parts that are still only exercised by replay tests.
 #![allow(dead_code)]
 
 /// Injected monotonic time in nanoseconds. The core never reads a clock.
