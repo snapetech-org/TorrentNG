@@ -1160,7 +1160,8 @@ fn v2_transfer_now(context: &V2PeerContext) -> u64 {
 struct V2PieceAssembly {
     generation: u64,
     region_len: u32,
-    received: Vec<bool>,
+    /// One bit per wire block; unlike `Vec<bool>`, this is explicitly packed.
+    received: Vec<u64>,
     received_count: usize,
     /// First block that may still be requested by this peer. The per-piece
     /// request window advances this past received and on-wire blocks.
@@ -1260,14 +1261,16 @@ impl V2PieceAssembly {
         if block_count == 0 || block_count > V2_MAX_PIECE_BLOCKS {
             anyhow::bail!("v2 piece {piece} has too many blocks");
         }
-        let bookkeeping_bytes = u64::try_from(block_count)
+        let bitmap_words = block_count.div_ceil(u64::BITS as usize);
+        let bookkeeping_bytes = u64::try_from(bitmap_words)
             .map_err(|_| anyhow::anyhow!("v2 piece bookkeeping size overflow"))?
+            .saturating_mul(std::mem::size_of::<u64>() as u64)
             .saturating_add(std::mem::size_of::<usize>() as u64);
         let mut received = Vec::new();
         received
-            .try_reserve_exact(block_count)
+            .try_reserve_exact(bitmap_words)
             .map_err(|error| anyhow::anyhow!("v2 piece bookkeeping allocation failed: {error}"))?;
-        received.resize(block_count, false);
+        received.resize(bitmap_words, 0);
         let (data, memory_lease) = if cap_bytes > 0 && (region_len as usize) <= cap_bytes {
             let bytes = u64::from(region_len).saturating_add(bookkeeping_bytes);
             let lease = resources
@@ -1306,13 +1309,25 @@ impl V2PieceAssembly {
 
     fn block_index(&self, begin: u32) -> anyhow::Result<usize> {
         let index = begin as usize / rt_peer_wire::message::MAX_BLOCK_SIZE as usize;
-        if index >= self.received.len()
+        if index >= self.block_count()
             || begin as usize >= self.region_len as usize
             || !(begin as usize).is_multiple_of(rt_peer_wire::message::MAX_BLOCK_SIZE as usize)
         {
             anyhow::bail!("v2 piece block begins outside the piece");
         }
         Ok(index)
+    }
+
+    fn block_count(&self) -> usize {
+        (self.region_len as usize).div_ceil(rt_peer_wire::message::MAX_BLOCK_SIZE as usize)
+    }
+
+    fn block_received(&self, index: usize) -> bool {
+        self.received[index / u64::BITS as usize] & (1u64 << (index % u64::BITS as usize)) != 0
+    }
+
+    fn set_block_received(&mut self, index: usize) {
+        self.received[index / u64::BITS as usize] |= 1u64 << (index % u64::BITS as usize);
     }
 
     fn accept_block(&mut self, begin: u32, data: &[u8]) -> anyhow::Result<bool> {
@@ -1327,7 +1342,7 @@ impl V2PieceAssembly {
                 expected
             );
         }
-        if self.received[index] {
+        if self.block_received(index) {
             if self.data.as_ref().is_some_and(|current| {
                 current[begin as usize..begin as usize + data.len()] != *data
             }) {
@@ -1338,13 +1353,13 @@ impl V2PieceAssembly {
         if let Some(current) = self.data.as_mut() {
             current[begin as usize..begin as usize + data.len()].copy_from_slice(data);
         }
-        self.received[index] = true;
+        self.set_block_received(index);
         self.received_count += 1;
         Ok(true)
     }
 
     fn is_complete(&self) -> bool {
-        self.received_count == self.received.len()
+        self.received_count == self.block_count()
     }
 
     fn is_ready(&self) -> bool {
@@ -1358,15 +1373,13 @@ impl V2PieceAssembly {
         piece: u32,
         outstanding: &HashMap<(u32, u32), V2OutstandingRequest>,
     ) -> Option<u32> {
-        (self.next_unrequested_hint.min(self.received.len())..self.received.len()).find_map(
-            |index| {
-                let begin = u32::try_from(index)
-                    .ok()?
-                    .checked_mul(rt_peer_wire::message::MAX_BLOCK_SIZE)?;
-                (!self.received[index] && !outstanding.contains_key(&(piece, begin)))
-                    .then_some(begin)
-            },
-        )
+        (self.next_unrequested_hint.min(self.block_count())..self.block_count()).find_map(|index| {
+            let begin = u32::try_from(index)
+                .ok()?
+                .checked_mul(rt_peer_wire::message::MAX_BLOCK_SIZE)?;
+            (!self.block_received(index) && !outstanding.contains_key(&(piece, begin)))
+                .then_some(begin)
+        })
     }
 
     fn advance_next_unrequested(
@@ -1374,7 +1387,7 @@ impl V2PieceAssembly {
         piece: u32,
         outstanding: &HashMap<(u32, u32), V2OutstandingRequest>,
     ) {
-        while self.next_unrequested_hint < self.received.len() {
+        while self.next_unrequested_hint < self.block_count() {
             let index = self.next_unrequested_hint;
             let Some(begin) = u32::try_from(index)
                 .ok()
@@ -1382,7 +1395,7 @@ impl V2PieceAssembly {
             else {
                 break;
             };
-            if self.received[index] || outstanding.contains_key(&(piece, begin)) {
+            if self.block_received(index) || outstanding.contains_key(&(piece, begin)) {
                 self.next_unrequested_hint += 1;
             } else {
                 break;
@@ -1394,7 +1407,7 @@ impl V2PieceAssembly {
         let Ok(index) = self.block_index(begin) else {
             return;
         };
-        if !self.received[index] {
+        if !self.block_received(index) {
             self.next_unrequested_hint = self.next_unrequested_hint.min(index);
         }
     }
@@ -7365,8 +7378,30 @@ mod tests {
         assert_eq!(assembly.next_unrequested_hint, 2);
         assert_eq!(
             resources.snapshot().classes[MemoryClass::PieceAssembly as usize].used_bytes,
-            3 + std::mem::size_of::<usize>() as u64,
-            "the assembly lease includes the added cursor bookkeeping"
+            std::mem::size_of::<u64>() as u64 + std::mem::size_of::<usize>() as u64,
+            "the assembly lease includes the packed bitmap and cursor"
+        );
+    }
+
+    #[test]
+    fn v2_piece_assembly_packs_received_blocks_across_word_boundaries() {
+        let resources = ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default());
+        let block_len = rt_peer_wire::message::MAX_BLOCK_SIZE;
+        let mut assembly = V2PieceAssembly::new(4, 1, block_len * 65, 0, &resources).unwrap();
+        let block = vec![0; block_len as usize];
+
+        assert_eq!(assembly.received.len(), 2);
+        assert!(assembly.accept_block(block_len * 63, &block).unwrap());
+        assert!(assembly.block_received(63));
+        assert!(!assembly.block_received(64));
+        assert!(assembly.accept_block(block_len * 64, &block).unwrap());
+        assert!(assembly.block_received(64));
+        assert_eq!(assembly.received_count, 2);
+        assert!(!assembly.is_complete());
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::PieceAssembly as usize].used_bytes,
+            2 * std::mem::size_of::<u64>() as u64 + std::mem::size_of::<usize>() as u64,
+            "the assembly lease includes packed bitmap words and the cursor"
         );
     }
 
@@ -7646,7 +7681,10 @@ mod tests {
         )
         .unwrap();
         let assembly = V2PieceAssembly::new(0, 1, region_len, 0, &resources).unwrap();
-        assert_eq!(assembly.received.len(), block_count);
+        assert_eq!(
+            assembly.received.len(),
+            block_count.div_ceil(u64::BITS as usize)
+        );
     }
 
     #[test]
