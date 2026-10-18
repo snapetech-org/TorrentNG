@@ -738,8 +738,10 @@ compact v2 projection containing aligned file ranges and authenticated piece
 layers. The in-memory completion path computes SHA-1, the file root, and the
 piece-layer root from one immutable piece buffer and one bounded pool job; the
 disk fallback streams each file range once and checks both roots while keeping
-BEP 47 padding only in the v1 view. The projection maps v2 files back to v1
-file indexes because synthetic v1 pad files shift those indexes.
+BEP 47 padding only in the v1 view. Disk recheck now routes through the same
+hybrid-aware verifier instead of directly invoking the v1-only verifier. The
+projection maps v2 files back to v1 file indexes because synthetic v1 pad
+files shift those indexes.
 
 ### Ownership and invariant
 
@@ -767,7 +769,8 @@ file indexes because synthetic v1 pad files shift those indexes.
 - Hybrid memory and disk paths check both v1 and authenticated v2 roots;
   regressions cover v1 padding, a short final piece, the one-piece file-root
   shape, v1/v2 index differences, a v2-only expected-root mismatch, and
-  zero-copy freezing/slicing of the completed piece allocation.
+  zero-copy freezing/slicing of the completed piece allocation. Full disk
+  recheck must also reject a v1-valid piece whose authenticated v2 root differs.
 - Hash-pool retries retain the immutable content and one queued-byte
   reservation across saturation; shared payload jobs carry the existing
   allocation lease and charge queue overhead once. A canceled queued closure
@@ -787,8 +790,9 @@ file indexes because synthetic v1 pad files shift those indexes.
   verifies a queued immutable view keeps the original allocation charged
   after the actor-side assembly is gone.
   `cancelled_queued_hybrid_hash_retains_shared_payload_lease_until_dequeued`
-  covers waiter cancellation while the accepted hash closure remains queued.
-  Sources remain unrun.
+  covers waiter cancellation while the accepted hash closure remains queued;
+  the task-level hybrid completion/recheck regression verifies that a v1-valid
+  disk piece with a mismatched v2 root is rejected. Sources remain unrun.
 - **Command or probe to run:** the focused storage verifier, scheduler, and
   engine regressions in the deferred bulk pass.
 - **Executed on exact revision:** no.

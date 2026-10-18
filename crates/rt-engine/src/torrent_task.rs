@@ -4634,14 +4634,10 @@ impl TorrentTask {
                 }
             }
 
-            let result = PieceVerifier::new(
-                &self.save_root,
-                &self.storage,
-                &self.piece_map,
-                &self.meta.pieces,
-            )
-            .verify_piece(piece)
-            .await;
+            // Recheck must use the same torrent-view selection as completion
+            // verification. For hybrid torrents this verifies the v1 piece
+            // and authenticated v2 file range from one read stream.
+            let result = self.verify_piece(piece).await;
             match result {
                 VerifyResult::Valid => {
                     valid += 1;
@@ -9197,7 +9193,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hybrid_memory_completion_requires_both_integrity_views() {
+    async fn hybrid_completion_and_recheck_require_both_integrity_views() {
         let temp = tempfile::tempdir().unwrap();
         let content = b"short hybrid payload";
         let piece_length = (V2_BLOCK_SIZE * 2) as u64;
@@ -9207,43 +9203,56 @@ mod tests {
         let path = SafeRelPath::from_name("hybrid.bin", false).unwrap();
         let conn = Connection::open_in_memory().unwrap();
         rt_db::migrate(&conn).unwrap();
+        let meta = TorrentMetaV1 {
+            info_hash: [3; 20],
+            announce: None,
+            announce_list: Vec::new(),
+            webseeds: Vec::new(),
+            comment: None,
+            created_by: None,
+            creation_date: None,
+            name: "hybrid.bin".to_owned(),
+            piece_length,
+            pieces: vec![v1_hash],
+            files: vec![
+                TorrentFileV1 {
+                    index: 0,
+                    length: content.len() as u64,
+                    path: path.clone(),
+                    offset: 0,
+                    pad: false,
+                },
+                TorrentFileV1 {
+                    index: 1,
+                    length: piece_length - content.len() as u64,
+                    path: SafeRelPath::from_name("padding", false).unwrap(),
+                    offset: content.len() as u64,
+                    pad: true,
+                },
+            ],
+            private: false,
+            raw: Vec::new(),
+        };
+        let info_hash = hex::encode(meta.info_hash);
+        let registry = Arc::new(RwLock::new(SessionRegistry::new()));
+        let mut entry = rt_session::TorrentEntry::new(
+            info_hash,
+            meta.name.clone(),
+            temp.path().to_string_lossy().into_owned(),
+        );
+        entry.total_length = piece_length;
+        entry.amount_left = piece_length;
+        entry.transition(TorrentState::Downloading).unwrap();
+        persist_task_row(&conn, &entry, &meta);
+        registry.write().await.add(entry).unwrap();
         let db = Arc::new(Mutex::new(conn));
         let (_cmd_tx, cmd_rx) = mpsc::channel(1);
         let mut task = TorrentTask::new(
-            TorrentMetaV1 {
-                info_hash: [3; 20],
-                announce: None,
-                announce_list: Vec::new(),
-                webseeds: Vec::new(),
-                comment: None,
-                created_by: None,
-                creation_date: None,
-                name: "hybrid.bin".to_owned(),
-                piece_length,
-                pieces: vec![v1_hash],
-                files: vec![
-                    TorrentFileV1 {
-                        index: 0,
-                        length: content.len() as u64,
-                        path: path.clone(),
-                        offset: 0,
-                        pad: false,
-                    },
-                    TorrentFileV1 {
-                        index: 1,
-                        length: piece_length - content.len() as u64,
-                        path: SafeRelPath::from_name("padding", false).unwrap(),
-                        offset: content.len() as u64,
-                        pad: true,
-                    },
-                ],
-                private: false,
-                raw: Vec::new(),
-            },
+            meta.clone(),
             temp.path().to_path_buf(),
             false,
             TorrentState::Downloading,
-            Arc::new(RwLock::new(SessionRegistry::new())),
+            Arc::clone(&registry),
             DbExecutor::direct(Arc::clone(&db)),
             ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default()),
             cmd_rx,
@@ -9286,6 +9295,7 @@ mod tests {
             private: false,
             raw: Vec::new(),
         });
+        std::fs::write(temp.path().join("hybrid.bin"), content).unwrap();
         let mut assembly = PieceAssembly::new(piece.len());
         assembly
             .insert(0, &piece[..MAX_BLOCK_SIZE as usize])
@@ -9301,6 +9311,23 @@ mod tests {
             task.verify_completed_piece(0).await,
             VerifyResult::Invalid,
             "matching v1 SHA-1 cannot certify a mismatched v2 file root"
+        );
+        assert!(matches!(
+            task.run_recheck(None).await,
+            RecheckOutcome::Complete
+        ));
+        assert!(
+            !task.picker.is_complete(),
+            "disk recheck must reject v1-valid data when its hybrid v2 root mismatches"
+        );
+        assert_eq!(
+            registry
+                .read()
+                .await
+                .get(&hex::encode(meta.info_hash))
+                .unwrap()
+                .state,
+            TorrentState::Downloading
         );
     }
 
