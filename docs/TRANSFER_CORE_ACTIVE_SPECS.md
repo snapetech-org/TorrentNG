@@ -800,7 +800,9 @@ cross-plane immutable spans, or integrate hybrid payload ownership.
   checks v2 no-send under denial, retry, per-block ownership through full Piece
   storage/verification, and remaining-request disconnect release;
   `v2_choke_preserves_fast_request_obligations`
-  checks the request lease survives Fast Choke and releases on legacy Choke.
+  checks the request lease survives Fast Choke and releases on legacy Choke;
+  `v2_reject_releases_only_matching_response_lease` checks matching Reject
+  release and mismatched Reject retention.
   These v2 regressions are authored but remain unrun; hybrid/shared-span
   admission remains open.
 - **Command or probe to run:** targeted request-admission and peer-loop lease

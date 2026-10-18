@@ -3424,12 +3424,12 @@ async fn run_v2_peer_protocol(
                     }
                     Message::Cancel { .. } => {}
                     Message::Reject { piece, begin, length } => {
-                        if outstanding
-                            .get(&(piece, begin))
-                            .is_some_and(|request| request.length == length)
-                        {
-                            let _ = outstanding.remove(&(piece, begin));
-                        }
+                        release_v2_rejected_request(
+                            &mut outstanding,
+                            piece,
+                            begin,
+                            length,
+                        );
                         fill_v2_requests(&context, &mut framed, &state, &mut outstanding, &mut assemblies).await?;
                     }
                     // BEP 6 Fast extension: TorrentNG does not bypass its
@@ -3984,6 +3984,24 @@ fn apply_v2_remote_choke(
     }
 }
 
+fn release_v2_rejected_request(
+    outstanding: &mut HashMap<(u32, u32), V2OutstandingRequest>,
+    piece: u32,
+    begin: u32,
+    length: u32,
+) -> bool {
+    let coordinate = (piece, begin);
+    match outstanding.entry(coordinate) {
+        std::collections::hash_map::Entry::Occupied(entry)
+            if entry.get().length == length =>
+        {
+            drop(entry.remove());
+            true
+        }
+        _ => false,
+    }
+}
+
 fn reserve_v2_upload_bytes(resources: &ResourceGovernor, bytes: u32) -> Option<MemoryLease> {
     resources.try_acquire(MemoryClass::PeerBuffer, u64::from(bytes))
 }
@@ -4448,6 +4466,46 @@ mod tests {
         assert_eq!(
             resources.snapshot().classes[MemoryClass::PieceAssembly as usize].used_bytes,
             0
+        );
+    }
+
+    #[test]
+    fn v2_reject_releases_only_matching_response_lease() {
+        let resources = ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default());
+        let mut outstanding = HashMap::from([(
+            (3, 16_384),
+            V2OutstandingRequest {
+                length: 8_192,
+                _memory_lease: Some(
+                    resources
+                        .try_acquire(MemoryClass::PeerBuffer, 8_192)
+                        .unwrap(),
+                ),
+            },
+        )]);
+
+        assert!(!release_v2_rejected_request(
+            &mut outstanding,
+            3,
+            16_384,
+            4_096
+        ));
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
+            8_192,
+            "a mismatched Reject must not release the outstanding response lease"
+        );
+        assert!(release_v2_rejected_request(
+            &mut outstanding,
+            3,
+            16_384,
+            8_192
+        ));
+        assert!(outstanding.is_empty());
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
+            0,
+            "a matching Reject terminates and releases the request lease"
         );
     }
 
