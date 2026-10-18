@@ -940,7 +940,8 @@ impl TorrentTask {
                 self.fail_piece_transfer(piece);
                 return;
             }
-            self.record_download(event.block.data.len() as u64).await;
+            self.record_download(event.network_bytes.unwrap_or(event.block.data.len() as u64))
+                .await;
             let complete = self.picker.block_received_pending(piece as usize, offset);
             self.cancel_endgame_duplicates(BlockRequest {
                 piece,
@@ -969,6 +970,7 @@ impl TorrentTask {
             .insert((piece, offset), generation);
 
         let length = event.block.data.len() as u64;
+        let downloaded_bytes = event.network_bytes.unwrap_or(length);
         let context = self.transfer_io_context();
         self.transfer_jobs.push(Box::pin(async move {
             let result = write_transfer_block(&context, event)
@@ -979,6 +981,7 @@ impl TorrentTask {
                 generation,
                 offset,
                 length,
+                downloaded_bytes,
                 result,
             }
         }));
@@ -1089,6 +1092,7 @@ impl TorrentTask {
                 generation,
                 offset,
                 length,
+                downloaded_bytes,
                 result,
             } => {
                 let coordinate = (piece, offset);
@@ -1103,7 +1107,7 @@ impl TorrentTask {
                     }
                     if result.is_ok() {
                         self.note_data_write();
-                        self.record_download(length).await;
+                        self.record_download(downloaded_bytes).await;
                     }
                     debug!(
                         component = "storage",
@@ -1144,7 +1148,7 @@ impl TorrentTask {
 
                 if succeeded {
                     self.note_data_write();
-                    self.record_download(length).await;
+                    self.record_download(downloaded_bytes).await;
                 }
                 let mut complete_piece = false;
                 if accept_written_block {

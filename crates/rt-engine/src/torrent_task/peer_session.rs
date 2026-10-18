@@ -557,18 +557,6 @@ impl TorrentTask {
             );
             return None;
         }
-        if self.meta.files.len() != 1 {
-            debug!(
-                component = "webseed",
-                operation = "select_block",
-                torrent = %self.info_hash_hex,
-                files = self.meta.files.len(),
-                reason = "multi_file",
-                result = "skipped",
-                "webseed skipped: multi-file torrent"
-            );
-            return None;
-        }
         if !self.active_peers.is_empty() {
             debug!(
                 component = "webseed",
@@ -594,11 +582,29 @@ impl TorrentTask {
             );
             return None;
         };
+        let Some(ranges) = webseed_block_ranges(&self.meta, req) else {
+            self.picker.cancel_request(req.piece as usize, req.begin);
+            debug!(
+                component = "webseed",
+                operation = "select_block",
+                torrent = %self.info_hash_hex,
+                reason = "unsupported_range_layout",
+                result = "skipped",
+                "webseed skipped: block range is not representable as bounded file reads"
+            );
+            return None;
+        };
+        let expected_network_bytes = ranges
+            .iter()
+            .filter(|range| !range.file.pad)
+            .map(|range| u32::try_from(range.length).unwrap_or(u32::MAX))
+            .fold(0u32, u32::saturating_add);
+        drop(ranges);
         // Check the local bucket before starting the request, but do not
         // debit it yet. The HTTP operation can fail or be cancelled by a
         // lifecycle command; neither case transferred any payload bytes and
         // must not consume a full protocol block's allowance.
-        if !self.download_tokens_available(req.length) {
+        if !self.download_tokens_available(expected_network_bytes) {
             self.picker.cancel_request(req.piece as usize, req.begin);
             return None;
         }
@@ -622,7 +628,13 @@ impl TorrentTask {
             {
                 continue;
             }
-            let Some(url) = webseed_block_url(&self.meta, &self.meta.webseeds[idx]) else {
+            let supported_url = self
+                .meta
+                .files
+                .iter()
+                .find(|file| !file.pad)
+                .and_then(|file| webseed_file_url(&self.meta, file, &self.meta.webseeds[idx]));
+            let Some(url) = supported_url else {
                 if let Some(failures) = self.webseed_failures.get_mut(idx) {
                     // An unsupported URL is a permanent local configuration
                     // failure for this task. Do not wake it ten times per
@@ -646,22 +658,25 @@ impl TorrentTask {
                 "fetching webseed block"
             );
             let started = Instant::now();
-            match self.fetch_webseed_block(&url, req).await {
-                Ok(data) => {
+            match self
+                .fetch_webseed_block(&self.meta.webseeds[idx], req)
+                .await
+            {
+                Ok(event) => {
                     if !self.commit_webseed_block(transfer_conn, req) {
                         self.release_webseed_block(transfer_conn, req);
                         self.close_webseed_transfer_connection();
                         return None;
                     }
                     let elapsed = started.elapsed().as_secs_f64().max(0.001);
-                    let rate = (data.len() as f64 / elapsed).round() as i64;
+                    let network_bytes = event.network_bytes.unwrap_or(u64::from(req.length));
+                    let rate = (network_bytes as f64 / elapsed).round() as i64;
                     // Charge the aggregate budget for bytes actually
                     // received. Failed seeds and short/error responses do
                     // not consume the process-wide download allowance.
-                    self.network_budget
-                        .download()
-                        .acquire(data.len() as u64)
-                        .await;
+                    if network_bytes > 0 {
+                        self.network_budget.download().acquire(network_bytes).await;
+                    }
                     // `fetch_webseed_block` validates the exact block length,
                     // and the global budget wait has completed. Commit the
                     // local budget at the final handoff point so a lifecycle
@@ -671,7 +686,8 @@ impl TorrentTask {
                     // This is deliberately a plain statement: a debit inside
                     // `debug_assert!` is compiled out of release builds, which
                     // would leave webseed bytes uncharged against the limit.
-                    if !self.try_consume_download_tokens(req.length) {
+                    let local_bytes = u32::try_from(network_bytes).unwrap_or(u32::MAX);
+                    if !self.try_consume_download_tokens(local_bytes) {
                         // The limit was lowered while the block was in flight.
                         // The bytes are already here and are delivered, so
                         // spend what is left instead of leaving the bucket
@@ -696,7 +712,7 @@ impl TorrentTask {
                     if let Some(last_success) = self.webseed_last_success.get_mut(idx) {
                         *last_success = Some(Instant::now());
                     }
-                    return Some(data);
+                    return Some(event);
                 }
                 Err(e) => {
                     let err = webseed_error_for_log(&e);
@@ -735,48 +751,78 @@ impl TorrentTask {
 
     pub(super) async fn fetch_webseed_block(
         &self,
-        url: &Url,
+        webseed: &str,
         req: BlockRequest,
     ) -> anyhow::Result<LeasedBlockEvent> {
         let user_agent = crate::peer_id::user_agent();
-        let client = self
-            .egress_policy
-            .http_client(
-                OutboundTargetKind::Webseed,
-                url,
-                self.http_timeout,
-                &user_agent,
-            )
-            .await
-            .map_err(|error| anyhow::anyhow!(error))?;
-        let lease = reserve_webseed_body_bytes(&self.resources, req.length)?;
-        let (start, end) =
-            webseed_byte_range(req.piece, self.meta.piece_length, req.begin, req.length)?;
-        let response = client
-            .get(url.clone())
-            .header(RANGE, format!("bytes={start}-{end}"))
-            .send()
-            .await
-            .map_err(|error| anyhow::anyhow!(error.without_url()))?;
-        validate_webseed_range_response(response.status(), response.headers(), start, end)?;
-        let bytes = bounded_response_body(response, req.length as usize)
-            .await
-            .map_err(|error| anyhow::anyhow!(error))?;
-        if bytes.len() != req.length as usize {
-            anyhow::bail!(
-                "expected {} bytes, received {} bytes",
-                req.length,
-                bytes.len()
-            );
+        let ranges = webseed_block_ranges(&self.meta, req)
+            .ok_or_else(|| anyhow::anyhow!("webseed block has an unsupported file range layout"))?;
+        let payload_len = usize::try_from(req.length)?;
+        let output_lease = reserve_webseed_body_bytes(&self.resources, req.length)?;
+        let mut data = Vec::new();
+        data.try_reserve_exact(payload_len)?;
+        data.resize(payload_len, 0);
+        let mut network_bytes = 0u64;
+
+        for range in ranges {
+            if range.file.pad {
+                continue;
+            }
+            let url = webseed_file_url(&self.meta, range.file, webseed)
+                .ok_or_else(|| anyhow::anyhow!("webseed URL cannot address torrent file"))?;
+            let client = self
+                .egress_policy
+                .http_client(
+                    OutboundTargetKind::Webseed,
+                    &url,
+                    self.http_timeout,
+                    &user_agent,
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!(error))?;
+            let (start, end) = webseed_file_byte_range(range.file_offset, range.length)?;
+            let body_lease =
+                reserve_webseed_body_bytes(&self.resources, u32::try_from(range.length)?)?;
+            let response = client
+                .get(url)
+                .header(RANGE, format!("bytes={start}-{end}"))
+                .send()
+                .await
+                .map_err(|error| anyhow::anyhow!(error.without_url()))?;
+            validate_webseed_range_response(response.status(), response.headers(), start, end)?;
+            let bytes = bounded_response_body(response, range.length)
+                .await
+                .map_err(|error| anyhow::anyhow!(error))?;
+            if bytes.len() != range.length {
+                anyhow::bail!(
+                    "expected {} bytes, received {} bytes",
+                    range.length,
+                    bytes.len()
+                );
+            }
+            let data_end = range
+                .block_offset
+                .checked_add(range.length)
+                .ok_or_else(|| anyhow::anyhow!("webseed block slice overflow"))?;
+            data.get_mut(range.block_offset..data_end)
+                .ok_or_else(|| anyhow::anyhow!("webseed file range exceeds requested block"))?
+                .copy_from_slice(&bytes);
+            network_bytes = network_bytes
+                .checked_add(u64::try_from(range.length)?)
+                .ok_or_else(|| anyhow::anyhow!("webseed network byte count overflow"))?;
+            drop(bytes);
+            drop(body_lease);
         }
-        LeasedBlockEvent::new(
+
+        Ok(LeasedBlockEvent::new(
             BlockEvent {
                 piece: req.piece,
                 offset: req.begin,
-                data: bytes.into(),
+                data: data.into(),
             },
-            lease,
-        )
+            output_lease,
+        )?
+        .with_network_bytes(network_bytes))
     }
 
     pub(super) fn schedule_peerless_reannounce(&mut self) {

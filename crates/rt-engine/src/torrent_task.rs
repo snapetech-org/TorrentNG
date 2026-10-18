@@ -1331,6 +1331,7 @@ struct LeasedBlockEvent {
     block: BlockEvent,
     _memory_lease: Option<Arc<MemoryLease>>,
     response_delay_nanos: Option<u64>,
+    network_bytes: Option<u64>,
 }
 
 const MAX_TRANSFER_COMPLETION_JOBS: usize = 64;
@@ -1353,6 +1354,7 @@ enum TransferCompletion {
         generation: u64,
         offset: u32,
         length: u64,
+        downloaded_bytes: u64,
         result: Result<(), String>,
     },
     PieceVerified {
@@ -1383,6 +1385,7 @@ impl LeasedBlockEvent {
             block,
             _memory_lease: Some(Arc::new(memory_lease)),
             response_delay_nanos: None,
+            network_bytes: None,
         })
     }
 
@@ -1391,6 +1394,7 @@ impl LeasedBlockEvent {
             block,
             _memory_lease: memory_lease,
             response_delay_nanos: None,
+            network_bytes: None,
         }
     }
 
@@ -1407,6 +1411,11 @@ impl LeasedBlockEvent {
         Ok(event)
     }
 
+    fn with_network_bytes(mut self, network_bytes: u64) -> Self {
+        self.network_bytes = Some(network_bytes);
+        self
+    }
+
     #[cfg(test)]
     fn uncharged_for_test(piece: u32, offset: u32, data: bytes::Bytes) -> Self {
         Self {
@@ -1417,6 +1426,7 @@ impl LeasedBlockEvent {
             },
             _memory_lease: None,
             response_delay_nanos: None,
+            network_bytes: None,
         }
     }
 
@@ -6775,28 +6785,102 @@ fn webseed_block_url(meta: &TorrentMetaV1, webseed: &str) -> Option<Url> {
     }
 }
 
-fn webseed_byte_range(
-    piece: u32,
-    piece_length: u64,
-    begin: u32,
-    length: u32,
-) -> anyhow::Result<(u64, u64)> {
-    if piece_length == 0 {
-        anyhow::bail!("webseed piece length must not be zero");
+// A block spanning many tiny files would otherwise fan out into thousands of
+// HTTP requests. Skip oversized webseed ranges to cap request amplification.
+const MAX_WEBSEED_RANGES_PER_BLOCK: usize = 64;
+
+struct WebseedBlockRange<'a> {
+    file: &'a TorrentFileV1,
+    file_offset: u64,
+    block_offset: usize,
+    length: usize,
+}
+
+fn webseed_block_ranges(
+    meta: &TorrentMetaV1,
+    request: BlockRequest,
+) -> Option<Vec<WebseedBlockRange<'_>>> {
+    if meta.piece_length == 0 || request.length == 0 || request.length > MAX_BLOCK_SIZE {
+        return None;
     }
-    if length == 0 || length > MAX_BLOCK_SIZE {
-        anyhow::bail!("webseed block length {length} is invalid");
+    let block_start = u64::from(request.piece)
+        .checked_mul(meta.piece_length)?
+        .checked_add(u64::from(request.begin))?;
+    let block_end = block_start.checked_add(u64::from(request.length))?;
+    let requested_len = usize::try_from(request.length).ok()?;
+    let first = meta.files.partition_point(|file| {
+        file.offset
+            .checked_add(file.length)
+            .is_some_and(|file_end| file_end <= block_start)
+    });
+    let mut ranges = Vec::new();
+    let mut covered_until = block_start;
+
+    for file in &meta.files[first..] {
+        if file.offset >= block_end {
+            break;
+        }
+        let file_end = file.offset.checked_add(file.length)?;
+        let overlap_start = block_start.max(file.offset);
+        let overlap_end = block_end.min(file_end);
+        if overlap_start >= overlap_end {
+            continue;
+        }
+        if overlap_start != covered_until || ranges.len() >= MAX_WEBSEED_RANGES_PER_BLOCK {
+            return None;
+        }
+        ranges.push(WebseedBlockRange {
+            file,
+            file_offset: overlap_start.checked_sub(file.offset)?,
+            block_offset: usize::try_from(overlap_start.checked_sub(block_start)?).ok()?,
+            length: usize::try_from(overlap_end.checked_sub(overlap_start)?).ok()?,
+        });
+        covered_until = overlap_end;
     }
-    let piece_start = u64::from(piece)
-        .checked_mul(piece_length)
-        .ok_or_else(|| anyhow::anyhow!("webseed piece offset overflow"))?;
-    let start = piece_start
-        .checked_add(u64::from(begin))
-        .ok_or_else(|| anyhow::anyhow!("webseed block start overflow"))?;
-    let end = start
-        .checked_add(u64::from(length - 1))
-        .ok_or_else(|| anyhow::anyhow!("webseed block end overflow"))?;
-    Ok((start, end))
+
+    (covered_until == block_end
+        && ranges.iter().map(|range| range.length).sum::<usize>() == requested_len)
+        .then_some(ranges)
+}
+
+fn webseed_file_url(meta: &TorrentMetaV1, file: &TorrentFileV1, webseed: &str) -> Option<Url> {
+    if meta.is_single_file() {
+        return webseed_block_url(meta, webseed);
+    }
+    let parsed = Url::parse(webseed).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return None;
+    }
+    let components = file.path.components();
+    if components.first() != Some(&meta.name) || components.len() < 2 {
+        return None;
+    }
+
+    let mut url = parsed;
+    let base_has_trailing_slash = url.path().ends_with('/');
+    let root_is_explicit = url
+        .path_segments()
+        .and_then(|mut segments| segments.next_back())
+        .is_some_and(|last| last == meta.name);
+    let mut segments = url.path_segments_mut().ok()?;
+    if base_has_trailing_slash || !root_is_explicit {
+        segments.push(&meta.name);
+    }
+    for component in &components[1..] {
+        segments.push(component);
+    }
+    drop(segments);
+    Some(url)
+}
+
+fn webseed_file_byte_range(file_offset: u64, length: usize) -> anyhow::Result<(u64, u64)> {
+    if length == 0 || length > MAX_BLOCK_SIZE as usize {
+        anyhow::bail!("webseed file range length {length} is invalid");
+    }
+    let end = file_offset
+        .checked_add(u64::try_from(length - 1)?)
+        .ok_or_else(|| anyhow::anyhow!("webseed file range end overflow"))?;
+    Ok((file_offset, end))
 }
 
 fn validate_webseed_range_response(
@@ -10159,6 +10243,7 @@ mod tests {
             generation: old_generation,
             offset: 0,
             length: 4,
+            downloaded_bytes: 4,
             result: Err("late old write failure".into()),
         })
         .await;
@@ -11382,6 +11467,186 @@ mod tests {
     }
 
     #[test]
+    fn multi_file_webseed_url_appends_torrent_root_and_file_path() {
+        let meta = TorrentMetaV1 {
+            info_hash: [1; 20],
+            announce: None,
+            announce_list: Vec::new(),
+            webseeds: Vec::new(),
+            comment: None,
+            created_by: None,
+            creation_date: None,
+            name: "release".into(),
+            piece_length: 16_384,
+            pieces: vec![[2; 20]],
+            files: vec![
+                rt_metainfo::TorrentFileV1 {
+                    index: 0,
+                    length: 5,
+                    path: rt_path::SafeRelPath::from_components(
+                        &["release", "docs", "readme.txt"],
+                        false,
+                    )
+                    .unwrap(),
+                    offset: 0,
+                    pad: false,
+                },
+                rt_metainfo::TorrentFileV1 {
+                    index: 1,
+                    length: 7,
+                    path: rt_path::SafeRelPath::from_components(&["release", "payload.bin"], false)
+                        .unwrap(),
+                    offset: 5,
+                    pad: false,
+                },
+            ],
+            private: false,
+            raw: Vec::new(),
+        };
+
+        assert_eq!(
+            webseed_file_url(&meta, &meta.files[0], "https://mirror.example/pub/")
+                .unwrap()
+                .as_str(),
+            "https://mirror.example/pub/release/docs/readme.txt"
+        );
+        assert_eq!(
+            webseed_file_url(&meta, &meta.files[0], "https://mirror.example/pub/release")
+                .unwrap()
+                .as_str(),
+            "https://mirror.example/pub/release/docs/readme.txt"
+        );
+    }
+
+    #[test]
+    fn webseed_block_ranges_split_files_and_synthesize_padding() {
+        let meta = TorrentMetaV1 {
+            info_hash: [1; 20],
+            announce: None,
+            announce_list: Vec::new(),
+            webseeds: Vec::new(),
+            comment: None,
+            created_by: None,
+            creation_date: None,
+            name: "release".into(),
+            piece_length: 16_384,
+            pieces: vec![[2; 20]],
+            files: vec![
+                rt_metainfo::TorrentFileV1 {
+                    index: 0,
+                    length: 3,
+                    path: rt_path::SafeRelPath::from_components(&["release", "a.bin"], false)
+                        .unwrap(),
+                    offset: 0,
+                    pad: false,
+                },
+                rt_metainfo::TorrentFileV1 {
+                    index: 1,
+                    length: 2,
+                    path: rt_path::SafeRelPath::from_components(&["release", ".pad", "2"], false)
+                        .unwrap(),
+                    offset: 3,
+                    pad: true,
+                },
+                rt_metainfo::TorrentFileV1 {
+                    index: 2,
+                    length: 4,
+                    path: rt_path::SafeRelPath::from_components(&["release", "b.bin"], false)
+                        .unwrap(),
+                    offset: 5,
+                    pad: false,
+                },
+            ],
+            private: false,
+            raw: Vec::new(),
+        };
+
+        let ranges = webseed_block_ranges(
+            &meta,
+            BlockRequest {
+                piece: 0,
+                begin: 1,
+                length: 6,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(ranges.len(), 3);
+        assert_eq!(
+            (
+                ranges[0].file_offset,
+                ranges[0].block_offset,
+                ranges[0].length,
+                ranges[0].file.pad,
+            ),
+            (1, 0, 2, false)
+        );
+        assert_eq!(
+            (
+                ranges[1].file_offset,
+                ranges[1].block_offset,
+                ranges[1].length,
+                ranges[1].file.pad,
+            ),
+            (0, 2, 2, true)
+        );
+        assert_eq!(
+            (
+                ranges[2].file_offset,
+                ranges[2].block_offset,
+                ranges[2].length,
+                ranges[2].file.pad,
+            ),
+            (0, 4, 2, false)
+        );
+    }
+
+    #[test]
+    fn webseed_block_ranges_reject_excessive_file_fanout() {
+        let files = (0..=MAX_WEBSEED_RANGES_PER_BLOCK)
+            .map(|index| {
+                let filename = format!("{index}.bin");
+                rt_metainfo::TorrentFileV1 {
+                    index: index as u32,
+                    length: 1,
+                    path: rt_path::SafeRelPath::from_components(
+                        &["release", filename.as_str()],
+                        false,
+                    )
+                    .unwrap(),
+                    offset: index as u64,
+                    pad: false,
+                }
+            })
+            .collect();
+        let meta = TorrentMetaV1 {
+            info_hash: [1; 20],
+            announce: None,
+            announce_list: Vec::new(),
+            webseeds: Vec::new(),
+            comment: None,
+            created_by: None,
+            creation_date: None,
+            name: "release".into(),
+            piece_length: 16_384,
+            pieces: vec![[2; 20]],
+            files,
+            private: false,
+            raw: Vec::new(),
+        };
+
+        assert!(webseed_block_ranges(
+            &meta,
+            BlockRequest {
+                piece: 0,
+                begin: 0,
+                length: (MAX_WEBSEED_RANGES_PER_BLOCK + 1) as u32,
+            }
+        )
+        .is_none());
+    }
+
+    #[test]
     fn webseed_range_response_rejects_server_that_ignores_range() {
         let headers = reqwest::header::HeaderMap::new();
 
@@ -11392,14 +11657,14 @@ mod tests {
     }
 
     #[test]
-    fn webseed_byte_range_rejects_invalid_or_overflowing_coordinates() {
+    fn webseed_file_byte_range_rejects_invalid_or_overflowing_coordinates() {
         assert_eq!(
-            webseed_byte_range(2, 16_384, 4, 8).unwrap(),
+            webseed_file_byte_range(32_772, 8).unwrap(),
             (32_772, 32_779)
         );
-        assert!(webseed_byte_range(0, 16_384, 0, 0).is_err());
-        assert!(webseed_byte_range(u32::MAX, u64::MAX, 0, 1).is_err());
-        assert!(webseed_byte_range(0, 16_384, 0, MAX_BLOCK_SIZE + 1).is_err());
+        assert!(webseed_file_byte_range(0, 0).is_err());
+        assert!(webseed_file_byte_range(u64::MAX, 2).is_err());
+        assert!(webseed_file_byte_range(0, MAX_BLOCK_SIZE as usize + 1).is_err());
     }
 
     #[test]
@@ -12704,6 +12969,7 @@ mod tests {
             .expect("webseed fetch should finish")
             .expect("webseed block should be delivered");
         assert_eq!(event.block.data.as_ref(), b"data");
+        assert_eq!(event.network_bytes, Some(4));
         let transfer_conn = task
             .webseed_transfer_conn
             .expect("webseed work should register a ledger connection");

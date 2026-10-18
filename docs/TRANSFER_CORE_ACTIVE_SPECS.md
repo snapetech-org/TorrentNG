@@ -3622,10 +3622,12 @@ remain open.
 
 Schedule peer and webseed work through one bounded ownership and rate-control
 path, then publish transfer progress in bounded batches. The current v1
-webseed implementation is a serial no-peer fallback; pure-v2 has no webseed
-execution. This slice only batches pure-v2 upload/download statistics at the
-existing five-second runtime flush, while completion and lifecycle boundaries
-flush immediately.
+webseed implementation is a serial no-peer fallback. It now maps multi-file
+blocks to bounded per-file HTTP ranges and synthesizes BEP 47 padding locally;
+pure-v2 still has no webseed execution. v1 already batches progress at its
+five-second dirty-stat flush, and pure-v2 now batches upload/download
+statistics at the existing five-second runtime flush. Completion and
+lifecycle boundaries flush immediately.
 
 ### Ownership and invariant
 
@@ -3655,17 +3657,18 @@ flush immediately.
 - A failed progress transaction restores the prior registry projection and
   retains each pending source total for exactly-once retry.
 - Regression sources cover concurrent peer/webseed ownership, rate waits,
-  cancellation, per-file webseed mapping, progress coalescing, retry, and
-  lifecycle flushes.
+  cancellation, per-file webseed mapping and padding synthesis, progress
+  coalescing, retry, and lifecycle flushes.
 - Matched live-source workloads show no missing or duplicate payload and
   bounded progress-publication latency.
 
 ### Current slice evidence
 
 - **Regression source added or updated:** pure-v2 progress batching and
-  database-failure retry in `torrent_task_v2.rs`.
+  database-failure retry in `torrent_task_v2.rs`; multi-file URL/range mapping,
+  BEP 47 padding, and excessive file-fanout bounds in `torrent_task.rs`.
 - **Command or probe:** run with the requested bulk engine suite; do not run
   this source independently before that pass.
 - **Executed on exact revision:** no.
-- **Remaining:** peer/webseed shared scheduling, v1 progress batching review,
-  live-source workloads, and the bulk pass.
+- **Remaining:** concurrent peer/webseed shared scheduling, pure-v2 webseed
+  execution, live-source workloads, and the bulk pass.
