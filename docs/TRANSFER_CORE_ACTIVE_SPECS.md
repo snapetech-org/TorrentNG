@@ -2221,6 +2221,80 @@ subsystems.
 - **External evidence still required:** large-catalog and mixed-load
   collection latency and resource impact.
 
+## PERF-108 — Stable memory accounting domains
+
+- **Priority / wave:** P0 / 4
+- **Prerequisites:** PERF-101, PERF-102, SYS-011
+- **Owning component:** `rt-engine` memory projections, the native Prometheus
+  renderer, and the independent PERF-102 observer.
+- **Finding or capability:** remove shadow-runtime metrics and keep governor
+  leases, torrent-owner estimates, allocator values, process memory, and
+  cgroup measurements distinct.
+- **Status:** `wip`
+
+### Scope
+
+Keep existing Prometheus names stable while defining what each memory family
+counts. The resource-governor family remains active leases, not RSS. The
+top-torrent family remains a bounded estimate; expose outstanding-request
+receive reservations separately from upload buffers because the reservation
+can overlap materialized piece memory. PERF-102 remains the independent source
+for process, allocator, and cgroup observations.
+
+### Ownership and invariant
+
+- **Current owner:** TorrentNG owners expose lease snapshots and bounded
+  per-torrent counters; the external observer samples process and cgroup
+  state.
+- **Target owner:** unchanged; each metric reads its existing owner and each
+  measurement domain remains separate.
+- **Invariant preserved:** a scrape never initializes an owner, and no
+  governor, RSS, allocator, cgroup, or estimate value is relabeled as another
+  domain.
+- **Must not:** add an aggregate that sums overlapping owner estimates and
+  call it process memory, or treat unavailable measurements as zero.
+
+### Acceptance
+
+- Keep `torrentng_memory_used_bytes` and class usage explicitly defined as
+  current resource-governor leases.
+- Keep the top-torrent aggregate metric name, document its estimate and
+  reservation overlap, and separately render receive reservations and upload
+  buffers for each retained top torrent.
+- Hash torrent identifiers by default and preserve the existing explicit
+  opt-in for raw identifiers.
+- Document metric meaning, source owner, and known overlap in `docs/API.md`
+  and `docs/TRANSFER_CORE_OBSERVABILITY.md`.
+- Renderer regressions verify the separate receive/upload values and the
+  default identifier redaction.
+- Process, allocator, and cgroup evidence continues to come from the
+  identity-bound observer; large-catalog scrape cost remains SYS-014/PERF-109.
+
+### Files and compatibility
+
+- **Expected code paths:** `crates/rt-engine/src/command.rs`,
+  `crates/rt-api-native/src/handlers.rs`, `docs/API.md`, and
+  `docs/TRANSFER_CORE_OBSERVABILITY.md`.
+- **State or wire compatibility:** additive gauges only; existing metric names
+  and hash privacy defaults remain stable.
+- **Migration / rollback:** none.
+- **Feature flag or rollout boundary:** no new flag; interpret owner estimates
+  only within their documented accounting domain.
+
+### Evidence
+
+- **Regression source added or updated:** engine estimate projection and native
+  metrics renderer now preserve the combined estimate while exposing receive
+  reservations and upload buffers separately.
+- **Command or probe to run:** engine aggregation and native metrics renderer
+  regressions during the requested bulk pass.
+- **Expected result:** values retain their owner and overlap semantics, with
+  raw identifiers absent unless explicitly enabled.
+- **Executed on exact revision:** no.
+- **Artifact or report path:** pending bulk pass.
+- **External evidence still required:** PERF-102 process/allocator/cgroup
+  observations and SYS-014/PERF-109 collection-cost qualification.
+
 ## SYS-012 — Production-shaped protocol and platform compatibility fixtures
 
 - **Priority / wave:** P0 / 3

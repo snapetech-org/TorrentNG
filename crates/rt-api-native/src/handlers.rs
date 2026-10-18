@@ -8292,7 +8292,7 @@ fn render_metrics_with_health(
             &mut out,
             "torrentng_hot_torrent_memory_estimated_bytes",
             "gauge",
-            "Estimated process-owned memory attributed to top active torrents",
+            "Estimated tracked torrent-owned bytes for top active torrents; includes request reservations and may overlap materialized piece memory",
             ("rank", &(rank + 1).to_string()),
             ("info_hash", metric_info_hash.as_ref()),
             torrent.estimated_bytes,
@@ -8310,10 +8310,28 @@ fn render_metrics_with_health(
             &mut out,
             "torrentng_hot_torrent_peer_buffer_bytes",
             "gauge",
-            "Peer rx/tx buffer bytes attributed to top active torrents",
+            "Peer receive reservations plus upload buffers; receive reservations may overlap materialized piece memory",
             ("rank", &(rank + 1).to_string()),
             ("info_hash", metric_info_hash.as_ref()),
             torrent.peer_buffer_bytes,
+        );
+        metric_with_two_labels(
+            &mut out,
+            "torrentng_hot_torrent_peer_rx_reserved_bytes",
+            "gauge",
+            "Outstanding peer-request receive capacity reserved before payload arrival; may overlap materialized piece assembly",
+            ("rank", &(rank + 1).to_string()),
+            ("info_hash", metric_info_hash.as_ref()),
+            torrent.peer_rx_reserved_bytes,
+        );
+        metric_with_two_labels(
+            &mut out,
+            "torrentng_hot_torrent_peer_tx_buffer_bytes",
+            "gauge",
+            "Upload payload bytes currently owned by peer tasks",
+            ("rank", &(rank + 1).to_string()),
+            ("info_hash", metric_info_hash.as_ref()),
+            torrent.peer_tx_buffer_bytes,
         );
         metric_with_two_labels(
             &mut out,
@@ -10733,6 +10751,8 @@ mod tests {
             estimated_bytes: 54,
             piece_assembly_bytes: 55,
             peer_buffer_bytes: 56,
+            peer_rx_reserved_bytes: 60,
+            peer_tx_buffer_bytes: 61,
             tracker_peer_bytes: 57,
             peer_command_queue_bytes: 58,
             storage_cache_bytes: 59,
@@ -10806,6 +10826,12 @@ mod tests {
         )));
         assert!(rendered.contains(&format!(
             "torrentng_hot_torrent_peer_buffer_bytes{{rank=\"1\",info_hash=\"{hashed_id}\"}} 56"
+        )));
+        assert!(rendered.contains(&format!(
+            "torrentng_hot_torrent_peer_rx_reserved_bytes{{rank=\"1\",info_hash=\"{hashed_id}\"}} 60"
+        )));
+        assert!(rendered.contains(&format!(
+            "torrentng_hot_torrent_peer_tx_buffer_bytes{{rank=\"1\",info_hash=\"{hashed_id}\"}} 61"
         )));
         assert!(rendered.contains(&format!(
             "torrentng_hot_torrent_tracker_peer_bytes{{rank=\"1\",info_hash=\"{hashed_id}\"}} 57"

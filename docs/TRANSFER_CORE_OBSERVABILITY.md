@@ -58,6 +58,14 @@ pool.
 - The metrics surface has cumulative counters and selected storage buckets,
   but it does not provide tail histograms for every owner.
 
+Memory totals have separate meanings. Governor-used bytes count active leases.
+The top-torrent estimate combines owner-reported buffers, metadata estimates,
+and outstanding-request receive reservations; the receive reservation can
+overlap with materialized piece memory. The hot-torrent metrics expose receive
+reservations and upload buffers separately so readers can inspect that overlap.
+Neither metric family is a substitute for PERF-102 process, allocator, or
+cgroup observations.
+
 SYS-011 remains in progress until the fresh-process passivity regression and
 mixed-load collection behavior are reviewed together. This inventory does not
 turn the current metric families into a gate or capacity claim.

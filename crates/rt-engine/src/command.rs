@@ -451,9 +451,15 @@ pub struct EngineDatabaseWorkerStats {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HotTorrentMemoryStats {
     pub info_hash: String,
+    /// Aggregate estimate retained for compatibility; it includes outstanding
+    /// receive reservations and may overlap materialized piece-assembly bytes.
     pub estimated_bytes: u64,
     pub piece_assembly_bytes: u64,
     pub peer_buffer_bytes: u64,
+    /// Payload capacity reserved before outstanding peer requests are sent.
+    pub peer_rx_reserved_bytes: u64,
+    /// Upload payload bytes currently owned by peer tasks.
+    pub peer_tx_buffer_bytes: u64,
     pub tracker_peer_bytes: u64,
     pub peer_command_queue_bytes: u64,
     /// Cache metadata is included only when storage ownership is torrent-local
@@ -940,9 +946,9 @@ impl EngineStats {
     }
 
     fn record_hot_torrent_memory(&mut self, info_hash: String, runtime: &TorrentRuntimeStats) {
-        let peer_buffer_bytes = runtime
-            .peer_rx_buffer_bytes
-            .saturating_add(runtime.peer_tx_buffer_bytes);
+        let peer_rx_reserved_bytes = runtime.peer_rx_buffer_bytes;
+        let peer_tx_buffer_bytes = runtime.peer_tx_buffer_bytes;
+        let peer_buffer_bytes = peer_rx_reserved_bytes.saturating_add(peer_tx_buffer_bytes);
         let tracker_peer_bytes = runtime.tracker_peer_cache_bytes;
         let peer_command_queue_bytes = runtime.peer_command_queue_bytes;
         let storage_cache_bytes = if runtime.storage.shared_resource_id == 0 {
@@ -966,6 +972,8 @@ impl EngineStats {
             estimated_bytes,
             piece_assembly_bytes: runtime.piece_assembly_bytes,
             peer_buffer_bytes,
+            peer_rx_reserved_bytes,
+            peer_tx_buffer_bytes,
             tracker_peer_bytes,
             peer_command_queue_bytes,
             storage_cache_bytes,
@@ -1963,6 +1971,8 @@ mod tests {
                 estimated_bytes: 7_555,
                 piece_assembly_bytes: 20,
                 peer_buffer_bytes: 47,
+                peer_rx_reserved_bytes: 23,
+                peer_tx_buffer_bytes: 24,
                 tracker_peer_bytes: 1_600,
                 peer_command_queue_bytes: 1_792,
                 storage_cache_bytes: 4_096,
