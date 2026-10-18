@@ -245,10 +245,11 @@ injected read/write failures, partial-write failure, retry after a failed data
 barrier, and operation-level file identity fencing. Dirty path state binds each
 typed `ContentEpoch` to the descriptor identity that received it. The admitted
 `DiskSubmission` carries a `StorageOperationRecord` containing a process-wide
-operation identity, the device-local operation sequence, and the captured file
-identity and content epoch through backend completion; only that record can
-clear the dirty state it covered. Coalesced peer reads also receive a
-process-wide identity for tracing.
+operation identity, the device-local operation sequence, the captured file
+identity and content epoch, the per-file write sequence for dirty content,
+and payload read/write byte ranges where applicable through backend completion;
+only that record can clear the dirty state it covered. Coalesced peer reads
+also receive an operation identity and range for tracing.
 Securely opened descriptor leases carry that captured identity through queued
 and submitted operations. On Unix and Windows, reads, writes, and sync
 operations check that the descriptor's original identity still matches the

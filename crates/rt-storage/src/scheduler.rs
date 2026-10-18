@@ -837,9 +837,16 @@ fn allocate_storage_operation_id() -> Option<StorageOperationId> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct StorageByteRange {
+    offset: u64,
+    length: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DirtyPathState {
     content_epoch: ContentEpoch,
     identity: FileIdentity,
+    write_sequence: u64,
 }
 
 fn mark_dirty_path(
@@ -847,11 +854,13 @@ fn mark_dirty_path(
     dirty_path_epoch: &AtomicU64,
     path: PathBuf,
     identity: FileIdentity,
+    write_sequence: u64,
 ) -> DirtyPathState {
     let mut dirty = lock_recover(dirty_paths);
     let state = DirtyPathState {
         content_epoch: ContentEpoch(dirty_path_epoch.fetch_add(1, Ordering::Relaxed)),
         identity,
+        write_sequence,
     };
     dirty.insert(path, state);
     state
@@ -866,6 +875,7 @@ fn clear_dirty_path_if_operation(
         || operation.device_operation_id.is_none()
         || operation.content_epoch.is_none()
         || operation.file_identity.is_none()
+        || operation.write_sequence.is_none()
     {
         return;
     }
@@ -1286,14 +1296,17 @@ struct DiskSubmission {
 }
 
 /// Evidence carried with an admitted operation until its backend completion.
-/// The device sequence is local to the retained device queue; the content
-/// epoch and file identity bind any dirty-path clearing to this operation.
+/// The device sequence is local to the retained device queue; the file
+/// identity, content epoch, and write sequence bind dirty-path clearing to the
+/// operation. Payload reads and writes also retain their submitted byte range.
 #[derive(Debug, Default)]
 struct StorageOperationRecord {
     storage_operation_id: Option<StorageOperationId>,
     device_operation_id: Option<DeviceOperationId>,
     file_identity: Option<FileIdentity>,
     content_epoch: Option<ContentEpoch>,
+    byte_range: Option<StorageByteRange>,
+    write_sequence: Option<u64>,
 }
 
 impl StorageOperationRecord {
@@ -1308,11 +1321,30 @@ impl StorageOperationRecord {
             .content_epoch
             .is_none_or(|epoch| epoch == state.content_epoch));
         self.content_epoch = Some(state.content_epoch);
+        debug_assert!(self
+            .write_sequence
+            .is_none_or(|sequence| sequence == state.write_sequence));
+        self.write_sequence = Some(state.write_sequence);
+    }
+
+    fn bind_byte_range(&mut self, offset: u64, length: u64) {
+        debug_assert!(offset.checked_add(length).is_some());
+        let range = StorageByteRange { offset, length };
+        debug_assert!(self.byte_range.is_none_or(|current| current == range));
+        self.byte_range = Some(range);
+    }
+
+    fn bind_write_sequence(&mut self, sequence: u64) {
+        debug_assert!(self
+            .write_sequence
+            .is_none_or(|current| current == sequence));
+        self.write_sequence = Some(sequence);
     }
 
     fn covers_dirty_path(&self, state: DirtyPathState) -> bool {
         self.file_identity == Some(state.identity)
             && self.content_epoch == Some(state.content_epoch)
+            && self.write_sequence == Some(state.write_sequence)
     }
 }
 
@@ -2208,9 +2240,17 @@ async fn dispatch_peer_read_batch(
                     .map(|request| (request.tx, Err(error.clone_for_waiter())))
                     .collect();
             };
+            let mut operation_record = StorageOperationRecord::default();
+            operation_record.storage_operation_id = Some(storage_operation_id);
+            operation_record.device_operation_id =
+                Some(DeviceOperationId(_device_queue.operation_id()));
+            operation_record.bind_file_identity(file.identity());
+            operation_record.bind_byte_range(offset, len as u64);
             tracing::trace!(
-                storage_operation_id = storage_operation_id.0,
-                device_operation_id = _device_queue.operation_id(),
+                storage_operation_id = operation_record.storage_operation_id.unwrap().0,
+                device_operation_id = operation_record.device_operation_id.unwrap().0,
+                byte_offset = offset,
+                byte_length = len as u64,
                 class = ?IoClass::PeerRead,
                 "dispatching coalesced peer read"
             );
@@ -3111,6 +3151,7 @@ impl MountScheduler {
                 bytes,
             } => {
                 submission.bind_file_identity(identity);
+                submission.bind_byte_range(offset, len as u64);
                 verify_path_identity(&key, identity, "payload_read")?;
                 let _submission = submission;
                 Ok(StorageRead::Bytes(bytes))
@@ -3121,6 +3162,7 @@ impl MountScheduler {
                 read_len,
             } => {
                 submission.bind_file_identity(file.identity());
+                submission.bind_byte_range(offset, read_len as u64);
                 let requested_charge = queued_disk_charge(len as u64);
                 let read_buffer_charge = queued_disk_charge(read_len as u64);
                 let read_buffer_queued_bytes = read_buffer_charge
@@ -3144,6 +3186,8 @@ impl MountScheduler {
                 tracing::trace!(
                     storage_operation_id = submission.storage_operation_id().unwrap_or_default(),
                     device_operation_id = submission.device_operation_id().unwrap_or_default(),
+                    byte_offset = offset,
+                    byte_length = read_len as u64,
                     class = ?class,
                     "dispatching positioned read"
                 );
@@ -3339,10 +3383,13 @@ impl MountScheduler {
         };
         let file_identity = current_file_identity(&key, file.as_ref(), "payload_write")?;
         let written = data.len();
+        submission.bind_byte_range(offset, written as u64);
         submission.start_device_operation(self.acquire_device_operation(class).await?);
         tracing::trace!(
             storage_operation_id = submission.storage_operation_id().unwrap_or_default(),
             device_operation_id = submission.device_operation_id().unwrap_or_default(),
+            byte_offset = offset,
+            byte_length = written as u64,
             class = ?class,
             "dispatching positioned write"
         );
@@ -3352,9 +3399,15 @@ impl MountScheduler {
         // cancelled caller leave written bytes that no barrier covers. A
         // failed write costs one redundant fdatasync, which is harmless.
         let write_sequence = file_sync_fence.issue_write_sequence();
+        submission.bind_write_sequence(write_sequence);
         let _write_watermark = next_saturating_sequence(&self.write_sequence);
-        let dirty_state =
-            mark_dirty_path(&dirty_paths, &dirty_path_epoch, key.clone(), file_identity);
+        let dirty_state = mark_dirty_path(
+            &dirty_paths,
+            &dirty_path_epoch,
+            key.clone(),
+            file_identity,
+            write_sequence,
+        );
         submission.bind_dirty_path(dirty_state);
         let (file_write_guard, admission_guard, submission) = match await_backend_io_with_fence(
             &key,
@@ -3462,9 +3515,15 @@ impl MountScheduler {
             let file = pool.get_or_open(&key, OpenMode::Write, true)?;
             let identity = current_file_identity(&key, file.as_ref(), "prepare_file")?;
             if mode != PreallocationMode::Off {
-                let _file_sequence = fence_for_job.issue_write_sequence();
+                let file_sequence = fence_for_job.issue_write_sequence();
                 let _write_watermark = next_saturating_sequence(&write_sequence);
-                mark_dirty_path(&dirty_paths, &dirty_path_epoch, key.clone(), identity);
+                mark_dirty_path(
+                    &dirty_paths,
+                    &dirty_path_epoch,
+                    key.clone(),
+                    identity,
+                    file_sequence,
+                );
             }
             if mode != PreallocationMode::Off {
                 let current_len = file
@@ -6702,12 +6761,14 @@ mod tests {
         let path = PathBuf::from("payload.bin");
         let identity = test_file_identity();
 
-        let first_state = mark_dirty_path(&dirty_paths, &dirty_path_epoch, path.clone(), identity);
+        let first_state =
+            mark_dirty_path(&dirty_paths, &dirty_path_epoch, path.clone(), identity, 1);
         let mut first_operation = StorageOperationRecord::default();
         first_operation.storage_operation_id = Some(StorageOperationId(10));
         first_operation.device_operation_id = Some(DeviceOperationId(1));
+        first_operation.bind_byte_range(0, 16);
         first_operation.bind_dirty_path(first_state);
-        mark_dirty_path(&dirty_paths, &dirty_path_epoch, path.clone(), identity);
+        mark_dirty_path(&dirty_paths, &dirty_path_epoch, path.clone(), identity, 2);
 
         clear_dirty_path_if_operation(&dirty_paths, &path, &first_operation);
         assert_eq!(dirty_paths.lock().unwrap().len(), 1);
@@ -6718,12 +6779,28 @@ mod tests {
         clear_dirty_path_if_operation(&dirty_paths, &path, &unadmitted_operation);
         assert_eq!(dirty_paths.lock().unwrap().len(), 1);
 
+        let mut stale_write_sequence = StorageOperationRecord::default();
+        stale_write_sequence.storage_operation_id = Some(StorageOperationId(12));
+        stale_write_sequence.device_operation_id = Some(DeviceOperationId(3));
+        stale_write_sequence.bind_dirty_path(second_state);
+        stale_write_sequence.write_sequence = Some(1);
+        clear_dirty_path_if_operation(&dirty_paths, &path, &stale_write_sequence);
+        assert_eq!(dirty_paths.lock().unwrap().len(), 1);
+
         let mut second_operation = StorageOperationRecord::default();
         second_operation.storage_operation_id = Some(StorageOperationId(11));
         second_operation.device_operation_id = Some(DeviceOperationId(2));
+        second_operation.bind_byte_range(0, 16);
         second_operation.bind_dirty_path(second_state);
         clear_dirty_path_if_operation(&dirty_paths, &path, &second_operation);
         assert!(dirty_paths.lock().unwrap().is_empty());
+        assert_eq!(
+            second_operation.byte_range,
+            Some(StorageByteRange {
+                offset: 0,
+                length: 16
+            })
+        );
     }
 
     #[test]
@@ -6741,6 +6818,7 @@ mod tests {
         let original_state = DirtyPathState {
             content_epoch: ContentEpoch(7),
             identity,
+            write_sequence: 8,
         };
         let dirty_paths = Arc::new(Mutex::new(HashMap::from([(
             original_path.clone(),
@@ -6755,7 +6833,13 @@ mod tests {
         .join()
         .is_err());
 
-        mark_dirty_path(&dirty_paths, &AtomicU64::new(8), new_path.clone(), identity);
+        mark_dirty_path(
+            &dirty_paths,
+            &AtomicU64::new(8),
+            new_path.clone(),
+            identity,
+            9,
+        );
         let dirty = lock_recover(&dirty_paths);
         assert_eq!(dirty.get(&original_path), Some(&original_state));
         assert!(dirty.contains_key(&new_path));

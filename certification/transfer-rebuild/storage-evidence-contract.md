@@ -56,10 +56,12 @@ diagnostics, but cannot publish content into the current generation.
 Current implementation: `LeasedFile` carries the secure-open identity and
 descriptor permit together; `DiskSubmission` carries a process-wide typed
 `StorageOperationId`, its device-local sequence, file identity and content
-epoch, plus the per-mount queue permit, shared physical-device permit, and
-queued-disk byte charge through queued open and backend completion watchers.
-Dirty clearing requires the admitted record and exact file/content identity.
-Coalesced peer reads receive a process-wide ID for tracing. The device
+epoch, the write sequence for dirty payload, and the payload byte range where
+applicable, plus the per-mount queue permit,
+shared physical-device permit, and queued-disk byte charge through queued open
+and backend completion watchers. Dirty clearing requires the admitted record
+and exact file/content/write-sequence identity. Coalesced peer reads receive a
+process-wide ID and byte range for tracing. The device
 admission pool is keyed by physical device identity rather than mount profile;
 unidentified topology falls back to a storage-root-scoped pool. Strict writes
 move the same submission through their data sync. Reads recheck the descriptor
