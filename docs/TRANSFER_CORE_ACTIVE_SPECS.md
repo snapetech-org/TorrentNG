@@ -1342,9 +1342,12 @@ When physical-device IDs are unavailable, all copy jobs through the engine's
 storage dispatcher share its stable fallback queue. This conservatively bounds
 unknown devices without assuming two paths are independent.
 
-Directory entry vectors are still collected by the root-confined verifier,
-and the background job is not yet split into copy/hash subjobs. Keep those as
-explicit gaps instead of claiming whole-tree memory qualification.
+Directory verification now streams entries on Unix and Windows without
+materializing per-directory name vectors. Unix recursive deletion retains at
+most 256 names per batch and restarts enumeration after each batch, so removing
+entries cannot invalidate an active directory cursor. The background job is
+not yet split into copy/hash subjobs; large copies still hold their admitted
+device slots until the secure step completes.
 
 ### Ownership and invariant
 
@@ -1369,13 +1372,17 @@ explicit gaps instead of claiming whole-tree memory qualification.
 - Opposing cross-device copies cannot deadlock while holding device permits.
 - Nested directory copies hash each leaf once on each side and reject
   same-length corruption.
+- Verification streams directory entries without a per-directory name vector;
+  recursive deletion retains at most the fixed batch size.
 - Regression sources cover scheduler contention, cancellation cleanup,
   cross-device admission, and once-per-leaf hashing.
 
 ### Files and compatibility
 
 - **Expected code paths:** `crates/rt-storage/src/plan.rs`,
-  `crates/rt-storage/src/secure_fs.rs`, `crates/rt-storage/src/scheduler.rs`,
+  `crates/rt-storage/src/secure_fs.rs`,
+  `crates/rt-storage/src/windows_secure_fs.rs`,
+  `crates/rt-storage/src/scheduler.rs`,
   `crates/rt-engine/src/storage_jobs.rs`, and engine scheduler composition.
 - **State or wire compatibility:** no resume, storage-path, or peer-wire
   format change.
@@ -1392,13 +1399,19 @@ explicit gaps instead of claiming whole-tree memory qualification.
   `external_device_handoff_shares_admission_across_mounts` covers shared device
   admission; `multi_device_handoff_holds_source_and_destination_until_completion`
   checks both physical permits remain held. The existing secure-copy hash-count
-  and cleanup sources remain in place.
+  and cleanup sources remain in place; `directory_name_stream_visits_all_entries`
+  and `directory_deletion_batches_bound_retained_names` cover the streaming
+  iterator and bounded Unix deletion batch;
+  `streamed_tree_verification_rejects_destination_only_entries` preserves
+  exact directory-content matching without a name set on Unix, and
+  `windows_secure_fs::tests::streamed_directory_verification_rejects_destination_only_entries`
+  covers the Windows handle-relative path.
 - **Command or probe to run:** storage plan, scheduler admission, cancellation,
   secure-copy hash-count, and injected-backend suites in the deferred bulk pass.
 - **Expected result:** no plan step begins before all touched device queues
   admit it, no permit or byte charge is released while accepted work remains
-  active, and rollback/reconciliation report uncertain filesystem state
-  explicitly.
+  active, directory verification/deletion retain bounded entry state, and
+  rollback/reconciliation report uncertain filesystem state explicitly.
 - **Executed on exact revision:** no.
 - **Artifact or report path:** pending bulk pass.
 - **External evidence still required:** matched cross-device throughput and

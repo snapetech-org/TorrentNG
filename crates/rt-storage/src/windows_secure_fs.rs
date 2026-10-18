@@ -7,7 +7,6 @@
 //! use `FILE_FLAG_OPEN_REPARSE_POINT` so reparse points are rejected instead
 //! of followed.
 
-use std::collections::HashSet;
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::mem::{offset_of, size_of};
@@ -817,22 +816,14 @@ fn verify_directory_contents(
     depth: usize,
     check_control: &dyn Fn() -> Result<(), StorageError>,
 ) -> Result<(), StorageError> {
-    let source_names = directory_names(source, source_path)?;
-    let destination_names = directory_names(destination, destination_path)?;
-    let source_set = source_names.iter().cloned().collect::<HashSet<_>>();
-    let destination_set = destination_names.iter().cloned().collect::<HashSet<_>>();
-    if source_set != destination_set {
-        return Err(plan_error(
-            "verify-content",
-            &format!(
-                "directory entries differ between {} and {}",
-                source_path.display(),
-                destination_path.display()
-            ),
-        ));
-    }
-    for name in source_names {
+    for item in source
+        .entries()
+        .map_err(|error| StorageError::io(source_path.display().to_string(), error))?
+    {
         check_control()?;
+        let item =
+            item.map_err(|error| StorageError::io(source_path.display().to_string(), error))?;
+        let name = item.file_name();
         let source_child = Entry {
             parent: crate::open::reopen_windows_directory(source)
                 .map_err(|error| StorageError::io(source_path.display().to_string(), error))?,
@@ -855,19 +846,60 @@ fn verify_directory_contents(
             check_control,
         )?;
     }
-    Ok(())
-}
-
-fn directory_names(directory: &Dir, path: &Path) -> Result<Vec<OsString>, StorageError> {
-    directory
+    for item in destination
         .entries()
-        .map_err(|error| StorageError::io(path.display().to_string(), error))?
-        .map(|entry| {
-            entry
-                .map(|entry| entry.file_name())
-                .map_err(|error| StorageError::io(path.display().to_string(), error))
-        })
-        .collect()
+        .map_err(|error| StorageError::io(destination_path.display().to_string(), error))?
+    {
+        check_control()?;
+        let item = item
+            .map_err(|error| StorageError::io(destination_path.display().to_string(), error))?;
+        let name = item.file_name();
+        let destination_child = Entry {
+            parent: crate::open::reopen_windows_directory(destination)
+                .map_err(|error| StorageError::io(destination_path.display().to_string(), error))?,
+            _ancestor_directories: Vec::new(),
+            name: name.clone(),
+            path: destination_path.join(&name),
+        };
+        let destination_metadata =
+            entry_metadata(&destination_child, "verify-content-destination")?;
+        if is_reparse(&destination_metadata) {
+            return Err(unsafe_symlink_error(
+                &destination_child.path,
+                "verify-content-destination",
+            ));
+        }
+
+        let source_child = Entry {
+            parent: crate::open::reopen_windows_directory(source)
+                .map_err(|error| StorageError::io(source_path.display().to_string(), error))?,
+            _ancestor_directories: Vec::new(),
+            name: name.clone(),
+            path: source_path.join(&name),
+        };
+        let source_metadata = match entry_metadata(&source_child, "verify-content-source") {
+            Ok(metadata) => metadata,
+            Err(StorageError::FileNotFound { .. }) => {
+                return Err(plan_error(
+                    "verify-content",
+                    &format!(
+                        "directory entries differ between {} and {}",
+                        source_path.display(),
+                        destination_path.display()
+                    ),
+                ));
+            }
+            Err(error) => return Err(error),
+        };
+        if is_reparse(&source_metadata) {
+            return Err(unsafe_symlink_error(
+                &source_child.path,
+                "verify-content-source",
+            ));
+        }
+        ensure_supported_entry(&source_metadata, &source_child.path, "verify-content-source")?;
+    }
+    Ok(())
 }
 
 fn hash_file(
@@ -1338,6 +1370,26 @@ mod tests {
         );
         assert!(source.exists());
         assert!(!staging.exists());
+    }
+
+    #[test]
+    fn streamed_directory_verification_rejects_destination_only_entries() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        let source = root.join("source");
+        let destination = root.join("destination");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&destination).unwrap();
+        std::fs::write(source.join("payload.bin"), b"same bytes").unwrap();
+        std::fs::write(destination.join("payload.bin"), b"same bytes").unwrap();
+        std::fs::write(destination.join("extra.bin"), b"extra").unwrap();
+        let roots = vec![configured_root(&root)];
+
+        let error =
+            verify_content_matches(&source, &destination, &roots, &|| Ok(())).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("directory entries differ between"));
     }
 
     #[test]

@@ -12,7 +12,7 @@ use std::ffi::{CStr, CString, OsString};
 use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::io::{self, Read, Write};
-use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -36,6 +36,7 @@ use crate::{PlannedStorageAction, StorageError, StoragePlan, StoragePlanStep};
 // proceed concurrently, while two workers racing the same destination still
 // reliably hash to the same shard and serialize as intended.
 const RENAME_LOCK_SHARDS: usize = 64;
+const DIRECTORY_DELETE_BATCH_ENTRIES: usize = 256;
 static RENAME_SERIAL: OnceLock<Vec<Mutex<()>>> = OnceLock::new();
 
 fn rename_lock_shard(destination: &Path) -> &Mutex<()> {
@@ -569,7 +570,7 @@ fn copy_directory_contents(
     depth: usize,
     check_control: &dyn Fn() -> Result<(), StorageError>,
 ) -> Result<(), StorageError> {
-    for name in directory_names(source_dir, source_path)? {
+    visit_directory_names(source_dir, source_path, |name| {
         check_control()?;
         let child_source = source_path.join(&name);
         let child_destination = destination_path.join(&name);
@@ -583,7 +584,8 @@ fn copy_directory_contents(
             false,
             check_control,
         )?;
-    }
+        Ok(true)
+    })?;
     Ok(())
 }
 
@@ -869,16 +871,22 @@ fn remove_entry_at_inner(
         ensure_storage_tree_depth(depth, path, "delete-tree-depth")?;
         let child_dir = open_dir_at(parent, name, path)
             .map_err(|error| StorageError::io(path.display().to_string(), error))?;
-        for child in directory_names(&child_dir, path)? {
-            remove_entry_at_inner(
-                &child_dir,
-                &child,
-                &path.join(&child),
-                missing_ok,
-                check_control,
-                removed,
-                depth.saturating_add(1),
-            )?;
+        loop {
+            let children = directory_names_batch(&child_dir, path)?;
+            if children.is_empty() {
+                break;
+            }
+            for child in children {
+                remove_entry_at_inner(
+                    &child_dir,
+                    &child,
+                    &path.join(&child),
+                    missing_ok,
+                    check_control,
+                    removed,
+                    depth.saturating_add(1),
+                )?;
+            }
         }
         check_control()?;
         let result = unlink_at(parent, name, path, libc::AT_REMOVEDIR);
@@ -1069,30 +1077,55 @@ fn verify_content_at(
         let destination_dir =
             open_dir_at(destination_parent, destination_name, destination_path)
                 .map_err(|error| StorageError::io(destination_path.display().to_string(), error))?;
-        let mut source_names = directory_names(&source_dir, source_path)?;
-        let mut destination_names = directory_names(&destination_dir, destination_path)?;
-        if !sort_and_compare_directory_names(&mut source_names, &mut destination_names) {
-            return Err(staged(
-                "verify-content",
-                format!(
-                    "destination directory has entries absent from source: {}",
-                    destination_path.display()
-                ),
-            ));
-        }
-        for name in &source_names {
+        visit_directory_names(&source_dir, source_path, |name| {
             check_control()?;
-            let child_source = source_path.join(name);
-            let child_destination = destination_path.join(name);
+            let child_source = source_path.join(&name);
+            let child_destination = destination_path.join(&name);
             verify_content_at(
                 &source_dir,
-                name,
+                &name,
                 &destination_dir,
-                name,
+                &name,
                 (&child_source, &child_destination, depth.saturating_add(1)),
                 check_control,
             )?;
-        }
+            Ok(true)
+        })?;
+        visit_directory_names(&destination_dir, destination_path, |name| {
+            check_control()?;
+            let child_source = source_path.join(&name);
+            let child_destination = destination_path.join(&name);
+            let destination_type = entry_type(&destination_dir, &name, &child_destination)?;
+            if destination_type.is_symlink() {
+                return Err(unsafe_symlink(
+                    &child_destination,
+                    "verify-content-destination",
+                ));
+            }
+            let source_type = match entry_type(&source_dir, &name, &child_source) {
+                Ok(kind) => kind,
+                Err(error) if is_not_found(&error) => {
+                    return Err(staged(
+                        "verify-content",
+                        format!(
+                            "destination directory has entries absent from source: {}",
+                            destination_path.display()
+                        ),
+                    ));
+                }
+                Err(error) => return Err(error),
+            };
+            if source_type.is_symlink() {
+                return Err(unsafe_symlink(&child_source, "verify-content-source"));
+            }
+            if !source_type.is_file() && !source_type.is_dir() {
+                return Err(staged(
+                    "verify-content",
+                    format!("unsupported source entry type: {}", child_source.display()),
+                ));
+            }
+            Ok(true)
+        })?;
         Ok(())
     } else if source_type.is_file() {
         if !destination_type.is_file() {
@@ -1207,7 +1240,7 @@ fn content_len_at(
         let directory = open_dir_at(parent, name, path)
             .map_err(|error| StorageError::io(path.display().to_string(), error))?;
         let mut total = 0u64;
-        for child in directory_names(&directory, path)? {
+        visit_directory_names(&directory, path, |child| {
             check_control()?;
             total = total.saturating_add(content_len_at(
                 &directory,
@@ -1216,7 +1249,8 @@ fn content_len_at(
                 depth.saturating_add(1),
                 check_control,
             )?);
-        }
+            Ok(true)
+        })?;
         return Ok(total);
     }
     Err(staged(
@@ -1523,29 +1557,45 @@ impl EntryType {
     }
 }
 
-fn directory_names(directory: &File, path: &Path) -> Result<Vec<OsString>, StorageError> {
-    let duplicate = unsafe { libc::dup(directory.as_raw_fd()) };
-    if duplicate < 0 {
-        return Err(StorageError::io(
-            path.display().to_string(),
-            io::Error::last_os_error(),
-        ));
-    }
-    let directory_stream = unsafe { libc::fdopendir(duplicate) };
+fn directory_names_batch(directory: &File, path: &Path) -> Result<Vec<OsString>, StorageError> {
+    let mut names = Vec::with_capacity(DIRECTORY_DELETE_BATCH_ENTRIES);
+    visit_directory_names(directory, path, |name| {
+        names.push(name);
+        Ok(names.len() < DIRECTORY_DELETE_BATCH_ENTRIES)
+    })?;
+    Ok(names)
+}
+
+/// Visit names through a separate open directory description so recursive
+/// callbacks can use the pinned directory fd without sharing its read offset.
+/// Returning `false` stops after the current entry and is used by bounded
+/// deletion batches.
+fn visit_directory_names<F>(
+    directory: &File,
+    path: &Path,
+    mut visit: F,
+) -> Result<(), StorageError>
+where
+    F: FnMut(OsString) -> Result<bool, StorageError>,
+{
+    let stream_file = open_dir_at(directory, &OsString::from("."), path)
+        .map_err(|error| StorageError::io(path.display().to_string(), error))?;
+    let stream_fd = stream_file.into_raw_fd();
+    let directory_stream = unsafe { libc::fdopendir(stream_fd) };
     if directory_stream.is_null() {
-        unsafe { libc::close(duplicate) };
+        unsafe { libc::close(stream_fd) };
         return Err(StorageError::io(
             path.display().to_string(),
             io::Error::last_os_error(),
         ));
     }
-    let mut names = Vec::new();
-    // POSIX uses a NULL `readdir` result for both end-of-directory and an
-    // enumeration error. Clear errno before the loop so a stale error from a
-    // previous syscall cannot be mistaken for a current read failure.
-    clear_errno();
+
+    let mut visit_error = None;
     let mut read_error = None;
     loop {
+        // The callback can perform filesystem operations that change errno,
+        // so reset it before every readdir call rather than only once.
+        clear_errno();
         let entry = unsafe { libc::readdir(directory_stream) };
         if entry.is_null() {
             let error = io::Error::last_os_error();
@@ -1558,9 +1608,19 @@ fn directory_names(directory: &File, path: &Path) -> Result<Vec<OsString>, Stora
         if name == b"." || name == b".." {
             continue;
         }
-        names.push(OsString::from_vec(name.to_vec()));
+        match visit(OsString::from_vec(name.to_vec())) {
+            Ok(true) => {}
+            Ok(false) => break,
+            Err(error) => {
+                visit_error = Some(error);
+                break;
+            }
+        }
     }
     let close_result = unsafe { libc::closedir(directory_stream) };
+    if let Some(error) = visit_error {
+        return Err(error);
+    }
     if let Some(error) = read_error {
         return Err(StorageError::io(path.display().to_string(), error));
     }
@@ -1570,13 +1630,7 @@ fn directory_names(directory: &File, path: &Path) -> Result<Vec<OsString>, Stora
             io::Error::last_os_error(),
         ));
     }
-    Ok(names)
-}
-
-fn sort_and_compare_directory_names(left: &mut [OsString], right: &mut [OsString]) -> bool {
-    left.sort_unstable();
-    right.sort_unstable();
-    left == right
+    Ok(())
 }
 
 #[cfg(any(target_os = "linux", target_os = "hurd", target_os = "redox"))]
@@ -1716,13 +1770,18 @@ mod tests {
     }
 
     #[test]
-    fn directory_names_returns_all_entries() {
+    fn directory_name_stream_visits_all_entries() {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("file"), b"data").unwrap();
         std::fs::create_dir(root.path().join("directory")).unwrap();
 
         let directory = File::open(root.path()).unwrap();
-        let mut names = directory_names(&directory, root.path()).unwrap();
+        let mut names = Vec::new();
+        visit_directory_names(&directory, root.path(), |name| {
+            names.push(name);
+            Ok(true)
+        })
+        .unwrap();
         names.sort();
 
         assert_eq!(
@@ -1732,27 +1791,41 @@ mod tests {
     }
 
     #[test]
-    fn directory_name_comparison_is_order_independent_and_detects_extras() {
-        let mut source = vec![
-            OsString::from("c"),
-            OsString::from("a"),
-            OsString::from("b"),
-        ];
-        let mut destination = vec![
-            OsString::from("b"),
-            OsString::from("c"),
-            OsString::from("a"),
-        ];
+    fn directory_deletion_batches_bound_retained_names() {
+        let root = tempfile::tempdir().unwrap();
+        for index in 0..=DIRECTORY_DELETE_BATCH_ENTRIES {
+            std::fs::write(root.path().join(format!("file-{index:04}")), b"").unwrap();
+        }
+        let directory = File::open(root.path()).unwrap();
 
-        assert!(sort_and_compare_directory_names(
-            &mut source,
-            &mut destination
-        ));
-        destination.push(OsString::from("extra"));
-        assert!(!sort_and_compare_directory_names(
-            &mut source,
-            &mut destination
-        ));
+        let first_batch = directory_names_batch(&directory, root.path()).unwrap();
+        assert_eq!(first_batch.len(), DIRECTORY_DELETE_BATCH_ENTRIES);
+        for name in first_batch {
+            std::fs::remove_file(root.path().join(name)).unwrap();
+        }
+        assert_eq!(directory_names_batch(&directory, root.path()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn streamed_tree_verification_rejects_destination_only_entries() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let destination = root.path().join("destination");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::create_dir(&destination).unwrap();
+        std::fs::write(source.join("payload.bin"), b"same bytes").unwrap();
+        std::fs::write(destination.join("payload.bin"), b"same bytes").unwrap();
+        std::fs::write(destination.join("extra.bin"), b"extra").unwrap();
+
+        let error = verify_content(
+            &source,
+            &destination,
+            &[root.path().to_path_buf()],
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("destination directory has entries absent from source"));
     }
 
     #[test]
