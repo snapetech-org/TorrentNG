@@ -5366,6 +5366,99 @@ mod tests {
         assert_eq!(resources.snapshot().total_used_bytes, 0);
     }
 
+    #[test]
+    fn storage_frame_queue_hash_credit_reconciles_live_snapshots() {
+        let counters = Arc::new(StorageCounters::default());
+        let resources = ResourceGovernor::new(Default::default());
+        let frames = crate::frame::FramePool::new(64 * 1024);
+        let baseline = resources.snapshot();
+        assert_eq!(baseline.total_used_bytes, 0);
+        assert_eq!(frames.in_use_bytes(), 0);
+
+        let frame = frames.try_acquire(1).expect("frame fits the local pool");
+        let frame_charge = frame.charged_bytes();
+        assert_eq!(frame_charge, 16 * 1024);
+        assert_eq!(frames.in_use_bytes(), frame_charge);
+
+        let payload_lease = Arc::new(
+            resources
+                .try_acquire(MemoryClass::PeerBuffer, 4096)
+                .expect("payload lease fits the resource governor"),
+        );
+        let queued_bytes = Arc::new(
+            QueuedDiskBytes::reserve_shared_payload(
+                counters.clone(),
+                Some(&resources),
+                4096,
+                Arc::clone(&payload_lease),
+                "frame-queue-hash-test",
+            )
+            .unwrap(),
+        );
+        drop(payload_lease);
+
+        let mut operation_record = StorageOperationRecord::default();
+        operation_record
+            .resource_credit
+            .include(queued_bytes.resource_credit());
+        operation_record.record_frame_pool_charge(&frame);
+        let operation_credit = operation_record.resource_credit;
+        assert_eq!(operation_credit.governor_credit_leases, 1);
+        assert_eq!(
+            operation_credit.governor_credit_bytes,
+            QUEUED_DISK_JOB_OVERHEAD_BYTES
+        );
+        assert_eq!(operation_credit.shared_payload_lease_count, 1);
+        assert_eq!(operation_credit.shared_payload_lease_bytes, 4096);
+        assert_eq!(operation_credit.shared_payload_view_bytes, 4096);
+        assert_eq!(
+            operation_credit.frame_pool_charge_bytes_at_dispatch,
+            frame_charge
+        );
+
+        let owner = HashJobCreditOwner::new(
+            "sha1_piece",
+            4096,
+            HashQueueCredit::Shared(Arc::clone(&queued_bytes)),
+        );
+        drop(queued_bytes);
+        drop(frame);
+
+        let retained = resources.snapshot();
+        assert_eq!(frames.in_use_bytes(), 0);
+        assert_eq!(
+            retained.classes[MemoryClass::PeerBuffer as usize].used_bytes,
+            4096
+        );
+        assert_eq!(
+            retained.classes[MemoryClass::QueuedDisk as usize].used_bytes,
+            QUEUED_DISK_JOB_OVERHEAD_BYTES
+        );
+        assert_eq!(
+            operation_credit.governor_credit_bytes + operation_credit.shared_payload_lease_bytes,
+            retained.total_used_bytes
+        );
+        assert_eq!(
+            counters.queued_disk_bytes.load(Ordering::Relaxed),
+            queued_disk_charge(4096)
+        );
+
+        drop(owner);
+
+        let released = resources.snapshot();
+        assert_eq!(released.total_used_bytes, baseline.total_used_bytes);
+        assert_eq!(
+            released.classes[MemoryClass::PeerBuffer as usize].used_bytes,
+            baseline.classes[MemoryClass::PeerBuffer as usize].used_bytes
+        );
+        assert_eq!(
+            released.classes[MemoryClass::QueuedDisk as usize].used_bytes,
+            baseline.classes[MemoryClass::QueuedDisk as usize].used_bytes
+        );
+        assert_eq!(frames.in_use_bytes(), 0);
+        assert_eq!(counters.queued_disk_bytes.load(Ordering::Relaxed), 0);
+    }
+
     fn hdd_scheduler() -> MountScheduler {
         MountScheduler::new(
             StorageRootId::new(),

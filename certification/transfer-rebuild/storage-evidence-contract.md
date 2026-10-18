@@ -34,9 +34,13 @@ Those aggregate diagnostics can collide and are not a complete ID set.
 Untraced leases avoid ID allocation and snapshot work. Data-bearing hash jobs
 retain their queued-byte owners through worker closure completion and record
 the same exact IDs or aggregate diagnostics at submission and release when
-TRACE is enabled. Automated lifetime-to-snapshot reconciliation,
-full-pipeline before/after assertions, crash cuts, and the remaining fault
-matrix cases are still open. These evidence sources are authored but unrun.
+TRACE is enabled. A deterministic owner-chain fixture combines a local frame
+pool, shared payload lease, queued-disk lease, and hash owner; it checks that
+dispatch credit matches live governor snapshots while the hash owner retains
+the payload and that frame-pool, queue, and governor accounting return to
+baseline at their respective owner drops. Scheduler-backed end-to-end
+reconciliation, crash cuts, and the remaining fault matrix cases are still
+open. These sources are authored but unrun.
 
 ## Evidence states
 
@@ -101,9 +105,10 @@ by physical device identity rather than mount profile; unidentified topology
 falls back to a storage-root-scoped pool. Strict writes move the same
 submission through their data sync. Reads recheck the descriptor identity
 against the current path before returning. Stable trace identities and lease
-lifetime events are implemented. Automated reconciliation against runtime
-snapshots, deterministic assertions across the complete storage-frame, queue,
-and hash pipeline, crash cuts, and platform fault qualification remain open.
+lifetime events are implemented. The controlled frame/queue/hash owner-chain
+regression reconciles its dispatch record to live frame-pool and governor
+snapshots. Automated reconciliation across production scheduler operations,
+crash cuts, and platform fault qualification remain open.
 
 Dirty evidence is tracked per normalized path, write sequence, and file
 identity. A barrier snapshots the dirty files and highest covered sequence for
@@ -135,9 +140,10 @@ Each scenario records the injected event sequence, operation/file generations,
 lease and permit counts before/after, completion state, dirty sequences, and
 recovered content. Current dispatch/drop traces expose submitted credit and
 retained-owner counts; identity/growth/release and order-independent lossy
-coalesced-credit regressions are authored. Deterministic snapshots and
-assertions across all credit classes are still required. Wall-clock sleeps and “usually happens”
-race tests do not satisfy this contract.
+coalesced-credit regressions plus a deterministic frame/queue/hash owner-chain
+snapshot regression are authored. Production-path snapshots across all credit
+classes are still required. Wall-clock sleeps and “usually happens” race tests
+do not satisfy this contract.
 
 ## Qualification boundary
 
