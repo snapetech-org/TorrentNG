@@ -35,7 +35,9 @@ metadata paths can actually use those streams.
   - retains a capped number of retired endpoint generations during listener
     rebind so established streams can drain;
   - accepts multiple incoming uTP streams without consuming the listener socket;
-  - routes DATA/FIN/STATE packets into per-stream bounded queues.
+  - routes DATA/FIN/STATE packets into per-stream bounded queues;
+  - shares one ordered deadline queue and timer task per endpoint, with
+    per-stream ready notifications for routed receive deadlines.
 - Process-level uTP counters and gauges exported through TorrentNG Prometheus
   metrics: connects, accepts, sent/received bytes, send/receive timeouts,
   retransmissions, route drops, RTT, RTT variance, retransmit timeout,
@@ -66,13 +68,17 @@ The local `rt-utp` test suite covers:
   wrap-safe sequence handling;
 - bounded out-of-order delivery, multi-packet window fill, and shared-runtime
   socket reuse across listener rebind.
+- deadline queue replacement, cancellation, and expiry ordering.
 
 These regression sources have not been run against the current worktree. The
 updated stream path fills a bounded send window, applies SACK accounting,
 buffers in-window reordered payloads, and retains retransmission bytes across
 canceled writes. Production outbound connects use `UtpRuntime`; standalone
 callers can still use `UtpStream::connect` directly. The central deadline and
-ready-queue scheduler and matched efficiency evidence remain open.
+ready-queue scheduler is now authored for shared endpoints; standalone streams
+retain their direct timeout path. Scheduler runtime behavior remains
+unqualified until the planned bulk pass. Matched efficiency evidence also
+remains open.
 
 ## Transfer Rebuild Backend Decision
 

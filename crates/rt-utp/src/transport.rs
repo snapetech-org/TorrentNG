@@ -17,6 +17,7 @@ use tokio::{
 };
 
 use crate::{
+    deadline::{UtpDeadlineClient, UtpDeadlineScheduler},
     error::UtpError,
     packet::{PacketType, UtpPacket},
     state::{
@@ -66,6 +67,7 @@ pub struct UtpEndpoint {
     accepted_rx: Arc<TokioMutex<mpsc::Receiver<Result<UtpStream, UtpError>>>>,
     stop: watch::Sender<bool>,
     recv_task: Arc<StdMutex<Option<JoinHandle<()>>>>,
+    deadlines: UtpDeadlineScheduler,
     accept_new_connections: Arc<AtomicBool>,
 }
 
@@ -99,6 +101,7 @@ pub struct UtpStream {
     reorder: ReorderBuffer,
     pending_send: VecDeque<PendingPacket>,
     routed_rx: Option<mpsc::Receiver<UtpPacket>>,
+    deadline: Option<UtpDeadlineClient>,
     handshake_state: Option<UtpPacket>,
     route: Option<UtpRouteRegistration>,
 }
@@ -419,6 +422,7 @@ impl UtpListener {
                 reorder,
                 pending_send: VecDeque::new(),
                 routed_rx: None,
+                deadline: None,
                 handshake_state: Some(state),
                 route: None,
             });
@@ -443,6 +447,7 @@ impl UtpEndpoint {
         let streams = Arc::new(StdMutex::new(HashMap::new()));
         let (accepted_tx, accepted_rx) = mpsc::channel(256);
         let (stop, stop_rx) = watch::channel(false);
+        let deadlines = UtpDeadlineScheduler::new(stop_rx.clone());
         let accept_new_connections = Arc::new(AtomicBool::new(true));
         let recv_task = tokio::spawn(run_endpoint_recv(
             socket.clone(),
@@ -450,6 +455,7 @@ impl UtpEndpoint {
             streams.clone(),
             accepted_tx,
             Arc::clone(&accept_new_connections),
+            deadlines.clone(),
             stop_rx,
         ));
         Ok(Self {
@@ -459,6 +465,7 @@ impl UtpEndpoint {
             accepted_rx: Arc::new(TokioMutex::new(accepted_rx)),
             stop,
             recv_task: Arc::new(StdMutex::new(Some(recv_task))),
+            deadlines,
             accept_new_connections,
         })
     }
@@ -550,6 +557,7 @@ impl UtpEndpoint {
             reorder: ReorderBuffer::new(0),
             pending_send: VecDeque::new(),
             routed_rx: Some(rx),
+            deadline: Some(self.deadlines.client()),
             handshake_state: None,
             route: Some(route),
         };
@@ -599,6 +607,7 @@ impl UtpEndpoint {
                 }
             })?;
         }
+        self.deadlines.wait_stopped().await?;
         Ok(())
     }
 }
@@ -785,6 +794,7 @@ async fn run_endpoint_recv(
     streams: Arc<StdMutex<HashMap<UtpRouteKey, UtpRoute>>>,
     accepted_tx: mpsc::Sender<Result<UtpStream, UtpError>>,
     accept_new_connections: Arc<AtomicBool>,
+    deadlines: UtpDeadlineScheduler,
     mut stop: watch::Receiver<bool>,
 ) {
     let mut buf = vec![0u8; config.max_datagram_len.saturating_add(1)];
@@ -929,6 +939,7 @@ async fn run_endpoint_recv(
             reorder,
             pending_send: VecDeque::new(),
             routed_rx: Some(rx),
+            deadline: Some(deadlines.client()),
             handshake_state: Some(state),
             route: Some(route),
         };
@@ -1008,6 +1019,7 @@ impl UtpStream {
             reorder,
             pending_send: VecDeque::new(),
             routed_rx: None,
+            deadline: None,
             handshake_state: None,
             route: None,
         })
@@ -1379,7 +1391,9 @@ impl UtpStream {
     }
 
     async fn recv_packet(&mut self, wait: Duration) -> Result<UtpPacket, UtpError> {
-        if let Some(rx) = &mut self.routed_rx {
+        if let (Some(rx), Some(deadline)) = (&mut self.routed_rx, &mut self.deadline) {
+            deadline.recv_packet(rx, wait).await
+        } else if let Some(rx) = &mut self.routed_rx {
             timeout(wait, rx.recv())
                 .await
                 .map_err(|_| UtpError::Timeout)?
@@ -1566,6 +1580,7 @@ mod tests {
             reorder,
             pending_send: VecDeque::new(),
             routed_rx: Some(rx),
+            deadline: None,
             handshake_state: None,
             route: None,
         };
@@ -1967,6 +1982,7 @@ mod tests {
             reorder,
             pending_send: VecDeque::new(),
             routed_rx: None,
+            deadline: None,
             handshake_state: None,
             route: None,
         };
