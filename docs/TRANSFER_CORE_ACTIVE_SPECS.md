@@ -3834,8 +3834,8 @@ a whole-torrent scan for each requested block.
   connection limits in the live v1, hybrid-v1, and pure-v2 paths.
   `live_hybrid_v2_plane_returns_data_in_canonical_v1_coordinates` covers the
   new live facade's v2 admission, reservation, wire commit, response, and
-  canonical data projection; production actor handshake/scheduling remain
-  open.
+  canonical data projection with synthetic BEP 47 padding; production actor
+  handshake/scheduling remain open.
 - **Command or probe:** run transfer-core simulator and engine regression
   suites only during the owner-requested bulk pass.
 - **Executed on exact revision:** no. No build or test commands were run for

@@ -617,30 +617,55 @@ mod tests {
 
     #[test]
     fn live_hybrid_v2_plane_returns_data_in_canonical_v1_coordinates() {
-        let piece_length = u64::from(BLOCK_SIZE) * 2;
-        let path = SafeRelPath::from_name("payload.bin", false).unwrap();
+        let piece_length = 32 * 1024;
+        let first_path = SafeRelPath::from_name("a.bin", false).unwrap();
+        let second_path = SafeRelPath::from_name("b.bin", false).unwrap();
         let v1 = Arc::new(
-            PieceMap::new(
+            PieceMap::new_with_padding(
                 piece_length,
-                vec![FileSpan {
-                    file_index: 0,
-                    path: path.clone(),
-                    content_offset: 0,
-                    length: piece_length,
-                }],
+                vec![
+                    FileSpan {
+                        file_index: 0,
+                        path: first_path.clone(),
+                        content_offset: 0,
+                        length: 40 * 1024,
+                    },
+                    FileSpan {
+                        file_index: 1,
+                        path: SafeRelPath::from_name("padding.bin", false).unwrap(),
+                        content_offset: 40 * 1024,
+                        length: 24 * 1024,
+                    },
+                    FileSpan {
+                        file_index: 2,
+                        path: second_path.clone(),
+                        content_offset: 64 * 1024,
+                        length: 24 * 1024,
+                    },
+                ],
+                [1],
             )
             .unwrap(),
         );
         let v2 = Arc::new(
             V2PieceMap::new(
                 piece_length,
-                vec![V2FileSpan {
-                    file_index: 0,
-                    path,
-                    piece_offset: 0,
-                    length: piece_length,
-                    pad: false,
-                }],
+                vec![
+                    V2FileSpan {
+                        file_index: 0,
+                        path: first_path,
+                        piece_offset: 0,
+                        length: 40 * 1024,
+                        pad: false,
+                    },
+                    V2FileSpan {
+                        file_index: 1,
+                        path: second_path,
+                        piece_offset: 64 * 1024,
+                        length: 24 * 1024,
+                        pad: false,
+                    },
+                ],
             )
             .unwrap(),
         );
@@ -648,28 +673,30 @@ mod tests {
         assert!(ledger.attach_hybrid_geometry(Arc::new(HybridGeometry::new(v1, v2))));
 
         let conn = ledger.try_connect_on_plane(Plane::V2, 2).unwrap();
-        let wire_block = BlockExtent::new(0, 0, BLOCK_SIZE);
+        let wire_block = BlockExtent::new(1, 0, 8 * 1024);
+        let canonical_block = BlockExtent::new(1, 0, BLOCK_SIZE);
         assert_eq!(ledger.plane(conn), Some(Plane::V2));
         assert_eq!(
             ledger
                 .reserve_piece_affine_on_plane(conn, wire_block)
                 .unwrap(),
-            wire_block
+            canonical_block
         );
         assert_eq!(
             ledger.commit_on_plane(conn, wire_block, 1).unwrap().0,
             CommitOutcome::OnWire
         );
 
-        let payload = Bytes::from(vec![0xA5; BLOCK_SIZE as usize]);
+        let payload = Bytes::from(vec![0xA5; 8 * 1024]);
         let (outcome, data) = ledger
             .on_block_piece_affine_on_plane(conn, wire_block, payload.clone())
             .unwrap();
         assert!(matches!(outcome, HybridReceiveOutcome::Accepted { .. }));
         let data = data.expect("accepted v2 response returns canonical data");
-        assert_eq!(data.canonical_extent, wire_block);
-        assert_eq!(data.payload, payload);
-        assert_eq!(ledger.piece_progress(0), Some((1, 2)));
+        assert_eq!(data.canonical_extent, canonical_block);
+        assert_eq!(&data.payload[..8 * 1024], payload.as_ref());
+        assert!(data.payload[8 * 1024..].iter().all(|byte| *byte == 0));
+        assert_eq!(ledger.piece_progress(1), Some((1, 2)));
         ledger.check_invariants().unwrap();
     }
 }
