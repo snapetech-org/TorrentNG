@@ -15,4 +15,4 @@ Persistent state and the default download directory live under
 /var/lib/torrentngd. The service runs as the unprivileged torrentngd account.
 
 The PPA contains packages for Ubuntu Jammy, Noble, and Resolute on amd64 and
-arm64. Report package issues at https://github.com/snapetech/TorrentNG/issues.
+arm64. Report package issues at https://github.com/snapetech-org/TorrentNG/issues.

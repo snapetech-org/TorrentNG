@@ -169,9 +169,9 @@ impl Default for StorageIoConfig {
         Self {
             file_pool_size: 512,
             idle_file_ttl_secs: 300,
-            io_worker_threads: 4,
+            io_worker_threads: 2,
             io_queue_depth: 256,
-            hash_worker_threads: 2,
+            hash_worker_threads: 1,
             hash_queue_depth: 256,
             preallocation_mode: PreallocationMode::Auto,
             durability_mode: DurabilityMode::Checkpoint,
@@ -3951,6 +3951,13 @@ mod tests {
     use rt_path::SafeRelPath;
     use rt_path::StorageRootId;
     use rt_piece_map::{FileSpan, PieceMap};
+
+    #[test]
+    fn default_storage_pools_use_bounded_worker_counts() {
+        let config = StorageIoConfig::default();
+        assert_eq!(config.io_worker_threads, 2);
+        assert_eq!(config.hash_worker_threads, 1);
+    }
 
     fn hdd_scheduler() -> MountScheduler {
         MountScheduler::new(

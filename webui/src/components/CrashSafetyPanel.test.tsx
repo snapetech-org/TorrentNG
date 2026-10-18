@@ -220,8 +220,8 @@ describe('CrashSafetyPanel', () => {
     view = makeView({}, 'host_crash')
     renderPanel()
     const summary = await screen.findByTestId('crash-recovery-summary')
-    expect(summary.textContent).toContain('3 torrents rechecked')
-    expect(summary.textContent).toContain('12 pieces re-verified')
+    expect(summary.textContent).toContain('torrents checked again: 3')
+    expect(summary.textContent).toContain('pieces re-verified by the allocation audit: 12')
     expect(screen.getByText('Power loss or system crash')).toBeTruthy()
   })
 
@@ -273,8 +273,8 @@ describe('CrashSafetyPanel', () => {
   it('blocks Apply and explains why when a value is invalid', async () => {
     const user = userEvent.setup()
     renderPanel()
-    await screen.findByLabelText('Always treat as weak')
-    await user.type(screen.getByLabelText('Always treat as weak'), 'not-absolute')
+    await screen.findByLabelText('Always rate these paths as Weak')
+    await user.type(screen.getByLabelText('Always rate these paths as Weak'), 'not-absolute')
     const alert = await screen.findByRole('alert')
     expect(alert.textContent).toMatch(/must be absolute/)
     expect((screen.getByRole('button', { name: 'Apply' }) as HTMLButtonElement).disabled).toBe(true)
@@ -404,9 +404,9 @@ describe('CrashSafetyPanel', () => {
     expect(pathQueries).toEqual(['/mnt/nas/tv'])
     expect(within(report).getByText('/mnt/nas')).toBeTruthy()
     expect(within(report).getByText('Weak')).toBeTruthy()
-    expect(report.textContent).toContain('Raised from Watermark only because this location is rated Weak')
+    expect(report.textContent).toContain('Recovery setting was raised from Use only the sync checkpoint because this location is rated Weak')
     expect(report.textContent).toContain('Sample (10%)')
-    expect(report.textContent).toContain('Raised from Off because this location is rated Weak')
+    expect(report.textContent).toContain('Read-back verification was raised from Off because this location is rated weak.')
   })
 
   it('says so when no folder policy matches and reports a failed check', async () => {
@@ -426,11 +426,13 @@ describe('CrashSafetyPanel', () => {
     await user.click(within(form).getByRole('button', { name: 'Check' }))
     const report = await screen.findByTestId('path-report')
     expect(report.textContent).toContain('None. The global settings apply.')
-    expect(report.textContent).not.toContain('Raised from')
+    expect(report.textContent).not.toContain('Recovery setting was raised from')
 
     pathReport = new Response('bad', { status: 400 })
     await user.click(within(form).getByRole('button', { name: 'Check' }))
-    expect((await within(form).findByRole('alert')).textContent).toMatch(/Could not check that folder: API 400/)
+    expect((await within(form).findByRole('alert')).textContent).toContain(
+      'Could not check that folder: API request failed (HTTP 400):',
+    )
   })
 
   it('discards an answer that described settings that have since changed', async () => {

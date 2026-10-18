@@ -1,5 +1,4 @@
 import { useSyncExternalStore } from 'react'
-import { UI_LABELS } from './ui-labels'
 
 export const INTERFACE_LANGUAGE_OPTIONS = [
   { value: 'en', label: 'English' },
@@ -18,8 +17,30 @@ export const INTERFACE_LANGUAGE_OPTIONS = [
 ] as const
 
 export type InterfaceLanguage = (typeof INTERFACE_LANGUAGE_OPTIONS)[number]['value']
+type TranslatedLanguage = Exclude<InterfaceLanguage, 'en'>
+type LocaleCatalog = Record<string, string>
+
 const STORAGE_KEY = 'torrentng.interface-language'
 const listeners = new Set<() => void>()
+const catalogCache = new Map<TranslatedLanguage, LocaleCatalog>()
+const pendingCatalogs = new Map<TranslatedLanguage, Promise<LocaleCatalog>>()
+const catalogLoaders: Record<TranslatedLanguage, () => Promise<LocaleCatalog>> = {
+  es: () => import('./locale-catalogs/es').then(module => module.UI_LABELS),
+  'zh-Hans': () => import('./locale-catalogs/zh-Hans').then(module => module.UI_LABELS),
+  hi: () => import('./locale-catalogs/hi').then(module => module.UI_LABELS),
+  de: () => import('./locale-catalogs/de').then(module => module.UI_LABELS),
+  ja: () => import('./locale-catalogs/ja').then(module => module.UI_LABELS),
+  fr: () => import('./locale-catalogs/fr').then(module => module.UI_LABELS),
+  'pt-BR': () => import('./locale-catalogs/pt-BR').then(module => module.UI_LABELS),
+  ar: () => import('./locale-catalogs/ar').then(module => module.UI_LABELS),
+  ko: () => import('./locale-catalogs/ko').then(module => module.UI_LABELS),
+  'zh-Hant': () => import('./locale-catalogs/zh-Hant').then(module => module.UI_LABELS),
+  vi: () => import('./locale-catalogs/vi').then(module => module.UI_LABELS),
+  id: () => import('./locale-catalogs/id').then(module => module.UI_LABELS),
+}
+
+type LocaleSnapshot = { language: InterfaceLanguage; revision: number }
+const serverSnapshot: LocaleSnapshot = { language: 'en', revision: 0 }
 
 function isInterfaceLanguage(value: string | null): value is InterfaceLanguage {
   return INTERFACE_LANGUAGE_OPTIONS.some(option => option.value === value)
@@ -48,56 +69,85 @@ function readLanguage(): InterfaceLanguage {
   }
 }
 
-function applyDocumentLanguage(_language: InterfaceLanguage) {
-  if (typeof document === 'undefined') return
-  document.documentElement.lang = 'en'
-  document.documentElement.dir = 'ltr'
-}
-
 let activeLanguage = readLanguage()
+let currentSnapshot: LocaleSnapshot = { language: activeLanguage, revision: 0 }
 
 function notify() {
+  currentSnapshot = { language: activeLanguage, revision: currentSnapshot.revision + 1 }
   listeners.forEach(listener => listener())
+}
+
+function loadCatalog(language: InterfaceLanguage) {
+  if (language === 'en' || catalogCache.has(language) || pendingCatalogs.has(language)) return
+
+  const pending = catalogLoaders[language]()
+  pendingCatalogs.set(language, pending)
+  void pending.then(catalog => {
+    pendingCatalogs.delete(language)
+    catalogCache.set(language, catalog)
+    if (activeLanguage === language) notify()
+  }).catch(() => {
+    pendingCatalogs.delete(language)
+    if (activeLanguage === language) notify()
+  })
+}
+
+function activateLanguage(language: InterfaceLanguage) {
+  activeLanguage = language
+  loadCatalog(language)
+  notify()
 }
 
 if (typeof window !== 'undefined') {
   window.addEventListener('storage', event => {
     if (event.key !== STORAGE_KEY && event.key !== null) return
-    activeLanguage = readLanguage()
-    applyDocumentLanguage(activeLanguage)
-    notify()
+    activateLanguage(readLanguage())
   })
 }
 
 export function applyInitialInterfaceLanguage() {
-  activeLanguage = readLanguage()
-  applyDocumentLanguage(activeLanguage)
+  activateLanguage(readLanguage())
+}
+
+function translatedValue(source: string, language: InterfaceLanguage) {
+  if (language === 'en') return source
+  return catalogCache.get(language)?.[source] ?? source
+}
+
+export function translateInterface(
+  source: string,
+  parameters: Record<string, string | number> = {},
+  language: InterfaceLanguage = activeLanguage,
+) {
+  return translatedValue(source, language).replace(/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g, (placeholder, name: string) => {
+    const value = parameters[name]
+    return typeof value === 'string' || typeof value === 'number' ? String(value) : placeholder
+  })
+}
+
+export function interfaceTextProps(source: string, language: InterfaceLanguage = activeLanguage): { lang: string; dir: 'ltr' | 'rtl' } {
+  const translatedValue = language === 'en' ? undefined : catalogCache.get(language)?.[source]
+  const translated = typeof translatedValue === 'string' && translatedValue !== source
+  return { lang: translated ? language : 'en', dir: translated && language === 'ar' ? 'rtl' : 'ltr' }
 }
 
 export function useInterfaceLanguage() {
-  const language = useSyncExternalStore<InterfaceLanguage>(
+  const snapshot = useSyncExternalStore(
     listener => {
       listeners.add(listener)
       return () => listeners.delete(listener)
     },
-    () => activeLanguage,
-    () => 'en',
+    () => currentSnapshot,
+    () => serverSnapshot,
   )
   const setLanguage = (next: InterfaceLanguage) => {
-    activeLanguage = next
     try { localStorage.setItem(STORAGE_KEY, next) } catch { /* Keep the current tab usable without storage. */ }
-    applyDocumentLanguage(next)
-    notify()
+    activateLanguage(next)
   }
-  const t = (source: string) => {
-    if (language === 'en') return source
-    const entry = (UI_LABELS as Record<string, Partial<Record<InterfaceLanguage, string>>>)[source]
-    return entry?.[language] ?? source
-  }
-  const textProps = (source: string): { lang: string; dir: 'ltr' | 'rtl' } => {
-    const entry = (UI_LABELS as Record<string, Partial<Record<InterfaceLanguage, string>>>)[source]
-    const translated = language !== 'en' && Boolean(entry?.[language])
-    return { lang: translated ? language : 'en', dir: translated && language === 'ar' ? 'rtl' : 'ltr' }
-  }
+  const language = snapshot.language
+  const t = (source: string, parameters: Record<string, string | number> = {}) => translateInterface(source, parameters, language)
+  const textProps = (source: string) => interfaceTextProps(source, language)
   return { language, setLanguage, t, textProps }
 }
+
+loadCatalog(activeLanguage)

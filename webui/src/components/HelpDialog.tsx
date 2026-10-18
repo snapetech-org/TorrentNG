@@ -1,3 +1,4 @@
+import { LocalizedText } from '../lib/LocalizedText'
 import { useDialogFocus } from '../hooks/useDialogFocus'
 
 interface Props {
@@ -25,7 +26,7 @@ const SHORTCUTS = [
 ]
 
 const LINKS = [
-  ['Project', 'https://github.com/snapetech/TorrentNG'],
+  ['Project', 'https://github.com/snapetech-org/TorrentNG'],
   ['Discord support', 'https://discord.gg/5PyXBfvS6T'],
   ['Support on Ko-fi', 'https://ko-fi.com/snapetech'],
   ['qBittorrent API compatibility', 'https://github.com/qbittorrent/qBittorrent/wiki/WebUI-API-(qBittorrent-4.1)'],
@@ -49,49 +50,44 @@ export function HelpDialog({ onClose }: Props) {
           borderBottom: '1px solid var(--border)',
         }}>
           <div style={{ flex: 1 }}>
-            <h2 id="help-dialog-title" style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>Help</h2>
-            <div id="help-dialog-description" style={{ fontSize: 12, color: 'var(--faint)', marginTop: 2 }}>TorrentNG WebUI controls and support links</div>
+            <h2 id="help-dialog-title" style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'var(--text)' }}><LocalizedText source="Help" /></h2>
+            <div id="help-dialog-description" style={{ fontSize: 12, color: 'var(--faint)', marginTop: 2 }}><LocalizedText source="TorrentNG WebUI controls and support links" /></div>
           </div>
-          <button type="button" onClick={onClose} data-dialog-initial-focus style={closeButton}>Close</button>
+          <button type="button" onClick={onClose} data-dialog-initial-focus style={closeButton}><LocalizedText source="Close" /></button>
         </div>
 
         <div style={{ padding: 16, display: 'grid', gap: 18 }}>
           <section className="tng-card" style={sectionCard}>
-            <h3 style={headingStyle}>Shortcuts</h3>
+            <h3 style={headingStyle}><LocalizedText source="Shortcuts" /></h3>
             <div style={{ display: 'grid', gap: 6 }}>
               {SHORTCUTS.map(([key, value]) => (
                 <div key={key} className="tng-shortcut-row" style={rowStyle}>
                   <kbd style={kbdStyle}>{key}</kbd>
-                  <span>{value}</span>
+                  <span><LocalizedText source={value} /></span>
                 </div>
               ))}
             </div>
           </section>
 
           <section className="tng-card" style={sectionCard}>
-            <h3 style={headingStyle}>Actions</h3>
+            <h3 style={headingStyle}><LocalizedText source="Actions" /></h3>
             <p style={textStyle}>
-              Use the toolbar for selected torrents, the left sidebar for filtering and saved views,
-              and the details panel for trackers, files, save path, hash, and destructive actions.
+              <LocalizedText source="Use the toolbar for selected torrents, the left sidebar to filter and open saved views, and the details panel to view trackers, files, the save path, the hash, and destructive actions." /></p>
+          </section>
+
+          <section className="tng-card" style={sectionCard}>
+            <h3 style={headingStyle}><LocalizedText source="Finalizing" /></h3>
+            <p style={textStyle}>
+              <LocalizedText source="A torrent shown as Finalizing has downloaded every piece but is being held until its data is confirmed on disk, so a power cut cannot leave a half-written file marked complete for Sonarr, Radarr or a tracker. It normally clears within a second. If it stays, storage cannot be synced; see Settings, Backend, Crash safety." />
             </p>
           </section>
 
           <section className="tng-card" style={sectionCard}>
-            <h3 style={headingStyle}>Finalizing</h3>
-            <p style={textStyle}>
-              A torrent shown as Finalizing has downloaded every piece but is being held until its data is
-              confirmed on disk, so a power cut cannot leave a half-written file marked complete for
-              Sonarr, Radarr or a tracker. It normally clears within a second. If it stays, storage cannot be
-              synced; see Settings, Backend, Crash safety.
-            </p>
-          </section>
-
-          <section className="tng-card" style={sectionCard}>
-            <h3 style={headingStyle}>Links</h3>
+            <h3 style={headingStyle}><LocalizedText source="Links" /></h3>
             <div style={{ display: 'grid', gap: 7 }}>
               {LINKS.map(([label, href]) => (
                 <a key={href} className="tng-card-link" href={href} target="_blank" rel="noreferrer" style={linkStyle}>
-                  <span>{label}</span>
+                  <span><LocalizedText source={label} /></span>
                   <span style={{ color: 'var(--faint)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{href.replace(/^https?:\/\//, '')}</span>
                   <span aria-hidden="true" style={{ color: 'var(--accent-text)', justifySelf: 'end' }}>↗</span>
                 </a>

@@ -1,3 +1,5 @@
+import { LocalizedErrorText, LocalizedText } from '../lib/LocalizedText'
+import { interfaceTextProps, translateInterface } from '../lib/interfaceLocale'
 import { getRegionalLocale } from '../lib/localeFormat'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -67,22 +69,22 @@ export function CategoriesPanel() {
     <section aria-labelledby="categories-title" style={{ padding: '20px 24px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
         <div>
-          <h2 id="categories-title" style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>Categories</h2>
+          <h2 id="categories-title" style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)' }}><LocalizedText source="Categories" /></h2>
           <div style={{ fontSize: 12, color: 'var(--faint)', marginTop: 2 }}>
-            {categories.length.toLocaleString(getRegionalLocale())} configured
+            <LocalizedText source="{count} configured" parameters={{ count: categories.length.toLocaleString(getRegionalLocale()) }} />
           </div>
         </div>
         {(save.isPending || del.isPending) && (
           <span role="status" aria-live="polite" style={{
             color: 'var(--accent-text)', background: 'var(--accent-soft)', border: '1px solid var(--accent)',
             borderRadius: 999, padding: '2px 8px', fontSize: 11, fontWeight: 700,
-          }}>Working</span>
+          }}><LocalizedText source="Working" /></span>
         )}
       </div>
 
       {/* Category list */}
       {isLoading ? (
-        <div role="status" aria-label="Loading categories" style={{ display: 'grid', gap: 8, marginBottom: 20, maxWidth: 720 }}>
+        <div role="status" aria-label={translateInterface("Loading categories")} style={{ display: 'grid', gap: 8, marginBottom: 20, maxWidth: 720 }} {...interfaceTextProps("Loading categories")}>
           {Array.from({ length: 3 }, (_, index) => (
             <div key={index} style={{
               border: '1px solid var(--border)', borderRadius: 7, background: 'var(--surface)',
@@ -99,10 +101,10 @@ export function CategoriesPanel() {
           border: '1px dashed var(--border-strong)', borderRadius: 7,
           background: 'color-mix(in srgb, var(--surface) 72%, transparent)', padding: 14,
           maxWidth: 720,
-        }}>No categories yet.</div>
+        }}><LocalizedText source="No categories yet." /></div>
       ) : (
         <div style={{ marginBottom: 20 }}>
-          {deleteError && <Notice tone="error">{deleteError}</Notice>}
+          {deleteError && <Notice tone="error"><LocalizedErrorText message={deleteError} /></Notice>}
           {categories.map(cat => (
             <div key={cat.name} className="tng-card tng-category-row" data-active={editingName === cat.name ? 'true' : 'false'} data-has-path={cat.save_path ? 'true' : 'false'} style={{
               display: 'grid',
@@ -124,19 +126,21 @@ export function CategoriesPanel() {
                   <span style={{ fontSize: 13, color: 'var(--text)', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cat.name}</span>
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--faint)', fontFamily: 'monospace', marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {cat.save_path || '(no save path)'}
+                  {cat.save_path || <LocalizedText source="No save path" />}
                 </div>
               </div>
               <button
                 type="button"
-                aria-label={`Edit category ${cat.name}`}
+                aria-label={translateInterface('Edit category {name}', { name: cat.name })}
+                {...interfaceTextProps('Edit category {name}')}
                 onClick={() => startEdit(cat)}
                 disabled={save.isPending || del.isPending}
                 style={{ background: 'var(--surface-2)', border: '1px solid var(--border-strong)', borderRadius: 4, color: 'var(--text)', padding: '2px 8px', fontSize: 11, cursor: 'pointer' }}
-              >Edit</button>
+              ><LocalizedText source="Edit" /></button>
               <button
                 type="button"
-                aria-label={`Delete category ${cat.name}`}
+                aria-label={translateInterface('Delete category {name}', { name: cat.name })}
+                {...interfaceTextProps('Delete category {name}')}
                 onClick={() => del.mutate(cat.name)}
                 disabled={save.isPending || del.isPending}
                 style={{
@@ -147,7 +151,7 @@ export function CategoriesPanel() {
                   padding: '2px 8px', fontSize: 11, cursor: save.isPending || del.isPending ? 'not-allowed' : 'pointer',
                   opacity: save.isPending || del.isPending ? 0.5 : 1,
                 }}
-              >{del.isPending && del.variables === cat.name ? 'Deleting…' : 'Delete'}</button>
+              >{del.isPending && del.variables === cat.name ? <LocalizedText source="Deleting…" /> : <LocalizedText source="Delete" />}</button>
             </div>
           ))}
         </div>
@@ -160,21 +164,21 @@ export function CategoriesPanel() {
         boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.03)',
       }}>
         <h3 style={{ margin: 0, fontSize: 12, fontWeight: 600, color: 'var(--faint)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-          {editingName ? `Edit "${editingName}"` : 'Add category'}
+          {editingName ? <LocalizedText source="Edit category {name}" parameters={{ name: editingName }} /> : <LocalizedText source="Add category" />}
         </h3>
         <div>
-          <label htmlFor="category-name" style={{ fontSize: 11, color: 'var(--faint)', display: 'block', marginBottom: 4 }}>Name</label>
+          <label htmlFor="category-name" style={{ fontSize: 11, color: 'var(--faint)', display: 'block', marginBottom: 4 }}><LocalizedText source="Name" /></label>
           <input
             id="category-name"
             value={name}
             onChange={e => setName(e.target.value)}
-            placeholder="e.g. Movies"
+            placeholder={translateInterface("e.g. Movies")}
             disabled={!!editingName}
             style={{ ...INPUT, opacity: editingName ? 0.6 : 1 }}
-          />
+          {...interfaceTextProps("e.g. Movies")} />
         </div>
         <div>
-          <label htmlFor="category-save-path" style={{ fontSize: 11, color: 'var(--faint)', display: 'block', marginBottom: 4 }}>Save path</label>
+          <label htmlFor="category-save-path" style={{ fontSize: 11, color: 'var(--faint)', display: 'block', marginBottom: 4 }}><LocalizedText source="Save path" /></label>
           <input
             id="category-save-path"
             value={savePath}
@@ -190,16 +194,16 @@ export function CategoriesPanel() {
             cursor: save.isPending || !name.trim() ? 'not-allowed' : 'pointer',
             opacity: save.isPending || !name.trim() ? 0.55 : 1,
           }}>
-            {save.isPending ? 'Saving…' : editingName ? 'Save changes' : 'Add'}
+            {save.isPending ? <LocalizedText source="Saving…" /> : editingName ? <LocalizedText source="Save changes" /> : <LocalizedText source="Add" />}
           </button>
           {editingName && (
             <button type="button" onClick={cancelEdit} style={{
               background: 'none', border: '1px solid var(--border-strong)', borderRadius: 5,
               color: 'var(--faint)', padding: '5px 12px', fontSize: 13, cursor: 'pointer',
-            }}>Cancel</button>
+            }}><LocalizedText source="Cancel" /></button>
           )}
         </div>
-        {save.isError && <Notice tone="error">Failed to save.</Notice>}
+        {save.isError && <Notice tone="error"><LocalizedText source="Failed to save." /></Notice>}
       </form>
     </section>
   )

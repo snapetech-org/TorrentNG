@@ -9,9 +9,9 @@ Two templates are provided:
 
 Both ship a qBittorrent-compatible API so Prowlarr, Sonarr, Radarr, autobrr, and cross-seed keep working unchanged.
 
-Source, issues, and documentation: https://github.com/snapetech/TorrentNG
+Source, issues, and documentation: https://github.com/snapetech-org/TorrentNG
   </Profile>
-  <Icon>https://raw.githubusercontent.com/snapetech/TorrentNG/main/icon.png</Icon>
-  <WebPage>https://github.com/snapetech/TorrentNG</WebPage>
-  <Forum>https://github.com/snapetech/TorrentNG/issues</Forum>
+  <Icon>https://raw.githubusercontent.com/snapetech-org/TorrentNG/main/icon.png</Icon>
+  <WebPage>https://github.com/snapetech-org/TorrentNG</WebPage>
+  <Forum>https://github.com/snapetech-org/TorrentNG/issues</Forum>
 </CommunityApplications>

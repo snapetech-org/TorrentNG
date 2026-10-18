@@ -1,3 +1,4 @@
+import { interfaceTextProps, translateInterface } from '../lib/interfaceLocale'
 import { formatRegionalNumber, getRegionalLocale } from '../lib/localeFormat'
 import { useInterfaceLanguage } from '../lib/interfaceLocale'
 import { useState, useRef, useCallback } from 'react'
@@ -31,6 +32,10 @@ export function AddTorrentDialog({ onClose }: Props) {
 
   const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: api.categories.list })
   const urlCount = url.split('\n').map(line => line.trim()).filter(Boolean).length
+  const stagedFilesSource = files.length === 1 ? '{count} file staged' : '{count} files staged'
+  const stagedUrlsSource = urlCount === 1 ? '{count} URL staged' : '{count} URLs staged'
+  const stagedFilesCount = files.length.toLocaleString(getRegionalLocale())
+  const stagedUrlsCount = urlCount.toLocaleString(getRegionalLocale())
   const canSubmit = !busy && (urlCount > 0 || files.length > 0)
   const selectedCategory = categories.find(c => c.name === category)
   const effectiveSavePath = savePath.trim() || selectedCategory?.save_path || ''
@@ -47,7 +52,7 @@ export function AddTorrentDialog({ onClose }: Props) {
       const names = new Set(prev.map(f => f.name))
       return [...prev, ...valid.filter(f => !names.has(f.name))]
     })
-  }, [])
+  }, [t])
 
   function handleDrop(e: React.DragEvent) {
     e.preventDefault()
@@ -79,8 +84,8 @@ export function AddTorrentDialog({ onClose }: Props) {
 
       qc.invalidateQueries({ queryKey: ['torrents'], exact: false })
       onClose()
-    } catch (e) {
-      setError(String(e))
+    } catch {
+      setError(t('Failed to add torrent. Check the URL or file and try again.'))
     } finally {
       setBusy(false)
     }
@@ -147,10 +152,10 @@ export function AddTorrentDialog({ onClose }: Props) {
             type="file"
             accept=".torrent"
             multiple
-            aria-label="Torrent files"
+            aria-label={translateInterface("Torrent files")}
             style={{ display: 'none' }}
             onChange={e => e.target.files && addFiles(e.target.files)}
-          />
+          {...interfaceTextProps("Torrent files")} />
           {files.length === 0 ? (
             <div style={{ display: 'grid', gap: 5 }}>
               <span {...textProps(dragOver ? 'Drop to stage torrents' : 'Drop .torrent files here')} style={{ fontSize: 14, color: dragOver ? 'var(--accent-text)' : 'var(--muted)', fontWeight: 700 }}>
@@ -170,13 +175,13 @@ export function AddTorrentDialog({ onClose }: Props) {
                 }}>
                   <span style={{ fontSize: 12, color: 'var(--muted)', flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📄 {f.name}</span>
                   <span style={{ color: 'var(--faint)', fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>{fmtSize(f.size)}</span>
-                  <button type="button" aria-label={`Remove ${f.name}`} onClick={e => { e.stopPropagation(); setFiles(p => p.filter(x => x !== f)) }}
+                  <button type="button" aria-label={t('Remove {name}', { name: f.name })} {...textProps('Remove {name}')} onClick={e => { e.stopPropagation(); setFiles(p => p.filter(x => x !== f)) }}
                     style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14, padding: '0 2px' }}>✕</button>
                 </div>
               ))}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
-                <span {...textProps(files.length === 1 ? 'file staged' : 'files staged')} style={{ fontSize: 11, color: 'var(--success)' }}>
-                  {files.length.toLocaleString(getRegionalLocale())} {t(files.length === 1 ? 'file staged' : 'files staged')}
+                <span {...textProps(stagedFilesSource)} style={{ fontSize: 11, color: 'var(--success)' }}>
+                  {t(stagedFilesSource, { count: stagedFilesCount })}
                 </span>
                 <button
                   type="button"
@@ -187,7 +192,8 @@ export function AddTorrentDialog({ onClose }: Props) {
                     background: 'var(--surface-2)', border: '1px solid var(--border-strong)', borderRadius: 4,
                     color: 'var(--accent-text)', padding: '2px 7px', fontSize: 10, cursor: 'pointer',
                   }}
-                >{t('Browse more')}</button>
+                {...textProps('Select more files')}
+                >{t('Select more files')}</button>
               </div>
             </div>
           )}
@@ -211,7 +217,9 @@ export function AddTorrentDialog({ onClose }: Props) {
           />
           {urlCount > 0 && (
             <div style={{ marginTop: 5, color: 'var(--accent-text)', fontSize: 11 }}>
-              {urlCount.toLocaleString(getRegionalLocale())} {t(urlCount === 1 ? 'URL staged' : 'URLs staged')}
+              <span {...textProps(stagedUrlsSource)}>
+                {t(stagedUrlsSource, { count: stagedUrlsCount })}
+              </span>
             </div>
           )}
         </div>
@@ -248,7 +256,7 @@ export function AddTorrentDialog({ onClose }: Props) {
               }}
               style={{ ...INPUT, cursor: 'pointer' }}
             >
-              <option value="">{t('None')}</option>
+              <option value="" {...textProps('None')}>{t('None')}</option>
               {categories.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
             </select>
             {selectedCategory?.save_path && (
@@ -274,8 +282,10 @@ export function AddTorrentDialog({ onClose }: Props) {
           padding: '7px 9px', border: '1px solid var(--border)', borderRadius: 6,
           background: 'var(--surface)', color: 'var(--faint)', fontSize: 12,
         }}>
-          <span {...textProps('file staged')} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {files.length.toLocaleString(getRegionalLocale())} {t(files.length === 1 ? 'file staged' : 'files staged')} · {urlCount.toLocaleString(getRegionalLocale())} {t(urlCount === 1 ? 'URL staged' : 'URLs staged')}
+          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span {...textProps(stagedFilesSource)}>{t(stagedFilesSource, { count: stagedFilesCount })}</span>
+            {' · '}
+            <span {...textProps(stagedUrlsSource)}>{t(stagedUrlsSource, { count: stagedUrlsCount })}</span>
             {effectiveSavePath ? ` · ${effectiveSavePath}` : ''}
           </span>
           <span style={{ color: start ? 'var(--success)' : 'var(--warning)' }}>

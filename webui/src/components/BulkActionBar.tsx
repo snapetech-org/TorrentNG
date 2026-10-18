@@ -1,3 +1,6 @@
+import { LocalizedErrorText, LocalizedText } from '../lib/LocalizedText'
+import { interfaceTextProps, translateInterface } from '../lib/interfaceLocale'
+import { getRegionalLocale } from '../lib/localeFormat'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -18,7 +21,7 @@ export function BulkActionBar({ hashes, onClear }: Props) {
   const qc = useQueryClient()
   const [pending, setPending] = useState<string | null>(null)
   const [preview, setPreview] = useState<{ applied: string[] } | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<string | { source: string; parameters?: Record<string, string | number> } | null>(null)
   const [category, setCategory] = useState('')
   const [savePath, setSavePath] = useState('')
 
@@ -45,7 +48,10 @@ export function BulkActionBar({ hashes, onClear }: Props) {
         setPreview(data)
       } else {
         setPreview(null)
-        if (data.errors.length > 0) setError(`${data.errors.length} error(s)`)
+        if (data.errors.length > 0) setError({
+          source: data.errors.length === 1 ? '{count} error' : '{count} errors',
+          parameters: { count: data.errors.length.toLocaleString(getRegionalLocale()) },
+        })
         qc.invalidateQueries({ queryKey: ['torrents'], exact: false })
       }
     } catch (e) {
@@ -56,7 +62,7 @@ export function BulkActionBar({ hashes, onClear }: Props) {
   }
 
   return (
-    <div role="toolbar" aria-label="Bulk torrent actions" aria-busy={Boolean(pending)} style={{
+    <div role="toolbar" aria-label={translateInterface("Bulk torrent actions")} aria-busy={Boolean(pending)} style={{
       minHeight: 44,
       background: 'var(--panel)',
       borderBottom: '1px solid var(--border)',
@@ -67,9 +73,9 @@ export function BulkActionBar({ hashes, onClear }: Props) {
       flexWrap: 'wrap',
       flexShrink: 0,
       fontSize: 12,
-    }}>
+    }} {...interfaceTextProps("Bulk torrent actions")}>
       <span role="status" aria-live="polite" style={{ color: 'var(--accent)', fontWeight: 600, marginRight: 4 }}>
-        {hashes.length} selected
+        <LocalizedText source="{count} selected" parameters={{ count: hashes.length.toLocaleString(getRegionalLocale()) }} />
       </span>
 
       {ACTIONS.map(a => (
@@ -89,12 +95,12 @@ export function BulkActionBar({ hashes, onClear }: Props) {
             opacity: pending ? 0.5 : 1,
           }}
         >
-          {pending === a.key ? '…' : a.label}
+          {pending === a.key ? '…' : <LocalizedText source={a.label} />}
         </button>
       ))}
 
       <select
-        aria-label="Bulk category"
+        aria-label={translateInterface("Category for selected torrents")}
         value={category}
         onChange={e => setCategory(e.target.value)}
         disabled={!!pending}
@@ -103,8 +109,8 @@ export function BulkActionBar({ hashes, onClear }: Props) {
           color: 'var(--muted)', padding: '3px 8px', fontSize: 12,
           maxWidth: 150,
         }}
-      >
-        <option value="">Clear category</option>
+       {...interfaceTextProps("Category for selected torrents")}>
+        <option value=""><LocalizedText source="Clear category" /></option>
         {categories.map(cat => (
           <option key={cat.name} value={cat.name}>{cat.name}</option>
         ))}
@@ -119,8 +125,7 @@ export function BulkActionBar({ hashes, onClear }: Props) {
           cursor: pending ? 'not-allowed' : 'pointer',
         }}
       >
-        Preview category
-      </button>
+        <LocalizedText source="Preview category" /></button>
       <button
         type="button"
         disabled={!!pending}
@@ -131,21 +136,20 @@ export function BulkActionBar({ hashes, onClear }: Props) {
           cursor: pending ? 'not-allowed' : 'pointer',
         }}
       >
-        Apply category
-      </button>
+        <LocalizedText source="Apply category" /></button>
 
       <input
-        aria-label="Bulk save path"
+        aria-label={translateInterface("Bulk save path")}
         value={savePath}
         onChange={e => setSavePath(e.target.value)}
         disabled={!!pending}
-        placeholder="Save path…"
+        placeholder={translateInterface("Destination path…")}
         style={{
           width: 180, background: 'var(--surface)', border: '1px solid var(--border-strong)',
           borderRadius: 4, color: 'var(--text)', padding: '3px 8px',
           fontSize: 12, fontFamily: 'monospace',
         }}
-      />
+      {...interfaceTextProps("Bulk save path")} />
       <button
         type="button"
         disabled={!!pending || !savePath.trim()}
@@ -157,8 +161,7 @@ export function BulkActionBar({ hashes, onClear }: Props) {
           opacity: savePath.trim() ? 1 : 0.5,
         }}
       >
-        Preview path
-      </button>
+        <LocalizedText source="Preview path" /></button>
       <button
         type="button"
         disabled={!!pending || !savePath.trim()}
@@ -170,8 +173,7 @@ export function BulkActionBar({ hashes, onClear }: Props) {
           opacity: savePath.trim() ? 1 : 0.5,
         }}
       >
-        Apply path
-      </button>
+        <LocalizedText source="Apply path" /></button>
 
       <button
         type="button"
@@ -188,16 +190,15 @@ export function BulkActionBar({ hashes, onClear }: Props) {
           marginLeft: 4,
         }}
       >
-        Dry run
-      </button>
+        <LocalizedText source="Dry run" /></button>
 
       {preview && (
           <span role="status" aria-live="polite" style={{ color: 'var(--muted)', fontSize: 11 }}>
-          Preview: {preview.applied.length} would be affected
-        </span>
+          <LocalizedText source={preview.applied.length === 1 ? 'Preview: {count} torrent would be affected.' : 'Preview: {count} torrents would be affected.'} parameters={{ count: preview.applied.length.toLocaleString(getRegionalLocale()) }} />
+          </span>
       )}
       {error && (
-        <span role="alert" aria-live="assertive" style={{ color: '#ef4444', fontSize: 11 }}>{error}</span>
+        <span role="alert" aria-live="assertive" style={{ color: '#ef4444', fontSize: 11 }}>{typeof error === 'string' ? <LocalizedErrorText message={error} /> : <LocalizedText source={error.source} parameters={error.parameters} />}</span>
       )}
 
       <button
@@ -213,8 +214,7 @@ export function BulkActionBar({ hashes, onClear }: Props) {
           padding: '2px 6px',
         }}
       >
-        ✕ Clear
-      </button>
+        <LocalizedText source="✕ Deselect all" /></button>
     </div>
   )
 }

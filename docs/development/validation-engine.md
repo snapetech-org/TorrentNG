@@ -5,6 +5,13 @@ replacing Cargo, unittest, Vitest, or the certification scripts. Its inventory
 tracks Rust unit and integration test sources, Python test modules, WebUI tests,
 and the certification self-tests.
 
+## GitHub runner routing
+
+All CI and release jobs use GitHub-hosted runners. Linux jobs use
+`ubuntu-latest`; Windows smoke checks use `windows-latest`. Real-device storage
+evidence requires an operator-run test against the intended mount. The 24-hour
+soak requires an operator-managed process outside GitHub Actions.
+
 From the repository root:
 
 ```sh

@@ -1,4 +1,6 @@
 import { useEffect, useRef } from 'react'
+import { LocalizedText } from '../lib/LocalizedText'
+import { interfaceTextProps, translateInterface } from '../lib/interfaceLocale'
 import { formatRegionalNumber } from '../lib/localeFormat'
 import { isFinalizing, type TorrentSummary } from '../api/client'
 import { useDialogFocus } from '../hooks/useDialogFocus'
@@ -100,7 +102,8 @@ export function TorrentContextMenu({
       tabIndex={-1}
       data-status={status.label.toLowerCase()}
       role="menu"
-      aria-label={`Actions for ${menu.torrent.name}`}
+      aria-label={translateInterface('Actions for {name}', { name: menu.torrent.name })}
+      {...interfaceTextProps('Actions for {name}')}
       onKeyDown={moveMenuFocus}
       onContextMenu={e => e.preventDefault()}
       style={{
@@ -119,8 +122,8 @@ export function TorrentContextMenu({
             width: 7, height: 7, borderRadius: 999, background: status.color,
             boxShadow: `0 0 12px color-mix(in srgb, ${status.color} 45%, transparent)`,
           }} />
-          <span style={{ color: status.color, fontWeight: 700 }}>{status.label}</span>
-          <span style={{ marginInlineStart: 'auto' }}>{formatRegionalNumber(menu.torrent.ratio / 1000, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ratio</span>
+          <span style={{ color: status.color, fontWeight: 700 }}><LocalizedText source={status.label} /></span>
+          <span style={{ marginInlineStart: 'auto' }}><LocalizedText source="Ratio: {value}" parameters={{ value: formatRegionalNumber(menu.torrent.ratio / 1000, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} /></span>
         </span>
       </div>
       {items.map((item, index) => item.separator ? (
@@ -145,7 +148,7 @@ export function TorrentContextMenu({
           }}
         >
           <span style={{ color: item.danger ? 'var(--danger)' : 'var(--faint)', fontSize: 11 }}>{item.icon}</span>
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.label}</span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><LocalizedText source={item.label} /></span>
         </button>
       ))}
     </div>

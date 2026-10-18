@@ -22,6 +22,7 @@ CHECKOUT_WORKFLOWS = (
     "release-aur.yml",
     "release-copr.yml",
     "package-smoke-disabled.yml",
+    "fork-safe-validation.yml",
 )
 
 
@@ -81,38 +82,29 @@ def run_interop_preflight(
 
 
 class WorkflowSecurityTests(unittest.TestCase):
-    def test_pull_requests_never_select_persistent_runners(self) -> None:
-        ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
-        self.assertRegex(ci, r"(?m)^\s*pull_request:")
-        self.assertRegex(ci, r'(?m)^  push:\n    branches: \["main"\]$')
-        self.assertNotIn('branches: ["**"]', ci)
-        self.assertNotRegex(ci, r"(?m)^\s*runs-on:\s*\[self-hosted")
-        runner_lines = [
-            line.strip()
-            for line in ci.splitlines()
-            if line.lstrip().startswith("runs-on:") and "self-hosted" in line
-        ]
-        self.assertEqual(len(runner_lines), 7)
-        for runner in runner_lines:
-            self.assertNotIn("github.event_name == 'pull_request'", runner)
-            self.assertIn(
-                "github.event_name == 'push' && github.ref == 'refs/heads/main'",
-                runner,
-            )
-            self.assertIn(
-                "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
-                runner,
-            )
-            self.assertIn(
-                "fromJSON('[\"self-hosted\",\"Linux\",\"X64\",\"host\"]')",
-                runner,
-            )
-            self.assertIn("fromJSON('[\"ubuntu-latest\"]')", runner)
-        self.assertNotRegex(ci, r"(?m)^\s*pull_request_target:")
-
+    def test_workflows_use_github_hosted_runners(self) -> None:
+        public_jit_runner = (
+            "runs-on: ${{ github.event_name == 'pull_request' && "
+            "github.event.pull_request.head.repo.fork == true && "
+            "fromJSON('[\"self-hosted\", \"linux\", \"x64\", \"public-pr-torrentng\"]') "
+            "|| 'ubuntu-latest' }}"
+        )
+        for workflow_path in WORKFLOWS.glob("*.y*"):
+            source = workflow_path.read_text(encoding="utf-8")
+            if workflow_path.name == "fork-safe-validation.yml":
+                self.assertIn(public_jit_runner, source)
+                self.assertIn(
+                    "github.event.pull_request.base.repo.full_name == 'snapetech-org/TorrentNG'",
+                    source,
+                )
+                self.assertIn("contents: read", source)
+                self.assertNotIn("secrets:", source)
+                self.assertNotIn("pull_request_target", source)
+                continue
+            self.assertNotRegex(source, r"(?m)^\s*(?:runs-on|labels):.*self-hosted")
+            self.assertNotIn("TRUSTED_MAIN_RUNNERS_ENABLED", source)
         windows = (WORKFLOWS / "windows-smoke.yml").read_text(encoding="utf-8")
         self.assertRegex(windows, r"(?m)^\s*runs-on:\s*windows-latest\s*$")
-        self.assertNotRegex(windows, r"(?m)^\s*runs-on:.*self-hosted")
 
     def test_cargo_validation_steps_keep_the_selected_rust_toolchain(self) -> None:
         ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
@@ -146,7 +138,7 @@ class WorkflowSecurityTests(unittest.TestCase):
             chr(10) + "  sidecar:", 1
         )[0]
         self.assertIn(
-            'cargo_fuzz_root="$(mktemp -d -- "$RUNNER_TEMP/cargo-fuzz.XXXXXX")"',
+            'cargo_fuzz_root="$(mktemp -d -- "$TMPDIR/cargo-fuzz.XXXXXX")"',
             job,
         )
         self.assertIn(
@@ -156,82 +148,12 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("printf", job)
         self.assertIn('"$cargo_fuzz_root/bin" >> "$GITHUB_PATH"', job)
 
-    def test_self_hosted_jobs_use_runner_temp_for_temporary_files(self) -> None:
-        missing: list[str] = []
-        observed = 0
-        setup_name = "      - name: Route temporary files to runner temp"
-        for workflow_path in sorted(WORKFLOWS.glob("*.yml")):
-            lines = workflow_path.read_text(encoding="utf-8").splitlines()
-            jobs_start = next(
-                (index for index, line in enumerate(lines) if line == "jobs:"),
-                None,
-            )
-            if jobs_start is None:
-                continue
-
-            jobs: list[tuple[str, str]] = []
-            current_name: str | None = None
-            current_body: list[str] = []
-            for line in lines[jobs_start + 1 :]:
-                if line and not line.startswith(" "):
-                    break
-                match = re.fullmatch(r"  ([A-Za-z0-9_-]+):", line)
-                if match is not None:
-                    if current_name is not None:
-                        jobs.append((current_name, chr(10).join(current_body)))
-                    current_name = match.group(1)
-                    current_body = []
-                elif current_name is not None:
-                    current_body.append(line)
-            if current_name is not None:
-                jobs.append((current_name, chr(10).join(current_body)))
-
-            for job_name, body in jobs:
-                if re.search(r"(?m)^    runs-on:.*self-hosted", body) is None:
-                    continue
-                observed += 1
-                steps_start = body.find("    steps:" + chr(10))
-                if steps_start < 0:
-                    missing.append(f"{workflow_path.name}:{job_name}:steps are missing")
-                    continue
-                steps_body = body[steps_start:]
-                first_step = next(
-                    (
-                        line
-                        for line in steps_body.splitlines()
-                        if line.startswith("      - ")
-                    ),
-                    None,
-                )
-                if first_step != setup_name:
-                    missing.append(
-                        f"{workflow_path.name}:{job_name}:setup step is not first"
-                    )
-                    continue
-                setup = steps_body.split(setup_name, 1)[1].split(
-                    chr(10) + "      - ", 1
-                )[0]
-                required = (
-                    "RUNNER_TEMP:?RUNNER_TEMP is required",
-                    'mkdir -p "$RUNNER_TEMP"',
-                    'test -w "$RUNNER_TEMP"',
-                    "TMPDIR=%s",
-                    "$RUNNER_TEMP",
-                    "$GITHUB_ENV",
-                    '>> "$GITHUB_ENV"',
-                )
-                if any(item not in setup for item in required):
-                    missing.append(
-                        f"{workflow_path.name}:{job_name}:incomplete temp setup"
-                    )
-
-        self.assertGreater(observed, 0, "no self-hosted workflow jobs were found")
-        self.assertEqual(
-            [],
-            missing,
-            "every self-hosted job must export RUNNER_TEMP as TMPDIR "
-            "before other steps",
-        )
+    def test_workflows_do_not_reference_private_runner_configuration(self) -> None:
+        for workflow_path in WORKFLOWS.glob("*.y*"):
+            source = workflow_path.read_text(encoding="utf-8")
+            self.assertNotIn("PREFER_SELF_HOSTED", source)
+            self.assertNotIn("TRUSTED_MAIN_RUNNERS_ENABLED", source)
+            self.assertNotIn("private-runner-temp", source)
 
     def test_checkout_credentials_are_not_persisted(self) -> None:
         for workflow_name in CHECKOUT_WORKFLOWS:

@@ -79,6 +79,16 @@ impl FramePool {
         self.in_use.load(Ordering::Relaxed)
     }
 
+    /// Bytes held in idle size-class buffers for reuse.
+    pub fn retained_bytes(&self) -> u64 {
+        self.lock_inner()
+            .free
+            .iter()
+            .flatten()
+            .map(|buffer| buffer.capacity() as u64)
+            .sum()
+    }
+
     pub fn denied_allocations(&self) -> u64 {
         self.denied.load(Ordering::Relaxed)
     }
@@ -450,6 +460,14 @@ mod tests {
         assert_eq!(pool.in_use_bytes(), 16 * 1024);
         drop(f);
         assert_eq!(pool.in_use_bytes(), 0);
+    }
+
+    #[test]
+    fn retained_bytes_reports_idle_reuse_buffers() {
+        let pool = FramePool::new(1024 * 1024);
+        assert_eq!(pool.retained_bytes(), 0);
+        drop(pool.try_acquire(1).unwrap());
+        assert_eq!(pool.retained_bytes(), 16 * 1024);
     }
 
     #[test]

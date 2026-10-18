@@ -1,13 +1,13 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>torrentng</Name>
-  <Repository>ghcr.io/snapetech/torrentng/native:latest</Repository>
+  <Repository>ghcr.io/snapetech/torrentng/native:main</Repository>
   <Registry>https://github.com/snapetech/TorrentNG/pkgs/container/torrentng%2Fnative</Registry>
   <Network>bridge</Network>
   <Privileged>false</Privileged>
   <Shell>sh</Shell>
 
-  <Icon>https://raw.githubusercontent.com/snapetech/TorrentNG/main/icon.png</Icon>
+  <Icon>https://raw.githubusercontent.com/snapetech-org/TorrentNG/main/icon.png</Icon>
 
   <WebUI>http://[IP]:[PORT:8080]</WebUI>
 
@@ -27,10 +27,10 @@ RUNNING BEHIND A VPN: Runtime listen-port changes are supported through the auth
   <Category>Downloaders:</Category>
   <Category>Network:Web</Category>
 
-  <Support>https://github.com/snapetech/TorrentNG/issues</Support>
-  <Project>https://github.com/snapetech/TorrentNG</Project>
-  <TemplateURL>https://raw.githubusercontent.com/snapetech/TorrentNG/main/templates/torrentng.xml</TemplateURL>
-  <ReadMe>https://raw.githubusercontent.com/snapetech/TorrentNG/main/deploy/unraid/README.md</ReadMe>
+  <Support>https://github.com/snapetech-org/TorrentNG/issues</Support>
+  <Project>https://github.com/snapetech-org/TorrentNG</Project>
+  <TemplateURL>https://raw.githubusercontent.com/snapetech-org/TorrentNG/main/templates/torrentng.xml</TemplateURL>
+  <ReadMe>https://raw.githubusercontent.com/snapetech-org/TorrentNG/main/deploy/unraid/README.md</ReadMe>
 
   <ExtraSearchTerms>bittorrent torrent client seedbox rtorrent qbittorrent transmission deluge torrentngd</ExtraSearchTerms>
   <Requires>Create the config appdata folder (optionally with a config.toml inside) and set an API token before first start. The install generates a unique WebUI password. To retrieve the active login, open Unraid's Docker tab, click this container's icon, choose Console, and run `torrentngd auth-token`. On this template's public bind, use the API token in either login field for first sign-in, then set a username and password of at least 16 characters in Settings -> Security.</Requires>

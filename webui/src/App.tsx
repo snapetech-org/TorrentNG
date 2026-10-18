@@ -1,3 +1,5 @@
+import { LocalizedErrorText, LocalizedRichText, LocalizedText } from './lib/LocalizedText'
+import { interfaceTextProps, translateInterface } from './lib/interfaceLocale'
 import { Suspense, lazy, useState, useCallback, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTorrentsInfinite, flattenPages, useHealth } from './hooks/useTorrents'
@@ -22,7 +24,7 @@ import { BulkEditDialog } from './components/BulkEditDialog'
 import { useDialogFocus } from './hooks/useDialogFocus'
 import { api, AuthError, type ListParams, type LiveStats, type TorrentSummary } from './api/client'
 import { PALETTES, applyTheme, findPalette, THEME_MODE_STORAGE_KEY, THEME_STORAGE_KEY, type ThemeMode } from './themes'
-import { getRegionalLocale, setRegionalFormatPreference, useRegionalFormat } from './lib/localeFormat'
+import { formatRegionalNumber, getRegionalLocale, setRegionalFormatPreference, useRegionalFormat } from './lib/localeFormat'
 import { useInterfaceLanguage } from './lib/interfaceLocale'
 
 const EnginePanel = lazy(() => import('./components/EnginePanel').then(module => ({ default: module.EnginePanel })))
@@ -39,6 +41,7 @@ type View = 'torrents' | 'settings'
 type AuthState = 'checking' | 'authenticated' | 'unauthenticated'
 type SettingsSection = 'library' | 'engine' | 'automation' | 'security' | 'support'
 type SelectionMode = 'toggle' | 'replace' | 'range' | 'range-add'
+type InterfaceMessage = { source: string; parameters?: Record<string, string | number> }
 const MEDIA_INFERENCE_KEY = 'tng.mediaInference'
 const DETAIL_AUTO_DISPLAY_KEY = 'tng.detailAutoDisplay'
 const DETAIL_POSITION_KEY = 'tng.detailPosition'
@@ -50,56 +53,77 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && (target.isContentEditable || target.getAttribute('role') === 'textbox')
 }
 
-function utpPathLabel(path: string): string {
+function utpPathLabel(path: string, t: typeof translateInterface): string {
   switch (path) {
-    case 'outgoing_peer_wire': return 'outgoing'
-    case 'metadata_fetch': return 'metadata'
-    case 'incoming_peer_wire': return 'incoming'
+    case 'outgoing_peer_wire': return t('Outgoing')
+    case 'metadata_fetch': return t('Metadata')
+    case 'incoming_peer_wire': return t('Incoming')
     default: return path.replaceAll('_', ' ')
   }
 }
 
-function utpStatus(capabilities: NonNullable<Awaited<ReturnType<typeof api.health>>['engine']>['capabilities'] | undefined) {
+function utpStatus(capabilities: NonNullable<Awaited<ReturnType<typeof api.health>>['engine']>['capabilities'] | undefined, t: typeof translateInterface) {
   const networking = capabilities?.networking
   if (!networking) return null
   const paths = networking.utp_transport_paths ?? []
   const label = paths.length
-    ? paths.map(utpPathLabel).join('+')
-    : networking.utp_transport ? 'enabled' : 'off'
+    ? paths.map(path => utpPathLabel(path, t)).join('+')
+    : networking.utp_transport ? t('Enabled') : t('Off')
   const policy = [
-    networking.utp_outgoing_policy ? `outgoing=${networking.utp_outgoing_policy}` : null,
-    networking.utp_metadata_policy ? `metadata=${networking.utp_metadata_policy}` : null,
-    networking.utp_incoming_enabled !== undefined ? `incoming=${networking.utp_incoming_enabled ? 'on' : 'off'}` : null,
+    networking.utp_outgoing_policy ? `${t('Outgoing')}=${networking.utp_outgoing_policy}` : null,
+    networking.utp_metadata_policy ? `${t('Metadata')}=${networking.utp_metadata_policy}` : null,
+    networking.utp_incoming_enabled !== undefined ? `${t('Incoming')}=${t(networking.utp_incoming_enabled ? 'On' : 'Off')}` : null,
   ].filter(Boolean).join(', ')
-  const title = paths.length
-    ? `Active uTP runtime paths: ${paths.map(utpPathLabel).join(', ')}${policy ? ` (${policy})` : ''}`
-    : `No active uTP runtime transport path${policy ? ` (${policy})` : ''}`
-  return { label, title, enabled: networking.utp_transport === true }
+  const titleSource = paths.length
+    ? policy ? 'Active uTP runtime paths: {paths} ({policy})' : 'Active uTP runtime paths: {paths}'
+    : policy ? 'No active uTP runtime transport path ({policy})' : 'No active uTP runtime transport path'
+  const titleParameters = { paths: paths.map(path => utpPathLabel(path, t)).join(', '), policy }
+  const title = t(titleSource, titleParameters)
+  return { label, title, titleSource, titleParameters, enabled: networking.utp_transport === true }
 }
 
-function backendHealthLabel(health: Awaited<ReturnType<typeof api.health>> | undefined) {
-  const displayName = (type: string) => type === 'torrentng' ? 'TorrentNG client' : type
+function backendHealthLabel(
+  health: Awaited<ReturnType<typeof api.health>> | undefined,
+  t: typeof translateInterface,
+  language: ReturnType<typeof useInterfaceLanguage>['language'],
+) {
+  const statusText = (status: string) => {
+    const normalized = status.toLowerCase()
+    const labels: Record<string, string> = {
+      connected: 'Connected', connecting: 'Connecting', starting: 'Starting',
+      disconnected: 'Disconnected', unavailable: 'Unavailable', error: 'Error',
+    }
+    if (!labels[normalized]) return status
+    return language === 'en' ? normalized : t(labels[normalized])
+  }
   if (health?.backend) {
+    const source = health.backend.type === 'torrentng' ? 'TorrentNG client: {status}' : 'backend: {status}'
     return {
       type: health.backend.type,
       status: health.backend.status,
       connected: health.backend.status === 'connected',
-      label: `${displayName(health.backend.type)}: ${health.backend.status}`,
+      source,
+      label: t(source, { status: statusText(health.backend.status) }),
     }
   }
   if (health?.native_engine) {
+    const status = health.ready === false ? 'starting' : 'connected'
+    const source = 'TorrentNG client: {status}'
     return {
       type: 'torrentng',
       status: health.ready === false ? 'starting' : 'connected',
       connected: health.ready !== false,
-      label: `TorrentNG client: ${health.ready === false ? 'starting' : 'connected'}`,
+      source,
+      label: t(source, { status: statusText(status) }),
     }
   }
+  const status = health?.rtorrent
   return {
     type: 'backend',
-    status: health?.rtorrent ?? 'connecting',
-    connected: health?.rtorrent === 'connected',
-    label: health?.rtorrent ? `backend: ${health.rtorrent}` : 'connecting...',
+    status: status ?? 'connecting',
+    connected: status === 'connected',
+    source: status ? 'backend: {status}' : 'Connecting…',
+    label: status ? t('backend: {status}', { status: statusText(status) }) : t('Connecting…'),
   }
 }
 const SETTINGS_SECTION_KEY = 'tng.settingsSection'
@@ -265,7 +289,7 @@ function useSingleActiveTab() {
 }
 
 export function App() {
-  const { language, t } = useInterfaceLanguage()
+  const { language, t, textProps } = useInterfaceLanguage()
   const qc = useQueryClient()
   const activeTab = useSingleActiveTab()
   const [authState, setAuthState] = useState<AuthState>('checking')
@@ -289,8 +313,8 @@ export function App() {
   const [propertiesHash, setPropertiesHash] = useState<string | null>(null)
   const [bulkEditOpen, setBulkEditOpen] = useState(false)
   const [togglingFeature, setTogglingFeature] = useState<'dht' | 'pex' | null>(null)
-  const [featureError, setFeatureError] = useState<string | null>(null)
-  const [actionNotice, setActionNotice] = useState<{ text: string; tone: 'ok' | 'error' } | null>(null)
+  const [featureError, setFeatureError] = useState<InterfaceMessage | null>(null)
+  const [actionNotice, setActionNotice] = useState<{ message: InterfaceMessage; tone: 'ok' | 'error' } | null>(null)
   const [settingsSection, setSettingsSection] = useState<SettingsSection>(() => loadSettingsSection())
   const [mediaInference, setMediaInference] = useState<MediaInferenceMode>(loadMediaInference)
   const [themeId, setThemeId] = useState(loadThemeId)
@@ -327,8 +351,8 @@ export function App() {
     })
   }, [selected, torrents])
   const { data: health } = useHealth(activeTab.isActive && authState === 'authenticated')
-  const healthUtp = utpStatus(health?.engine?.capabilities)
-  const backendHealth = backendHealthLabel(health)
+  const healthUtp = utpStatus(health?.engine?.capabilities, t)
+  const backendHealth = backendHealthLabel(health, t, language)
   const { data: storage } = useQuery({
     queryKey: ['storage', 'status-bar'],
     queryFn: api.storage,
@@ -391,7 +415,7 @@ export function App() {
         if (cancelled) return
         setAuthState('unauthenticated')
         if (!(err instanceof AuthError)) {
-          setAuthMessage('Could not reach the API.')
+          setAuthMessage(translateInterface("Could not reach the API."))
         }
       })
     return () => { cancelled = true }
@@ -602,7 +626,7 @@ export function App() {
 
       handleSelectAll([...selectedHashes], selectedRecords)
     } catch {
-      setActionNotice({ text: 'Failed to select all matching torrents', tone: 'error' })
+      setActionNotice({ message: { source: 'Failed to select all matching torrents' }, tone: 'error' })
     } finally {
       setSelectingAllMatching(false)
     }
@@ -658,14 +682,21 @@ export function App() {
   async function runBulk(action: 'start' | 'stop' | 'recheck' | 'reannounce') {
     const hashes = [...selected]
     if (hashes.length === 0) return
+    const actionLabel = t(({ start: 'Start', stop: 'Pause', recheck: 'Recheck', reannounce: 'Reannounce' } as const)[action])
     setToolbarBusy(true)
     setActionNotice(null)
     try {
       await api.bulk(action, hashes, false)
       qc.invalidateQueries({ queryKey: ['torrents'], exact: false })
-      setActionNotice({ text: `${action} queued for ${hashes.length.toLocaleString(getRegionalLocale())} torrent${hashes.length === 1 ? '' : 's'}`, tone: 'ok' })
+      setActionNotice({
+        message: {
+          source: hashes.length === 1 ? '{action} queued for {count} torrent' : '{action} queued for {count} torrents',
+          parameters: { action: actionLabel, count: formatRegionalNumber(hashes.length) },
+        },
+        tone: 'ok',
+      })
     } catch {
-      setActionNotice({ text: `Failed to ${action} selected torrents`, tone: 'error' })
+      setActionNotice({ message: { source: 'Could not perform the requested action on the selected torrents.' }, tone: 'error' })
     } finally {
       setToolbarBusy(false)
     }
@@ -678,9 +709,15 @@ export function App() {
     try {
       await api.torrents.toggleSequential(hashes)
       qc.invalidateQueries({ queryKey: ['torrents'], exact: false })
-      setActionNotice({ text: `Sequential toggled for ${hashes.length.toLocaleString(getRegionalLocale())} torrent${hashes.length === 1 ? '' : 's'}`, tone: 'ok' })
+      setActionNotice({
+        message: {
+          source: hashes.length === 1 ? 'Sequential toggled for {count} torrent' : 'Sequential toggled for {count} torrents',
+          parameters: { count: formatRegionalNumber(hashes.length) },
+        },
+        tone: 'ok',
+      })
     } catch {
-      setActionNotice({ text: 'Failed to toggle sequential download', tone: 'error' })
+      setActionNotice({ message: { source: 'Failed to toggle sequential download' }, tone: 'error' })
     } finally {
       setToolbarBusy(false)
     }
@@ -699,13 +736,14 @@ export function App() {
       setLiveStats(prev => ({ ...prev, [feature]: applied ? 'on' : 'off' }))
       qc.invalidateQueries({ queryKey: ['engine'] })
     } catch {
-      setFeatureError(`Failed to toggle ${feature.toUpperCase()}`)
+      setFeatureError({ source: 'Failed to toggle {feature}', parameters: { feature: feature.toUpperCase() } })
     } finally {
       setTogglingFeature(null)
     }
   }
 
   async function runTorrent(torrent: TorrentSummary, action: 'start' | 'stop' | 'recheck' | 'reannounce') {
+    const actionLabel = t(({ start: 'Start', stop: 'Pause', recheck: 'Recheck', reannounce: 'Reannounce' } as const)[action])
     const actions = {
       start: api.torrents.start,
       stop: api.torrents.stop,
@@ -716,9 +754,9 @@ export function App() {
     try {
       await actions[action](torrent.hash)
       qc.invalidateQueries({ queryKey: ['torrents'], exact: false })
-      setActionNotice({ text: `${action} queued`, tone: 'ok' })
+      setActionNotice({ message: { source: '{action} queued', parameters: { action: actionLabel } }, tone: 'ok' })
     } catch {
-      setActionNotice({ text: `Failed to ${action} torrent`, tone: 'error' })
+      setActionNotice({ message: { source: 'Failed to {action} torrent', parameters: { action: actionLabel.toLowerCase() } }, tone: 'error' })
     }
   }
 
@@ -740,9 +778,9 @@ export function App() {
       if (selectionAnchor === torrent.hash) setSelectionAnchor(null)
       if (detailHash === torrent.hash) setDetailHash(null)
       qc.invalidateQueries({ queryKey: ['torrents'], exact: false })
-      setActionNotice({ text: deleteFiles ? 'Torrent and files deleted' : 'Torrent removed', tone: 'ok' })
+      setActionNotice({ message: { source: deleteFiles ? 'Torrent and files deleted' : 'Torrent removed' }, tone: 'ok' })
     } catch {
-      setActionNotice({ text: 'Failed to delete torrent', tone: 'error' })
+      setActionNotice({ message: { source: 'Failed to delete torrent' }, tone: 'error' })
     }
   }
 
@@ -793,7 +831,7 @@ export function App() {
             border: '2px solid var(--border-strong)', borderTopColor: 'var(--accent)',
             animation: 'tng-spin 800ms linear infinite',
           }} />
-          <span>Checking session...</span>
+          <span><LocalizedText source="Checking session..." /></span>
         </div>
       </div>
     )
@@ -808,7 +846,7 @@ export function App() {
       display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw',
       overflow: 'hidden', background: 'var(--bg)', color: 'var(--text)',
     }}>
-      <a className="tng-skip-link" href="#tng-main-content">Skip to main content</a>
+      <a className="tng-skip-link" href="#tng-main-content"><LocalizedText source="Skip to main content" /></a>
       {/* Topbar */}
       <header className="tng-topbar" style={{
         height: 44, background: 'var(--bg)', borderBottom: '1px solid var(--border)',
@@ -826,7 +864,7 @@ export function App() {
           }} />
           TorrentNG</h1>
 
-        <nav aria-label="Primary" lang={language} dir={language === 'ar' ? 'rtl' : 'ltr'} style={{ display: 'flex', gap: 4, marginInlineStart: 4, flex: '0 0 auto' }}>
+        <nav aria-label={t('Primary navigation')} {...textProps('Primary navigation')} style={{ display: 'flex', gap: 4, marginInlineStart: 4, flex: '0 0 auto' }}>
           {(['torrents', 'settings'] as View[]).map(v => (
             <button
               key={v}
@@ -839,6 +877,7 @@ export function App() {
               }}
               aria-current={view === v ? 'page' : undefined}
               aria-label={t(v === 'torrents' ? 'Torrents' : 'Settings')}
+              {...textProps(v === 'torrents' ? 'Torrents' : 'Settings')}
               style={{
               background: view === v ? 'var(--accent-soft)' : 'transparent',
               border: '1px solid ' + (view === v ? 'var(--accent)' : 'transparent'),
@@ -854,30 +893,30 @@ export function App() {
         </nav>
 
         {view === 'torrents' && (
-          <span className="tng-topbar-pill" data-tone="neutral" role="status" aria-label={`${total.toLocaleString(getRegionalLocale())} torrents`} style={{
+          <span className="tng-topbar-pill" data-tone="neutral" role="status" aria-label={t('{count} torrents', { count: total.toLocaleString(getRegionalLocale()) })} {...textProps('{count} torrents')} style={{
             color: 'var(--muted)', background: 'var(--surface)', border: '1px solid var(--border)',
             borderRadius: 999, padding: '2px 8px', fontSize: 11, fontWeight: 700,
             whiteSpace: 'nowrap', flex: '0 0 auto',
           }}>
-            {total.toLocaleString(getRegionalLocale())} torrents
+            {t('{count} torrents', { count: total.toLocaleString(getRegionalLocale()) })}
           </span>
         )}
         {selected.size > 0 && view === 'torrents' && (
-          <span className="tng-topbar-pill" data-tone="accent" role="status" aria-label={`${selected.size.toLocaleString(getRegionalLocale())} selected`} style={{
+          <span className="tng-topbar-pill" data-tone="accent" role="status" aria-label={t('{count} selected', { count: selected.size.toLocaleString(getRegionalLocale()) })} {...textProps('{count} selected')} style={{
             color: 'var(--accent-text)', background: 'var(--accent-soft)', border: '1px solid var(--accent)',
             borderRadius: 999, padding: '2px 8px', fontSize: 11, fontWeight: 800,
             whiteSpace: 'nowrap', flex: '0 0 auto',
           }}>
-            {selected.size.toLocaleString(getRegionalLocale())} selected
+            {t('{count} selected', { count: selected.size.toLocaleString(getRegionalLocale()) })}
           </span>
         )}
-        <button type="button" onClick={() => setHelpOpen(true)} title="Help and links" style={{
+        <button type="button" onClick={() => setHelpOpen(true)} title={t('Help and links')} {...textProps('Help and links')} style={{
           background: 'transparent', border: '1px solid var(--border-strong)', borderRadius: 5,
           color: 'var(--muted)', padding: '3px 10px', fontSize: 12, cursor: 'pointer',
           whiteSpace: 'nowrap', flex: '0 0 auto',
-        }}>Help</button>
+        }}>{t('Help')}</button>
 
-        <span className="tng-topbar-pill" data-tone={backendHealth.connected ? 'ok' : 'error'} role="status" aria-label={`Backend ${backendHealth.label}`} title="Selected backend connection state" style={{
+        <span className="tng-topbar-pill" data-tone={backendHealth.connected ? 'ok' : 'error'} role="status" aria-label={backendHealth.label} title={t('Selected backend connection state')} {...textProps(backendHealth.source)} style={{
           fontSize: 11, color: backendHealth.connected ? 'var(--success)' : 'var(--danger)',
           display: 'flex', alignItems: 'center', gap: 5, padding: '2px 7px',
           border: '1px solid ' + (backendHealth.connected ? 'color-mix(in srgb, var(--success) 42%, var(--border))' : 'color-mix(in srgb, var(--danger) 42%, var(--border))'),
@@ -893,7 +932,7 @@ export function App() {
         </span>
 
         {healthUtp && (
-          <span className="tng-topbar-pill" data-tone={healthUtp.enabled ? 'ok' : 'neutral'} role="status" aria-label={`uTP ${healthUtp.label}`} title={healthUtp.title} style={{
+          <span className="tng-topbar-pill" data-tone={healthUtp.enabled ? 'ok' : 'neutral'} role="status" aria-label={t('uTP status: {status}', { status: healthUtp.label })} title={healthUtp.title} {...textProps(healthUtp.titleSource)} style={{
             fontSize: 11,
             color: healthUtp.enabled ? 'var(--success)' : 'var(--muted)',
             display: 'flex', alignItems: 'center', gap: 5, padding: '2px 7px',
@@ -901,7 +940,7 @@ export function App() {
             borderRadius: 999,
             background: healthUtp.enabled ? 'color-mix(in srgb, var(--success) 9%, transparent)' : 'var(--surface)',
           }}>
-            uTP {healthUtp.label}
+            <span aria-hidden="true">uTP </span><span lang={language} dir={language === 'ar' ? 'rtl' : 'ltr'}>{healthUtp.label}</span>
           </span>
         )}
 
@@ -909,7 +948,8 @@ export function App() {
         <div className="tng-theme-controls" style={{ display: 'flex', alignItems: 'center', gap: 6, flex: '0 0 auto' }}>
           <span
             className="tng-theme-swatch"
-            title={`${findPalette(themeId).label} ${themeMode}`}
+            title={t('Theme: {palette} ({mode})', { palette: t(findPalette(themeId).label), mode: t(themeMode === 'dark' ? 'Dark' : 'Light') })}
+            {...textProps('Theme: {palette} ({mode})')}
             aria-hidden="true"
             style={{
               ['--swatch-bg' as string]: activeTheme.bg,
@@ -923,7 +963,8 @@ export function App() {
             <span />
           </span>
           <select
-            aria-label="Theme palette"
+            aria-label={t('Theme palette')}
+            {...textProps('Theme palette')}
             value={themeId}
             onChange={e => setThemeId(e.target.value)}
             style={themeSelectStyle}
@@ -935,23 +976,24 @@ export function App() {
           <button
             type="button"
             onClick={() => setThemeMode(mode => mode === 'dark' ? 'light' : 'dark')}
-            title="Toggle light/dark theme"
-            aria-label={`Switch to ${themeMode === 'dark' ? 'light' : 'dark'} theme`}
+            title={t('Toggle light/dark theme')}
+            aria-label={t('Switch to {mode} theme', { mode: t(themeMode === 'dark' ? 'Light' : 'Dark') })}
+            {...textProps('Switch to {mode} theme')}
             aria-pressed={themeMode === 'dark'}
             style={themeButtonStyle}
           >
-            {themeMode === 'dark' ? 'Dark' : 'Light'}
+            <span {...textProps(themeMode === 'dark' ? 'Dark' : 'Light')}>{t(themeMode === 'dark' ? 'Dark' : 'Light')}</span>
           </button>
         </div>
-        <button type="button" onClick={handleLogout} title="Log out" style={{
+        <button type="button" onClick={handleLogout} title={t('Log out')} {...textProps('Log out')} style={{
           background: 'transparent', border: '1px solid var(--border-strong)', borderRadius: 5,
           color: 'var(--muted)', padding: '3px 10px', fontSize: 12, cursor: 'pointer',
           whiteSpace: 'nowrap', flex: '0 0 auto',
-        }}>Log out</button>
+        }}>{t('Log out')}</button>
       </header>
 
       {view === 'torrents' && (
-        <nav aria-label="Torrent list filters and actions">
+        <nav aria-label={t('Torrent list filters and actions')} {...textProps('Torrent list filters and actions')}>
           <FilterBar params={params} onChange={updateParams} />
           <SavedViewsBar params={params} onApply={applySavedView} />
           <TorrentToolbar
@@ -1009,18 +1051,18 @@ export function App() {
                     background: 'color-mix(in srgb, var(--danger) 9%, var(--surface))',
                     borderRadius: 8, padding: '16px 18px', display: 'grid', gap: 8, minWidth: 280,
                   }}>
-                    <span style={{ fontWeight: 800 }}>Failed to connect to TorrentNG API.</span>
-                    <span style={{ color: 'var(--faint)', fontSize: 12 }}>The table will refresh when the API responds again.</span>
+                    <span {...textProps('Failed to connect to TorrentNG API.')} style={{ fontWeight: 800 }}>{t('Failed to connect to TorrentNG API.')}</span>
+                    <span {...textProps('The table will refresh when the API responds again.')} style={{ color: 'var(--faint)', fontSize: 12 }}>{t('The table will refresh when the API responds again.')}</span>
                   </div>
                   <button type="button" onClick={() => query.refetch()} style={{
                     background: 'var(--surface-2)', border: '1px solid var(--border-strong)',
                     borderRadius: 5, color: 'var(--muted)', padding: '5px 10px', fontSize: 12,
                     cursor: 'pointer',
-                  }}>Retry</button>
+                  }} {...textProps('Retry')}>{t('Retry')}</button>
                 </div>
               )}
               {query.isLoading && !query.data && (
-                <div role="status" aria-live="polite" aria-label="Loading torrents" style={{
+                <div role="status" aria-live="polite" aria-label={t('Loading torrents')} {...textProps('Loading torrents')} style={{
                   padding: 24, color: 'var(--faint)', display: 'grid', gap: 10,
                   alignContent: 'start',
                 }}>
@@ -1113,7 +1155,7 @@ export function App() {
         utpEnabled={healthUtp?.enabled}
         togglingFeature={togglingFeature}
         featureError={featureError}
-        actionMessage={actionNotice?.text}
+        actionMessage={actionNotice?.message}
         actionTone={actionNotice?.tone}
         onToggleDht={() => toggleSessionFeature('dht')}
         onTogglePex={() => toggleSessionFeature('pex')}
@@ -1173,15 +1215,14 @@ function StandbyScreen({ onTakeOver }: { onTakeOver: () => void }) {
             color: 'var(--accent-text)', background: 'var(--accent-soft)', border: '1px solid var(--accent)',
             fontWeight: 900,
           }}>▣</span>
-          <h1 style={{ margin: 0, fontWeight: 800, fontSize: 18 }}>TorrentNG is open in another tab</h1>
+          <h1 style={{ margin: 0, fontWeight: 800, fontSize: 18 }}><LocalizedText source="TorrentNG is open in another tab" /></h1>
         </div>
         <div style={{ color: 'var(--muted)', fontSize: 13, lineHeight: 1.45 }}>
-          This standby tab is not connected to the API or websocket. Use one active tab for large libraries.
-        </div>
+          <LocalizedText source="This tab is not connected to the API or WebSocket. Use one active tab for large libraries." /></div>
         <button type="button" onClick={onTakeOver} style={{
           width: 'fit-content', background: 'var(--accent-soft)', border: '1px solid var(--accent)',
           borderRadius: 5, color: 'var(--accent-text)', padding: '7px 11px', fontSize: 13, cursor: 'pointer',
-        }}>Take over this tab</button>
+        }}><LocalizedText source="Take over this tab" /></button>
       </div>
     </div>
   )
@@ -1200,7 +1241,8 @@ function SettingsView({ section, onSection, mediaInference, onMediaInference, th
   regionalFormat: string
   onRegionalFormat: (value: string) => void
 }) {
-  const { language, t } = useInterfaceLanguage()
+  const { t, textProps } = useInterfaceLanguage()
+  const localized = (source: string) => <span {...textProps(source)}>{t(source)}</span>
   const sections: Array<[SettingsSection, string, string]> = [
     ['library', 'Library', '▦'],
     ['engine', 'Backend', '⚙'],
@@ -1217,15 +1259,15 @@ function SettingsView({ section, onSection, mediaInference, onMediaInference, th
   }
   return (
     <>
-      <aside className="tng-settings-sidebar" aria-label={t("Settings")} lang={language} dir={language === 'ar' ? 'rtl' : 'ltr'} style={{
+      <aside className="tng-settings-sidebar" aria-label={t("Settings")} {...textProps('Settings')} style={{
         width: 220, flexShrink: 0, background: 'var(--panel)', borderRight: '1px solid var(--border)',
         padding: 12,
       }}>
         <div style={{ margin: '4px 4px 12px' }}>
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: 'var(--text)' }}>{t("Settings")}</h2>
-          <div style={{ fontSize: 11, color: 'var(--faint)', marginTop: 3 }}>Daemon, library, and browser controls</div>
+          <h2 {...textProps('Settings')} style={{ margin: 0, fontSize: 16, fontWeight: 800, color: 'var(--text)' }}>{t("Settings")}</h2>
+          <div {...textProps('Daemon, library, and browser controls')} style={{ fontSize: 11, color: 'var(--faint)', marginTop: 3 }}>{t('Daemon, library, and browser controls')}</div>
         </div>
-        <div role="tablist" aria-label={t("Settings")} aria-orientation="vertical">
+        <div role="tablist" aria-label={t("Settings")} {...textProps('Settings')} aria-orientation="vertical">
         {sections.map(([key, label, icon]) => (
           <button
             key={key}
@@ -1275,7 +1317,7 @@ function SettingsView({ section, onSection, mediaInference, onMediaInference, th
             padding: '7px 9px', fontSize: 13, cursor: 'pointer',
           }}>
             <span style={{ color: section === key ? 'var(--accent-text)' : 'var(--accent)', textAlign: 'center' }}>{icon}</span>
-            <span>{t(label)}</span>
+            <span {...textProps(label)}>{t(label)}</span>
             {section === key && <span style={{ color: 'var(--accent-text)', fontSize: 10 }}>●</span>}
           </button>
         ))}
@@ -1284,30 +1326,30 @@ function SettingsView({ section, onSection, mediaInference, onMediaInference, th
       <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)' }}>
         <Suspense fallback={<SettingsPanelFallback />}>
         {section === 'library' && (<section id="settings-panel-library" role="tabpanel" aria-labelledby="settings-tab-library" tabIndex={0}>
-          <PanelTitle title="Library" subtitle="Categories, storage roots, and tracker summaries" />
+          <PanelTitle title={localized('Library')} subtitle={localized('Categories, storage roots, and tracker summaries')} />
           <PanelFrame><CategoriesPanel /></PanelFrame>
           <PanelFrame><StoragePanel /></PanelFrame>
           <PanelFrame><TrackerHealthPanel onSelectTracker={onSelectTracker} /></PanelFrame>
         </section>)}
         {section === 'engine' && (<section id="settings-panel-engine" role="tabpanel" aria-labelledby="settings-tab-engine" tabIndex={0}>
-          <PanelTitle title="Backend" subtitle="Runtime diagnostics, settings, and capability checks" />
+          <PanelTitle title={localized('Backend')} subtitle={localized('Runtime diagnostics, settings, and capability checks')} />
           <PanelFrame><EnginePanel /></PanelFrame>
           <PanelFrame><UserAgentPanel /></PanelFrame>
           <PanelFrame><CrashSafetyPanel /></PanelFrame>
           <PanelFrame><LogsPanel /></PanelFrame>
         </section>)}
         {section === 'automation' && (<section id="settings-panel-automation" role="tabpanel" aria-labelledby="settings-tab-automation" tabIndex={0}>
-          <PanelTitle title="Automation" subtitle="Ratio groups, workflows, and RSS rules" />
+          <PanelTitle title={localized('Automation')} subtitle={localized('Ratio groups, workflows, and RSS rules')} />
           <PanelFrame><RatioGroupsPanel /></PanelFrame>
           <PanelFrame><WorkflowsPanel /></PanelFrame>
           <PanelFrame><RssRulesPanel /></PanelFrame>
         </section>)}
         {section === 'security' && (<section id="settings-panel-security" role="tabpanel" aria-labelledby="settings-tab-security" tabIndex={0}>
-          <PanelTitle title="Security" subtitle="WebUI sign-in and API-token access" />
+          <PanelTitle title={localized('Security')} subtitle={localized('WebUI sign-in and API-token access')} />
           <PanelFrame><AuthPanel /></PanelFrame>
         </section>)}
         {section === 'support' && (<section id="settings-panel-support" role="tabpanel" aria-labelledby="settings-tab-support" tabIndex={0}>
-          <PanelTitle title="Support" subtitle="Appearance, community links, and project resources" />
+          <PanelTitle title={localized('Support')} subtitle={localized('Appearance, community links, and project resources')} />
           <PanelFrame>
             <AppearancePanel
               mediaInference={mediaInference}
@@ -1325,16 +1367,16 @@ function SettingsView({ section, onSection, mediaInference, onMediaInference, th
             padding: 18, display: 'grid', gap: 10, maxWidth: 860,
             gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
           }}>
-            <SupportCard icon="☊" title="Discord support" href="https://discord.gg/5PyXBfvS6T" detail="Community support and release discussion" />
-            <SupportCard icon="⌘" title="GitHub project" href="https://github.com/snapetech/TorrentNG" detail="Source, issues, and deployment files" />
+            <SupportCard icon="☊" title={translateInterface("Discord support")} href="https://discord.gg/5PyXBfvS6T" detail={translateInterface("Community support and release discussion")} />
+            <SupportCard icon="⌘" title={translateInterface("GitHub project")} href="https://github.com/snapetech-org/TorrentNG" detail={translateInterface("Source, issues, and deployment files")} />
             <button type="button" onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: '?' }))} style={{
               ...supportButton, width: '100%', minHeight: 72, textAlign: 'left',
               display: 'grid', gridTemplateColumns: '32px 1fr', alignItems: 'center',
             }}>
               <span aria-hidden="true" style={{ fontSize: 18, textAlign: 'center' }}>?</span>
               <span>
-                <span style={{ display: 'block', fontWeight: 700 }}>Open help</span>
-                <span style={{ display: 'block', color: 'var(--faint)', fontSize: 12, marginTop: 2 }}>Shortcuts and workflow notes</span>
+                <span style={{ display: 'block', fontWeight: 700 }}><LocalizedText source="Open help" /></span>
+                <span style={{ display: 'block', color: 'var(--faint)', fontSize: 12, marginTop: 2 }}><LocalizedText source="Shortcuts and workflow notes" /></span>
               </span>
             </button>
           </div>
@@ -1356,12 +1398,12 @@ function SettingsPanelFallback() {
     }}>
       <span className="tng-skeleton" style={{ width: 180, height: 12 }} />
       <span className="tng-skeleton" style={{ width: 'min(520px, 82%)', height: 10 }} />
-      <span>Loading settings panel...</span>
+      <span><LocalizedText source="Loading settings panel..." /></span>
     </div>
   )
 }
 
-function PanelTitle({ title, subtitle }: { title: string; subtitle: string }) {
+function PanelTitle({ title, subtitle }: { title: React.ReactNode; subtitle: React.ReactNode }) {
   return (
     <div style={{
       padding: '18px 22px', borderBottom: '1px solid var(--border)',
@@ -1412,20 +1454,19 @@ function DeleteDialog({ torrent, onCancel, onRemove, onRemoveFiles }: {
               border: '1px solid color-mix(in srgb, var(--danger) 45%, var(--border))',
               color: 'var(--danger)', fontWeight: 800,
             }}>!</span>
-            <h2 id="delete-torrent-title" style={{ margin: 0, fontSize: 16, fontWeight: 800, color: 'var(--danger)' }}>Delete torrent</h2>
+            <h2 id="delete-torrent-title" style={{ margin: 0, fontSize: 16, fontWeight: 800, color: 'var(--danger)' }}><LocalizedText source="Delete torrent" /></h2>
           </div>
           <div style={{ marginTop: 8, color: 'var(--text)', fontSize: 13, lineHeight: 1.4, wordBreak: 'break-word' }}>{torrent.name}</div>
           <div id="delete-torrent-description" style={{
             marginTop: 10, color: 'var(--faint)', fontSize: 12, lineHeight: 1.45,
             border: '1px solid var(--border)', borderRadius: 6, background: 'var(--surface)', padding: 9,
           }}>
-            Removing only the torrent keeps downloaded files. Deleting files removes the saved payload from disk.
-          </div>
+            <LocalizedText source="Removing only the torrent keeps downloaded files. Deleting files removes the saved payload from disk." /></div>
         </div>
         <div style={{ padding: 14, display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
-          <button type="button" onClick={onCancel} data-dialog-initial-focus style={dialogButton('var(--muted)')}>Cancel</button>
-          <button type="button" onClick={onRemove} style={dialogButton('#f87171')}>Remove torrent</button>
-          <button type="button" onClick={onRemoveFiles} style={dialogButton('var(--danger)')}>Delete files</button>
+          <button type="button" onClick={onCancel} data-dialog-initial-focus style={dialogButton('var(--muted)')}><LocalizedText source="Cancel" /></button>
+          <button type="button" onClick={onRemove} style={dialogButton('#f87171')}><LocalizedText source="Remove torrent" /></button>
+          <button type="button" onClick={onRemoveFiles} style={dialogButton('var(--danger)')}><LocalizedText source="Delete files" /></button>
         </div>
       </div>
     </div>
@@ -1506,7 +1547,7 @@ function LoginScreen({ message, onLogin }: {
     try {
       await onLogin(username.trim(), password)
     } catch (err) {
-      setError(err instanceof AuthError ? err.message : 'Login failed.')
+      setError(err instanceof AuthError ? err.message : translateInterface('Login failed.'))
     } finally {
       setBusy(false)
     }
@@ -1531,41 +1572,52 @@ function LoginScreen({ message, onLogin }: {
             <h1 style={{ margin: 0, fontWeight: 800, fontSize: 18 }}>TorrentNG</h1>
           </div>
           <div style={{ color: 'var(--faint)', fontSize: 12, marginTop: 4, lineHeight: 1.5 }}>
-            Fresh installs generate a unique WebUI password. Run <code>torrentngd auth-token</code> for the native daemon or <code>torrentng auth-token</code> for the WebUI service in its console to retrieve it. An API token also works in either field. On Unraid, find it in the native template’s <strong>API Token</strong> setting or the WebUI template’s <strong>API Tokens</strong> setting. Native config uses <code>[auth].api_tokens</code> or <code>[auth].api_tokens_file</code>; the WebUI service also accepts <code>TNG_API_TOKENS</code> or <code>RTNG_API_TOKENS</code>.
+            <p style={{ margin: '0 0 6px' }}><LocalizedRichText
+              source="Fresh installs generate a unique WebUI password. Run {nativeCommand} on the native daemon, or run {webuiCommand} in the WebUI service console to retrieve it. You can use an API token in either login field."
+              parameters={{ nativeCommand: <code>torrentngd auth-token</code>, webuiCommand: <code>torrentng auth-token</code> }}
+            /></p>
+            <p style={{ margin: 0 }}><LocalizedRichText
+              source="On Unraid, find the API token in the native container template's {nativeSetting} field or the WebUI service template's {webuiSetting} field. Native config accepts {tokenConfig} or {tokenFileConfig}; the WebUI service accepts {tngApiTokens} or {rtngApiTokens}."
+              parameters={{
+                nativeSetting: <strong><LocalizedText source="API Token" /></strong>,
+                webuiSetting: <strong><LocalizedText source="API Tokens" /></strong>,
+                tokenConfig: <code>[auth].api_tokens</code>,
+                tokenFileConfig: <code>[auth].api_tokens_file</code>,
+                tngApiTokens: <code>TNG_API_TOKENS</code>,
+                rtngApiTokens: <code>RTNG_API_TOKENS</code>,
+              }}
+            /></p>
           </div>
-          <nav aria-label="Sign-in instructions" style={{
+          <nav aria-label={translateInterface("Sign-in instructions")} style={{
             marginTop: 8, color: 'var(--faint)', fontSize: 12, lineHeight: 1.8,
-          }}>
-            Login help:{' '}
+          }} {...interfaceTextProps("Sign-in instructions")}>
+            <LocalizedText source="Login help:" />{' '}
             <a
-              href="https://github.com/snapetech/TorrentNG/blob/main/README.md#try-the-torrentng-engine"
+              href="https://github.com/snapetech-org/TorrentNG/blob/main/README.md#try-the-torrentng-engine"
               target="_blank"
               rel="noopener noreferrer"
               style={helpLinkStyle}
             >
-              Docker Engine
-            </a>
+              Docker Engine</a>
             {' · '}
             <a
-              href="https://github.com/snapetech/TorrentNG/blob/main/docs/NATIVE_DEPLOYMENT.md#webui-login"
+              href="https://github.com/snapetech-org/TorrentNG/blob/main/docs/NATIVE_DEPLOYMENT.md#webui-login"
               target="_blank"
               rel="noopener noreferrer"
               style={helpLinkStyle}
             >
-              Linux / Kubernetes
-            </a>
+              <LocalizedText source="Linux / Kubernetes" /></a>
             {' · '}
             <a
-              href="https://github.com/snapetech/TorrentNG/blob/main/sidecar/README.md#webui-login"
+              href="https://github.com/snapetech-org/TorrentNG/blob/main/sidecar/README.md#webui-login"
               target="_blank"
               rel="noopener noreferrer"
               style={helpLinkStyle}
             >
-              Docker + existing client
-            </a>
+              <LocalizedText source="Docker + existing client" /></a>
             {' · '}
             <a
-              href="https://github.com/snapetech/TorrentNG/blob/main/deploy/unraid/README.md#webui-login"
+              href="https://github.com/snapetech-org/TorrentNG/blob/main/deploy/unraid/README.md#webui-login"
               target="_blank"
               rel="noopener noreferrer"
               style={helpLinkStyle}
@@ -1574,7 +1626,7 @@ function LoginScreen({ message, onLogin }: {
             </a>
             {' · '}
             <a
-              href="https://github.com/snapetech/TorrentNG/blob/main/packaging/yunohost/doc/POST_INSTALL.md#first-sign-in"
+              href="https://github.com/snapetech-org/TorrentNG/blob/main/packaging/yunohost/doc/POST_INSTALL.md#first-sign-in"
               target="_blank"
               rel="noopener noreferrer"
               style={helpLinkStyle}
@@ -1584,8 +1636,7 @@ function LoginScreen({ message, onLogin }: {
           </nav>
         </div>
         <label className="tng-form-card" style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12, color: 'var(--muted)' }}>
-          Username or API token
-          <input
+          <LocalizedText source="Username or API token" /><input
             id="tng-login-username"
             name="username"
             autoFocus
@@ -1599,8 +1650,7 @@ function LoginScreen({ message, onLogin }: {
           />
         </label>
         <label className="tng-form-card" style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12, color: 'var(--muted)' }}>
-          Password or API token
-          <input
+          <LocalizedText source="Password or API token" /><input
             id="tng-login-password"
             name="password"
             type="password"
@@ -1618,13 +1668,13 @@ function LoginScreen({ message, onLogin }: {
           background: 'color-mix(in srgb, var(--danger) 9%, var(--surface))',
           border: '1px solid color-mix(in srgb, var(--danger) 45%, var(--border))',
           borderRadius: 6, padding: '8px 9px',
-        }}>{error}</div>}
+        }}><LocalizedErrorText message={error} /></div>}
         <button type="submit" disabled={busy} style={{
           marginTop: 4, background: busy ? 'var(--surface-2)' : 'var(--accent-soft)',
           border: '1px solid var(--accent)', borderRadius: 5, color: 'var(--accent-text)',
           padding: '8px 12px', fontSize: 13, cursor: busy ? 'default' : 'pointer',
         }}>
-          {busy ? 'Signing in...' : 'Sign in'}
+          {busy ? <LocalizedText source="Signing in..." /> : <LocalizedText source="Sign in" />}
         </button>
       </form>
     </div>

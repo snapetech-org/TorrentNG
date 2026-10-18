@@ -566,9 +566,9 @@ impl Default for StorageConfig {
             device_elevator_enabled: true,
             file_pool_size: 512,
             idle_file_ttl_secs: 300,
-            io_worker_threads: 4,
+            io_worker_threads: 2,
             io_queue_depth: 256,
-            hash_worker_threads: 2,
+            hash_worker_threads: 1,
             hash_queue_depth: 256,
             preallocation_mode: StoragePreallocationMode::Auto,
             durability_mode: StorageDurabilityMode::Checkpoint,
@@ -586,7 +586,7 @@ impl Default for MemoryConfig {
             total_cap_mb: 512,
             storage_frame_cap_mb: 128,
             queued_disk_cap_mb: 64,
-            piece_assembly_cap_mb: 128,
+            piece_assembly_cap_mb: 0,
             piece_index_cap_mb: 128,
             peer_buffer_cap_mb: 128,
             metadata_cap_mb: 32,
@@ -1100,6 +1100,7 @@ mod tests {
         assert_eq!(c.memory.total_cap_mb, 512);
         assert_eq!(c.memory.storage_frame_cap_mb, 128);
         assert_eq!(c.memory.queued_disk_cap_mb, 64);
+        assert_eq!(c.memory.piece_assembly_cap_mb, 0);
         assert_eq!(c.memory.piece_index_cap_mb, 128);
         assert!(c.runtime.torrent_tiers_enabled);
         assert_eq!(c.runtime.tier_hot_idle_secs, 120);
@@ -1107,9 +1108,9 @@ mod tests {
         assert!(c.storage.device_elevator_enabled);
         assert_eq!(c.storage.file_pool_size, 512);
         assert_eq!(c.storage.idle_file_ttl_secs, 300);
-        assert_eq!(c.storage.io_worker_threads, 4);
+        assert_eq!(c.storage.io_worker_threads, 2);
         assert_eq!(c.storage.io_queue_depth, 256);
-        assert_eq!(c.storage.hash_worker_threads, 2);
+        assert_eq!(c.storage.hash_worker_threads, 1);
         assert_eq!(c.storage.hash_queue_depth, 256);
         assert_eq!(c.storage.preallocation_mode, StoragePreallocationMode::Auto);
         assert_eq!(c.storage.durability_mode, StorageDurabilityMode::Checkpoint);

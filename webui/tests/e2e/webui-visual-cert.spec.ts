@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 
-// Hosted PR runners and the self-hosted push runner render system fonts differently.
-const snapshotProfile = process.env.TNG_WEBUI_SNAPSHOT_PROFILE === 'hosted' ? 'hosted' : 'self-hosted'
+// CI uses one hosted font baseline across pull requests and main pushes.
+const snapshotProfile = 'hosted'
 
 const torrents = Array.from({ length: 80 }, (_, i) => {
   const n = i + 1
