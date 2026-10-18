@@ -4409,7 +4409,11 @@ mod tests {
             (3, 0),
             V2OutstandingRequest {
                 length: 4,
-                _memory_lease: None,
+                _memory_lease: Some(
+                    resources
+                        .try_acquire(MemoryClass::PeerBuffer, 4)
+                        .unwrap(),
+                ),
             },
         )]);
         let mut assemblies = HashMap::new();
@@ -4426,11 +4430,21 @@ mod tests {
             outstanding.get(&(3, 0)).map(|request| request.length),
             Some(4)
         );
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
+            4,
+            "Fast Choke preserves the on-wire response reservation"
+        );
         assert!(assemblies.contains_key(&3));
 
         apply_v2_remote_choke(false, &mut outstanding, &mut assemblies);
         assert!(outstanding.is_empty());
         assert!(assemblies.is_empty());
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
+            0,
+            "legacy Choke releases terminal request reservations"
+        );
         assert_eq!(
             resources.snapshot().classes[MemoryClass::PieceAssembly as usize].used_bytes,
             0
@@ -5605,6 +5619,168 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[tokio::test]
+    async fn v2_request_admission_retries_after_capacity_returns_and_owns_each_block() {
+        let content = mb_content(2 * MB_PIECE);
+        let raw = v2_raw_with_piece_length(&content, MB_PIECE);
+        let (task, _fx) =
+            v2_task_not_started(quiet_v2_runtime(), &raw, content.len() as u64).await;
+        let context = task.peer_context("127.0.0.1:6881".parse().unwrap(), PeerId::new());
+        let resources = context.resources.clone();
+        let piece_count = task.piece_map.piece_count as usize;
+        let mut remote_have = V2Bitmap::new(piece_count);
+        for piece in 0..piece_count {
+            remote_have.set(piece, true);
+        }
+        let mut peer = V2PeerState::new(piece_count);
+        peer.remote_have = Arc::new(remote_have);
+        peer.choked = false;
+        let state = Arc::new(Mutex::new(peer));
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap());
+        let (client, accepted) = tokio::join!(client, listener.accept());
+        let mut framed = PeerIo::Tcp(Framed::with_capacity(
+            client.unwrap(),
+            PeerCodec::default(),
+            1,
+        ));
+        let mut remote = Framed::new(accepted.unwrap().0, PeerCodec::default());
+        let mut outstanding = HashMap::new();
+        let mut assemblies = HashMap::new();
+        let peer_buffer_index = MemoryClass::PeerBuffer as usize;
+        let baseline_used = resources.snapshot().classes[peer_buffer_index].used_bytes;
+        let snapshot = resources.snapshot();
+        let class = snapshot.classes[peer_buffer_index];
+        let class_available = class.cap_bytes.saturating_sub(class.used_bytes);
+        let total_available = snapshot
+            .total_cap_bytes
+            .saturating_sub(snapshot.total_used_bytes);
+        let blocker_bytes = class_available.min(total_available);
+        assert!(blocker_bytes > 0);
+        let blocker = resources
+            .try_acquire(MemoryClass::PeerBuffer, blocker_bytes)
+            .expect("test should hold the remaining peer-buffer admission");
+        let denied_before = resources.snapshot().classes[peer_buffer_index].denied_allocations;
+
+        fill_v2_requests(
+            &context,
+            &mut framed,
+            &state,
+            &mut outstanding,
+            &mut assemblies,
+        )
+        .await
+        .unwrap();
+
+        assert!(outstanding.is_empty());
+        assert!(assemblies.is_empty());
+        assert_eq!(
+            resources.snapshot().classes[peer_buffer_index].denied_allocations,
+            denied_before + 1
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), remote.next())
+                .await
+                .is_err(),
+            "a denied v2 request must not reach the wire"
+        );
+
+        drop(blocker);
+        fill_v2_requests(
+            &context,
+            &mut framed,
+            &state,
+            &mut outstanding,
+            &mut assemblies,
+        )
+        .await
+        .unwrap();
+        assert_eq!(outstanding.len(), 4);
+        for (piece, begin) in [
+            (0, 0),
+            (0, MB_BLOCK as u32),
+            (1, 0),
+            (1, MB_BLOCK as u32),
+        ] {
+            assert!(outstanding.contains_key(&(piece, begin)));
+            let message = tokio::time::timeout(Duration::from_secs(1), remote.next())
+                .await
+                .expect("admitted request should reach the peer")
+                .expect("peer socket should remain open")
+                .expect("request frame should decode");
+            match message {
+                Message::Request {
+                    piece: actual_piece,
+                    begin: actual_begin,
+                    length,
+                } => {
+                    assert_eq!((actual_piece, actual_begin), (piece, begin));
+                    assert_eq!(length, MB_BLOCK as u32);
+                }
+                other => panic!("expected v2 request, got {other:?}"),
+            }
+        }
+
+        let request_bytes = outstanding
+            .values()
+            .map(|request| u64::from(request.length))
+            .sum::<u64>();
+        let owned_bytes = outstanding
+            .values()
+            .map(|request| {
+                request
+                    ._memory_lease
+                    .as_ref()
+                    .map_or(0, MemoryLease::bytes)
+            })
+            .sum::<u64>();
+        assert_eq!(owned_bytes, request_bytes);
+        assert_eq!(
+            resources.snapshot().classes[peer_buffer_index].used_bytes,
+            baseline_used + request_bytes
+        );
+
+        for begin in [0, MB_BLOCK as u32] {
+            let start = begin as usize;
+            handle_v2_piece(
+                &context,
+                &state,
+                &mut outstanding,
+                &mut assemblies,
+                0,
+                begin,
+                Bytes::copy_from_slice(&content[start..start + MB_BLOCK]),
+            )
+            .await
+            .unwrap();
+        }
+        let remaining_bytes = outstanding
+            .values()
+            .map(|request| u64::from(request.length))
+            .sum::<u64>();
+        assert!(!outstanding.contains_key(&(0, 0)));
+        assert!(!outstanding.contains_key(&(0, MB_BLOCK as u32)));
+        assert_eq!(remaining_bytes, (2 * MB_BLOCK) as u64);
+        assert_eq!(
+            resources.snapshot().classes[peer_buffer_index].used_bytes,
+            baseline_used + remaining_bytes,
+            "full piece storage and verification releases each response lease"
+        );
+        assert!(context.local_have.read().await.get(0));
+        let payload_path = context.meta.files[0].path.resolve(&context.save_root);
+        assert_eq!(
+            &std::fs::read(payload_path).unwrap()[..MB_PIECE],
+            &content[..MB_PIECE]
+        );
+
+        drop(outstanding); // peer disconnect releases the remaining requests
+        assert_eq!(
+            resources.snapshot().classes[peer_buffer_index].used_bytes,
+            baseline_used
+        );
     }
 
     #[tokio::test]

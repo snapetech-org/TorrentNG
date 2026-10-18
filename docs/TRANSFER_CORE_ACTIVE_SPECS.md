@@ -796,8 +796,13 @@ cross-plane immutable spans, or integrate hybrid payload ownership.
   denied request releases its picker slot and retries after capacity returns;
   `peer_loop_moves_request_reservation_into_piece_event` checks that the same
   reservation remains charged through the received event and releases at
-  drop. Focused v2 admission and lease-lifetime regression coverage remains
-  open.
+  drop; `v2_request_admission_retries_after_capacity_returns_and_owns_each_block`
+  checks v2 no-send under denial, retry, per-block ownership through full Piece
+  storage/verification, and remaining-request disconnect release;
+  `v2_choke_preserves_fast_request_obligations`
+  checks the request lease survives Fast Choke and releases on legacy Choke.
+  These v2 regressions are authored but remain unrun; hybrid/shared-span
+  admission remains open.
 - **Command or probe to run:** targeted request-admission and peer-loop lease
   regressions during the requested bulk pass.
 - **Expected result:** request bytes are charged before enqueue, stay charged
