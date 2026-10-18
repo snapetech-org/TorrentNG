@@ -529,6 +529,44 @@ impl HybridGeometry {
         }
         Some((v1_block, expanded))
     }
+
+    /// Project a canonical v1 block payload onto the corresponding v2 wire
+    /// extent, omitting synthetic BEP 47 padding. The caller must reserve
+    /// capacity for the returned v2 payload before calling; the input and
+    /// output allocations coexist during this bounded one-block conversion.
+    pub fn project_v1_block_to_v2(
+        &self,
+        v1_block: BlockExtent,
+        payload: &[u8],
+    ) -> Option<(BlockExtent, Vec<u8>)> {
+        if payload.len() != usize::try_from(v1_block.length).ok()? {
+            return None;
+        }
+        let v2_block = self.canonical_v2_block_for_v1(v1_block)?;
+        let source_ranges = self.v1.block_content_ranges(v1_block).ok()?;
+        let target_ranges = self.v2.block_content_ranges(v2_block).ok()?;
+        if !same_block_payload_ranges(&source_ranges, &target_ranges) {
+            return None;
+        }
+
+        let mut projected = vec![0; usize::try_from(v2_block.length).ok()?];
+        let mut source_payload = source_ranges.iter().filter(|range| !range.content.pad);
+        for target in target_ranges.iter().filter(|range| !range.content.pad) {
+            let source = source_payload.next()?;
+            let length = usize::try_from(target.content.length).ok()?;
+            let source_start = usize::try_from(source.block_offset).ok()?;
+            let target_start = usize::try_from(target.block_offset).ok()?;
+            let source_end = source_start.checked_add(length)?;
+            let target_end = target_start.checked_add(length)?;
+            projected
+                .get_mut(target_start..target_end)?
+                .copy_from_slice(payload.get(source_start..source_end)?);
+        }
+        if source_payload.next().is_some() {
+            return None;
+        }
+        Some((v2_block, projected))
+    }
 }
 
 fn same_content_ranges(left: &[ContentRange], right: &[ContentRange]) -> bool {
@@ -905,6 +943,20 @@ mod tests {
         assert_eq!(hybrid.canonical_v2_block_for_v1(v1_tail), Some(v2_tail));
         assert!(expanded[..8 * 1024].iter().all(|byte| *byte == 0x5a));
         assert!(expanded[8 * 1024..].iter().all(|byte| *byte == 0));
+        let (projected_tail, projected) = hybrid
+            .project_v1_block_to_v2(v1_tail, &expanded)
+            .expect("padded v1 block projects back to its shorter v2 payload");
+        assert_eq!(projected_tail, v2_tail);
+        assert_eq!(projected, v2_tail_data);
+
+        let second_file_v1 = BlockExtent::new(2, 0, 16 * 1024);
+        let second_file_v2 = BlockExtent::new(2, 0, 16 * 1024);
+        let second_file_payload = vec![0xA6; 16 * 1024];
+        let (projected_second_file, projected) = hybrid
+            .project_v1_block_to_v2(second_file_v1, &second_file_payload)
+            .expect("second-file v1 block projects after the preceding pad extent");
+        assert_eq!(projected_second_file, second_file_v2);
+        assert_eq!(projected, second_file_payload);
         assert_eq!(
             hybrid.canonical_v2_block_for_v1(BlockExtent::new(1, BLOCK_SIZE, BLOCK_SIZE)),
             None,

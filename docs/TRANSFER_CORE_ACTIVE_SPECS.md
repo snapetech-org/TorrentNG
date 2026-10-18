@@ -3738,9 +3738,10 @@ a whole-torrent scan for each requested block.
   wire block into path/offset spans while retaining v1 synthetic padding;
   `HybridGeometry::blocks_match_content` identifies equivalent payload when a
   padded v1 block and its v2 block have different lengths, and
-  `canonical_v1_block_for_v2`, `canonical_v2_block_for_v1`, and
-  `expand_v2_block_to_v1` provide bidirectional wire projection, mapped ledger
-  extents, and zero-filled padding conversion. The pure
+  `canonical_v1_block_for_v2`, `canonical_v2_block_for_v1`,
+  `expand_v2_block_to_v1`, and `project_v1_block_to_v2` provide bidirectional
+  wire and payload projection, mapped ledger extents, and zero-filled padding
+  conversion. The pure
   `transfer::hybrid::HybridLedger` adapter now binds each connection to its
   wire plane, arbitrates both coordinate views in one canonical v1 ledger,
   returns accepted v2 bytes with v1 padding synthesized, and projects ledger
@@ -3810,7 +3811,8 @@ a whole-torrent scan for each requested block.
 
 - **Regression sources:** partial-resume ledger completion and verification
   boundary, padded hybrid block-range projection and zero-fill,
-  reverse mapping from canonical ledger extents to v2 wire actions,
+  reverse mapping from canonical ledger extents to v2 wire actions and from
+  canonical v1 upload payloads to shorter v2 wire payloads,
   shared hybrid ownership when v1 and v2 requests overlap one padded payload
   extent, one winning response canceling the other plane in its own
   coordinates, duplicate suppression after canonicalization, generation-safe
