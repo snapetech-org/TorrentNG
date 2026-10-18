@@ -204,6 +204,9 @@ impl<G: PieceGeometry> LiveTransferLedger<G> {
         }
     }
 
+    /// Accept an owned response and return canonical payload bytes only when
+    /// the connection wins arbitration. V2 callers must reserve PeerBuffer
+    /// capacity for padding expansion before calling this method.
     pub fn on_block_piece_affine_on_plane(
         &mut self,
         conn: ConnectionId,

@@ -3747,7 +3747,9 @@ a whole-torrent scan for each requested block.
   cancellation actions back to each connection's plane. Its piece-affine
   reserve/receive methods apply the peer-local assembly rule after projecting
   coordinates, so a v1 and a v2 connection cannot split one canonical piece.
-  The production actor ledger does not use this adapter yet.
+  Live hybrid-v1 actors use it through `LiveTransferLedger`; the facade now
+  exposes v2-plane lifecycle operations, but the peer handshake and scheduler
+  do not use those operations yet.
 - **Target owner:** each protocol adapter submits candidates to one shared
   content owner, while immutable payload, storage completion, and durability
   evidence retain their existing explicit owners.
