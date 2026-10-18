@@ -274,7 +274,7 @@ reproduced).
 ## 6. Work packages
 
 63 packages; ordering is topological. A *wave* is a dependency frontier, not a
-sprint. Current snapshot: **4 done, 45 wip, 14 todo**. Status values: `todo`,
+sprint. Current snapshot: **4 done, 46 wip, 13 todo**. Status values: `todo`,
 `wip`, `done`, `blocked`. Detailed per-ticket scope/acceptance is created from
 the template in SYS-001 when picked up.
 
@@ -313,7 +313,7 @@ the template in SYS-001 when picked up.
 | 5 | NET-104 | P0 | Implement the authoritative request and content ownership ledger | NET-101, NET-102, NET-103, IO-005 | wip | in-progress piece arrays use a conservative 64 MiB logical byte budget; live connections cap at 4,096, per-peer request depth at 1,024, torrent-wide in-flight owners at 65,536, and endgame owners at four per block; budget/cap regression sources authored, bulk pass and live integration pending |
 | 5 | PERF-107 | P0 | Implement independent network, hash, disk and pipeline ceilings | PERF-102, PERF-105, PERF-106 | wip | `ceilings.py` derives directional network/disk/hash/pipeline bounds from identity-pinned independent calibration inputs; versioned schemas, manifest digest/recompute checks, and optional trial linkage bind the host/device/network/protocol and client/version/settings pointer, then verify peer/block/request counts; regression sources authored; no calibration, tests, or qualification run |
 | 5 | PERF-109 | P0 | Replace synthetic capacity proxies with live production fixtures | PERF-102, PERF-103, PERF-104, PERF-105, PERF-108 | wip | deterministic unique v1 catalog metainfo now flows through production engine raw-add, metadata-blob/DB persistence, clean shutdown and restore, paused registry, and native API path; synthetic scale test names now say `proxy`; 1k live case and opt-in 100k qualification source authored, not run; independent process/resource trials still belong to PERF-102/PERF-110 |
-| 5 | PERF-112 | P0 | Enforce v2 and persistence invariants in full transfer paths | PERF-104, PERF-105, PERF-106 | todo | |
+| 5 | PERF-112 | P0 | Enforce v2 and persistence invariants in full transfer paths | PERF-104, PERF-105, PERF-106 | wip | production-engine regression source covers v1, pure-v2 and hybrid fixture admission, disk recheck, persisted completion across a clean restart, and pure-v2 corruption demotion on resume; regression source is unrun; actual paired peer transfers and bulk evidence remain open |
 | 6 | IO-012 | P1 | Stream recheck through large chunks and persistent sparse cursors | IO-006, IO-007 | wip | 1 MiB chunked v2 verify + batched leaf hashing; persistent sparse cursors not started |
 | 6 | NET-105 | P0 | Implement negotiated peer protocol request semantics | NET-104 | wip | pure obligations module present; v1/v2 Reject follows negotiated Fast and v1/v2 retain wire requests across Fast Choke; v1 invalidates queued requests by generation, returns queued-only picker slots, rejects canceled queued uploads only for Fast peers, and sends best-effort endgame Cancel without releasing possible late-response leases; focused Cancel regressions and full live-core integration remain pending NET-114 |
 | 6 | NET-109 | P1 | Rebuild piece selection around active candidates and accurate accounting | NET-104 | wip | array-backed rarity buckets, swap-remove positions, fresh-work candidate index, randomized equal-rarity choice, peer-cap-aware capacity accounting, and capacity trimming under availability churn implemented; regression tests authored, bulk pass pending |
@@ -344,9 +344,9 @@ the template in SYS-001 when picked up.
 | 13 | PERF-116 | P1 | Run candidate soak recovery and reversible canary qualification | PERF-112, PERF-114, PERF-115, SYS-013, SYS-014 | todo | |
 | 14 | SYS-015 | P0 | Integrate final gates, independent review and reproducible release | SYS-013, SYS-014, NET-116, IO-016, PERF-116 | todo | |
 
-### Status snapshot (2026-10-17)
+### Status snapshot (2026-10-18)
 
-4 of 63 tickets `done`, 43 `wip`, 16 `todo`. `wip` means a bounded
+4 of 63 tickets `done`, 46 `wip`, 13 `todo`. `wip` means a bounded
 implementation or contract slice landed and the rest of its scope remains;
 applicable regression sources are recorded in Evidence and may be awaiting the
 owner-requested bulk pass. Documentation-only work does not claim runtime
@@ -501,3 +501,4 @@ test pass establishes correctness of the landed slices only.
 | 2026-10-18 | PERF-109 live-catalog source: added deterministic parseable v1 catalog metainfo with unique content-derived info hashes; authored a 1k native-engine/API observation and an opt-in 100k case using real engine add, blob/database persistence, clean restart/restore, paused registry admission, and native API reads. Synthetic registry/database scale cases are now labeled proxies. No tests or builds were run; live scale, process-attributed resources, and mixed-load evidence remain deferred. |
 | 2026-10-18 | PERF-110 planning slice: defined the efficiency matrix as seven checked-in client adapters × four fixture profiles, distinct from the interop correctness matrix; added a canonical catalog, a versioned SHA-256 Fisher-Yates seeded pair schedule, strict schema and deterministic semantic validation, explicit exclusions, and regression sources. This is a planning artifact only: runtime compatibility preflight, process launch, trial/manifest emission, independent observations, and bulk validation remain open. No tests or builds were run. |
 | 2026-10-18 | PERF-111 probes: added a warmed picker pick/cancel timer and a native API snapshot benchmark for initial, cached, and one-row-changed generations, with process-local allocation traffic at 1k–100k scales. CSV probes have no timing thresholds; no tests, builds, or benches were run, and dedicated-host evidence remains deferred. |
+| 2026-10-18 | PERF-112 started: added a production-engine source case using v1, pure-v2, and hybrid payload-derived fixtures. It admits and rechecks the real metainfo paths, persists completed state across a clean restart, then corrupts pure-v2 content and requires resume-time verification to demote it while valid v1/hybrid cases remain complete. This is storage/recheck correctness, not peer-transfer evidence; actual paired network trials and bulk validation remain open. No tests or builds were run. |

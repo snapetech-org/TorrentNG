@@ -2863,6 +2863,89 @@ threshold tests or whole-client performance evidence.
   identified hardware; compare exact source/toolchain; independent process RSS
   and whole-service evidence remain separate.
 
+## PERF-112 — V2 and persistence invariants in full engine paths
+
+- **Priority / wave:** P0 / 5
+- **Prerequisites:** PERF-104, PERF-105, PERF-106
+- **Owning component:** production-shaped transfer fixtures and the
+  `rt-metrics` engine integration target.
+- **Finding or capability:** performance cases need protocol-correct payloads
+  and must not count persisted completion state as valid after its content has
+  changed.
+- **Status:** `wip`
+
+### Scope
+
+Use the deterministic v1, pure-v2, and hybrid compatibility fixtures through
+the production engine API and storage recheck path. Persist paused completion
+state through a clean engine shutdown and restore it from the same database and
+metainfo blobs. Change one byte in the pure-v2 payload between process
+lifetimes, then require resume-time verification to demote that torrent while
+the unchanged v1 and hybrid payloads remain complete. This checks full engine
+admission, storage hashing, state persistence, restart, and recheck behavior;
+it does not simulate a network swarm or establish transfer goodput.
+
+### Ownership and invariant
+
+- **Current owner:** `rt-testkit` defines payload-derived protocol fixtures;
+  `rt-engine` owns real metainfo admission, storage verification, and durable
+  registry updates; the `rt-metrics` integration target observes lifecycle
+  results across restart.
+- **Target owner:** PERF-110's paired runner must run clients against pinned
+  v2/hybrid fixtures and invoke integrity/restart gates before a trial can be
+  treated as comparable.
+- **Invariant preserved:** a torrent that was previously complete is not
+  trusted after restart until its current payload verifies; v1, pure-v2, and
+  hybrid identities remain distinct, and hybrid pad bytes stay zero-filled.
+- **Must not:** label local storage recheck as a peer transfer, accept the
+  persisted `amount_left == 0` row without resumed verification, or infer
+  filesystem durability beyond IO-009/IO-010 evidence.
+
+### Acceptance
+
+- Materialize each protocol fixture under its name-wrapped save path, with
+  separate roots and the expected hybrid padding file.
+- Admit the raw metainfo through `EngineHandle::add_torrent_raw_with_labels`,
+  use the production task to verify existing bytes, and observe all three
+  cases reach complete state with zero bytes remaining.
+- Pause the completed entries, shut down cleanly, and restore all three from
+  the same database and metainfo blobs with their protocol identities and
+  completed counters intact.
+- Corrupt one pure-v2 payload byte between engine lifetimes. After resume, the
+  pure-v2 entry must return to `Downloading` with bytes remaining; unchanged
+  v1 and hybrid entries must reverify as `Seeding` with zero bytes remaining.
+- Keep peer network transfer, matched goodput, resource attribution, crash-cut
+  behavior, and strict durability qualification as separate evidence owned by
+  PERF-110, PERF-102, IO-009, and IO-010.
+
+### Files and compatibility
+
+- **Expected code paths:**
+  `crates/rt-metrics/tests/transfer_invariants.rs` and this spec.
+- **State or wire compatibility:** regression-source changes only; no
+  product format or runtime behavior changes.
+- **Migration / rollback:** none.
+- **Feature flag or rollout boundary:** none; paired performance results stay
+  unqualified until their network payload and restart invariants pass.
+
+### Evidence
+
+- **Regression source added or updated:**
+  `persisted_v2_completion_is_rechecked_after_restart` exercises the v1,
+  pure-v2, and hybrid engine paths and corrupts only the pure-v2 content
+  between restarts.
+- **Command or probe to run:**
+  `cargo test -p rt-metrics --test transfer_invariants -- --nocapture`
+  during the requested bulk pass.
+- **Expected result:** valid protocol fixtures become complete through the
+  production storage path; persisted completion is restored; corrupted v2
+  content is rejected after restart while the unchanged protocol cases remain
+  complete.
+- **Executed on exact revision:** no.
+- **Artifact or report path:** pending bulk pass.
+- **External evidence still required:** matched network transfer and payload
+  integrity for all applicable PERF-110 client/profile pairs.
+
 ## PERF-113 — Descriptive paired scorecard
 
 - **Priority / wave:** P1 / 7
