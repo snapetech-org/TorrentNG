@@ -9,6 +9,7 @@
 //! * [`coords`]      typed block/piece extents, torrent-scoped peer identities,
 //!   epochs and the v1 / v2 / hybrid geometry adapters
 //! * [`ledger`]      the one authoritative request and content ownership ledger
+//! * [`hybrid`]      a dual-wire-view adapter over one canonical hybrid ledger
 //! * [`obligations`] negotiated peer-protocol request termination (BEP 6)
 //! * [`upload`]      bounded, fair, byte-admitted upload service keyed by the
 //!   shared torrent/connection identity
@@ -31,6 +32,7 @@
 pub(crate) type Nanos = u64;
 
 pub(crate) mod coords;
+pub(crate) mod hybrid;
 pub(crate) mod ledger;
 pub(crate) mod obligations;
 pub(crate) mod rate;

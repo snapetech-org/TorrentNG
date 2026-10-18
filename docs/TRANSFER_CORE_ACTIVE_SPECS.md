@@ -3657,8 +3657,12 @@ a whole-torrent scan for each requested block.
   padded v1 block and its v2 block have different lengths, and
   `canonical_v1_block_for_v2`, `canonical_v2_block_for_v1`, and
   `expand_v2_block_to_v1` provide bidirectional wire projection, mapped ledger
-  extents, and zero-filled padding conversion. The live actor ledger does not
-  use these helpers yet.
+  extents, and zero-filled padding conversion. The pure
+  `transfer::hybrid::HybridLedger` adapter now binds each connection to its
+  wire plane, arbitrates both coordinate views in one canonical v1 ledger,
+  returns accepted v2 bytes with v1 padding synthesized, and projects ledger
+  cancellation actions back to each connection's plane. The production actor
+  ledger does not use this adapter yet.
 - **Target owner:** each protocol adapter submits candidates to one shared
   content owner, while immutable payload, storage completion, and durability
   evidence retain their existing explicit owners.
@@ -3708,12 +3712,18 @@ a whole-torrent scan for each requested block.
 - **Regression sources:** partial-resume ledger completion and verification
   boundary, padded hybrid block-range projection and zero-fill,
   reverse mapping from canonical ledger extents to v2 wire actions,
+  shared hybrid ownership when v1 and v2 requests overlap one padded payload
+  extent, one winning response canceling the other plane in its own
+  coordinates, duplicate suppression after canonicalization, generation-safe
+  plane reuse, and malformed response lengths preserving ownership,
   ledger failure/expiry cancellation, v1 actor lifecycle, webseed ledger
   ownership, and pure-v2
   reservation/response/action-routing/timeout sources and a request-cursor
   sources covering live-block skips, cancellation rewind, received-block word
   boundaries, packed bitmap/cursor memory accounting, and remote-availability
-  set-bit iteration are present; hybrid dual-view cases remain open.
+  set-bit iteration are present; the pure hybrid ledger adapter covers padded
+  overlap, winner cancellation, zero-fill, and duplicate suppression, while
+  live hybrid actor cases remain open.
 - **Command or probe:** run transfer-core simulator and engine regression
   suites only during the owner-requested bulk pass.
 - **Executed on exact revision:** no. No build or test commands were run for
