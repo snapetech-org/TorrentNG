@@ -1090,6 +1090,8 @@ struct StorageCounters {
     sparse_data_extents: AtomicU64,
     sparse_hole_bytes: AtomicU64,
     sparse_seek_fallbacks: AtomicU64,
+    #[cfg(test)]
+    operation_dispatches: Mutex<Vec<StorageDispatchTestSnapshot>>,
 }
 
 impl Default for StorageCounters {
@@ -1129,6 +1131,8 @@ impl Default for StorageCounters {
             sparse_data_extents: AtomicU64::new(0),
             sparse_hole_bytes: AtomicU64::new(0),
             sparse_seek_fallbacks: AtomicU64::new(0),
+            #[cfg(test)]
+            operation_dispatches: Mutex::new(Vec::new()),
         }
     }
 }
@@ -1359,6 +1363,17 @@ struct StorageCreditEvidence {
     frame_pool_charge_bytes_at_dispatch: u64,
 }
 
+#[cfg(test)]
+#[derive(Debug, Clone, Copy)]
+struct StorageDispatchTestSnapshot {
+    credit: StorageCreditEvidence,
+    byte_range: Option<StorageByteRange>,
+    has_file_identity: bool,
+    file_owner_retained: bool,
+    payload_owner_retained: bool,
+    device_queue_permits: usize,
+}
+
 /// Evidence carried with an admitted operation until its backend completion.
 /// The device sequence is local to the retained device queue and is therefore
 /// paired with that queue's key; file identity, content epoch, and write
@@ -1455,6 +1470,26 @@ impl DiskSubmission {
     fn trace_dispatch(&self, operation_kind: &'static str, class: IoClass, device_count: usize) {
         let range = self.operation.byte_range;
         let credit = self.operation.resource_credit;
+        #[cfg(test)]
+        let mut operation_dispatches = self
+            ._queued_bytes
+            .counters
+            .operation_dispatches
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        #[cfg(test)]
+        if operation_dispatches.len() < 64 {
+            operation_dispatches.push(StorageDispatchTestSnapshot {
+                credit,
+                byte_range: range,
+                has_file_identity: self.operation.file_identity.is_some(),
+                file_owner_retained: self._file_owner.is_some(),
+                payload_owner_retained: self._payload_owner.is_some(),
+                device_queue_permits: self.device_queue_permit_count(),
+            });
+        }
+        #[cfg(test)]
+        drop(operation_dispatches);
         tracing::trace!(
             storage_operation_id = ?self.operation.storage_operation_id.map(|id| id.0),
             device_operation_id = ?self.operation.device_operation_id.map(|id| id.0),
@@ -5457,6 +5492,78 @@ mod tests {
         );
         assert_eq!(frames.in_use_bytes(), 0);
         assert_eq!(counters.queued_disk_bytes.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn production_scheduler_dispatch_credit_matches_live_owners_until_completion() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("scheduler-owner-chain.bin");
+        std::fs::write(&path, b"payload").unwrap();
+        let resources = ResourceGovernor::new(Default::default());
+        let scheduler = MountScheduler::new(
+            StorageRootId::new(),
+            &SchedulerConfig {
+                profile: StorageProfile::Hdd,
+                resources: Some(resources.clone()),
+                ..Default::default()
+            },
+        );
+        let (scheduler, backend) = scheduler_with_scripted_backend_for(scheduler);
+        backend.inject(Operation::Read, Effect::HoldCompletion);
+
+        let read_scheduler = scheduler.clone();
+        let read_path = path.clone();
+        let read = tokio::spawn(async move {
+            read_scheduler
+                .read_at(IoClass::Recheck, &read_path, 0, 7)
+                .await
+        });
+        backend.wait_until_completion_is_held().await;
+
+        let dispatches = scheduler
+            .counters
+            .operation_dispatches
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        assert_eq!(dispatches.len(), 1);
+        let dispatch = dispatches[0];
+        assert_eq!(
+            dispatch.byte_range,
+            Some(StorageByteRange {
+                offset: 0,
+                length: 7
+            })
+        );
+        assert!(dispatch.has_file_identity);
+        assert!(dispatch.file_owner_retained);
+        assert!(!dispatch.payload_owner_retained);
+        assert_eq!(dispatch.device_queue_permits, 1);
+        assert_eq!(
+            dispatch.credit.frame_pool_charge_bytes_at_dispatch,
+            16 * 1024
+        );
+
+        let stats = scheduler.stats();
+        let resource_snapshot = resources.snapshot();
+        let queued_disk_used =
+            resource_snapshot.classes[MemoryClass::QueuedDisk as usize].used_bytes;
+        assert_eq!(dispatch.credit.governor_credit_leases, 1);
+        assert_eq!(dispatch.credit.governor_credit_bytes, queued_disk_used);
+        assert_eq!(
+            dispatch.credit.logical_queued_bytes,
+            stats.queued_disk_bytes
+        );
+        assert_eq!(stats.queued_disk_bytes, queued_disk_used);
+        assert_eq!(
+            stats.device_queue_capacity - stats.device_queue_available,
+            1
+        );
+
+        assert!(backend.release_next());
+        assert_eq!(&read.await.unwrap().unwrap()[..], b"payload");
+        assert_storage_admission_released(&scheduler);
+        assert_eq!(resources.snapshot().total_used_bytes, 0);
     }
 
     fn hdd_scheduler() -> MountScheduler {

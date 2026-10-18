@@ -107,8 +107,11 @@ submission through their data sync. Reads recheck the descriptor identity
 against the current path before returning. Stable trace identities and lease
 lifetime events are implemented. The controlled frame/queue/hash owner-chain
 regression reconciles its dispatch record to live frame-pool and governor
-snapshots. Automated reconciliation across production scheduler operations,
-crash cuts, and platform fault qualification remain open.
+snapshots. A held-backend regression now also executes a real scheduler read
+and reconciles its dispatch credit, range, descriptor owner, frame charge, and
+device permit with live queue and governor snapshots through completion.
+Multi-operation/hash-pipeline reconciliation, crash cuts, and platform fault
+qualification remain open.
 
 Dirty evidence is tracked per normalized path, write sequence, and file
 identity. A barrier snapshots the dirty files and highest covered sequence for
@@ -140,9 +143,10 @@ Each scenario records the injected event sequence, operation/file generations,
 lease and permit counts before/after, completion state, dirty sequences, and
 recovered content. Current dispatch/drop traces expose submitted credit and
 retained-owner counts; identity/growth/release and order-independent lossy
-coalesced-credit regressions plus a deterministic frame/queue/hash owner-chain
-snapshot regression are authored. Production-path snapshots across all credit
-classes are still required. Wall-clock sleeps and “usually happens” race tests
+coalesced-credit regressions, a deterministic frame/queue/hash owner-chain
+snapshot regression, and a held-backend production scheduler read reconciliation
+are authored. Multi-operation production snapshots across all credit classes
+remain required. Wall-clock sleeps and “usually happens” race tests
 do not satisfy this contract.
 
 ## Qualification boundary
