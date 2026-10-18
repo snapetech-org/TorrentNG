@@ -3606,7 +3606,9 @@ remain open.
 Each pure-v2 assembly also keeps a forward request cursor over received and
 on-wire blocks. Matching Cancel and Reject responses rewind the cursor. Its
 received-block state is stored as a packed bitmap; both bitmap and cursor are
-included in the PieceAssembly memory lease.
+included in the PieceAssembly memory lease. The peer request filler prioritizes
+its active assemblies and then walks set bits in remote availability, avoiding
+a whole-torrent scan for each requested block.
 
 ### Ownership and invariant
 
@@ -3654,6 +3656,8 @@ included in the PieceAssembly memory lease.
   disconnect, and piece completion/failure.
 - Pure-v2 request cursors skip received/on-wire blocks and rewind on matching
   Cancel/Reject responses.
+- Pure-v2 request filling continues active assemblies before considering new
+  pieces and visits only set bits in the remote availability bitmap.
 - Serial v1 webseed requests reserve before fetch, commit after a validated
   response, and release on fetch failure, cancellation, or response handling;
   temporary connection and piece-state allocations are charged to
@@ -3680,8 +3684,8 @@ included in the PieceAssembly memory lease.
   ownership, and pure-v2
   reservation/response/action-routing/timeout sources and a request-cursor
   sources covering live-block skips, cancellation rewind, received-block word
-  boundaries, packed bitmap/cursor memory accounting are present; hybrid
-  dual-view cases remain open.
+  boundaries, packed bitmap/cursor memory accounting, and remote-availability
+  set-bit iteration are present; hybrid dual-view cases remain open.
 - **Command or probe:** run transfer-core simulator and engine regression
   suites only during the owner-requested bulk pass.
 - **Executed on exact revision:** no. No build or test commands were run for

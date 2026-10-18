@@ -364,6 +364,24 @@ impl V2Bitmap {
             .sum()
     }
 
+    fn next_set_from(&self, start: usize) -> Option<usize> {
+        if start >= self.len {
+            return None;
+        }
+        let mut word_index = start / 64;
+        let mut word = self.words.get(word_index).copied()? & (u64::MAX << (start % 64));
+        loop {
+            if word != 0 {
+                let index = word_index
+                    .saturating_mul(64)
+                    .saturating_add(word.trailing_zeros() as usize);
+                return (index < self.len).then_some(index);
+            }
+            word_index = word_index.checked_add(1)?;
+            word = self.words.get(word_index).copied()?;
+        }
+    }
+
     fn to_bitfield(&self) -> Vec<u8> {
         let mut bits = vec![0_u8; self.len.div_ceil(8)];
         for index in 0..self.len {
@@ -5119,6 +5137,81 @@ async fn update_v2_interest(
     Ok(())
 }
 
+fn next_v2_request_candidate(
+    context: &V2PeerContext,
+    piece: u32,
+    local_have: &V2Bitmap,
+    remote_have: &V2Bitmap,
+    pending_piece_completions: &HashMap<u32, V2PendingCompletion>,
+    foreign_activity: &[u32],
+    assemblies: &mut HashMap<u32, V2PieceAssembly>,
+    outstanding: &HashMap<(u32, u32), V2OutstandingRequest>,
+    ready_completions: usize,
+    tracked_pieces: usize,
+) -> anyhow::Result<Option<(u32, u32, u32, bool)>> {
+    let piece_index = piece as usize;
+    if local_have.get(piece_index)
+        || !remote_have.get(piece_index)
+        || pending_piece_completions.contains_key(&piece)
+        || foreign_activity.binary_search(&piece).is_ok()
+    {
+        return Ok(None);
+    }
+    let Ok(region) = context.piece_map.piece_to_file(piece) else {
+        return Ok(None);
+    };
+    if region.pad || !context.file_is_wanted(region.file_index) {
+        return Ok(None);
+    }
+
+    let is_new_assembly = !assemblies.contains_key(&piece);
+    if is_new_assembly {
+        if ready_completions >= V2_MAX_PENDING_PIECE_JOBS
+            || tracked_pieces >= V2_MAX_TRACKED_PIECES_PER_PEER
+        {
+            return Ok(None);
+        }
+        assemblies.insert(
+            piece,
+            V2PieceAssembly::new(
+                piece,
+                context.next_piece_attempt_generation(),
+                region.length,
+                context.assembly_cap_bytes,
+                &context.resources,
+            )?,
+        );
+    } else if assemblies
+        .get(&piece)
+        .is_some_and(|assembly| assembly.is_complete() || assembly.discard_when_idle)
+    {
+        return Ok(None);
+    }
+
+    let Some(begin) = assemblies
+        .get(&piece)
+        .and_then(|assembly| assembly.next_unrequested(piece, outstanding))
+    else {
+        if is_new_assembly {
+            assemblies.remove(&piece);
+        }
+        return Ok(None);
+    };
+    let length = context
+        .piece_map
+        .validate_request(piece, begin, rt_peer_wire::message::MAX_BLOCK_SIZE)
+        .map(|region| region.length)
+        .or_else(|_| {
+            context
+                .piece_map
+                .piece_len(piece)
+                .ok()
+                .and_then(|length| length.checked_sub(begin))
+                .ok_or(rt_piece_map::PieceMapError::ZeroRequestLength)
+        })?;
+    Ok(Some((piece, begin, length, is_new_assembly)))
+}
+
 async fn fill_v2_requests(
     context: &V2PeerContext,
     framed: &mut PeerIo,
@@ -5199,68 +5292,61 @@ async fn fill_v2_requests(
         {
             break;
         }
-        for piece in 0..context.piece_map.piece_count {
-            let piece_index = piece as usize;
-            if local_have.get(piece_index)
-                || !remote_have.get(piece_index)
-                || pending_piece_completions.contains_key(&piece)
-                || foreign_activity.binary_search(&piece).is_ok()
-            {
-                continue;
+        // Fill every active piece before scanning for new ones. This keeps a
+        // multi-block piece's hot path bounded by the per-peer assembly cap
+        // instead of revisiting the full torrent index for each block.
+        let mut active_pieces = [0; V2_MAX_TRACKED_PIECES_PER_PEER];
+        let mut active_piece_count = 0;
+        for piece in assemblies
+            .keys()
+            .copied()
+            .take(V2_MAX_TRACKED_PIECES_PER_PEER)
+        {
+            active_pieces[active_piece_count] = piece;
+            active_piece_count += 1;
+        }
+        active_pieces[..active_piece_count].sort_unstable();
+        for piece in active_pieces[..active_piece_count].iter().copied() {
+            selected = next_v2_request_candidate(
+                context,
+                piece,
+                &local_have,
+                &remote_have,
+                pending_piece_completions,
+                &foreign_activity,
+                assemblies,
+                outstanding,
+                ready_completions,
+                tracked_pieces,
+            )?;
+            if selected.is_some() {
+                break;
             }
-            let Ok(region) = context.piece_map.piece_to_file(piece) else {
-                continue;
-            };
-            if region.pad || !context.file_is_wanted(region.file_index) {
-                continue;
-            }
-            let is_new_assembly = !assemblies.contains_key(&piece);
-            let assembly = if let Some(assembly) = assemblies.get(&piece) {
-                if assembly.is_complete() {
-                    continue;
-                }
-                if assembly.discard_when_idle {
-                    continue;
-                }
-                None
-            } else {
-                if ready_completions >= V2_MAX_PENDING_PIECE_JOBS
-                    || tracked_pieces >= V2_MAX_TRACKED_PIECES_PER_PEER
-                {
-                    continue;
-                }
-                Some(V2PieceAssembly::new(
+        }
+        if selected.is_none() {
+            // Availability is a packed bitmap. Walk only the peer's set bits
+            // rather than visiting every piece the peer does not have.
+            let mut piece_index = remote_have.next_set_from(0);
+            while let Some(index) = piece_index {
+                piece_index = remote_have.next_set_from(index.saturating_add(1));
+                let piece = u32::try_from(index)
+                    .map_err(|_| anyhow::anyhow!("v2 piece index exceeds wire range"))?;
+                selected = next_v2_request_candidate(
+                    context,
                     piece,
-                    context.next_piece_attempt_generation(),
-                    region.length,
-                    context.assembly_cap_bytes,
-                    &context.resources,
-                )?)
-            };
-            if let Some(assembly) = assembly {
-                assemblies.insert(piece, assembly);
+                    &local_have,
+                    &remote_have,
+                    pending_piece_completions,
+                    &foreign_activity,
+                    assemblies,
+                    outstanding,
+                    ready_completions,
+                    tracked_pieces,
+                )?;
+                if selected.is_some() {
+                    break;
+                }
             }
-            let Some(begin) = assemblies
-                .get(&piece)
-                .and_then(|assembly| assembly.next_unrequested(piece, outstanding))
-            else {
-                // Every missing block is already on the wire; try the next piece.
-                continue;
-            };
-            let length = context
-                .piece_map
-                .validate_request(piece, begin, rt_peer_wire::message::MAX_BLOCK_SIZE)
-                .map(|region| region.length)
-                .or_else(|_| {
-                    context
-                        .piece_map
-                        .piece_len(piece)
-                        .ok()
-                        .and_then(|length| length.checked_sub(begin))
-                        .ok_or(rt_piece_map::PieceMapError::ZeroRequestLength)
-                })?;
-            selected = Some((piece, begin, length, is_new_assembly));
-            break;
         }
         let Some((piece, begin, length, is_new_assembly)) = selected else {
             break;
@@ -6856,6 +6942,19 @@ mod tests {
         let mut decoded = V2Bitmap::new(10);
         decoded.copy_from_bitfield(&encoded).unwrap();
         assert_eq!(decoded.count_ones(), 2);
+    }
+
+    #[test]
+    fn bitmap_set_iteration_skips_empty_words_and_stops_at_piece_count() {
+        let mut bitmap = V2Bitmap::new(130);
+        bitmap.set(1, true);
+        bitmap.set(65, true);
+        bitmap.set(129, true);
+
+        assert_eq!(bitmap.next_set_from(0), Some(1));
+        assert_eq!(bitmap.next_set_from(2), Some(65));
+        assert_eq!(bitmap.next_set_from(66), Some(129));
+        assert_eq!(bitmap.next_set_from(130), None);
     }
 
     #[test]
