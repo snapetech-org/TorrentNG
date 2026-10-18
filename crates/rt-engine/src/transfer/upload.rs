@@ -13,7 +13,7 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use super::coords::{BlockExtent, ConnectionId, BLOCK_SIZE};
+use super::coords::{BlockExtent, TransferPeerId, BLOCK_SIZE};
 use super::obligations::{InboundDecision, InboundObligations, Reject, Served};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,14 +46,14 @@ pub struct JobId(u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReadJob {
     pub id: JobId,
-    pub conn: ConnectionId,
+    pub conn: TransferPeerId,
     pub block: BlockExtent,
 }
 
 /// What the caller must send in response to an event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Outgoing {
-    pub conn: ConnectionId,
+    pub conn: TransferPeerId,
     pub reject: Reject,
 }
 
@@ -64,9 +64,9 @@ struct ConnUpload {
 
 pub struct UploadService {
     limits: UploadLimits,
-    conns: HashMap<ConnectionId, ConnUpload>,
+    conns: HashMap<TransferPeerId, ConnUpload>,
     /// Round-robin order of connections that may have work.
-    ring: VecDeque<ConnectionId>,
+    ring: VecDeque<TransferPeerId>,
     jobs: HashMap<JobId, ReadJob>,
     in_flight_bytes: u64,
     next_job: u64,
@@ -85,9 +85,10 @@ impl UploadService {
         }
     }
 
-    /// Register one fresh connection generation. Refuse a duplicate live
-    /// identity, including one whose previous storage read has not completed.
-    pub fn register(&mut self, conn: ConnectionId, fast_negotiated: bool) -> bool {
+    /// Register one fresh torrent/connection generation. Refuse a duplicate
+    /// live identity, including one whose previous storage read has not
+    /// completed.
+    pub fn register(&mut self, conn: TransferPeerId, fast_negotiated: bool) -> bool {
         if self.conns.contains_key(&conn) || self.jobs.values().any(|job| job.conn == conn) {
             return false;
         }
@@ -105,7 +106,7 @@ impl UploadService {
         true
     }
 
-    pub fn allow_fast(&mut self, conn: ConnectionId, piece: u32) {
+    pub fn allow_fast(&mut self, conn: TransferPeerId, piece: u32) {
         if let Some(state) = self.conns.get_mut(&conn) {
             state.obligations.allow_fast(piece);
         }
@@ -119,7 +120,7 @@ impl UploadService {
         self.in_flight_bytes
     }
 
-    pub fn queued(&self, conn: ConnectionId) -> usize {
+    pub fn queued(&self, conn: TransferPeerId) -> usize {
         self.conns
             .get(&conn)
             .map_or(0, |state| state.obligations.queued_len())
@@ -128,7 +129,7 @@ impl UploadService {
     /// A request arrived from `conn`.
     pub fn admit(
         &mut self,
-        conn: ConnectionId,
+        conn: TransferPeerId,
         block: BlockExtent,
         have_piece: bool,
     ) -> Option<InboundDecision> {
@@ -137,18 +138,18 @@ impl UploadService {
             .map(|state| state.obligations.on_request(block, have_piece))
     }
 
-    pub fn on_cancel(&mut self, conn: ConnectionId, block: BlockExtent) -> Option<Outgoing> {
+    pub fn on_cancel(&mut self, conn: TransferPeerId, block: BlockExtent) -> Option<Outgoing> {
         let reject = self.conns.get_mut(&conn)?.obligations.on_cancel(block)?;
         Some(Outgoing { conn, reject })
     }
 
-    pub fn on_local_unchoke(&mut self, conn: ConnectionId) {
+    pub fn on_local_unchoke(&mut self, conn: TransferPeerId) {
         if let Some(state) = self.conns.get_mut(&conn) {
             state.obligations.on_local_unchoke();
         }
     }
 
-    pub fn on_local_choke(&mut self, conn: ConnectionId) -> Vec<Outgoing> {
+    pub fn on_local_choke(&mut self, conn: TransferPeerId) -> Vec<Outgoing> {
         self.conns
             .get_mut(&conn)
             .map(|state| {
@@ -228,7 +229,7 @@ impl UploadService {
     /// The connection closed; its protocol obligations end with it. Reads
     /// already handed to the backend remain charged until `finish`, even
     /// though their results can no longer be sent.
-    pub fn disconnect(&mut self, conn: ConnectionId) {
+    pub fn disconnect(&mut self, conn: TransferPeerId) {
         if let Some(mut state) = self.conns.remove(&conn) {
             state.obligations.close();
         }
@@ -251,7 +252,7 @@ impl UploadService {
             let jobs = self.jobs.values().filter(|job| job.conn == *conn).count();
             if jobs != state.in_flight {
                 return Err(format!(
-                    "{conn} in-flight {} != jobs {jobs}",
+                    "{conn:?} in-flight {} != jobs {jobs}",
                     state.in_flight
                 ));
             }
@@ -263,25 +264,63 @@ impl UploadService {
 
 #[cfg(test)]
 mod tests {
+    use super::super::coords::{ConnectionId, TorrentKey};
     use super::super::obligations::RejectReason;
     use super::*;
 
-    fn conn(slot: u32) -> ConnectionId {
-        ConnectionId {
-            slot,
-            generation: 1,
-        }
+    fn peer(torrent: u64, slot: u32) -> TransferPeerId {
+        TransferPeerId::new(
+            TorrentKey(torrent),
+            ConnectionId {
+                slot,
+                generation: 1,
+            },
+        )
+    }
+
+    fn conn(slot: u32) -> TransferPeerId {
+        peer(1, slot)
     }
 
     fn block(piece: u32, index: u32) -> BlockExtent {
         BlockExtent::new(piece, index * 16 * 1024, 16 * 1024)
     }
 
-    fn ready(service: &mut UploadService, id: u32, fast: bool) -> ConnectionId {
+    fn ready(service: &mut UploadService, id: u32, fast: bool) -> TransferPeerId {
         let conn = conn(id);
         service.register(conn, fast);
         service.on_local_unchoke(conn);
         conn
+    }
+
+    #[test]
+    fn ledger_connection_slots_are_isolated_between_torrents() {
+        let mut service = UploadService::new(UploadLimits::default());
+        let first_torrent = peer(1, 1);
+        let second_torrent = peer(2, 1);
+        assert_eq!(first_torrent.connection, second_torrent.connection);
+        assert!(service.register(first_torrent, true));
+        assert!(service.register(second_torrent, true));
+        service.on_local_unchoke(first_torrent);
+        service.on_local_unchoke(second_torrent);
+
+        assert_eq!(
+            service.admit(first_torrent, block(0, 0), true),
+            Some(InboundDecision::Queue)
+        );
+        assert_eq!(
+            service.admit(second_torrent, block(0, 0), true),
+            Some(InboundDecision::Queue)
+        );
+        assert_eq!(service.queued(first_torrent), 1);
+        assert_eq!(service.queued(second_torrent), 1);
+
+        service.disconnect(first_torrent);
+        assert_eq!(service.queued(second_torrent), 1);
+        let job = service
+            .next_job()
+            .expect("the other torrent remains schedulable");
+        assert_eq!(job.conn, second_torrent);
     }
 
     #[test]

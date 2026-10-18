@@ -1294,7 +1294,7 @@ parked requests eligible sooner, so the live adapter must promptly reconsider
 the affected requests instead of waiting for their previous deadlines.
 
 `TorrentKey` is unique for a task generation while stale peer work may still
-exist. `RatePeerId` combines that key with the connection-local generation-safe
+exist. `TransferPeerId` combines that key with the connection-local generation-safe
 `ConnectionId`, because separate torrent ledgers can both register `conn#0.1`.
 NET-114 and NET-115 own actor registration, payload admission, limit updates,
 cancellation/refund, and shared source scheduling.
@@ -1461,13 +1461,15 @@ full swarm-trace input/output harness remains open.
 
 ### Scope
 
-The pure `UploadService` queues protocol obligations per connection, dispatches
-bounded byte-admitted reads in round-robin order, and reports whether a read
-result may still be sent. Requests with zero or greater-than-one-block lengths
-are refused. The configured byte ceiling has a one-wire-block minimum, then
-acts as a hard cap. A disconnect ends protocol obligations but does not release
-capacity for reads already dispatched to storage. Actor integration and
-independent read/write progress remain NET-106/NET-114.
+The pure `UploadService` queues protocol obligations per torrent-scoped peer,
+dispatches bounded byte-admitted reads in round-robin order, and reports whether
+a read result may still be sent. Its composite identity permits one process-wide
+service even though each torrent ledger reuses local connection slots. Requests
+with zero or greater-than-one-block lengths are refused. The configured byte
+ceiling has a one-wire-block minimum, then acts as a hard cap. A disconnect ends
+protocol obligations but does not release capacity for reads already dispatched
+to storage. Actor integration and independent read/write progress remain
+NET-106/NET-114.
 
 ### Ownership and invariant
 
@@ -1492,6 +1494,8 @@ independent read/write progress remain NET-106/NET-114.
   one valid block is admitted even when configuration is below one block.
 - Re-registering a live connection identity is refused, including while its
   disconnected generation still owns an unfinished read.
+- Equal ledger connection slots and generations in separate torrents remain
+  distinct registrations; disconnecting one cannot remove the other's work.
 - Regression sources cover queue bounds, byte bounds, fairness, invalid wire
   lengths, connection-generation reuse, choke, cancel, and disconnect
   completion ownership.
@@ -1500,7 +1504,7 @@ independent read/write progress remain NET-106/NET-114.
 
 ### Files and compatibility
 
-- **Expected code paths:** `crates/rt-engine/src/transfer/{upload,obligations}.rs`
+- **Expected code paths:** `crates/rt-engine/src/transfer/{coords,upload,obligations}.rs`
   and the NET-114 peer adapters.
 - **State or wire compatibility:** no wire-format change.
 - **Migration / rollback:** actor-local request handling remains selectable
@@ -1511,7 +1515,8 @@ independent read/write progress remain NET-106/NET-114.
 ### Evidence
 
 - **Regression source added or updated:** upload service queue, fairness,
-  budgets, choked reads, and disconnect-held budget cases.
+  budgets, cross-torrent identity isolation, choked reads, and disconnect-held
+  budget cases.
 - **Command or probe to run:** transfer-core upload tests during the requested
   bulk pass.
 - **Expected result:** no accepted request disappears and disconnected reads

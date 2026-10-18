@@ -20,8 +20,13 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use super::coords::ConnectionId;
+use super::coords::{TorrentKey, TransferPeerId};
 use super::Nanos;
+
+/// Rate-specific name retained for callers that work directly with the
+/// hierarchical scheduler. The identity is shared with other transfer-core
+/// services that span multiple torrent ledgers.
+pub type RatePeerId = TransferPeerId;
 
 const NANOS_PER_SEC: i128 = 1_000_000_000;
 /// Burst a limited bucket may accumulate: this fraction of a second of rate.
@@ -33,29 +38,6 @@ const MIN_BURST_BYTES: u64 = 16 * 1024;
 const FAIRNESS_LAG_BYTES: u128 = 2 * 16 * 1024;
 /// Virtual-time resolution: bytes scaled by this before dividing by weight.
 const VTIME_SCALE: u128 = 1_000_000;
-
-/// Unique rate-tree identity for a torrent task; do not reuse while an
-/// earlier task generation may still hold peer work.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct TorrentKey(pub u64);
-
-/// A ledger connection is unique only within its torrent. This composite key
-/// keeps peer accounting distinct when one process-wide tree serves many
-/// torrent actors whose local ledgers reuse the same slot and generation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct RatePeerId {
-    pub torrent: TorrentKey,
-    pub connection: ConnectionId,
-}
-
-impl RatePeerId {
-    pub const fn new(torrent: TorrentKey, connection: ConnectionId) -> Self {
-        Self {
-            torrent,
-            connection,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Grant {
@@ -510,8 +492,8 @@ mod tests {
     const SEC: Nanos = 1_000_000_000;
     const BLOCK: u64 = 16 * 1024;
 
-    fn conn(slot: u32) -> ConnectionId {
-        ConnectionId {
+    fn conn(slot: u32) -> super::super::coords::ConnectionId {
+        super::super::coords::ConnectionId {
             slot,
             generation: 1,
         }

@@ -6,11 +6,12 @@
 //! unbounded task spawns, so every behaviour here is deterministic and can be
 //! replayed by `sim`.
 //!
-//! * [`coords`]      typed block/piece extents, connection identities, epochs and
-//!   the v1 / v2 / hybrid geometry adapters
+//! * [`coords`]      typed block/piece extents, torrent-scoped peer identities,
+//!   epochs and the v1 / v2 / hybrid geometry adapters
 //! * [`ledger`]      the one authoritative request and content ownership ledger
 //! * [`obligations`] negotiated peer-protocol request termination (BEP 6)
-//! * [`upload`]      bounded, fair, byte-admitted upload service
+//! * [`upload`]      bounded, fair, byte-admitted upload service keyed by the
+//!   shared torrent/connection identity
 //! * [`rate`]        hierarchical global/torrent/peer rate scheduler
 //! * [`window`]      adaptive request windows and refill deadlines
 //! * [`sim`]         deterministic simulator and invariant oracle

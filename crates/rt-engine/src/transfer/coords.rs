@@ -79,6 +79,29 @@ pub struct ConnectionId {
     pub generation: u32,
 }
 
+/// Runtime identity for one live torrent task. It is process-local and must
+/// not be reused while work from an earlier task generation may still exist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TorrentKey(pub u64);
+
+/// Process-wide identity for a peer connection. `ConnectionId` is only unique
+/// within one torrent ledger, so shared transfer services use this composite
+/// key when they cover multiple torrent tasks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TransferPeerId {
+    pub torrent: TorrentKey,
+    pub connection: ConnectionId,
+}
+
+impl TransferPeerId {
+    pub const fn new(torrent: TorrentKey, connection: ConnectionId) -> Self {
+        Self {
+            torrent,
+            connection,
+        }
+    }
+}
+
 impl fmt::Display for ConnectionId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "conn#{}.{}", self.slot, self.generation)
