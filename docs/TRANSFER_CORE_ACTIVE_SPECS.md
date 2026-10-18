@@ -520,8 +520,11 @@ and the full injected-fault matrix remain open.
   backend completion.
 - Strict writes hold admission through their fdatasync; checkpoint writes
   release it only after the write completion.
-- End-to-end queue-capacity and memory-budget cancellation cases remain to be
-  added alongside the fault-injected device-service matrix.
+- End-to-end scheduler regressions cancel submitted writes while completion is
+  held, prove queue slots and queued-disk memory leases stay charged, verify
+  later admission is rejected at each limit, and prove admission returns after
+  backend completion.
+- The full fault-injected device-service matrix remains open.
 
 ### Files and compatibility
 
@@ -535,13 +538,15 @@ and the full injected-fault matrix remain open.
 
 ### Evidence
 
-- **Regression source added or updated:** completion-owner lifetime cases for
-  canceled read/write waiters; they exercise helper ownership, not yet the
-  whole scheduler semaphore and resource-governor accounting path.
+- **Regression source added or updated:**
+  `cancelled_submitted_write_retains_queue_slot_until_completion`,
+  `cancelled_submitted_write_retains_memory_budget_until_completion`, and
+  helper-level completion-owner lifetime cases for canceled read/write waiters.
 - **Command or probe to run:** `cargo test -p rt-storage` and the scripted
   backend cancellation matrix during the requested bulk pass.
 - **Expected result:** accepted work holds its queue/device/byte owner until
-  backend completion, with no leak after pre-submission failure.
+  backend completion; each bounded admission path recovers after completion,
+  with no leak after pre-submission failure.
 - **Executed on exact revision:** no.
 - **Artifact or report path:** pending bulk pass.
 - **External evidence still required:** cancellation and queue behavior under
