@@ -14,6 +14,28 @@ the integration and rollback stages, and evaluate maintained clients against
 the native candidate with the same fixtures, settings, resource limits, and
 measurement contract.
 
+### Direct recommendation
+
+No: we cannot be 100% sure that TorrentNG should keep its own transfer engine.
+The best current call is to keep this implementation as a reversible
+candidate long enough to compare it fairly, while borrowing concrete design
+lessons from maintained clients. That is not a commitment to finish a rewrite
+at any cost. If a maintained implementation wins on the matched workload and
+can preserve TorrentNG's storage and persistence contracts with less total
+complexity, replace the smallest failing boundary; restart the engine only if
+the evidence supports a whole-engine change.
+
+The current maintainers suggest different roles for the comparison. `rqbit`
+is the closest Rust baseline for v1, but its upstream feature list still says
+piece selection is sequential-only and does not list BEP 52. `libtorrent`'s
+manual documents v2 and hybrid support, making it the stronger full-protocol
+behavior reference, with a C++ and adapter cost that must be included in the
+comparison. `urtorrent` remains a focused Linux v1 and uTP reference whose
+Rust 1.98 and io_uring-only requirements do not fit TorrentNG's Rust 1.88
+portable-runtime contract. These are suitability observations, not
+performance results. The paired harness is still incomplete, so there is no
+measured winner yet.
+
 This is a provisional decision. It does **not** assume that TorrentNG's new
 core is faster, better, or the final architecture. Keep subsystem boundaries
 replaceable. If the native candidate fails the correctness, portability,
@@ -191,6 +213,7 @@ integration cost.
 ## Primary references
 
 - [rqbit repository](https://github.com/ikatson/rqbit)
+- [rqbit upstream feature list](https://github.com/ikatson/rqbit#features)
 - [`librqbit` 9.0.1 manifest](https://github.com/ikatson/rqbit/blob/v9.0.1/crates/librqbit/Cargo.toml)
 - [`librqbit` 9.0.1 session API](https://github.com/ikatson/rqbit/blob/v9.0.1/crates/librqbit/src/session.rs)
 - [rqbit v9.0.1 release notes](https://github.com/ikatson/rqbit/releases/tag/v9.0.1)
@@ -205,6 +228,7 @@ integration cost.
 - [`urtorrent` 0.14.3 performance and copy budget](https://github.com/giejqf/urtorrent/blob/v0.14.3/docs/perf.md)
 - [libtorrent repository and license](https://github.com/arvidn/libtorrent)
 - [libtorrent 2.1 manual](https://github.com/arvidn/libtorrent/blob/RC_2_1/docs/manual.rst)
+- [libtorrent BitTorrent v2 and hybrid support](https://libtorrent.org/manual-ref.html)
 - [TorrentNG uTP evaluation](TRANSFER_CORE_UTP_EVALUATION.md)
 - [TorrentNG transfer rebuild harness](../scripts/transfer_rebuild/README.md)
 
