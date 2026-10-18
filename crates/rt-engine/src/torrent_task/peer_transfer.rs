@@ -157,9 +157,7 @@ impl TorrentTask {
         if let Some(conn) = self.webseed_transfer_conn {
             return Some(conn);
         }
-        let bytes =
-            u64::try_from(TransferLedger::<Arc<PieceMap>>::estimated_connection_state_bytes())
-                .ok()?;
+        let bytes = u64::try_from(self.transfer_ledger.connection_state_bytes()).ok()?;
         let memory_lease = self.resources.try_acquire(MemoryClass::PeerBuffer, bytes)?;
         let conn = self.transfer_ledger.try_connect(1)?;
         self.webseed_transfer_conn = Some(conn);

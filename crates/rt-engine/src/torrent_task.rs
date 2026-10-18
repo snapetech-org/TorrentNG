@@ -87,10 +87,11 @@ use crate::tracker_runtime::{
     TrackerScrapeResult, TrackerWorkerEvent, TrackerWorkers, MAX_TRACKER_ANNOUNCES_IN_FLIGHT,
     STOPPED_TRACKER_ANNOUNCE_DEADLINE,
 };
-use crate::transfer::coords::{BlockExtent, ConnectionId, HybridGeometry, PieceGeometry};
+use crate::transfer::coords::{BlockExtent, ConnectionId, HybridGeometry, PieceGeometry, Plane};
 use crate::transfer::ledger::{
-    Action as TransferAction, CommitOutcome, Ledger as TransferLedger, ReceiveOutcome, ReserveMode,
+    Action as TransferAction, CommitOutcome, ReceiveOutcome, ReserveMode,
 };
+use crate::transfer::live::LiveTransferLedger as TransferLedger;
 use crate::transfer::obligations::{
     InboundDecision, InboundObligations, Reject as InboundReject,
     RejectReason as InboundRejectReason, Served as InboundServed,
@@ -368,9 +369,10 @@ pub(crate) fn persistent_torrent_metadata_memory_bytes(meta: &TorrentMetaV1) -> 
     total
 }
 
-/// Estimate the v1 task graph plus the compact v2 verification projection
-/// retained by a hybrid task. The original v2 paths, raw info dictionary,
-/// tracker strings, and name are dropped after the projection is built.
+/// Estimate the v1 task graph plus the compact v2 verification projection and
+/// shared hybrid geometry retained by a hybrid task. The original v2 paths,
+/// raw info dictionary, tracker strings, and name are dropped after the
+/// projection is built.
 pub(crate) fn persistent_hybrid_metadata_memory_bytes(
     v1: &TorrentMetaV1,
     v2: &TorrentMetaV2,
@@ -388,8 +390,9 @@ pub(crate) fn persistent_hybrid_metadata_memory_bytes(
                 .len()
                 .saturating_mul(std::mem::size_of::<V2FileSpan>()),
         )
-        .saturating_add(std::mem::size_of::<HybridGeometry>())
+        .saturating_add(2 * std::mem::size_of::<HybridGeometry>())
         .saturating_add(std::mem::size_of::<V2PieceMap>())
+        .saturating_add(std::mem::size_of::<HashMap<ConnectionId, Plane>>())
         .saturating_add(4 * std::mem::size_of::<usize>())
         .saturating_add(
             v2.piece_layers
@@ -2008,6 +2011,7 @@ impl Drop for UploadReadTasks {
 struct HybridV2Meta {
     piece_length: u64,
     files: Vec<HybridV2File>,
+    /// Retains the v2 piece map and shares the task's existing v1 map.
     geometry: Option<Arc<HybridGeometry>>,
     piece_layers: HashMap<[u8; 32], Vec<[u8; 32]>>,
     valid_layout: bool,
@@ -2018,6 +2022,7 @@ struct HybridV2File {
     /// The v1 file index used by `PieceMap`; v1 padding entries can make this
     /// differ from the file's v2 index.
     file_index: u32,
+    /// Lookup key for the file region returned by the shared v2 geometry.
     v2_file_index: u32,
     length: u64,
     pieces_root: Option<[u8; 32]>,
@@ -2619,6 +2624,19 @@ impl TorrentTask {
     pub(crate) fn attach_hybrid_v2_metadata(&mut self, meta: TorrentMetaV2) {
         let projection =
             HybridV2Meta::from_validated_views(&self.meta, Arc::clone(&self.piece_map), meta);
+        if projection.valid_layout {
+            if let Some(geometry) = projection.geometry.clone() {
+                if !self.transfer_ledger.attach_hybrid_geometry(geometry) {
+                    warn!(
+                        component = "transfer",
+                        operation = "attach_hybrid_ledger",
+                        torrent = %self.info_hash_hex,
+                        result = "skipped",
+                        "hybrid metadata arrived after the live ledger had already been used"
+                    );
+                }
+            }
+        }
         if !projection.valid_layout {
             warn!(
                 component = "torrent",
@@ -2779,8 +2797,8 @@ impl TorrentTask {
         // The serial webseed fallback owns one transient ledger connection in
         // addition to the configured peer slots. Dispatch starts while idle,
         // though a new peer may overlap a fetch already in progress.
-        let transfer_ledger = TransferLedger::new(Arc::clone(&piece_map))
-            .with_max_connections(max_peers.saturating_add(1));
+        let transfer_ledger =
+            TransferLedger::new_bounded(Arc::clone(&piece_map), max_peers.saturating_add(1));
         let storage = MountScheduler::new_for_path(
             StorageRootId::new(),
             &save_root,
@@ -9568,6 +9586,7 @@ mod tests {
             private: false,
             raw: Vec::new(),
         });
+        assert!(task.transfer_ledger.is_hybrid());
         std::fs::write(temp.path().join("hybrid.bin"), content).unwrap();
         let mut assembly = PieceAssembly::new(piece.len());
         assembly

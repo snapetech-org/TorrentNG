@@ -135,6 +135,69 @@ impl HybridLedger {
         Some(conn)
     }
 
+    /// v1-actor compatibility path while the live hybrid wire-plane upgrade
+    /// is staged. These operations preserve the legacy actor's action and
+    /// block types while still making this HybridLedger the sole owner.
+    pub fn reserve_v1(
+        &mut self,
+        conn: ConnectionId,
+        block: BlockExtent,
+        mode: &ReserveMode,
+    ) -> Result<(), ReserveError> {
+        if self.plane(conn) != Some(Plane::V1) {
+            return Err(ReserveError::UnknownConnection);
+        }
+        self.ledger.reserve(conn, block, mode)
+    }
+
+    pub fn commit_v1(
+        &mut self,
+        conn: ConnectionId,
+        block: BlockExtent,
+        now: Nanos,
+    ) -> (CommitOutcome, Vec<Action>) {
+        if self.plane(conn) != Some(Plane::V1) {
+            return (CommitOutcome::StaleConnection, Vec::new());
+        }
+        self.ledger.commit(conn, block, now)
+    }
+
+    pub fn on_reject_v1(&mut self, conn: ConnectionId, block: BlockExtent) -> RejectOutcome {
+        if self.plane(conn) != Some(Plane::V1) {
+            return RejectOutcome::StaleConnection;
+        }
+        self.ledger.on_reject(conn, block)
+    }
+
+    pub fn on_block_v1(&mut self, conn: ConnectionId, block: BlockExtent) -> ReceiveOutcome {
+        if self.plane(conn) != Some(Plane::V1) {
+            return ReceiveOutcome::StaleConnection;
+        }
+        self.ledger.on_block(conn, block)
+    }
+
+    pub fn on_choke_v1(&mut self, conn: ConnectionId, fast_negotiated: bool) -> Vec<BlockExtent> {
+        if self.plane(conn) != Some(Plane::V1) {
+            return Vec::new();
+        }
+        self.ledger.on_choke(conn, fast_negotiated)
+    }
+
+    pub fn disconnect_v1(&mut self, conn: ConnectionId) -> Vec<BlockExtent> {
+        if self.connection_planes.remove(&conn) != Some(Plane::V1) {
+            return Vec::new();
+        }
+        self.ledger.disconnect(conn)
+    }
+
+    pub fn piece_failed_with_actions_v1(&mut self, piece: u32) -> (Vec<ConnectionId>, Vec<Action>) {
+        self.ledger.piece_failed_with_actions(piece)
+    }
+
+    pub fn mark_have_v1(&mut self, piece: u32) -> Vec<Action> {
+        self.ledger.mark_have(piece)
+    }
+
     pub fn connect(&mut self, plane: Plane, remote_reqq: usize) -> ConnectionId {
         self.try_connect(plane, remote_reqq)
             .expect("hybrid transfer ledger connection limit reached")

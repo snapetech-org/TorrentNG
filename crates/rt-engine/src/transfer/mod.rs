@@ -25,9 +25,10 @@
 //! bounded per-peer request admission, while concurrent shared-source
 //! scheduling, hybrid dual-view arbitration, and shared content completion
 //! remain open. Hybrid v2 verification now resolves piece file ranges through
-//! [`coords::HybridGeometry`], but live request ownership still runs on v1
-//! coordinates. Unused-code lints are allowed for the parts that are still
-//! only exercised by replay tests.
+//! [`coords::HybridGeometry`], and live hybrid-v1 tasks use `HybridLedger` as
+//! their single v1-coordinate owner. Hybrid v2-plane handshake/scheduling and
+//! dual-view request ownership remain open. Unused-code lints are allowed for
+//! the parts that are still only exercised by replay tests.
 #![allow(dead_code)]
 
 /// Injected monotonic time in nanoseconds. The core never reads a clock.
@@ -36,6 +37,7 @@ pub(crate) type Nanos = u64;
 pub(crate) mod coords;
 pub(crate) mod hybrid;
 pub(crate) mod ledger;
+pub(crate) mod live;
 pub(crate) mod obligations;
 pub(crate) mod rate;
 #[cfg(test)]

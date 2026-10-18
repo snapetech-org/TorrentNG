@@ -286,7 +286,7 @@ impl TorrentTask {
         // never creates a large temporary bitmap.
         let bitmap_bytes = PieceBitmap::memory_bytes_for_len(self.meta.pieces.len())
             .saturating_mul(2)
-            .saturating_add(TransferLedger::<Arc<PieceMap>>::estimated_connection_state_bytes());
+            .saturating_add(self.transfer_ledger.connection_state_bytes());
         let bitmap_memory_lease = self
             .resources
             .try_acquire(MemoryClass::PeerBuffer, bitmap_bytes)?;
