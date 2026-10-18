@@ -515,7 +515,7 @@ pub(crate) fn start_file_copy_cursor(
                 .map_err(|error| StorageError::io(source.display().to_string(), error))?;
             let destination_dir = open_dir_at(&destination_parent, &destination_name, destination)
                 .map_err(|error| StorageError::io(destination.display().to_string(), error))?;
-            let frame = CopyDirectoryFrame::new(
+            let frame = DirectoryCopyFrame::new(
                 source_dir,
                 destination_dir,
                 source.to_path_buf(),

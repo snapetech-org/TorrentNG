@@ -29,7 +29,7 @@ use crate::{
     fd_limit::process_handle_cache_capacity,
     file_handle::LeasedFileHandle,
     frame::{global_frame_pool, Frame},
-    handle_cache::{Access, HandleCache},
+    handle_cache::HandleCache,
     io_class::IoClass,
     open::{create_dir_all_no_follow, normalized_storage_path, FileIdentity},
 };
@@ -1460,9 +1460,9 @@ impl DiskSubmission {
 
     fn device_queue_permit_count(&self) -> usize {
         (if self._device_operation.is_some() {
-            1
+            1usize
         } else {
-            0
+            0usize
         })
         .saturating_add(
             self._additional_device_operations
@@ -1678,6 +1678,7 @@ impl QueuedDiskBytes {
             governor_credit_lease_ids_sum: governor_lease_id.unwrap_or_default(),
             logical_queued_bytes: self.bytes,
             shared_payload_class: shared_payload.map(MemoryLease::class),
+            shared_payload_classes_mixed: false,
             shared_payload_lease_count: if shared_payload.is_some() { 1 } else { 0 },
             shared_payload_lease_id,
             shared_payload_lease_ids_xor: shared_payload_lease_id.unwrap_or_default(),
@@ -2730,9 +2731,7 @@ async fn dispatch_peer_read_batch(
             };
             let mut operation_record = StorageOperationRecord::default();
             operation_record.storage_operation_id = Some(storage_operation_id);
-            operation_record.device_operation_id =
-                Some(DeviceOperationId(_device_queue.operation_id()));
-            operation_record.device_queue_key = Some(Arc::clone(&_device_queue.queue.key));
+            operation_record.bind_device_operation(&_device_queue);
             operation_record.bind_file_identity(file.identity());
             operation_record.bind_byte_range(offset, len as u64);
             for request in &batch.requests {
@@ -3537,17 +3536,17 @@ impl MountScheduler {
         let peer_read_cache_epoch = self.peer_read_cache_epoch.clone();
         let peer_read_streams = self.peer_read_streams.clone();
         let peer_read_elevator = self.peer_read_elevator();
+        let path = path.to_path_buf();
         let readahead_bytes = self.io_config.peer_read_readahead_bytes;
         let sequential_only = self.io_config.peer_read_readahead_sequential_only;
         let readahead_cache_entries = self.io_config.peer_read_cache_entries;
-        let path = path.to_path_buf();
         let started = Instant::now();
         let cache_generation =
             (class == IoClass::PeerRead && readahead_bytes > len && readahead_cache_entries > 0)
                 .then(|| peer_read_cache_epoch.load(Ordering::Acquire));
         if class == IoClass::PeerRead && readahead_bytes <= len {
             if let Some(elevator) = peer_read_elevator {
-                let bytes = elevator.read(path, offset, len).await?;
+                let bytes = elevator.read(path.to_path_buf(), offset, len).await?;
                 counters.read_ops_by_class[class_index(class)].fetch_add(1, Ordering::Relaxed);
                 counters.bytes_read_by_class[class_index(class)]
                     .fetch_add(bytes.len() as u64, Ordering::Relaxed);
@@ -3658,7 +3657,7 @@ impl MountScheduler {
                 bytes,
             } => {
                 submission.bind_file_identity(identity);
-                submission.bind_byte_range(offset, len as u64);
+                submission.operation.bind_byte_range(offset, len as u64);
                 verify_path_identity(&key, identity, "payload_read")?;
                 let _submission = submission;
                 Ok(StorageRead::Bytes(bytes))
@@ -3669,7 +3668,9 @@ impl MountScheduler {
                 read_len,
             } => {
                 submission.retain_file(Arc::clone(&file));
-                submission.bind_byte_range(offset, read_len as u64);
+                submission
+                    .operation
+                    .bind_byte_range(offset, read_len as u64);
                 let requested_charge = queued_disk_charge(len as u64);
                 let read_buffer_charge = queued_disk_charge(read_len as u64);
                 let read_buffer_queued_bytes = read_buffer_charge
@@ -3857,7 +3858,6 @@ impl MountScheduler {
         let peer_read_cache = self.peer_read_cache.clone();
         let peer_read_cache_epoch = self.peer_read_cache_epoch.clone();
         let counters = self.counters.clone();
-        let path = path.to_path_buf();
         let started = Instant::now();
         let submission = self.reserve_mount_submission_with_shared_payload_lease(
             data.len() as u64,
@@ -3892,7 +3892,7 @@ impl MountScheduler {
         let written = data.len();
         submission.retain_file(Arc::clone(&file));
         submission.retain_payload(data.clone());
-        submission.bind_byte_range(offset, written as u64);
+        submission.operation.bind_byte_range(offset, written as u64);
         submission.start_device_operation(self.acquire_device_operation(class).await?);
         submission.trace_dispatch("positioned_write", class, 1);
         // Record the path as needing a sync when the write is *issued*, not
@@ -3901,7 +3901,7 @@ impl MountScheduler {
         // cancelled caller leave written bytes that no barrier covers. A
         // failed write costs one redundant fdatasync, which is harmless.
         let write_sequence = file_sync_fence.issue_write_sequence();
-        submission.bind_write_sequence(write_sequence);
+        submission.operation.bind_write_sequence(write_sequence);
         let _write_watermark = next_saturating_sequence(&self.write_sequence);
         let dirty_state = mark_dirty_path(
             &dirty_paths,
@@ -3911,7 +3911,7 @@ impl MountScheduler {
             write_sequence,
         );
         submission.bind_dirty_path(dirty_state);
-        let (file_write_guard, admission_guard, submission) = match await_backend_io_with_fence(
+        let (file_write_guard, admission_guard, mut submission) = match await_backend_io_with_fence(
             &key,
             backend_write_completion_with_cache_invalidation(
                 disk_backend.pwrite_leased(file.clone(), data, offset),
@@ -4155,7 +4155,7 @@ impl MountScheduler {
         ensure_dirty_identity(&key, "data_sync", expected_state, completed_identity)?;
         record_sync_completion(&counters, started);
         file_sync_fence.mark_synced(watermark);
-        if let Some(expected_state) = expected_state {
+        if expected_state.is_some() {
             clear_dirty_path_if_operation(&dirty_paths, &key, &submission.operation);
         }
         drop(fence_guard);
@@ -4320,7 +4320,7 @@ impl MountScheduler {
         key: PathBuf,
         mount: String,
         queue: Arc<DeviceQueue>,
-        mut submission: DiskSubmission,
+        submission: DiskSubmission,
     ) -> Result<DiskSubmission, StorageError> {
         let file_sync_fence = self.file_sync_fences.for_path(&key);
         let fence_guard = Arc::clone(&file_sync_fence.gate).write_owned().await;
@@ -4383,7 +4383,7 @@ impl MountScheduler {
         let completed_identity = current_file_identity(&key, file.as_ref(), "checkpoint_sync")?;
         ensure_dirty_identity(&key, "checkpoint_sync", expected_state, completed_identity)?;
         file_sync_fence.mark_synced(watermark);
-        if let Some(expected_state) = expected_state {
+        if expected_state.is_some() {
             clear_dirty_path_if_operation(&self.dirty_paths, &key, &submission.operation);
         }
         drop(fence_guard);
@@ -5517,7 +5517,9 @@ mod tests {
         operation_record
             .resource_credit
             .include(queued_bytes.resource_credit());
-        operation_record.record_frame_pool_charge(&frame);
+        operation_record
+            .resource_credit
+            .include_frame_pool_charge(frame.charged_bytes());
         let operation_credit = operation_record.resource_credit;
         assert_eq!(operation_credit.governor_credit_leases, 1);
         assert_eq!(
@@ -6501,7 +6503,7 @@ mod tests {
         let first_operation_scheduler = first.clone();
         let operation = tokio::spawn(async move {
             first_operation_scheduler
-                .run_device_operation(IoClass::MoveCopy, 64, move || {
+                .run_device_operation(IoClass::MoveCopy, 64, move || -> Result<(), StorageError> {
                     started_tx.send(()).unwrap();
                     finish_rx.recv().unwrap();
                     Err(StorageError::io(
@@ -9542,13 +9544,14 @@ mod tests {
         assert_eq!(backend.pending_releases(), 1);
 
         let later_scheduler = scheduler.clone();
+        let later_write_path = later_path.clone();
         let (started_tx, started_rx) = oneshot::channel();
         let later_write = tokio::spawn(async move {
             started_tx.send(()).unwrap();
             later_scheduler
                 .write_at(
                     IoClass::PeerWrite,
-                    &later_path,
+                    &later_write_path,
                     0,
                     bytes::Bytes::from_static(b"after-barrier"),
                     true,
@@ -9714,13 +9717,14 @@ mod tests {
         let _ = barrier.await;
 
         let later_scheduler = scheduler.clone();
+        let later_write_path = later_path.clone();
         let (started_tx, started_rx) = oneshot::channel();
         let later_write = tokio::spawn(async move {
             started_tx.send(()).unwrap();
             later_scheduler
                 .write_at(
                     IoClass::PeerWrite,
-                    &later_path,
+                    &later_write_path,
                     0,
                     bytes::Bytes::from_static(b"later-write"),
                     true,
