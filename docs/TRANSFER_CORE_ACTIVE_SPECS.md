@@ -3981,7 +3981,8 @@ and the 60-second ledger timeout revoke the matching fetch and release its
 request ownership; timeout processing wakes source selection when a peer's
 expired reservation makes a piece available. Candidate traversal skips full
 local-have bitmap words and advances fairly when a selected file cannot use a
-webseed.
+webseed. All blocks in one active piece stay with one selected seed, and a
+typed Merkle mismatch backs that seed off before retrying the piece elsewhere.
 
 v1 progress already batches at its five-second dirty-stat flush, and pure-v2
 batches upload/download statistics at its existing five-second runtime flush.
@@ -4036,7 +4037,9 @@ Completion and lifecycle boundaries flush immediately.
   pipeline; source tests cover single/multi-file URL mapping, live status
   snapshots, and timeout cancellation with ledger cleanup. Candidate traversal
   uses bitmap-word skips and round-robin cursor advancement; peer-request
-  expiry wakes the scheduler. Hash-mismatch source attribution remains open.
+  expiry wakes the scheduler. A source-affinity regression source checks that
+  a Merkle mismatch backs off the contributing seed; all these sources remain
+  authored but unrun.
 - **Command or probe:** run with the requested bulk engine suite; do not run
   this source independently before that pass.
 - **Executed on exact revision:** no.

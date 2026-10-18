@@ -601,6 +601,7 @@ struct V2WebseedFetchedBlock {
 struct V2WebseedFetchInFlight {
     request: BlockExtent,
     seed_index: usize,
+    timed_out: bool,
     task: tokio::task::JoinHandle<anyhow::Result<V2WebseedFetchedBlock>>,
 }
 
@@ -617,6 +618,7 @@ struct V2WebseedRuntime {
     transfer_jobs: futures::stream::FuturesUnordered<V2TransferTask>,
     fetch: Option<V2WebseedFetchInFlight>,
     seed_states: Vec<V2WebseedSeedState>,
+    piece_seed_indexes: HashMap<u32, usize>,
     next_seed_index: usize,
     next_piece_cursor: u32,
     admission_retry_at: Option<Instant>,
@@ -641,6 +643,7 @@ impl V2WebseedRuntime {
             transfer_jobs: futures::stream::FuturesUnordered::new(),
             fetch: None,
             seed_states: vec![V2WebseedSeedState::default(); seed_count],
+            piece_seed_indexes: HashMap::new(),
             next_seed_index: 0,
             next_piece_cursor: 0,
             admission_retry_at: None,
@@ -660,6 +663,7 @@ impl Drop for V2WebseedRuntime {
                 .len()
                 .saturating_add(self.pending_block_completions.len())
                 .saturating_add(self.pending_piece_completions.len())
+                .saturating_add(self.piece_seed_indexes.len())
                 .saturating_add(self.outstanding.len()),
         );
         pieces.extend(self.assemblies.keys().copied());
@@ -669,6 +673,7 @@ impl Drop for V2WebseedRuntime {
                 .map(|(piece, _)| *piece),
         );
         pieces.extend(self.pending_piece_completions.keys().copied());
+        pieces.extend(self.piece_seed_indexes.keys().copied());
         pieces.extend(self.outstanding.keys().map(|(piece, _)| *piece));
         pieces.sort_unstable();
         pieces.dedup();
@@ -1392,6 +1397,12 @@ struct V2PieceCompletion {
     generation: u64,
     bytes: u64,
     result: anyhow::Result<()>,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("v2 piece {piece} merkle hash mismatch")]
+struct V2MerkleHashMismatch {
+    piece: u32,
 }
 
 struct V2BlockCompletion {
@@ -2430,6 +2441,10 @@ impl V2TorrentTask {
                     .webseeds
                     .len()
                     .saturating_mul(std::mem::size_of::<V2WebseedSeedState>()),
+            )
+            .saturating_add(
+                V2_MAX_TRACKED_PIECES_PER_PEER
+                    .saturating_mul(std::mem::size_of::<(u32, usize)>().saturating_mul(2)),
             );
         let Ok(state_bytes) = u64::try_from(state_bytes) else {
             return false;
@@ -2484,6 +2499,15 @@ impl V2TorrentTask {
                 }
             })
             .collect()
+    }
+
+    fn advance_v2_webseed_cursor(&mut self, piece: u32) {
+        if self.piece_map.piece_count > 0 {
+            if let Some(webseed) = self.webseed.as_mut() {
+                webseed.next_piece_cursor =
+                    ((piece as usize + 1) % self.piece_map.piece_count) as u32;
+            }
+        }
     }
 
     async fn start_v2_webseed_block(&mut self) -> bool {
@@ -2588,16 +2612,12 @@ impl V2TorrentTask {
         let Some(block) = selected else {
             return false;
         };
-        if self.piece_map.piece_count > 0 {
-            if let Some(webseed) = self.webseed.as_mut() {
-                webseed.next_piece_cursor =
-                    ((block.piece as usize + 1) % self.piece_map.piece_count) as u32;
-            }
-        }
         let Ok(region) = context.piece_map.piece_to_file(block.piece) else {
+            self.advance_v2_webseed_cursor(block.piece);
             return false;
         };
         if region.pad {
+            self.advance_v2_webseed_cursor(block.piece);
             return false;
         }
         let Some(file) = context
@@ -2606,9 +2626,11 @@ impl V2TorrentTask {
             .iter()
             .find(|file| file.index == region.file_index)
         else {
+            self.advance_v2_webseed_cursor(block.piece);
             return false;
         };
-        let Some((seed_index, url)) = self.select_v2_webseed(file) else {
+        let Some((seed_index, url)) = self.select_v2_webseed(block.piece, file) else {
+            self.advance_v2_webseed_cursor(block.piece);
             return false;
         };
         // Reserve the bounded response body before network I/O; the
@@ -2619,10 +2641,11 @@ impl V2TorrentTask {
             }
             return false;
         };
-        let maps_ready = self
-            .webseed
-            .as_mut()
-            .is_some_and(|webseed| webseed.outstanding.try_reserve(1).is_ok());
+        let maps_ready = self.webseed.as_mut().is_some_and(|webseed| {
+            webseed.outstanding.try_reserve(1).is_ok()
+                && (webseed.piece_seed_indexes.contains_key(&block.piece)
+                    || webseed.piece_seed_indexes.try_reserve(1).is_ok())
+        });
         if !maps_ready {
             drop(memory_lease);
             if let Some(webseed) = self.webseed.as_mut() {
@@ -2677,6 +2700,10 @@ impl V2TorrentTask {
             drop(rate_grant);
             drop(memory_lease);
             release_v2_transfer_piece_memory_if_idle(&context, block.piece);
+            if let Some(webseed) = self.webseed.as_mut() {
+                webseed.admission_retry_at = Some(Instant::now() + V2_WEBSEED_ADMISSION_RETRY);
+            }
+            self.advance_v2_webseed_cursor(block.piece);
             return false;
         }
         let sent_at = v2_transfer_now(&context);
@@ -2691,6 +2718,10 @@ impl V2TorrentTask {
             drop(rate_grant);
             drop(memory_lease);
             release_v2_transfer_piece_memory_if_idle(&context, block.piece);
+            if let Some(webseed) = self.webseed.as_mut() {
+                webseed.admission_retry_at = Some(Instant::now() + V2_WEBSEED_ADMISSION_RETRY);
+            }
+            self.advance_v2_webseed_cursor(block.piece);
             return false;
         }
         let coordinate = (block.piece, block.begin);
@@ -2703,6 +2734,10 @@ impl V2TorrentTask {
                 drop(rate_grant);
                 drop(memory_lease);
                 release_v2_transfer_piece_memory_if_idle(&context, block.piece);
+                if let Some(webseed) = self.webseed.as_mut() {
+                    webseed.admission_retry_at = Some(Instant::now() + V2_WEBSEED_ADMISSION_RETRY);
+                }
+                self.advance_v2_webseed_cursor(block.piece);
                 return false;
             }
         };
@@ -2710,6 +2745,7 @@ impl V2TorrentTask {
         let http_timeout = self.http_timeout;
         let request = block;
         let fetch_url = url.clone();
+        self.advance_v2_webseed_cursor(block.piece);
         let task = tokio::spawn(async move {
             fetch_v2_webseed_block(
                 request,
@@ -2722,6 +2758,7 @@ impl V2TorrentTask {
             .await
         });
         let webseed = self.webseed.as_mut().expect("webseed runtime was created");
+        webseed.piece_seed_indexes.insert(block.piece, seed_index);
         webseed.outstanding.insert(
             coordinate,
             V2OutstandingRequest {
@@ -2735,6 +2772,7 @@ impl V2TorrentTask {
         webseed.fetch = Some(V2WebseedFetchInFlight {
             request: block,
             seed_index,
+            timed_out: false,
             task,
         });
         if let Ok(mut state) = webseed.state.lock() {
@@ -2743,10 +2781,27 @@ impl V2TorrentTask {
         true
     }
 
-    fn select_v2_webseed(&mut self, file: &TorrentFileV2) -> Option<(usize, Url)> {
+    fn select_v2_webseed(&mut self, piece: u32, file: &TorrentFileV2) -> Option<(usize, Url)> {
         let seed_count = self.meta.webseeds.len();
         let webseed = self.webseed.as_mut()?;
         let now = Instant::now();
+        if let Some(index) = webseed.piece_seed_indexes.get(&piece).copied() {
+            let available = webseed.seed_states.get(index).is_some_and(|state| {
+                state.failures != u8::MAX
+                    && state.next_attempt.is_none_or(|deadline| deadline <= now)
+            });
+            if available {
+                if let Some(url) = v2_webseed_file_url(&self.meta, file, &self.meta.webseeds[index])
+                {
+                    return Some((index, url));
+                }
+                if let Some(state) = webseed.seed_states.get_mut(index) {
+                    state.failures = u8::MAX;
+                    state.download_rate = 0;
+                }
+            }
+            webseed.piece_seed_indexes.remove(&piece);
+        }
         for attempt in 0..seed_count {
             let index = (webseed.next_seed_index + attempt) % seed_count;
             let state = webseed.seed_states.get_mut(index)?;
@@ -2784,14 +2839,13 @@ impl V2TorrentTask {
             Ok(Ok(fetched)) => {
                 let bytes = fetched.data.len() as u64;
                 if let Some(seed) = webseed.seed_states.get_mut(fetch.seed_index) {
-                    seed.failures = 0;
-                    seed.next_attempt = None;
                     let seconds = fetched.elapsed.as_secs_f64().max(0.001);
                     seed.download_rate =
                         (bytes as f64 / seconds).round().clamp(0.0, i64::MAX as f64) as i64;
                 }
                 let Some(request) = webseed.outstanding.get_mut(&coordinate) else {
                     self.release_v2_webseed_request(&mut webseed, block);
+                    webseed.piece_seed_indexes.remove(&block.piece);
                     drop(fetched);
                     self.webseed = Some(webseed);
                     return;
@@ -2844,6 +2898,8 @@ impl V2TorrentTask {
             Ok(Err(error)) => {
                 self.release_v2_webseed_request(&mut webseed, block);
                 self.record_v2_webseed_failure(&mut webseed, fetch.seed_index);
+                self.discard_v2_webseed_piece(&mut webseed, block.piece)
+                    .await;
                 debug!(
                     component = "webseed",
                     operation = "fetch_v2_block",
@@ -2858,7 +2914,11 @@ impl V2TorrentTask {
             }
             Err(error) => {
                 self.release_v2_webseed_request(&mut webseed, block);
-                self.record_v2_webseed_failure(&mut webseed, fetch.seed_index);
+                if fetch.timed_out || !error.is_cancelled() {
+                    self.record_v2_webseed_failure(&mut webseed, fetch.seed_index);
+                }
+                self.discard_v2_webseed_piece(&mut webseed, block.piece)
+                    .await;
                 debug!(
                     component = "webseed",
                     operation = "fetch_v2_block",
@@ -2906,6 +2966,7 @@ impl V2TorrentTask {
     }
 
     async fn discard_v2_webseed_piece(&self, webseed: &mut V2WebseedRuntime, piece: u32) {
+        webseed.piece_seed_indexes.remove(&piece);
         let remove_assembly = if let Some(assembly) = webseed.assemblies.get_mut(&piece) {
             assembly.failed = true;
             assembly.discard_when_idle = true;
@@ -2940,6 +3001,15 @@ impl V2TorrentTask {
         match completion {
             V2TransferCompletion::BlockStored(completion) => {
                 let piece = completion.piece;
+                let current_completion = webseed
+                    .pending_block_completions
+                    .get(&(piece, completion.begin))
+                    .is_some_and(|pending| pending.generation == completion.generation)
+                    && webseed
+                        .assemblies
+                        .get(&piece)
+                        .is_some_and(|assembly| assembly.generation == completion.generation);
+                let storage_failed = current_completion && completion.result.is_err();
                 if let Err(error) = apply_v2_block_completion(
                     completion,
                     &mut webseed.assemblies,
@@ -2954,6 +3024,9 @@ impl V2TorrentTask {
                         "pure-v2 webseed block write failed"
                     );
                 }
+                if storage_failed {
+                    webseed.piece_seed_indexes.remove(&piece);
+                }
                 fail_v2_discarded_piece_if_idle(
                     &webseed.context,
                     piece,
@@ -2963,6 +3036,20 @@ impl V2TorrentTask {
                 .await;
             }
             V2TransferCompletion::PieceVerified(completion) => {
+                let merkle_mismatch = completion
+                    .result
+                    .as_ref()
+                    .is_err_and(|error| error.downcast_ref::<V2MerkleHashMismatch>().is_some());
+                if let Some(seed_index) = webseed.piece_seed_indexes.remove(&completion.piece) {
+                    if merkle_mismatch {
+                        self.record_v2_webseed_failure(webseed, seed_index);
+                    } else if completion.result.is_ok() {
+                        if let Some(seed) = webseed.seed_states.get_mut(seed_index) {
+                            seed.failures = 0;
+                            seed.next_attempt = None;
+                        }
+                    }
+                }
                 apply_v2_piece_completion(
                     &webseed.context,
                     &webseed.state,
@@ -3008,6 +3095,7 @@ impl V2TorrentTask {
                 .len()
                 .saturating_add(webseed.pending_block_completions.len())
                 .saturating_add(webseed.pending_piece_completions.len())
+                .saturating_add(webseed.piece_seed_indexes.len())
                 .saturating_add(webseed.outstanding.len()),
         );
         pieces.extend(webseed.assemblies.keys().copied());
@@ -3018,6 +3106,7 @@ impl V2TorrentTask {
                 .map(|(piece, _)| *piece),
         );
         pieces.extend(webseed.pending_piece_completions.keys().copied());
+        pieces.extend(webseed.piece_seed_indexes.keys().copied());
         pieces.extend(webseed.outstanding.keys().map(|(piece, _)| *piece));
         pieces.sort_unstable();
         pieces.dedup();
@@ -3028,6 +3117,7 @@ impl V2TorrentTask {
         webseed.assemblies.clear();
         webseed.pending_block_completions.clear();
         webseed.pending_piece_completions.clear();
+        webseed.piece_seed_indexes.clear();
         drop(webseed);
     }
 
@@ -4217,7 +4307,7 @@ impl V2TorrentTask {
         }
     }
 
-    fn expire_v2_transfer_requests(&self) {
+    fn expire_v2_transfer_requests(&mut self) {
         let now = self
             .transfer_started_at
             .elapsed()
@@ -4226,7 +4316,7 @@ impl V2TorrentTask {
         self.expire_v2_transfer_requests_at(now, V2_REQUEST_TIMEOUT);
     }
 
-    fn expire_v2_transfer_requests_at(&self, now: u64, timeout: Duration) {
+    fn expire_v2_transfer_requests_at(&mut self, now: u64, timeout: Duration) {
         let timeout = timeout.as_nanos().min(u128::from(u64::MAX)) as u64;
         let Ok(mut ledger) = self.transfer_ledger.lock() else {
             warn!(
@@ -4241,6 +4331,21 @@ impl V2TorrentTask {
         };
         let (_, actions) = ledger.expire(now, timeout);
         drop(ledger);
+        if let Some(webseed) = self.webseed.as_mut() {
+            for action in &actions {
+                let TransferAction::Cancel { conn, block } = action;
+                if *conn == webseed.context.transfer_conn
+                    && webseed
+                        .fetch
+                        .as_ref()
+                        .is_some_and(|fetch| fetch.request == *block)
+                {
+                    if let Some(fetch) = webseed.fetch.as_mut() {
+                        fetch.timed_out = true;
+                    }
+                }
+            }
+        }
         self.apply_v2_transfer_actions(actions);
     }
 
@@ -7051,7 +7156,7 @@ async fn complete_v2_piece_job(
     }
     let actual_hash = context.storage.hash_v2_root(leaves).await?;
     if actual_hash != expected_hash {
-        anyhow::bail!("v2 piece {piece} merkle hash mismatch");
+        return Err(V2MerkleHashMismatch { piece }.into());
     }
     if let Some(payload_lease) = payload_lease {
         let path = region.path.resolve(&context.save_root);
@@ -8231,6 +8336,7 @@ mod tests {
         webseed.fetch = Some(V2WebseedFetchInFlight {
             request: block,
             seed_index: 0,
+            timed_out: false,
             task: fetch_task,
         });
         let snapshot = task.webseed_snapshots().pop().unwrap();
@@ -8254,6 +8360,45 @@ mod tests {
         let ledger = task.transfer_ledger.lock().unwrap();
         assert_eq!(ledger.in_flight(), 0);
         assert_eq!(ledger.piece_progress(block.piece), None);
+    }
+
+    #[tokio::test]
+    async fn v2_webseed_merkle_mismatch_backs_off_the_piece_source() {
+        let content = vec![0x41; rt_peer_wire::message::MAX_BLOCK_SIZE as usize];
+        let raw = v2_raw_with_content(&content);
+        let (mut task, _fixture) =
+            v2_task_not_started(quiet_v2_runtime(), &raw, content.len() as u64).await;
+        Arc::make_mut(&mut task.meta)
+            .webseeds
+            .push("https://seed.example/payload.bin".to_owned());
+        assert!(task.ensure_v2_webseed_runtime());
+
+        let webseed = task.webseed.as_mut().unwrap();
+        webseed.piece_seed_indexes.insert(0, 0);
+        webseed.pending_piece_completions.insert(
+            0,
+            V2PendingCompletion {
+                generation: 1,
+                bytes: content.len() as u64,
+            },
+        );
+        let before = Instant::now();
+        task.handle_v2_webseed_transfer_completion(V2TransferCompletion::PieceVerified(
+            V2PieceCompletion {
+                piece: 0,
+                generation: 1,
+                bytes: content.len() as u64,
+                result: Err(V2MerkleHashMismatch { piece: 0 }.into()),
+            },
+        ))
+        .await;
+
+        let webseed = task.webseed.as_ref().unwrap();
+        assert!(webseed.piece_seed_indexes.is_empty());
+        assert_eq!(webseed.seed_states[0].failures, 1);
+        assert!(webseed.seed_states[0]
+            .next_attempt
+            .is_some_and(|deadline| deadline > before));
     }
 
     #[test]
