@@ -2070,8 +2070,9 @@ text. No database, API, or wire representation changes.
 - Task-exit IDs, the four `EngineRuntimeState` maps, and the pending add/delete
   sets keep canonical hashes inline and preserve their existing string-facing
   lookup behavior.
-- Explicit runtime map/set retained-capacity accounting remains open; compact
-  keys do not close the ticket without bulk evidence.
+- Compact map/set keys do not by themselves prove a whole-process memory or
+  throughput improvement; that requires the planned bulk and matched-client
+  evidence.
 
 ### Files and compatibility
 
