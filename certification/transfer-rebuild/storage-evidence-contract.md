@@ -9,8 +9,13 @@ unrun. Dropping the scripted backend releases any held test completions to
 avoid leaving a blocked helper thread during failure cleanup. Zero-progress
 read/write error mapping now has authored scheduler regressions. Path identity
 replacement is covered for cached descriptors and readahead entries under
-IO-004; operation-level publication after a replacement, end-to-end lease
-accounting, crash cuts, and the remaining fault-matrix cases are still open.
+IO-004. Dirty path state also binds the write generation to the descriptor
+identity: on Unix and Windows, payload writes and data/checkpoint syncs verify
+the descriptor still matches the current path at operation boundaries, and a
+mismatch fails closed without clearing dirty evidence. Held-write and
+held-checkpoint-sync replacement regression sources are authored but unrun.
+End-to-end lease accounting, crash cuts, and the remaining fault-matrix cases
+are still open.
 
 ## Evidence states
 
@@ -58,10 +63,13 @@ Strict writes move the same owner through their data sync. This preserves
 admission lifetime but does not yet provide the complete operation record,
 resource-credit transfer, or device-service ownership described above.
 
-Dirty evidence is tracked per file and write sequence. A barrier snapshots the
-dirty files and highest covered sequence for each file. It clears only the
-generation it observed after every sync succeeds. A newer write remains dirty.
-One torrent checkpoint does not sync unrelated scheduler or torrent files.
+Dirty evidence is tracked per normalized path, write sequence, and file
+identity. A barrier snapshots the dirty files and highest covered sequence for
+each file. On Unix and Windows, before clearing a generation, sync verifies
+that the open descriptor matches the current path and the identity recorded by
+that dirty generation; a replacement leaves the evidence dirty and reports
+uncertain filesystem state. A newer write remains dirty. One torrent checkpoint
+does not sync unrelated scheduler or torrent files.
 
 ## Deterministic fault matrix
 

@@ -19,6 +19,8 @@ use rt_metrics::{MemoryClass, MemoryLease, ResourceGovernor};
 use rt_path::{StorageProfile, StorageRootId};
 use sha1::{Digest, Sha1};
 
+#[cfg(any(unix, windows))]
+use crate::open::identity_matches_path;
 use crate::{
     backend::{BackendRequest, SelectedDiskBackend},
     device::{detect_storage_topology, StorageTopology},
@@ -808,26 +810,93 @@ fn next_saturating_sequence(sequence: &AtomicU64) -> u64 {
         .saturating_add(1)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DirtyPathState {
+    generation: u64,
+    identity: FileIdentity,
+}
+
 fn mark_dirty_path(
-    dirty_paths: &Mutex<HashMap<PathBuf, u64>>,
+    dirty_paths: &Mutex<HashMap<PathBuf, DirtyPathState>>,
     dirty_path_generation: &AtomicU64,
     path: PathBuf,
-) -> u64 {
+    identity: FileIdentity,
+) -> DirtyPathState {
     let mut dirty = lock_recover(dirty_paths);
     let generation = dirty_path_generation.fetch_add(1, Ordering::Relaxed);
-    dirty.insert(path, generation);
-    generation
+    let state = DirtyPathState {
+        generation,
+        identity,
+    };
+    dirty.insert(path, state);
+    state
 }
 
 fn clear_dirty_path_if_generation(
-    dirty_paths: &Mutex<HashMap<PathBuf, u64>>,
+    dirty_paths: &Mutex<HashMap<PathBuf, DirtyPathState>>,
     path: &Path,
     expected_generation: u64,
 ) {
     let mut dirty = lock_recover(dirty_paths);
-    if dirty.get(path).copied() == Some(expected_generation) {
+    if dirty
+        .get(path)
+        .is_some_and(|state| state.generation == expected_generation)
+    {
         dirty.remove(path);
     }
+}
+
+fn current_file_identity(
+    path: &Path,
+    file: &File,
+    operation: &'static str,
+) -> Result<FileIdentity, StorageError> {
+    let identity = file_identity(file).map_err(|error| StorageError::FilesystemStateUncertain {
+        step: operation,
+        reason: format!("cannot identify open file {}: {error}", path.display()),
+    })?;
+    #[cfg(any(unix, windows))]
+    match identity_matches_path(path, identity) {
+        Ok(true) => {}
+        Ok(false) => {
+            return Err(StorageError::FilesystemStateUncertain {
+                step: operation,
+                reason: format!(
+                    "file path {} was replaced during storage I/O",
+                    path.display()
+                ),
+            });
+        }
+        Err(error) => {
+            return Err(StorageError::FilesystemStateUncertain {
+                step: operation,
+                reason: format!("cannot verify file path {}: {error}", path.display()),
+            });
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    let _ = (path, operation);
+    Ok(identity)
+}
+
+fn ensure_dirty_identity(
+    path: &Path,
+    operation: &'static str,
+    dirty: Option<DirtyPathState>,
+    actual: FileIdentity,
+) -> Result<(), StorageError> {
+    if let Some(dirty) = dirty {
+        if dirty.identity != actual {
+            return Err(StorageError::FilesystemStateUncertain {
+                step: operation,
+                reason: format!(
+                    "dirty writes for {} belong to a replaced file identity",
+                    path.display()
+                ),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Per-path write admission and durability fence. Writers share the gate, so
@@ -907,11 +976,11 @@ pub struct MountScheduler {
     io_pool: Arc<BlockingPool>,
     disk_backend: Arc<SelectedDiskBackend>,
     hash_pool: Arc<BlockingPool>,
-    /// Dirty paths carry a write generation, not just membership. Per-path
-    /// fences order admitted writes before fdatasync and keep later writes
-    /// behind the barrier; only the generation observed by that sync may be
-    /// cleared when it completes.
-    dirty_paths: Arc<Mutex<HashMap<PathBuf, u64>>>,
+    /// Dirty paths carry both the write generation and descriptor identity.
+    /// Per-path fences order admitted writes before fdatasync and keep later
+    /// writes behind the barrier; a sync may clear only the generation and
+    /// file identity it actually covered.
+    dirty_paths: Arc<Mutex<HashMap<PathBuf, DirtyPathState>>>,
     dirty_path_generation: Arc<AtomicU64>,
     file_sync_fences: Arc<FileSyncFenceRegistry>,
     /// Shared write admission lets a full checkpoint take a stable snapshot
@@ -3146,6 +3215,7 @@ impl MountScheduler {
                 return Err(error);
             }
         };
+        let file_identity = current_file_identity(&key, file.as_file(), "payload_write")?;
         let written = data.len();
         submission.start_device_operation(self.acquire_device_operation(class).await?);
         tracing::trace!(
@@ -3160,7 +3230,12 @@ impl MountScheduler {
         // failed write costs one redundant fdatasync, which is harmless.
         let write_sequence = file_sync_fence.issue_write_sequence();
         let _write_watermark = next_saturating_sequence(&self.write_sequence);
-        let write_generation = mark_dirty_path(&dirty_paths, &dirty_path_generation, key.clone());
+        let dirty_state = mark_dirty_path(
+            &dirty_paths,
+            &dirty_path_generation,
+            key.clone(),
+            file_identity,
+        );
         let (file_write_guard, admission_guard, submission) = match await_backend_io_with_fence(
             &key,
             backend_write_completion_with_cache_invalidation(
@@ -3185,6 +3260,7 @@ impl MountScheduler {
                 return Err(error);
             }
         };
+        current_file_identity(&key, file.as_file(), "payload_write")?;
         peer_read_cache_invalidate(&peer_read_cache, &peer_read_cache_epoch, &key);
         let submission = if strict {
             let sync_started = Instant::now();
@@ -3197,7 +3273,7 @@ impl MountScheduler {
             let sync_completion = await_backend_io_with_fence(
                 &key,
                 backend_completion_with_fence(
-                    disk_backend.fdatasync_leased(file),
+                    disk_backend.fdatasync_leased(file.clone()),
                     (strict_sync_guard, admission_guard),
                     submission,
                 ),
@@ -3215,9 +3291,10 @@ impl MountScheduler {
                     return Err(error);
                 }
             };
+            current_file_identity(&key, file.as_file(), "strict_data_sync")?;
             record_sync_completion(&counters, sync_started);
             file_sync_fence.mark_synced(write_sequence);
-            clear_dirty_path_if_generation(&dirty_paths, &key, write_generation);
+            clear_dirty_path_if_generation(&dirty_paths, &key, dirty_state.generation);
             drop(strict_sync_guard);
             drop(admission_guard);
             submission
@@ -3263,10 +3340,11 @@ impl MountScheduler {
                     .map_err(|e| StorageError::io(parent.display().to_string(), e))?;
             }
             let file = pool.get_or_open(&key, OpenMode::Write, true)?;
+            let identity = current_file_identity(&key, file.as_file(), "prepare_file")?;
             if mode != PreallocationMode::Off {
                 let _file_sequence = fence_for_job.issue_write_sequence();
                 let _write_watermark = next_saturating_sequence(&write_sequence);
-                mark_dirty_path(&dirty_paths, &dirty_path_generation, key.clone());
+                mark_dirty_path(&dirty_paths, &dirty_path_generation, key.clone(), identity);
             }
             if mode != PreallocationMode::Off {
                 let current_len = file
@@ -3324,6 +3402,7 @@ impl MountScheduler {
                     }
                 }
             }
+            current_file_identity(&key, file.as_file(), "prepare_file")?;
             Ok(())
         })
         .await
@@ -3342,7 +3421,7 @@ impl MountScheduler {
         let watermark = file_sync_fence.watermark();
         let started = Instant::now();
         let submission = self.reserve_mount_submission(0)?;
-        let expected_generation = lock_recover(&dirty_paths).get(&key).copied();
+        let expected_state = lock_recover(&dirty_paths).get(&key).copied();
         let (file, mut submission) = match self
             .io_pool
             .run({
@@ -3360,6 +3439,8 @@ impl MountScheduler {
                 return Err(error);
             }
         };
+        let opened_identity = current_file_identity(&key, file.as_file(), "data_sync")?;
+        ensure_dirty_identity(&key, "data_sync", expected_state, opened_identity)?;
         submission
             .start_device_operation(self.acquire_device_operation(IoClass::Foreground).await?);
         tracing::trace!(
@@ -3370,7 +3451,7 @@ impl MountScheduler {
         let (fence_guard, admission_guard, submission) = match await_backend_io_with_fence(
             &key,
             backend_completion_with_fence(
-                disk_backend.fdatasync_leased(file),
+                disk_backend.fdatasync_leased(file.clone()),
                 (fence_guard, write_admission_guard),
                 submission,
             ),
@@ -3388,10 +3469,12 @@ impl MountScheduler {
                 return Err(error);
             }
         };
+        let completed_identity = current_file_identity(&key, file.as_file(), "data_sync")?;
+        ensure_dirty_identity(&key, "data_sync", expected_state, completed_identity)?;
         record_sync_completion(&counters, started);
         file_sync_fence.mark_synced(watermark);
-        if let Some(expected_generation) = expected_generation {
-            clear_dirty_path_if_generation(&dirty_paths, &key, expected_generation);
+        if let Some(expected_state) = expected_state {
+            clear_dirty_path_if_generation(&dirty_paths, &key, expected_state.generation);
         }
         drop(fence_guard);
         drop(admission_guard);
@@ -3563,7 +3646,7 @@ impl MountScheduler {
         let file_sync_fence = self.file_sync_fences.for_path(&key);
         let fence_guard = Arc::clone(&file_sync_fence.gate).write_owned().await;
         let watermark = file_sync_fence.watermark();
-        let expected_generation = lock_recover(&self.dirty_paths).get(&key).copied();
+        let expected_state = lock_recover(&self.dirty_paths).get(&key).copied();
         let (file, mut submission) = match self
             .io_pool
             .run({
@@ -3581,6 +3664,8 @@ impl MountScheduler {
                 return Err(error);
             }
         };
+        let opened_identity = current_file_identity(&key, file.as_file(), "checkpoint_sync")?;
+        ensure_dirty_identity(&key, "checkpoint_sync", expected_state, opened_identity)?;
         let device_operation = queue.acquire(IoClass::Foreground, mount).await;
         let device_operation = match device_operation {
             Ok(permit) => permit,
@@ -3600,7 +3685,7 @@ impl MountScheduler {
         let (fence_guard, mut submission) = match await_backend_io_with_fence(
             &key,
             backend_completion_with_fence(
-                self.disk_backend.fdatasync_leased(file),
+                self.disk_backend.fdatasync_leased(file.clone()),
                 fence_guard,
                 submission,
             ),
@@ -3616,9 +3701,11 @@ impl MountScheduler {
                 return Err(error);
             }
         };
+        let completed_identity = current_file_identity(&key, file.as_file(), "checkpoint_sync")?;
+        ensure_dirty_identity(&key, "checkpoint_sync", expected_state, completed_identity)?;
         file_sync_fence.mark_synced(watermark);
-        if let Some(expected_generation) = expected_generation {
-            clear_dirty_path_if_generation(&self.dirty_paths, &key, expected_generation);
+        if let Some(expected_state) = expected_state {
+            clear_dirty_path_if_generation(&self.dirty_paths, &key, expected_state.generation);
         }
         drop(fence_guard);
         submission.finish_device_operation();
@@ -4576,6 +4663,11 @@ mod tests {
                 ..Default::default()
             },
         )
+    }
+
+    fn test_file_identity() -> FileIdentity {
+        let file = tempfile::tempfile().unwrap();
+        file_identity(&file).unwrap()
     }
 
     fn ssd_scheduler() -> MountScheduler {
@@ -6479,15 +6571,28 @@ mod tests {
         let dirty_paths = Mutex::new(HashMap::new());
         let dirty_path_generation = AtomicU64::new(0);
         let path = PathBuf::from("payload.bin");
+        let identity = test_file_identity();
 
-        mark_dirty_path(&dirty_paths, &dirty_path_generation, path.clone());
-        let first_generation = dirty_paths.lock().unwrap().get(&path).copied().unwrap();
-        mark_dirty_path(&dirty_paths, &dirty_path_generation, path.clone());
+        mark_dirty_path(&dirty_paths, &dirty_path_generation, path.clone(), identity);
+        let first_generation = dirty_paths
+            .lock()
+            .unwrap()
+            .get(&path)
+            .copied()
+            .unwrap()
+            .generation;
+        mark_dirty_path(&dirty_paths, &dirty_path_generation, path.clone(), identity);
 
         clear_dirty_path_if_generation(&dirty_paths, &path, first_generation);
         assert_eq!(dirty_paths.lock().unwrap().len(), 1);
 
-        let second_generation = dirty_paths.lock().unwrap().get(&path).copied().unwrap();
+        let second_generation = dirty_paths
+            .lock()
+            .unwrap()
+            .get(&path)
+            .copied()
+            .unwrap()
+            .generation;
         clear_dirty_path_if_generation(&dirty_paths, &path, second_generation);
         assert!(dirty_paths.lock().unwrap().is_empty());
     }
@@ -6496,7 +6601,15 @@ mod tests {
     fn poisoned_dirty_path_state_is_preserved_and_unpoisoned() {
         let original_path = PathBuf::from("already-dirty.bin");
         let new_path = PathBuf::from("new-dirty.bin");
-        let dirty_paths = Arc::new(Mutex::new(HashMap::from([(original_path.clone(), 7)])));
+        let identity = test_file_identity();
+        let original_state = DirtyPathState {
+            generation: 7,
+            identity,
+        };
+        let dirty_paths = Arc::new(Mutex::new(HashMap::from([(
+            original_path.clone(),
+            original_state,
+        )])));
 
         let poisoner = Arc::clone(&dirty_paths);
         assert!(std::thread::spawn(move || {
@@ -6506,9 +6619,9 @@ mod tests {
         .join()
         .is_err());
 
-        mark_dirty_path(&dirty_paths, &AtomicU64::new(8), new_path.clone());
+        mark_dirty_path(&dirty_paths, &AtomicU64::new(8), new_path.clone(), identity);
         let dirty = lock_recover(&dirty_paths);
-        assert_eq!(dirty.get(&original_path), Some(&7));
+        assert_eq!(dirty.get(&original_path), Some(&original_state));
         assert!(dirty.contains_key(&new_path));
         assert!(!dirty_paths.is_poisoned());
     }
@@ -7355,6 +7468,93 @@ mod tests {
         assert_eq!(scheduler.stats().dirty_files, 0);
         assert_storage_admission_released(&scheduler);
         assert_eq!(queued_disk_used_bytes(&resources), 0);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn replaced_path_after_held_write_keeps_old_identity_dirty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("replaced-during-write.bin");
+        let (scheduler, backend) = scheduler_with_scripted_backend();
+        backend.inject(Operation::Write, Effect::HoldCompletion);
+
+        let write_scheduler = scheduler.clone();
+        let write_path = path.clone();
+        let write = tokio::spawn(async move {
+            write_scheduler
+                .write_at(
+                    IoClass::PeerWrite,
+                    &write_path,
+                    0,
+                    bytes::Bytes::from_static(b"old-generation"),
+                    true,
+                )
+                .await
+        });
+
+        backend.wait_until_completion_is_held().await;
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, b"replacement-generation").unwrap();
+        assert!(backend.release_next());
+
+        let error = write.await.unwrap().unwrap_err();
+        assert!(matches!(
+            error,
+            StorageError::FilesystemStateUncertain {
+                step: "payload_write",
+                ..
+            }
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), b"replacement-generation");
+        assert_eq!(scheduler.stats().dirty_files, 1);
+
+        let barrier_error = scheduler.sync_all_open_files().await.unwrap_err();
+        assert!(matches!(
+            barrier_error,
+            StorageError::FilesystemStateUncertain {
+                step: "checkpoint_sync",
+                ..
+            }
+        ));
+        assert_eq!(scheduler.stats().dirty_files, 1);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn replaced_path_after_held_checkpoint_sync_is_not_cleared() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("replaced-during-sync.bin");
+        let (scheduler, backend) = scheduler_with_scripted_backend();
+        scheduler
+            .write_at(
+                IoClass::PeerWrite,
+                &path,
+                0,
+                bytes::Bytes::from_static(b"dirty-generation"),
+                true,
+            )
+            .await
+            .unwrap();
+        backend.inject(Operation::Sync, Effect::HoldCompletion);
+
+        let sync_scheduler = scheduler.clone();
+        let sync = tokio::spawn(async move { sync_scheduler.sync_all_open_files().await });
+
+        backend.wait_until_completion_is_held().await;
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, b"replacement-generation").unwrap();
+        assert!(backend.release_next());
+
+        let error = sync.await.unwrap().unwrap_err();
+        assert!(matches!(
+            error,
+            StorageError::FilesystemStateUncertain {
+                step: "checkpoint_sync",
+                ..
+            }
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), b"replacement-generation");
+        assert_eq!(scheduler.stats().dirty_files, 1);
     }
 
     #[tokio::test]

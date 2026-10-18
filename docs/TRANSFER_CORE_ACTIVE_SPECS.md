@@ -225,9 +225,13 @@ The live v1/v2 actor integration to the shared ledger remains NET-114.
 
 Document storage evidence and introduce deterministic backend faults for the
 portable scheduler. This slice covers cancellation after backend submission,
-injected read/write failures, partial-write failure, and retry after a failed
-data barrier. Operation leases, file replacement, restart cuts, and full
-generation fences remain later IO tickets.
+injected read/write failures, partial-write failure, retry after a failed data
+barrier, and operation-level file identity fencing. Dirty path state binds each
+write generation to the descriptor identity that received it. On Unix and
+Windows, write and sync operations check that their descriptor still matches
+the current path at their completion boundary; a mismatch fails as uncertain
+and leaves dirty evidence intact. Full operation-lease accounting, restart
+cuts, and platform fault qualification remain open.
 
 ### Ownership and invariant
 
@@ -256,8 +260,13 @@ generation fences remain later IO tickets.
   retryable. Platform-specific storage-failure qualification remains open.
 - The positioned-I/O helpers retry `Interrupted` and positive short progress;
   regression sources simulate short reads and writes across multiple calls.
-- File replacement, end-to-end operation-lease accounting, and crash-cut
-  cases remain explicitly open until implemented.
+- Path-replacement regressions cover secure open, cached descriptor reopening,
+  scheduler snapshots, and peer-read readahead (IO-004), plus held payload
+  writes and checkpoint syncs. Dirty writes remain tied to the original file
+  identity, and replacement during an operation returns
+  `FilesystemStateUncertain` without clearing dirty evidence. Full
+  operation-lease accounting, crash cuts, and platform-specific fault
+  qualification remain open.
 
 ### Files and compatibility
 
