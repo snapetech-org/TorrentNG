@@ -64,6 +64,34 @@ or trial records. The paired runner still has to connect it to each adapter,
 the isolated seed process, resource observation, and manifest emission. No
 client was launched while adding this source.
 
+## Trial record assembly
+
+`trial_record.py` captures the measurement harness identity and assembles
+versioned trial records from one paired-plan entry, the client adapter's
+identity/settings observation, the independent resource observation, workload
+and environment data, phase timings, byte accounting, integrity, and outcome.
+The top-level `identity` binds the TorrentNG source revision and dirty state,
+the Python interpreter, toolchain, and a versioned lockset digest. The lockset
+digest is SHA-256 over canonical JSON containing the SHA-256 values of
+`Cargo.lock` and `scripts/transfer_rebuild/requirements.txt`.
+
+Client and resource observations are schema-checked before their process IDs,
+start times, settings, and counters are copied into the trial. A complete
+payload transfer must account for the full useful payload, pass applicable
+integrity checks, and link independent resource evidence. A startup failure is
+recorded as `unmeasured` with null client identity and no observer link; a
+missing client observation cannot be relabeled as another outcome.
+`write_trial()` creates a new, exclusive mode-`0600` JSON file and syncs the
+file and its directory. It returns the artifact digest for manifest assembly.
+
+This module does not launch clients, create namespaces, run the seed peer, or
+publish a manifest. The paired runner must still connect it to the adapters,
+`process_supervisor.py`, observer lifecycle, isolated fixture/seeder, and
+`manifest.py`. Trial-record regressions are in
+`scripts/test_transfer_rebuild_trial_record.py`; trial/manifest validation
+regressions remain in `scripts/test_transfer_rebuild_validator.py`. Both are
+reserved for the requested bulk pass.
+
 ## Trial and manifest validation
 
 Install the pinned schema validator and validate each record before adding it

@@ -3337,8 +3337,11 @@ for its paired clients.
 - **Current owner:** `paired_plan.py` builds the catalog, seed-bound plan, and
   immutable output. `compatibility.py` probes each pinned candidate with a
   small private fixture, records add/paused/remove outcomes, and binds them to
-  client identity and settings readback. `validate_artifact.py` validates both
-  plan and preflight artifacts.
+  client identity and settings readback. `process_supervisor.py` provides
+  pinned native-process lifecycle control, and `trial_record.py` maps the
+  schedule, process-bound observations, workload, timings, payload, integrity,
+  and outcome into a versioned trial artifact. `validate_artifact.py`
+  validates the plan, preflight, trial, and linked manifest artifacts.
 - **Target owner:** PERF-110's process runner consumes the plan, performs
   compatibility preflight, prepares shared fixtures and network state, starts
   each client, observes independent resources, and emits PERF-101 trial and
@@ -3376,8 +3379,17 @@ for its paired clients.
 - A passed case is eligible only when add, paused-state verification, and exact
   removal all succeed. A scheduled pair is excluded when fewer than two of its
   clients pass. No failed or cleanup-failed case is silently dropped.
+- Every attempted scheduled slot produces a trial record. A failed client
+  startup remains `unmeasured`, with no client process identity, settings
+  readback, or process resource observation; it is retained with its reason.
+  A complete payload transfer accounts for the full expected useful payload,
+  passes applicable integrity checks, and links the matching independent
+  process observation.
 - Plan output is exclusive, mode `0600`, schema-validated, and rejected if its
   catalog digest or deterministic schedule no longer matches its identity.
+- Trial output is schema-validated, mode `0600`, exclusive, and syncs both file
+  and parent directory. The source-bound manifest still requires a clean
+  committed worktree and verifies each trial and evidence digest.
 - Regression sources cover the 28 slots, balanced pairs, stable scheduling,
   exclusions, tamper rejection, bounds, and exclusive output.
 
@@ -3385,6 +3397,8 @@ for its paired clients.
 
 - **Expected code paths:** `scripts/transfer_rebuild/paired_plan.py`,
   `scripts/transfer_rebuild/compatibility.py`,
+  `scripts/transfer_rebuild/process_supervisor.py`,
+  `scripts/transfer_rebuild/trial_record.py`,
   `scripts/transfer_rebuild/fixtures.py`,
   `scripts/transfer_rebuild/validate_artifact.py`,
   `certification/transfer-rebuild/{paired-plan,compatibility-preflight}.schema.json`,
@@ -3402,8 +3416,11 @@ for its paired clients.
 
 - **Regression source added or updated:**
   `scripts/test_transfer_rebuild_paired_plan.py`,
-  `scripts/test_transfer_rebuild_compatibility.py`, and semantic validation
-  for both artifacts.
+  `scripts/test_transfer_rebuild_compatibility.py`,
+  `scripts/test_transfer_rebuild_process_supervisor.py`,
+  `scripts/test_transfer_rebuild_trial_record.py`,
+  `scripts/test_transfer_rebuild_validator.py`, and semantic validation for
+  the plan, observations, trial, and manifest artifacts.
 - **Command or probe to run:** planner, compatibility preflight, schema
   validators, and regression cases during the requested bulk pass.
 - **Expected result:** byte-identical plan content for identical inputs;
@@ -3412,8 +3429,9 @@ for its paired clients.
   incomplete removal evidence; tampered identity or ordering rejected; no
   output overwrite.
 - **Executed on exact revision:** no.
-- **Artifact or report path:** none; planner, preflight, and validator source
-  only. No runtime preflight has been executed.
+- **Artifact or report path:** none; planner, preflight, process supervision,
+  trial assembly, and validator source only. No runtime preflight or paired
+  client trial has been executed.
 - **External evidence still required:** successful pinned compatibility
   preflights, actual paired process execution, complete trial records,
   independent resources, and dedicated-host results.

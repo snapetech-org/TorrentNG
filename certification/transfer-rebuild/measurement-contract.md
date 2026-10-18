@@ -28,6 +28,13 @@ is checked against the trial's resource totals. The manifest validator also
 recomputes peak and network totals from the CSV rows. Historical trial-v1
 records without this link remain readable, but the scorecard excludes them.
 
+The trial's top-level `identity` describes the measurement harness invocation,
+while `client_identity` describes the measured torrent client. For this Python
+harness, the executable fields identify the Python interpreter; the dependency
+lock digest covers the workspace `Cargo.lock` and pinned
+`scripts/transfer_rebuild/requirements.txt`. The client executable or immutable
+container image remains bound separately by the linked client observation.
+
 The canonical `manifest.py` writer accepts only a clean committed worktree and
 records `worktree_dirty: false`; commit the measured source before publishing
 the manifest. The schema keeps the dirty-state field explicit for externally
@@ -199,7 +206,10 @@ Each trial is `complete`, `incomplete`, `invalid`, `failed`, or `unmeasured`.
 Only `complete` trials with passing applicable integrity checks can enter a
 scorecard. A timeout is `incomplete`; startup failure is `unmeasured`; invalid
 identity, fixture, or settings readback is `invalid`; an observed runtime error
-is `failed`. Preserve their evidence and reason.
+is `failed`. An `unmeasured` startup failure has no client process identity,
+settings readback, or process resource observation; preserve the launch failure
+reason and any separate launcher log. Preserve the evidence and reason for all
+outcomes.
 
 Paired trials use the same fixture, resource envelope, cache state, durability
 boundary, and matched start barrier. Re-prepare cache state before each paired

@@ -32,12 +32,19 @@
     "identity": {
       "type": "object",
       "additionalProperties": false,
+      "description": "Measurement harness source, dependency lockset, interpreter executable, and toolchain. The tested torrent client's process or image identity is recorded in client_identity and its linked observation.",
       "required": ["source_commit", "dirty_worktree", "lockfile_sha256", "binary_sha256", "binary_size_bytes"],
       "properties": {
         "source_commit": { "$ref": "#/$defs/git_sha" },
         "dirty_worktree": { "type": "boolean" },
-        "lockfile_sha256": { "$ref": "#/$defs/sha256" },
-        "binary_sha256": { "$ref": "#/$defs/sha256" },
+        "lockfile_sha256": {
+          "$ref": "#/$defs/sha256",
+          "description": "SHA-256 of the versioned lockset digest over Cargo.lock and scripts/transfer_rebuild/requirements.txt."
+        },
+        "binary_sha256": {
+          "$ref": "#/$defs/sha256",
+          "description": "SHA-256 of the Python interpreter executable running the measurement harness."
+        },
         "binary_size_bytes": { "$ref": "#/$defs/nonnegative_integer" },
         "binary_path": { "type": "string", "minLength": 1 },
         "image_digest": { "type": ["string", "null"], "pattern": "^sha256:[a-f0-9]{64}$" },
@@ -45,28 +52,33 @@
       }
     },
     "client_identity": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "client_id",
-        "version",
-        "runtime_kind",
-        "process_id",
-        "process_start_ticks",
-        "observation_sha256",
-        "settings_sha256"
-      ],
-      "properties": {
-        "client_id": {
-          "enum": ["torrentngd", "qbittorrent", "transmission", "deluge", "rtorrent", "rqbit", "urtorrent"]
-        },
-        "version": { "type": "string", "minLength": 1 },
-        "runtime_kind": { "enum": ["container", "native_binary"] },
-        "process_id": { "type": "integer", "minimum": 1 },
-        "process_start_ticks": { "$ref": "#/$defs/nonnegative_integer" },
-        "observation_sha256": { "$ref": "#/$defs/sha256" },
-        "settings_sha256": { "$ref": "#/$defs/sha256" }
-      }
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "client_id",
+            "version",
+            "runtime_kind",
+            "process_id",
+            "process_start_ticks",
+            "observation_sha256",
+            "settings_sha256"
+          ],
+          "properties": {
+            "client_id": {
+              "enum": ["torrentngd", "qbittorrent", "transmission", "deluge", "rtorrent", "rqbit", "urtorrent"]
+            },
+            "version": { "type": "string", "minLength": 1 },
+            "runtime_kind": { "enum": ["container", "native_binary"] },
+            "process_id": { "type": "integer", "minimum": 1 },
+            "process_start_ticks": { "$ref": "#/$defs/nonnegative_integer" },
+            "observation_sha256": { "$ref": "#/$defs/sha256" },
+            "settings_sha256": { "$ref": "#/$defs/sha256" }
+          }
+        }
+      ]
     },
     "workload": {
       "type": "object",
@@ -200,7 +212,7 @@
       "required": ["observer_id", "sample_interval_ms", "rss_peak_bytes", "pss_peak_bytes", "cgroup_anon_peak_bytes", "cgroup_file_peak_bytes", "cgroup_reclaimable_cache_peak_bytes", "cgroup_current_peak_bytes", "cpu_time_ns", "threads_peak", "fds_peak", "block_read_bytes", "block_write_bytes", "network_rx_bytes", "network_tx_bytes", "energy_joules"],
       "properties": {
         "observer_id": { "type": "string", "minLength": 1 },
-        "sample_interval_ms": { "type": "integer", "minimum": 1 },
+        "sample_interval_ms": { "type": ["integer", "null"], "minimum": 1 },
         "rss_peak_bytes": { "type": ["integer", "null"], "minimum": 0 },
         "pss_peak_bytes": { "type": ["integer", "null"], "minimum": 0 },
         "cgroup_anon_peak_bytes": { "type": ["integer", "null"], "minimum": 0 },
@@ -253,6 +265,7 @@
       },
       "then": {
         "properties": {
+          "client_identity": { "type": "object" },
           "settings_readback": { "properties": { "captured": { "const": true } } },
           "durations_ns": { "properties": { "transfer": { "minimum": 1 } } },
           "integrity": {
@@ -263,6 +276,79 @@
             }
           },
           "outcome": { "properties": { "reason": { "type": "null" } } }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "properties": { "status": { "const": "unmeasured" } },
+            "required": ["status"]
+          }
+        },
+        "required": ["outcome"]
+      },
+      "then": {
+        "properties": {
+          "client_identity": { "type": "null" },
+          "settings_readback": {
+            "properties": { "captured": { "const": false } }
+          },
+          "resources": {
+            "required": ["raw_artifact_sha256"],
+            "properties": {
+              "observer_id": { "const": "not_run" },
+              "sample_interval_ms": { "type": "null" },
+              "rss_peak_bytes": { "type": "null" },
+              "pss_peak_bytes": { "type": "null" },
+              "cgroup_anon_peak_bytes": { "type": "null" },
+              "cgroup_file_peak_bytes": { "type": "null" },
+              "cgroup_reclaimable_cache_peak_bytes": { "type": "null" },
+              "cgroup_current_peak_bytes": { "type": "null" },
+              "cpu_time_ns": { "type": "null" },
+              "threads_peak": { "type": "null" },
+              "fds_peak": { "type": "null" },
+              "block_read_bytes": { "type": "null" },
+              "block_write_bytes": { "type": "null" },
+              "network_rx_bytes": { "type": "null" },
+              "network_tx_bytes": { "type": "null" },
+              "energy_joules": { "type": "null" },
+              "raw_artifact_sha256": { "type": "null" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "properties": {
+              "status": { "enum": ["incomplete", "invalid", "failed", "unmeasured"] }
+            },
+            "required": ["status"]
+          }
+        },
+        "required": ["outcome"]
+      },
+      "then": {
+        "properties": {
+          "outcome": { "properties": { "reason": { "type": "string", "minLength": 1 } } }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "client_identity": { "type": "null" } },
+        "required": ["client_identity"]
+      },
+      "then": {
+        "properties": {
+          "outcome": {
+            "properties": { "status": { "const": "unmeasured" } },
+            "required": ["status"]
+          }
         }
       }
     },

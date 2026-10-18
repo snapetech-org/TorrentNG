@@ -136,6 +136,62 @@ def valid_trial() -> dict[str, object]:
     }
 
 
+def valid_unmeasured_trial() -> dict[str, object]:
+    trial = valid_trial()
+    trial["client_identity"] = None
+    trial["settings_readback"] = {
+        "captured": False,
+        "values": {},
+        "artifact_sha256": None,
+    }
+    trial["resources"] = {
+        "observer_id": "not_run",
+        "sample_interval_ms": None,
+        "rss_peak_bytes": None,
+        "pss_peak_bytes": None,
+        "cgroup_anon_peak_bytes": None,
+        "cgroup_file_peak_bytes": None,
+        "cgroup_reclaimable_cache_peak_bytes": None,
+        "cgroup_current_peak_bytes": None,
+        "cpu_time_ns": None,
+        "threads_peak": None,
+        "fds_peak": None,
+        "block_read_bytes": None,
+        "block_write_bytes": None,
+        "network_rx_bytes": None,
+        "network_tx_bytes": None,
+        "energy_joules": None,
+        "raw_artifact_sha256": None,
+    }
+    trial["integrity"] = {
+        "status": "not_run",
+        "expected_sha256": None,
+        "observed_sha256": None,
+        "hash_failures": 0,
+        "false_completions": 0,
+    }
+    trial["outcome"] = {
+        "status": "unmeasured",
+        "reason": "pinned client did not start",
+        "exit_code": 127,
+    }
+    trial["durations_ns"] = {
+        "barrier_wait": 0,
+        "transfer": 0,
+        "flush": 0,
+        "validation": 0,
+        "shutdown": 0,
+    }
+    trial["payload"] = {
+        "useful_bytes": 0,
+        "received_bytes": 0,
+        "written_bytes": 0,
+        "read_bytes": 0,
+        "duplicate_bytes": 0,
+    }
+    return trial
+
+
 def attach_resource_artifacts(root: Path, trial: dict[str, object]) -> list[dict[str, str]]:
     artifacts_dir = root / "artifacts"
     artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -380,6 +436,45 @@ class TransferRebuildValidatorTests(unittest.TestCase):
         trial["resources"].pop("raw_artifact_sha256")  # type: ignore[index]
 
         self.assertEqual(validate_document("trial", trial), [])
+
+    def test_unmeasured_trial_can_omit_client_and_resource_observations(self) -> None:
+        self.assertEqual(validate_document("trial", valid_unmeasured_trial()), [])
+
+        misleading = valid_unmeasured_trial()
+        misleading["outcome"]["status"] = "failed"  # type: ignore[index]
+        errors = validate_document("trial", misleading)
+        self.assertTrue(any("unmeasured" in error for error in errors))
+
+    def test_manifest_verifies_unmeasured_trial_without_process_identity(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="tng-transfer-unmeasured-") as directory:
+            root = Path(directory)
+            trial_path = root / "trial.json"
+            trial = valid_unmeasured_trial()
+            trial_bytes = json.dumps(trial).encode("utf-8")
+            trial_path.write_bytes(trial_bytes)
+            manifest = {
+                "schema_version": "transfer-manifest-v1",
+                "manifest_id": "manifest-unmeasured-1",
+                "created_at": "2026-10-18T18:00:00Z",
+                "source_commit": COMMIT,
+                "worktree_dirty": False,
+                "trial_files": [
+                    {
+                        "path": "trial.json",
+                        "sha256": hashlib.sha256(trial_bytes).hexdigest(),
+                        "trial_id": trial["trial_id"],
+                        "pair_id": trial["pair_id"],
+                        "outcome": "unmeasured",
+                    }
+                ],
+                "artifacts": [],
+            }
+            manifest_path = root / "manifest.json"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            self.assertEqual(
+                validate("manifest", manifest_path, verify_referenced_files=True), []
+            )
 
     def test_client_observation_requires_pinned_runtime_and_settings(self) -> None:
         self.assertEqual(validate_document("client-observation", valid_client_observation()), [])
@@ -999,31 +1094,33 @@ class TransferManifestWriterTests(unittest.TestCase):
         artifact_specs: list[tuple[str, Path]] = []
 
         for index, status in enumerate(statuses, start=1):
-            observation = valid_client_observation()
-            observation["runtime_identity"]["source_commit"] = self.commit  # type: ignore[index]
-            observation["runtime_identity"]["process_id"] = index  # type: ignore[index]
-            observation["runtime_identity"]["process_start_ticks"] = index  # type: ignore[index]
-            observation_path = artifacts_dir / f"client-{index}.json"
-            observation_bytes = json.dumps(observation, sort_keys=True).encode("utf-8")
-            observation_path.write_bytes(observation_bytes)
-            observation_sha = hashlib.sha256(observation_bytes).hexdigest()
-            artifact_specs.append(("transfer-client-observation-v1", observation_path))
-
-            trial = valid_trial()
+            trial = valid_unmeasured_trial() if status == "unmeasured" else valid_trial()
             trial["trial_id"] = f"trial-{status}-{index}"
             trial["pair_id"] = f"pair-{status}-{index}"
             trial["identity"]["source_commit"] = self.commit  # type: ignore[index]
-            trial["client_identity"]["process_id"] = index  # type: ignore[index]
-            trial["client_identity"]["process_start_ticks"] = index  # type: ignore[index]
-            trial["client_identity"]["observation_sha256"] = observation_sha  # type: ignore[index]
-            trial["outcome"]["status"] = status  # type: ignore[index]
-            if status != "complete":
-                trial["outcome"]["reason"] = "preserved regression fixture"  # type: ignore[index]
-                trial["outcome"]["exit_code"] = None  # type: ignore[index]
-                trial["integrity"]["status"] = "not_run"  # type: ignore[index]
-            resource_artifacts = attach_resource_artifacts(evidence, trial)
-            for artifact in resource_artifacts:
-                artifact_specs.append((artifact["kind"], evidence / artifact["path"]))
+            if status == "unmeasured":
+                trial["outcome"]["reason"] = "pinned client did not start"  # type: ignore[index]
+            else:
+                observation = valid_client_observation()
+                observation["runtime_identity"]["source_commit"] = self.commit  # type: ignore[index]
+                observation["runtime_identity"]["process_id"] = index  # type: ignore[index]
+                observation["runtime_identity"]["process_start_ticks"] = index  # type: ignore[index]
+                observation_path = artifacts_dir / f"client-{index}.json"
+                observation_bytes = json.dumps(observation, sort_keys=True).encode("utf-8")
+                observation_path.write_bytes(observation_bytes)
+                observation_sha = hashlib.sha256(observation_bytes).hexdigest()
+                artifact_specs.append(("transfer-client-observation-v1", observation_path))
+                trial["client_identity"]["process_id"] = index  # type: ignore[index]
+                trial["client_identity"]["process_start_ticks"] = index  # type: ignore[index]
+                trial["client_identity"]["observation_sha256"] = observation_sha  # type: ignore[index]
+                trial["outcome"]["status"] = status  # type: ignore[index]
+                if status != "complete":
+                    trial["outcome"]["reason"] = "preserved regression fixture"  # type: ignore[index]
+                    trial["outcome"]["exit_code"] = None  # type: ignore[index]
+                    trial["integrity"]["status"] = "not_run"  # type: ignore[index]
+                resource_artifacts = attach_resource_artifacts(evidence, trial)
+                for artifact in resource_artifacts:
+                    artifact_specs.append((artifact["kind"], evidence / artifact["path"]))
             trial_path = trials_dir / f"trial-{index}.json"
             trial_path.write_text(json.dumps(trial, sort_keys=True), encoding="utf-8")
             trial_paths.append(trial_path)

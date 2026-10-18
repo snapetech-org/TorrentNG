@@ -1060,14 +1060,20 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
                     errors.append(
                         f"{location}.resources.sample_interval_ms: differs from its observation"
                     )
-                if resource_observation["root_pid"] != trial["client_identity"]["process_id"]:
+                trial_client = trial["client_identity"]
+                if trial_client is None:
+                    errors.append(
+                        f"{location}.resources.raw_artifact_sha256: "
+                        "resource evidence has no linked client process identity"
+                    )
+                elif resource_observation["root_pid"] != trial_client["process_id"]:
                     errors.append(
                         f"{location}.resources.raw_artifact_sha256: observer root PID "
                         "differs from the client process"
                     )
-                if resource_observation["root_process_start_ticks"] != trial[
-                    "client_identity"
-                ]["process_start_ticks"]:
+                if trial_client is not None and resource_observation[
+                    "root_process_start_ticks"
+                ] != trial_client["process_start_ticks"]:
                     errors.append(
                         f"{location}.resources.raw_artifact_sha256: observer root process "
                         "start identity differs from the client process"
@@ -1100,7 +1106,12 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
 
         copy_accounting = trial["payload"].get("copy_accounting")
         if copy_accounting is not None:
-            if trial["client_identity"]["client_id"] != "torrentngd":
+            trial_client = trial["client_identity"]
+            if trial_client is None:
+                errors.append(
+                    f"{location}.payload.copy_accounting: client process identity is missing"
+                )
+            elif trial_client["client_id"] != "torrentngd":
                 errors.append(
                     f"{location}.payload.copy_accounting: this observation format is TorrentNG-specific"
                 )
@@ -1122,8 +1133,8 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
                     f"{location}.payload.copy_accounting.end_observation_sha256: "
                     "no verified payload-copy observation artifact"
                 )
-            if start_copy is not None and end_copy is not None:
-                client = trial["client_identity"]
+            if start_copy is not None and end_copy is not None and trial_client is not None:
+                client = trial_client
                 for label, observation in (("start", start_copy), ("end", end_copy)):
                     if observation["process_id"] != client["process_id"]:
                         errors.append(
@@ -1187,16 +1198,22 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
                 if calibration is not None:
                     ceiling_calibration = calibration
                     target_identity = trial["client_identity"]
-                    for source_name in ("network", "disk", "hash", "pipeline"):
-                        source = calibration[source_name]
-                        if (
-                            source["process_id"] == target_identity["process_id"]
-                            and source["process_start_ticks"] == target_identity["process_start_ticks"]
-                        ):
-                            errors.append(
-                                f"{location}.environment.independent_ceiling_sha256: "
-                                f"{source_name} calibration uses the candidate process"
-                            )
+                    if target_identity is None:
+                        errors.append(
+                            f"{location}.environment.independent_ceiling_sha256: "
+                            "client process identity is missing"
+                        )
+                    else:
+                        for source_name in ("network", "disk", "hash", "pipeline"):
+                            source = calibration[source_name]
+                            if (
+                                source["process_id"] == target_identity["process_id"]
+                                and source["process_start_ticks"] == target_identity["process_start_ticks"]
+                            ):
+                                errors.append(
+                                    f"{location}.environment.independent_ceiling_sha256: "
+                                    f"{source_name} calibration uses the candidate process"
+                                )
         control_profile = network.get("control_profile_id")
         control_digests = network.get("control_observation_sha256s", [])
         if control_profile is None and control_digests:
@@ -1256,6 +1273,12 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
                     )
 
         client_identity = trial["client_identity"]
+        if client_identity is None:
+            if trial["outcome"]["status"] != "unmeasured":
+                errors.append(
+                    f"{location}.client_identity: only an unmeasured trial may omit client identity"
+                )
+            continue
         observation = client_observations.get(client_identity["observation_sha256"])
         if observation is None:
             errors.append(
