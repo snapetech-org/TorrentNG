@@ -1094,13 +1094,16 @@ remain on their reference paths until NET-114.
 
 Honor negotiated BEP 6 behavior in the existing handlers while moving the
 complete obligation state machine into the live shared runtime. The pure
-`transfer::InboundObligations` module remains the protocol reference; v1 and
-v2 currently have actor-local request state.
+`transfer::InboundObligations` module now owns the pure-v2 inbound upload
+queue/service lifecycle; v1, hybrid, and outbound request state remain on
+their reference paths.
 
 ### Ownership and invariant
 
-- **Current owner:** v1 upload work is owned by the peer loop; pure-v2 request
-  and piece state is owned by its peer protocol loop.
+- **Current owner:** pure-v2 inbound upload queue, in-service, Cancel, choke,
+  and completion transitions use `InboundObligations`; the v2 peer loop owns
+  storage futures and wire writes. v1 upload work and outbound request state
+  remain actor-local.
 - **Target owner:** `InboundObligations` and the shared ledger own response
   obligations across both protocol planes.
 - **Invariant preserved:** when Fast is negotiated, a request already
@@ -1125,8 +1128,9 @@ v2 currently have actor-local request state.
 - Request cancellation and endgame loser handling reconcile exactly once with
   queued reads, in-flight work, Piece delivery, and Reject delivery.
 - Stale, duplicate, and unsolicited responses cannot mutate current content.
-- The production v1, v2, and hybrid actors use the shared obligation ledger;
-  pure-module tests alone do not close this ticket.
+- The pure-v2 inbound upload path uses the shared obligation owner. v1, hybrid,
+  and outbound request ownership must also move to the shared runtime before
+  this ticket closes; pure-module tests alone do not close it.
 
 ### Files and compatibility
 
@@ -1144,11 +1148,14 @@ v2 currently have actor-local request state.
 - **Regression source added or updated:**
   `v2_reject_obligations_require_fast_negotiation`,
   `v2_choke_preserves_fast_request_obligations`,
+  `interrupted_in_service_request_can_be_requeued_without_losing_its_obligation`,
   `fast_choke_keeps_wire_request_lease_and_legacy_choke_releases_it`,
   `fast_choke_cancels_queued_requests_but_keeps_wire_requests`, and the
   existing v1 `fast_peer_request_while_choked_is_rejected_not_dropped`.
-- The new v1 queued-versus-in-service Cancel and endgame Cancel paths still
-  need focused regression sources before NET-105 can close.
+- Focused v1 regression sources now cover queued-versus-in-service Cancel,
+  late Piece after outbound Cancel, and exact endgame duplicate matching.
+  Shared-ledger integration, v1 actor adoption, hybrid parity, and all bulk
+  validation remain open.
 - **Command or probe to run:** targeted v1/v2 Fast lifecycle and shared-ledger
   simulations during the requested bulk pass.
 - **Expected result:** no owed request is lost across Fast Choke/Cancel and

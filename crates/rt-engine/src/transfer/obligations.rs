@@ -188,6 +188,20 @@ impl InboundObligations {
         Some(block)
     }
 
+    /// Return an in-service request to the front of the queue when a
+    /// cancellable rate wait ends before storage work can finish. Its
+    /// obligation stays live and it keeps its original priority relative to
+    /// requests accepted later.
+    pub fn requeue_front(&mut self, block: BlockExtent) -> bool {
+        if !self.in_service.contains(&block) || self.queue.len() >= self.max_queue {
+            return false;
+        }
+        self.in_service.remove(&block);
+        self.queued.insert(block);
+        self.queue.push_front(block);
+        true
+    }
+
     /// Whether the data for an in-service request may still be sent: we must
     /// not send a Piece to a peer we have since choked (except allowed-fast).
     pub fn may_send(&self, block: &BlockExtent) -> bool {
@@ -401,6 +415,25 @@ mod tests {
         assert_eq!(fast.on_cancel(b(1)), None);
         assert_eq!(fast.queued_len(), 0);
         fast.check_invariants().unwrap();
+    }
+
+    #[test]
+    fn interrupted_in_service_request_can_be_requeued_without_losing_its_obligation() {
+        let mut ob = InboundObligations::new(true, 8);
+        ob.on_local_unchoke();
+        assert_eq!(ob.on_request(b(1), true), InboundDecision::Queue);
+        assert_eq!(ob.on_request(b(2), true), InboundDecision::Queue);
+
+        let first = ob.next_request().unwrap();
+        assert_eq!(first, b(1));
+        assert_eq!(ob.on_cancel(first), None, "in-service work remains owed");
+        assert!(ob.requeue_front(first));
+        assert_eq!(ob.queued_len(), 2);
+        assert_eq!(ob.in_service_len(), 0);
+        assert_eq!(ob.next_request(), Some(first));
+        assert_eq!(ob.finish(first, Served::Sent), None);
+        assert_eq!(ob.next_request(), Some(b(2)));
+        ob.check_invariants().unwrap();
     }
 
     #[test]

@@ -65,6 +65,9 @@ use crate::tracker_runtime::{
     MAX_TRACKER_ANNOUNCES_IN_FLIGHT, STOPPED_TRACKER_ANNOUNCE_DEADLINE,
 };
 use crate::transfer::coords::{BlockExtent, PieceGeometry};
+use crate::transfer::obligations::{
+    InboundDecision, InboundObligations, Reject as InboundReject, Served as InboundServed,
+};
 use crate::{EnginePeerSnapshot, EngineTorrentLimits, EngineWebseedSnapshot, TorrentRuntimeStats};
 
 const V2_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -3381,7 +3384,10 @@ async fn run_v2_peer_protocol(
     let mut pending_block_completions = HashMap::<(u32, u32), V2PendingCompletion>::new();
     let mut pending_piece_completions = HashMap::<u32, V2PendingCompletion>::new();
     let mut upload_reads = futures::stream::FuturesUnordered::<V2UploadReadTask>::new();
-    let mut pending_upload_requests = VecDeque::new();
+    let mut upload_obligations = InboundObligations::new(remote_supports_fast, V2_MAX_UPLOAD_WORK);
+    if v2_upload_can_serve(&context, &state) {
+        upload_obligations.on_local_unchoke();
+    }
     let mut remote_availability_known = false;
     let mut local_interested = false;
     update_v2_interest(
@@ -3418,23 +3424,18 @@ async fn run_v2_peer_protocol(
                     }
                 }
                 if selected {
+                    upload_obligations.on_local_unchoke();
                     start_v2_upload_reads(
                         &mut upload_reads,
-                        &mut pending_upload_requests,
+                        &mut upload_obligations,
                         &context,
                         &state,
                     );
                 } else {
-                    while let Some(request) = pending_upload_requests.pop_front() {
-                        reject_v2_request(
-                            &context,
-                            &mut framed,
-                            remote_supports_fast,
-                            request.piece,
-                            request.begin,
-                            request.length,
-                        )
-                        .await?;
+                    for reject in upload_obligations.on_local_choke() {
+                        if !send_v2_obligation_reject(&context, &mut framed, reject).await? {
+                            return Ok(());
+                        }
                     }
                 }
             }
@@ -3617,22 +3618,14 @@ async fn run_v2_peer_protocol(
                         }
                     }
                     Message::Request { piece, begin, length } => {
+                        let block = BlockExtent::new(piece, begin, length);
                         let request = V2UploadRequest {
                             piece,
                             begin,
                             length,
                         };
-                        if !v2_upload_can_serve(&context, &state) {
-                            reject_v2_request(
-                                &context,
-                                &mut framed,
-                                remote_supports_fast,
-                                piece,
-                                begin,
-                                length,
-                            )
-                            .await?;
-                        } else if pending_upload_requests.len() + upload_reads.len()
+                        if upload_obligations.queued_len()
+                            + upload_obligations.in_service_len()
                             >= V2_MAX_UPLOAD_WORK
                         {
                             if remote_supports_fast {
@@ -3648,36 +3641,41 @@ async fn run_v2_peer_protocol(
                             } else {
                                 anyhow::bail!("v2 peer exceeded the bounded upload queue");
                             }
-                        } else {
-                            pending_upload_requests.push_back(request);
-                            start_v2_upload_reads(
+                            continue;
+                        }
+                        let have_piece = v2_upload_can_serve(&context, &state)
+                            && context
+                                .local_have
+                                .read()
+                                .await
+                                .get(piece as usize);
+                        match upload_obligations.on_request(block, have_piece) {
+                            InboundDecision::Queue => start_v2_upload_reads(
                                 &mut upload_reads,
-                                &mut pending_upload_requests,
+                                &mut upload_obligations,
                                 &context,
                                 &state,
-                            );
+                            ),
+                            InboundDecision::Reject(_) => {
+                                reject_v2_request(
+                                    &context,
+                                    &mut framed,
+                                    remote_supports_fast,
+                                    request.piece,
+                                    request.begin,
+                                    request.length,
+                                )
+                                .await?;
+                            }
+                            InboundDecision::Drop(_) | InboundDecision::Duplicate => {}
                         }
                     }
                     Message::Cancel { piece, begin, length } => {
-                        let request = V2UploadRequest {
-                            piece,
-                            begin,
-                            length,
-                        };
-                        if let Some(index) = pending_upload_requests
-                            .iter()
-                            .position(|pending| *pending == request)
-                        {
-                            let _ = pending_upload_requests.remove(index);
-                            reject_v2_request(
-                                &context,
-                                &mut framed,
-                                remote_supports_fast,
-                                piece,
-                                begin,
-                                length,
-                            )
-                            .await?;
+                        let block = BlockExtent::new(piece, begin, length);
+                        if let Some(reject) = upload_obligations.on_cancel(block) {
+                            if !send_v2_obligation_reject(&context, &mut framed, reject).await? {
+                                return Ok(());
+                            }
                         }
                     }
                     Message::Reject { piece, begin, length } => {
@@ -3852,9 +3850,12 @@ async fn run_v2_peer_protocol(
                     continue;
                 };
                 let request = completion.request;
+                let block = BlockExtent::new(request.piece, request.begin, request.length);
                 match completion.outcome {
-                    V2UploadOutcome::Ready(block) if v2_upload_can_serve(&context, &state) => {
-                        let V2LeasedUploadBlock { data, _lease } = block;
+                    V2UploadOutcome::Ready(upload_block)
+                        if v2_upload_can_serve(&context, &state) =>
+                    {
+                        let V2LeasedUploadBlock { data, _lease } = upload_block;
                         let bytes = data.len() as u64;
                         if !send_v2_peer_message(
                             &context,
@@ -3864,6 +3865,17 @@ async fn run_v2_peer_protocol(
                                 begin: request.begin,
                                 data,
                             },
+                        )
+                        .await?
+                        {
+                            return Ok(());
+                        }
+                        if !finish_v2_upload_obligation(
+                            &context,
+                            &mut framed,
+                            &mut upload_obligations,
+                            block,
+                            InboundServed::Sent,
                         )
                         .await?
                         {
@@ -3881,52 +3893,49 @@ async fn run_v2_peer_protocol(
                             })
                             .await;
                     }
-                    V2UploadOutcome::Ready(_) | V2UploadOutcome::Rejected => {
-                        reject_v2_request(
+                    V2UploadOutcome::Ready(_) => {
+                        if !finish_v2_upload_obligation(
                             &context,
                             &mut framed,
-                            remote_supports_fast,
-                            request.piece,
-                            request.begin,
-                            request.length,
+                            &mut upload_obligations,
+                            block,
+                            InboundServed::Discarded,
                         )
-                        .await?;
+                        .await?
+                        {
+                            return Ok(());
+                        }
+                    }
+                    V2UploadOutcome::Rejected => {
+                        if !finish_v2_upload_obligation(
+                            &context,
+                            &mut framed,
+                            &mut upload_obligations,
+                            block,
+                            InboundServed::Failed,
+                        )
+                        .await?
+                        {
+                            return Ok(());
+                        }
                     }
                     V2UploadOutcome::RateInterrupted => {
-                        if v2_upload_can_serve(&context, &state)
-                            && pending_upload_requests.len() + upload_reads.len()
-                                < V2_MAX_UPLOAD_WORK
-                        {
-                            pending_upload_requests.push_front(request);
-                        } else if v2_upload_can_serve(&context, &state) {
-                            // The active job was just removed, so this can
-                            // only occur if the total-work invariant drifted.
-                            // End a legacy connection rather than silently
-                            // losing its request; Fast peers get the defined
-                            // overload response.
-                            if remote_supports_fast {
-                                reject_v2_request(
-                                    &context,
-                                    &mut framed,
-                                    true,
-                                    request.piece,
-                                    request.begin,
-                                    request.length,
-                                )
-                                .await?;
-                            } else {
-                                anyhow::bail!("v2 upload work accounting exceeded its bound");
+                        if v2_upload_can_serve(&context, &state) {
+                            if !upload_obligations.requeue_front(block) {
+                                anyhow::bail!("v2 upload obligation could not be requeued");
                             }
                         } else {
-                            reject_v2_request(
+                            if !finish_v2_upload_obligation(
                                 &context,
                                 &mut framed,
-                                remote_supports_fast,
-                                request.piece,
-                                request.begin,
-                                request.length,
+                                &mut upload_obligations,
+                                block,
+                                InboundServed::Discarded,
                             )
-                            .await?;
+                            .await?
+                            {
+                                return Ok(());
+                            }
                         }
                     }
                     V2UploadOutcome::Failed(error) => {
@@ -3941,20 +3950,22 @@ async fn run_v2_peer_protocol(
                             error = %error,
                             "failed to read pure-v2 upload block"
                         );
-                        reject_v2_request(
+                        if !finish_v2_upload_obligation(
                             &context,
                             &mut framed,
-                            remote_supports_fast,
-                            request.piece,
-                            request.begin,
-                            request.length,
+                            &mut upload_obligations,
+                            block,
+                            InboundServed::Failed,
                         )
-                        .await?;
+                        .await?
+                        {
+                            return Ok(());
+                        }
                     }
                 }
                 start_v2_upload_reads(
                     &mut upload_reads,
-                    &mut pending_upload_requests,
+                    &mut upload_obligations,
                     &context,
                     &state,
                 );
@@ -3965,7 +3976,7 @@ async fn run_v2_peer_protocol(
     .await;
     context.peer_control.cancel();
     context.upload_control.cancel();
-    pending_upload_requests.clear();
+    upload_obligations.close();
     drain_v2_upload_reads(&mut upload_reads).await;
     let drain_result = drain_v2_transfer_jobs(
         &context,
@@ -4735,7 +4746,7 @@ fn v2_upload_can_serve(context: &V2PeerContext, state: &Arc<Mutex<V2PeerState>>)
 
 fn start_v2_upload_reads(
     upload_reads: &mut futures::stream::FuturesUnordered<V2UploadReadTask>,
-    pending: &mut VecDeque<V2UploadRequest>,
+    obligations: &mut InboundObligations,
     context: &V2PeerContext,
     state: &Arc<Mutex<V2PeerState>>,
 ) {
@@ -4743,11 +4754,16 @@ fn start_v2_upload_reads(
         return;
     }
     while upload_reads.len() < V2_MAX_PENDING_UPLOAD_READS
-        && !pending.is_empty()
+        && obligations.queued_len() > 0
         && v2_upload_can_serve(context, state)
     {
-        let Some(request) = pending.pop_front() else {
+        let Some(block) = obligations.next_request() else {
             break;
+        };
+        let request = V2UploadRequest {
+            piece: block.piece,
+            begin: block.begin,
+            length: block.length,
         };
         let context = context.clone();
         let state = Arc::clone(state);
@@ -4854,6 +4870,38 @@ async fn reject_v2_request(
         let _ = send_v2_peer_message(context, framed, message).await?;
     }
     Ok(())
+}
+
+async fn send_v2_obligation_reject(
+    context: &V2PeerContext,
+    framed: &mut PeerIo,
+    reject: InboundReject,
+) -> anyhow::Result<bool> {
+    let block = reject.block;
+    send_v2_peer_message(
+        context,
+        framed,
+        Message::Reject {
+            piece: block.piece,
+            begin: block.begin,
+            length: block.length,
+        },
+    )
+    .await
+}
+
+async fn finish_v2_upload_obligation(
+    context: &V2PeerContext,
+    framed: &mut PeerIo,
+    obligations: &mut InboundObligations,
+    block: BlockExtent,
+    served: InboundServed,
+) -> anyhow::Result<bool> {
+    if let Some(reject) = obligations.finish(block, served) {
+        send_v2_obligation_reject(context, framed, reject).await
+    } else {
+        Ok(true)
+    }
 }
 
 fn v2_request_rejection_message(
