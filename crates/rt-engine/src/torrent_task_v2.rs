@@ -3932,6 +3932,9 @@ async fn run_v2_peer_protocol(
     }
     .await;
     context.peer_control.cancel();
+    context.upload_control.cancel();
+    pending_upload_requests.clear();
+    drain_v2_upload_reads(&mut upload_reads).await;
     let drain_result = drain_v2_transfer_jobs(
         &context,
         &state,
@@ -4397,6 +4400,12 @@ async fn drain_v2_transfer_jobs(
     }
 }
 
+async fn drain_v2_upload_reads(
+    upload_reads: &mut futures::stream::FuturesUnordered<V2UploadReadTask>,
+) {
+    while upload_reads.next().await.is_some() {}
+}
+
 async fn complete_v2_piece_job(
     context: &V2PeerContext,
     piece: u32,
@@ -4653,6 +4662,9 @@ async fn read_v2_upload_block(
     state: &Arc<Mutex<V2PeerState>>,
     request: V2UploadRequest,
 ) -> V2UploadOutcome {
+    if context.peer_control.generation() != context.peer_generation {
+        return V2UploadOutcome::RateInterrupted;
+    }
     let block_extent = BlockExtent::new(request.piece, request.begin, request.length);
     if PieceGeometry::validate_served_block(&context.piece_map, block_extent).is_err() {
         return V2UploadOutcome::Rejected;
@@ -4694,6 +4706,10 @@ async fn read_v2_upload_block(
             Err(error) => return V2UploadOutcome::Failed(error.into()),
         }
     };
+
+    if context.peer_control.generation() != context.peer_generation {
+        return V2UploadOutcome::RateInterrupted;
+    }
 
     // Capture before the final slot check: a choke that races between the
     // check and the wait changes this generation and wakes the waiter.
@@ -5445,6 +5461,38 @@ mod tests {
             .unwrap();
         assert!(completed.is_some());
         drop(remote);
+    }
+
+    #[tokio::test]
+    async fn v2_peer_shutdown_drains_admitted_upload_reads() {
+        let (release_read, read_completion) = tokio::sync::oneshot::channel();
+        let mut upload_reads = futures::stream::FuturesUnordered::<V2UploadReadTask>::new();
+        upload_reads.push(
+            async move {
+                let _ = read_completion.await;
+                V2UploadCompletion {
+                    request: V2UploadRequest {
+                        piece: 0,
+                        begin: 0,
+                        length: rt_peer_wire::message::MAX_BLOCK_SIZE,
+                    },
+                    outcome: V2UploadOutcome::RateInterrupted,
+                }
+            }
+            .boxed(),
+        );
+
+        let mut drain = tokio::spawn(async move {
+            drain_v2_upload_reads(&mut upload_reads).await;
+        });
+        assert!(timeout(Duration::from_millis(25), &mut drain)
+            .await
+            .is_err());
+        release_read.send(()).unwrap();
+        timeout(Duration::from_secs(1), drain)
+            .await
+            .expect("shutdown should wait for the admitted upload read")
+            .unwrap();
     }
 
     #[test]
