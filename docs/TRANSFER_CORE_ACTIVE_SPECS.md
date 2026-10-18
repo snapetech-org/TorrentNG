@@ -1265,6 +1265,114 @@ progress persistence remain IO-008.
 - **External evidence still required:** mixed-speed peer control latency and
   bounded resource use under a saturated upload queue.
 
+## NET-107 — Hierarchical fair payload rate scheduler
+
+- **Priority / wave:** P1 / 8
+- **Prerequisites:** NET-103, NET-104, NET-106
+- **Owning component:** pure scheduler in `crates/rt-engine/src/transfer/rate.rs`,
+  then the process-wide network budget and live peer adapters.
+- **Finding or capability:** remove copied per-peer torrent buckets, avoid
+  timer polling, and share configured limits fairly across live torrents and
+  peers.
+- **Status:** `wip`
+
+### Scope
+
+Use one deterministic `RateTree` to admit payload bytes under process-wide and
+per-torrent limits, with weighted per-peer fairness. The core accepts an
+injected monotonic timestamp, keeps
+fractional byte-nanosecond credit, and may carry debt so a configured rate
+below one block per second still makes progress. Wait results identify the
+first useful retry deadline, and a bounded due-peer query drains wake work
+without scanning every connection; weighted start-time fairness limits how
+far one peer runs ahead of waiting peers in its torrent. The engine owns
+wall-clock timers, limit-change notifications, cancellation, and socket or
+storage work.
+
+Deadlines describe the last grant attempt. A limit change or refund can make
+parked requests eligible sooner, so the live adapter must promptly reconsider
+the affected requests instead of waiting for their previous deadlines.
+
+`TorrentKey` is unique for a task generation while stale peer work may still
+exist. `RatePeerId` combines that key with the connection-local generation-safe
+`ConnectionId`, because separate torrent ledgers can both register `conn#0.1`.
+NET-114 and NET-115 own actor registration, payload admission, limit updates,
+cancellation/refund, and shared source scheduling.
+
+### Ownership and invariant
+
+- **Current owner:** `GlobalNetworkBudget` and torrent/peer actors hold the
+  existing process and torrent limit state; the pure `RateTree` is not yet
+  wired to live peers.
+- **Target owner:** one process-shared tree owns global and per-torrent byte
+  credit, peer fairness progress, unsettled grant/refund accounting, and the
+  next-wakeup index.
+- **Invariant preserved:** a grant debits all applicable levels atomically;
+  a denial does not partially consume torrent or peer service. A rate update
+  clamps existing credit and cannot mint another burst.
+- **Must not:** key process-wide state by a `ConnectionId` alone, scan every
+  peer on each grant/timer pass, or hold the tree lock while waiting or doing
+  I/O.
+
+### Acceptance
+
+- Rate peer identity remains distinct when two torrent ledgers reuse the same
+  connection slot and generation; removing one torrent leaves the other's
+  rate state intact.
+- Global and torrent limits are shared across peers and grants debit every
+  limited level together or none.
+- Fractional refill and debt make sub-block-per-second limits progress, with
+  whole-nanosecond retry deadlines and no floating-point drift.
+- Weighted peers share a saturated torrent allowance; a new peer starts at
+  the current virtual floor rather than at zero.
+- Updating a peer's weight preserves its fairness progress and unsettled
+  grant accounting.
+- Re-registering or updating a torrent limit preserves accumulated debt and
+  never mints a burst; unlimited-to-limited starts without accumulated credit.
+- Refunds restore only granted bytes that were not settled as transferred
+  payload, and clamp at bucket capacity.
+- Ordered per-torrent active/wait indexes and the global wake index stay
+  coherent across grant, wait, refund, peer removal, and torrent removal.
+- The due-peer query returns only indexed peers at or before the supplied
+  deadline, respects its caller-provided batch bound, and leaves entries
+  indexed until a grant attempt reconciles them.
+- Limit changes and refunds promptly reconsider affected parked requests, so
+  an earlier eligibility time is not hidden by a stale timer deadline.
+- Live v1, pure-v2, and webseed adapters use the same service before the
+  scheduler is considered integrated; request admission remains bounded by
+  memory and device capacity.
+
+### Files and compatibility
+
+- **Expected code paths:** `transfer/rate.rs`, `network_budget.rs`,
+  `torrent_task/peer_transfer.rs`, `torrent_task/peer_session.rs`,
+  `torrent_task_v2.rs`, and NET-114/115 integration.
+- **State or wire compatibility:** no wire or persisted-state change; rates
+  continue to count payload bytes at the engine boundary.
+- **Migration / rollback:** retain the existing actor limiters until the
+  shared service has matched behavior and reversible actor coverage.
+- **Feature flag or rollout boundary:** the pure module remains inactive in
+  production until live adapters and bulk regressions are complete.
+
+### Evidence
+
+- **Regression sources:** exact deadlines, sub-block progress, shared
+  global/torrent budgets, all-or-nothing grants, weighted fairness, no-burst
+  limit updates, unsettled-grant refunds, settled-payload protection, peer
+  weight updates, index
+  cleanup, deadline-filtered bounded wake batches, unknown peers, repeated
+  torrent-limit updates, and
+  `reused_ledger_connections_are_isolated_between_torrents`.
+- **Command or probe to run:** pure scheduler regressions and the engine rate
+  integration suites during the requested bulk pass.
+- **Expected result:** deterministic grants conserve each configured budget,
+  return useful wake deadlines, and keep peer identities separate across
+  torrent actors.
+- **Executed on exact revision:** no.
+- **Artifact or report path:** pending the bulk pass.
+- **External evidence still required:** live mixed-torrent fairness and
+  matched whole-client CPU, memory, and goodput measurements.
+
 ## NET-111 — Fair seed and download choking policies
 
 - **Priority / wave:** P1 / 10

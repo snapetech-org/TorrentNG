@@ -34,8 +34,28 @@ const FAIRNESS_LAG_BYTES: u128 = 2 * 16 * 1024;
 /// Virtual-time resolution: bytes scaled by this before dividing by weight.
 const VTIME_SCALE: u128 = 1_000_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TorrentKey(pub u32);
+/// Unique rate-tree identity for a torrent task; do not reuse while an
+/// earlier task generation may still hold peer work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TorrentKey(pub u64);
+
+/// A ledger connection is unique only within its torrent. This composite key
+/// keeps peer accounting distinct when one process-wide tree serves many
+/// torrent actors whose local ledgers reuse the same slot and generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct RatePeerId {
+    pub torrent: TorrentKey,
+    pub connection: ConnectionId,
+}
+
+impl RatePeerId {
+    pub const fn new(torrent: TorrentKey, connection: ConnectionId) -> Self {
+        Self {
+            torrent,
+            connection,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Grant {
@@ -139,9 +159,9 @@ impl Bucket {
 struct TorrentNode {
     bucket: Bucket,
     /// Active peer progress, ordered so new peers start near the fair floor.
-    peers: BTreeSet<(u128, ConnectionId)>,
+    peers: BTreeSet<(u128, RatePeerId)>,
     /// Waiting peers ordered by progress then retry deadline.
-    waiting: BTreeSet<(u128, Nanos, ConnectionId)>,
+    waiting: BTreeSet<(u128, Nanos, RatePeerId)>,
 }
 
 struct PeerNode {
@@ -149,6 +169,8 @@ struct PeerNode {
     weight: u64,
     /// Virtual finish time of the last grant (start-time fair queueing).
     vfinish: u128,
+    /// Granted bytes that may still be refunded if the payload is not used.
+    refundable_bytes: u64,
     /// Denied and still wanting service.
     waiting: bool,
     wake_at: Nanos,
@@ -157,9 +179,9 @@ struct PeerNode {
 pub struct RateTree {
     global: Bucket,
     torrents: HashMap<TorrentKey, TorrentNode>,
-    peers: HashMap<ConnectionId, PeerNode>,
+    peers: HashMap<RatePeerId, PeerNode>,
     /// Earliest waiting retry is always the first entry.
-    wake_queue: BTreeSet<(Nanos, ConnectionId)>,
+    wake_queue: BTreeSet<(Nanos, RatePeerId)>,
 }
 
 impl RateTree {
@@ -172,27 +194,32 @@ impl RateTree {
         }
     }
 
+    /// Update the process-wide limit without minting credit.
+    ///
+    /// Existing wait deadlines reflect the last grant attempt. The live
+    /// adapter must promptly reconsider parked requests after a limit change,
+    /// since a higher limit can make them eligible before those deadlines.
     pub fn set_global_limit(&mut self, limit: Option<u64>, now: Nanos) {
         self.global.set_limit(limit, now);
     }
 
     pub fn add_torrent(&mut self, key: TorrentKey, limit: Option<u64>, now: Nanos) {
-        let bucket = Bucket::new(limit, now);
         if let Some(node) = self.torrents.get_mut(&key) {
-            node.bucket = bucket;
+            node.bucket.set_limit(limit, now);
         } else {
+            let bucket = Bucket::new(limit, now);
             // Preserve peers registered before the torrent node was created.
             let peers = self
                 .peers
                 .iter()
                 .filter(|(_, peer)| peer.torrent == key)
-                .map(|(conn, peer)| (peer.vfinish, *conn))
+                .map(|(peer_id, peer)| (peer.vfinish, *peer_id))
                 .collect();
             let waiting = self
                 .peers
                 .iter()
                 .filter(|(_, peer)| peer.torrent == key && peer.waiting)
-                .map(|(conn, peer)| (peer.vfinish, peer.wake_at, *conn))
+                .map(|(peer_id, peer)| (peer.vfinish, peer.wake_at, *peer_id))
                 .collect();
             self.torrents.insert(
                 key,
@@ -205,56 +232,70 @@ impl RateTree {
         }
     }
 
+    /// Update one torrent limit without minting credit. The live adapter must
+    /// promptly reconsider that torrent's parked requests after a limit
+    /// change because their previous deadlines may now be late.
     pub fn set_torrent_limit(&mut self, key: TorrentKey, limit: Option<u64>, now: Nanos) {
         if let Some(node) = self.torrents.get_mut(&key) {
             node.bucket.set_limit(limit, now);
         }
     }
 
+    /// Remove a torrent and all its peer registrations after the caller has
+    /// settled transferred payload and refunded unused grants.
     pub fn remove_torrent(&mut self, key: TorrentKey) {
         let Some(torrent) = self.torrents.remove(&key) else {
             self.peers.retain(|_, peer| peer.torrent != key);
             return;
         };
-        for (_, conn) in torrent.peers {
-            if let Some(peer) = self.peers.remove(&conn) {
+        for (_, peer_id) in torrent.peers {
+            if let Some(peer) = self.peers.remove(&peer_id) {
                 if peer.waiting {
-                    self.wake_queue.remove(&(peer.wake_at, conn));
+                    self.wake_queue.remove(&(peer.wake_at, peer_id));
                 }
             }
         }
     }
 
-    /// Register a peer under `torrent` with a fairness weight (at least 1). A
-    /// newcomer starts at the torrent's current virtual time, not zero, so it
-    /// neither starves nor is starved by existing peers.
-    pub fn add_peer(&mut self, torrent: TorrentKey, conn: ConnectionId, weight: u64) {
-        self.remove_peer(conn);
-        let floor = self.virtual_floor(torrent).unwrap_or(0);
+    /// Register a peer with a fairness weight (at least 1), or update the
+    /// weight of an existing registration without discarding its progress or
+    /// unsettled grants. A newcomer starts at the torrent's current virtual
+    /// time, not zero, so it neither starves nor is starved by existing peers.
+    pub fn add_peer(&mut self, peer_id: RatePeerId, weight: u64) {
+        if let Some(peer) = self.peers.get_mut(&peer_id) {
+            peer.weight = weight.max(1);
+            return;
+        }
+        let floor = self.virtual_floor(peer_id.torrent).unwrap_or(0);
         self.peers.insert(
-            conn,
+            peer_id,
             PeerNode {
-                torrent,
+                torrent: peer_id.torrent,
                 weight: weight.max(1),
                 vfinish: floor,
+                refundable_bytes: 0,
                 waiting: false,
                 wake_at: 0,
             },
         );
-        if let Some(node) = self.torrents.get_mut(&torrent) {
-            node.peers.insert((floor, conn));
+        if let Some(node) = self.torrents.get_mut(&peer_id.torrent) {
+            node.peers.insert((floor, peer_id));
         }
     }
 
-    pub fn remove_peer(&mut self, conn: ConnectionId) {
-        let Some(peer) = self.peers.remove(&conn) else {
+    /// Remove a registration after settling transferred payload and refunding
+    /// any unused grant bytes.
+    pub fn remove_peer(&mut self, peer_id: RatePeerId) {
+        let Some(peer) = self.peers.remove(&peer_id) else {
             return;
         };
         if let Some(torrent) = self.torrents.get_mut(&peer.torrent) {
-            torrent.peers.remove(&(peer.vfinish, conn));
+            torrent.peers.remove(&(peer.vfinish, peer_id));
             if peer.waiting {
-                torrent.waiting.remove(&(peer.vfinish, peer.wake_at, conn));
-                self.wake_queue.remove(&(peer.wake_at, conn));
+                torrent
+                    .waiting
+                    .remove(&(peer.vfinish, peer.wake_at, peer_id));
+                self.wake_queue.remove(&(peer.wake_at, peer_id));
             }
         }
     }
@@ -268,30 +309,30 @@ impl RateTree {
             .or_else(|| node.peers.first().map(|(vfinish, _)| *vfinish))
     }
 
-    fn mark_waiting(&mut self, conn: ConnectionId, wake_at: Nanos) {
-        let Some(peer) = self.peers.get(&conn) else {
+    fn mark_waiting(&mut self, peer_id: RatePeerId, wake_at: Nanos) {
+        let Some(peer) = self.peers.get(&peer_id) else {
             return;
         };
         let (torrent_key, vfinish, was_waiting, old_wake_at) =
             (peer.torrent, peer.vfinish, peer.waiting, peer.wake_at);
         if was_waiting {
             if let Some(torrent) = self.torrents.get_mut(&torrent_key) {
-                torrent.waiting.remove(&(vfinish, old_wake_at, conn));
+                torrent.waiting.remove(&(vfinish, old_wake_at, peer_id));
             }
-            self.wake_queue.remove(&(old_wake_at, conn));
+            self.wake_queue.remove(&(old_wake_at, peer_id));
         }
-        if let Some(peer) = self.peers.get_mut(&conn) {
+        if let Some(peer) = self.peers.get_mut(&peer_id) {
             peer.waiting = true;
             peer.wake_at = wake_at;
         }
         if let Some(torrent) = self.torrents.get_mut(&torrent_key) {
-            torrent.waiting.insert((vfinish, wake_at, conn));
+            torrent.waiting.insert((vfinish, wake_at, peer_id));
         }
-        self.wake_queue.insert((wake_at, conn));
+        self.wake_queue.insert((wake_at, peer_id));
     }
 
-    fn clear_waiting(&mut self, conn: ConnectionId) {
-        let Some(peer) = self.peers.get(&conn) else {
+    fn clear_waiting(&mut self, peer_id: RatePeerId) {
+        let Some(peer) = self.peers.get(&peer_id) else {
             return;
         };
         if !peer.waiting {
@@ -299,16 +340,16 @@ impl RateTree {
         }
         let (torrent_key, vfinish, wake_at) = (peer.torrent, peer.vfinish, peer.wake_at);
         if let Some(torrent) = self.torrents.get_mut(&torrent_key) {
-            torrent.waiting.remove(&(vfinish, wake_at, conn));
+            torrent.waiting.remove(&(vfinish, wake_at, peer_id));
         }
-        self.wake_queue.remove(&(wake_at, conn));
-        if let Some(peer) = self.peers.get_mut(&conn) {
+        self.wake_queue.remove(&(wake_at, peer_id));
+        if let Some(peer) = self.peers.get_mut(&peer_id) {
             peer.waiting = false;
         }
     }
 
-    fn update_peer_vfinish(&mut self, conn: ConnectionId, vfinish: u128) {
-        let Some(peer) = self.peers.get(&conn) else {
+    fn update_peer_vfinish(&mut self, peer_id: RatePeerId, vfinish: u128) {
+        let Some(peer) = self.peers.get(&peer_id) else {
             return;
         };
         let (torrent_key, previous, waiting, wake_at) =
@@ -317,24 +358,24 @@ impl RateTree {
             return;
         }
         if let Some(torrent) = self.torrents.get_mut(&torrent_key) {
-            torrent.peers.remove(&(previous, conn));
-            torrent.peers.insert((vfinish, conn));
+            torrent.peers.remove(&(previous, peer_id));
+            torrent.peers.insert((vfinish, peer_id));
             if waiting {
-                torrent.waiting.remove(&(previous, wake_at, conn));
-                torrent.waiting.insert((vfinish, wake_at, conn));
+                torrent.waiting.remove(&(previous, wake_at, peer_id));
+                torrent.waiting.insert((vfinish, wake_at, peer_id));
             }
         }
-        if let Some(peer) = self.peers.get_mut(&conn) {
+        if let Some(peer) = self.peers.get_mut(&peer_id) {
             peer.vfinish = vfinish;
         }
     }
 
-    /// Try to spend `bytes` for `conn` at every level at once.
-    pub fn try_grant(&mut self, conn: ConnectionId, bytes: u64, now: Nanos) -> Grant {
-        let Some(peer) = self.peers.get(&conn) else {
+    /// Try to spend `bytes` for `peer_id` at every level at once.
+    pub fn try_grant(&mut self, peer_id: RatePeerId, bytes: u64, now: Nanos) -> Grant {
+        let Some(peer) = self.peers.get(&peer_id) else {
             return Grant::Unknown;
         };
-        let torrent_key = peer.torrent;
+        let torrent_key = peer_id.torrent;
         let (weight, vfinish) = (peer.weight, peer.vfinish);
         if !self.torrents.contains_key(&torrent_key) {
             return Grant::Unknown;
@@ -365,7 +406,7 @@ impl RateTree {
                 torrent
                     .waiting
                     .iter()
-                    .find(|(_, _, other)| *other != conn)
+                    .find(|(_, _, other)| *other != peer_id)
                     .copied()
             });
             if let Some((floor, laggard_wake, _)) = laggard {
@@ -380,50 +421,85 @@ impl RateTree {
         }
 
         if !ready {
-            self.mark_waiting(conn, wake);
+            self.mark_waiting(peer_id, wake);
             return Grant::Wait { until: wake };
         }
 
-        self.clear_waiting(conn);
+        self.clear_waiting(peer_id);
         self.global.debit(bytes);
         self.torrents
             .get_mut(&torrent_key)
             .expect("checked above")
             .bucket
             .debit(bytes);
-        let peer = self.peers.get(&conn).expect("peer checked above");
+        let peer = self.peers.get(&peer_id).expect("peer checked above");
         let next_vfinish = peer
             .vfinish
             .saturating_add(u128::from(bytes) * VTIME_SCALE / u128::from(peer.weight));
-        self.update_peer_vfinish(conn, next_vfinish);
+        self.update_peer_vfinish(peer_id, next_vfinish);
+        if let Some(peer) = self.peers.get_mut(&peer_id) {
+            peer.refundable_bytes = peer.refundable_bytes.saturating_add(bytes);
+        }
         Grant::Granted
     }
 
     /// Return reserved bytes that will not be used (request cancelled or
-    /// rejected). Never raises credit past the bucket capacity.
-    pub fn refund(&mut self, conn: ConnectionId, bytes: u64, now: Nanos) {
-        let Some(peer) = self.peers.get(&conn) else {
+    /// rejected), up to the grants not already settled or refunded. Never
+    /// raises credit past the bucket capacity. A refund can make parked
+    /// requests eligible before their recorded deadlines; the live adapter
+    /// must promptly reconsider them.
+    pub fn refund(&mut self, peer_id: RatePeerId, bytes: u64, now: Nanos) {
+        let Some(peer) = self.peers.get(&peer_id) else {
             return;
         };
-        let torrent_key = peer.torrent;
+        let torrent_key = peer_id.torrent;
+        let refunded = bytes.min(peer.refundable_bytes);
+        if refunded == 0 {
+            return;
+        }
+        let next_vfinish = peer
+            .vfinish
+            .saturating_sub(u128::from(refunded) * VTIME_SCALE / u128::from(peer.weight));
+        if let Some(peer) = self.peers.get_mut(&peer_id) {
+            peer.refundable_bytes -= refunded;
+        }
         self.global.refill(now);
-        self.global.credit_back(bytes);
+        self.global.credit_back(refunded);
         if let Some(torrent) = self.torrents.get_mut(&torrent_key) {
             torrent.bucket.refill(now);
-            torrent.bucket.credit_back(bytes);
+            torrent.bucket.credit_back(refunded);
         }
-        if let Some(peer) = self.peers.get(&conn) {
-            let next_vfinish = peer
-                .vfinish
-                .saturating_sub(u128::from(bytes) * VTIME_SCALE / u128::from(peer.weight));
-            self.update_peer_vfinish(conn, next_vfinish);
-        }
+        self.update_peer_vfinish(peer_id, next_vfinish);
+    }
+
+    /// Mark granted bytes as actually used so a later cancellation cannot
+    /// refund service already spent on transferred payload.
+    pub fn settle(&mut self, peer_id: RatePeerId, bytes: u64) -> u64 {
+        let Some(peer) = self.peers.get_mut(&peer_id) else {
+            return 0;
+        };
+        let settled = bytes.min(peer.refundable_bytes);
+        peer.refundable_bytes -= settled;
+        settled
     }
 
     /// Earliest retry deadline among waiting peers, for a single timer;
     /// `None` when nobody is waiting.
     pub fn next_wake(&self) -> Option<Nanos> {
         self.wake_queue.first().map(|(wake_at, _)| *wake_at)
+    }
+
+    /// Return at most `limit` peers whose deadlines are due. The entries stay
+    /// indexed until `try_grant` updates their wait state, so a caller can
+    /// safely batch wake notifications without losing a peer if delivery is
+    /// delayed.
+    pub fn due_peers(&self, now: Nanos, limit: usize) -> Vec<RatePeerId> {
+        self.wake_queue
+            .iter()
+            .take_while(|(wake_at, _)| *wake_at <= now)
+            .take(limit)
+            .map(|(_, peer_id)| *peer_id)
+            .collect()
     }
 }
 
@@ -441,13 +517,17 @@ mod tests {
         }
     }
 
-    /// Drive `conn` for `seconds`, waiting exactly as told; return bytes granted.
-    fn drain(tree: &mut RateTree, conn: ConnectionId, start: Nanos, seconds: u64) -> u64 {
+    fn peer(torrent: u64, slot: u32) -> RatePeerId {
+        RatePeerId::new(TorrentKey(torrent), conn(slot))
+    }
+
+    /// Drive one peer for `seconds`, waiting exactly as told; return bytes granted.
+    fn drain(tree: &mut RateTree, peer_id: RatePeerId, start: Nanos, seconds: u64) -> u64 {
         let end = start + seconds * SEC;
         let mut now = start;
         let mut granted = 0;
         while now < end {
-            match tree.try_grant(conn, BLOCK, now) {
+            match tree.try_grant(peer_id, BLOCK, now) {
                 Grant::Granted => granted += BLOCK,
                 Grant::Wait { until } => {
                     assert!(until > now, "a wait must move time forward");
@@ -463,8 +543,8 @@ mod tests {
     fn long_run_rate_matches_the_limit_exactly() {
         let mut tree = RateTree::new(None, 0);
         tree.add_torrent(TorrentKey(1), Some(1_000_000), 0);
-        tree.add_peer(TorrentKey(1), conn(1), 1);
-        let granted = drain(&mut tree, conn(1), 0, 20);
+        tree.add_peer(peer(1, 1), 1);
+        let granted = drain(&mut tree, peer(1, 1), 0, 20);
         let expected = 20_000_000u64;
         // The initial burst (100 ms of rate, at least one block) plus one
         // block of debt are the only deviations.
@@ -480,8 +560,8 @@ mod tests {
         // block and waited forever for tokens that could never accumulate.
         let mut tree = RateTree::new(None, 0);
         tree.add_torrent(TorrentKey(1), Some(1024), 0);
-        tree.add_peer(TorrentKey(1), conn(1), 1);
-        let granted = drain(&mut tree, conn(1), 0, 120);
+        tree.add_peer(peer(1, 1), 1);
+        let granted = drain(&mut tree, peer(1, 1), 0, 120);
         // About 120 KiB over two minutes: within a couple of blocks.
         assert!(
             (100 * 1024..=150 * 1024).contains(&granted),
@@ -493,19 +573,22 @@ mod tests {
     fn a_denial_names_the_exact_instant_to_retry() {
         let mut tree = RateTree::new(None, 0);
         tree.add_torrent(TorrentKey(1), Some(BLOCK), 0);
-        tree.add_peer(TorrentKey(1), conn(1), 1);
+        tree.add_peer(peer(1, 1), 1);
         // Spend the burst, then the next grant is owed exactly after the debt.
         let now = 0;
         loop {
-            match tree.try_grant(conn(1), BLOCK, now) {
+            match tree.try_grant(peer(1, 1), BLOCK, now) {
                 Grant::Granted => {}
                 Grant::Wait { until } => {
                     // Retrying one nanosecond early must still be denied.
                     assert!(matches!(
-                        tree.try_grant(conn(1), BLOCK, until - 1),
+                        tree.try_grant(peer(1, 1), BLOCK, until - 1),
                         Grant::Wait { .. }
                     ));
-                    assert_eq!(tree.try_grant(conn(1), BLOCK, until), Grant::Granted);
+                    assert!(tree.due_peers(until - 1, 8).is_empty());
+                    assert_eq!(tree.due_peers(until, 8), vec![peer(1, 1)]);
+                    assert_eq!(tree.try_grant(peer(1, 1), BLOCK, until), Grant::Granted);
+                    assert!(tree.due_peers(until, 8).is_empty());
                     break;
                 }
                 Grant::Unknown => panic!(),
@@ -519,19 +602,55 @@ mod tests {
     }
 
     #[test]
+    fn due_peer_batches_respect_the_bound_and_keep_unprocessed_waiters() {
+        let first_waiter = peer(1, 3);
+        let second_waiter = peer(2, 4);
+        let mut tree = RateTree::new(Some(1024), 0);
+        tree.add_torrent(TorrentKey(1), None, 0);
+        tree.add_torrent(TorrentKey(2), None, 0);
+        for peer_id in [peer(1, 1), peer(1, 2), first_waiter, second_waiter] {
+            tree.add_peer(peer_id, 1);
+        }
+
+        assert_eq!(tree.try_grant(peer(1, 1), BLOCK, 0), Grant::Granted);
+        assert_eq!(tree.try_grant(peer(1, 2), BLOCK, 0), Grant::Granted);
+        let deadline = match tree.try_grant(first_waiter, BLOCK, 0) {
+            Grant::Wait { until } => until,
+            other => panic!("expected first waiter to be rate limited, got {other:?}"),
+        };
+        assert_eq!(
+            tree.try_grant(second_waiter, BLOCK, 0),
+            Grant::Wait { until: deadline }
+        );
+
+        assert!(tree.due_peers(deadline, 0).is_empty());
+        assert_eq!(tree.due_peers(deadline, 1), vec![first_waiter]);
+        assert_eq!(
+            tree.due_peers(deadline, 2),
+            vec![first_waiter, second_waiter]
+        );
+
+        assert_eq!(
+            tree.try_grant(first_waiter, BLOCK, deadline),
+            Grant::Granted
+        );
+        assert_eq!(tree.due_peers(deadline, 1), vec![second_waiter]);
+    }
+
+    #[test]
     fn peers_share_one_torrent_allowance_instead_of_each_getting_it() {
         // F09: N peers must together stay at the torrent limit.
         let mut tree = RateTree::new(None, 0);
         tree.add_torrent(TorrentKey(1), Some(1_000_000), 0);
         for slot in 1..=4 {
-            tree.add_peer(TorrentKey(1), conn(slot), 1);
+            tree.add_peer(peer(1, slot), 1);
         }
         let mut now = 0;
         let mut total = 0u64;
         while now < 10 * SEC {
             let mut next = now + SEC / 100;
             for slot in 1..=4 {
-                match tree.try_grant(conn(slot), BLOCK, now) {
+                match tree.try_grant(peer(1, slot), BLOCK, now) {
                     Grant::Granted => total += BLOCK,
                     Grant::Wait { until } => next = next.min(until.max(now + 1)),
                     Grant::Unknown => panic!(),
@@ -547,22 +666,48 @@ mod tests {
     }
 
     #[test]
+    fn reused_ledger_connections_are_isolated_between_torrents() {
+        let mut tree = RateTree::new(None, 0);
+        tree.add_torrent(TorrentKey(1), None, 0);
+        tree.add_torrent(TorrentKey(2), None, 0);
+        let first_torrent_peer = peer(1, 1);
+        let second_torrent_peer = peer(2, 1);
+        assert_eq!(
+            first_torrent_peer.connection, second_torrent_peer.connection,
+            "each torrent's local ledger may use the same slot and generation"
+        );
+        tree.add_peer(first_torrent_peer, 1);
+        tree.add_peer(second_torrent_peer, 1);
+
+        assert_eq!(tree.peers.len(), 2);
+        assert_eq!(tree.try_grant(first_torrent_peer, BLOCK, 0), Grant::Granted);
+        assert_eq!(
+            tree.try_grant(second_torrent_peer, BLOCK, 0),
+            Grant::Granted
+        );
+
+        tree.remove_torrent(TorrentKey(1));
+        assert_eq!(tree.try_grant(first_torrent_peer, 1, 0), Grant::Unknown);
+        assert_eq!(tree.try_grant(second_torrent_peer, 1, 0), Grant::Granted);
+    }
+
+    #[test]
     fn a_grant_is_all_or_nothing_across_levels() {
         let mut tree = RateTree::new(Some(10 * BLOCK), 0);
         tree.add_torrent(TorrentKey(1), Some(1_000_000), 0);
         tree.add_torrent(TorrentKey(2), None, 0);
-        tree.add_peer(TorrentKey(1), conn(1), 1);
-        tree.add_peer(TorrentKey(2), conn(2), 1);
+        tree.add_peer(peer(1, 1), 1);
+        tree.add_peer(peer(2, 2), 1);
         // Exhaust the global bucket through the unlimited torrent.
         let mut now = 0;
-        while matches!(tree.try_grant(conn(2), BLOCK, now), Grant::Granted) {
+        while matches!(tree.try_grant(peer(2, 2), BLOCK, now), Grant::Granted) {
             now += 1;
         }
         // Torrent 1 has plenty of its own credit, but the global level denies,
         // and the denial must not have debited torrent 1's bucket.
         let before = tree.torrents[&TorrentKey(1)].bucket.credit;
         assert!(matches!(
-            tree.try_grant(conn(1), BLOCK, now),
+            tree.try_grant(peer(1, 1), BLOCK, now),
             Grant::Wait { .. }
         ));
         assert_eq!(tree.torrents[&TorrentKey(1)].bucket.credit, before);
@@ -572,10 +717,10 @@ mod tests {
     fn a_limit_update_never_mints_a_burst() {
         let mut tree = RateTree::new(None, 0);
         tree.add_torrent(TorrentKey(1), Some(1_000_000), 0);
-        tree.add_peer(TorrentKey(1), conn(1), 1);
+        tree.add_peer(peer(1, 1), 1);
         // Drain the bucket into debt.
         let now = 0;
-        while matches!(tree.try_grant(conn(1), BLOCK, now), Grant::Granted) {}
+        while matches!(tree.try_grant(peer(1, 1), BLOCK, now), Grant::Granted) {}
         let before = tree.torrents[&TorrentKey(1)].bucket.credit;
         assert!(before < 0);
         // Raising the limit must not forgive the debt or add credit.
@@ -588,17 +733,51 @@ mod tests {
     }
 
     #[test]
+    fn readding_a_torrent_limit_does_not_reset_existing_debt() {
+        let torrent = TorrentKey(1);
+        let mut tree = RateTree::new(None, 0);
+        tree.add_torrent(torrent, Some(BLOCK), 0);
+        tree.add_peer(peer(1, 1), 1);
+        assert_eq!(tree.try_grant(peer(1, 1), BLOCK, 0), Grant::Granted);
+        assert_eq!(tree.try_grant(peer(1, 1), BLOCK, 0), Grant::Granted);
+        let debt = tree.torrents[&torrent].bucket.credit;
+        assert!(debt < 0);
+
+        tree.add_torrent(torrent, Some(50 * BLOCK), 0);
+
+        assert_eq!(tree.torrents[&torrent].bucket.credit, debt);
+    }
+
+    #[test]
+    fn updating_a_peer_weight_preserves_unsettled_grants_and_progress() {
+        let peer_id = peer(1, 1);
+        let mut tree = RateTree::new(None, 0);
+        tree.add_torrent(TorrentKey(1), Some(1_000_000), 0);
+        tree.add_peer(peer_id, 1);
+        assert_eq!(tree.try_grant(peer_id, BLOCK, 0), Grant::Granted);
+        let vfinish = tree.peers[&peer_id].vfinish;
+
+        tree.add_peer(peer_id, 3);
+
+        assert_eq!(tree.peers[&peer_id].weight, 3);
+        assert_eq!(tree.peers[&peer_id].vfinish, vfinish);
+        assert_eq!(tree.peers[&peer_id].refundable_bytes, BLOCK);
+        tree.refund(peer_id, BLOCK, 0);
+        assert_eq!(tree.peers[&peer_id].refundable_bytes, 0);
+    }
+
+    #[test]
     fn weighted_peers_split_a_saturated_bucket_by_weight() {
         let mut tree = RateTree::new(None, 0);
         tree.add_torrent(TorrentKey(1), Some(2_000_000), 0);
-        tree.add_peer(TorrentKey(1), conn(1), 1);
-        tree.add_peer(TorrentKey(1), conn(2), 3);
+        tree.add_peer(peer(1, 1), 1);
+        tree.add_peer(peer(1, 2), 3);
         let mut now = 0u64;
         let mut totals = [0u64; 2];
         while now < 30 * SEC {
             let mut next = now + 1_000_000;
             for (index, slot) in [1u32, 2].iter().enumerate() {
-                if tree.try_grant(conn(*slot), BLOCK, now) == Grant::Granted {
+                if tree.try_grant(peer(1, *slot), BLOCK, now) == Grant::Granted {
                     totals[index] += BLOCK;
                 }
             }
@@ -618,17 +797,17 @@ mod tests {
     fn a_new_peer_does_not_get_a_head_start_or_penalty() {
         let mut tree = RateTree::new(None, 0);
         tree.add_torrent(TorrentKey(1), Some(1_000_000), 0);
-        tree.add_peer(TorrentKey(1), conn(1), 1);
+        tree.add_peer(peer(1, 1), 1);
         let mut now = 0;
         // The veteran runs for a while and builds up virtual time.
         while now < 5 * SEC {
-            if let Grant::Wait { until } = tree.try_grant(conn(1), BLOCK, now) {
+            if let Grant::Wait { until } = tree.try_grant(peer(1, 1), BLOCK, now) {
                 now = until;
             }
         }
-        tree.add_peer(TorrentKey(1), conn(2), 1);
-        let veteran = tree.peers[&conn(1)].vfinish;
-        let newcomer = tree.peers[&conn(2)].vfinish;
+        tree.add_peer(peer(1, 2), 1);
+        let veteran = tree.peers[&peer(1, 1)].vfinish;
+        let newcomer = tree.peers[&peer(1, 2)].vfinish;
         assert!(
             newcomer + FAIRNESS_LAG_BYTES * VTIME_SCALE >= veteran,
             "newcomer starts near the floor"
@@ -639,18 +818,34 @@ mod tests {
     fn refund_returns_credit_without_exceeding_capacity() {
         let mut tree = RateTree::new(None, 0);
         tree.add_torrent(TorrentKey(1), Some(1_000_000), 0);
-        tree.add_peer(TorrentKey(1), conn(1), 1);
-        assert_eq!(tree.try_grant(conn(1), BLOCK, 0), Grant::Granted);
+        tree.add_peer(peer(1, 1), 1);
+        assert_eq!(tree.try_grant(peer(1, 1), BLOCK, 0), Grant::Granted);
         let spent = tree.torrents[&TorrentKey(1)].bucket.credit;
-        tree.refund(conn(1), BLOCK, 0);
+        tree.refund(peer(1, 1), BLOCK, 0);
         assert!(tree.torrents[&TorrentKey(1)].bucket.credit > spent);
-        tree.refund(conn(1), 100 * BLOCK, 0);
         let capacity = tree.torrents[&TorrentKey(1)].bucket.capacity();
         assert_eq!(tree.torrents[&TorrentKey(1)].bucket.credit, capacity);
-        let vfinish = tree.peers[&conn(1)].vfinish;
+        tree.refund(peer(1, 1), 100 * BLOCK, 0);
+        assert_eq!(tree.torrents[&TorrentKey(1)].bucket.credit, capacity);
+        let vfinish = tree.peers[&peer(1, 1)].vfinish;
         assert!(tree.torrents[&TorrentKey(1)]
             .peers
-            .contains(&(vfinish, conn(1))));
+            .contains(&(vfinish, peer(1, 1))));
+    }
+
+    #[test]
+    fn settled_payload_bytes_cannot_be_refunded() {
+        let mut tree = RateTree::new(None, 0);
+        tree.add_torrent(TorrentKey(1), Some(1_000_000), 0);
+        tree.add_peer(peer(1, 1), 1);
+        assert_eq!(tree.try_grant(peer(1, 1), BLOCK, 0), Grant::Granted);
+        assert_eq!(tree.settle(peer(1, 1), BLOCK), BLOCK);
+        let spent = tree.torrents[&TorrentKey(1)].bucket.credit;
+
+        tree.refund(peer(1, 1), 100 * BLOCK, 0);
+
+        assert_eq!(tree.torrents[&TorrentKey(1)].bucket.credit, spent);
+        assert_eq!(tree.peers[&peer(1, 1)].refundable_bytes, 0);
     }
 
     #[test]
@@ -658,14 +853,14 @@ mod tests {
         let torrent = TorrentKey(1);
         let mut tree = RateTree::new(None, 0);
         tree.add_torrent(torrent, Some(1_000_000), 0);
-        tree.add_peer(torrent, conn(1), 1);
-        tree.add_peer(torrent, conn(2), 1);
+        tree.add_peer(peer(torrent.0, 1), 1);
+        tree.add_peer(peer(torrent.0, 2), 1);
 
         // Let the first peer run more than the two-block fairness allowance.
         for _ in 0..7 {
-            assert_eq!(tree.try_grant(conn(1), BLOCK, 0), Grant::Granted);
+            assert_eq!(tree.try_grant(peer(1, 1), BLOCK, 0), Grant::Granted);
         }
-        let laggard_wake = match tree.try_grant(conn(2), BLOCK, 0) {
+        let laggard_wake = match tree.try_grant(peer(1, 2), BLOCK, 0) {
             Grant::Wait { until } => until,
             other => panic!("expected a rate wait, got {other:?}"),
         };
@@ -673,32 +868,37 @@ mod tests {
 
         let fairness_wake = laggard_wake.saturating_add(1);
         assert_eq!(
-            tree.try_grant(conn(1), BLOCK, laggard_wake),
+            tree.try_grant(peer(1, 1), BLOCK, laggard_wake),
             Grant::Wait {
                 until: fairness_wake
             },
             "fairness waits for the laggard instead of polling on a fixed tick"
         );
         assert_eq!(tree.next_wake(), Some(laggard_wake));
-        assert_eq!(tree.try_grant(conn(2), BLOCK, laggard_wake), Grant::Granted);
+        assert_eq!(
+            tree.try_grant(peer(1, 2), BLOCK, laggard_wake),
+            Grant::Granted
+        );
         assert_eq!(tree.next_wake(), Some(fairness_wake));
 
-        tree.remove_peer(conn(1));
+        tree.remove_peer(peer(1, 1));
         assert_eq!(tree.next_wake(), None);
-        let vfinish = tree.peers[&conn(2)].vfinish;
-        assert!(tree.torrents[&torrent].peers.contains(&(vfinish, conn(2))));
+        let vfinish = tree.peers[&peer(1, 2)].vfinish;
+        assert!(tree.torrents[&torrent]
+            .peers
+            .contains(&(vfinish, peer(1, 2))));
     }
 
     #[test]
     fn unknown_and_removed_peers_are_reported() {
         let mut tree = RateTree::new(None, 0);
-        assert_eq!(tree.try_grant(conn(9), 1, 0), Grant::Unknown);
+        assert_eq!(tree.try_grant(peer(1, 9), 1, 0), Grant::Unknown);
         tree.add_torrent(TorrentKey(1), None, 0);
-        tree.add_peer(TorrentKey(1), conn(1), 1);
-        tree.remove_peer(conn(1));
-        assert_eq!(tree.try_grant(conn(1), 1, 0), Grant::Unknown);
-        tree.add_peer(TorrentKey(1), conn(2), 1);
+        tree.add_peer(peer(1, 1), 1);
+        tree.remove_peer(peer(1, 1));
+        assert_eq!(tree.try_grant(peer(1, 1), 1, 0), Grant::Unknown);
+        tree.add_peer(peer(1, 2), 1);
         tree.remove_torrent(TorrentKey(1));
-        assert_eq!(tree.try_grant(conn(2), 1, 0), Grant::Unknown);
+        assert_eq!(tree.try_grant(peer(1, 2), 1, 0), Grant::Unknown);
     }
 }
