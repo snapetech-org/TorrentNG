@@ -97,6 +97,16 @@ impl<G: PieceGeometry> LiveTransferLedger<G> {
         }
     }
 
+    /// Keep the shared connection owner in step with the peer's advertised
+    /// request queue. Callers should clamp this to their own request-window
+    /// ceiling so retained request history stays bounded by live policy.
+    pub fn set_remote_reqq(&mut self, conn: ConnectionId, remote_reqq: usize) {
+        match &mut self.inner {
+            LiveLedgerInner::V1(ledger) => ledger.set_remote_reqq(conn, remote_reqq),
+            LiveLedgerInner::Hybrid(ledger) => ledger.set_remote_reqq(conn, remote_reqq),
+        }
+    }
+
     pub fn reserve(
         &mut self,
         conn: ConnectionId,
@@ -292,5 +302,63 @@ mod tests {
         // A live hybrid ledger cannot be replaced after ownership has begun.
         assert!(!ledger.attach_hybrid_geometry(geometry));
         assert!(ledger.is_live(conn));
+    }
+
+    #[test]
+    fn peer_reqq_updates_the_live_v1_and_hybrid_ledger_bounds() {
+        let piece_length = u64::from(BLOCK_SIZE) * 2;
+        let path = SafeRelPath::from_name("payload.bin", false).unwrap();
+        let v1 = Arc::new(
+            PieceMap::new(
+                piece_length,
+                vec![FileSpan {
+                    file_index: 0,
+                    path: path.clone(),
+                    content_offset: 0,
+                    length: piece_length * 2,
+                }],
+            )
+            .unwrap(),
+        );
+        let v2 = Arc::new(
+            V2PieceMap::new(
+                piece_length,
+                vec![V2FileSpan {
+                    file_index: 0,
+                    path,
+                    piece_offset: 0,
+                    length: piece_length * 2,
+                    pad: false,
+                }],
+            )
+            .unwrap(),
+        );
+
+        for hybrid in [false, true] {
+            let mut ledger = LiveTransferLedger::new_bounded(Arc::clone(&v1), 2);
+            if hybrid {
+                assert!(ledger.attach_hybrid_geometry(Arc::new(HybridGeometry::new(
+                    Arc::clone(&v1),
+                    Arc::clone(&v2),
+                ))));
+            }
+            let conn = ledger.try_connect(8).unwrap();
+            ledger.set_remote_reqq(conn, 1);
+            ledger
+                .reserve(
+                    conn,
+                    BlockExtent::new(0, 0, BLOCK_SIZE),
+                    &ReserveMode::Exclusive,
+                )
+                .unwrap();
+            assert_eq!(
+                ledger.reserve(
+                    conn,
+                    BlockExtent::new(0, BLOCK_SIZE, BLOCK_SIZE),
+                    &ReserveMode::Exclusive,
+                ),
+                Err(ReserveError::ConnectionFull)
+            );
+        }
     }
 }

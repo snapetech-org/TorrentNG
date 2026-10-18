@@ -3790,6 +3790,12 @@ a whole-torrent scan for each requested block.
   checks to canonical v1 pieces across both wire planes.
 - Peer request, ledger connection, piece state, source jobs, rate queues, and
   upload obligations stay within measured resource caps.
+- On the live v1, hybrid-v1, and pure-v2 paths, negotiated BEP 10 `reqq`
+  updates the actor request window and its ledger connection bound together,
+  clamped to that actor's request-window maximum; an omitted value restores
+  that local cap, while reducing the bound stops new reservations without
+  revoking existing wire obligations. Hybrid-v2 handshake and scheduling
+  remain open.
 - Simulator and actor regressions pass, then matched v1/v2/hybrid live
   workloads show correct payload and lifecycle parity before the reference
   paths are removed.
@@ -3816,7 +3822,10 @@ a whole-torrent scan for each requested block.
   endgame response arbitration, loser cancel projection, padding expansion,
   late responses, canonical assembly, and generation reuse. Live hybrid actor
   cases remain open. `v1_compat_disconnect_cannot_orphan_v2_ledger_connection`
-  protects a live v2 plane entry from the staged v1 cleanup adapter.
+  protects a live v2 plane entry from the staged v1 cleanup adapter, and
+  `peer_reqq_updates_the_live_v1_and_hybrid_ledger_bounds` and
+  `v2_remote_reqq_bounds_the_peer_window_and_shared_ledger` cover negotiated
+  connection limits in the live v1, hybrid-v1, and pure-v2 paths.
 - **Command or probe:** run transfer-core simulator and engine regression
   suites only during the owner-requested bulk pass.
 - **Executed on exact revision:** no. No build or test commands were run for

@@ -506,6 +506,11 @@ impl TorrentTask {
                     handle.ut_pex_id = ut_pex_id;
                     handle.metadata_size = metadata_size;
                     handle.request_window.set_remote_reqq(reqq);
+                    self.transfer_ledger.set_remote_reqq(
+                        handle.transfer_conn,
+                        reqq.unwrap_or(PEER_REQUEST_PIPELINE_ADAPTIVE_MAX)
+                            .min(PEER_REQUEST_PIPELINE_ADAPTIVE_MAX),
+                    );
                 }
                 self.refill_peer_requests(peer).await;
             }

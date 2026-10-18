@@ -438,6 +438,11 @@ impl V2PeerState {
         }
     }
 
+    fn update_remote_reqq(&mut self, reqq: Option<usize>) -> usize {
+        self.request_window.set_remote_reqq(reqq);
+        reqq.unwrap_or(V2_REQUEST_WINDOW).min(V2_REQUEST_WINDOW)
+    }
+
     fn record_transfer(&mut self, upload: bool, bytes: u64) {
         let now = Instant::now();
         if upload {
@@ -4735,9 +4740,18 @@ async fn run_v2_peer_protocol(
                     Message::Hashes { .. } | Message::HashReject { .. } => {}
                     Message::Extended { ext_id: EXT_HANDSHAKE_ID, payload } => {
                         if let Ok(handshake) = ExtensionHandshake::parse(&payload) {
-                            if let Ok(mut peer) = state.lock() {
-                                peer.request_window.set_remote_reqq(handshake.reqq);
-                            }
+                            let mut peer = state
+                                .lock()
+                                .map_err(|_| anyhow::anyhow!("v2 peer state lock poisoned"))?;
+                            let ledger_reqq = peer.update_remote_reqq(handshake.reqq);
+                            drop(peer);
+                            context
+                                .transfer_ledger
+                                .lock()
+                                .map_err(|_| {
+                                    anyhow::anyhow!("v2 transfer ledger lock poisoned")
+                                })?
+                                .set_remote_reqq(context.transfer_conn, ledger_reqq);
                             fill_v2_requests(
                                 &context,
                                 &mut framed,
@@ -6958,6 +6972,51 @@ mod tests {
         assert_eq!(bitmap.next_set_from(2), Some(65));
         assert_eq!(bitmap.next_set_from(66), Some(129));
         assert_eq!(bitmap.next_set_from(130), None);
+    }
+
+    #[test]
+    fn v2_remote_reqq_bounds_the_peer_window_and_shared_ledger() {
+        let piece_length = u64::from(rt_peer_wire::message::MAX_BLOCK_SIZE) * 2;
+        let path = rt_path::SafeRelPath::from_name("payload.bin", false).unwrap();
+        let piece_map = Arc::new(
+            V2PieceMap::new(
+                piece_length,
+                vec![V2FileSpan {
+                    file_index: 0,
+                    path,
+                    piece_offset: 0,
+                    length: piece_length,
+                    pad: false,
+                }],
+            )
+            .unwrap(),
+        );
+        let mut ledger = TransferLedger::new(piece_map);
+        let conn = ledger.try_connect(V2_REQUEST_WINDOW).unwrap();
+        let mut peer = V2PeerState::new(1);
+
+        let remote_reqq = peer.update_remote_reqq(Some(1));
+        ledger.set_remote_reqq(conn, remote_reqq);
+        assert_eq!(
+            peer.request_window.window(&WindowInputs::unconstrained(8)),
+            1
+        );
+
+        let block_length = rt_peer_wire::message::MAX_BLOCK_SIZE;
+        ledger
+            .reserve_piece_affine(conn, BlockExtent::new(0, 0, block_length))
+            .unwrap();
+        assert_eq!(
+            ledger.reserve_piece_affine(conn, BlockExtent::new(0, block_length, block_length),),
+            Err(crate::transfer::ledger::ReserveError::ConnectionFull)
+        );
+
+        let remote_reqq = peer.update_remote_reqq(None);
+        ledger.set_remote_reqq(conn, remote_reqq);
+        assert_eq!(remote_reqq, V2_REQUEST_WINDOW);
+        ledger
+            .reserve_piece_affine(conn, BlockExtent::new(0, block_length, block_length))
+            .unwrap();
     }
 
     #[test]
