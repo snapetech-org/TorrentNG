@@ -1532,7 +1532,9 @@ optimistic slot. Pure-v2 peer loops now apply the same policy through a
 task-owned watch keyed by connection identity, so reconnecting at the same
 address does not inherit an old slot. The choker accepts a seed for
 deterministic tie replay and an explicit monotonic timestamp for replay; the
-full swarm-trace input/output harness remains open.
+replay fixture now covers downloading/seeding mode changes, stale rates,
+interest changes, peer joins/departures, optimistic-slot fairness, and
+transition-only outputs. Its source is authored but remains unrun.
 
 ### Ownership and invariant
 
@@ -1564,13 +1566,14 @@ full swarm-trace input/output harness remains open.
 - Reconnecting at the same socket address does not inherit the prior
   connection's selected slot.
 - A deterministic swarm trace covers mode changes, stale rates, interest
-  changes, joins, departures, and optimistic-slot fairness.
+  changes, joins, departures, and optimistic-slot fairness, and replays the
+  exact decision and choke-transition outputs from the same seed and timeline.
 
 ### Files and compatibility
 
 - **Expected code paths:** `crates/rt-peer-manager/src/choker.rs`,
-  `crates/rt-engine/src/torrent_task.rs`, `torrent_task_v2.rs`, and a future
-  trace-replay fixture.
+  `crates/rt-engine/src/torrent_task.rs`, `torrent_task_v2.rs`, and the
+  deterministic trace-replay regression source.
 - **State or wire compatibility:** no wire-format change; slot behavior changes
   only peer upload scheduling.
 - **Migration / rollback:** retain the reference actor path until shared-core
@@ -1582,7 +1585,8 @@ full swarm-trace input/output harness remains open.
 
 - **Regression source added or updated:** mode-aware rankings, optimistic
   history, seeded tie replay on virtual monotonic time, interest transitions,
-  v2 wire-state changes, and connection identity across reconnect.
+  v2 wire-state changes, connection identity across reconnect, and
+  `seeded_swarm_trace_replays_mode_stale_interest_join_leave_and_fair_rotation`.
 - **Command or probe to run:** peer-manager and v2 peer-policy tests during the
   requested bulk pass.
 - **Expected result:** mode changes select the matching feedback rate, seeded

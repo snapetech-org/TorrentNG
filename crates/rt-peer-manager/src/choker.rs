@@ -208,6 +208,7 @@ impl Default for Choker {
 mod tests {
     use super::*;
     use crate::peer::ChokeState;
+    use uuid::Uuid;
 
     fn snap(id: PeerId, interested: bool, rate: f64) -> PeerSnapshot {
         PeerSnapshot {
@@ -217,6 +218,115 @@ mod tests {
             download_rate: 0.0,
             current_choke: ChokeState::Choked,
         }
+    }
+
+    fn trace_peer(
+        id: PeerId,
+        interested: bool,
+        upload_rate: f64,
+        download_rate: f64,
+    ) -> PeerSnapshot {
+        PeerSnapshot {
+            id,
+            interested,
+            upload_rate,
+            download_rate,
+            current_choke: ChokeState::Choked,
+        }
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct ChokeTraceOutput {
+        decisions: Vec<(PeerId, ChokeDecision)>,
+        transitions: Vec<(PeerId, ChokeDecision)>,
+    }
+
+    fn replay_swarm_trace(seed: u64, ids: &[PeerId]) -> Vec<ChokeTraceOutput> {
+        let ranked_downloaders = vec![
+            trace_peer(ids[0], true, 1.0, 100.0),
+            trace_peer(ids[1], true, 1.0, 90.0),
+            trace_peer(ids[2], true, 1.0, 10.0),
+            trace_peer(ids[3], true, 1.0, 10.0),
+            trace_peer(ids[4], true, 1.0, 10.0),
+            trace_peer(ids[5], true, 1.0, 10.0),
+            trace_peer(ids[6], true, 1.0, 10.0),
+        ];
+        let mut rounds: Vec<(Duration, ChokeMode, Vec<PeerSnapshot>)> = (0..5)
+            .map(|rotation| {
+                (
+                    OPTIMISTIC_ROTATE_INTERVAL * rotation,
+                    ChokeMode::Downloading,
+                    ranked_downloaders.clone(),
+                )
+            })
+            .collect();
+        rounds.push((
+            Duration::from_secs(150),
+            ChokeMode::Seeding,
+            vec![
+                trace_peer(ids[0], true, 10.0, 0.0),
+                trace_peer(ids[1], false, 1_000.0, 0.0),
+                trace_peer(ids[2], true, 1.0, 0.0),
+                trace_peer(ids[3], true, 700.0, 0.0),
+                trace_peer(ids[4], true, 1.0, 0.0),
+                trace_peer(ids[5], true, 1.0, 0.0),
+                trace_peer(ids[7], true, 1_000.0, 0.0),
+            ],
+        ));
+        rounds.push((
+            Duration::from_secs(180),
+            ChokeMode::Downloading,
+            vec![
+                trace_peer(ids[0], true, 0.0, 0.0),
+                trace_peer(ids[1], true, 0.0, 0.0),
+                trace_peer(ids[2], true, 0.0, 0.0),
+                trace_peer(ids[3], false, 0.0, 0.0),
+                trace_peer(ids[4], true, 0.0, 0.0),
+                trace_peer(ids[5], true, 0.0, 0.0),
+                trace_peer(ids[7], true, 0.0, 0.0),
+            ],
+        ));
+
+        let mut choker = Choker::with_seed(2, seed);
+        let start = Instant::now();
+        let mut current: HashMap<PeerId, ChokeState> = HashMap::new();
+        let mut outputs = Vec::with_capacity(rounds.len());
+        for (elapsed, mode, mut peers) in rounds {
+            for peer in &mut peers {
+                peer.current_choke = current.get(&peer.id).copied().unwrap_or(ChokeState::Choked);
+            }
+            let decisions = choker.run_with_mode_at(&peers, mode, start + elapsed);
+            let ordered_decisions: Vec<_> = peers
+                .iter()
+                .map(|peer| (peer.id, decisions[&peer.id]))
+                .collect();
+            let transitions: Vec<_> = peers
+                .iter()
+                .filter_map(|peer| {
+                    let decision = decisions[&peer.id];
+                    let next_state = match decision {
+                        ChokeDecision::Unchoke => ChokeState::Unchoked,
+                        ChokeDecision::Choke => ChokeState::Choked,
+                    };
+                    (peer.current_choke != next_state).then_some((peer.id, decision))
+                })
+                .collect();
+            current.retain(|id, _| peers.iter().any(|peer| peer.id == *id));
+            for (id, decision) in &ordered_decisions {
+                current.insert(
+                    *id,
+                    match *decision {
+                        ChokeDecision::Unchoke => ChokeState::Unchoked,
+                        ChokeDecision::Choke => ChokeState::Choked,
+                    },
+                );
+            }
+            outputs.push(ChokeTraceOutput {
+                decisions: ordered_decisions,
+                transitions,
+            });
+        }
+        outputs
     }
 
     #[test]
@@ -408,5 +518,41 @@ mod tests {
         let next = choker.run(&peers);
         assert_eq!(next[&holder], ChokeDecision::Choke);
         assert_eq!(next[&other], ChokeDecision::Unchoke);
+    }
+
+    #[test]
+    fn seeded_swarm_trace_replays_mode_stale_interest_join_leave_and_fair_rotation() {
+        let ids: Vec<PeerId> = (1..=8).map(|id| PeerId(Uuid::from_u128(id))).collect();
+        let first = replay_swarm_trace(0x5EED, &ids);
+        let replay = replay_swarm_trace(0x5EED, &ids);
+
+        assert_eq!(first, replay);
+
+        let waiting = &ids[2..7];
+        let first_five_optimistic: Vec<PeerId> = first[..5]
+            .iter()
+            .map(|round| {
+                waiting
+                    .iter()
+                    .find(|id| round.decisions.contains(&(**id, ChokeDecision::Unchoke)))
+                    .copied()
+                    .expect("one waiting peer should hold the optimistic slot")
+            })
+            .collect();
+        let visited: std::collections::HashSet<_> = first_five_optimistic.iter().copied().collect();
+        assert_eq!(visited.len(), waiting.len());
+
+        let seeding_decisions = &first[5].decisions;
+        assert!(seeding_decisions.contains(&(ids[7], ChokeDecision::Unchoke)));
+        assert!(seeding_decisions.contains(&(ids[3], ChokeDecision::Unchoke)));
+        assert!(seeding_decisions.contains(&(ids[1], ChokeDecision::Choke)));
+
+        let stale_rate_decisions = &first[6].decisions;
+        assert!(!stale_rate_decisions.iter().any(|(id, _)| *id == ids[6]));
+        assert!(stale_rate_decisions.contains(&(ids[3], ChokeDecision::Choke)));
+        assert!(first[6]
+            .transitions
+            .iter()
+            .all(|(id, decision)| stale_rate_decisions.contains(&(*id, *decision))));
     }
 }
