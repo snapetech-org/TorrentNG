@@ -1035,6 +1035,7 @@ impl Engine {
         let mut task = V2TorrentTask::new(
             meta,
             save,
+            self.config.daemon.session_dir.clone(),
             paused,
             initial_state,
             Arc::clone(&self.registry),

@@ -53,9 +53,9 @@ pub use frame::{
 };
 pub use io_class::IoClass;
 pub use open::{
-    create_dir_all_no_follow, metadata_no_follow, read_file_no_follow_limited,
-    remove_file_no_follow, rename_no_follow, sync_dir_no_follow, write_file_no_follow,
-    write_file_no_follow_sync,
+    create_dir_all_no_follow, create_new_file_no_follow, metadata_no_follow,
+    open_file_read_no_follow, read_file_no_follow_limited, remove_file_no_follow, rename_no_follow,
+    sync_dir_no_follow, write_file_no_follow, write_file_no_follow_sync,
 };
 pub use plan::{
     ensure_plan_can_apply, execute_storage_plan_under_roots,

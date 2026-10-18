@@ -195,8 +195,7 @@ pub(crate) fn open_path_no_follow_current_identity(
 /// Create a new runtime file without following the final component or an
 /// ancestor reparse point/symlink. Existing destinations are never opened or
 /// truncated.
-#[cfg(any(all(not(unix), not(windows)), test))]
-pub(crate) fn create_new_file_no_follow(path: &Path) -> io::Result<File> {
+pub fn create_new_file_no_follow(path: &Path) -> io::Result<File> {
     #[cfg(unix)]
     {
         let (parent, name) = open_parent_no_follow_unix(path)?;
@@ -351,6 +350,12 @@ pub fn create_dir_all_no_follow(path: &Path) -> io::Result<()> {
 pub fn metadata_no_follow(path: &Path) -> io::Result<std::fs::Metadata> {
     let file = open_path_no_follow(path, false, false)?;
     file.metadata()
+}
+
+/// Open a runtime-owned regular file for bounded random-access reads without
+/// following a symlink or reparse point in its path.
+pub fn open_file_read_no_follow(path: &Path) -> io::Result<File> {
+    open_path_no_follow(path, false, false)
 }
 
 /// Read a runtime-owned file with a hard byte ceiling. Path safety does not

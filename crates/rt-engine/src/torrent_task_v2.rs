@@ -8,8 +8,9 @@
 //! semantics.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -17,7 +18,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use bytes::Bytes;
 use futures::future::BoxFuture;
 use futures::{FutureExt, StreamExt};
-use rt_hash::{merkle_layers, BlockHash, V2_BLOCK_SIZE};
+use rt_hash::{hash_pair, merkle_layers, BlockHash, V2_BLOCK_SIZE};
 #[cfg(test)]
 use rt_hash::{merkle_root, piece_layer_hash};
 use rt_metainfo::{TorrentFileV2, TorrentMetaV2};
@@ -104,7 +105,16 @@ const V2_HASH_EXCHANGE_READ_BYTES: usize = 256 * 1024;
 /// Bytes of authenticated Merkle layers kept for hash-request serving, shared
 /// by every peer of one torrent (about 0.4% of the covered file bytes).
 const V2_PROOF_CACHE_BYTES: u64 = 64 * 1024 * 1024;
+/// Per-torrent on-disk proof-node cache budget. Oversized trees remain
+/// serviceable but are rebuilt after restart instead of growing session data
+/// without a bound.
+const V2_PROOF_STORE_BYTES: u64 = 512 * 1024 * 1024;
+const V2_PROOF_STORE_MAX_ENTRIES: usize = 4096;
+const V2_PROOF_STORE_MAGIC: &[u8; 8] = b"TNGV2N01";
+const V2_PROOF_STORE_VERSION: u32 = 1;
+const V2_PROOF_STORE_HEADER_BYTES: u64 = 104;
 const V2_MAX_HASH_REQUEST_LENGTH: u32 = 512;
+static V2_PROOF_STORE_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 const STOPPED_TRACKER_CONTROL_ANNOUNCE_DEADLINE: Duration = Duration::from_secs(1);
 
 /// Preserve BEP 12's tier failover semantics for pure-v2 metainfo. The flat
@@ -511,32 +521,77 @@ struct V2PeerContext {
 /// Merkle layers of a file, proven against its metainfo `pieces root`.
 type V2ProofLayers = Arc<Vec<Vec<[u8; 32]>>>;
 
+struct V2ProofLayerResult {
+    layers: V2ProofLayers,
+    _cache_entry: Option<Arc<V2ProofCacheEntry>>,
+    memory_lease: Option<MemoryLease>,
+}
+
+struct V2HashPayload {
+    hashes: Vec<[u8; 32]>,
+    _cache_entry: Option<Arc<V2ProofCacheEntry>>,
+    _memory_leases: Vec<MemoryLease>,
+}
+
 /// Bounded LRU of proven Merkle layers keyed by `pieces root`.
 ///
 /// A hash request used to reread the whole file and rebuild its tree. The
 /// layers are derived only from content that hashes to the metainfo root, so
 /// they are authenticated hashes of the torrent rather than of whatever is on
 /// disk, and are safe to keep and share across peers.
-#[derive(Default)]
 struct V2ProofCache {
     inner: Mutex<V2ProofCacheInner>,
+    store_write_lock: Mutex<()>,
+    store_dir: Option<PathBuf>,
 }
 
 #[derive(Default)]
 struct V2ProofCacheInner {
-    entries: HashMap<[u8; 32], (V2ProofLayers, u64, u64)>,
+    entries: HashMap<[u8; 32], (Arc<V2ProofCacheEntry>, u64, u64)>,
     bytes: u64,
     tick: u64,
 }
 
+struct V2ProofCacheEntry {
+    layers: V2ProofLayers,
+    _memory_lease: Option<MemoryLease>,
+}
+
+impl Default for V2ProofCache {
+    fn default() -> Self {
+        Self {
+            inner: Mutex::new(V2ProofCacheInner::default()),
+            store_write_lock: Mutex::new(()),
+            store_dir: None,
+        }
+    }
+}
+
 impl V2ProofCache {
+    fn with_store_dir(store_dir: PathBuf) -> Self {
+        Self {
+            inner: Mutex::new(V2ProofCacheInner::default()),
+            store_write_lock: Mutex::new(()),
+            store_dir: Some(store_dir),
+        }
+    }
+
+    fn store_path(&self, info_hash_v2: &[u8; 32], root: &[u8; 32]) -> Option<PathBuf> {
+        Some(
+            self.store_dir
+                .as_ref()?
+                .join(hex::encode(info_hash_v2))
+                .join(format!("{}.nodes", hex::encode(root))),
+        )
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, V2ProofCacheInner> {
         self.inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn get(&self, root: &[u8; 32]) -> Option<V2ProofLayers> {
+    fn get(&self, root: &[u8; 32]) -> Option<Arc<V2ProofCacheEntry>> {
         let mut inner = self.lock();
         inner.tick = inner.tick.wrapping_add(1);
         let tick = inner.tick;
@@ -547,10 +602,20 @@ impl V2ProofCache {
 
     /// Keep `layers` if it fits the byte budget, evicting the least recently
     /// used entries to make room.
-    fn insert(&self, root: [u8; 32], layers: V2ProofLayers, bytes: u64) {
+    fn insert(
+        &self,
+        root: [u8; 32],
+        layers: V2ProofLayers,
+        bytes: u64,
+        memory_lease: Option<MemoryLease>,
+    ) -> Option<Arc<V2ProofCacheEntry>> {
         if bytes > V2_PROOF_CACHE_BYTES {
-            return;
+            return None;
         }
+        let entry = Arc::new(V2ProofCacheEntry {
+            layers,
+            _memory_lease: memory_lease,
+        });
         let mut inner = self.lock();
         if let Some((_, old_bytes, _)) = inner.entries.remove(&root) {
             inner.bytes = inner.bytes.saturating_sub(old_bytes);
@@ -571,8 +636,421 @@ impl V2ProofCache {
         inner.tick = inner.tick.wrapping_add(1);
         let tick = inner.tick;
         inner.bytes = inner.bytes.saturating_add(bytes);
-        inner.entries.insert(root, (layers, bytes, tick));
+        inner
+            .entries
+            .insert(root, (Arc::clone(&entry), bytes, tick));
+        Some(entry)
     }
+}
+
+fn v2_proof_store_layout(leaf_count: u64) -> Option<(u64, Vec<u64>, u64)> {
+    let padded_leaves = leaf_count.max(1).checked_next_power_of_two()?;
+    let height = padded_leaves.trailing_zeros() as usize;
+    let mut offsets = Vec::with_capacity(height.saturating_add(1));
+    let mut offset = V2_PROOF_STORE_HEADER_BYTES;
+    let mut layer_nodes = padded_leaves;
+    loop {
+        offsets.push(offset);
+        offset = offset.checked_add(layer_nodes.checked_mul(32)?)?;
+        if layer_nodes == 1 {
+            break;
+        }
+        layer_nodes >>= 1;
+    }
+    Some((padded_leaves, offsets, offset))
+}
+
+fn v2_proof_store_header(
+    info_hash_v2: &[u8; 32],
+    pieces_root: &[u8; 32],
+    file_length: u64,
+    leaf_count: u64,
+    padded_leaves: u64,
+) -> [u8; V2_PROOF_STORE_HEADER_BYTES as usize] {
+    let mut header = Vec::with_capacity(V2_PROOF_STORE_HEADER_BYTES as usize);
+    header.extend_from_slice(V2_PROOF_STORE_MAGIC);
+    header.extend_from_slice(&V2_PROOF_STORE_VERSION.to_be_bytes());
+    header.extend_from_slice(info_hash_v2);
+    header.extend_from_slice(pieces_root);
+    header.extend_from_slice(&file_length.to_be_bytes());
+    header.extend_from_slice(&leaf_count.to_be_bytes());
+    header.extend_from_slice(&padded_leaves.to_be_bytes());
+    header.extend_from_slice(&(padded_leaves.trailing_zeros() + 1).to_be_bytes());
+    header
+        .try_into()
+        .expect("v2 proof store header has a fixed wire length")
+}
+
+/// Store a complete, already root-checked tree. The tree is a rebuildable
+/// cache, so a write failure must not affect whether verified proof data can
+/// be served from this process's memory cache.
+fn write_v2_proof_store(
+    path: &Path,
+    info_hash_v2: &[u8; 32],
+    pieces_root: &[u8; 32],
+    file_length: u64,
+    leaf_count: u64,
+    layers: &[Vec<[u8; 32]>],
+) -> std::io::Result<bool> {
+    let (padded_leaves, layer_offsets, file_bytes) =
+        v2_proof_store_layout(leaf_count).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "v2 tree size overflow")
+        })?;
+    if file_bytes > V2_PROOF_STORE_BYTES {
+        return Ok(false);
+    }
+    if layers.len() != layer_offsets.len()
+        || layers
+            .iter()
+            .enumerate()
+            .any(|(level, layer)| u64::try_from(layer.len()).ok() != Some(padded_leaves >> level))
+        || layers.last().and_then(|layer| layer.first()) != Some(pieces_root)
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "v2 proof layers do not match their root or tree shape",
+        ));
+    }
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "proof store path has no parent",
+        )
+    })?;
+    rt_storage::create_dir_all_no_follow(parent)?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "proof store filename is invalid",
+            )
+        })?;
+
+    let (temporary_path, mut temporary_file) = (0..16)
+        .find_map(|_| {
+            let sequence = V2_PROOF_STORE_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let candidate = parent.join(format!(
+                ".{file_name}.{}.{}.tmp",
+                std::process::id(),
+                sequence
+            ));
+            match rt_storage::create_new_file_no_follow(&candidate) {
+                Ok(file) => Some(Ok((candidate, file))),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
+                Err(error) => Some(Err(error)),
+            }
+        })
+        .transpose()?
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "could not reserve a unique v2 proof store temporary file",
+            )
+        })?;
+
+    let write_result = (|| {
+        temporary_file.write_all(&v2_proof_store_header(
+            info_hash_v2,
+            pieces_root,
+            file_length,
+            leaf_count,
+            padded_leaves,
+        ))?;
+        for layer in layers {
+            for hash in layer {
+                temporary_file.write_all(hash)?;
+            }
+        }
+        if temporary_file.metadata()?.len() != file_bytes {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "v2 proof store writer produced the wrong file length",
+            ));
+        }
+        temporary_file.sync_all()
+    })();
+    drop(temporary_file);
+    if let Err(error) = write_result {
+        let _ = rt_storage::remove_file_no_follow(&temporary_path);
+        return Err(error);
+    }
+
+    let install_result = (|| {
+        trim_v2_proof_store(parent, path, file_bytes)?;
+        #[cfg(unix)]
+        rt_storage::rename_no_follow(&temporary_path, path)?;
+        #[cfg(not(unix))]
+        match rt_storage::remove_file_no_follow(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        #[cfg(not(unix))]
+        rt_storage::rename_no_follow(&temporary_path, path)?;
+        rt_storage::sync_dir_no_follow(parent)
+    })();
+    if let Err(error) = install_result {
+        let _ = rt_storage::remove_file_no_follow(&temporary_path);
+        return Err(error);
+    }
+    Ok(true)
+}
+
+fn trim_v2_proof_store(
+    directory: &Path,
+    replacing: &Path,
+    incoming_bytes: u64,
+) -> std::io::Result<()> {
+    if incoming_bytes > V2_PROOF_STORE_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "v2 proof store entry exceeds its per-torrent cache budget",
+        ));
+    }
+    let mut current_bytes = 0u64;
+    let mut current_entries = 0usize;
+    let mut clear_cache = false;
+    let mut candidates = Vec::new();
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path == replacing || path.extension().and_then(|ext| ext.to_str()) != Some("nodes") {
+            continue;
+        }
+        let Ok(metadata) = rt_storage::metadata_no_follow(&path) else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        current_bytes = current_bytes.saturating_add(metadata.len());
+        current_entries = current_entries.saturating_add(1);
+        if current_entries <= V2_PROOF_STORE_MAX_ENTRIES {
+            candidates.push((
+                metadata.modified().unwrap_or(UNIX_EPOCH),
+                metadata.len(),
+                path,
+            ));
+        } else {
+            clear_cache = true;
+        }
+    }
+    if clear_cache {
+        for entry in std::fs::read_dir(directory)? {
+            let path = entry?.path();
+            if path == replacing || path.extension().and_then(|ext| ext.to_str()) != Some("nodes") {
+                continue;
+            }
+            match rt_storage::remove_file_no_follow(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        current_bytes = 0;
+        current_entries = 0;
+        candidates.clear();
+    }
+    candidates.sort_by_key(|(modified, _, _)| *modified);
+    for (_, bytes, path) in candidates {
+        if current_bytes.saturating_add(incoming_bytes) <= V2_PROOF_STORE_BYTES
+            && current_entries.saturating_add(1) <= V2_PROOF_STORE_MAX_ENTRIES
+        {
+            break;
+        }
+        match rt_storage::remove_file_no_follow(&path) {
+            Ok(()) => {
+                current_bytes = current_bytes.saturating_sub(bytes);
+                current_entries = current_entries.saturating_sub(1);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                current_bytes = current_bytes.saturating_sub(bytes);
+                current_entries = current_entries.saturating_sub(1);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    if current_bytes.saturating_add(incoming_bytes) > V2_PROOF_STORE_BYTES
+        || current_entries.saturating_add(1) > V2_PROOF_STORE_MAX_ENTRIES
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "unable to make room in the v2 proof store",
+        ));
+    }
+    Ok(())
+}
+
+fn read_v2_proof_store_hashes(
+    path: &Path,
+    info_hash_v2: &[u8; 32],
+    pieces_root: &[u8; 32],
+    file_length: u64,
+    leaf_count: u64,
+    base_layer: u32,
+    index: u32,
+    length: u32,
+    proof_layers: u32,
+) -> std::io::Result<Option<Vec<[u8; 32]>>> {
+    let Ok(mut file) = rt_storage::open_file_read_no_follow(path) else {
+        return Ok(None);
+    };
+    let Ok(leaf_count_usize) = usize::try_from(leaf_count) else {
+        return Ok(None);
+    };
+    let Some((base, start, count, proof_count)) =
+        hash_request_bounds(leaf_count_usize, base_layer, index, length, proof_layers)
+    else {
+        return Ok(None);
+    };
+    let Some((padded_leaves, layer_offsets, expected_file_bytes)) =
+        v2_proof_store_layout(leaf_count)
+    else {
+        return Ok(None);
+    };
+    if file.metadata()?.len() != expected_file_bytes {
+        return Ok(None);
+    }
+    let mut header = [0u8; V2_PROOF_STORE_HEADER_BYTES as usize];
+    file.seek(SeekFrom::Start(0))?;
+    file.read_exact(&mut header)?;
+    if header
+        != v2_proof_store_header(
+            info_hash_v2,
+            pieces_root,
+            file_length,
+            leaf_count,
+            padded_leaves,
+        )
+    {
+        return Ok(None);
+    }
+
+    let layer_nodes = padded_leaves >> base_layer;
+    let end = start.checked_add(count).ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "v2 proof range overflow")
+    })?;
+    if u64::try_from(end).ok().is_none_or(|end| end > layer_nodes) {
+        return Ok(None);
+    }
+    let range_bytes = count.checked_mul(32).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "v2 proof range byte overflow",
+        )
+    })?;
+    let range_offset = layer_offsets[base]
+        .checked_add(u64::try_from(start).unwrap_or(u64::MAX).saturating_mul(32))
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "v2 proof file offset overflow",
+            )
+        })?;
+    file.seek(SeekFrom::Start(range_offset))?;
+    let mut raw_range = vec![0u8; range_bytes];
+    file.read_exact(&mut raw_range)?;
+    let mut base_hashes = Vec::new();
+    base_hashes
+        .try_reserve_exact(count)
+        .map_err(|error| std::io::Error::other(format!("v2 proof allocation failed: {error}")))?;
+    for bytes in raw_range.chunks_exact(32) {
+        base_hashes.push(bytes.try_into().expect("hash chunk has fixed width"));
+    }
+
+    let tree_height = padded_leaves.trailing_zeros() as usize;
+    let root_offset = *layer_offsets.last().expect("tree always has a root layer");
+    if read_v2_proof_store_node(&mut file, root_offset, 0, 1)? != *pieces_root {
+        return Ok(None);
+    }
+
+    // Independently authenticate every returned base hash to the metainfo
+    // root, even when the wire request asks for only part of that proof path.
+    let mut subtree = base_hashes.clone();
+    while subtree.len() > 1 {
+        let next = subtree
+            .chunks_exact(2)
+            .map(|pair| hash_pair(pair[0], pair[1]))
+            .collect::<Vec<_>>();
+        subtree = next;
+    }
+    let omitted_layers = length.trailing_zeros() as usize;
+    let mut node = *subtree.first().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "empty v2 proof range")
+    })?;
+    let mut node_index = start >> omitted_layers;
+    let mut level = base.checked_add(omitted_layers).ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "v2 proof layer overflow")
+    })?;
+    let mut authentication_path = Vec::new();
+    authentication_path
+        .try_reserve_exact(tree_height.saturating_sub(level))
+        .map_err(|error| {
+            std::io::Error::other(format!("v2 proof path allocation failed: {error}"))
+        })?;
+    while level < tree_height {
+        let sibling = read_v2_proof_store_node(
+            &mut file,
+            layer_offsets[level],
+            node_index ^ 1,
+            padded_leaves >> level,
+        )?;
+        authentication_path.push(sibling);
+        node = if node_index.is_multiple_of(2) {
+            hash_pair(node, sibling)
+        } else {
+            hash_pair(sibling, node)
+        };
+        node_index >>= 1;
+        level += 1;
+    }
+    if node != *pieces_root {
+        return Ok(None);
+    }
+
+    let mut hashes = base_hashes;
+    if omitted_layers <= proof_count {
+        for proof_index in omitted_layers..=proof_count {
+            let path_index = proof_index.saturating_sub(omitted_layers);
+            let Some(sibling) = authentication_path.get(path_index) else {
+                return Ok(None);
+            };
+            hashes.push(*sibling);
+        }
+    }
+    let _ = file.set_times(std::fs::FileTimes::new().set_modified(SystemTime::now()));
+    Ok(Some(hashes))
+}
+
+fn read_v2_proof_store_node(
+    file: &mut std::fs::File,
+    layer_offset: u64,
+    index: usize,
+    layer_nodes: u64,
+) -> std::io::Result<[u8; 32]> {
+    if u64::try_from(index)
+        .ok()
+        .is_none_or(|index| index >= layer_nodes)
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "v2 proof node index is outside its layer",
+        ));
+    }
+    let offset = layer_offset
+        .checked_add(u64::try_from(index).unwrap_or(u64::MAX).saturating_mul(32))
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "v2 proof node offset overflow",
+            )
+        })?;
+    file.seek(SeekFrom::Start(offset))?;
+    let mut node = [0u8; 32];
+    file.read_exact(&mut node)?;
+    Ok(node)
 }
 
 impl V2PeerContext {
@@ -958,6 +1436,7 @@ impl V2TorrentTask {
     pub(crate) async fn new(
         meta: TorrentMetaV2,
         save_root: PathBuf,
+        session_dir: PathBuf,
         paused: bool,
         initial_state: TorrentState,
         registry: Arc<RwLock<SessionRegistry>>,
@@ -1113,7 +1592,7 @@ impl V2TorrentTask {
             known_tracker_peers: HashSet::new(),
             tracker_peer_cache_drops: 0,
             assembly_cap_bytes: piece_assembly_cap_bytes,
-            proof_cache: Arc::new(V2ProofCache::default()),
+            proof_cache: Arc::new(V2ProofCache::with_store_dir(session_dir.join("v2-merkle"))),
             egress_policy,
             _piece_index_memory_lease: piece_index_memory_lease,
             _torrent_metadata_memory_lease: torrent_metadata_memory_lease,
@@ -5764,15 +6243,24 @@ async fn serve_v2_hash_request(
         let _ = send_v2_peer_message(context, framed, reject()).await?;
         return Ok(());
     }
-    let layers_result = tokio::select! {
+    let hashes_result = tokio::select! {
         biased;
         _ = context.peer_control.wait_for_change(context.peer_generation) => {
             return Ok(());
         }
-        result = v2_proof_layers(context, file, pieces_root, leaf_count) => result,
+        result = v2_hashes_for_request(
+            context,
+            file,
+            pieces_root,
+            leaf_count,
+            base_layer,
+            index,
+            length,
+            proof_layers,
+        ) => result,
     };
-    let layers = match layers_result {
-        Ok(Some(layers)) => layers,
+    let payload = match hashes_result {
+        Ok(Some(payload)) => payload,
         Ok(None) => {
             let _ = send_v2_peer_message(context, framed, reject()).await?;
             return Ok(());
@@ -5791,20 +6279,11 @@ async fn serve_v2_hash_request(
             return Ok(());
         }
     };
-    let leaves_len = layers.first().map_or(0, Vec::len);
-    let Some(hashes) = hashes_for_v2_request(
-        &layers,
-        usize::try_from(leaf_count)
-            .unwrap_or(usize::MAX)
-            .min(leaves_len),
-        base_layer,
-        index,
-        length,
-        proof_layers,
-    ) else {
-        let _ = send_v2_peer_message(context, framed, reject()).await?;
-        return Ok(());
-    };
+    let V2HashPayload {
+        hashes,
+        _cache_entry,
+        _memory_leases,
+    } = payload;
     let _ = send_v2_peer_message(
         context,
         framed,
@@ -5818,6 +6297,8 @@ async fn serve_v2_hash_request(
         },
     )
     .await?;
+    drop(_cache_entry);
+    drop(_memory_leases);
     Ok(())
 }
 
@@ -5907,6 +6388,128 @@ fn hashes_for_v2_request(
     Some(hashes)
 }
 
+fn v2_hash_response_memory_bytes() -> u64 {
+    (u64::from(V2_MAX_HASH_REQUEST_LENGTH) + u64::from(u64::BITS))
+        .saturating_mul(32)
+        .saturating_mul(4)
+}
+
+async fn v2_hashes_for_request(
+    context: &V2PeerContext,
+    file: &TorrentFileV2,
+    pieces_root: [u8; 32],
+    leaf_count: u64,
+    base_layer: u32,
+    index: u32,
+    length: u32,
+    proof_layers: u32,
+) -> anyhow::Result<Option<V2HashPayload>> {
+    if let Some(cache_entry) = context.proof_cache.get(&pieces_root) {
+        let Some(memory_lease) = context
+            .resources
+            .try_acquire(MemoryClass::PeerBuffer, v2_hash_response_memory_bytes())
+        else {
+            return Ok(None);
+        };
+        let Some(hashes) = hashes_for_v2_request(
+            &cache_entry.layers,
+            usize::try_from(leaf_count).unwrap_or(usize::MAX),
+            base_layer,
+            index,
+            length,
+            proof_layers,
+        ) else {
+            return Ok(None);
+        };
+        return Ok(Some(V2HashPayload {
+            hashes,
+            _cache_entry: Some(cache_entry),
+            _memory_leases: vec![memory_lease],
+        }));
+    }
+
+    if let Some(path) = context
+        .proof_cache
+        .store_path(&context.meta.info_hash_v2, &pieces_root)
+    {
+        if let Some(memory_lease) = context
+            .resources
+            .try_acquire(MemoryClass::PeerBuffer, v2_hash_response_memory_bytes())
+        {
+            let info_hash_v2 = context.meta.info_hash_v2;
+            let pieces_root_for_read = pieces_root;
+            let file_length = file.length;
+            let leaf_count_for_read = leaf_count;
+            let (cached, memory_lease) = tokio::task::spawn_blocking(move || {
+                let cached = read_v2_proof_store_hashes(
+                    &path,
+                    &info_hash_v2,
+                    &pieces_root_for_read,
+                    file_length,
+                    leaf_count_for_read,
+                    base_layer,
+                    index,
+                    length,
+                    proof_layers,
+                );
+                (cached, memory_lease)
+            })
+            .await
+            .map_err(|error| anyhow::anyhow!("v2 proof store reader failed: {error}"))?;
+            match cached {
+                Ok(Some(hashes)) => {
+                    return Ok(Some(V2HashPayload {
+                        hashes,
+                        _cache_entry: None,
+                        _memory_leases: vec![memory_lease],
+                    }));
+                }
+                Ok(None) => {}
+                Err(error) => debug!(
+                    component = "torrent_v2",
+                    operation = "read_proof_store",
+                    result = "cache_miss",
+                    error = %error,
+                    "v2 proof store could not be read; rebuilding from verified file content"
+                ),
+            }
+            drop(memory_lease);
+        }
+    }
+
+    let Some(tree) = v2_proof_layers(context, file, pieces_root, leaf_count).await? else {
+        return Ok(None);
+    };
+    let Some(memory_lease) = context
+        .resources
+        .try_acquire(MemoryClass::PeerBuffer, v2_hash_response_memory_bytes())
+    else {
+        return Ok(None);
+    };
+    let leaves_len = tree.layers.first().map_or(0, Vec::len);
+    let Some(hashes) = hashes_for_v2_request(
+        &tree.layers,
+        usize::try_from(leaf_count)
+            .unwrap_or(usize::MAX)
+            .min(leaves_len),
+        base_layer,
+        index,
+        length,
+        proof_layers,
+    ) else {
+        return Ok(None);
+    };
+    let mut memory_leases = vec![memory_lease];
+    if let Some(tree_lease) = tree.memory_lease {
+        memory_leases.push(tree_lease);
+    }
+    Ok(Some(V2HashPayload {
+        hashes,
+        _cache_entry: tree._cache_entry,
+        _memory_leases: memory_leases,
+    }))
+}
+
 /// Validate a BEP 52 hash request against a file's padded Merkle-tree shape.
 /// The returned proof-layer value is the inclusive ancestor depth used by the
 /// wire format: for a two-hash request, `proof_layers = 2` asks for the two
@@ -5954,9 +6557,13 @@ async fn v2_proof_layers(
     file: &TorrentFileV2,
     pieces_root: [u8; 32],
     leaf_count: u64,
-) -> anyhow::Result<Option<V2ProofLayers>> {
-    if let Some(layers) = context.proof_cache.get(&pieces_root) {
-        return Ok(Some(layers));
+) -> anyhow::Result<Option<V2ProofLayerResult>> {
+    if let Some(cache_entry) = context.proof_cache.get(&pieces_root) {
+        return Ok(Some(V2ProofLayerResult {
+            layers: Arc::clone(&cache_entry.layers),
+            _cache_entry: Some(cache_entry),
+            memory_lease: None,
+        }));
     }
     // All layers together are about twice the padded leaf layer.
     let padded_leaves = leaf_count
@@ -5966,11 +6573,15 @@ async fn v2_proof_layers(
         .saturating_mul(2)
         .saturating_mul(std::mem::size_of::<[u8; 32]>() as u64);
     let leaf_bytes = leaf_count.saturating_mul(std::mem::size_of::<[u8; 32]>() as u64);
-    let Some(_hash_memory_lease) = context.resources.try_acquire(
+    let Some(tree_memory_lease) = context
+        .resources
+        .try_acquire(MemoryClass::PeerBuffer, layer_bytes)
+    else {
+        return Ok(None);
+    };
+    let Some(build_memory_lease) = context.resources.try_acquire(
         MemoryClass::PeerBuffer,
-        layer_bytes
-            .saturating_add(leaf_bytes)
-            .saturating_add(V2_HASH_EXCHANGE_READ_BYTES as u64),
+        leaf_bytes.saturating_add(V2_HASH_EXCHANGE_READ_BYTES as u64),
     ) else {
         return Ok(None);
     };
@@ -5984,14 +6595,85 @@ async fn v2_proof_layers(
     };
     let layers = merkle_layers(&leaves);
     drop(leaves);
+    drop(build_memory_lease);
     if layers.last().and_then(|layer| layer.first()) != Some(&pieces_root) {
         return Ok(None);
     }
     let layers = Arc::new(layers);
-    context
-        .proof_cache
-        .insert(pieces_root, Arc::clone(&layers), layer_bytes);
-    Ok(Some(layers))
+    let info_hash_v2 = context.meta.info_hash_v2;
+    let file_length = file.length;
+    let cache_memory_lease =
+        if let Some(path) = context.proof_cache.store_path(&info_hash_v2, &pieces_root) {
+            let layers_for_store = Arc::clone(&layers);
+            let proof_cache = Arc::clone(&context.proof_cache);
+            match tokio::task::spawn_blocking(move || {
+                let _store_guard = proof_cache
+                    .store_write_lock
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let result = write_v2_proof_store(
+                    &path,
+                    &info_hash_v2,
+                    &pieces_root,
+                    file_length,
+                    leaf_count,
+                    &layers_for_store,
+                );
+                (result, tree_memory_lease)
+            })
+            .await
+            {
+                Ok((Ok(_), memory_lease)) => memory_lease,
+                Ok((Err(error), memory_lease)) => {
+                    debug!(
+                        component = "torrent_v2",
+                        operation = "write_proof_store",
+                        result = "cache_miss",
+                        error = %error,
+                        "unable to persist verified v2 proof nodes"
+                    );
+                    memory_lease
+                }
+                Err(error) => {
+                    debug!(
+                        component = "torrent_v2",
+                        operation = "write_proof_store",
+                        result = "cache_miss",
+                        error = %error,
+                        "v2 proof store writer failed"
+                    );
+                    let Some(memory_lease) = context
+                        .resources
+                        .try_acquire(MemoryClass::PeerBuffer, layer_bytes)
+                    else {
+                        return Ok(None);
+                    };
+                    memory_lease
+                }
+            }
+        } else {
+            tree_memory_lease
+        };
+    if layer_bytes <= V2_PROOF_CACHE_BYTES {
+        let cache_entry = context.proof_cache.insert(
+            pieces_root,
+            Arc::clone(&layers),
+            layer_bytes,
+            Some(cache_memory_lease),
+        );
+        let cache_entry = cache_entry.expect("tree fits the in-memory proof-cache budget");
+        Ok(Some(V2ProofLayerResult {
+            layers: Arc::clone(&cache_entry.layers),
+            _cache_entry: Some(cache_entry),
+            memory_lease: None,
+        }))
+    } else {
+        Ok(Some(V2ProofLayerResult {
+            layers,
+            _cache_entry: None,
+            memory_lease: Some(cache_memory_lease),
+        }))
+    }
 }
 
 /// Hash `file` into 16 KiB leaf hashes with bounded reads, so the payload is
@@ -6806,6 +7488,7 @@ mod tests {
         let mut task = V2TorrentTask::new(
             meta,
             temp.path().to_path_buf(),
+            temp.path().join("session"),
             false,
             TorrentState::Downloading,
             Arc::new(RwLock::new(SessionRegistry::new())),
@@ -7094,6 +7777,7 @@ mod tests {
         let mut task = V2TorrentTask::new(
             meta,
             temp.path().to_path_buf(),
+            temp.path().join("session"),
             false,
             TorrentState::Downloading,
             Arc::clone(&registry),
@@ -7357,6 +8041,7 @@ mod tests {
         let mut task = V2TorrentTask::new(
             meta,
             temp.path().to_path_buf(),
+            temp.path().join("session"),
             false,
             TorrentState::Downloading,
             Arc::clone(&registry),
@@ -8330,12 +9015,59 @@ mod tests {
             .await
             .unwrap()
             .expect("verified content yields layers");
-        assert_eq!(first.last().unwrap()[0], root);
+        assert_eq!(first.layers.last().unwrap()[0], root);
         let second = v2_proof_layers(&context, &file, root, leaves)
             .await
             .unwrap()
             .unwrap();
-        assert!(Arc::ptr_eq(&first, &second), "served from the cache");
+        assert!(
+            Arc::ptr_eq(&first.layers, &second.layers),
+            "served from the cache"
+        );
+
+        let expected = hashes_for_v2_request(&first.layers, leaves as usize, 0, 0, 2, 2).unwrap();
+        let store_dir = context.proof_cache.store_dir.clone().unwrap();
+        let mut cold_context = context.clone();
+        cold_context.proof_cache = Arc::new(V2ProofCache::with_store_dir(store_dir));
+        let persisted = v2_hashes_for_request(&cold_context, &file, root, leaves, 0, 0, 2, 2)
+            .await
+            .unwrap()
+            .expect("persisted root-checked nodes serve bounded proofs");
+        assert_eq!(persisted.hashes, expected);
+
+        let store_path = cold_context
+            .proof_cache
+            .store_path(&cold_context.meta.info_hash_v2, &root)
+            .unwrap();
+        let mut node_store = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&store_path)
+            .unwrap();
+        node_store
+            .seek(SeekFrom::Start(V2_PROOF_STORE_HEADER_BYTES))
+            .unwrap();
+        let mut first_leaf = [0u8; 32];
+        node_store.read_exact(&mut first_leaf).unwrap();
+        first_leaf[0] ^= 1;
+        node_store
+            .seek(SeekFrom::Start(V2_PROOF_STORE_HEADER_BYTES))
+            .unwrap();
+        node_store.write_all(&first_leaf).unwrap();
+        drop(node_store);
+        assert!(read_v2_proof_store_hashes(
+            &store_path,
+            &cold_context.meta.info_hash_v2,
+            &root,
+            file.length,
+            leaves,
+            0,
+            0,
+            2,
+            2,
+        )
+        .unwrap()
+        .is_none());
     }
 
     #[test]
@@ -8343,13 +9075,13 @@ mod tests {
         let cache = V2ProofCache::default();
         let layers = || Arc::new(vec![vec![[0u8; 32]]]);
         let third = V2_PROOF_CACHE_BYTES / 3 + 1;
-        cache.insert([1; 32], layers(), third);
-        cache.insert([2; 32], layers(), third);
+        let _ = cache.insert([1; 32], layers(), third, None);
+        let _ = cache.insert([2; 32], layers(), third, None);
         assert!(cache.get(&[1; 32]).is_some(), "touch 1 so 2 is the oldest");
-        cache.insert([3; 32], layers(), third);
+        let _ = cache.insert([3; 32], layers(), third, None);
         assert!(cache.get(&[2; 32]).is_none(), "oldest entry evicted");
         assert!(cache.get(&[1; 32]).is_some() && cache.get(&[3; 32]).is_some());
-        cache.insert([4; 32], layers(), V2_PROOF_CACHE_BYTES + 1);
+        let _ = cache.insert([4; 32], layers(), V2_PROOF_CACHE_BYTES + 1, None);
         assert!(
             cache.get(&[4; 32]).is_none(),
             "an oversized entry is not kept"
