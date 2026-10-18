@@ -946,6 +946,7 @@ impl PeerReadStreams {
         offset: u64,
         len: usize,
         max_readahead_bytes: usize,
+        cache_hit: bool,
     ) -> (bool, usize) {
         self.sequence = self.sequence.saturating_add(1).max(1);
         let last_used = self.sequence;
@@ -955,8 +956,12 @@ impl PeerReadStreams {
             if sequential {
                 let next = if stream.sequential_reads == 0 {
                     len.saturating_mul(2)
+                } else if cache_hit {
+                    stream
+                        .recommended_bytes
+                        .saturating_add((stream.recommended_bytes / 4).max(len))
                 } else {
-                    stream.recommended_bytes.max(len).saturating_mul(2)
+                    stream.recommended_bytes
                 };
                 stream.sequential_reads = stream.sequential_reads.saturating_add(1);
                 stream.recommended_bytes = next.min(max_readahead_bytes.max(len));
@@ -2685,6 +2690,7 @@ impl MountScheduler {
                                 offset,
                                 len,
                                 readahead_bytes,
+                                true,
                             );
                             preparation_counters
                                 .peer_read_cache_hits
@@ -2718,7 +2724,7 @@ impl MountScheduler {
                         // this file. An isolated 16 KiB request stays 16 KiB
                         // instead of fetching 512 KiB it will never reuse.
                         let (sequential, recommended_bytes) = lock_recover(&peer_read_streams)
-                            .observe(&key, offset, len, readahead_bytes);
+                            .observe(&key, offset, len, readahead_bytes, false);
                         if offset >= file_len || (sequential_only && !sequential) {
                             len
                         } else {
@@ -6330,39 +6336,72 @@ mod tests {
         let mut streams = PeerReadStreams::default();
         let file = Path::new("/payload/a.bin");
         assert_eq!(
-            streams.observe(file, 0, 16_384, 128 * 1024),
+            streams.observe(file, 0, 16_384, 64 * 1024, false),
             (false, 16_384),
             "first read is exact"
         );
         assert_eq!(
-            streams.observe(file, 16_384, 16_384, 128 * 1024),
+            streams.observe(file, 16_384, 16_384, 64 * 1024, false),
             (true, 32_768),
             "first continuation expands by one block"
         );
         assert_eq!(
-            streams.observe(file, 32_768, 16_384, 128 * 1024),
-            (true, 65_536),
-            "continued reuse grows the range"
+            streams.observe(file, 32_768, 16_384, 64 * 1024, true),
+            (true, 49_152),
+            "a cache hit grows the range gradually"
         );
         assert_eq!(
-            streams.observe(file, 49_152, 16_384, 128 * 1024),
-            (true, 128 * 1024),
+            streams.observe(file, 49_152, 16_384, 64 * 1024, false),
+            (true, 49_152),
+            "an exhausted range holds the recommendation until reuse is observed"
+        );
+        assert_eq!(
+            streams.observe(file, 65_536, 16_384, 64 * 1024, true),
+            (true, 64 * 1024),
             "growth stops at the configured cap"
         );
         assert_eq!(
-            streams.observe(file, 65_536, 16_384, 128 * 1024),
-            (true, 128 * 1024),
+            streams.observe(file, 81_920, 16_384, 64 * 1024, true),
+            (true, 64 * 1024),
             "a stream at its cap stays bounded"
         );
         assert_eq!(
-            streams.observe(file, 1_048_576, 16_384, 128 * 1024),
+            streams.observe(file, 1_048_576, 16_384, 64 * 1024, false),
             (false, 16_384),
             "a jump resets to an exact read"
         );
         assert_eq!(
-            streams.observe(Path::new("/payload/b.bin"), 16_384, 16_384, 128 * 1024),
+            streams.observe(
+                Path::new("/payload/b.bin"),
+                16_384,
+                16_384,
+                64 * 1024,
+                false,
+            ),
             (false, 16_384),
             "another file starts fresh"
+        );
+    }
+
+    #[test]
+    fn readahead_stops_growing_when_prefetch_is_not_reused() {
+        let mut streams = PeerReadStreams::default();
+        let file = Path::new("/payload/a.bin");
+        streams.observe(file, 0, 16_384, 128 * 1024, false);
+        assert_eq!(
+            streams.observe(file, 16_384, 16_384, 128 * 1024, false),
+            (true, 32_768),
+            "sequential demand bootstraps one prefetch"
+        );
+        assert_eq!(
+            streams.observe(file, 32_768, 16_384, 128 * 1024, false),
+            (true, 32_768),
+            "a cache miss does not increase speculative range"
+        );
+        assert_eq!(
+            streams.observe(file, 49_152, 16_384, 128 * 1024, true),
+            (true, 49_152),
+            "a later cache hit resumes bounded growth"
         );
     }
 
@@ -6370,21 +6409,23 @@ mod tests {
     fn peer_read_stream_bound_evicts_one_least_recent_stream() {
         let mut streams = PeerReadStreams::default();
         let hot = Path::new("/payload/hot.bin");
-        streams.observe(hot, 0, 16, 128);
-        streams.observe(hot, 16, 16, 128);
+        streams.observe(hot, 0, 16, 128, false);
+        streams.observe(hot, 16, 16, 128, false);
 
         for index in 0..PeerReadStreams::MAX_TRACKED_FILES - 1 {
             let path = PathBuf::from(format!("/payload/{index}.bin"));
-            streams.observe(&path, 0, 16, 128);
+            streams.observe(&path, 0, 16, 128, false);
         }
         assert_eq!(streams.files.len(), PeerReadStreams::MAX_TRACKED_FILES);
 
-        assert!(streams.observe(hot, 32, 16, 128).0);
-        streams.observe(Path::new("/payload/overflow.bin"), 0, 16, 128);
+        assert!(streams.observe(hot, 32, 16, 128, false).0);
+        streams.observe(Path::new("/payload/overflow.bin"), 0, 16, 128, false);
 
         assert_eq!(streams.files.len(), PeerReadStreams::MAX_TRACKED_FILES);
-        assert!(streams.observe(hot, 48, 16, 128).0);
-        assert!(!streams.observe(Path::new("/payload/0.bin"), 16, 16, 128).0);
+        assert!(streams.observe(hot, 48, 16, 128, false).0);
+        assert!(!streams
+            .observe(Path::new("/payload/0.bin"), 16, 16, 128, false)
+            .0);
     }
 
     #[test]

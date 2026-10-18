@@ -1239,13 +1239,15 @@ watermark fields default to zero when reading existing records.
 
 ### Scope
 
-Sequential-only readahead now starts at an exact first read and grows a
-per-file recommendation as subsequent reads continue, bounded by the configured
-maximum. A discontinuity resets it to the requested range. Stream history is
-bounded with single-entry least-recently-used eviction, so admitting a new file
-does not clear every warm stream. The stored cache is still the existing bounded
-forward-read cache; cache-hit feedback, a full useful-range policy, and
-live-engine qualification remain open.
+Sequential-only readahead now starts at an exact first read and bootstraps one
+prefetch on the first continuation. Later growth is driven by cache hits and is
+gradual; a miss holds the current recommendation rather than expanding
+speculative I/O. Recommendations remain bounded by the configured maximum, and
+a discontinuity resets to the requested range. Stream history is bounded with
+single-entry least-recently-used eviction, so admitting a new file does not
+clear every warm stream. The stored cache is still the existing bounded
+forward-read cache; a full useful-range policy and live-engine qualification
+remain open.
 
 ### Ownership and invariant
 
@@ -1265,6 +1267,8 @@ live-engine qualification remain open.
   mode is enabled.
 - Repeated continuation grows only to the configured maximum; per-file
   histories remain bounded.
+- Cache hits may grow the recommendation gradually; misses do not expand the
+  speculative range.
 - Added buffer bytes are charged before allocation/submission and released only
   after completion.
 - Toggle-off preserves the existing unconditional configured range behavior.
@@ -1285,8 +1289,9 @@ live-engine qualification remain open.
 ### Evidence
 
 - **Regression source added or updated:** `readahead_expands_only_continuing_streams`
-  now covers bounded per-file growth and discontinuity reset; scheduler cache
-  regressions remain in the bulk pass.
+  covers bounded per-file growth and discontinuity reset;
+  `readahead_stops_growing_when_prefetch_is_not_reused` covers hit/miss
+  feedback; scheduler cache regressions remain in the bulk pass.
 - **Command or probe to run:** storage scheduler tests during the requested
   bulk pass, then matched fixture runs for reuse and read amplification.
 - **Expected result:** exact reads for isolated requests, bounded growth for
