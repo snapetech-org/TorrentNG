@@ -1349,22 +1349,18 @@ fn execute_step_with_device_scheduler(
                             .lock()
                             .unwrap_or_else(|poisoned| poisoned.into_inner());
                         if let Some(cursor) = slot.as_mut() {
-                            if let Err(cleanup_error) = cursor.discard_partial_destination() {
-                                return Err(cleanup_error);
-                            }
+                            cursor.discard_partial_destination()?;
                             slot.take();
                         }
                         return Err(error);
                     }
-                    Err(error) if matches!(error, StorageError::QueueFull { .. }) => {}
+                    Err(StorageError::QueueFull { .. }) => {}
                     Err(error) => {
                         let mut slot = cursor_slot
                             .lock()
                             .unwrap_or_else(|poisoned| poisoned.into_inner());
                         if let Some(mut cursor) = slot.take() {
-                            if let Err(cleanup_error) = cursor.discard_partial_destination() {
-                                return Err(cleanup_error);
-                            }
+                            cursor.discard_partial_destination()?;
                         }
                         return Err(error);
                     }

@@ -5,6 +5,14 @@ use crate::transfer::window::rate_credit_blocks;
 
 use super::*;
 
+type PeerShutdownHandle = (
+    mpsc::Sender<PeerCommand>,
+    Option<tokio::task::AbortHandle>,
+    RateLimitCancellation,
+    RateLimitCancellation,
+    ConnectionId,
+);
+
 impl TorrentTask {
     pub(super) fn discard_registered_peer(&mut self, peer: SocketAddr) {
         let Some(handle) = self.active_peers.remove(&peer) else {
@@ -725,11 +733,13 @@ impl TorrentTask {
         )
         .unwrap_or(usize::MAX);
         let rate_credit_blocks = rate_credit_blocks(
-            self.network_budget
-                .download_available_credit_bytes_for(TransferPeerId::new(
-                    self.transfer_rate_torrent,
-                    handle.transfer_conn,
-                )),
+            Some(
+                self.network_budget
+                    .download_available_credit_bytes_for(TransferPeerId::new(
+                        self.transfer_rate_torrent,
+                        handle.transfer_conn,
+                    )),
+            ),
             MAX_BLOCK_SIZE,
         );
         let (device_queue_capacity, device_queue_available) = self.storage.device_queue_load();
@@ -774,6 +784,7 @@ impl TorrentTask {
                 .as_ref()
                 .and_then(|hybrid| hybrid.geometry.clone());
             let rate_peer = TransferPeerId::new(self.transfer_rate_torrent, transfer_conn);
+            let source_admission = network_budget.source_admission_for_torrent(rate_peer.torrent);
             let Some(handle) = peers.get_mut(&peer) else {
                 return;
             };
@@ -881,6 +892,27 @@ impl TorrentTask {
                 } else {
                     None
                 };
+                let source_permit = if wire_block.is_some() {
+                    match source_admission
+                        .as_ref()
+                        .and_then(|admission| admission.try_acquire())
+                    {
+                        Some(permit) => Some(permit),
+                        None => {
+                            transfer_ledger.on_reject_peer(transfer_conn, block);
+                            picker.cancel_request(req.piece as usize, req.begin);
+                            if transfer_ledger.piece_progress(req.piece).is_none() {
+                                transfer_piece_memory_leases.remove(&req.piece);
+                            }
+                            drop(memory_lease);
+                            drop(rate_grant);
+                            rate_wait_delay = Some(Duration::from_millis(50));
+                            break;
+                        }
+                    }
+                } else {
+                    None
+                };
                 if handle
                     .cmd_tx
                     .try_send(PeerCommand::Request {
@@ -888,6 +920,7 @@ impl TorrentTask {
                         download_generation: handle.download_generation,
                         memory_lease,
                         rate_grant,
+                        source_permit,
                     })
                     .is_err()
                 {
@@ -1779,19 +1812,17 @@ impl TorrentTask {
     }
 
     pub(super) async fn shutdown_peers(&mut self) {
+        if self.shutting_down_peers {
+            return;
+        }
+        self.shutting_down_peers = true;
         self.close_webseed_transfer_connection();
         // Accepted transfer writes and hashes own their payload leases and
         // piece generation until completion. Drain them before resetting the
         // picker or changing file policy so no completion can cross that
         // boundary.
         self.drain_transfer_jobs().await;
-        let handles: Vec<(
-            mpsc::Sender<PeerCommand>,
-            Option<tokio::task::AbortHandle>,
-            RateLimitCancellation,
-            RateLimitCancellation,
-            ConnectionId,
-        )> = self
+        let handles: Vec<PeerShutdownHandle> = self
             .active_peers
             .values()
             .map(|peer| {
@@ -1829,6 +1860,7 @@ impl TorrentTask {
         self.pending_transfer_pieces.clear();
         while self.peer_event_rx.try_recv().is_ok() {}
         while self.peer_disconnect_rx.try_recv().is_ok() {}
+        self.shutting_down_peers = false;
     }
 
     /// A ban update can race a full torrent command queue. Re-check the
@@ -1927,7 +1959,7 @@ impl TorrentTask {
         );
     }
 
-    pub(super) async fn transfer_snapshot(&self) -> (u64, u64) {
+    pub(super) async fn transfer_snapshot(&mut self) -> (u64, u64) {
         let reg = self.registry.read().await;
         reg.get(&self.info_hash_hex)
             .map(|entry| (entry.stats.uploaded, entry.stats.downloaded))

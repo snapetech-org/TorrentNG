@@ -62,7 +62,7 @@ impl RuntimeTorrentKey {
             _ => return Self::Text(info_hash.to_owned()),
         };
         let mut bytes = [0; 32];
-        for (index, pair) in info_hash.as_bytes().chunks_exact(2).enumerate() {
+        for (index, pair) in info_hash.as_bytes().as_chunks::<2>().0.iter().enumerate() {
             let Some(high) = decode_hex_nibble(pair[0]) else {
                 return Self::Text(info_hash.to_owned());
             };
@@ -148,6 +148,7 @@ impl<V> RuntimeTorrentMap<V> {
         self.entries.values()
     }
 
+    #[cfg(test)]
     pub(super) fn into_values(self) -> hash_map::IntoValues<RuntimeTorrentKey, V> {
         self.entries.into_values()
     }
@@ -164,6 +165,7 @@ impl<V> RuntimeTorrentMap<V> {
         self.entries.len()
     }
 
+    #[cfg(test)]
     pub(super) fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -180,16 +182,9 @@ impl<V> RuntimeTorrentMap<V> {
 }
 
 /// Set counterpart to [`RuntimeTorrentMap`] for engine-owned pending work.
+#[derive(Default)]
 pub(super) struct RuntimeTorrentSet {
     entries: HashSet<RuntimeTorrentKey>,
-}
-
-impl Default for RuntimeTorrentSet {
-    fn default() -> Self {
-        Self {
-            entries: HashSet::new(),
-        }
-    }
 }
 
 impl RuntimeTorrentSet {

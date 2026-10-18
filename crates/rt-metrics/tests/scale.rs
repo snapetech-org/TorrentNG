@@ -329,12 +329,13 @@ impl LiveEngineCatalog {
 
         let (registered, all_paused) = {
             let registry = registry.read().await;
-            (
+            let snapshot = (
                 registry.len(),
                 registry
                     .iter()
                     .all(|torrent| torrent.state == TorrentState::Paused),
-            )
+            );
+            snapshot
         };
         if registered != count {
             ingest_engine.shutdown().await;
@@ -356,12 +357,13 @@ impl LiveEngineCatalog {
         let restore_ns = restore_started.elapsed().as_nanos();
         let (restored_count, restored_all_paused) = {
             let registry = restored_registry.read().await;
-            (
+            let snapshot = (
                 registry.len(),
                 registry
                     .iter()
                     .all(|torrent| torrent.state == TorrentState::Paused),
-            )
+            );
+            snapshot
         };
         if restored_count != count {
             engine.shutdown().await;

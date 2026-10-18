@@ -1959,10 +1959,8 @@ fn finished_torrent_hashes_limited(
 ) -> Vec<String> {
     tasks
         .iter()
-        .filter_map(|(info_hash, task)| {
-            task.is_finished()
-                .then(|| info_hash.clone().into_info_hash())
-        })
+        .filter(|(_, task)| task.is_finished())
+        .map(|(info_hash, _)| info_hash.clone().into_info_hash())
         .take(MAX_TORRENT_REAPS_PER_TICK)
         .collect()
 }

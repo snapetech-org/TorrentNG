@@ -148,7 +148,23 @@ const preloadSettingsPanels = {
 } satisfies Record<SettingsSection, () => void>
 
 function preloadSettingsSection(section: SettingsSection) {
-  preloadSettingsPanels[section]()
+  switch (section) {
+    case 'library':
+      preloadSettingsPanels.library()
+      break
+    case 'engine':
+      preloadSettingsPanels.engine()
+      break
+    case 'automation':
+      preloadSettingsPanels.automation()
+      break
+    case 'security':
+      preloadSettingsPanels.security()
+      break
+    case 'support':
+      preloadSettingsPanels.support()
+      break
+  }
 }
 
 function preloadAllSettingsPanels() {

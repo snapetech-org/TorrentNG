@@ -34,6 +34,8 @@ pub struct HybridAction {
     pub block: HybridWireBlock,
 }
 
+pub type HybridExpiration = (Vec<(ConnectionId, HybridWireBlock)>, Vec<HybridAction>);
+
 /// Canonical v1-sized data accepted from either hybrid wire view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HybridBlockData {
@@ -508,7 +510,7 @@ impl HybridLedger {
         &mut self,
         now: Nanos,
         timeout: Nanos,
-    ) -> Result<(Vec<(ConnectionId, HybridWireBlock)>, Vec<HybridAction>), HybridLedgerError> {
+    ) -> Result<HybridExpiration, HybridLedgerError> {
         let (expired, actions) = self.ledger.expire(now, timeout);
         let expired = expired
             .into_iter()

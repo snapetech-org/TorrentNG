@@ -9,11 +9,19 @@ pub const MEMORY_CLASS_COUNT: usize = 10;
 static NEXT_MEMORY_LEASE_ID: AtomicU64 = AtomicU64::new(1);
 
 fn allocate_memory_lease_id() -> Option<u64> {
-    NEXT_MEMORY_LEASE_ID
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-            current.checked_add(1)
-        })
-        .ok()
+    let mut current = NEXT_MEMORY_LEASE_ID.load(Ordering::Acquire);
+    loop {
+        let next = current.checked_add(1)?;
+        match NEXT_MEMORY_LEASE_ID.compare_exchange_weak(
+            current,
+            next,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => return Some(current),
+            Err(observed) => current = observed,
+        }
+    }
 }
 
 /// A deliberately narrow category for a payload copy observed at a known

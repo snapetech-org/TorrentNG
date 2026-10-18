@@ -358,7 +358,9 @@ impl TorrentTask {
         // never creates a large temporary bitmap.
         let bitmap_bytes = PieceBitmap::memory_bytes_for_len(self.meta.pieces.len())
             .saturating_mul(2)
-            .saturating_add(self.transfer_ledger.connection_state_bytes());
+            .saturating_add(
+                u64::try_from(self.transfer_ledger.connection_state_bytes()).unwrap_or(u64::MAX),
+            );
         let bitmap_memory_lease = self
             .resources
             .try_acquire(MemoryClass::PeerBuffer, bitmap_bytes)?;
@@ -400,6 +402,12 @@ impl TorrentTask {
                 ut_metadata_id: None,
                 ut_pex_id: None,
                 metadata_size: None,
+                request_window: WindowController::new(WindowConfig {
+                    initial: PEER_REQUEST_PIPELINE_NORMAL,
+                    min: 4,
+                    max: PEER_REQUEST_PIPELINE_ADAPTIVE_MAX,
+                    ..WindowConfig::default()
+                }),
                 _peer_permit: peer_permit,
                 _bitmap_memory_lease: bitmap_memory_lease,
                 pending_have,
@@ -761,8 +769,19 @@ impl TorrentTask {
                 .await
             {
                 Ok(Some(grant)) => grant,
-                Ok(None) => return Err("webseed rate admission was cancelled".to_owned()),
-                Err(error) => return Err(format!("webseed rate admission failed: {error}")),
+                Ok(None) => {
+                    return Err(WebseedFetchError::Admission(
+                        "webseed rate admission was cancelled".to_owned(),
+                    ));
+                }
+                Err(error) => {
+                    return Err(WebseedFetchError::Admission(format!(
+                        "webseed rate admission failed: {error}"
+                    )));
+                }
+            };
+            let Some(source_permit) = network_budget.try_acquire_source_request(rate_peer) else {
+                return Err(WebseedFetchError::SourceCapacity);
             };
             let fetch_started = TokioInstant::now();
             let event = Self::fetch_prepared_webseed_block(
@@ -773,20 +792,21 @@ impl TorrentTask {
                 resources,
             )
             .await
-            .map_err(|error| webseed_error_for_log(&error))?;
+            .map_err(|error| WebseedFetchError::Fetch(webseed_error_for_log(&error)))?;
             let fetch_elapsed = fetch_started.elapsed();
             let network_bytes = event
                 .network_bytes
                 .unwrap_or(u64::from(expected_network_bytes));
             if network_bytes > u64::from(expected_network_bytes) {
-                return Err(format!(
+                return Err(WebseedFetchError::Fetch(format!(
                     "webseed returned {network_bytes} network bytes for a {expected_network_bytes}-byte reservation"
-                ));
+                )));
             }
             rate_grant.settle(network_bytes);
             Ok(WebseedFetchedBlock {
                 event,
                 fetch_elapsed,
+                _source_permit: source_permit,
             })
         });
         self.webseed_fetch = Some(WebseedFetchInFlight {
@@ -801,7 +821,7 @@ impl TorrentTask {
     pub(super) fn finish_webseed_fetch(
         &mut self,
         fetch: WebseedFetchInFlight,
-        result: Result<Result<WebseedFetchedBlock, String>, tokio::task::JoinError>,
+        result: Result<Result<WebseedFetchedBlock, WebseedFetchError>, tokio::task::JoinError>,
     ) -> Option<WebseedFetchedBlock> {
         match result {
             Ok(Ok(fetched)) => {
@@ -829,7 +849,25 @@ impl TorrentTask {
                 }
                 Some(fetched)
             }
-            Ok(Err(error)) => {
+            Ok(Err(WebseedFetchError::Admission(error))) => {
+                debug!(
+                    component = "webseed",
+                    operation = "source_admission",
+                    torrent = %self.info_hash_hex,
+                    result = "deferred",
+                    error = %error,
+                    "webseed request deferred by shared download admission"
+                );
+                self.release_webseed_block(fetch.connection, fetch.request);
+                self.close_webseed_transfer_connection();
+                None
+            }
+            Ok(Err(WebseedFetchError::SourceCapacity)) => {
+                self.release_webseed_block(fetch.connection, fetch.request);
+                self.close_webseed_transfer_connection();
+                None
+            }
+            Ok(Err(WebseedFetchError::Fetch(error))) => {
                 self.record_webseed_failure(fetch.seed_index, fetch.request, error);
                 self.release_webseed_block(fetch.connection, fetch.request);
                 self.close_webseed_transfer_connection();

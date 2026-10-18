@@ -158,6 +158,7 @@ pub(crate) fn open_path_no_follow(path: &Path, write: bool, create: bool) -> io:
 /// the path between directory traversal and the final open; retry a bounded
 /// number of times so callers never publish the stale descriptor from that
 /// race. The identity check is deliberately outside cache locks.
+#[cfg(test)]
 pub(crate) fn open_path_no_follow_current(
     path: &Path,
     write: bool,
@@ -266,12 +267,12 @@ fn ensure_regular_file(file: File) -> io::Result<File> {
 /// but it no longer represents the path the caller authorized. Final
 /// symlinks are inspected without following them so replacing a regular file
 /// with a symlink cannot make a cached entry look valid.
-#[cfg(any(unix, windows))]
+#[cfg(all(test, any(unix, windows)))]
 pub(crate) fn file_matches_path(file: &File, path: &Path) -> io::Result<bool> {
     Ok(file_identity(file)? == path_identity(path)?)
 }
 
-#[cfg(not(any(unix, windows)))]
+#[cfg(all(test, not(any(unix, windows))))]
 pub(crate) fn file_matches_path(file: &File, path: &Path) -> io::Result<bool> {
     let _ = (file, path);
     Ok(false)

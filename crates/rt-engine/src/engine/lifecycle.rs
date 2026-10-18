@@ -178,8 +178,11 @@ impl Engine {
         validate_command_item_len(tags.len(), MAX_ENGINE_MUTATION_ITEMS, "torrent tag list")?;
         validate_label_bytes(&tags, "torrent tag list")?;
         let info_hash_hex = meta_info_hash_hex(&meta);
-        let piece_index_memory_lease =
-            reserve_piece_index_memory_for_meta(&self.services.resources, &meta)?;
+        let piece_index_memory_lease = reserve_piece_index_memory_for_meta(
+            &self.services.resources,
+            &meta,
+            self.config.network.max_peers,
+        )?;
         let torrent_metadata_memory_lease =
             reserve_torrent_metadata_memory_for_meta(&self.services.resources, &meta)?;
 
@@ -679,18 +682,21 @@ impl Engine {
         let total_length = meta_total_length(&meta);
         let v2_only = matches!(meta, TorrentMeta::V2(_));
         let dht_info_hash = meta_dht_info_hash(&meta);
-        let piece_index_memory_lease =
-            match reserve_piece_index_memory_for_meta(&self.services.resources, &meta) {
-                Ok(lease) => lease,
-                Err(error) => {
-                    self.remove_magnet_blob_candidate_best_effort(
-                        info_hash_hex,
-                        staged_blob.as_deref(),
-                        "magnet_completion_piece_index_limit",
-                    );
-                    return Err(error);
-                }
-            };
+        let piece_index_memory_lease = match reserve_piece_index_memory_for_meta(
+            &self.services.resources,
+            &meta,
+            self.config.network.max_peers,
+        ) {
+            Ok(lease) => lease,
+            Err(error) => {
+                self.remove_magnet_blob_candidate_best_effort(
+                    info_hash_hex,
+                    staged_blob.as_deref(),
+                    "magnet_completion_piece_index_limit",
+                );
+                return Err(error);
+            }
+        };
         let torrent_metadata_memory_lease =
             match reserve_torrent_metadata_memory_for_meta(&self.services.resources, &meta) {
                 Ok(lease) => lease,
@@ -1331,9 +1337,7 @@ impl Engine {
                 .await
             {
                 Ok(job_id) => {
-                    self.runtime
-                        .pending_torrent_deletes
-                        .insert(info_hash.to_owned());
+                    self.runtime.pending_torrent_deletes.insert(info_hash);
                     Some(job_id)
                 }
                 Err(error) => {

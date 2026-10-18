@@ -1,4 +1,5 @@
-use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -11,17 +12,32 @@ use tokio::sync::{mpsc, oneshot, Notify, Semaphore};
 use rt_utp::{UtpEndpoint, UtpRuntime};
 use tokio::time::Instant;
 
-use crate::transfer::coords::{ConnectionId, TorrentKey, TransferPeerId};
+use crate::transfer::coords::TorrentKey;
+#[cfg(test)]
+use crate::transfer::coords::{ConnectionId, TransferPeerId};
 use crate::transfer::rate::{Grant, RatePeerId, RateTree};
+
+/// Matches the v1 adaptive per-peer request-window ceiling.
+const SOURCE_REQUESTS_PER_PEER_SLOT: usize = 128;
+/// Keep one maximum-size peer window available even with a one-peer config.
+const MIN_GLOBAL_SOURCE_REQUESTS: usize = 128;
+/// Provides 512 MiB worth of slots at the standard 16 KiB block size; the
+/// PeerBuffer governor separately enforces byte admission for actual lengths.
+const MAX_GLOBAL_SOURCE_REQUESTS: usize = 32_768;
+/// Matches the existing per-torrent adaptive request headroom.
+const MAX_TORRENT_SOURCE_REQUESTS: usize = 2_048;
 
 /// Process-wide network admission and traffic budgets.
 ///
-/// The peer semaphore counts live peer/metadata connections. The rate
-/// limiters count payload bytes at the engine boundary; protocol framing and
-/// TCP/IP overhead are not included in the current accounting contract.
+/// The peer semaphore counts live peer/metadata connections. A separate
+/// shared request semaphore bounds outstanding peer and webseed payload work
+/// at both process and torrent scope. The rate limiters count payload bytes
+/// at the engine boundary; protocol framing and TCP/IP overhead are not
+/// included in the current accounting contract.
 #[derive(Clone)]
 pub(crate) struct GlobalNetworkBudget {
     peer_slots: Arc<Semaphore>,
+    source_admission: Arc<SourceAdmissionService>,
     download_tree: Arc<HierarchicalRateService>,
     upload_tree: Arc<HierarchicalRateService>,
     listen_port: Arc<AtomicU16>,
@@ -43,8 +59,15 @@ impl GlobalNetworkBudget {
     ) -> Self {
         let (listener_rebind_tx, listener_rebind_rx) = mpsc::channel(4);
         let upload_origin = Instant::now();
+        let global_source_requests = max_peers
+            .saturating_mul(SOURCE_REQUESTS_PER_PEER_SLOT)
+            .clamp(MIN_GLOBAL_SOURCE_REQUESTS, MAX_GLOBAL_SOURCE_REQUESTS);
         Self {
             peer_slots: Arc::new(Semaphore::new(max_peers.max(1))),
+            source_admission: Arc::new(SourceAdmissionService::new(
+                global_source_requests,
+                global_source_requests.min(MAX_TORRENT_SOURCE_REQUESTS),
+            )),
             download_tree: Arc::new(HierarchicalRateService {
                 tree: Mutex::new(RateTree::new(download_limit_bytes_per_sec, 0)),
                 origin: upload_origin,
@@ -163,6 +186,7 @@ impl GlobalNetworkBudget {
 
     pub(crate) fn register_download_torrent(&self, key: TorrentKey, limit: Option<u64>) {
         self.download_tree.register_torrent(key, limit);
+        self.source_admission.register_torrent(key);
     }
 
     pub(crate) fn set_upload_torrent_limit(&self, key: TorrentKey, limit: Option<u64>) {
@@ -174,6 +198,7 @@ impl GlobalNetworkBudget {
     }
 
     pub(crate) fn remove_transfer_torrent(&self, key: TorrentKey) {
+        self.source_admission.remove_torrent(key);
         self.upload_tree.remove_torrent(key);
         self.download_tree.remove_torrent(key);
     }
@@ -219,6 +244,121 @@ impl GlobalNetworkBudget {
     ) -> anyhow::Result<RateAdmissionAttempt> {
         self.download_tree.try_acquire(peer_id, bytes)
     }
+
+    /// Admit one outstanding payload request through the same process and
+    /// torrent caps regardless of whether its source is a peer or webseed.
+    /// The returned permit stays with the request until response, rejection,
+    /// expiry, cancellation, or failure.
+    pub(crate) fn try_acquire_source_request(
+        &self,
+        peer_id: RatePeerId,
+    ) -> Option<SourceRequestPermit> {
+        self.source_admission_for_torrent(peer_id.torrent)?
+            .try_acquire()
+    }
+
+    /// Clone a torrent-scoped admission handle once per request-fill batch.
+    /// The hot block path then uses semaphore atomics without taking the
+    /// process-wide torrent-map mutex for every block.
+    pub(crate) fn source_admission_for_torrent(
+        &self,
+        key: TorrentKey,
+    ) -> Option<SourceAdmissionTorrent> {
+        self.source_admission.for_torrent(key)
+    }
+}
+
+struct SourceAdmissionService {
+    process_slots: Arc<Semaphore>,
+    per_torrent_limit: usize,
+    torrent_slots: Mutex<HashMap<TorrentKey, Arc<TorrentSourceSlots>>>,
+}
+
+struct TorrentSourceSlots {
+    slots: Arc<Semaphore>,
+    active: AtomicBool,
+}
+
+impl SourceAdmissionService {
+    fn new(process_limit: usize, per_torrent_limit: usize) -> Self {
+        Self {
+            process_slots: Arc::new(Semaphore::new(process_limit.max(1))),
+            per_torrent_limit: per_torrent_limit.max(1),
+            torrent_slots: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn register_torrent(&self, key: TorrentKey) {
+        self.lock_torrents().entry(key).or_insert_with(|| {
+            Arc::new(TorrentSourceSlots {
+                slots: Arc::new(Semaphore::new(self.per_torrent_limit)),
+                active: AtomicBool::new(true),
+            })
+        });
+    }
+
+    fn remove_torrent(&self, key: TorrentKey) {
+        let mut torrents = self.lock_torrents();
+        if let Some(torrent) = torrents.get(&key) {
+            torrent.active.store(false, Ordering::Release);
+        }
+        torrents.remove(&key);
+    }
+
+    fn for_torrent(&self, key: TorrentKey) -> Option<SourceAdmissionTorrent> {
+        let torrent_slots = self.lock_torrents().get(&key).cloned()?;
+        Some(SourceAdmissionTorrent {
+            process_slots: Arc::clone(&self.process_slots),
+            torrent_slots,
+        })
+    }
+
+    fn lock_torrents(&self) -> MutexGuard<'_, HashMap<TorrentKey, Arc<TorrentSourceSlots>>> {
+        match self.torrent_slots.lock() {
+            Ok(slots) => slots,
+            Err(poisoned) => {
+                let slots = poisoned.into_inner();
+                self.torrent_slots.clear_poison();
+                slots
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct SourceAdmissionTorrent {
+    process_slots: Arc<Semaphore>,
+    torrent_slots: Arc<TorrentSourceSlots>,
+}
+
+impl SourceAdmissionTorrent {
+    pub(crate) fn try_acquire(&self) -> Option<SourceRequestPermit> {
+        if !self.torrent_slots.active.load(Ordering::Acquire) {
+            return None;
+        }
+        let torrent = self.torrent_slots.slots.clone().try_acquire_owned().ok()?;
+        let process = self.process_slots.clone().try_acquire_owned().ok()?;
+        if !self.torrent_slots.active.load(Ordering::Acquire) {
+            return None;
+        }
+        Some(SourceRequestPermit {
+            _process: process,
+            _torrent: torrent,
+        })
+    }
+}
+
+/// A bounded source request owns one process slot and one torrent slot.
+/// Peer and webseed adapters both keep this guard beside the ledger request.
+pub(crate) struct SourceRequestPermit {
+    _process: tokio::sync::OwnedSemaphorePermit,
+    _torrent: tokio::sync::OwnedSemaphorePermit,
+}
+
+impl std::fmt::Debug for SourceRequestPermit {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SourceRequestPermit")
+    }
 }
 
 pub(crate) enum RateAdmissionAttempt {
@@ -253,13 +393,21 @@ impl HierarchicalRateService {
     }
 
     fn new_torrent_key(&self) -> TorrentKey {
-        let value = self
-            .next_torrent
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
-                next.checked_add(1)
-            })
-            .expect("transfer rate torrent identity space exhausted");
-        TorrentKey(value)
+        let mut current = self.next_torrent.load(Ordering::Relaxed);
+        loop {
+            let next = current
+                .checked_add(1)
+                .expect("transfer rate torrent identity space exhausted");
+            match self.next_torrent.compare_exchange_weak(
+                current,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return TorrentKey(current),
+                Err(observed) => current = observed,
+            }
+        }
     }
 
     fn set_global_limit(&self, limit: Option<u64>) {
@@ -497,6 +645,81 @@ mod tests {
         assert!(clone.try_acquire_peer().is_err());
         drop(permit);
         assert!(clone.try_acquire_peer().is_ok());
+    }
+
+    #[test]
+    fn peer_and_webseed_requests_share_torrent_and_process_admission() {
+        let admission = Arc::new(SourceAdmissionService::new(3, 2));
+        let first_torrent = TorrentKey(1);
+        let second_torrent = TorrentKey(2);
+        admission.register_torrent(first_torrent);
+        admission.register_torrent(second_torrent);
+
+        // These handles model a peer request and the actor's synthetic
+        // webseed connection. Both enter through the same admission method.
+        let first = admission.for_torrent(first_torrent).unwrap();
+        let second = admission.for_torrent(second_torrent).unwrap();
+        let peer_request = first.try_acquire().unwrap();
+        let webseed_request = first.try_acquire().unwrap();
+        assert!(first.try_acquire().is_none());
+
+        let other_torrent_request = second.try_acquire().unwrap();
+        assert!(second.try_acquire().is_none());
+
+        drop(webseed_request);
+        let reopened = first.try_acquire().unwrap();
+        assert!(second.try_acquire().is_none());
+        drop(reopened);
+        drop(peer_request);
+        drop(other_torrent_request);
+    }
+
+    #[test]
+    fn removing_a_torrent_revokes_cached_source_admission_handles() {
+        let budget = GlobalNetworkBudget::new(2, None, None);
+        let torrent = budget.new_transfer_torrent_key();
+        budget.register_download_torrent(torrent, None);
+        let cached = budget
+            .source_admission_for_torrent(torrent)
+            .expect("registered torrent has a source-admission handle");
+
+        budget.remove_transfer_torrent(torrent);
+
+        assert!(cached.try_acquire().is_none());
+        budget.register_download_torrent(torrent, None);
+        assert!(budget
+            .source_admission_for_torrent(torrent)
+            .expect("re-registered torrent gets a fresh handle")
+            .try_acquire()
+            .is_some());
+    }
+
+    #[test]
+    fn global_network_budget_registers_and_releases_source_request_slots() {
+        let budget = GlobalNetworkBudget::new(1, None, None);
+        let first_torrent = budget.new_transfer_torrent_key();
+        let second_torrent = budget.new_transfer_torrent_key();
+        budget.register_download_torrent(first_torrent, None);
+        budget.register_download_torrent(second_torrent, None);
+
+        let mut first_torrent_requests = (0..MIN_GLOBAL_SOURCE_REQUESTS)
+            .map(|_| {
+                budget
+                    .try_acquire_source_request(rate_peer(first_torrent, 0))
+                    .expect("registered source request should fit")
+            })
+            .collect::<Vec<_>>();
+        assert!(budget
+            .try_acquire_source_request(rate_peer(first_torrent, 0))
+            .is_none());
+        assert!(budget
+            .try_acquire_source_request(rate_peer(second_torrent, 0))
+            .is_none());
+
+        drop(first_torrent_requests.pop());
+        assert!(budget
+            .try_acquire_source_request(rate_peer(second_torrent, 0))
+            .is_some());
     }
 
     #[test]

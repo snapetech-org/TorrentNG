@@ -112,9 +112,11 @@ struct PendingPacket {
     retransmits: usize,
 }
 
+type ReorderSlot = Option<(u16, Vec<u8>)>;
+
 struct ReorderBuffer {
     next_sequence: u16,
-    slots: Option<Vec<Option<(u16, Vec<u8>)>>>,
+    slots: Option<Vec<ReorderSlot>>,
     buffered_bytes: usize,
     buffered_packets: usize,
 }

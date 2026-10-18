@@ -805,12 +805,14 @@ impl PeerReadStreams {
 }
 
 fn next_saturating_sequence(sequence: &AtomicU64) -> u64 {
-    sequence
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-            Some(current.saturating_add(1))
-        })
-        .unwrap_or(u64::MAX)
-        .saturating_add(1)
+    let mut current = sequence.load(Ordering::Acquire);
+    loop {
+        let next = current.saturating_add(1);
+        match sequence.compare_exchange_weak(current, next, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => return next,
+            Err(observed) => current = observed,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -828,12 +830,19 @@ struct StorageOperationId(u64);
 static NEXT_STORAGE_OPERATION_ID: AtomicU64 = AtomicU64::new(1);
 
 fn allocate_storage_operation_id() -> Option<StorageOperationId> {
-    NEXT_STORAGE_OPERATION_ID
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-            current.checked_add(1)
-        })
-        .ok()
-        .map(StorageOperationId)
+    let mut current = NEXT_STORAGE_OPERATION_ID.load(Ordering::Acquire);
+    loop {
+        let next = current.checked_add(1)?;
+        match NEXT_STORAGE_OPERATION_ID.compare_exchange_weak(
+            current,
+            next,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => return Some(StorageOperationId(current)),
+            Err(observed) => current = observed,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -962,8 +971,12 @@ struct FileSyncFence {
 }
 
 enum FileFenceGuard {
-    Shared(tokio::sync::OwnedRwLockReadGuard<()>),
-    Exclusive(tokio::sync::OwnedRwLockWriteGuard<()>),
+    Shared {
+        _guard: tokio::sync::OwnedRwLockReadGuard<()>,
+    },
+    Exclusive {
+        _guard: tokio::sync::OwnedRwLockWriteGuard<()>,
+    },
 }
 
 impl FileSyncFence {
@@ -1160,10 +1173,7 @@ impl PeerReadCache {
         self.entries
     }
 
-    fn is_empty(&self) -> bool {
-        self.entries == 0
-    }
-
+    #[cfg(test)]
     fn contains_file(&self, path: &Path) -> bool {
         self.files.contains_key(path)
     }
@@ -1906,13 +1916,6 @@ fn validate_hybrid_piece_hash_geometry(
     Ok(())
 }
 
-async fn await_backend_io<T>(
-    path: &Path,
-    rx: oneshot::Receiver<io::Result<T>>,
-) -> Result<T, StorageError> {
-    await_backend_io_with_expected(path, rx, None).await
-}
-
 /// Keep cache invalidation attached to the backend operation rather than to
 /// the caller waiting for it. A cancelled writer can drop its receive future
 /// while the dedicated disk worker is still completing the syscall; without
@@ -2271,9 +2274,7 @@ fn collect_device_grant(
     state: &mut DeviceQueueState,
 ) -> Option<DeviceGrant> {
     while state.active < queue.active_limit {
-        let Some((slot, waiter)) = pop_next_device_waiter(state) else {
-            return None;
-        };
+        let (slot, waiter) = pop_next_device_waiter(state)?;
         state.dispatch_cursor = next_device_cursor(slot);
         if waiter.sender.is_closed() {
             continue;
@@ -2729,8 +2730,10 @@ async fn dispatch_peer_read_batch(
                     .map(|request| (request.tx, Err(error.clone_for_waiter())))
                     .collect();
             };
-            let mut operation_record = StorageOperationRecord::default();
-            operation_record.storage_operation_id = Some(storage_operation_id);
+            let mut operation_record = StorageOperationRecord {
+                storage_operation_id: Some(storage_operation_id),
+                ..StorageOperationRecord::default()
+            };
             operation_record.bind_device_operation(&_device_queue);
             operation_record.bind_file_identity(file.identity());
             operation_record.bind_byte_range(offset, len as u64);
@@ -3480,7 +3483,7 @@ impl MountScheduler {
                 if matches!(error, StorageError::QueueFull { .. }) {
                     self.counters.queue_full.fetch_add(1, Ordering::Relaxed);
                 }
-                return Err(error);
+                Err(error)
             }
         }
     }
@@ -3846,9 +3849,13 @@ impl MountScheduler {
         let strict = self.io_config.durability_mode == DurabilityMode::Strict;
         let file_sync_fence = self.file_sync_fences.for_path(&key);
         let file_write_guard = if strict {
-            FileFenceGuard::Exclusive(Arc::clone(&file_sync_fence.gate).write_owned().await)
+            FileFenceGuard::Exclusive {
+                _guard: Arc::clone(&file_sync_fence.gate).write_owned().await,
+            }
         } else {
-            FileFenceGuard::Shared(Arc::clone(&file_sync_fence.gate).read_owned().await)
+            FileFenceGuard::Shared {
+                _guard: Arc::clone(&file_sync_fence.gate).read_owned().await,
+            }
         };
         let _permit = self.acquire(class).await?;
         let pool = self.file_pool.clone();
@@ -3941,8 +3948,8 @@ impl MountScheduler {
         let submission = if strict {
             let sync_started = Instant::now();
             let strict_sync_guard = match file_write_guard {
-                FileFenceGuard::Exclusive(guard) => guard,
-                FileFenceGuard::Shared(_) => {
+                FileFenceGuard::Exclusive { _guard } => _guard,
+                FileFenceGuard::Shared { .. } => {
                     unreachable!("strict writes hold the exclusive per-file fence")
                 }
             };
@@ -6382,11 +6389,15 @@ mod tests {
             .await
             .unwrap();
 
-        let mut first_record = StorageOperationRecord::default();
-        first_record.storage_operation_id = Some(StorageOperationId(10));
+        let mut first_record = StorageOperationRecord {
+            storage_operation_id: Some(StorageOperationId(10)),
+            ..StorageOperationRecord::default()
+        };
         first_record.bind_device_operation(&first_permit);
-        let mut second_record = StorageOperationRecord::default();
-        second_record.storage_operation_id = Some(StorageOperationId(11));
+        let mut second_record = StorageOperationRecord {
+            storage_operation_id: Some(StorageOperationId(11)),
+            ..StorageOperationRecord::default()
+        };
         second_record.bind_device_operation(&second_permit);
 
         assert_eq!(
@@ -6503,14 +6514,18 @@ mod tests {
         let first_operation_scheduler = first.clone();
         let operation = tokio::spawn(async move {
             first_operation_scheduler
-                .run_device_operation(IoClass::MoveCopy, 64, move || -> Result<(), StorageError> {
-                    started_tx.send(()).unwrap();
-                    finish_rx.recv().unwrap();
-                    Err(StorageError::io(
-                        "external-cancel-test",
-                        io::Error::new(io::ErrorKind::Other, "injected external operation fault"),
-                    ))
-                })
+                .run_device_operation(
+                    IoClass::MoveCopy,
+                    64,
+                    move || -> Result<(), StorageError> {
+                        started_tx.send(()).unwrap();
+                        finish_rx.recv().unwrap();
+                        Err(StorageError::io(
+                            "external-cancel-test",
+                            io::Error::other("injected external operation fault"),
+                        ))
+                    },
+                )
                 .await
         });
         started_rx
@@ -6715,11 +6730,13 @@ mod tests {
         });
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
-                let state = lock_recover(&device_a.device_queue.state);
-                if state.pending_count != 0 {
+                let has_pending = {
+                    let state = lock_recover(&device_a.device_queue.state);
+                    state.pending_count != 0
+                };
+                if has_pending {
                     break;
                 }
-                drop(state);
                 tokio::task::yield_now().await;
             }
         })
@@ -7880,7 +7897,7 @@ mod tests {
 
         assert!(peer_read_cache_hit(&cache, &path, file_identity(&file).unwrap(), 0, 5).is_none());
         assert!(!cache.is_poisoned());
-        assert!(lock_reset_derived_cache(&cache).is_empty());
+        assert!(lock_reset_derived_cache(&cache).files.is_empty());
     }
 
     #[test]
@@ -7892,10 +7909,12 @@ mod tests {
 
         let first_state =
             mark_dirty_path(&dirty_paths, &dirty_path_epoch, path.clone(), identity, 1);
-        let mut first_operation = StorageOperationRecord::default();
-        first_operation.storage_operation_id = Some(StorageOperationId(10));
-        first_operation.device_operation_id = Some(DeviceOperationId(1));
-        first_operation.device_queue_key = Some(Arc::from("device:test"));
+        let mut first_operation = StorageOperationRecord {
+            storage_operation_id: Some(StorageOperationId(10)),
+            device_operation_id: Some(DeviceOperationId(1)),
+            device_queue_key: Some(Arc::from("device:test")),
+            ..StorageOperationRecord::default()
+        };
         first_operation.bind_byte_range(0, 16);
         first_operation.bind_dirty_path(first_state);
         mark_dirty_path(&dirty_paths, &dirty_path_epoch, path.clone(), identity, 2);
@@ -7909,19 +7928,23 @@ mod tests {
         clear_dirty_path_if_operation(&dirty_paths, &path, &unadmitted_operation);
         assert_eq!(dirty_paths.lock().unwrap().len(), 1);
 
-        let mut stale_write_sequence = StorageOperationRecord::default();
-        stale_write_sequence.storage_operation_id = Some(StorageOperationId(12));
-        stale_write_sequence.device_operation_id = Some(DeviceOperationId(3));
-        stale_write_sequence.device_queue_key = Some(Arc::from("device:test"));
+        let mut stale_write_sequence = StorageOperationRecord {
+            storage_operation_id: Some(StorageOperationId(12)),
+            device_operation_id: Some(DeviceOperationId(3)),
+            device_queue_key: Some(Arc::from("device:test")),
+            ..StorageOperationRecord::default()
+        };
         stale_write_sequence.bind_dirty_path(second_state);
         stale_write_sequence.write_sequence = Some(1);
         clear_dirty_path_if_operation(&dirty_paths, &path, &stale_write_sequence);
         assert_eq!(dirty_paths.lock().unwrap().len(), 1);
 
-        let mut second_operation = StorageOperationRecord::default();
-        second_operation.storage_operation_id = Some(StorageOperationId(11));
-        second_operation.device_operation_id = Some(DeviceOperationId(2));
-        second_operation.device_queue_key = Some(Arc::from("device:test"));
+        let mut second_operation = StorageOperationRecord {
+            storage_operation_id: Some(StorageOperationId(11)),
+            device_operation_id: Some(DeviceOperationId(2)),
+            device_queue_key: Some(Arc::from("device:test")),
+            ..StorageOperationRecord::default()
+        };
         second_operation.bind_byte_range(0, 16);
         second_operation.bind_dirty_path(second_state);
         clear_dirty_path_if_operation(&dirty_paths, &path, &second_operation);

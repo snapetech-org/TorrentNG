@@ -427,11 +427,13 @@ where
     }
 
     fn take_due_idle_checks(&mut self, now: Instant, limit: usize) -> Vec<K> {
-        self.resolve_due_keys(self.idle_checks.pop_due_limited(now, limit))
+        let ids = self.idle_checks.pop_due_limited(now, limit);
+        self.resolve_due_keys(ids)
     }
 
     fn take_due_tracker_checks(&mut self, now: Instant, limit: usize) -> Vec<K> {
-        self.resolve_due_keys(self.tracker_checks.pop_due_limited(now, limit))
+        let ids = self.tracker_checks.pop_due_limited(now, limit);
+        self.resolve_due_keys(ids)
     }
 
     fn record_tier(&mut self, id: TorrentKeyId, tier: TorrentActivityTier) {

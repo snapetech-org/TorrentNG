@@ -682,7 +682,7 @@ impl PiecePicker {
         selected
     }
 
-    fn endgame_active(&self) -> bool {
+    pub fn endgame_active(&self) -> bool {
         self.outstanding_wanted != 0 && self.availability.candidate_count() == 0
     }
 

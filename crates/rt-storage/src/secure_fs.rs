@@ -934,7 +934,7 @@ impl DirectoryCopyFrame {
     }
 }
 
-struct DirectoryCopyCursor {
+pub(crate) struct DirectoryCopyCursor {
     source_parent: File,
     source_name: OsString,
     source_path: PathBuf,

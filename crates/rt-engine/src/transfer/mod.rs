@@ -21,9 +21,11 @@
 //! pure-v2 inbound upload requests use [`obligations::InboundObligations`],
 //! and v1/hybrid-v1 plus pure-v2 outbound acquisition use the generation-aware
 //! ledger; the serial v1 webseed fallback also uses the ledger with a
-//! temporary source connection. V1/hybrid-v1 and pure-v2 use [`window`] for
-//! bounded per-peer request admission, while concurrent shared-source
-//! scheduling, hybrid dual-view arbitration, and shared content completion
+//! temporary source connection. Peer and webseed blocks now also hold common
+//! process/torrent request permits and hierarchical download credit until the
+//! response or a terminal outcome. V1/hybrid-v1 and pure-v2 use [`window`]
+//! for bounded per-peer request admission, while cross-actor candidate
+//! selection, hybrid dual-view arbitration, and shared content completion
 //! remain open. Hybrid v2 verification now resolves piece file ranges through
 //! [`coords::HybridGeometry`], and live hybrid-v1 tasks use `HybridLedger` as
 //! their single v1-coordinate owner. Hybrid v2-plane handshake/scheduling and

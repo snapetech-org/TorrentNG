@@ -152,14 +152,8 @@ fn build_torrent_named(
         (None, None)
     };
     if let (Some(entries), Some(pieces)) = (&v1_entries, &v1_pieces) {
-        info_fields.push((
-            b"files".as_slice(),
-            v1_entries_value(entries),
-        ));
-        info_fields.push((
-            b"pieces".as_slice(),
-            BValue::Bytes(pieces),
-        ));
+        info_fields.push((b"files".as_slice(), v1_entries_value(entries)));
+        info_fields.push((b"pieces".as_slice(), BValue::Bytes(pieces)));
     }
 
     let v2_hashes = if protocol.has_v2() {
@@ -517,10 +511,13 @@ mod tests {
         align_files: bool,
     ) {
         let (_, stream) = build_v1_view(&fixture.payload_files, align_files);
-        let expected = sha1_piece_hashes(&stream)
-            .chunks_exact(20)
-            .map(|hash| hash.try_into().expect("SHA-1 digest width is fixed"))
-            .collect::<Vec<[u8; 20]>>();
+        let hashes = sha1_piece_hashes(&stream);
+        let (expected, remainder) = hashes.as_chunks::<20>();
+        assert!(
+            remainder.is_empty(),
+            "SHA-1 output must contain whole digests"
+        );
+        let expected = expected.to_vec();
         assert_eq!(v1.pieces, expected);
     }
 

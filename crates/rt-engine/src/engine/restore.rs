@@ -186,6 +186,7 @@ impl Engine {
                             &self.services.resources,
                             row.info_hash.len(),
                             piece_count,
+                            self.config.network.max_peers,
                         ) {
                             Ok(lease) => piece_index_memory_lease = Some(lease),
                             Err(error) => {

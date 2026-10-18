@@ -4000,17 +4000,26 @@ peers are active, when fresh work is available. Both reserve through their
 shared transfer ledger and global/torrent download budgets before HTTP; an
 owned fetch task keeps actor commands and peer events responsive. The current
 adapters still select independently, but both sources compete for piece
-ownership in the same ledger. v1 maps multi-file blocks to bounded per-file
-HTTP ranges and synthesizes BEP 47 padding locally. Pure-v2 maps its file paths
-to BEP 19 URLs and sends returned blocks through its normal assembly, readback,
-and Merkle verification path. Requests use the DNS-validated, address-pinned
-HTTP client and require an exact partial-content range response. Cancellation
-and the 60-second ledger timeout revoke the matching fetch and release its
-request ownership; timeout processing wakes source selection when a peer's
-expired reservation makes a piece available. Candidate traversal skips full
-local-have bitmap words and advances fairly when a selected file cannot use a
-webseed. All blocks in one active piece stay with one selected seed, and a
-typed Merkle mismatch backs that seed off before retrying the piece elsewhere.
+ownership in the same ledger. `GlobalNetworkBudget` also caps outstanding
+payload requests across the process at `clamp(max_peers * 128, 128, 32768)`
+and across one torrent at `min(process_cap, 2048)`. Peer requests hold a slot
+until response or terminal cleanup; webseed requests hold it until the body is
+accepted or the attempt is cancelled. These non-waiting permits share one
+admission path and use bounded actor retries when capacity is full. Peer
+request-fill batches resolve one torrent-scoped handle and use semaphore
+atomics for each block; torrent removal revokes cached handles before dropping
+the registry entry. v1 maps multi-file blocks to bounded per-file HTTP ranges
+and synthesizes BEP 47 padding locally. Pure-v2 maps its file paths to BEP 19
+URLs and routes returned blocks through its normal assembly, readback, and
+Merkle verification path.
+Requests use the DNS-validated, address-pinned HTTP client and require an
+exact partial-content range response. Cancellation and the 60-second ledger
+timeout revoke the matching fetch and release its request ownership; timeout
+processing wakes source selection when a peer's expired reservation makes a
+piece available. Candidate traversal skips full local-have bitmap words and
+advances fairly when a selected file cannot use a webseed. All blocks in one
+active piece stay with one selected seed, and a typed Merkle mismatch backs
+that seed off before retrying the piece elsewhere.
 
 v1 progress already batches at its five-second dirty-stat flush, and pure-v2
 batches upload/download statistics at its existing five-second runtime flush.
@@ -4071,9 +4080,13 @@ Completion and lifecycle boundaries flush immediately.
   the late body does not reach storage; another sends a valid ranged response
   into a deliberately unwriteable file target and checks the failed piece
   releases ledger and assembly ownership without publishing local-have state.
-  All these sources remain authored but unrun.
+  `network_budget.rs` covers common per-torrent/process request caps and
+  revocation of cached admission handles after torrent removal. All these
+  sources remain authored but unrun.
 - **Command or probe:** run with the requested bulk engine suite; do not run
   this source independently before that pass.
 - **Executed on exact revision:** no.
-- **Remaining:** a shared peer/webseed source scheduler, live-source
-  workloads, and the bulk pass.
+- **Remaining:** one cross-actor candidate-selection policy, live-source
+  workloads, and the bulk pass. Peer and webseed candidate traversal still
+  follows protocol-specific actor logic; the common ledger, hierarchical rate
+  tree, and bounded source-request admission are shared.

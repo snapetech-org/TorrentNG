@@ -488,10 +488,7 @@ impl HandleCache {
             return 0;
         }
         let mut closed = 0usize;
-        loop {
-            let Some((&tick, key)) = inner.lru.first_key_value() else {
-                break;
-            };
+        while let Some((&tick, key)) = inner.lru.first_key_value() {
             let expired = inner
                 .map
                 .get(key.as_ref())

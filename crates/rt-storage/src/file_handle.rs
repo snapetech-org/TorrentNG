@@ -190,6 +190,7 @@ impl DescriptorLimiter {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn process_descriptor_budget_stats() -> (usize, usize, u64) {
     let active = PROCESS_DESCRIPTOR_GATE.lock_state().active;
     (

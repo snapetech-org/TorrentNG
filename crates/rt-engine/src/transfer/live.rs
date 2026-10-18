@@ -12,8 +12,8 @@ use bytes::Bytes;
 
 use super::coords::{BlockExtent, ConnectionId, HybridGeometry, PieceGeometry, Plane};
 use super::hybrid::{
-    HybridAction, HybridBlockData, HybridLedger, HybridLedgerError, HybridReceiveOutcome,
-    HybridWireBlock,
+    HybridAction, HybridBlockData, HybridExpiration, HybridLedger, HybridLedgerError,
+    HybridReceiveOutcome, HybridWireBlock,
 };
 use super::ledger::{
     Action, CommitOutcome, Ledger, ReceiveOutcome, RejectOutcome, ReserveError, ReserveMode,
@@ -87,6 +87,13 @@ impl<G: PieceGeometry> LiveTransferLedger<G> {
         match &self.inner {
             LiveLedgerInner::V1(_) => Ledger::<G>::estimated_connection_state_bytes(),
             LiveLedgerInner::Hybrid(_) => HybridLedger::estimated_connection_state_bytes(),
+        }
+    }
+
+    pub fn check_invariants(&self) -> Result<(), String> {
+        match &self.inner {
+            LiveLedgerInner::V1(ledger) => ledger.check_invariants(),
+            LiveLedgerInner::Hybrid(ledger) => ledger.check_invariants(),
         }
     }
 
@@ -320,7 +327,7 @@ impl<G: PieceGeometry> LiveTransferLedger<G> {
         &mut self,
         now: Nanos,
         timeout: Nanos,
-    ) -> Result<(Vec<(ConnectionId, HybridWireBlock)>, Vec<HybridAction>), HybridLedgerError> {
+    ) -> Result<HybridExpiration, HybridLedgerError> {
         self.used = true;
         match &mut self.inner {
             LiveLedgerInner::V1(ledger) => {

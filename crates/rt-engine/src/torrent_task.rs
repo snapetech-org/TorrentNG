@@ -2,12 +2,11 @@
 ///
 /// One tokio task per torrent owns: tracker announce loop, peer connection
 /// management, piece picker, and storage writes.
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -79,6 +78,7 @@ use crate::db_worker::DbExecutor;
 use crate::egress_policy::{OutboundEgressPolicy, OutboundTargetKind};
 use crate::network_budget::{
     GlobalNetworkBudget, RateAdmissionAttempt, RateAdmissionGrant, RateLimitCancellation,
+    SourceRequestPermit,
 };
 use crate::tracker_runtime::{
     announce_tracker, bounded_response_body, first_tracker_key, next_tracker_key, protocol_numwant,
@@ -1381,7 +1381,7 @@ struct WebseedFetchInFlight {
     request: BlockRequest,
     connection: ConnectionId,
     seed_index: usize,
-    task: JoinHandle<Result<WebseedFetchedBlock, String>>,
+    task: JoinHandle<Result<WebseedFetchedBlock, WebseedFetchError>>,
 }
 
 impl Drop for WebseedFetchInFlight {
@@ -1395,6 +1395,14 @@ impl Drop for WebseedFetchInFlight {
 struct WebseedFetchedBlock {
     event: LeasedBlockEvent,
     fetch_elapsed: Duration,
+    _source_permit: SourceRequestPermit,
+}
+
+#[derive(Debug)]
+enum WebseedFetchError {
+    Admission(String),
+    SourceCapacity,
+    Fetch(String),
 }
 
 struct PreparedWebseedRange {
@@ -1889,6 +1897,7 @@ enum PeerCommand {
         /// request and is settled when the matching payload arrives.
         memory_lease: MemoryLease,
         rate_grant: Option<RateAdmissionGrant>,
+        source_permit: Option<SourceRequestPermit>,
     },
     /// Endgame loser cancellation. The peer loop keeps an on-wire request and
     /// its response lease outstanding because a Piece or Reject may still
@@ -2040,10 +2049,10 @@ impl UploadRequest {
     fn new(canonical: BlockExtent, wire: BlockExtent) -> Self {
         Self {
             piece: canonical.piece,
-            begin: canonical.offset,
+            begin: canonical.begin,
             length: canonical.length,
             wire_piece: wire.piece,
-            wire_begin: wire.offset,
+            wire_begin: wire.begin,
             wire_length: wire.length,
         }
     }
@@ -2638,6 +2647,7 @@ pub struct TorrentTask {
     choker: Choker,
     /// active peer addresses
     active_peers: HashMap<SocketAddr, PeerHandle>,
+    shutting_down_peers: bool,
     known_tracker_peers: HashSet<SocketAddr>,
     /// The cache is pre-sized and its reservation covers the hash table's
     /// bounded capacity for the task lifetime. This prevents tracker, DHT,
@@ -3053,6 +3063,7 @@ impl TorrentTask {
             transfer_started_at: Instant::now(),
             choker: Choker::new(DEFAULT_MAX_UNCHOKED),
             active_peers: HashMap::new(),
+            shutting_down_peers: false,
             known_tracker_peers,
             _tracker_peer_cache_memory_lease: tracker_peer_cache_memory_lease,
             last_peerless_reannounce: None,
@@ -3662,12 +3673,11 @@ impl TorrentTask {
                     let had_fresh_requestable = self.picker.has_fresh_requestable();
                     if let Some(event) = peer_event_if_active(self.paused, event) {
                         self.handle_peer_event(event).await;
-                        if !had_fresh_requestable
+                        if (!had_fresh_requestable
                             && self.webseed_fetch.is_none()
-                            && self.picker.has_fresh_requestable()
+                            && self.picker.has_fresh_requestable())
+                            || self.active_peers.is_empty()
                         {
-                            reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
-                        } else if self.active_peers.is_empty() {
                             reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
                         }
                     }
@@ -4151,7 +4161,7 @@ impl TorrentTask {
         self.tracker_workers.cancel();
     }
 
-    async fn persist_tracker_state(&self) {
+    async fn persist_tracker_state(&mut self) {
         if let Err(error) = self.persist_tracker_state_inner().await {
             warn!(
                 component = "db",
@@ -4164,7 +4174,7 @@ impl TorrentTask {
         }
     }
 
-    async fn persist_tracker_state_inner(&self) -> Result<(), String> {
+    async fn persist_tracker_state_inner(&mut self) -> Result<(), String> {
         let (uploaded, downloaded) = self.transfer_snapshot().await;
         let left = db_i64(self.reported_bytes_left());
         let now = Instant::now();
@@ -5508,11 +5518,12 @@ impl TorrentTask {
         true
     }
 
-    async fn write_block(&self, block: &BlockEvent) -> anyhow::Result<()> {
+    #[cfg(test)]
+    async fn write_block(&mut self, block: &BlockEvent) -> anyhow::Result<()> {
         self.write_block_inner(block, None).await
     }
 
-    pub(super) fn transfer_io_context(&self) -> TransferIoContext {
+    fn transfer_io_context(&self) -> TransferIoContext {
         TransferIoContext {
             meta: Arc::clone(&self.meta),
             piece_map: Arc::clone(&self.piece_map),
@@ -5524,13 +5535,13 @@ impl TorrentTask {
         }
     }
 
-    async fn write_leased_block(&self, event: &LeasedBlockEvent) -> anyhow::Result<()> {
+    async fn write_leased_block(&mut self, event: &LeasedBlockEvent) -> anyhow::Result<()> {
         self.write_block_inner(&event.block, event._memory_lease.clone())
             .await
     }
 
     async fn write_block_inner(
-        &self,
+        &mut self,
         block: &BlockEvent,
         shared_payload_lease: Option<Arc<MemoryLease>>,
     ) -> anyhow::Result<()> {
@@ -5564,14 +5575,14 @@ impl TorrentTask {
                 data_offset = end;
                 continue;
             }
-            let file = self
+            let (path, file_length) = self
                 .meta
                 .files
                 .iter()
                 .find(|file| file.index == region.file_index)
+                .map(|file| (file.path.resolve(&self.save_root), file.length))
                 .ok_or_else(|| anyhow::anyhow!("file index {} out of range", region.file_index))?;
-            let path = file.path.resolve(&self.save_root);
-            self.prepare_file_once(file.index, &path, file.length)
+            self.prepare_file_once(region.file_index, &path, file_length)
                 .await?;
             data_offset = end;
             match shared_payload_lease.as_ref() {
@@ -5612,7 +5623,8 @@ impl TorrentTask {
         Ok(())
     }
 
-    async fn write_completed_piece(&self, piece: u32) -> anyhow::Result<()> {
+    #[allow(dead_code)]
+    async fn write_completed_piece(&mut self, piece: u32) -> anyhow::Result<()> {
         let (data, payload_lease) = self
             .piece_assemblies
             .get(&piece)
@@ -5629,14 +5641,14 @@ impl TorrentTask {
             if region.pad {
                 continue;
             }
-            let file = self
+            let (path, file_length) = self
                 .meta
                 .files
                 .iter()
                 .find(|file| file.index == region.file_index)
+                .map(|file| (file.path.resolve(&self.save_root), file.length))
                 .ok_or_else(|| anyhow::anyhow!("file index {} out of range", region.file_index))?;
-            let path = file.path.resolve(&self.save_root);
-            self.prepare_file_once(file.index, &path, file.length)
+            self.prepare_file_once(region.file_index, &path, file_length)
                 .await?;
             let start = usize::try_from(region.piece_offset)
                 .map_err(|_| anyhow::anyhow!("piece region offset does not fit in memory"))?;
@@ -5681,7 +5693,7 @@ impl TorrentTask {
     }
 
     async fn prepare_file_once(
-        &self,
+        &mut self,
         file_index: u32,
         path: &std::path::Path,
         len: u64,
@@ -5698,7 +5710,7 @@ impl TorrentTask {
         Ok(())
     }
 
-    async fn verify_piece(&self, piece: u32) -> VerifyResult {
+    async fn verify_piece(&mut self, piece: u32) -> VerifyResult {
         let verifier = PieceVerifier::new(
             &self.save_root,
             &self.storage,
@@ -5717,6 +5729,7 @@ impl TorrentTask {
         }
     }
 
+    #[cfg(test)]
     async fn verify_completed_piece(&mut self, piece: u32) -> VerifyResult {
         if let Some(assembly) = self
             .piece_assemblies
@@ -6006,7 +6019,7 @@ impl TorrentTask {
     }
 
     async fn persist_recheck_job_progress(
-        &self,
+        &mut self,
         job_id: &str,
         next_piece: u32,
         verified_bytes: u64,
@@ -6162,7 +6175,7 @@ impl TorrentTask {
         );
     }
 
-    async fn registry_completed_at(&self) -> Option<u64> {
+    async fn registry_completed_at(&mut self) -> Option<u64> {
         self.registry
             .read()
             .await
@@ -6173,7 +6186,7 @@ impl TorrentTask {
     /// Append a per-torrent event to the session event log. Best effort: a
     /// failed append is logged and never affects the torrent.
     async fn append_torrent_event(
-        &self,
+        &mut self,
         kind: &'static str,
         message: &str,
         payload: serde_json::Value,
@@ -6333,7 +6346,7 @@ impl TorrentTask {
                 self.paused = false;
                 self.recheck_restore_state = None;
                 self.restart_tracker_session();
-                self.shutdown_peers().await;
+                Box::pin(self.shutdown_peers()).await;
                 warn!(
                     component = "torrent",
                     operation = "complete_download",
@@ -6548,7 +6561,7 @@ impl TorrentTask {
     /// Downgrade `Valid` pieces that overlap a hole or unwritten extent of any
     /// file, so they are re-hashed instead of trusted. Returns the pieces
     /// downgraded and the files whose filesystem could not report allocation.
-    async fn audit_allocation(&self, state: &mut FastresumeState) -> (u32, u64) {
+    async fn audit_allocation(&mut self, state: &mut FastresumeState) -> (u32, u64) {
         let files: Vec<(u32, PathBuf, u64)> = self
             .meta
             .files
@@ -6761,10 +6774,16 @@ impl TorrentTask {
     /// received block indexes in fastresume. A clean fastresume record that
     /// points at bytes which only existed in RAM would make the next process
     /// trust a partial piece that the disk does not contain.
-    async fn flush_piece_assemblies_to_disk(&self) -> HashSet<u32> {
+    async fn flush_piece_assemblies_to_disk(&mut self) -> HashSet<u32> {
         let mut durable = HashSet::new();
-        for (&piece, assembly) in &self.piece_assemblies {
-            let blocks = match assembly.received_blocks(&self.resources, piece) {
+        let pieces = self.piece_assemblies.keys().copied().collect::<Vec<_>>();
+        for piece in pieces {
+            let blocks = match self
+                .piece_assemblies
+                .get(&piece)
+                .expect("piece key was collected from the assembly map")
+                .received_blocks(&self.resources, piece)
+            {
                 Ok(blocks) => blocks,
                 Err(error) => {
                     warn!(
@@ -7505,6 +7524,7 @@ async fn run_outgoing_peer_with_policy(
                 .await
         }
         OutgoingTransportPolicy::PreferUtp => match upload
+            .upload_rate
             .network_budget
             .utp_runtime()
             .connect(addr)
@@ -7677,7 +7697,12 @@ async fn run_outgoing_utp_peer(
     peer_cmd_rx: mpsc::Receiver<PeerCommand>,
     upload: UploadContext,
 ) -> anyhow::Result<PeerLoopExit> {
-    let stream = upload.network_budget.utp_runtime().connect(addr).await?;
+    let stream = upload
+        .upload_rate
+        .network_budget
+        .utp_runtime()
+        .connect(addr)
+        .await?;
     run_established_utp_peer(
         addr,
         peer_id,
@@ -7691,7 +7716,7 @@ async fn run_outgoing_utp_peer(
 }
 
 async fn prepare_outgoing_utp_peer(
-    addr: SocketAddr,
+    _addr: SocketAddr,
     info_hash: [u8; 20],
     upload: &mut UploadContext,
     mut stream: UtpStream,
@@ -8287,6 +8312,7 @@ async fn run_peer_loop(
                         download_generation: request_generation,
                         memory_lease,
                         rate_grant,
+                        source_permit,
                     } => {
                         if download_choked || request_generation != download_generation {
                             // The engine may have queued a request just
@@ -8306,6 +8332,7 @@ async fn run_peer_loop(
                                     req,
                                     Some(memory_lease),
                                     rate_grant,
+                                    source_permit,
                                 ));
                                 anyhow::bail!(
                                     "hybrid v2 peer request has no matching wire content range"
@@ -8316,6 +8343,7 @@ async fn run_peer_loop(
                             // its canonical zero block locally so a v2 peer
                             // can complete the same v1 piece assembly.
                             drop(rate_grant);
+                            drop(source_permit);
                             let block = LeasedBlockEvent::with_optional_lease(
                                 BlockEvent {
                                     piece: req.piece,
@@ -8342,7 +8370,7 @@ async fn run_peer_loop(
                         };
                         let wire_req = BlockRequest {
                             piece: wire_block.piece,
-                            begin: wire_block.offset,
+                            begin: wire_block.begin,
                             length: wire_block.length,
                         };
                         if let Err(error) = peer_io
@@ -8363,6 +8391,7 @@ async fn run_peer_loop(
                                 wire_req,
                                 Some(memory_lease),
                                 rate_grant,
+                                source_permit,
                             ));
                             return Err(error);
                         }
@@ -8371,6 +8400,7 @@ async fn run_peer_loop(
                             wire_req,
                             Some(memory_lease),
                             rate_grant,
+                            source_permit,
                         ));
                         if !send_peer_event(
                             &peer_event_tx,
@@ -8399,7 +8429,7 @@ async fn run_peer_loop(
                             peer_io
                                 .send(Message::Cancel {
                                     piece: wire_block.piece,
-                                    begin: wire_block.offset,
+                                    begin: wire_block.begin,
                                     length: wire_block.length,
                                 })
                                 .await?;
@@ -8647,7 +8677,7 @@ async fn run_peer_loop(
                         let block = match LeasedBlockEvent::with_optional_lease(
                             BlockEvent {
                                 piece: canonical_extent.piece,
-                                offset: canonical_extent.offset,
+                                offset: canonical_extent.begin,
                                 data: canonical_data,
                             },
                             requested.memory_lease.take(),
@@ -9242,6 +9272,9 @@ struct OutstandingRequest {
     /// Download credit is reserved before the request goes on wire and is
     /// refunded if no matching payload arrives.
     rate_grant: Option<RateAdmissionGrant>,
+    /// Shared process/torrent admission remains held until this wire request
+    /// reaches a terminal response or cancellation path.
+    _source_permit: Option<SourceRequestPermit>,
 }
 
 impl OutstandingRequest {
@@ -9252,6 +9285,7 @@ impl OutstandingRequest {
             sent_at: Instant::now(),
             memory_lease,
             rate_grant: None,
+            _source_permit: None,
         }
     }
 
@@ -9260,6 +9294,7 @@ impl OutstandingRequest {
         wire_req: BlockRequest,
         memory_lease: Option<MemoryLease>,
         rate_grant: Option<RateAdmissionGrant>,
+        source_permit: Option<SourceRequestPermit>,
     ) -> Self {
         Self {
             req,
@@ -9267,6 +9302,7 @@ impl OutstandingRequest {
             sent_at: Instant::now(),
             memory_lease,
             rate_grant,
+            _source_permit: source_permit,
         }
     }
 }
@@ -9315,7 +9351,7 @@ async fn read_upload_block(
     let lease = reserve_peer_upload_bytes(&upload.resources, length)?;
     let regions = upload
         .piece_map
-        .validate_request(canonical.piece, canonical.offset, length)?;
+        .validate_request(canonical.piece, canonical.begin, length)?;
     let mut data = Vec::with_capacity(length as usize);
     for region in regions {
         if region.pad {
@@ -9396,7 +9432,7 @@ async fn send_upload_obligation_reject(
     peer_io
         .send(Message::Reject {
             piece: block.piece,
-            begin: block.offset,
+            begin: block.begin,
             length: block.length,
         })
         .await?;
@@ -9570,11 +9606,9 @@ fn take_matching_outstanding(
     begin: u32,
     length: u32,
 ) -> Option<OutstandingRequest> {
-    let Some(pos) = outstanding.iter().position(|out| {
+    let pos = outstanding.iter().position(|out| {
         out.wire_req.piece == piece && out.wire_req.begin == begin && out.wire_req.length == length
-    }) else {
-        return None;
-    };
+    })?;
     Some(outstanding.swap_remove(pos))
 }
 
@@ -10117,14 +10151,14 @@ mod tests {
             begin: 0,
             length: 16 * 1024,
         };
-        let memory_lease =
-            reserve_peer_event_bytes(&resources, u64::from(canonical.length)).unwrap();
+        let memory_lease = reserve_peer_event_bytes(&resources, canonical.length as usize).unwrap();
         peer_cmd_tx
             .send(PeerCommand::Request {
                 request: canonical,
                 download_generation: 0,
                 memory_lease,
                 rate_grant: None,
+                source_permit: None,
             })
             .await
             .unwrap();
@@ -10323,7 +10357,7 @@ mod tests {
         task.piece_assemblies.insert(0, assembly);
 
         assert_eq!(task.verify_completed_piece(0).await, VerifyResult::Valid);
-        task.hybrid_v2.as_mut().unwrap().files[0].pieces_root = Some([0; 32]);
+        Arc::make_mut(task.hybrid_v2.as_mut().unwrap()).files[0].pieces_root = Some([0; 32]);
         assert_eq!(
             task.verify_completed_piece(0).await,
             VerifyResult::Invalid,
@@ -12994,6 +13028,7 @@ mod tests {
                 sent_at: Instant::now() - Duration::from_secs(120),
                 memory_lease: None,
                 rate_grant: None,
+                _source_permit: None,
             },
             OutstandingRequest::new(
                 BlockRequest {
@@ -13047,6 +13082,7 @@ mod tests {
             request,
             None,
             Some(grant),
+            None,
         )];
         assert_eq!(
             take_timed_out_requests(&mut outstanding, Duration::ZERO),
@@ -15093,12 +15129,15 @@ mod tests {
         };
         let peer_state_bytes = PieceBitmap::memory_bytes_for_len(1)
             .saturating_mul(2)
-            .saturating_add(TransferLedger::<Arc<PieceMap>>::estimated_connection_state_bytes());
+            .saturating_add(
+                u64::try_from(TransferLedger::<Arc<PieceMap>>::estimated_connection_state_bytes())
+                    .unwrap_or(u64::MAX),
+            );
         let ledger_piece_bytes =
             TransferLedger::<Arc<PieceMap>>::estimated_piece_state_bytes_for_block_count(1);
         let mut resource_config = rt_metrics::ResourceGovernorConfig::default();
         resource_config.class_caps_bytes[MemoryClass::PeerBuffer as usize] = peer_state_bytes
-            .saturating_add(ledger_piece_bytes)
+            .saturating_add(u64::try_from(ledger_piece_bytes).unwrap_or(u64::MAX))
             .saturating_add(4);
         let resources = ResourceGovernor::new(resource_config);
         let db = Arc::new(Mutex::new(conn));
@@ -15478,6 +15517,7 @@ mod tests {
             storage: upload.storage.clone(),
             resources: upload.resources.clone(),
             upload_control: upload.upload_control.clone(),
+            upload_rate: upload.upload_rate.clone(),
         };
         let extent = BlockExtent::new(0, 0, 16 * 1024);
         let block = read_upload_block(&read_context, UploadRequest::from_wire(extent))
@@ -16050,6 +16090,7 @@ mod tests {
             shutdown_control.clone(),
         )
         .await;
+        let rate = upload.upload_rate.clone();
         let (peer_event_tx, _peer_event_rx) = mpsc::channel(2);
         let (peer_cmd_tx, peer_cmd_rx) = mpsc::channel(2);
         let loop_task = tokio::spawn(run_peer_loop(
@@ -16099,7 +16140,8 @@ mod tests {
             .await
             .is_err());
 
-        rate.set_limit(None);
+        rate.network_budget
+            .set_upload_torrent_limit(rate.peer.torrent, None);
         assert!(matches!(
             timeout(Duration::from_secs(2), remote.next())
                 .await
@@ -16687,6 +16729,7 @@ mod tests {
                 download_generation: 0,
                 memory_lease: request_lease,
                 rate_grant: Some(rate_grant),
+                source_permit: None,
             })
             .await
             .unwrap();
@@ -16779,6 +16822,7 @@ mod tests {
                 download_generation: 0,
                 memory_lease: request_lease,
                 rate_grant: Some(rate_grant),
+                source_permit: None,
             })
             .await
             .unwrap();

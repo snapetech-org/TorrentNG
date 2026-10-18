@@ -7,7 +7,7 @@
 //! actor separate prevents a v2 compatibility path from silently changing v1
 //! semantics.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -17,6 +17,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use futures::future::BoxFuture;
+#[cfg(test)]
+use futures::SinkExt;
 use futures::{FutureExt, StreamExt};
 use reqwest::header::RANGE;
 use rt_hash::{hash_pair, merkle_layers, BlockHash, V2_BLOCK_SIZE};
@@ -56,6 +58,7 @@ use crate::db_worker::DbExecutor;
 use crate::egress_policy::{OutboundEgressPolicy, OutboundTargetKind};
 use crate::network_budget::{
     GlobalNetworkBudget, RateAdmissionAttempt, RateAdmissionGrant, RateLimitCancellation,
+    SourceRequestPermit,
 };
 use crate::torrent_task::{
     outgoing_transport_policy_configured, outgoing_transport_policy_for_peer,
@@ -534,7 +537,7 @@ enum V2PeerEvent {
         bytes: u64,
     },
     Uploaded {
-        peer: SocketAddr,
+        _peer: SocketAddr,
         bytes: u64,
     },
     InterestChanged,
@@ -649,6 +652,10 @@ impl V2WebseedRuntime {
             admission_retry_at: None,
         }
     }
+}
+
+fn saturating_usize_to_u64(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
 }
 
 impl Drop for V2WebseedRuntime {
@@ -1046,14 +1053,14 @@ fn trim_v2_proof_store(
     if current_bytes.saturating_add(incoming_bytes) > V2_PROOF_STORE_BYTES
         || current_entries.saturating_add(1) > V2_PROOF_STORE_MAX_ENTRIES
     {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
+        return Err(std::io::Error::other(
             "unable to make room in the v2 proof store",
         ));
     }
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn read_v2_proof_store_hashes(
     path: &Path,
     info_hash_v2: &[u8; 32],
@@ -1127,8 +1134,15 @@ fn read_v2_proof_store_hashes(
     base_hashes
         .try_reserve_exact(count)
         .map_err(|error| std::io::Error::other(format!("v2 proof allocation failed: {error}")))?;
-    for bytes in raw_range.chunks_exact(32) {
-        base_hashes.push(bytes.try_into().expect("hash chunk has fixed width"));
+    let (hash_chunks, remainder) = raw_range.as_chunks::<32>();
+    if !remainder.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "v2 proof range is not aligned to hash width",
+        ));
+    }
+    for bytes in hash_chunks {
+        base_hashes.push(*bytes);
     }
 
     let tree_height = padded_leaves.trailing_zeros() as usize;
@@ -1141,8 +1155,10 @@ fn read_v2_proof_store_hashes(
     // root, even when the wire request asks for only part of that proof path.
     let mut subtree = base_hashes.clone();
     while subtree.len() > 1 {
-        let next = subtree
-            .chunks_exact(2)
+        let (pairs, remainder) = subtree.as_chunks::<2>();
+        debug_assert!(remainder.is_empty());
+        let next = pairs
+            .iter()
             .map(|pair| hash_pair(pair[0], pair[1]))
             .collect::<Vec<_>>();
         subtree = next;
@@ -1226,12 +1242,21 @@ fn read_v2_proof_store_node(
 
 impl V2PeerContext {
     fn next_piece_attempt_generation(&self) -> u64 {
-        self.piece_attempt_generation
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |generation| {
-                generation.checked_add(1)
-            })
-            .map(|generation| generation + 1)
-            .expect("pure-v2 peer piece-attempt generation exhausted")
+        let mut generation = self.piece_attempt_generation.load(Ordering::Relaxed);
+        loop {
+            let next = generation
+                .checked_add(1)
+                .expect("pure-v2 peer piece-attempt generation exhausted");
+            match self.piece_attempt_generation.compare_exchange_weak(
+                generation,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return next,
+                Err(observed) => generation = observed,
+            }
+        }
     }
 
     fn file_is_wanted(&self, file_index: u32) -> bool {
@@ -1309,22 +1334,21 @@ fn fail_v2_transfer_piece(context: &V2PeerContext, piece: u32) {
     };
     let actions = ledger.piece_failed_with_actions(piece).1;
     drop(ledger);
-    if !actions.is_empty() {
-        if context
+    if !actions.is_empty()
+        && context
             .events
             .try_send(V2PeerEvent::TransferActions { actions })
             .is_err()
-        {
-            debug!(
-                component = "transfer",
-                operation = "fail_v2_piece",
-                peer = %context.peer,
-                piece,
-                result = "deferred",
-                reason = "action_queue_full",
-                "v2 piece failure could not queue peer cancellation actions"
-            );
-        }
+    {
+        debug!(
+            component = "transfer",
+            operation = "fail_v2_piece",
+            peer = %context.peer,
+            piece,
+            result = "deferred",
+            reason = "action_queue_full",
+            "v2 piece failure could not queue peer cancellation actions"
+        );
     }
     release_v2_transfer_piece_memory(context, piece);
 }
@@ -1363,6 +1387,9 @@ struct V2OutstandingRequest {
     /// Shared global/torrent download credit is held from request enqueue
     /// until payload receipt or a terminal request outcome.
     rate_grant: Option<RateAdmissionGrant>,
+    /// Shared peer/webseed request capacity is held until the response body is
+    /// accepted or the request reaches a terminal lifecycle path.
+    source_permit: Option<SourceRequestPermit>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1421,6 +1448,11 @@ struct V2PendingCompletion {
 enum V2TransferCompletion {
     BlockStored(V2BlockCompletion),
     PieceVerified(V2PieceCompletion),
+}
+
+enum V2WebseedActivity {
+    Fetch(Result<anyhow::Result<V2WebseedFetchedBlock>, tokio::task::JoinError>),
+    Transfer(Option<V2TransferCompletion>),
 }
 
 type V2TransferTask = BoxFuture<'static, V2TransferCompletion>;
@@ -1956,7 +1988,8 @@ impl V2TorrentTask {
             }
             true
         } else {
-            self.apply_barrier_result(self.storage.sync_all_open_files().await)
+            let barrier_result = self.storage.sync_all_open_files().await;
+            self.apply_barrier_result(barrier_result)
         };
         if !barrier_ok {
             return false;
@@ -2074,7 +2107,7 @@ impl V2TorrentTask {
     /// Verify the named files (all non-pad files when `only` is `None`).
     /// Returns the indexes of files that did not verify and how many were
     /// checked.
-    async fn verify_v2_files(&self, only: Option<&[u32]>) -> (Vec<u32>, usize) {
+    async fn verify_v2_files(&mut self, only: Option<&[u32]>) -> (Vec<u32>, usize) {
         let files: Vec<V2FileHash> = self
             .meta
             .files
@@ -2101,7 +2134,7 @@ impl V2TorrentTask {
 
     /// Mark every piece of the given files as not held. Returns how many
     /// pieces were cleared.
-    async fn clear_v2_files_from_have(&self, files: &[u32]) -> usize {
+    async fn clear_v2_files_from_have(&mut self, files: &[u32]) -> usize {
         if files.is_empty() {
             return 0;
         }
@@ -2143,7 +2176,12 @@ impl V2TorrentTask {
     }
 
     /// Append a per-torrent event to the session event log. Best effort.
-    async fn append_v2_event(&self, kind: &'static str, message: &str, payload: serde_json::Value) {
+    async fn append_v2_event(
+        &mut self,
+        kind: &'static str,
+        message: &str,
+        payload: serde_json::Value,
+    ) {
         let event = rt_db::SessionEventRow {
             event_id: None,
             occurred_at: SystemTime::now()
@@ -2180,7 +2218,7 @@ impl V2TorrentTask {
     /// After a recheck: a torrent already reported complete that now lacks
     /// wanted pieces is an integrity regression. Records the event with the
     /// affected files; repair downloads the missing pieces in place.
-    async fn report_v2_recheck(&self, have: &V2Bitmap, trigger: &'static str) {
+    async fn report_v2_recheck(&mut self, have: &V2Bitmap, trigger: &'static str) {
         let completed = self
             .registry
             .read()
@@ -2357,29 +2395,30 @@ impl V2TorrentTask {
                         self.start_due_tracker_announces().await;
                     }
                 }
-                result = async {
-                    let fetch = self
-                        .webseed
-                        .as_mut()
-                        .and_then(|webseed| webseed.fetch.as_mut())
-                        .expect("guarded v2 webseed fetch");
-                    (&mut fetch.task).await
-                }, if self.webseed.as_ref().is_some_and(|webseed| webseed.fetch.is_some()) => {
-                    self.finish_v2_webseed_fetch(result).await;
-                    webseed_sleep.as_mut().reset(tokio::time::Instant::now());
-                }
-                completion = async {
-                    self.webseed
-                        .as_mut()
-                        .expect("guarded v2 webseed transfer jobs")
-                        .transfer_jobs
-                        .next()
-                        .await
-                }, if self.webseed.as_ref().is_some_and(|webseed| !webseed.transfer_jobs.is_empty()) => {
-                    if let Some(completion) = completion {
-                        self.handle_v2_webseed_transfer_completion(completion).await;
-                        webseed_sleep.as_mut().reset(tokio::time::Instant::now());
+                activity = async {
+                    let webseed = self.webseed.as_mut().expect("guarded v2 webseed runtime");
+                    tokio::select! {
+                        result = async {
+                            let fetch = webseed.fetch.as_mut().expect("guarded v2 webseed fetch");
+                            (&mut fetch.task).await
+                        }, if webseed.fetch.is_some() => V2WebseedActivity::Fetch(result),
+                        completion = webseed.transfer_jobs.next(), if !webseed.transfer_jobs.is_empty() => {
+                            V2WebseedActivity::Transfer(completion)
+                        }
                     }
+                }, if self.webseed.as_ref().is_some_and(|webseed| {
+                    webseed.fetch.is_some() || !webseed.transfer_jobs.is_empty()
+                }) => {
+                    match activity {
+                        V2WebseedActivity::Fetch(result) => {
+                            self.finish_v2_webseed_fetch(result).await;
+                        }
+                        V2WebseedActivity::Transfer(Some(completion)) => {
+                            self.handle_v2_webseed_transfer_completion(completion).await;
+                        }
+                        V2WebseedActivity::Transfer(None) => {}
+                    }
+                    webseed_sleep.as_mut().reset(tokio::time::Instant::now());
                 }
                 _ = &mut webseed_sleep, if !self.paused && !self.meta.webseeds.is_empty() && self.webseed.as_ref().is_none_or(|webseed| webseed.fetch.is_none()) => {
                     if self.start_v2_webseed_block().await {
@@ -2431,24 +2470,23 @@ impl V2TorrentTask {
             return false;
         }
         let state_bytes = V2Bitmap::memory_bytes_for_len(self.piece_map.piece_count as usize)
-            .saturating_add(std::mem::size_of::<V2PeerState>())
-            .saturating_add(TransferLedger::<Arc<V2PieceMap>>::estimated_connection_state_bytes())
-            .saturating_add(
+            .saturating_add(saturating_usize_to_u64(std::mem::size_of::<V2PeerState>()))
+            .saturating_add(saturating_usize_to_u64(
+                TransferLedger::<Arc<V2PieceMap>>::estimated_connection_state_bytes(),
+            ))
+            .saturating_add(saturating_usize_to_u64(
                 V2_TRANSFER_COMMAND_CAPACITY.saturating_mul(std::mem::size_of::<V2PeerCommand>()),
-            )
-            .saturating_add(
+            ))
+            .saturating_add(saturating_usize_to_u64(
                 self.meta
                     .webseeds
                     .len()
                     .saturating_mul(std::mem::size_of::<V2WebseedSeedState>()),
-            )
-            .saturating_add(
+            ))
+            .saturating_add(saturating_usize_to_u64(
                 V2_MAX_TRACKED_PIECES_PER_PEER
                     .saturating_mul(std::mem::size_of::<(u32, usize)>().saturating_mul(2)),
-            );
-        let Ok(state_bytes) = u64::try_from(state_bytes) else {
-            return false;
-        };
+            ));
         let Some(memory_lease) = self
             .resources
             .try_acquire(MemoryClass::PeerBuffer, state_bytes)
@@ -2504,8 +2542,7 @@ impl V2TorrentTask {
     fn advance_v2_webseed_cursor(&mut self, piece: u32) {
         if self.piece_map.piece_count > 0 {
             if let Some(webseed) = self.webseed.as_mut() {
-                webseed.next_piece_cursor =
-                    ((piece as usize + 1) % self.piece_map.piece_count) as u32;
+                webseed.next_piece_cursor = piece.wrapping_add(1) % self.piece_map.piece_count;
             }
         }
     }
@@ -2687,6 +2724,18 @@ impl V2TorrentTask {
                 return false;
             }
         };
+        let Some(source_permit) = context
+            .network_budget
+            .try_acquire_source_request(context.rate_peer)
+        else {
+            if let Some(webseed) = self.webseed.as_mut() {
+                webseed.admission_retry_at = Some(Instant::now() + Duration::from_millis(50));
+            }
+            drop(rate_grant);
+            drop(memory_lease);
+            release_v2_transfer_piece_memory_if_idle(&context, block.piece);
+            return false;
+        };
         let reserve = context
             .transfer_ledger
             .lock()
@@ -2766,6 +2815,7 @@ impl V2TorrentTask {
                 sent_at,
                 _memory_lease: Some(memory_lease),
                 rate_grant: None,
+                source_permit: Some(source_permit),
             },
         );
         webseed.admission_retry_at = None;
@@ -2965,7 +3015,7 @@ impl V2TorrentTask {
         self.webseed = Some(webseed);
     }
 
-    async fn discard_v2_webseed_piece(&self, webseed: &mut V2WebseedRuntime, piece: u32) {
+    async fn discard_v2_webseed_piece(&mut self, webseed: &mut V2WebseedRuntime, piece: u32) {
         webseed.piece_seed_indexes.remove(&piece);
         let remove_assembly = if let Some(assembly) = webseed.assemblies.get_mut(&piece) {
             assembly.failed = true;
@@ -3713,7 +3763,7 @@ impl V2TorrentTask {
         self.tracker_workers.start(specs, context);
     }
 
-    async fn tracker_announce_context(&self) -> TrackerAnnounceContext {
+    async fn tracker_announce_context(&mut self) -> TrackerAnnounceContext {
         let (uploaded, downloaded) = self
             .registry
             .read()
@@ -3829,7 +3879,7 @@ impl V2TorrentTask {
     async fn disconnect_private_tracker_peers(&mut self) {
         self.known_tracker_peers.clear();
         let peers = std::mem::take(&mut self.peers);
-        let mut tasks = futures::stream::FuturesUnordered::new();
+        let tasks = futures::stream::FuturesUnordered::new();
         for (_, peer) in peers {
             peer.peer_control.cancel();
             tasks.push(peer.task);
@@ -3955,7 +4005,7 @@ impl V2TorrentTask {
         }
     }
 
-    async fn persist_tracker_state(&self) -> Result<(), String> {
+    async fn persist_tracker_state(&mut self) -> Result<(), String> {
         let (uploaded, downloaded) = {
             let registry = self.registry.read().await;
             registry
@@ -4090,7 +4140,7 @@ impl V2TorrentTask {
         }
     }
 
-    async fn recheck_files(&self) -> V2Bitmap {
+    async fn recheck_files(&mut self) -> V2Bitmap {
         let files = self
             .meta
             .files
@@ -4137,7 +4187,7 @@ impl V2TorrentTask {
         have
     }
 
-    async fn is_complete(&self) -> bool {
+    async fn is_complete(&mut self) -> bool {
         let have = self.local_have.read().await;
         self.bytes_left(have.as_ref()) == 0
     }
@@ -4145,7 +4195,7 @@ impl V2TorrentTask {
     fn bytes_left(&self, have: &V2Bitmap) -> u64 {
         (0..self.piece_map.piece_count)
             .filter(|piece| self.piece_is_wanted(*piece) && !have.get(*piece as usize))
-            .filter_map(|piece| self.piece_map.piece_len(piece).ok())
+            .filter_map(|piece| self.piece_map.piece_len(piece))
             .map(u64::from)
             .sum()
     }
@@ -4238,7 +4288,7 @@ impl V2TorrentTask {
                     }
                 }
             }
-            V2PeerEvent::Uploaded { peer: _, bytes } => {
+            V2PeerEvent::Uploaded { bytes, .. } => {
                 self.pending_uploaded_bytes = self.pending_uploaded_bytes.saturating_add(bytes);
             }
             V2PeerEvent::Disconnected {
@@ -4360,8 +4410,8 @@ impl V2TorrentTask {
         };
         let snapshots = self
             .peers
-            .iter()
-            .filter_map(|(_, handle)| {
+            .values()
+            .filter_map(|handle| {
                 let state = handle.state.lock().ok()?;
                 Some(PeerSnapshot {
                     id: handle.choker_id,
@@ -4379,8 +4429,8 @@ impl V2TorrentTask {
         let decisions = self.choker.run_with_mode(&snapshots, mode);
         let selected = self
             .peers
-            .iter()
-            .filter_map(|(_, handle)| {
+            .values()
+            .filter_map(|handle| {
                 (decisions.get(&handle.choker_id) == Some(&ChokeDecision::Unchoke))
                     .then_some(handle.choker_id)
             })
@@ -4486,13 +4536,13 @@ impl V2TorrentTask {
             // announced_have, so charge both packed maps before spawning it.
             let bitmap_bytes = V2Bitmap::memory_bytes_for_len(self.piece_map.piece_count as usize)
                 .saturating_mul(2)
-                .saturating_add(
+                .saturating_add(saturating_usize_to_u64(
                     TransferLedger::<Arc<V2PieceMap>>::estimated_connection_state_bytes(),
-                )
-                .saturating_add(
+                ))
+                .saturating_add(saturating_usize_to_u64(
                     V2_TRANSFER_COMMAND_CAPACITY
                         .saturating_mul(std::mem::size_of::<V2PeerCommand>()),
-                );
+                ));
             let Some(bitmap_memory_lease) = self
                 .resources
                 .try_acquire(MemoryClass::PeerBuffer, bitmap_bytes)
@@ -4647,10 +4697,12 @@ impl V2TorrentTask {
         // announced_have, so charge both packed maps before spawning it.
         let bitmap_bytes = V2Bitmap::memory_bytes_for_len(self.piece_map.piece_count as usize)
             .saturating_mul(2)
-            .saturating_add(TransferLedger::<Arc<V2PieceMap>>::estimated_connection_state_bytes())
-            .saturating_add(
+            .saturating_add(saturating_usize_to_u64(
+                TransferLedger::<Arc<V2PieceMap>>::estimated_connection_state_bytes(),
+            ))
+            .saturating_add(saturating_usize_to_u64(
                 V2_TRANSFER_COMMAND_CAPACITY.saturating_mul(std::mem::size_of::<V2PeerCommand>()),
-            );
+            ));
         let Some(bitmap_memory_lease) = self
             .resources
             .try_acquire(MemoryClass::PeerBuffer, bitmap_bytes)
@@ -4735,10 +4787,12 @@ impl V2TorrentTask {
         // announced_have, so charge both packed maps before spawning it.
         let bitmap_bytes = V2Bitmap::memory_bytes_for_len(self.piece_map.piece_count as usize)
             .saturating_mul(2)
-            .saturating_add(TransferLedger::<Arc<V2PieceMap>>::estimated_connection_state_bytes())
-            .saturating_add(
+            .saturating_add(saturating_usize_to_u64(
+                TransferLedger::<Arc<V2PieceMap>>::estimated_connection_state_bytes(),
+            ))
+            .saturating_add(saturating_usize_to_u64(
                 V2_TRANSFER_COMMAND_CAPACITY.saturating_mul(std::mem::size_of::<V2PeerCommand>()),
-            );
+            ));
         let Some(bitmap_memory_lease) = self
             .resources
             .try_acquire(MemoryClass::PeerBuffer, bitmap_bytes)
@@ -4807,7 +4861,7 @@ impl V2TorrentTask {
         };
         let transfer_conn = handle.transfer_conn;
         handle.peer_control.cancel();
-        let mut tasks = futures::stream::FuturesUnordered::new();
+        let tasks = futures::stream::FuturesUnordered::new();
         tasks.push(handle.task);
         self.join_v2_peer_tasks(tasks, "remove_peer").await;
         self.network_budget
@@ -4822,7 +4876,7 @@ impl V2TorrentTask {
 
     async fn shutdown_peers(&mut self) {
         let peers = std::mem::take(&mut self.peers);
-        let mut tasks = futures::stream::FuturesUnordered::new();
+        let tasks = futures::stream::FuturesUnordered::new();
         let mut transfer_connections = Vec::with_capacity(peers.len());
         for (_, handle) in peers {
             handle.peer_control.cancel();
@@ -5300,7 +5354,7 @@ fn set_v2_upload_unchoked(state: &Arc<Mutex<V2PeerState>>, unchoked: bool) -> Op
 
 fn v2_upload_slot_selected(context: &V2PeerContext) -> bool {
     let selected = context.upload_unchoked.borrow();
-    v2_slot_selected(&**selected, context.choker_id)
+    v2_slot_selected(&selected, context.choker_id)
 }
 
 fn v2_slot_selected(selected: &HashSet<PeerId>, peer: PeerId) -> bool {
@@ -5317,8 +5371,8 @@ async fn run_v2_peer_protocol(
 ) -> anyhow::Result<()> {
     let _upload_control_guard = V2UploadControlGuard(context.upload_control.clone());
     let shutdown_generation = context.peer_generation;
-    if remote_supports_extension {
-        if !send_v2_peer_message(
+    if remote_supports_extension
+        && !send_v2_peer_message(
             &context,
             &mut framed,
             Message::Extended {
@@ -5329,9 +5383,8 @@ async fn run_v2_peer_protocol(
             },
         )
         .await?
-        {
-            return Ok(());
-        }
+    {
+        return Ok(());
     }
     let mut have_updates = context.have_updates.subscribe();
     let mut upload_unchoked = context.upload_unchoked.clone();
@@ -5480,7 +5533,7 @@ async fn run_v2_peer_protocol(
                 context.upload_control.cancel();
                 let selected = {
                     let current = upload_unchoked.borrow();
-                    v2_slot_selected(&**current, context.choker_id)
+                    v2_slot_selected(&current, context.choker_id)
                 };
                 if let Some(message) = set_v2_upload_unchoked(&state, selected) {
                     if !send_v2_peer_message(&context, &mut framed, message).await? {
@@ -5830,11 +5883,12 @@ async fn run_v2_peer_protocol(
                     Message::Hashes { .. } | Message::HashReject { .. } => {}
                     Message::Extended { ext_id: EXT_HANDSHAKE_ID, payload } => {
                         if let Ok(handshake) = ExtensionHandshake::parse(&payload) {
-                            let mut peer = state
-                                .lock()
-                                .map_err(|_| anyhow::anyhow!("v2 peer state lock poisoned"))?;
-                            let ledger_reqq = peer.update_remote_reqq(handshake.reqq);
-                            drop(peer);
+                            let ledger_reqq = {
+                                let mut peer = state
+                                    .lock()
+                                    .map_err(|_| anyhow::anyhow!("v2 peer state lock poisoned"))?;
+                                peer.update_remote_reqq(handshake.reqq)
+                            };
                             context
                                 .transfer_ledger
                                 .lock()
@@ -5886,13 +5940,11 @@ async fn run_v2_peer_protocol(
                 match completion {
                     V2TransferCompletion::BlockStored(completion) => {
                         let piece = completion.piece;
-                        if let Err(error) = apply_v2_block_completion(
+                        apply_v2_block_completion(
                             completion,
                             &mut assemblies,
                             &mut pending_block_completions,
-                        ) {
-                            return Err(error);
-                        }
+                        )?;
                         fail_v2_discarded_piece_if_idle(
                             &context,
                             piece,
@@ -5996,7 +6048,7 @@ async fn run_v2_peer_protocol(
                         let _ = context
                             .events
                             .send(V2PeerEvent::Uploaded {
-                                peer: context.peer,
+                                _peer: context.peer,
                                 bytes,
                             })
                             .await;
@@ -6230,6 +6282,7 @@ async fn update_v2_interest(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn next_v2_request_candidate(
     context: &V2PeerContext,
     piece: u32,
@@ -6298,13 +6351,13 @@ fn next_v2_request_candidate(
             context
                 .piece_map
                 .piece_len(piece)
-                .ok()
                 .and_then(|length| length.checked_sub(begin))
                 .ok_or(rt_piece_map::PieceMapError::ZeroRequestLength)
         })?;
     Ok(Some((piece, begin, length, is_new_assembly)))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn useful_v2_missing_blocks(
     context: &V2PeerContext,
     local_have: &V2Bitmap,
@@ -6359,6 +6412,7 @@ fn useful_v2_missing_blocks(
     useful
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn fill_v2_requests(
     context: &V2PeerContext,
     framed: &mut PeerIo,
@@ -6415,9 +6469,11 @@ async fn fill_v2_requests(
             / device_queue_capacity as f64
     };
     let global_credit_blocks = rate_credit_blocks(
-        context
-            .network_budget
-            .download_available_credit_bytes_for(context.rate_peer),
+        Some(
+            context
+                .network_budget
+                .download_available_credit_bytes_for(context.rate_peer),
+        ),
         rt_peer_wire::message::MAX_BLOCK_SIZE,
     );
     let useful_missing = useful_v2_missing_blocks(
@@ -6445,6 +6501,13 @@ async fn fill_v2_requests(
             })
         })
         .unwrap_or(0);
+    let source_admission = if outstanding.len() < request_window {
+        context
+            .network_budget
+            .source_admission_for_torrent(context.rate_peer.torrent)
+    } else {
+        None
+    };
     while outstanding.len() < request_window {
         let foreign_activity = context
             .transfer_ledger
@@ -6612,6 +6675,31 @@ async fn fill_v2_requests(
                 return Err(error);
             }
         };
+        let Some(source_permit) = source_admission
+            .as_ref()
+            .and_then(|admission| admission.try_acquire())
+        else {
+            let piece_released = {
+                let mut ledger = context
+                    .transfer_ledger
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("v2 transfer ledger lock poisoned"))?;
+                let _ = ledger.on_reject(context.transfer_conn, block);
+                ledger.piece_progress(piece).is_none()
+            };
+            if is_new_assembly {
+                assemblies.remove(&piece);
+            }
+            if piece_released {
+                release_v2_transfer_piece_memory(context, piece);
+            }
+            drop(memory_lease);
+            drop(rate_grant);
+            if let Ok(mut peer) = state.lock() {
+                peer.download_rate_retry_at = Some(Instant::now() + Duration::from_millis(50));
+            }
+            break;
+        };
         if !send_v2_peer_message(
             context,
             framed,
@@ -6695,6 +6783,7 @@ async fn fill_v2_requests(
                 sent_at,
                 _memory_lease: Some(memory_lease),
                 rate_grant: Some(rate_grant),
+                source_permit: Some(source_permit),
             },
         );
         if let Some(assembly) = assemblies.get_mut(&piece) {
@@ -6881,28 +6970,28 @@ async fn apply_v2_piece_completion(
     pending_piece_completions.remove(&completion.piece);
     match completion.result {
         Ok(()) => {
-            let mut ledger = context
-                .transfer_ledger
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let actions = ledger.mark_have(completion.piece);
-            drop(ledger);
-            if !actions.is_empty() {
-                if context
+            let actions = {
+                let mut ledger = context
+                    .transfer_ledger
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                ledger.mark_have(completion.piece)
+            };
+            if !actions.is_empty()
+                && context
                     .events
                     .try_send(V2PeerEvent::TransferActions { actions })
                     .is_err()
-                {
-                    debug!(
-                        component = "transfer",
-                        operation = "complete_v2_piece",
-                        peer = %context.peer,
-                        piece = completion.piece,
-                        result = "deferred",
-                        reason = "action_queue_full",
-                        "v2 piece completion could not queue peer cancellation actions"
-                    );
-                }
+            {
+                debug!(
+                    component = "transfer",
+                    operation = "complete_v2_piece",
+                    peer = %context.peer,
+                    piece = completion.piece,
+                    result = "deferred",
+                    reason = "action_queue_full",
+                    "v2 piece completion could not queue peer cancellation actions"
+                );
             }
             release_v2_transfer_piece_memory(context, completion.piece);
             let newly_available = {
@@ -7219,13 +7308,16 @@ async fn handle_v2_piece(
         sent_at,
         _memory_lease: request_memory_lease,
         rate_grant,
+        source_permit,
     } = request;
     if let Some(grant) = rate_grant {
         grant.settle(data.len() as u64);
     }
     if expected != data.len() as u32 {
+        drop(source_permit);
         anyhow::bail!("v2 piece response length does not match request");
     }
+    drop(source_permit);
     // Keep the wire request and the complete verification unit typed
     // separately. `block_region` maps only the received range to storage;
     // assembly, read-back, hashing, and progress use the full piece extent.
@@ -7814,6 +7906,7 @@ fn v2_hash_response_memory_bytes() -> u64 {
         .saturating_mul(4)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn v2_hashes_for_request(
     context: &V2PeerContext,
     file: &TorrentFileV2,
@@ -8300,9 +8393,9 @@ mod tests {
     #[tokio::test]
     async fn v2_webseed_request_timeout_aborts_fetch_and_releases_ledger_owner() {
         let content = vec![0x31; rt_peer_wire::message::MAX_BLOCK_SIZE as usize];
+        let payload_len = content.len() as u64;
         let raw = v2_raw_with_content(&content);
-        let (mut task, _fixture) =
-            v2_task_not_started(quiet_v2_runtime(), &raw, content.len() as u64).await;
+        let (mut task, _fixture) = v2_task_not_started(quiet_v2_runtime(), &raw, payload_len).await;
         Arc::make_mut(&mut task.meta)
             .webseeds
             .push("https://seed.example/payload.bin".to_owned());
@@ -8331,6 +8424,7 @@ mod tests {
                 sent_at: 0,
                 _memory_lease: None,
                 rate_grant: None,
+                source_permit: None,
             },
         );
         webseed.fetch = Some(V2WebseedFetchInFlight {
@@ -8367,6 +8461,7 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         let content = vec![0x31; rt_peer_wire::message::MAX_BLOCK_SIZE as usize];
+        let payload_len = content.len() as u64;
         let raw = v2_raw_with_content(&content);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let webseed_addr = listener.local_addr().unwrap();
@@ -8400,7 +8495,7 @@ mod tests {
         });
 
         let (mut task, cmd_tx, _fixture) =
-            v2_task_not_started_with_commands(quiet_v2_runtime(), &raw, content.len() as u64).await;
+            v2_task_not_started_with_commands(quiet_v2_runtime(), &raw, payload_len).await;
         Arc::make_mut(&mut task.meta)
             .webseeds
             .push(format!("http://{webseed_addr}/"));
@@ -9262,6 +9357,7 @@ mod tests {
                 sent_at: 0,
                 _memory_lease: None,
                 rate_grant: None,
+                source_permit: None,
             },
         );
         assembly.advance_next_unrequested(3, &outstanding);
@@ -9275,6 +9371,7 @@ mod tests {
                 sent_at: 0,
                 _memory_lease: None,
                 rate_grant: None,
+                source_permit: None,
             },
         );
         assembly.advance_next_unrequested(3, &outstanding);
@@ -9313,6 +9410,7 @@ mod tests {
                 sent_at: 0,
                 _memory_lease: None,
                 rate_grant: None,
+                source_permit: None,
             },
         )]);
 
@@ -9410,6 +9508,7 @@ mod tests {
                 sent_at: 0,
                 _memory_lease: Some(resources.try_acquire(MemoryClass::PeerBuffer, 4).unwrap()),
                 rate_grant: None,
+                source_permit: None,
             },
         )]);
         let mut assemblies = HashMap::new();
@@ -9458,6 +9557,7 @@ mod tests {
                         .unwrap(),
                 ),
                 rate_grant: None,
+                source_permit: None,
             },
         )]);
 
@@ -9517,6 +9617,7 @@ mod tests {
                 sent_at: 0,
                 _memory_lease: None,
                 rate_grant: Some(grant),
+                source_permit: None,
             },
         )]);
         assert!(release_v2_rejected_request(&mut outstanding, 3, 0, 4));
@@ -10070,8 +10171,11 @@ mod tests {
         .await;
         task.handle_peer_event(V2PeerEvent::Downloaded { peer, bytes: 2_048 })
             .await;
-        task.handle_peer_event(V2PeerEvent::Uploaded { peer, bytes: 1_024 })
-            .await;
+        task.handle_peer_event(V2PeerEvent::Uploaded {
+            _peer: peer,
+            bytes: 1_024,
+        })
+        .await;
 
         let entry = fx.registry.read().await.get(&fx.info_hash).unwrap();
         assert_eq!(entry.stats.downloaded, 0);
@@ -10574,7 +10678,7 @@ mod tests {
     #[tokio::test]
     async fn v2_recheck_of_a_completed_torrent_reports_an_integrity_regression() {
         let runtime = quiet_v2_runtime();
-        let (task, fx) = v2_task(Arc::clone(&runtime)).await;
+        let (mut task, fx) = v2_task(Arc::clone(&runtime)).await;
         {
             let mut registry = fx.registry.write().await;
             let mut entry = registry.get_mut(&fx.info_hash).unwrap();
@@ -10590,7 +10694,7 @@ mod tests {
 
         // A torrent never reported complete is not a regression.
         let runtime = quiet_v2_runtime();
-        let (fresh, _fx) = v2_task(Arc::clone(&runtime)).await;
+        let (mut fresh, _fx) = v2_task(Arc::clone(&runtime)).await;
         fresh.report_v2_recheck(&have, "startup").await;
         assert_eq!(runtime.counters().integrity_regressions, 0);
     }
@@ -10700,6 +10804,7 @@ mod tests {
                         sent_at: 0,
                         _memory_lease: None,
                         rate_grant: None,
+                        source_permit: None,
                     },
                 );
             }
@@ -10793,7 +10898,7 @@ mod tests {
 
     #[tokio::test]
     async fn v2_piece_is_not_available_until_completion_job_finishes() {
-        let case = MultiBlock::new(MB_PIECE, false).await;
+        let mut case = MultiBlock::new(MB_PIECE, false).await;
         let context = case
             .task
             .peer_context("127.0.0.1:6881".parse().unwrap(), PeerId::new());
@@ -10816,6 +10921,7 @@ mod tests {
                     sent_at: 0,
                     _memory_lease: None,
                     rate_grant: None,
+                    source_permit: None,
                 },
             );
             handle_v2_piece(

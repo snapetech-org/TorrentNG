@@ -118,7 +118,9 @@ fn update_one_torrent(runtime: &Runtime, state: &AppState, torrent_count: usize,
         let mut entry = registry
             .get_mut(&info_hash)
             .expect("changed fixture torrent exists");
-        entry.name.push(if sample % 2 == 0 { 'x' } else { 'y' });
+        entry
+            .name
+            .push(if sample.is_multiple_of(2) { 'x' } else { 'y' });
     });
 }
 
