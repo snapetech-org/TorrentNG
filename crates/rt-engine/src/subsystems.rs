@@ -41,8 +41,62 @@ pub(super) struct EngineRuntimeState {
 
 /// Queue of info hashes whose actor future has ended, including by panic.
 pub(super) struct TaskExits {
-    tx: mpsc::UnboundedSender<String>,
-    rx: mpsc::UnboundedReceiver<String>,
+    tx: mpsc::UnboundedSender<TaskExitId>,
+    rx: mpsc::UnboundedReceiver<TaskExitId>,
+}
+
+/// Completion identity kept inline while an actor runs and while its exit is
+/// queued. Runtime APIs still use hex strings, but task guards need not retain
+/// another heap-backed copy of a canonical v1 or v2 hash.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum TaskExitId {
+    Compact { bytes: [u8; 32], byte_len: u8 },
+    Text(String),
+}
+
+impl TaskExitId {
+    fn from_info_hash(info_hash: &str) -> Self {
+        let byte_len = match info_hash.len() {
+            40 => 20,
+            64 => 32,
+            _ => return Self::Text(info_hash.to_owned()),
+        };
+        let mut bytes = [0; 32];
+        for (index, pair) in info_hash.as_bytes().chunks_exact(2).enumerate() {
+            let Some(high) = decode_hex_nibble(pair[0]) else {
+                return Self::Text(info_hash.to_owned());
+            };
+            let Some(low) = decode_hex_nibble(pair[1]) else {
+                return Self::Text(info_hash.to_owned());
+            };
+            bytes[index] = (high << 4) | low;
+        }
+        Self::Compact { bytes, byte_len }
+    }
+
+    pub(super) fn into_info_hash(self) -> String {
+        match self {
+            Self::Text(info_hash) => info_hash,
+            Self::Compact { bytes, byte_len } => {
+                let digits = b"0123456789abcdef";
+                let mut hex = String::with_capacity(usize::from(byte_len) * 2);
+                for byte in bytes.iter().take(usize::from(byte_len)) {
+                    let byte = *byte;
+                    hex.push(char::from(digits[usize::from(byte >> 4)]));
+                    hex.push(char::from(digits[usize::from(byte & 0x0f)]));
+                }
+                hex
+            }
+        }
+    }
+}
+
+fn decode_hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        _ => None,
+    }
 }
 
 impl Default for TaskExits {
@@ -57,13 +111,13 @@ impl TaskExits {
     /// unwinding panic) queues the hash.
     pub(super) fn guard(&self, info_hash: &str) -> TaskExitGuard {
         TaskExitGuard {
-            info_hash: info_hash.to_owned(),
+            info_hash: TaskExitId::from_info_hash(info_hash),
             tx: self.tx.clone(),
         }
     }
 
     /// Up to `limit` queued exits; O(exits), independent of active tasks.
-    pub(super) fn drain(&mut self, limit: usize) -> Vec<String> {
+    pub(super) fn drain(&mut self, limit: usize) -> Vec<TaskExitId> {
         let mut exits = Vec::new();
         while exits.len() < limit {
             match self.rx.try_recv() {
@@ -76,13 +130,14 @@ impl TaskExits {
 }
 
 pub(super) struct TaskExitGuard {
-    info_hash: String,
-    tx: mpsc::UnboundedSender<String>,
+    info_hash: TaskExitId,
+    tx: mpsc::UnboundedSender<TaskExitId>,
 }
 
 impl Drop for TaskExitGuard {
     fn drop(&mut self) {
-        let _ = self.tx.send(std::mem::take(&mut self.info_hash));
+        let info_hash = std::mem::replace(&mut self.info_hash, TaskExitId::Text(String::new()));
+        let _ = self.tx.send(info_hash);
     }
 }
 
@@ -170,7 +225,11 @@ mod task_exit_tests {
         let _ = ok.await;
         assert!(boom.await.is_err());
 
-        let mut reported = exits.drain(10);
+        let mut reported = exits
+            .drain(10)
+            .into_iter()
+            .map(TaskExitId::into_info_hash)
+            .collect::<Vec<_>>();
         reported.sort();
         assert_eq!(reported, ["boom", "ok"]);
         assert!(exits.drain(10).is_empty(), "each exit is reported once");
@@ -184,5 +243,19 @@ mod task_exit_tests {
         }
         assert_eq!(exits.drain(2).len(), 2);
         assert_eq!(exits.drain(10).len(), 3);
+    }
+
+    #[test]
+    fn compact_exit_ids_roundtrip_v1_v2_and_keep_non_hash_test_keys() {
+        for hash in ["01".repeat(20), "ab".repeat(32)] {
+            let id = TaskExitId::from_info_hash(&hash);
+            assert!(matches!(&id, TaskExitId::Compact { .. }));
+            assert_eq!(id.into_info_hash(), hash);
+        }
+
+        let text = "test-hash";
+        let id = TaskExitId::from_info_hash(text);
+        assert!(matches!(&id, TaskExitId::Text(_)));
+        assert_eq!(id.into_info_hash(), text);
     }
 }

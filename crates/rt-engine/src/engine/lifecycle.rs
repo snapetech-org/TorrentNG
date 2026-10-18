@@ -1565,6 +1565,7 @@ impl Engine {
             .task_exits
             .drain(MAX_TORRENT_REAPS_PER_TICK)
             .into_iter()
+            .map(|info_hash| info_hash.into_info_hash())
             .filter(|info_hash| {
                 self.runtime
                     .torrent_tasks
