@@ -2016,9 +2016,28 @@ struct DeviceWaiter {
     sender: oneshot::Sender<DeviceOperationPermit>,
 }
 
+struct DeviceMountWaiters {
+    by_class: [VecDeque<DeviceWaiter>; 6],
+}
+
+impl DeviceMountWaiters {
+    fn new() -> Self {
+        Self {
+            by_class: std::array::from_fn(|_| VecDeque::new()),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.by_class.iter().all(|queue| queue.is_empty())
+    }
+}
+
 struct DeviceQueueState {
     active: usize,
-    pending: [VecDeque<DeviceWaiter>; 6],
+    /// Pending operations are partitioned by storage-root owner, then class.
+    pending_by_mount: HashMap<Arc<str>, DeviceMountWaiters>,
+    /// Each class gives one turn at a time to every storage-root owner.
+    mount_turns: [VecDeque<Arc<str>>; 6],
     next_waiter_id: u64,
     next_operation_id: u64,
     dispatch_cursor: usize,
@@ -2082,7 +2101,8 @@ impl DeviceQueue {
             active_limit: active_limit.max(1).min(capacity),
             state: Mutex::new(DeviceQueueState {
                 active: 0,
-                pending: std::array::from_fn(|_| VecDeque::new()),
+                pending_by_mount: HashMap::new(),
+                mount_turns: std::array::from_fn(|_| VecDeque::new()),
                 next_waiter_id: 1,
                 next_operation_id: 1,
                 dispatch_cursor: 0,
@@ -2123,7 +2143,12 @@ impl DeviceQueue {
                 }
 
                 let id = take_device_sequence(&mut state.next_waiter_id);
-                state.pending[device_class_index(class)].push_back(DeviceWaiter { id, sender });
+                enqueue_device_waiter(
+                    &mut state,
+                    class,
+                    Arc::from(mount.as_str()),
+                    DeviceWaiter { id, sender },
+                );
                 (Some(id), None, grant)
             }
         };
@@ -2153,12 +2178,15 @@ impl DeviceQueue {
     fn cancel_waiter(self: &Arc<Self>, id: u64) {
         let grant = {
             let mut state = lock_recover(&self.state);
-            for queue in &mut state.pending {
-                if let Some(position) = queue.iter().position(|waiter| waiter.id == id) {
-                    queue.remove(position);
-                    break;
+            'mounts: for mount_waiters in state.pending_by_mount.values_mut() {
+                for queue in &mut mount_waiters.by_class {
+                    if let Some(position) = queue.iter().position(|waiter| waiter.id == id) {
+                        queue.remove(position);
+                        break 'mounts;
+                    }
                 }
             }
+            prune_closed_device_waiters(&mut state);
             collect_device_grant(self, &mut state)
         };
         dispatch_device_grant(grant);
@@ -2228,9 +2256,10 @@ fn collect_device_grant(
     state: &mut DeviceQueueState,
 ) -> Option<DeviceGrant> {
     while state.active < queue.active_limit {
-        let Some((class_index, waiter)) = pop_next_device_waiter(state) else {
+        let Some((slot, waiter)) = pop_next_device_waiter(state) else {
             return None;
         };
+        state.dispatch_cursor = next_device_cursor(slot);
         if waiter.sender.is_closed() {
             continue;
         }
@@ -2244,8 +2273,47 @@ fn collect_device_grant(
                 armed: true,
             },
         );
-        state.dispatch_cursor = next_device_cursor(class_index);
         return Some(grant);
+    }
+    None
+}
+
+fn enqueue_device_waiter(
+    state: &mut DeviceQueueState,
+    class: IoClass,
+    mount: Arc<str>,
+    waiter: DeviceWaiter,
+) {
+    let class_index = device_class_index(class);
+    let mount_waiters = state
+        .pending_by_mount
+        .entry(mount.clone())
+        .or_insert_with(DeviceMountWaiters::new);
+    let queue = &mut mount_waiters.by_class[class_index];
+    let add_mount_turn = queue.is_empty();
+    queue.push_back(waiter);
+    if add_mount_turn {
+        state.mount_turns[class_index].push_back(mount);
+    }
+}
+
+fn pop_mount_waiter(state: &mut DeviceQueueState, class_index: usize) -> Option<DeviceWaiter> {
+    while let Some(mount) = state.mount_turns[class_index].pop_front() {
+        let Some(mount_waiters) = state.pending_by_mount.get_mut(&mount) else {
+            continue;
+        };
+        let Some(waiter) = mount_waiters.by_class[class_index].pop_front() else {
+            continue;
+        };
+        let mount_has_more = !mount_waiters.by_class[class_index].is_empty();
+        let mount_is_empty = mount_waiters.is_empty();
+        if mount_has_more {
+            state.mount_turns[class_index].push_back(Arc::clone(&mount));
+        }
+        if mount_is_empty {
+            state.pending_by_mount.remove(&mount);
+        }
+        return Some(waiter);
     }
     None
 }
@@ -2254,7 +2322,7 @@ fn pop_next_device_waiter(state: &mut DeviceQueueState) -> Option<(usize, Device
     for offset in 0..DEVICE_DISPATCH_SLOT_COUNT {
         let slot = (state.dispatch_cursor + offset) % DEVICE_DISPATCH_SLOT_COUNT;
         let class_index = device_class_index(device_dispatch_class(slot));
-        if let Some(waiter) = state.pending[class_index].pop_front() {
+        if let Some(waiter) = pop_mount_waiter(state, class_index) {
             return Some((slot, waiter));
         }
     }
@@ -2278,13 +2346,32 @@ fn device_dispatch_class(slot: usize) -> IoClass {
 }
 
 fn prune_closed_device_waiters(state: &mut DeviceQueueState) {
-    for queue in &mut state.pending {
-        queue.retain(|waiter| !waiter.sender.is_closed());
+    for mount_waiters in state.pending_by_mount.values_mut() {
+        for queue in &mut mount_waiters.by_class {
+            queue.retain(|waiter| !waiter.sender.is_closed());
+        }
+    }
+
+    state
+        .pending_by_mount
+        .retain(|_, mount_waiters| !mount_waiters.is_empty());
+    let pending_by_mount = &state.pending_by_mount;
+    for class_index in 0..state.mount_turns.len() {
+        state.mount_turns[class_index].retain(|mount| {
+            pending_by_mount
+                .get(mount)
+                .is_some_and(|waiters| !waiters.by_class[class_index].is_empty())
+        });
     }
 }
 
 fn device_pending_count(state: &DeviceQueueState) -> usize {
-    state.pending.iter().map(VecDeque::len).sum()
+    state
+        .pending_by_mount
+        .values()
+        .flat_map(|mount_waiters| mount_waiters.by_class.iter())
+        .map(VecDeque::len)
+        .sum()
 }
 
 fn device_class_index(class: IoClass) -> usize {
@@ -3201,10 +3288,7 @@ impl MountScheduler {
             let topology = detect_storage_topology(path);
             let device_id = topology.device_id.map(|device| device.0);
             let device_key = device_queue_key(self.storage_root, device_id.as_deref());
-            let mount = device_id
-                .as_deref()
-                .map(|device| format!("storage-device-{device}"))
-                .unwrap_or_else(|| format!("storage-root-{}", self.storage_root.0));
+            let mount = format!("storage-root-{}", self.storage_root.0);
             let queue = device_queue_for(
                 self.storage_root,
                 device_id.as_deref(),
@@ -3253,11 +3337,7 @@ impl MountScheduler {
         F: FnOnce() -> Result<T, StorageError> + Send + 'static,
     {
         let mut queues = additional_queues;
-        let mount = self
-            .device_id
-            .as_deref()
-            .map(|device| format!("storage-device-{device}"))
-            .unwrap_or_else(|| format!("storage-root-{}", self.storage_root.0));
+        let mount = format!("storage-root-{}", self.storage_root.0);
         queues.push((
             device_queue_key(self.storage_root, self.device_id.as_deref()),
             mount,
@@ -3383,13 +3463,7 @@ impl MountScheduler {
     ) -> Result<DeviceOperationPermit, StorageError> {
         let device_operation = self
             .device_queue
-            .acquire(
-                class,
-                self.device_id
-                    .as_ref()
-                    .map(|device| format!("storage-device-{device}"))
-                    .unwrap_or_else(|| format!("storage-root-{}", self.storage_root.0)),
-            )
+            .acquire(class, format!("storage-root-{}", self.storage_root.0))
             .await;
         match device_operation {
             Ok(permit) => Ok(permit),
@@ -4140,10 +4214,7 @@ impl MountScheduler {
             let topology = detect_storage_topology(&key);
             let device_id = topology.device_id.map(|device| device.0);
             let device_key = device_queue_key(self.storage_root, device_id.as_deref());
-            let mount = device_id
-                .as_deref()
-                .map(|device| format!("storage-device-{device}"))
-                .unwrap_or_else(|| format!("storage-root-{}", self.storage_root.0));
+            let mount = format!("storage-root-{}", self.storage_root.0);
             let queue = if device_key == scheduler_device_key {
                 Arc::clone(&self.device_queue)
             } else {
@@ -5890,8 +5961,9 @@ mod tests {
             },
             ..Default::default()
         };
+        let first_root = StorageRootId::new();
         let first = MountScheduler::new_with_profile_and_io_config(
-            StorageRootId::new(),
+            first_root,
             &config,
             StorageProfile::Hdd,
             config.storage_io.clone(),
@@ -5902,8 +5974,9 @@ mod tests {
             max_queue: 8,
             ..config.clone()
         };
+        let second_root = StorageRootId::new();
         let second = MountScheduler::new_with_profile_and_io_config(
-            StorageRootId::new(),
+            second_root,
             &second_config,
             StorageProfile::Ssd,
             second_config.storage_io.clone(),
@@ -5915,7 +5988,7 @@ mod tests {
             .device_queue
             .acquire(
                 IoClass::Foreground,
-                "storage-device-shared-device".to_owned(),
+                format!("storage-root-{}", first.storage_root.0),
             )
             .await
             .unwrap();
@@ -5927,7 +6000,8 @@ mod tests {
 
         assert!(matches!(
             err,
-            StorageError::QueueFull { mount } if mount == "storage-device-shared-device"
+            StorageError::QueueFull { mount }
+                if mount == format!("storage-root-{}", second_root.0)
         ));
         let stats = second.stats();
         assert_eq!(stats.queue_full, 1);
@@ -5939,7 +6013,8 @@ mod tests {
     fn device_dispatch_uses_weighted_class_fairness() {
         let mut state = DeviceQueueState {
             active: 0,
-            pending: std::array::from_fn(|_| VecDeque::new()),
+            pending_by_mount: HashMap::new(),
+            mount_turns: std::array::from_fn(|_| VecDeque::new()),
             next_waiter_id: 1,
             next_operation_id: 1,
             dispatch_cursor: 0,
@@ -5957,7 +6032,12 @@ mod tests {
                 let (sender, receiver) = oneshot::channel();
                 receivers.push(receiver);
                 let id = take_device_sequence(&mut state.next_waiter_id);
-                state.pending[device_class_index(class)].push_back(DeviceWaiter { id, sender });
+                enqueue_device_waiter(
+                    &mut state,
+                    class,
+                    Arc::from(format!("mount-{class:?}")),
+                    DeviceWaiter { id, sender },
+                );
             }
         }
 
@@ -5966,7 +6046,12 @@ mod tests {
             let (slot, waiter) = pop_next_device_waiter(&mut state).unwrap();
             let class = device_dispatch_class(slot);
             selected[device_class_index(class)] += 1;
-            state.pending[device_class_index(class)].push_back(waiter);
+            enqueue_device_waiter(
+                &mut state,
+                class,
+                Arc::from(format!("mount-{class:?}")),
+                waiter,
+            );
             state.dispatch_cursor = next_device_cursor(slot);
         }
 
@@ -5976,6 +6061,42 @@ mod tests {
         assert_eq!(selected[device_class_index(IoClass::MoveCopy)], 2);
         assert_eq!(selected[device_class_index(IoClass::Recheck)], 1);
         assert_eq!(selected[device_class_index(IoClass::Metadata)], 1);
+        drop(receivers);
+    }
+
+    #[test]
+    fn device_dispatch_round_robins_mounts_within_each_class() {
+        let mut state = DeviceQueueState {
+            active: 0,
+            pending_by_mount: HashMap::new(),
+            mount_turns: std::array::from_fn(|_| VecDeque::new()),
+            next_waiter_id: 1,
+            next_operation_id: 1,
+            dispatch_cursor: 0,
+        };
+        let mut receivers = Vec::new();
+        for (mount, count) in [("busy-mount", 3), ("quiet-mount", 1)] {
+            for _ in 0..count {
+                let (sender, receiver) = oneshot::channel();
+                receivers.push(receiver);
+                let id = take_device_sequence(&mut state.next_waiter_id);
+                enqueue_device_waiter(
+                    &mut state,
+                    IoClass::PeerRead,
+                    Arc::from(mount),
+                    DeviceWaiter { id, sender },
+                );
+            }
+        }
+
+        let mut selected = Vec::new();
+        for _ in 0..4 {
+            let (slot, waiter) = pop_next_device_waiter(&mut state).unwrap();
+            selected.push(waiter.id);
+            state.dispatch_cursor = next_device_cursor(slot);
+        }
+
+        assert_eq!(selected, vec![1, 4, 2, 3]);
         drop(receivers);
     }
 
@@ -6237,7 +6358,7 @@ mod tests {
         );
         let source_check = source.clone();
         let source_key = device_queue_key(source.storage_root, source.device_id.as_deref());
-        let source_mount = format!("storage-device-{}", source.device_id.as_deref().unwrap());
+        let source_mount = format!("storage-root-{}", source.storage_root.0);
         let (started_tx, started_rx) = std::sync::mpsc::channel();
         let (finish_tx, finish_rx) = std::sync::mpsc::channel();
         let operation = tokio::spawn(async move {
@@ -6299,7 +6420,7 @@ mod tests {
         let queue_for = |scheduler: &MountScheduler| {
             (
                 device_queue_key(scheduler.storage_root, scheduler.device_id.as_deref()),
-                format!("storage-device-{}", scheduler.device_id.as_deref().unwrap()),
+                format!("storage-root-{}", scheduler.storage_root.0),
                 Arc::clone(&scheduler.device_queue),
             )
         };

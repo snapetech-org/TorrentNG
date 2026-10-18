@@ -800,10 +800,12 @@ fallback root identity across its copy schedulers, so unsupported platforms
 do not create a fresh, unshared queue for every plan. The queue capacity comes
 from the shared storage I/O depth, while active dispatch uses one slot per
 portable worker or a continuously refilled 64-operation io_uring window.
-Queued work uses the `DeviceElevator` class weights with weighted round-robin
-selection across mounts. A unique operation ID and permit travel through the
-existing completion owner. Cache hits and file-open preparation happen before
-device admission so they do not occupy a physical-device slot.
+Queued work uses the `DeviceElevator` class weights, then round-robins distinct
+storage-root owners within each class. A physical-device label is not reused as
+the owner key, so schedulers sharing one device remain distinct fairness
+participants. A unique operation ID and permit travel through the existing
+completion owner. Cache hits and file-open preparation happen before device
+admission so they do not occupy a physical-device slot.
 
 The live service currently covers scheduler positioned reads/writes/syncs,
 peer-read batches, preallocation, extent probes, and secure storage-plan
@@ -820,7 +822,9 @@ injected-backend accounting remain open.
 ### Ownership and invariant
 
 - **Current owner:** a weak registry shares one bounded, class-aware dispatcher
-  by device ID. Per-mount semaphores still enforce local queue and class caps;
+  by device ID. The dispatcher keeps a FIFO per storage-root owner and class,
+  with one owner turn per class round. Per-mount semaphores still enforce local
+  queue and class caps;
   `DiskSubmission` retains byte, mount, and device-operation ownership through
   the selected backend's completion path.
 - **Target owner:** the device service owns every disk-bound operation record
@@ -843,8 +847,10 @@ injected-backend accounting remain open.
   peer reads pass through the device owner with one operation identity.
 - Queued classes receive the documented weighted share; canceled waiters are
   removed and accepted operations retain the device slot through late backend
-  completion. The service caps active operations to its backend dispatch
-  window and bounds pending records by the remaining device queue depth.
+  completion. Within a class, distinct storage-root owners sharing a physical
+  device receive round-robin turns. The service caps active operations to its
+  backend dispatch window and bounds pending records by the remaining device
+  queue depth.
 - `MountScheduler::run_device_operation` is the reusable dispatch handoff for
   non-scheduler consumers. `run_device_operation_with_paths` admits every
   touched physical device in stable key order; secure copy/import steps use
@@ -858,6 +864,9 @@ injected-backend accounting remain open.
   until that completion.
 - Cancellation and injected-backend regression sources cover the full
   scheduler permit and queued-byte accounting path.
+- A skewed same-class queue from two storage-root owners verifies that a busy
+  root cannot place all of its pending work ahead of another root sharing the
+  same device. Regression source is authored; bulk execution remains deferred.
 
 ### Files and compatibility
 
