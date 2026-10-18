@@ -2034,6 +2034,8 @@ impl DeviceMountWaiters {
 
 struct DeviceQueueState {
     active: usize,
+    /// Maintained on enqueue/dequeue so depth checks do not scan owner lanes.
+    pending_count: usize,
     /// Pending operations are partitioned by storage-root owner, then class.
     pending_by_mount: HashMap<Arc<str>, DeviceMountWaiters>,
     /// Each class gives one turn at a time to every storage-root owner.
@@ -2101,6 +2103,7 @@ impl DeviceQueue {
             active_limit: active_limit.max(1).min(capacity),
             state: Mutex::new(DeviceQueueState {
                 active: 0,
+                pending_count: 0,
                 pending_by_mount: HashMap::new(),
                 mount_turns: std::array::from_fn(|_| VecDeque::new()),
                 next_waiter_id: 1,
@@ -2118,10 +2121,9 @@ impl DeviceQueue {
         let (sender, receiver) = oneshot::channel();
         let (waiter_id, immediate, grant) = {
             let mut state = lock_recover(&self.state);
-            prune_closed_device_waiters(&mut state);
             let grant = collect_device_grant(self, &mut state);
 
-            if state.active < self.active_limit && device_pending_count(&state) == 0 {
+            if state.active < self.active_limit && state.pending_count == 0 {
                 state.active += 1;
                 let operation_id =
                     DeviceOperationId(take_device_sequence(&mut state.next_operation_id));
@@ -2136,7 +2138,7 @@ impl DeviceQueue {
                 )
             } else {
                 let pending_limit = self.capacity.saturating_sub(self.active_limit);
-                if device_pending_count(&state) >= pending_limit {
+                if state.pending_count >= pending_limit {
                     drop(state);
                     dispatch_device_grant(grant);
                     return Err(StorageError::QueueFull { mount });
@@ -2146,7 +2148,7 @@ impl DeviceQueue {
                 enqueue_device_waiter(
                     &mut state,
                     class,
-                    Arc::from(mount.as_str()),
+                    Arc::from(mount),
                     DeviceWaiter { id, sender },
                 );
                 (Some(id), None, grant)
@@ -2172,7 +2174,7 @@ impl DeviceQueue {
     fn available(&self) -> usize {
         let state = lock_recover(&self.state);
         self.capacity
-            .saturating_sub(state.active.saturating_add(device_pending_count(&state)))
+            .saturating_sub(state.active.saturating_add(state.pending_count))
     }
 
     fn cancel_waiter(self: &Arc<Self>, id: u64) {
@@ -2292,6 +2294,7 @@ fn enqueue_device_waiter(
     let queue = &mut mount_waiters.by_class[class_index];
     let add_mount_turn = queue.is_empty();
     queue.push_back(waiter);
+    state.pending_count = state.pending_count.saturating_add(1);
     if add_mount_turn {
         state.mount_turns[class_index].push_back(mount);
     }
@@ -2305,6 +2308,7 @@ fn pop_mount_waiter(state: &mut DeviceQueueState, class_index: usize) -> Option<
         let Some(waiter) = mount_waiters.by_class[class_index].pop_front() else {
             continue;
         };
+        state.pending_count = state.pending_count.saturating_sub(1);
         let mount_has_more = !mount_waiters.by_class[class_index].is_empty();
         let mount_is_empty = mount_waiters.is_empty();
         if mount_has_more {
@@ -2346,11 +2350,14 @@ fn device_dispatch_class(slot: usize) -> IoClass {
 }
 
 fn prune_closed_device_waiters(state: &mut DeviceQueueState) {
+    let mut pending_count = 0usize;
     for mount_waiters in state.pending_by_mount.values_mut() {
         for queue in &mut mount_waiters.by_class {
             queue.retain(|waiter| !waiter.sender.is_closed());
+            pending_count = pending_count.saturating_add(queue.len());
         }
     }
+    state.pending_count = pending_count;
 
     state
         .pending_by_mount
@@ -2363,15 +2370,6 @@ fn prune_closed_device_waiters(state: &mut DeviceQueueState) {
                 .is_some_and(|waiters| !waiters.by_class[class_index].is_empty())
         });
     }
-}
-
-fn device_pending_count(state: &DeviceQueueState) -> usize {
-    state
-        .pending_by_mount
-        .values()
-        .flat_map(|mount_waiters| mount_waiters.by_class.iter())
-        .map(VecDeque::len)
-        .sum()
 }
 
 fn device_class_index(class: IoClass) -> usize {
@@ -6013,6 +6011,7 @@ mod tests {
     fn device_dispatch_uses_weighted_class_fairness() {
         let mut state = DeviceQueueState {
             active: 0,
+            pending_count: 0,
             pending_by_mount: HashMap::new(),
             mount_turns: std::array::from_fn(|_| VecDeque::new()),
             next_waiter_id: 1,
@@ -6061,6 +6060,7 @@ mod tests {
         assert_eq!(selected[device_class_index(IoClass::MoveCopy)], 2);
         assert_eq!(selected[device_class_index(IoClass::Recheck)], 1);
         assert_eq!(selected[device_class_index(IoClass::Metadata)], 1);
+        assert_eq!(state.pending_count, 6 * 64);
         drop(receivers);
     }
 
@@ -6068,6 +6068,7 @@ mod tests {
     fn device_dispatch_round_robins_mounts_within_each_class() {
         let mut state = DeviceQueueState {
             active: 0,
+            pending_count: 0,
             pending_by_mount: HashMap::new(),
             mount_turns: std::array::from_fn(|_| VecDeque::new()),
             next_waiter_id: 1,
@@ -6097,6 +6098,7 @@ mod tests {
         }
 
         assert_eq!(selected, vec![1, 4, 2, 3]);
+        assert_eq!(state.pending_count, 0);
         drop(receivers);
     }
 
@@ -6472,7 +6474,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
                 let state = lock_recover(&device_a.device_queue.state);
-                if device_pending_count(&state) != 0 {
+                if state.pending_count != 0 {
                     break;
                 }
                 drop(state);

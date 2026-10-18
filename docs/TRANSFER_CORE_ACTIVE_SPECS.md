@@ -804,7 +804,9 @@ Queued work uses the `DeviceElevator` class weights, then round-robins distinct
 storage-root owners within each class. A physical-device label is not reused as
 the owner key, so schedulers sharing one device remain distinct fairness
 participants. A unique operation ID and permit travel through the existing
-completion owner. Cache hits and file-open preparation happen before device
+completion owner. Pending depth and availability use an O(1) counter; canceled
+waiter guards remove their own entry, so normal admission does not scan the
+pending queue. Cache hits and file-open preparation happen before device
 admission so they do not occupy a physical-device slot.
 
 The live service currently covers scheduler positioned reads/writes/syncs,
