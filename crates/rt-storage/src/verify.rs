@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{collections::VecDeque, path::Path};
 
 use futures::future;
 use rt_hash::{MerkleAccumulator, V2_BLOCK_SIZE};
@@ -11,7 +11,7 @@ use rt_piece_map::{FileRegion, PieceMap};
 use crate::{
     error::StorageError,
     io_class::IoClass,
-    scheduler::{scheduled_read_owned, MountScheduler},
+    scheduler::{scheduled_read_owned, DataExtent, MountScheduler},
 };
 
 const VERIFY_READ_CHUNK_BYTES: u64 = 1024 * 1024;
@@ -495,19 +495,212 @@ impl<'a> V2FileVerifier<'a> {
         let mut accumulator = MerkleAccumulator::new();
         let mut offset = 0u64;
         let chunk_bytes = (Self::LEAF_SIZE * Self::CHUNK_LEAVES) as u64;
+        let mut sparse_cursor = SparseExtentCursor::new(self.scheduler, &path, file.length);
         while offset < file.length {
             let len = (file.length - offset).min(chunk_bytes) as usize;
-            let data = read_sparse_range(self.scheduler, &path, offset, len as u64).await?;
+            let data = sparse_cursor.read_next(len).await?;
             for leaf in recheck_hash_v2_leaves(self.scheduler, &data, Self::LEAF_SIZE).await? {
                 accumulator.push(leaf);
             }
             offset += len as u64;
+        }
+        if file.length > 0 {
+            // Sparse holes need no data read, but a final one-byte check keeps
+            // truncation during the streamed scan from being mistaken for
+            // zero-filled content.
+            let _ = recheck_read_owned(self.scheduler, &path, file.length - 1, 1).await?;
         }
         if file.length == 0 {
             let empty = bytes::Bytes::new();
             accumulator.push(recheck_hash_v2_leaf(self.scheduler, &empty).await?);
         }
         recheck_finish_v2_merkle_root(self.scheduler, accumulator).await
+    }
+}
+
+const SPARSE_EXTENTS_PER_PAGE: usize = 64;
+
+/// Sequential sparse-file reader whose bounded extent pages survive across
+/// 1 MiB verification chunks. A data extent that spans several chunks is
+/// discovered once and consumed as the Merkle stream advances.
+struct SparseExtentCursor<'a> {
+    scheduler: &'a MountScheduler,
+    path: &'a Path,
+    file_length: u64,
+    read_offset: u64,
+    scan_offset: u64,
+    scan_complete: bool,
+    extents: VecDeque<DataExtent>,
+    #[cfg(test)]
+    extent_page_count: usize,
+}
+
+impl<'a> SparseExtentCursor<'a> {
+    fn new(scheduler: &'a MountScheduler, path: &'a Path, file_length: u64) -> Self {
+        Self {
+            scheduler,
+            path,
+            file_length,
+            read_offset: 0,
+            scan_offset: 0,
+            scan_complete: false,
+            extents: VecDeque::new(),
+            #[cfg(test)]
+            extent_page_count: 0,
+        }
+    }
+
+    async fn read_next(&mut self, len: usize) -> Result<bytes::Bytes, StorageError> {
+        if len == 0 {
+            return Ok(bytes::Bytes::new());
+        }
+        let len_u64 = u64::try_from(len).map_err(|_| {
+            StorageError::io(
+                self.path.display().to_string(),
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "read length overflows u64",
+                ),
+            )
+        })?;
+        let end = self.read_offset.checked_add(len_u64).ok_or_else(|| {
+            StorageError::io(
+                self.path.display().to_string(),
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "read range overflows u64"),
+            )
+        })?;
+        if end > self.file_length {
+            return Err(StorageError::ShortIo {
+                path: self.path.display().to_string(),
+                expected: len,
+                actual: self.file_length.saturating_sub(self.read_offset) as usize,
+            });
+        }
+
+        let mut output = vec![0; len];
+        let mut cursor = self.read_offset;
+        while cursor < end {
+            while self
+                .extents
+                .front()
+                .is_some_and(|extent| extent.offset.saturating_add(extent.len) <= cursor)
+            {
+                self.extents.pop_front();
+            }
+
+            if let Some(extent) = self.extents.front().copied() {
+                if extent.offset > cursor {
+                    // `output` is zero-initialized; this interval is a hole.
+                    cursor = extent.offset.min(end);
+                    continue;
+                }
+                let extent_end = extent.offset.saturating_add(extent.len);
+                let read_end = extent_end.min(end);
+                let read_len = usize::try_from(read_end.saturating_sub(cursor)).map_err(|_| {
+                    StorageError::io(
+                        self.path.display().to_string(),
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "extent read length overflows usize",
+                        ),
+                    )
+                })?;
+                if read_len == 0 {
+                    self.extents.pop_front();
+                    continue;
+                }
+                let data = recheck_read_owned(self.scheduler, self.path, cursor, read_len).await?;
+                let output_start = usize::try_from(cursor - self.read_offset).map_err(|_| {
+                    StorageError::io(
+                        self.path.display().to_string(),
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "extent output offset overflows usize",
+                        ),
+                    )
+                })?;
+                let output_end = output_start.checked_add(read_len).ok_or_else(|| {
+                    StorageError::io(
+                        self.path.display().to_string(),
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "extent output range overflows usize",
+                        ),
+                    )
+                })?;
+                if output_end > output.len() {
+                    return Err(StorageError::io(
+                        self.path.display().to_string(),
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "extent exceeds the requested read chunk",
+                        ),
+                    ));
+                }
+                if data.len() != output_end.saturating_sub(output_start) {
+                    return Err(StorageError::ShortIo {
+                        path: self.path.display().to_string(),
+                        expected: output_end.saturating_sub(output_start),
+                        actual: data.len(),
+                    });
+                }
+                output[output_start..output_end].copy_from_slice(&data);
+                cursor = read_end;
+                if read_end >= extent_end {
+                    self.extents.pop_front();
+                } else if let Some(front) = self.extents.front_mut() {
+                    front.len = extent_end - read_end;
+                    front.offset = read_end;
+                }
+                continue;
+            }
+
+            if cursor < self.scan_offset {
+                // The current page has proved this interval contains no data.
+                cursor = self.scan_offset.min(end);
+                continue;
+            }
+            if self.scan_complete {
+                // The remainder of a fully scanned file is a sparse hole.
+                cursor = end;
+                continue;
+            }
+
+            let remaining = self.file_length.saturating_sub(self.scan_offset);
+            if remaining == 0 {
+                self.scan_complete = true;
+                cursor = end;
+                continue;
+            }
+            let page = self
+                .scheduler
+                .data_extents_page(
+                    self.path,
+                    self.scan_offset,
+                    remaining,
+                    SPARSE_EXTENTS_PER_PAGE,
+                )
+                .await?;
+            if page.scanned_to <= self.scan_offset && !page.complete {
+                return Err(StorageError::io(
+                    self.path.display().to_string(),
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "sparse extent scan did not advance",
+                    ),
+                ));
+            }
+            self.scan_offset = page.scanned_to;
+            self.scan_complete = page.complete;
+            self.extents.extend(page.extents);
+            #[cfg(test)]
+            {
+                self.extent_page_count = self.extent_page_count.saturating_add(1);
+            }
+        }
+
+        self.read_offset = end;
+        Ok(bytes::Bytes::from(output))
     }
 }
 
@@ -1143,6 +1336,45 @@ mod tests {
         // Three leaf-batch jobs plus the offloaded root fold, not 130
         // per-leaf jobs or a root fold on the async executor.
         assert_eq!(jobs, 4, "expected three leaf batches and one root job");
+    }
+
+    #[tokio::test]
+    async fn v2_sparse_extent_cursor_reuses_pages_across_hash_chunks() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sparse-cursor.bin");
+        let file_len = VERIFY_READ_CHUNK_BYTES * 3 + 17;
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(file_len).unwrap();
+        drop(file);
+
+        let data = vec![0x6du8; 8192];
+        let scheduler = ssd_scheduler();
+        scheduled_write(
+            &scheduler,
+            IoClass::PeerWrite,
+            &path,
+            0,
+            bytes::Bytes::from(data.clone()),
+            false,
+        )
+        .await
+        .unwrap();
+        let mut expected = vec![0; file_len as usize];
+        expected[..data.len()].copy_from_slice(&data);
+
+        let mut cursor = SparseExtentCursor::new(&scheduler, &path, file_len);
+        let mut actual = Vec::with_capacity(expected.len());
+        let chunk_bytes = VERIFY_READ_CHUNK_BYTES as usize;
+        while actual.len() < expected.len() {
+            let len = (expected.len() - actual.len()).min(chunk_bytes);
+            actual.extend_from_slice(&cursor.read_next(len).await.unwrap());
+        }
+
+        assert_eq!(actual, expected);
+        assert_eq!(
+            cursor.extent_page_count, 1,
+            "one persistent scan page should serve all sequential chunks"
+        );
     }
 
     #[tokio::test]

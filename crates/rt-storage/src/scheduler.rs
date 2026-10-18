@@ -412,6 +412,19 @@ pub struct DataExtent {
     pub len: u64,
 }
 
+/// One bounded page from a sparse-file extent scan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DataExtentPage {
+    pub extents: Vec<DataExtent>,
+    /// Exclusive logical offset through which the scan has completed.
+    pub scanned_to: u64,
+    /// Whether `scanned_to` reached the requested range end.
+    pub complete: bool,
+    /// The platform/filesystem did not support sparse seeks; this page treats
+    /// the requested range as allocated data.
+    pub used_fallback: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OpenMode {
     Read,
@@ -3664,13 +3677,34 @@ impl MountScheduler {
         offset: u64,
         len: u64,
     ) -> Result<Vec<DataExtent>, StorageError> {
+        self.data_extents_page(path, offset, len, usize::MAX)
+            .await
+            .map(|page| page.extents)
+    }
+
+    /// Scan a range for at most `max_extents` allocated extents. Callers can
+    /// continue from `scanned_to` without retaining an unbounded extent list
+    /// for a highly fragmented file.
+    pub async fn data_extents_page(
+        &self,
+        path: &Path,
+        offset: u64,
+        len: u64,
+        max_extents: usize,
+    ) -> Result<DataExtentPage, StorageError> {
         if len == 0 {
-            return Ok(Vec::new());
+            return Ok(DataExtentPage {
+                extents: Vec::new(),
+                scanned_to: offset,
+                complete: true,
+                used_fallback: false,
+            });
         }
         checked_file_range_end(path, offset, len)?;
         let pool = self.file_pool.clone();
         let counters = self.counters.clone();
         let path = path.to_path_buf();
+        let max_extents = max_extents.max(1);
         self.run_queued_blocking(IoClass::Recheck, 0, move || {
             let key = normalized_key(&path);
             let path_str = key.display().to_string();
@@ -3692,22 +3726,27 @@ impl MountScheduler {
                     actual: file_len.saturating_sub(offset) as usize,
                 });
             }
-            let (extents, used_fallback) = seek_data_extents(&file, offset, len)
+            let page = seek_data_extent_page(&file, offset, len, max_extents)
                 .map_err(|e| StorageError::io(&path_str, e))?;
-            if used_fallback {
+            if page.used_fallback {
                 counters
                     .sparse_seek_fallbacks
                     .fetch_add(1, Ordering::Relaxed);
             }
-            let data_bytes = extents.iter().map(|extent| extent.len).sum::<u64>();
-            let hole_bytes = len.saturating_sub(data_bytes);
+            let scanned_bytes = page.scanned_to.saturating_sub(offset).min(len);
+            let data_bytes = page
+                .extents
+                .iter()
+                .map(|extent| extent.len)
+                .fold(0u64, u64::saturating_add);
+            let hole_bytes = scanned_bytes.saturating_sub(data_bytes);
             counters
                 .sparse_data_extents
-                .fetch_add(extents.len() as u64, Ordering::Relaxed);
+                .fetch_add(page.extents.len() as u64, Ordering::Relaxed);
             counters
                 .sparse_hole_bytes
                 .fetch_add(hole_bytes, Ordering::Relaxed);
-            Ok(extents)
+            Ok(page)
         })
         .await
     }
@@ -4339,13 +4378,14 @@ fn advise_page_cache(file: &File, offset: u64, len: usize, advice: PageCacheAdvi
     }
 }
 
-fn seek_data_extents(
+fn seek_data_extent_page(
     file: &File,
     offset: u64,
     len: u64,
-) -> std::io::Result<(Vec<DataExtent>, bool)> {
+    max_extents: usize,
+) -> std::io::Result<DataExtentPage> {
     #[cfg(not(target_os = "linux"))]
-    let _ = file;
+    let _ = (file, max_extents);
 
     #[cfg(target_os = "linux")]
     {
@@ -4355,7 +4395,12 @@ fn seek_data_extents(
             io::Error::new(io::ErrorKind::InvalidInput, "file range overflows u64")
         })?;
         if len == 0 {
-            return Ok((Vec::new(), false));
+            return Ok(DataExtentPage {
+                extents: Vec::new(),
+                scanned_to: offset,
+                complete: true,
+                used_fallback: false,
+            });
         }
 
         let fd = file.as_raw_fd();
@@ -4375,7 +4420,12 @@ fn seek_data_extents(
                     break;
                 }
                 if matches!(err.raw_os_error(), Some(libc::EINVAL)) {
-                    return Ok((vec![DataExtent { offset, len }], true));
+                    return Ok(DataExtentPage {
+                        extents: vec![DataExtent { offset, len }],
+                        scanned_to: end,
+                        complete: true,
+                        used_fallback: true,
+                    });
                 }
                 return Err(err);
             }
@@ -4393,28 +4443,65 @@ fn seek_data_extents(
             if hole < 0 {
                 let err = std::io::Error::last_os_error();
                 if matches!(err.raw_os_error(), Some(libc::EINVAL)) {
-                    return Ok((vec![DataExtent { offset, len }], true));
+                    return Ok(DataExtentPage {
+                        extents: vec![DataExtent { offset, len }],
+                        scanned_to: end,
+                        complete: true,
+                        used_fallback: true,
+                    });
                 }
                 return Err(err);
             }
             let extent_end = (hole as u64).min(end);
-            if extent_end > data {
-                extents.push(DataExtent {
-                    offset: data,
-                    len: extent_end - data,
+            if extent_end <= data {
+                // SEEK_DATA/SEEK_HOLE did not make forward progress. Treat
+                // the filesystem as unsupported instead of risking a loop
+                // or silently skipping bytes.
+                return Ok(DataExtentPage {
+                    extents: vec![DataExtent { offset, len }],
+                    scanned_to: end,
+                    complete: true,
+                    used_fallback: true,
                 });
             }
-            cursor = extent_end.max(data.saturating_add(1));
+            extents.push(DataExtent {
+                offset: data,
+                len: extent_end - data,
+            });
+            cursor = extent_end;
+            if extents.len() >= max_extents && cursor < end {
+                return Ok(DataExtentPage {
+                    extents,
+                    scanned_to: cursor,
+                    complete: false,
+                    used_fallback: false,
+                });
+            }
         }
-        Ok((extents, false))
+        Ok(DataExtentPage {
+            extents,
+            scanned_to: end,
+            complete: true,
+            used_fallback: false,
+        })
     }
 
     #[cfg(not(target_os = "linux"))]
     {
         if len == 0 {
-            Ok((Vec::new(), true))
+            Ok(DataExtentPage {
+                extents: Vec::new(),
+                scanned_to: offset,
+                complete: true,
+                used_fallback: true,
+            })
         } else {
-            Ok((vec![DataExtent { offset, len }], true))
+            Ok(DataExtentPage {
+                extents: vec![DataExtent { offset, len }],
+                scanned_to: offset.saturating_add(len),
+                complete: true,
+                used_fallback: true,
+            })
         }
     }
 }
