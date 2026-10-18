@@ -12,6 +12,8 @@ Piece selection for the TorrentNG client:
 
 Priority pieces always win before sequential or rarest-first ordering. Sequential mode walks from the configured start piece to the end, then wraps to lower pieces so a torrent still completes. Endgame uses the same effective piece order as normal picking. Completed, disabled, and fully requested pieces leave the fresh-work index; cancellation or request reset restores them when a new request can be issued. The admission estimate includes bucket membership, candidate positions, vector capacity slack, and the configured global peer cap; `PiecePicker::memory_bytes` reports current vector capacities.
 
+Each in-progress piece keeps a cursor to its first block that may still be requested. Normal request fill advances through the piece without rescanning the requested prefix; cancellation rewinds the cursor when an earlier block becomes requestable, while restore and disconnect reset it around received blocks.
+
 ## Picker performance probe
 
 The `benches/perf.rs` probe reports request-selection plus cancellation time at

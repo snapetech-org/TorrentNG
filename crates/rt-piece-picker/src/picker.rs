@@ -65,6 +65,9 @@ struct PieceState {
     requested: Vec<u16>,
     /// Blocks that have been received.
     received: Vec<bool>,
+    /// First block that may still be requested. Advancing this cursor avoids
+    /// rescanning the already requested prefix for every block in a piece.
+    next_unrequested_hint: usize,
 }
 
 impl PieceState {
@@ -74,14 +77,24 @@ impl PieceState {
             piece_length,
             requested: vec![0; n_blocks],
             received: vec![false; n_blocks],
+            next_unrequested_hint: 0,
         }
     }
 
     fn next_unrequested(&self) -> Option<usize> {
-        self.requested
-            .iter()
-            .zip(self.received.iter())
-            .position(|(&req, &recv)| req == 0 && !recv)
+        let start = self.next_unrequested_hint.min(self.requested.len());
+        (start..self.requested.len())
+            .chain(0..start)
+            .find(|&block_idx| self.requested[block_idx] == 0 && !self.received[block_idx])
+    }
+
+    fn advance_next_unrequested(&mut self) {
+        while self.next_unrequested_hint < self.requested.len()
+            && (self.requested[self.next_unrequested_hint] != 0
+                || self.received[self.next_unrequested_hint])
+        {
+            self.next_unrequested_hint += 1;
+        }
     }
 
     fn next_requested_not_received(&self, exclude: &[BlockRequest], piece: usize) -> Option<usize> {
@@ -101,6 +114,9 @@ impl PieceState {
     fn mark_requested(&mut self, block_idx: usize) {
         if let Some(r) = self.requested.get_mut(block_idx) {
             *r = r.saturating_add(1);
+            if block_idx == self.next_unrequested_hint {
+                self.advance_next_unrequested();
+            }
         }
     }
 
@@ -110,6 +126,9 @@ impl PieceState {
         }
         if let Some(r) = self.requested.get_mut(block_idx) {
             *r = 0; // clear requests — no longer outstanding
+        }
+        if block_idx == self.next_unrequested_hint {
+            self.advance_next_unrequested();
         }
     }
 
@@ -336,6 +355,7 @@ impl PiecePicker {
                 *received = true;
             }
         }
+        state.advance_next_unrequested();
         // A partial-piece record contains bytes that were received but never
         // hash-verified. If it happens to list every block (for example after
         // a truncated or stale fastresume write), do not turn it into a
@@ -691,6 +711,9 @@ impl PiecePicker {
         if let Some(state) = self.in_progress.get_mut(&piece) {
             if let Some(r) = state.requested.get_mut(block_idx) {
                 *r = r.saturating_sub(1);
+                if *r == 0 && !state.received.get(block_idx).copied().unwrap_or(false) {
+                    state.next_unrequested_hint = state.next_unrequested_hint.min(block_idx);
+                }
             }
         }
         self.refresh_candidate(piece);
@@ -701,6 +724,8 @@ impl PiecePicker {
     pub fn reset_outstanding_requests(&mut self) {
         for state in self.in_progress.values_mut() {
             state.requested.fill(0);
+            state.next_unrequested_hint = 0;
+            state.advance_next_unrequested();
         }
         let pieces: Vec<_> = self.in_progress.keys().copied().collect();
         for piece in pieces {
@@ -985,6 +1010,7 @@ mod tests {
         let mut restored = picker_1piece(MAX_BLOCK_SIZE * 2);
         restored.availability.add_have(0);
         restored.restore_partial_piece(0, &[0]);
+        assert_eq!(restored.in_progress[&0].next_unrequested_hint, 1);
         let next = restored.pick(&all).unwrap();
         assert_eq!(next.begin, second.begin);
     }
@@ -1047,9 +1073,12 @@ mod tests {
         p.availability.add_have(0);
         let all = peer_has_all(1);
         let r1 = p.pick(&all).unwrap();
+        assert_eq!(p.in_progress[&0].next_unrequested_hint, 1);
         let _r2 = p.pick(&all).unwrap();
+        assert_eq!(p.in_progress[&0].next_unrequested_hint, 2);
         // Cancel r1 and pick again — should re-offer r1's block
         p.cancel_request(0, r1.begin);
+        assert_eq!(p.in_progress[&0].next_unrequested_hint, 0);
         let r3 = p.pick(&all).unwrap();
         assert_eq!(r3.begin, r1.begin);
     }
@@ -1061,9 +1090,11 @@ mod tests {
         let all = peer_has_all(1);
         let r1 = p.pick(&all).unwrap();
         let r2 = p.pick(&all).unwrap();
+        assert_eq!(p.in_progress[&0].next_unrequested_hint, 2);
         assert!(p.pick(&all).is_none());
 
         p.reset_outstanding_requests();
+        assert_eq!(p.in_progress[&0].next_unrequested_hint, 0);
 
         let again = p.pick(&all).unwrap();
         let next = p.pick(&all).unwrap();

@@ -183,6 +183,9 @@ The live v1/v2 actor integration to the shared ledger remains NET-114.
   reservoir sampling when matches are sparse.
 - Sources with out-of-band full availability, including webseeds, randomize
   zero-availability ties too.
+- In-progress pieces keep a forward cursor to the first block that may still
+  be requested; cancellation rewinds it, and restore/reset skip received
+  blocks without rescanning the requested prefix.
 - Priority, sequential, cancellation, partial restore, and endgame behavior
   remain covered by regression cases.
 - Static and live estimates include packed flags, index arrays, bucket
@@ -201,7 +204,8 @@ The live v1/v2 actor integration to the shared ledger remains NET-114.
 
 - **Regression source added or updated:** availability bucket movement,
   seeded random tie, candidate lifecycle, request cancellation, and picker
-  memory estimate cases.
+  memory estimate cases; block cursor advancement, cancellation rewind,
+  partial restore, and reset cases.
 - **Command or probe to run:** `cargo test -p rt-piece-picker` and the engine
   picker/accounting regressions during the requested bulk pass.
 - **Expected result:** all cases pass; no requestable piece is lost from the
