@@ -6,9 +6,11 @@ partial-write errors. Scheduler completion watchers now retain queue/device
 permits and queued-byte charges for admitted reads, writes, and syncs if their
 caller is canceled. The helper-level owner regressions are authored but
 unrun. Dropping the scripted backend releases any held test completions to
-avoid leaving a blocked helper thread during failure cleanup. End-to-end lease
-accounting, file replacement, crash cuts, and the remaining fault-matrix cases
-are still open.
+avoid leaving a blocked helper thread during failure cleanup. Zero-progress
+read/write error mapping now has authored scheduler regressions. Path identity
+replacement is covered for cached descriptors and readahead entries under
+IO-004; operation-level publication after a replacement, end-to-end lease
+accounting, crash cuts, and the remaining fault-matrix cases are still open.
 
 ## Evidence states
 

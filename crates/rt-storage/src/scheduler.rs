@@ -7127,6 +7127,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scripted_zero_progress_read_and_write_are_reported_as_short_io() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("zero-progress.bin");
+        std::fs::write(&path, b"existing").unwrap();
+        let (scheduler, backend) = scheduler_with_scripted_backend();
+
+        backend.inject(Operation::Read, Effect::Fail(io::ErrorKind::UnexpectedEof));
+        let read = scheduler.read_at(IoClass::Recheck, &path, 0, 8).await;
+        assert!(matches!(
+            read,
+            Err(StorageError::ShortIo {
+                expected: 8,
+                actual: 0,
+                ..
+            })
+        ));
+        assert_eq!(scheduler.stats().dirty_files, 0);
+        assert_storage_admission_released(&scheduler);
+
+        backend.inject(Operation::Write, Effect::Fail(io::ErrorKind::WriteZero));
+        let write = scheduler
+            .write_at(
+                IoClass::PeerWrite,
+                &path,
+                0,
+                bytes::Bytes::from_static(b"replacement"),
+                false,
+            )
+            .await;
+        assert!(matches!(
+            write,
+            Err(StorageError::ShortIo {
+                expected: 11,
+                actual: 0,
+                ..
+            })
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), b"existing");
+        assert_eq!(scheduler.stats().dirty_files, 1);
+        assert_storage_admission_released(&scheduler);
+    }
+
+    #[tokio::test]
     async fn pre_submission_open_failures_release_storage_admission() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("missing-parent").join("payload.bin");
