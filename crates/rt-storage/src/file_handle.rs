@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 use crate::fd_limit::process_handle_cache_capacity;
+use crate::open::FileIdentity;
 use once_cell::sync::Lazy;
 use tokio::sync::Notify;
 
@@ -235,15 +236,24 @@ impl Drop for DescriptorPermit {
 pub(crate) struct LeasedFile {
     // Keep the actual descriptor alive until before the permit is released.
     file: File,
+    /// Identity captured by the secure open that produced this descriptor.
+    /// Carry it with the descriptor lease so queued operations can validate
+    /// the path generation without re-reading descriptor metadata.
+    identity: FileIdentity,
     _permit: DescriptorPermit,
 }
 
 impl LeasedFile {
-    pub(crate) fn new(file: File, permit: DescriptorPermit) -> Self {
+    pub(crate) fn new(file: File, identity: FileIdentity, permit: DescriptorPermit) -> Self {
         Self {
             file,
+            identity,
             _permit: permit,
         }
+    }
+
+    pub(crate) fn identity(&self) -> FileIdentity {
+        self.identity
     }
 
     pub(crate) fn notify_waiters(&self) {
@@ -274,6 +284,10 @@ impl LeasedFileHandle {
 
     pub(crate) fn as_file(&self) -> &File {
         &self.file
+    }
+
+    pub(crate) fn identity(&self) -> FileIdentity {
+        self.file.identity()
     }
 }
 

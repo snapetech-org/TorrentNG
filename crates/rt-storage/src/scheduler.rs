@@ -31,8 +31,11 @@ use crate::{
     frame::{global_frame_pool, Frame},
     handle_cache::{Access, HandleCache},
     io_class::IoClass,
-    open::{create_dir_all_no_follow, file_identity, normalized_storage_path, FileIdentity},
+    open::{create_dir_all_no_follow, normalized_storage_path, FileIdentity},
 };
+
+#[cfg(test)]
+use crate::open::file_identity;
 
 pub const STORAGE_LATENCY_BUCKETS_NS: [u64; 8] = [
     100_000,
@@ -848,13 +851,21 @@ fn clear_dirty_path_if_generation(
 
 fn current_file_identity(
     path: &Path,
-    file: &File,
+    file: &LeasedFileHandle,
     operation: &'static str,
 ) -> Result<FileIdentity, StorageError> {
-    let identity = file_identity(file).map_err(|error| StorageError::FilesystemStateUncertain {
-        step: operation,
-        reason: format!("cannot identify open file {}: {error}", path.display()),
-    })?;
+    // The identity is captured by the secure open and travels with the
+    // descriptor lease through queued and submitted work. Re-reading the fd
+    // identity here would add an fstat to every boundary without strengthening
+    // the binding between this descriptor and the path generation.
+    verify_path_identity(path, file.identity(), operation)
+}
+
+fn verify_path_identity(
+    path: &Path,
+    identity: FileIdentity,
+    operation: &'static str,
+) -> Result<FileIdentity, StorageError> {
     #[cfg(any(unix, windows))]
     match identity_matches_path(path, identity) {
         Ok(true) => {}
@@ -1269,7 +1280,11 @@ impl DeviceOperationPermit {
 
 #[derive(Debug)]
 enum ReadPreparation {
-    CacheHit(bytes::Bytes),
+    CacheHit {
+        key: PathBuf,
+        identity: FileIdentity,
+        bytes: bytes::Bytes,
+    },
     BackendRead {
         key: PathBuf,
         file: Arc<LeasedFileHandle>,
@@ -2922,7 +2937,7 @@ impl MountScheduler {
                         if let Some(bytes) = peer_read_cache_hit(
                             &preparation_peer_read_cache,
                             &key,
-                            &file,
+                            file.identity(),
                             offset,
                             len,
                         ) {
@@ -2947,7 +2962,11 @@ impl MountScheduler {
                                 &preparation_counters.read_latency_buckets,
                                 latency_ns,
                             );
-                            return Ok(ReadPreparation::CacheHit(bytes));
+                            return Ok(ReadPreparation::CacheHit {
+                                key,
+                                identity: file.identity(),
+                                bytes,
+                            });
                         }
                         preparation_counters
                             .peer_read_cache_misses
@@ -2995,7 +3014,12 @@ impl MountScheduler {
         }
         let (preparation, mut submission) = preparation?;
         match preparation {
-            ReadPreparation::CacheHit(bytes) => {
+            ReadPreparation::CacheHit {
+                key,
+                identity,
+                bytes,
+            } => {
+                verify_path_identity(&key, identity, "payload_read")?;
                 let _submission = submission;
                 Ok(StorageRead::Bytes(bytes))
             }
@@ -3051,6 +3075,11 @@ impl MountScheduler {
                         return Err(error);
                     }
                 };
+                // A path can be atomically replaced while the backend read
+                // is in flight. The submitted descriptor remains valid, but
+                // its bytes must not be returned or cached as the current
+                // path's payload after that replacement.
+                current_file_identity(&key, file.as_ref(), "payload_read")?;
                 counters.read_ops_by_class[class_index(class)].fetch_add(1, Ordering::Relaxed);
                 counters.bytes_read_by_class[class_index(class)]
                     .fetch_add(len as u64, Ordering::Relaxed);
@@ -3066,15 +3095,14 @@ impl MountScheduler {
                 if class == IoClass::PeerRead && read_len > len && readahead_cache_entries > 0 {
                     let bytes = frame.into_bytes();
                     let exact = bytes.slice(..len);
-                    if let Ok(identity) = file_identity(&file) {
-                        self.peer_read_cache_store(
-                            cache_generation.expect("peer-read cache generation is set"),
-                            key,
-                            identity,
-                            offset,
-                            bytes,
-                        );
-                    }
+                    let identity = file.identity();
+                    self.peer_read_cache_store(
+                        cache_generation.expect("peer-read cache generation is set"),
+                        key,
+                        identity,
+                        offset,
+                        bytes,
+                    );
                     Ok(StorageRead::Bytes(exact))
                 } else {
                     Ok(StorageRead::Frame(frame))
@@ -3215,7 +3243,7 @@ impl MountScheduler {
                 return Err(error);
             }
         };
-        let file_identity = current_file_identity(&key, file.as_file(), "payload_write")?;
+        let file_identity = current_file_identity(&key, file.as_ref(), "payload_write")?;
         let written = data.len();
         submission.start_device_operation(self.acquire_device_operation(class).await?);
         tracing::trace!(
@@ -3260,7 +3288,7 @@ impl MountScheduler {
                 return Err(error);
             }
         };
-        current_file_identity(&key, file.as_file(), "payload_write")?;
+        current_file_identity(&key, file.as_ref(), "payload_write")?;
         peer_read_cache_invalidate(&peer_read_cache, &peer_read_cache_epoch, &key);
         let submission = if strict {
             let sync_started = Instant::now();
@@ -3291,7 +3319,7 @@ impl MountScheduler {
                     return Err(error);
                 }
             };
-            current_file_identity(&key, file.as_file(), "strict_data_sync")?;
+            current_file_identity(&key, file.as_ref(), "strict_data_sync")?;
             record_sync_completion(&counters, sync_started);
             file_sync_fence.mark_synced(write_sequence);
             clear_dirty_path_if_generation(&dirty_paths, &key, dirty_state.generation);
@@ -3340,7 +3368,7 @@ impl MountScheduler {
                     .map_err(|e| StorageError::io(parent.display().to_string(), e))?;
             }
             let file = pool.get_or_open(&key, OpenMode::Write, true)?;
-            let identity = current_file_identity(&key, file.as_file(), "prepare_file")?;
+            let identity = current_file_identity(&key, file.as_ref(), "prepare_file")?;
             if mode != PreallocationMode::Off {
                 let _file_sequence = fence_for_job.issue_write_sequence();
                 let _write_watermark = next_saturating_sequence(&write_sequence);
@@ -3402,7 +3430,7 @@ impl MountScheduler {
                     }
                 }
             }
-            current_file_identity(&key, file.as_file(), "prepare_file")?;
+            current_file_identity(&key, file.as_ref(), "prepare_file")?;
             Ok(())
         })
         .await
@@ -3439,7 +3467,7 @@ impl MountScheduler {
                 return Err(error);
             }
         };
-        let opened_identity = current_file_identity(&key, file.as_file(), "data_sync")?;
+        let opened_identity = current_file_identity(&key, file.as_ref(), "data_sync")?;
         ensure_dirty_identity(&key, "data_sync", expected_state, opened_identity)?;
         submission
             .start_device_operation(self.acquire_device_operation(IoClass::Foreground).await?);
@@ -3469,7 +3497,7 @@ impl MountScheduler {
                 return Err(error);
             }
         };
-        let completed_identity = current_file_identity(&key, file.as_file(), "data_sync")?;
+        let completed_identity = current_file_identity(&key, file.as_ref(), "data_sync")?;
         ensure_dirty_identity(&key, "data_sync", expected_state, completed_identity)?;
         record_sync_completion(&counters, started);
         file_sync_fence.mark_synced(watermark);
@@ -3664,7 +3692,7 @@ impl MountScheduler {
                 return Err(error);
             }
         };
-        let opened_identity = current_file_identity(&key, file.as_file(), "checkpoint_sync")?;
+        let opened_identity = current_file_identity(&key, file.as_ref(), "checkpoint_sync")?;
         ensure_dirty_identity(&key, "checkpoint_sync", expected_state, opened_identity)?;
         let device_operation = queue.acquire(IoClass::Foreground, mount).await;
         let device_operation = match device_operation {
@@ -3701,7 +3729,7 @@ impl MountScheduler {
                 return Err(error);
             }
         };
-        let completed_identity = current_file_identity(&key, file.as_file(), "checkpoint_sync")?;
+        let completed_identity = current_file_identity(&key, file.as_ref(), "checkpoint_sync")?;
         ensure_dirty_identity(&key, "checkpoint_sync", expected_state, completed_identity)?;
         file_sync_fence.mark_synced(watermark);
         if let Some(expected_state) = expected_state {
@@ -4364,11 +4392,10 @@ fn record_sync_completion(counters: &StorageCounters, started: Instant) {
 fn peer_read_cache_hit(
     cache: &Mutex<PeerReadCache>,
     key: &Path,
-    file: &File,
+    identity: FileIdentity,
     offset: u64,
     len: usize,
 ) -> Option<bytes::Bytes> {
-    let identity = file_identity(file).ok()?;
     lock_reset_derived_cache(cache).hit(key, identity, offset, len)
 }
 
@@ -6561,7 +6588,7 @@ mod tests {
         .join()
         .is_err());
 
-        assert!(peer_read_cache_hit(&cache, &path, &file, 0, 5).is_none());
+        assert!(peer_read_cache_hit(&cache, &path, file_identity(&file).unwrap(), 0, 5).is_none());
         assert!(!cache.is_poisoned());
         assert!(lock_reset_derived_cache(&cache).is_empty());
     }
@@ -7517,6 +7544,40 @@ mod tests {
             }
         ));
         assert_eq!(scheduler.stats().dirty_files, 1);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn replaced_path_after_held_read_is_not_returned_to_caller() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("replaced-during-read.bin");
+        std::fs::write(&path, b"old-generation").unwrap();
+        let (scheduler, backend) = scheduler_with_scripted_backend();
+        backend.inject(Operation::Read, Effect::HoldCompletion);
+
+        let read_scheduler = scheduler.clone();
+        let read_path = path.clone();
+        let read = tokio::spawn(async move {
+            read_scheduler
+                .read_at(IoClass::Foreground, &read_path, 0, 14)
+                .await
+        });
+
+        backend.wait_until_completion_is_held().await;
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, b"new-generation").unwrap();
+        assert!(backend.release_next());
+
+        let error = read.await.unwrap().unwrap_err();
+        assert!(matches!(
+            error,
+            StorageError::FilesystemStateUncertain {
+                step: "payload_read",
+                ..
+            }
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), b"new-generation");
+        assert_storage_admission_released(&scheduler);
     }
 
     #[cfg(unix)]

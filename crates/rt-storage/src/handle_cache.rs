@@ -224,9 +224,9 @@ impl HandleCache {
         if let Some(file) = self.touch_for_access(&path, access) {
             return Ok(Arc::new(LeasedFileHandle::new(file)));
         }
-        let (file, _identity) = open_path_no_follow_current_identity(&path, write, create)?;
+        let (file, identity) = open_path_no_follow_current_identity(&path, write, create)?;
         Ok(Arc::new(LeasedFileHandle::new(Arc::new(LeasedFile::new(
-            file, permit,
+            file, identity, permit,
         )))))
     }
 
@@ -303,7 +303,7 @@ impl HandleCache {
         // path. The final component is no-follow as well.
         let (file, identity) =
             open_path_no_follow_current_identity(&path, access == Access::Write, create)?;
-        let file = Arc::new(LeasedFile::new(file, permit));
+        let file = Arc::new(LeasedFile::new(file, identity, permit));
 
         loop {
             let existing = {

@@ -234,11 +234,13 @@ Document storage evidence and introduce deterministic backend faults for the
 portable scheduler. This slice covers cancellation after backend submission,
 injected read/write failures, partial-write failure, retry after a failed data
 barrier, and operation-level file identity fencing. Dirty path state binds each
-write generation to the descriptor identity that received it. On Unix and
-Windows, write and sync operations check that their descriptor still matches
-the current path at their completion boundary; a mismatch fails as uncertain
-and leaves dirty evidence intact. Full operation-lease accounting, restart
-cuts, and platform fault qualification remain open.
+write generation to the descriptor identity that received it. Securely opened
+descriptor leases carry that captured identity through queued and submitted
+operations. On Unix and Windows, reads, writes, and sync operations check that
+the descriptor's original identity still matches the current path at their
+completion boundary; a mismatch fails as uncertain, and writes keep dirty
+evidence intact. Full operation-lease accounting, restart cuts, and platform
+fault qualification remain open.
 
 ### Ownership and invariant
 
@@ -269,9 +271,10 @@ cuts, and platform fault qualification remain open.
   regression sources simulate short reads and writes across multiple calls.
 - Path-replacement regressions cover secure open, cached descriptor reopening,
   scheduler snapshots, and peer-read readahead (IO-004), plus held payload
-  writes and checkpoint syncs. Dirty writes remain tied to the original file
-  identity, and replacement during an operation returns
-  `FilesystemStateUncertain` without clearing dirty evidence. Full
+  reads, writes, and checkpoint syncs. Dirty writes remain tied to the original
+  file identity; replacement during an operation returns
+  `FilesystemStateUncertain` before stale read bytes reach the caller and
+  without clearing dirty evidence. Full
   operation-lease accounting, crash cuts, and platform-specific fault
   qualification remain open.
 
@@ -298,8 +301,9 @@ cuts, and platform fault qualification remain open.
   `cancelled_strict_write_retains_admission_until_sync_completion`,
   `partial_write_then_error_is_not_reported_as_success`,
   `failed_barrier_keeps_dirty_evidence_for_retry`,
-  `cancelled_checkpoint_waiter_keeps_dirty_evidence_after_sync_failure`, and
-  `dropping_backend_releases_and_joins_held_completion_workers`.
+  `cancelled_checkpoint_waiter_keeps_dirty_evidence_after_sync_failure`,
+  `dropping_backend_releases_and_joins_held_completion_workers`, and
+  `replaced_path_after_held_read_is_not_returned_to_caller`.
 - **Command or probe to run:** `cargo test -p rt-storage` during the requested
   bulk pass.
 - **Expected result:** injected read/write failures are returned; failed reads
@@ -484,6 +488,10 @@ same secure identity helpers and descriptor-lease implementation.
   identity lookup; it does not `fstat` the cached descriptor on every hit.
 - Reads can reuse a read+write descriptor, while read-only descriptors never
   serve writes.
+- Every leased descriptor retains the identity captured by secure open.
+  Queued reads validate that identity after backend completion and before
+  returning or caching bytes, so a path replacement cannot make an old
+  descriptor's payload appear current.
 - The LRU index shares each path allocation and expiry checks only the stale
   oldest prefix, avoiding a path-string clone and full-map scan on every hit.
 - Replacement, unlink/recreate, descriptor-budget, and in-flight-lease
@@ -511,8 +519,9 @@ same secure identity helpers and descriptor-lease implementation.
 - **Regression source added or updated:**
   `read_only_handles_do_not_serve_writes_and_reads_reuse_writable_handle`,
   `reopens_path_after_unlink_and_recreate`, `zero_idle_ttl_disables_expiry`,
-  `write_handle_snapshot_drops_replaced_paths`, plus existing descriptor
-  budget, in-flight lease, and scheduler cache-stat regressions.
+  `write_handle_snapshot_drops_replaced_paths`,
+  `replaced_path_after_held_read_is_not_returned_to_caller`, plus existing
+  descriptor-budget, in-flight-lease, and scheduler cache-stat regressions.
 - **Command or probe to run:** `cargo test -p rt-storage` during the requested
   bulk pass.
 - **Expected result:** scheduler and runtime use one cache implementation and

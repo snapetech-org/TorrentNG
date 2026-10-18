@@ -9,13 +9,13 @@ unrun. Dropping the scripted backend releases any held test completions to
 avoid leaving a blocked helper thread during failure cleanup. Zero-progress
 read/write error mapping now has authored scheduler regressions. Path identity
 replacement is covered for cached descriptors and readahead entries under
-IO-004. Dirty path state also binds the write generation to the descriptor
-identity: on Unix and Windows, payload writes and data/checkpoint syncs verify
-the descriptor still matches the current path at operation boundaries, and a
-mismatch fails closed without clearing dirty evidence. Held-write and
-held-checkpoint-sync replacement regression sources are authored but unrun.
-End-to-end lease accounting, crash cuts, and the remaining fault-matrix cases
-are still open.
+IO-004. The identity captured by secure open now travels with the leased
+descriptor. On Unix and Windows, payload reads, writes, and data/checkpoint
+syncs verify that identity against the current path at operation boundaries;
+a mismatch prevents stale read bytes from returning and leaves dirty write
+evidence intact. Held-read, held-write, and held-checkpoint-sync replacement
+regression sources are authored but unrun. End-to-end lease accounting, crash
+cuts, and the remaining fault-matrix cases are still open.
 
 ## Evidence states
 
@@ -45,23 +45,24 @@ committed.
 
 ## Operation identity and ownership
 
-Each asynchronous storage operation records an operation id, content epoch,
-secure file identity and generation, byte range, write sequence, and capacity
-lease. The operation retains the descriptor, immutable payload owner, and
-admission permit until the backend reports completion, even if its waiting
-future is cancelled. A late completion from a previous epoch or file
-generation may release resources and report diagnostics, but cannot publish
-content into the current generation.
+The target record for each asynchronous storage operation includes an
+operation id, content epoch, secure file identity and generation, byte range,
+write sequence, and capacity lease. The operation must retain its descriptor,
+immutable payload owner, and admission permit until the backend reports
+completion, even if its waiting future is cancelled. A late completion from a
+previous epoch or file generation may release resources and report
+diagnostics, but cannot publish content into the current generation.
 
-The current scheduler carries a `DiskSubmission` through queued file-open
-preparation and then through its backend completion watcher. The submission
-owns its per-mount queue permit, shared physical-device admission permit, and
-queued-disk byte charge. The device admission pool is keyed by physical device
-identity rather than by mount profile; unidentified topology falls back to a
-storage-root-scoped pool.
-Strict writes move the same owner through their data sync. This preserves
-admission lifetime but does not yet provide the complete operation record,
-resource-credit transfer, or device-service ownership described above.
+Current implementation: `LeasedFile` carries the secure-open identity and
+descriptor permit together; `DiskSubmission` carries the per-mount queue
+permit, shared physical-device permit, and queued-disk byte charge through
+queued open and backend completion watchers. The device admission pool is
+keyed by physical device identity rather than mount profile; unidentified
+topology falls back to a storage-root-scoped pool. Strict writes move the same
+submission through their data sync. Dirty writes retain their sequence and
+file identity, and reads recheck the descriptor identity against the current
+path before returning. A unified operation/content-epoch record and complete
+cross-boundary resource-credit accounting remain open.
 
 Dirty evidence is tracked per normalized path, write sequence, and file
 identity. A barrier snapshots the dirty files and highest covered sequence for
