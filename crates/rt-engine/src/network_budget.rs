@@ -169,6 +169,10 @@ impl GlobalNetworkBudget {
         self.download.set_limit(limit);
     }
 
+    pub(crate) fn download_limit_changes(&self) -> RateLimitCancellation {
+        self.download.limit_changes()
+    }
+
     pub(crate) fn set_upload_limit(&self, limit: Option<u64>) {
         self.upload.set_limit(limit);
     }
@@ -240,6 +244,10 @@ impl SharedRateLimiter {
             }),
             limit_changed: RateLimitCancellation::default(),
         }
+    }
+
+    fn limit_changes(&self) -> RateLimitCancellation {
+        self.limit_changed.clone()
     }
 
     fn lock_state(&self) -> MutexGuard<'_, RateState> {
@@ -619,5 +627,16 @@ mod tests {
         assert!(clone.try_acquire_peer().is_err());
         drop(permit);
         assert!(clone.try_acquire_peer().is_ok());
+    }
+
+    #[test]
+    fn global_download_limit_change_signal_tracks_runtime_updates() {
+        let budget = GlobalNetworkBudget::new(1, Some(1), None);
+        let changes = budget.download_limit_changes();
+        let generation = changes.generation();
+
+        budget.set_download_limit(Some(2));
+
+        assert_ne!(changes.generation(), generation);
     }
 }

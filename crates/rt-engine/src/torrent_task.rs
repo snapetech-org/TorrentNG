@@ -2998,6 +2998,8 @@ impl TorrentTask {
         // that seed's exponential retry deadline.
         let mut webseed_sleep = Box::pin(sleep(WEBSEED_RETRY_MAX));
         reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
+        let global_download_limit_changes = self.network_budget.download_limit_changes();
+        let mut global_download_limit_generation = global_download_limit_changes.generation();
 
         loop {
             tokio::select! {
@@ -3458,6 +3460,16 @@ impl TorrentTask {
 
                 _ = sleep_until_download_tokens(self.download_token_wake), if self.download_token_wake.is_some() => {
                     self.download_token_wake = None;
+                    if !self.paused {
+                        let peers: Vec<SocketAddr> = self.active_peers.keys().copied().collect();
+                        for peer in peers {
+                            self.refill_peer_requests(peer).await;
+                        }
+                    }
+                }
+
+                _ = global_download_limit_changes.wait_for_change(global_download_limit_generation) => {
+                    global_download_limit_generation = global_download_limit_changes.generation();
                     if !self.paused {
                         let peers: Vec<SocketAddr> = self.active_peers.keys().copied().collect();
                         for peer in peers {
