@@ -3859,7 +3859,9 @@ a whole-torrent scan for each requested block.
   coordinates, so a v1 and a v2 connection cannot split one canonical piece.
   Live hybrid-v1 actors use it through `LiveTransferLedger`; the facade now
   exposes v2-plane lifecycle operations, but the peer handshake and scheduler
-  do not use those operations yet.
+  do not use those operations yet. The facade can rebind a hybrid connection
+  to the negotiated plane only while it has no reserved or on-wire requests;
+  that guard is in place for the upcoming handshake cutover.
 - **Target owner:** each protocol adapter submits candidates to one shared
   content owner, while immutable payload, storage completion, and durability
   evidence retain their existing explicit owners.

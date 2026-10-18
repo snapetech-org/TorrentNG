@@ -135,6 +135,16 @@ impl<G: PieceGeometry> LiveTransferLedger<G> {
         }
     }
 
+    /// Apply a negotiated wire-plane change before the peer owns any
+    /// outstanding requests. Plain v1 torrents cannot change coordinate
+    /// systems.
+    pub fn set_connection_plane(&mut self, conn: ConnectionId, plane: Plane) -> bool {
+        match &mut self.inner {
+            LiveLedgerInner::V1(ledger) => plane == Plane::V1 && ledger.is_live(conn),
+            LiveLedgerInner::Hybrid(ledger) => ledger.set_plane(conn, plane),
+        }
+    }
+
     /// Keep the shared connection owner in step with the peer's advertised
     /// request queue. Callers should clamp this to their own request-window
     /// ceiling so retained request history stays bounded by live policy.
@@ -613,6 +623,64 @@ mod tests {
                 Err(ReserveError::ConnectionFull)
             );
         }
+    }
+
+    #[test]
+    fn hybrid_connection_plane_changes_only_while_idle() {
+        let piece_length = u64::from(BLOCK_SIZE) * 2;
+        let path = SafeRelPath::from_name("payload.bin", false).unwrap();
+        let v1 = Arc::new(
+            PieceMap::new(
+                piece_length,
+                vec![FileSpan {
+                    file_index: 0,
+                    path: path.clone(),
+                    content_offset: 0,
+                    length: piece_length,
+                }],
+            )
+            .unwrap(),
+        );
+        let v2 = Arc::new(
+            V2PieceMap::new(
+                piece_length,
+                vec![V2FileSpan {
+                    file_index: 0,
+                    path,
+                    piece_offset: 0,
+                    length: piece_length,
+                    pad: false,
+                }],
+            )
+            .unwrap(),
+        );
+        let mut ledger = LiveTransferLedger::new_bounded(Arc::clone(&v1), 2);
+        assert!(ledger.attach_hybrid_geometry(Arc::new(HybridGeometry::new(v1, v2))));
+
+        let conn = ledger.try_connect(4).unwrap();
+        assert_eq!(ledger.plane(conn), Some(Plane::V1));
+        assert!(ledger.set_connection_plane(conn, Plane::V2));
+        assert_eq!(ledger.plane(conn), Some(Plane::V2));
+
+        let wire_block = BlockExtent::new(0, 0, BLOCK_SIZE);
+        assert_eq!(
+            ledger
+                .reserve_piece_affine_on_plane(conn, wire_block)
+                .unwrap(),
+            wire_block
+        );
+        assert!(
+            !ledger.set_connection_plane(conn, Plane::V1),
+            "a reserved request must retain its negotiated wire coordinates"
+        );
+        assert_eq!(ledger.plane(conn), Some(Plane::V2));
+
+        assert_eq!(
+            ledger.on_reject_on_plane(conn, wire_block).unwrap(),
+            RejectOutcome::Released
+        );
+        assert!(ledger.set_connection_plane(conn, Plane::V1));
+        assert_eq!(ledger.plane(conn), Some(Plane::V1));
     }
 
     #[test]

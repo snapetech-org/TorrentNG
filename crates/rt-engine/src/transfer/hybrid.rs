@@ -218,6 +218,21 @@ impl HybridLedger {
             .flatten()
     }
 
+    /// Rebind an idle connection to the plane selected by hybrid handshake
+    /// negotiation. Once a request is outstanding its coordinates are part
+    /// of the wire contract, so changing planes must wait until it is
+    /// reconciled.
+    pub fn set_plane(&mut self, conn: ConnectionId, plane: Plane) -> bool {
+        if !self.is_live(conn) || self.ledger.outstanding(conn) != 0 {
+            return false;
+        }
+        let Some(current) = self.connection_planes.get_mut(&conn) else {
+            return false;
+        };
+        *current = plane;
+        true
+    }
+
     pub fn set_remote_reqq(&mut self, conn: ConnectionId, reqq: usize) {
         if self.is_live(conn) {
             self.ledger.set_remote_reqq(conn, reqq);
