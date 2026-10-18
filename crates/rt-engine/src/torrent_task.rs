@@ -14177,6 +14177,338 @@ mod tests {
         ));
     }
 
+    fn peer_loop_upload_context(
+        root: &std::path::Path,
+        payload_len: u64,
+        fast_negotiated: bool,
+        torrent_upload: Arc<SharedRateLimiter>,
+        upload_control: RateLimitCancellation,
+        shutdown_control: RateLimitCancellation,
+    ) -> (UploadContext, MountScheduler) {
+        let piece_map = Arc::new(
+            PieceMap::new(
+                payload_len,
+                vec![FileSpan {
+                    file_index: 0,
+                    path: rt_path::SafeRelPath::from_name("peer.bin", false).unwrap(),
+                    content_offset: 0,
+                    length: payload_len,
+                }],
+            )
+            .unwrap(),
+        );
+        let storage = MountScheduler::new_for_path(
+            StorageRootId::new(),
+            root,
+            &SchedulerConfig {
+                profile: StorageProfile::Unknown,
+                ..Default::default()
+            },
+        );
+        let upload = UploadContext {
+            save_root: root.to_path_buf(),
+            piece_map,
+            storage: storage.clone(),
+            resources: ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default()),
+            have_pieces: PieceBitmap::from_bools(&[true]),
+            _bitmap_memory_lease: None,
+            metadata: None,
+            is_private: false,
+            pex_enabled: true,
+            torrent_upload,
+            fast_negotiated,
+            upload_control,
+            shutdown_control,
+            global_download: GlobalNetworkBudget::unlimited().download(),
+            global_upload: GlobalNetworkBudget::unlimited().upload(),
+        };
+        (upload, storage)
+    }
+
+    #[tokio::test]
+    async fn remote_cancel_rejects_fast_request_still_queued_for_storage() {
+        let temp = tempfile::tempdir().unwrap();
+        const REQUESTS: usize = MAX_PENDING_UPLOAD_READS + 1;
+        const REQUEST_BYTES: u64 = 4;
+        let payload = vec![0x5a; REQUESTS * REQUEST_BYTES as usize];
+        std::fs::write(temp.path().join("peer.bin"), payload).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = listener.local_addr().unwrap();
+        let remote = TcpStream::connect(peer_addr).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let rate = Arc::new(SharedRateLimiter::new(Some(1)));
+        rate.acquire(64 * 1024).await;
+        let upload_control = RateLimitCancellation::default();
+        let shutdown_control = RateLimitCancellation::default();
+        let (upload, storage) = peer_loop_upload_context(
+            temp.path(),
+            payload.len() as u64,
+            true,
+            Arc::clone(&rate),
+            upload_control.clone(),
+            shutdown_control.clone(),
+        );
+        let (peer_event_tx, _peer_event_rx) = mpsc::channel(REQUESTS + 1);
+        let (peer_cmd_tx, peer_cmd_rx) = mpsc::channel(REQUESTS + 1);
+        let loop_task = tokio::spawn(run_peer_loop(
+            peer_addr,
+            PeerId::new(),
+            PeerIo::Tcp(Framed::new(server, PeerCodec::default())),
+            peer_event_tx,
+            peer_cmd_rx,
+            upload,
+            true,
+        ));
+        let mut remote = Framed::new(remote, PeerCodec::default());
+
+        peer_cmd_tx.send(PeerCommand::Unchoke).await.unwrap();
+        assert!(matches!(
+            timeout(Duration::from_secs(1), remote.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap(),
+            Message::Unchoke
+        ));
+        for index in 0..REQUESTS {
+            remote
+                .send(Message::Request {
+                    piece: 0,
+                    begin: (index as u32) * REQUEST_BYTES as u32,
+                    length: REQUEST_BYTES as u32,
+                })
+                .await
+                .unwrap();
+        }
+        timeout(Duration::from_secs(5), async {
+            while storage.stats().backend_read_ops_by_class[IoClass::PeerRead as usize]
+                < MAX_PENDING_UPLOAD_READS as u64
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the bounded upload-read window did not fill");
+
+        let queued = (MAX_PENDING_UPLOAD_READS as u32) * REQUEST_BYTES as u32;
+        remote
+            .send(Message::Cancel {
+                piece: 0,
+                begin: queued,
+                length: REQUEST_BYTES as u32,
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            timeout(Duration::from_secs(1), remote.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap(),
+            Message::Reject { piece: 0, begin, length }
+                if begin == queued && length == REQUEST_BYTES as u32
+        ));
+
+        upload_control.cancel();
+        shutdown_control.cancel();
+        peer_cmd_tx.send(PeerCommand::Shutdown).await.unwrap();
+        let exit = timeout(Duration::from_secs(2), loop_task)
+            .await
+            .expect("peer loop did not stop after queued Cancel")
+            .unwrap();
+        assert!(exit.result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn remote_cancel_keeps_fast_request_already_in_service_owed() {
+        let temp = tempfile::tempdir().unwrap();
+        let payload = b"data";
+        std::fs::write(temp.path().join("peer.bin"), payload).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = listener.local_addr().unwrap();
+        let remote = TcpStream::connect(peer_addr).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let rate = Arc::new(SharedRateLimiter::new(Some(1)));
+        rate.acquire(64 * 1024).await;
+        let upload_control = RateLimitCancellation::default();
+        let shutdown_control = RateLimitCancellation::default();
+        let (upload, storage) = peer_loop_upload_context(
+            temp.path(),
+            payload.len() as u64,
+            true,
+            Arc::clone(&rate),
+            upload_control.clone(),
+            shutdown_control.clone(),
+        );
+        let (peer_event_tx, _peer_event_rx) = mpsc::channel(2);
+        let (peer_cmd_tx, peer_cmd_rx) = mpsc::channel(2);
+        let loop_task = tokio::spawn(run_peer_loop(
+            peer_addr,
+            PeerId::new(),
+            PeerIo::Tcp(Framed::new(server, PeerCodec::default())),
+            peer_event_tx,
+            peer_cmd_rx,
+            upload,
+            true,
+        ));
+        let mut remote = Framed::new(remote, PeerCodec::default());
+
+        peer_cmd_tx.send(PeerCommand::Unchoke).await.unwrap();
+        assert!(matches!(
+            timeout(Duration::from_secs(1), remote.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap(),
+            Message::Unchoke
+        ));
+        remote
+            .send(Message::Request {
+                piece: 0,
+                begin: 0,
+                length: payload.len() as u32,
+            })
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(2), async {
+            while storage.stats().backend_read_ops_by_class[IoClass::PeerRead as usize] == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the upload read did not enter service");
+        remote
+            .send(Message::Cancel {
+                piece: 0,
+                begin: 0,
+                length: payload.len() as u32,
+            })
+            .await
+            .unwrap();
+        assert!(timeout(Duration::from_millis(50), remote.next())
+            .await
+            .is_err());
+
+        rate.set_limit(None);
+        assert!(matches!(
+            timeout(Duration::from_secs(2), remote.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap(),
+            Message::Piece { piece: 0, begin: 0, data } if data.as_ref() == payload
+        ));
+        drop(peer_cmd_tx);
+        let exit = timeout(Duration::from_secs(2), loop_task)
+            .await
+            .expect("peer loop did not finish after its in-service response")
+            .unwrap();
+        assert!(exit.result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn endgame_cancel_targets_only_exact_duplicate_requests() {
+        let temp = tempfile::tempdir().unwrap();
+        let conn = Connection::open_in_memory().unwrap();
+        rt_db::migrate(&conn).unwrap();
+        let meta = TorrentMetaV1 {
+            info_hash: [91; 20],
+            announce: None,
+            announce_list: Vec::new(),
+            webseeds: Vec::new(),
+            comment: None,
+            created_by: None,
+            creation_date: None,
+            name: "endgame-cancel.bin".into(),
+            piece_length: 4,
+            pieces: vec![[0; 20]],
+            files: vec![rt_metainfo::TorrentFileV1 {
+                index: 0,
+                length: 4,
+                path: rt_path::SafeRelPath::from_name("endgame-cancel.bin", false).unwrap(),
+                offset: 0,
+                pad: false,
+            }],
+            private: false,
+            raw: Vec::new(),
+        };
+        let db = Arc::new(Mutex::new(conn));
+        let (_cmd_tx, cmd_rx) = mpsc::channel(1);
+        let mut task = TorrentTask::new(
+            meta,
+            temp.path().to_path_buf(),
+            false,
+            TorrentState::Downloading,
+            Arc::new(RwLock::new(SessionRegistry::new())),
+            DbExecutor::direct(Arc::clone(&db)),
+            ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default()),
+            cmd_rx,
+            temp.path().join("fastresume"),
+            8,
+            6881,
+            10,
+            10,
+            60,
+            1024 * 1024,
+            StorageIoConfig::default(),
+            false,
+            OutboundEgressPolicy::default(),
+            GlobalNetworkBudget::unlimited(),
+            10_000,
+            None,
+        )
+        .await;
+
+        let permits = Arc::new(tokio::sync::Semaphore::new(3));
+        let accepted_peer = "127.0.0.1:6881".parse().unwrap();
+        let duplicate_peer = "127.0.0.1:6882".parse().unwrap();
+        let near_match_peer = "127.0.0.1:6883".parse().unwrap();
+        let (_, mut accepted_commands) = task
+            .register_peer(
+                accepted_peer,
+                permits.clone().acquire_owned().await.unwrap(),
+            )
+            .expect("accepted peer registration should fit the memory budget");
+        let (_, mut duplicate_commands) = task
+            .register_peer(
+                duplicate_peer,
+                permits.clone().acquire_owned().await.unwrap(),
+            )
+            .expect("duplicate peer registration should fit the memory budget");
+        let (_, mut near_match_commands) = task
+            .register_peer(near_match_peer, permits.acquire_owned().await.unwrap())
+            .expect("near-match peer registration should fit the memory budget");
+
+        let accepted = BlockRequest {
+            piece: 0,
+            begin: 0,
+            length: 4,
+        };
+        task.active_peers
+            .get_mut(&duplicate_peer)
+            .unwrap()
+            .requested
+            .push(accepted);
+        task.active_peers
+            .get_mut(&near_match_peer)
+            .unwrap()
+            .requested
+            .push(BlockRequest {
+                length: 3,
+                ..accepted
+            });
+
+        task.cancel_endgame_duplicates(accepted);
+
+        assert!(matches!(
+            duplicate_commands.try_recv(),
+            Ok(PeerCommand::Cancel { request }) if request == accepted
+        ));
+        assert!(accepted_commands.try_recv().is_err());
+        assert!(near_match_commands.try_recv().is_err());
+        task.shutdown_peers().await;
+    }
+
     #[tokio::test]
     async fn peer_loop_shutdown_interrupts_rate_limited_upload() {
         let temp = tempfile::tempdir().unwrap();
@@ -14750,6 +15082,27 @@ mod tests {
                 break;
             }
         }
+        peer_cmd_tx
+            .send(PeerCommand::Cancel { request })
+            .await
+            .unwrap();
+        assert!(matches!(
+            timeout(Duration::from_secs(1), remote.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap(),
+            Message::Cancel {
+                piece: 0,
+                begin: 0,
+                length: 4
+            }
+        ));
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
+            4,
+            "sending Cancel must retain the lease for a possible in-flight Piece"
+        );
         remote
             .send(Message::Piece {
                 piece: 0,

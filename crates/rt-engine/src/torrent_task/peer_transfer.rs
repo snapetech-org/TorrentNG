@@ -1112,7 +1112,7 @@ impl TorrentTask {
     /// sending a duplicate. The peer loop retains an on-wire response lease
     /// until Piece, Reject, timeout, or disconnect because Cancel can race a
     /// response already in flight.
-    fn cancel_endgame_duplicates(&mut self, accepted: BlockRequest) {
+    pub(super) fn cancel_endgame_duplicates(&mut self, accepted: BlockRequest) {
         let mut queue_full = 0u64;
         for handle in self.active_peers.values() {
             let owns_request = handle.requested.iter().any(|request| {
