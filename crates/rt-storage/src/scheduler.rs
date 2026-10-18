@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -2540,6 +2540,112 @@ impl MountScheduler {
             .await
     }
 
+    /// Run disk-bound work that touches paths on this mount and any additional
+    /// physical devices. Every device queue is admitted in stable key order,
+    /// so concurrent copies in opposite directions cannot hold one device
+    /// while waiting for the other in the reverse order.
+    ///
+    /// The current scheduler remains the mount and byte-accounting owner.
+    /// Additional paths contribute physical-device admission; their path
+    /// mounts do not acquire a second queue-byte charge for the same working
+    /// buffer.
+    pub async fn run_device_operation_with_paths<T, F>(
+        &self,
+        class: IoClass,
+        queued_bytes: u64,
+        additional_paths: &[PathBuf],
+        operation: F,
+    ) -> Result<T, StorageError>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> Result<T, StorageError> + Send + 'static,
+    {
+        let mut queues = Vec::with_capacity(additional_paths.len());
+        for path in additional_paths {
+            let topology = detect_storage_topology(path);
+            let device_id = topology.device_id.map(|device| device.0);
+            let device_key = device_queue_key(self.storage_root, device_id.as_deref());
+            let mount = device_id
+                .as_deref()
+                .map(|device| format!("storage-device-{device}"))
+                .unwrap_or_else(|| format!("storage-root-{}", self.storage_root.0));
+            let queue = device_queue_for(
+                self.storage_root,
+                device_id.as_deref(),
+                self.device_queue_capacity,
+                self.device_queue.active_limit,
+            );
+            queues.push((device_key, mount, queue));
+        }
+        self.run_device_operation_with_queues(class, queued_bytes, queues, operation)
+            .await
+    }
+
+    async fn run_device_operation_with_queues<T, F>(
+        &self,
+        class: IoClass,
+        queued_bytes: u64,
+        additional_queues: Vec<(String, String, Arc<DeviceQueue>)>,
+        operation: F,
+    ) -> Result<T, StorageError>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> Result<T, StorageError> + Send + 'static,
+    {
+        let mut queues = additional_queues;
+        let mount = self
+            .device_id
+            .as_deref()
+            .map(|device| format!("storage-device-{device}"))
+            .unwrap_or_else(|| format!("storage-root-{}", self.storage_root.0));
+        queues.push((
+            device_queue_key(self.storage_root, self.device_id.as_deref()),
+            mount,
+            Arc::clone(&self.device_queue),
+        ));
+        queues.sort_by(|left, right| left.0.cmp(&right.0));
+        let mut seen = HashSet::with_capacity(queues.len());
+        queues.retain(|(_, _, queue)| seen.insert(Arc::as_ptr(queue) as usize));
+
+        let mut submission = self.reserve_mount_submission(queued_bytes)?;
+        let mut permits = Vec::with_capacity(queues.len());
+        for (_, mount, queue) in queues {
+            match queue.acquire(class, mount).await {
+                Ok(permit) => permits.push(permit),
+                Err(error) => {
+                    if matches!(error, StorageError::QueueFull { .. }) {
+                        self.counters.queue_full.fetch_add(1, Ordering::Relaxed);
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        let mut permits = permits.into_iter();
+        let Some(primary) = permits.next() else {
+            return Err(StorageError::Cancelled);
+        };
+        submission.start_device_operation(primary);
+        let additional_permits = permits.collect::<Vec<_>>();
+        tracing::trace!(
+            device_operation_id = submission.device_operation_id().unwrap_or_default(),
+            class = ?class,
+            device_count = additional_permits.len().saturating_add(1),
+            "dispatching multi-device blocking operation"
+        );
+        let result = self
+            .io_pool
+            .run(move || {
+                let _submission = submission;
+                let _additional_device_permits = additional_permits;
+                operation()
+            })
+            .await;
+        if matches!(result, Err(StorageError::QueueFull { .. })) {
+            self.counters.queue_full.fetch_add(1, Ordering::Relaxed);
+        }
+        result
+    }
+
     fn reserve_mount_submission(&self, queued_bytes: u64) -> Result<DiskSubmission, StorageError> {
         let queued_bytes = QueuedDiskBytes::reserve(
             self.counters.clone(),
@@ -4469,6 +4575,181 @@ mod tests {
         finish_tx.send(()).unwrap();
         operation.await.unwrap().unwrap();
         assert_eq!(second.device_queue.available(), 1);
+    }
+
+    #[tokio::test]
+    async fn multi_device_handoff_holds_source_and_destination_until_completion() {
+        let config = SchedulerConfig {
+            profile: StorageProfile::Hdd,
+            max_queue: 1,
+            storage_io: StorageIoConfig {
+                io_worker_threads: 1,
+                io_queue_depth: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let destination = MountScheduler::new_with_profile_and_io_config(
+            StorageRootId::new(),
+            &config,
+            StorageProfile::Hdd,
+            config.storage_io.clone(),
+            Some(StorageTopology {
+                device_id: Some(DeviceId("multi-device-destination".to_owned())),
+                profile: StorageProfile::Hdd,
+                fs_type: Some("ext4".to_owned()),
+                cow: false,
+            }),
+        );
+        let source = MountScheduler::new_with_profile_and_io_config(
+            StorageRootId::new(),
+            &config,
+            StorageProfile::Hdd,
+            config.storage_io.clone(),
+            Some(StorageTopology {
+                device_id: Some(DeviceId("multi-device-source".to_owned())),
+                profile: StorageProfile::Hdd,
+                fs_type: Some("ext4".to_owned()),
+                cow: false,
+            }),
+        );
+        let source_check = source.clone();
+        let source_key = device_queue_key(source.storage_root, source.device_id.as_deref());
+        let source_mount = format!("storage-device-{}", source.device_id.as_deref().unwrap());
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+        let operation = tokio::spawn(async move {
+            destination
+                .run_device_operation_with_queues(
+                    IoClass::MoveCopy,
+                    64 * 1024,
+                    vec![(source_key, source_mount, source.device_queue.clone())],
+                    move || {
+                        started_tx.send(()).unwrap();
+                        finish_rx.recv().unwrap();
+                        Ok(())
+                    },
+                )
+                .await
+        });
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("multi-device operation did not start");
+
+        let blocked = source_check
+            .run_device_operation(IoClass::PeerRead, 0, || Ok(()))
+            .await;
+        assert!(matches!(blocked, Err(StorageError::QueueFull { .. })));
+
+        finish_tx.send(()).unwrap();
+        operation.await.unwrap().unwrap();
+        assert_eq!(source_check.device_queue.available(), 1);
+    }
+
+    #[tokio::test]
+    async fn opposing_multi_device_handoffs_use_one_queue_order() {
+        let config = SchedulerConfig {
+            profile: StorageProfile::Hdd,
+            max_queue: 2,
+            storage_io: StorageIoConfig {
+                io_worker_threads: 1,
+                io_queue_depth: 2,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let make_scheduler = |device: &str| {
+            MountScheduler::new_with_profile_and_io_config(
+                StorageRootId::new(),
+                &config,
+                StorageProfile::Hdd,
+                config.storage_io.clone(),
+                Some(StorageTopology {
+                    device_id: Some(DeviceId(device.to_owned())),
+                    profile: StorageProfile::Hdd,
+                    fs_type: Some("ext4".to_owned()),
+                    cow: false,
+                }),
+            )
+        };
+        let device_a = make_scheduler("multi-device-order-a");
+        let device_b = make_scheduler("multi-device-order-b");
+        let queue_for = |scheduler: &MountScheduler| {
+            (
+                device_queue_key(scheduler.storage_root, scheduler.device_id.as_deref()),
+                format!("storage-device-{}", scheduler.device_id.as_deref().unwrap()),
+                Arc::clone(&scheduler.device_queue),
+            )
+        };
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let release_rx = Arc::new(Mutex::new(release_rx));
+
+        let first_scheduler = device_a.clone();
+        let first_other_queue = queue_for(&device_b);
+        let first_started = started_tx.clone();
+        let first_release = Arc::clone(&release_rx);
+        let first = tokio::spawn(async move {
+            first_scheduler
+                .run_device_operation_with_queues(
+                    IoClass::MoveCopy,
+                    64,
+                    vec![first_other_queue],
+                    move || {
+                        first_started.send(()).unwrap();
+                        lock_recover(&first_release).recv().unwrap();
+                        Ok(())
+                    },
+                )
+                .await
+        });
+        tokio::task::yield_now().await;
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first cross-device operation did not start");
+
+        let second_scheduler = device_b.clone();
+        let second_other_queue = queue_for(&device_a);
+        let second_started = started_tx;
+        let second_release = Arc::clone(&release_rx);
+        let second = tokio::spawn(async move {
+            second_scheduler
+                .run_device_operation_with_queues(
+                    IoClass::MoveCopy,
+                    64,
+                    vec![second_other_queue],
+                    move || {
+                        second_started.send(()).unwrap();
+                        lock_recover(&second_release).recv().unwrap();
+                        Ok(())
+                    },
+                )
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let state = lock_recover(&device_a.device_queue.state);
+                if device_pending_count(&state) != 0 {
+                    break;
+                }
+                drop(state);
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("opposing operation did not wait on the first ordered device");
+
+        release_tx.send(()).unwrap();
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("opposing cross-device operation deadlocked");
+        release_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            first.await.unwrap().unwrap();
+            second.await.unwrap().unwrap();
+        })
+        .await
+        .expect("ordered cross-device operations did not finish");
     }
 
     #[tokio::test]

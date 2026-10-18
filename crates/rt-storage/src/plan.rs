@@ -1193,9 +1193,16 @@ where
     } else {
         0
     };
-    runtime.block_on(scheduler.run_device_operation(
+    let touched_paths = step
+        .source
+        .iter()
+        .chain(step.destination.iter())
+        .cloned()
+        .collect::<Vec<_>>();
+    runtime.block_on(scheduler.run_device_operation_with_paths(
         IoClass::MoveCopy,
         queued_bytes,
+        &touched_paths,
         move || execute_plan_step_for_platform(&step, &roots, check_control.as_ref()),
     ))
 }
@@ -2480,17 +2487,19 @@ mod tests {
             }],
             rollback_steps: Vec::new(),
         };
-        let scheduler = MountScheduler::new(
-            rt_path::StorageRootId::new(),
-            &crate::SchedulerConfig {
-                max_queue: 1,
-                storage_io: crate::StorageIoConfig {
-                    io_worker_threads: 1,
-                    io_queue_depth: 1,
-                    ..Default::default()
-                },
+        let scheduler_config = crate::SchedulerConfig {
+            max_queue: 1,
+            storage_io: crate::StorageIoConfig {
+                io_worker_threads: 1,
+                io_queue_depth: 1,
                 ..Default::default()
             },
+            ..Default::default()
+        };
+        let scheduler = MountScheduler::new_for_path(
+            rt_path::StorageRootId::new(),
+            &destination,
+            &scheduler_config,
         );
         let (started_tx, started_rx) = std::sync::mpsc::channel();
         let (finish_tx, finish_rx) = std::sync::mpsc::channel();

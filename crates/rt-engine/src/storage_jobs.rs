@@ -398,6 +398,9 @@ pub(crate) struct StorageJobDispatcher {
     /// Production copy plans share the configured storage resources and
     /// device identity with torrent actors. Test dispatchers leave this unset.
     scheduler_config: Option<SchedulerConfig>,
+    /// Stable fallback identity for copy-plan devices whose platform cannot
+    /// expose a physical device ID. Per-operation IDs would split admission.
+    scheduler_storage_root: StorageRootId,
     max_inflight: usize,
     worker_count: usize,
     shutdown_tx: Option<oneshot::Sender<()>>,
@@ -453,6 +456,7 @@ impl StorageJobDispatcher {
             controls: Arc::new(Mutex::new(HashMap::new())),
             worker_db: None,
             scheduler_config: None,
+            scheduler_storage_root: StorageRootId::new(),
             max_inflight: 2,
             worker_count: 1,
             shutdown_tx: None,
@@ -525,6 +529,7 @@ impl StorageJobDispatcher {
             controls,
             worker_db,
             scheduler_config: None,
+            scheduler_storage_root: StorageRootId::new(),
             max_inflight,
             worker_count,
             shutdown_tx: Some(shutdown_tx),
@@ -735,7 +740,7 @@ impl StorageJobDispatcher {
         });
         let copy_scheduler = self.scheduler_config.as_ref().and_then(|config| {
             copy_destination.map(|destination| {
-                MountScheduler::new_for_path(StorageRootId::new(), destination, config)
+                MountScheduler::new_for_path(self.scheduler_storage_root, destination, config)
             })
         });
         let control = Arc::new(StorageJobControl::new(paused));
