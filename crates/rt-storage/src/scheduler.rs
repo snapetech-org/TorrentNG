@@ -1330,7 +1330,7 @@ impl Drop for DiskSubmission {
 /// bytes are retained for existing scheduler accounting; governor-backed
 /// bytes and any shared immutable payload lease are reported separately so
 /// callers can distinguish a retained view from a second allocation.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct StorageCreditEvidence {
     governor_credit_leases: u64,
     governor_credit_bytes: u64,
@@ -5174,6 +5174,56 @@ mod tests {
 
         assert_eq!(first.governor_credit_bytes, 4096);
         assert_eq!(first.frame_pool_charge_bytes_at_dispatch, 80 * 1024);
+    }
+
+    #[test]
+    fn storage_credit_merge_is_order_independent_across_resource_domains() {
+        let governor_and_peer_payload = StorageCreditEvidence {
+            governor_credit_leases: 1,
+            governor_credit_bytes: 4096,
+            logical_queued_bytes: 8192,
+            shared_payload_class: Some(MemoryClass::PeerBuffer),
+            shared_payload_lease_count: 1,
+            shared_payload_lease_bytes: 16 * 1024,
+            shared_payload_view_bytes: 8192,
+            frame_pool_charge_bytes_at_dispatch: 64 * 1024,
+            ..StorageCreditEvidence::default()
+        };
+        let queue_and_webseed_payload = StorageCreditEvidence {
+            governor_credit_leases: 1,
+            governor_credit_bytes: 2048,
+            logical_queued_bytes: 4096,
+            shared_payload_class: Some(MemoryClass::WebseedBody),
+            shared_payload_lease_count: 1,
+            shared_payload_lease_bytes: 4096,
+            shared_payload_view_bytes: 4096,
+            frame_pool_charge_bytes_at_dispatch: 16 * 1024,
+            ..StorageCreditEvidence::default()
+        };
+
+        let mut forward = governor_and_peer_payload;
+        forward.include(queue_and_webseed_payload);
+        let mut reverse = queue_and_webseed_payload;
+        reverse.include(governor_and_peer_payload);
+
+        assert_eq!(forward, reverse);
+        assert_eq!(forward.governor_credit_leases, 2);
+        assert_eq!(forward.governor_credit_bytes, 6144);
+        assert_eq!(forward.logical_queued_bytes, 12 * 1024);
+        assert_eq!(forward.shared_payload_class, None);
+        assert!(forward.shared_payload_classes_mixed);
+        assert_eq!(forward.shared_payload_lease_count, 2);
+        assert_eq!(forward.shared_payload_lease_bytes, 20 * 1024);
+        assert_eq!(forward.shared_payload_view_bytes, 12 * 1024);
+        assert_eq!(forward.frame_pool_charge_bytes_at_dispatch, 80 * 1024);
+
+        let mut same_class = governor_and_peer_payload;
+        same_class.include(governor_and_peer_payload);
+        assert_eq!(
+            same_class.shared_payload_class,
+            Some(MemoryClass::PeerBuffer)
+        );
+        assert!(!same_class.shared_payload_classes_mixed);
     }
 
     #[test]
