@@ -1089,6 +1089,9 @@ reservations use piece affinity because those assemblies are not shared.
 - The per-piece slots move only through missing, reserved, received, and
   verification outcomes; invariants cross-check slot owners, connection maps,
   and in-flight totals.
+- Acquisition, commit, Reject, and received events use the exact canonical
+  aligned block extent; a shorter response cannot mark an entire ledger slot
+  received or release a different live request.
 - Response-before-commit is reconciled once; its pending reconciliation
   history and late-response tombstones have hard per-connection caps.
 - Piece-state admission and release preserve the configured logical byte
@@ -1124,7 +1127,8 @@ reservations use piece affinity because those assemblies are not shared.
 - **Regression source added or updated:** ledger transition cases and seeded
   simulator replay; current additions include bounded commit history, late
   data superseding a replacement reservation, byte-budget lifecycle, bounded
-  connection registration, and request/endgame caps.
+  connection registration, request/endgame caps, and rejection of partial or
+  mismatched request, commit, Reject, and response extents.
 - **Command or probe to run:** transfer-core and simulator tests during the
   requested bulk pass.
 - **Expected result:** all transitions preserve ledger conservation and all

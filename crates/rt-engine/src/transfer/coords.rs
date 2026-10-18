@@ -150,6 +150,11 @@ pub enum GeometryError {
     Unaligned {
         begin: u32,
     },
+    NonCanonicalBlock {
+        piece: u32,
+        begin: u32,
+        length: u32,
+    },
 }
 
 impl fmt::Display for GeometryError {
@@ -175,6 +180,14 @@ impl fmt::Display for GeometryError {
                 "block ends at {end} past piece {piece} length {piece_len}"
             ),
             Self::Unaligned { begin } => write!(f, "block begin {begin} is not block aligned"),
+            Self::NonCanonicalBlock {
+                piece,
+                begin,
+                length,
+            } => write!(
+                f,
+                "block ({piece}, {begin}, {length}) is not a full canonical block extent"
+            ),
         }
     }
 }
@@ -263,11 +276,19 @@ pub trait PieceGeometry {
         ))
     }
 
-    /// Validate a block we are about to request: in range and aligned.
+    /// Validate an acquisition block: it must equal the full aligned extent
+    /// used by the ledger, including a short final block when the piece ends.
     fn validate_request_block(&self, block: BlockExtent) -> Result<(), GeometryError> {
         self.validate_served_block(block)?;
         if !block.begin.is_multiple_of(BLOCK_SIZE) {
             return Err(GeometryError::Unaligned { begin: block.begin });
+        }
+        if self.block_extent(block.piece, block.block_index()) != Some(block) {
+            return Err(GeometryError::NonCanonicalBlock {
+                piece: block.piece,
+                begin: block.begin,
+                length: block.length,
+            });
         }
         Ok(())
     }
@@ -725,6 +746,25 @@ mod tests {
             geometry.validate_served_block(BlockExtent::new(9, 0, 1)),
             Err(GeometryError::PieceOutOfRange { .. })
         ));
+    }
+
+    #[test]
+    fn acquisition_blocks_must_match_the_canonical_extent() {
+        let geometry = UniformGeometry::new(32 * 1024, 2);
+        assert_eq!(
+            geometry.validate_request_block(BlockExtent::new(0, 0, 8 * 1024)),
+            Err(GeometryError::NonCanonicalBlock {
+                piece: 0,
+                begin: 0,
+                length: 8 * 1024,
+            })
+        );
+        assert!(geometry
+            .validate_request_block(BlockExtent::new(0, 0, BLOCK_SIZE))
+            .is_ok());
+        assert!(geometry
+            .validate_request_block(BlockExtent::new(1, BLOCK_SIZE, BLOCK_SIZE))
+            .is_ok());
     }
 
     #[test]

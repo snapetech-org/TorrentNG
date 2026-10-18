@@ -715,6 +715,12 @@ impl<G: PieceGeometry> Ledger<G> {
         if state.take_pending_commit_ignore(&block) {
             return (CommitOutcome::Reconciled, Vec::new());
         }
+        if !state.outstanding.contains(&block) {
+            return (
+                CommitOutcome::Orphaned,
+                vec![Action::Cancel { conn, block }],
+            );
+        }
         if let Some(piece) = self.pieces.get_mut(&block.piece) {
             if let Some(Slot::Reserved(owners)) = piece.slots.get_mut(block.block_index() as usize)
             {
@@ -737,11 +743,14 @@ impl<G: PieceGeometry> Ledger<G> {
         if self.conn_ref(conn).is_none() {
             return ReceiveOutcome::StaleConnection;
         }
-        if let Err(error) = self.geometry.validate_served_block(block) {
+        if let Err(error) = self.geometry.validate_request_block(block) {
             return ReceiveOutcome::Invalid(error);
         }
         let index = block.block_index() as usize;
-        let owned_by_conn = self
+        let has_outstanding = self
+            .conn_ref(conn)
+            .is_some_and(|state| state.outstanding.contains(&block));
+        let slot_owned_by_conn = self
             .pieces
             .get(&block.piece)
             .and_then(|piece| piece.slots.get(index))
@@ -749,6 +758,7 @@ impl<G: PieceGeometry> Ledger<G> {
                 Slot::Reserved(owners) => owners.iter().any(|owner| owner.conn == conn),
                 _ => false,
             });
+        let owned_by_conn = has_outstanding && slot_owned_by_conn;
         let received_already = self
             .pieces
             .get(&block.piece)
@@ -800,7 +810,7 @@ impl<G: PieceGeometry> Ledger<G> {
         if !self.is_live(conn) {
             return ReceiveOutcome::StaleConnection;
         }
-        if let Err(error) = self.geometry.validate_served_block(block) {
+        if let Err(error) = self.geometry.validate_request_block(block) {
             return ReceiveOutcome::Invalid(error);
         }
         if self.piece_has_foreign_activity(conn, block.piece) {
@@ -871,8 +881,13 @@ impl<G: PieceGeometry> Ledger<G> {
 
     /// The peer answered a request with Reject Request.
     pub fn on_reject(&mut self, conn: ConnectionId, block: BlockExtent) -> RejectOutcome {
-        if self.conn_ref(conn).is_none() {
+        let Some(state) = self.conn_ref(conn) else {
             return RejectOutcome::StaleConnection;
+        };
+        if !state.outstanding.contains(&block)
+            || self.geometry.validate_request_block(block).is_err()
+        {
+            return RejectOutcome::Unknown;
         }
         if self.release_owner(conn, block) {
             if let Some(state) = self.conn_mut(conn) {
@@ -1827,6 +1842,45 @@ mod tests {
         assert!(matches!(
             ledger.on_block(conn, BlockExtent::new(9, 0, 16 * KIB)),
             ReceiveOutcome::Invalid(GeometryError::PieceOutOfRange { .. })
+        ));
+        ledger.check_invariants().unwrap();
+    }
+
+    #[test]
+    fn partial_or_mismatched_extents_cannot_complete_a_reserved_block() {
+        let mut ledger = ledger();
+        let conn = ledger.connect(8);
+        let requested = block(0, 0);
+        let partial = BlockExtent::new(0, 0, 8 * KIB);
+
+        assert_eq!(
+            ledger.reserve(conn, partial, &ReserveMode::Exclusive),
+            Err(ReserveError::Invalid(GeometryError::NonCanonicalBlock {
+                piece: 0,
+                begin: 0,
+                length: 8 * KIB,
+            }))
+        );
+        ledger
+            .reserve(conn, requested, &ReserveMode::Exclusive)
+            .unwrap();
+        assert_eq!(ledger.on_reject(conn, partial), RejectOutcome::Unknown);
+        assert!(ledger.owns(conn, requested));
+        assert_eq!(ledger.commit(conn, partial, 1).0, CommitOutcome::Orphaned);
+        assert_eq!(ledger.commit(conn, requested, 2).0, CommitOutcome::OnWire);
+        assert_eq!(
+            ledger.on_block(conn, partial),
+            ReceiveOutcome::Invalid(GeometryError::NonCanonicalBlock {
+                piece: 0,
+                begin: 0,
+                length: 8 * KIB,
+            })
+        );
+        assert!(ledger.owns(conn, requested));
+        assert_eq!(ledger.piece_progress(0), Some((0, 2)));
+        assert!(matches!(
+            ledger.on_block(conn, requested),
+            ReceiveOutcome::Accepted { .. }
         ));
         ledger.check_invariants().unwrap();
     }
