@@ -1655,6 +1655,98 @@ impl StorageCreditEvidence {
     }
 }
 
+/// Retains and describes the queued-memory credits owned by a hash job. The
+/// job closure owns this value, so cancellation of its waiter cannot make the
+/// data lease available while queued or running hash work still retains bytes.
+#[derive(Debug)]
+enum HashQueueCredit {
+    Owned(QueuedDiskBytes),
+    Shared(Arc<QueuedDiskBytes>),
+}
+
+impl HashQueueCredit {
+    fn evidence(&self) -> StorageCreditEvidence {
+        match self {
+            Self::Owned(queued_bytes) => queued_bytes.resource_credit(),
+            Self::Shared(queued_bytes) => queued_bytes.resource_credit(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct HashJobCreditOwner {
+    operation_id: Option<StorageOperationId>,
+    operation_kind: &'static str,
+    input_bytes: u64,
+    credit: StorageCreditEvidence,
+    _queued_bytes: HashQueueCredit,
+}
+
+impl HashJobCreditOwner {
+    fn new(operation_kind: &'static str, input_bytes: u64, queued_bytes: HashQueueCredit) -> Self {
+        // Hash jobs are on a hot path. Avoid a global identity atomic and
+        // duplicate credit snapshot work unless trace output can consume it.
+        let trace_enabled = tracing::enabled!(tracing::Level::TRACE);
+        let operation_id = trace_enabled.then(allocate_storage_operation_id).flatten();
+        let credit = if operation_id.is_some() {
+            queued_bytes.evidence()
+        } else {
+            StorageCreditEvidence::default()
+        };
+        Self {
+            operation_id,
+            operation_kind,
+            input_bytes,
+            credit,
+            _queued_bytes: queued_bytes,
+        }
+    }
+
+    fn trace_submission(&self) {
+        let Some(operation_id) = self.operation_id else {
+            return;
+        };
+        let credit = self.credit;
+        tracing::trace!(
+            storage_operation_id = operation_id.0,
+            hash_operation = self.operation_kind,
+            hash_input_bytes = self.input_bytes,
+            resource_credit_governor_leases = credit.governor_credit_leases,
+            resource_credit_governor_bytes = credit.governor_credit_bytes,
+            resource_credit_logical_queued_bytes = credit.logical_queued_bytes,
+            resource_credit_shared_payload_class = ?credit.shared_payload_class,
+            resource_credit_shared_payload_classes_mixed = credit.shared_payload_classes_mixed,
+            resource_credit_shared_payload_leases = credit.shared_payload_lease_count,
+            resource_credit_shared_payload_lease_bytes = credit.shared_payload_lease_bytes,
+            resource_credit_shared_payload_view_bytes = credit.shared_payload_view_bytes,
+            "hash job submission requested"
+        );
+    }
+}
+
+impl Drop for HashJobCreditOwner {
+    fn drop(&mut self) {
+        let Some(operation_id) = self.operation_id else {
+            return;
+        };
+        let credit = self.credit;
+        tracing::trace!(
+            storage_operation_id = operation_id.0,
+            hash_operation = self.operation_kind,
+            hash_input_bytes = self.input_bytes,
+            resource_credit_governor_leases = credit.governor_credit_leases,
+            resource_credit_governor_bytes = credit.governor_credit_bytes,
+            resource_credit_logical_queued_bytes = credit.logical_queued_bytes,
+            resource_credit_shared_payload_class = ?credit.shared_payload_class,
+            resource_credit_shared_payload_classes_mixed = credit.shared_payload_classes_mixed,
+            resource_credit_shared_payload_leases = credit.shared_payload_lease_count,
+            resource_credit_shared_payload_lease_bytes = credit.shared_payload_lease_bytes,
+            resource_credit_shared_payload_view_bytes = credit.shared_payload_view_bytes,
+            "hash job credit owner released"
+        );
+    }
+}
+
 impl Drop for QueuedDiskBytes {
     fn drop(&mut self) {
         if self.bytes > 0 {
@@ -4261,10 +4353,16 @@ impl MountScheduler {
                 "rt-storage-hash",
             )?,
         };
+        let hash_owner = HashJobCreditOwner::new(
+            "sha1_piece",
+            data.len() as u64,
+            HashQueueCredit::Owned(queued_bytes),
+        );
+        hash_owner.trace_submission();
         let result = self
             .hash_pool
             .run(move || {
-                let _queued_bytes = queued_bytes;
+                let _hash_owner = hash_owner;
                 let mut hasher = Sha1::new();
                 hasher.update(&data);
                 counters.hash_ops.fetch_add(1, Ordering::Relaxed);
@@ -4368,10 +4466,16 @@ impl MountScheduler {
         let counters = self.counters.clone();
         let started = Instant::now();
         let piece_leaf_count = piece_length / V2_BLOCK_SIZE;
+        let hash_owner = HashJobCreditOwner::new(
+            "hybrid_piece",
+            data.len() as u64,
+            HashQueueCredit::Shared(queued_bytes),
+        );
+        hash_owner.trace_submission();
         let result = self
             .hash_pool
             .run(move || {
-                let _queued_bytes = queued_bytes;
+                let _hash_owner = hash_owner;
                 let v1_sha1 = Sha1::digest(&data).into();
                 let mut accumulator = MerkleAccumulator::new();
                 for leaf in data[..v2_content_len].chunks(V2_BLOCK_SIZE) {
@@ -4522,10 +4626,16 @@ impl MountScheduler {
             "rt-storage-hash",
         )?;
         let next_hasher = hasher.clone();
+        let hash_owner = HashJobCreditOwner::new(
+            "sha1_recheck_chunk",
+            data.len() as u64,
+            HashQueueCredit::Owned(queued_bytes),
+        );
+        hash_owner.trace_submission();
         let result = self
             .hash_pool
             .run(move || {
-                let _queued_bytes = queued_bytes;
+                let _hash_owner = hash_owner;
                 let mut next_hasher = next_hasher;
                 next_hasher.update(&data);
                 counters.hash_ops.fetch_add(1, Ordering::Relaxed);
@@ -4552,10 +4662,16 @@ impl MountScheduler {
             data.len() as u64,
             "rt-storage-hash",
         )?;
+        let hash_owner = HashJobCreditOwner::new(
+            "v2_leaf",
+            data.len() as u64,
+            HashQueueCredit::Owned(queued_bytes),
+        );
+        hash_owner.trace_submission();
         let result = self
             .hash_pool
             .run(move || {
-                let _queued_bytes = queued_bytes;
+                let _hash_owner = hash_owner;
                 counters.hash_ops.fetch_add(1, Ordering::Relaxed);
                 let latency_ns = latency_ns_since(started);
                 counters
@@ -4587,10 +4703,16 @@ impl MountScheduler {
             data.len() as u64,
             "rt-storage-hash",
         )?;
+        let hash_owner = HashJobCreditOwner::new(
+            "v2_leaf_batch",
+            data.len() as u64,
+            HashQueueCredit::Owned(queued_bytes),
+        );
+        hash_owner.trace_submission();
         let result = self
             .hash_pool
             .run(move || {
-                let _queued_bytes = queued_bytes;
+                let _hash_owner = hash_owner;
                 counters.hash_ops.fetch_add(1, Ordering::Relaxed);
                 let latency_ns = latency_ns_since(started);
                 counters
@@ -4612,16 +4734,20 @@ impl MountScheduler {
     pub async fn hash_v2_root(&self, leaves: Vec<[u8; 32]>) -> Result<[u8; 32], StorageError> {
         let counters = self.counters.clone();
         let started = Instant::now();
+        let input_bytes = (leaves.len() * 32) as u64;
         let queued_bytes = QueuedDiskBytes::reserve(
             counters.clone(),
             self.resources.as_ref(),
-            (leaves.len() * 32) as u64,
+            input_bytes,
             "rt-storage-hash",
         )?;
+        let hash_owner =
+            HashJobCreditOwner::new("v2_root", input_bytes, HashQueueCredit::Owned(queued_bytes));
+        hash_owner.trace_submission();
         let result = self
             .hash_pool
             .run(move || {
-                let _queued_bytes = queued_bytes;
+                let _hash_owner = hash_owner;
                 counters.hash_ops.fetch_add(1, Ordering::Relaxed);
                 let latency_ns = latency_ns_since(started);
                 counters
@@ -5048,6 +5174,29 @@ mod tests {
 
         assert_eq!(first.governor_credit_bytes, 4096);
         assert_eq!(first.frame_pool_charge_bytes_at_dispatch, 80 * 1024);
+    }
+
+    #[test]
+    fn hash_job_owner_retains_queued_credit_until_drop() {
+        let counters = Arc::new(StorageCounters::default());
+        let queued_bytes =
+            QueuedDiskBytes::reserve(counters.clone(), None, 4096, "hash-owner-test").unwrap();
+        let owner =
+            HashJobCreditOwner::new("sha1_piece", 4096, HashQueueCredit::Owned(queued_bytes));
+        owner.trace_submission();
+
+        assert!(matches!(
+            &owner._queued_bytes,
+            HashQueueCredit::Owned(queued) if queued.bytes == queued_disk_charge(4096)
+        ));
+        assert_eq!(
+            counters.queued_disk_bytes.load(Ordering::Relaxed),
+            queued_disk_charge(4096)
+        );
+
+        drop(owner);
+
+        assert_eq!(counters.queued_disk_bytes.load(Ordering::Relaxed), 0);
     }
 
     fn hdd_scheduler() -> MountScheduler {

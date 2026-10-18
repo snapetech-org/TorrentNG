@@ -275,11 +275,15 @@ Securely opened descriptor leases carry that captured identity through queued
 and submitted operations. On Unix and Windows, reads, writes, and sync
 operations check that the descriptor's original identity still matches the
 current path at their completion boundary; a mismatch fails as uncertain, and
-writes keep dirty evidence intact. Stable lease identities, hash credit
+writes keep dirty evidence intact. Data-bearing hash jobs always retain their
+queued-byte owner through closure completion. When trace-level logging is
+enabled, they also capture a process-wide operation identity and record queue
+and shared-payload credits at submission and release; normal operation avoids
+that ID and snapshot work. Stable lease identities, consumer-lifetime credit
 reconciliation, deterministic credit before/after assertions, restart cuts,
 and platform fault qualification remain open. Frame-pool charge attribution
-is now present in read-dispatch traces; consumer-lifetime reconciliation is
-still open.
+is present in read-dispatch traces; consumer-lifetime reconciliation is still
+open.
 
 ### Ownership and invariant
 
@@ -320,10 +324,14 @@ still open.
   immutable write-payload references; traces expose their queue credit and
   retained permit/owner counts. Read dispatch records the actual frame-pool
   charge, including size-class rounding, separately from governor-backed queue
-  bytes. Regression sources cover that separation and the frame-pool charge
-  calculation; deterministic before/after assertions across storage frames,
-  queued work, and hash work remain open. Crash cuts and platform-specific
-  fault qualification remain open.
+  bytes. Data-bearing hash jobs retain queue/payload credit through the worker
+  closure; at trace level they also record operation-scoped credit at
+  submission and release without a global ID allocation on the untraced hot
+  path. Regression sources cover frame-credit separation, rounded frame
+  charge, and hash queue credit lifetime; deterministic before/after
+  assertions across the complete storage-frame, queue, and hash pipeline
+  remain open. Crash cuts and platform-specific fault qualification remain
+  open.
 
 ### Files and compatibility
 
@@ -353,7 +361,7 @@ still open.
   `replaced_path_after_held_read_is_not_returned_to_caller`, and
   `device_operation_record_disambiguates_local_sequences_by_queue`, plus
   `storage_credit_keeps_frame_pool_charge_separate_from_governor_bytes` and
-  the size-class charge assertion in
+  `hash_job_owner_retains_queued_credit_until_drop`, plus the size-class charge assertion in
   `into_bytes_releases_charge_without_copying_payload`.
 - **Command or probe to run:** `cargo test -p rt-storage` during the requested
   bulk pass.
