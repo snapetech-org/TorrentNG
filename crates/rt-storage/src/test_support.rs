@@ -43,6 +43,7 @@ struct FaultRule {
 struct Control {
     rules: Mutex<VecDeque<FaultRule>>,
     releases: Mutex<VecDeque<mpsc::Sender<()>>>,
+    completion_workers: Mutex<Vec<thread::JoinHandle<()>>>,
     ready_count: AtomicUsize,
     ready: Notify,
 }
@@ -60,6 +61,7 @@ impl ScriptedDiskBackend {
             control: Arc::new(Control {
                 rules: Mutex::new(VecDeque::new()),
                 releases: Mutex::new(VecDeque::new()),
+                completion_workers: Mutex::new(Vec::new()),
                 ready_count: AtomicUsize::new(0),
                 ready: Notify::new(),
             }),
@@ -109,7 +111,7 @@ impl ScriptedDiskBackend {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .push_back(release);
         let control = self.control.clone();
-        thread::Builder::new()
+        let worker = thread::Builder::new()
             .name("tng-storage-test-completion".to_string())
             .spawn(move || {
                 let result = inner.blocking_recv().unwrap_or_else(|_| {
@@ -130,6 +132,11 @@ impl ScriptedDiskBackend {
                 let _ = reply.send(result);
             })
             .expect("test completion worker should start");
+        self.control
+            .completion_workers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(worker);
     }
 
     pub(crate) async fn wait_until_completion_is_held(&self) {
@@ -176,6 +183,17 @@ impl Drop for ScriptedDiskBackend {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         for release in releases.drain(..) {
             let _ = release.send(());
+        }
+        drop(releases);
+        let workers = std::mem::take(
+            &mut *self
+                .control
+                .completion_workers
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        );
+        for worker in workers {
+            let _ = worker.join();
         }
     }
 }
@@ -237,5 +255,24 @@ impl DiskBackend for ScriptedDiskBackend {
             Some(Effect::WritePrefixThenFail { .. }) => self.fail(io::ErrorKind::InvalidInput),
             None => self.delegate.fdatasync(file),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn dropping_backend_releases_and_joins_held_completion_workers() {
+        let backend = ScriptedDiskBackend::new(1, 1);
+        let (inner_tx, inner) = oneshot::channel();
+        let (reply, receiver) = oneshot::channel();
+        backend.hold(inner, reply, None::<io::ErrorKind>);
+        inner_tx.send(Ok(())).unwrap();
+        backend.wait_until_completion_is_held().await;
+
+        drop(backend);
+
+        assert!(receiver.await.unwrap().is_ok());
     }
 }

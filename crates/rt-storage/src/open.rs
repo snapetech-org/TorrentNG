@@ -11,7 +11,7 @@ use std::fs::File;
 use std::fs::OpenOptions;
 use std::io;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
 use std::ffi::CString;
@@ -26,7 +26,7 @@ use std::os::windows::ffi::OsStrExt;
 #[cfg(windows)]
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 #[cfg(any(unix, windows))]
-use std::path::{Component, PathBuf};
+use std::path::Component;
 #[cfg(all(windows, test))]
 use windows_sys::Win32::Storage::FileSystem::MoveFileW;
 #[cfg(windows)]
@@ -48,6 +48,17 @@ pub(crate) struct FileIdentity {
     volume_serial: u32,
     #[cfg(windows)]
     file_index: u64,
+}
+
+/// Give every path-backed storage cache the same absolute key spelling.
+/// This deliberately does not canonicalize through the filesystem: doing so
+/// would follow links before the secure no-follow open has checked them.
+pub(crate) fn normalized_storage_path(path: &Path) -> io::Result<PathBuf> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(std::env::current_dir()?.join(path))
+    }
 }
 
 #[cfg(unix)]
@@ -87,6 +98,22 @@ pub(crate) fn path_identity(path: &Path) -> io::Result<FileIdentity> {
         device: metadata.dev(),
         inode: metadata.ino(),
     })
+}
+
+/// Compare a cached identity with the current path without consulting the
+/// cached descriptor while the catalog lock is held.
+pub(crate) fn identity_matches_path(path: &Path, identity: FileIdentity) -> io::Result<bool> {
+    #[cfg(any(unix, windows))]
+    {
+        Ok(path_identity(path)? == identity)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (path, identity);
+        // This target has no stable file identity implementation, so a
+        // cached descriptor cannot be safely reused for a later path lookup.
+        Ok(false)
+    }
 }
 
 #[cfg(windows)]
@@ -136,15 +163,27 @@ pub(crate) fn open_path_no_follow_current(
     write: bool,
     create: bool,
 ) -> io::Result<File> {
+    open_path_no_follow_current_identity(path, write, create).map(|(file, _)| file)
+}
+
+/// Securely open a path and return the identity checked against the current
+/// name. Keeping the descriptor identity avoids a second metadata lookup in
+/// the catalog before publishing the entry.
+pub(crate) fn open_path_no_follow_current_identity(
+    path: &Path,
+    write: bool,
+    create: bool,
+) -> io::Result<(File, FileIdentity)> {
     const MAX_REPLACEMENT_RETRIES: usize = 8;
 
     for _ in 0..MAX_REPLACEMENT_RETRIES {
         let file = open_path_no_follow(path, write, create)?;
+        let identity = file_identity(&file)?;
         #[cfg(any(unix, windows))]
-        if !file_matches_path(&file, path)? {
+        if !identity_matches_path(path, identity)? {
             continue;
         }
-        return Ok(file);
+        return Ok((file, identity));
     }
 
     Err(io::Error::new(

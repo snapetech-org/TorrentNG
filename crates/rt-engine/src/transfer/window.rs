@@ -45,6 +45,27 @@ impl Default for WindowConfig {
     }
 }
 
+impl WindowConfig {
+    fn normalized(self) -> Self {
+        let max = self.max.max(1);
+        let min = self.min.clamp(1, max);
+        let backlog_high = if self.backlog_high.is_finite() {
+            self.backlog_high.clamp(0.0, 1.0 - f64::EPSILON)
+        } else {
+            0.5
+        };
+        Self {
+            block_bytes: self.block_bytes.max(1),
+            initial: self.initial.clamp(min, max),
+            min,
+            max,
+            sample_nanos: self.sample_nanos.max(1),
+            backlog_high,
+            ..self
+        }
+    }
+}
+
 /// Everything besides the peer's own behaviour that bounds the window, in
 /// blocks (or a ratio for backlog).
 #[derive(Debug, Clone, Copy)]
@@ -86,7 +107,7 @@ pub struct WindowController {
 impl WindowController {
     pub fn new(cfg: WindowConfig) -> Self {
         Self {
-            cfg,
+            cfg: cfg.normalized(),
             rate_bytes_per_sec: None,
             delay_nanos: None,
             sample_start: None,
@@ -143,7 +164,12 @@ impl WindowController {
             None => self.cfg.initial,
         };
         // A growing device backlog only ever shrinks admission.
-        let backlog = inputs.device_backlog.clamp(0.0, 1.0);
+        let backlog = if inputs.device_backlog.is_finite() {
+            inputs.device_backlog.clamp(0.0, 1.0)
+        } else {
+            // An unmeasurable backlog must never increase admission.
+            1.0
+        };
         let shaped = if backlog > self.cfg.backlog_high {
             let over =
                 (backlog - self.cfg.backlog_high) / (1.0 - self.cfg.backlog_high).max(f64::EPSILON);
@@ -293,5 +319,38 @@ mod tests {
             Some(400)
         );
         assert_eq!(next_refill_deadline([None, None]), None);
+    }
+
+    #[test]
+    fn invalid_window_configuration_is_normalized_to_safe_bounds() {
+        let controller = WindowController::new(WindowConfig {
+            block_bytes: 0,
+            initial: 0,
+            min: 8,
+            max: 2,
+            margin_nanos: 0,
+            sample_nanos: 0,
+            backlog_high: f64::NAN,
+        });
+
+        assert_eq!(controller.cfg.block_bytes, 1);
+        assert_eq!(controller.cfg.min, 2);
+        assert_eq!(controller.cfg.max, 2);
+        assert_eq!(controller.cfg.initial, 2);
+        assert_eq!(controller.cfg.sample_nanos, 1);
+        assert_eq!(controller.cfg.backlog_high, 0.5);
+        assert_eq!(
+            controller.window(&WindowInputs::unconstrained(100)),
+            2,
+            "the initial window respects the normalized maximum"
+        );
+        assert_eq!(
+            controller.window(&WindowInputs {
+                device_backlog: f64::NAN,
+                ..WindowInputs::unconstrained(100)
+            }),
+            1,
+            "unknown backlog shrinks admission conservatively"
+        );
     }
 }

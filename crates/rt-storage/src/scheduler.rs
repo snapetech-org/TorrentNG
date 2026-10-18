@@ -24,13 +24,11 @@ use crate::{
     elevator::elevator_class_weight,
     error::StorageError,
     fd_limit::process_handle_cache_capacity,
-    file_handle::{DescriptorLimiter, DescriptorPermit, LeasedFile, LeasedFileHandle},
+    file_handle::LeasedFileHandle,
     frame::{global_frame_pool, Frame},
+    handle_cache::{Access, HandleCache},
     io_class::IoClass,
-    open::{
-        create_dir_all_no_follow, file_identity, open_path_no_follow_current, path_identity,
-        FileIdentity,
-    },
+    open::{create_dir_all_no_follow, file_identity, normalized_storage_path, FileIdentity},
 };
 
 pub const STORAGE_LATENCY_BUCKETS_NS: [u64; 8] = [
@@ -411,58 +409,21 @@ pub struct DataExtent {
     pub len: u64,
 }
 
-#[derive(Debug, Default)]
-struct FilePoolCounters {
-    hits: AtomicU64,
-    misses: AtomicU64,
-    evictions: AtomicU64,
-    idle_closes: AtomicU64,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OpenMode {
     Read,
     Write,
 }
 
-/// A write descriptor is opened read+write, so it also serves reads; a read
-/// descriptor cannot serve writes.
-fn mode_satisfies(cached: OpenMode, requested: OpenMode) -> bool {
-    cached == requested || cached == OpenMode::Write
-}
-
-#[derive(Debug)]
-struct CachedFile {
-    file: Arc<LeasedFile>,
-    mode: OpenMode,
-    identity: FileIdentity,
-    last_used: Instant,
-    sequence: u64,
-}
-
 #[derive(Debug)]
 struct FilePool {
-    capacity: usize,
-    idle_ttl: Duration,
-    entries: Mutex<HashMap<PathBuf, CachedFile>>,
-    descriptors: Arc<DescriptorLimiter>,
-    counters: FilePoolCounters,
-    sequence: AtomicU64,
-    epoch: Instant,
-    last_sweep_ns: AtomicU64,
+    catalog: HandleCache,
 }
 
 impl FilePool {
     fn new(capacity: usize, idle_ttl: Duration) -> Self {
         Self {
-            capacity,
-            idle_ttl,
-            entries: Mutex::new(HashMap::new()),
-            descriptors: DescriptorLimiter::new(capacity),
-            counters: FilePoolCounters::default(),
-            sequence: AtomicU64::new(1),
-            epoch: Instant::now(),
-            last_sweep_ns: AtomicU64::new(0),
+            catalog: HandleCache::new(capacity, idle_ttl),
         }
     }
 
@@ -473,105 +434,16 @@ impl FilePool {
         create: bool,
     ) -> Result<Arc<LeasedFileHandle>, StorageError> {
         let key = normalized_key(path);
-        let path_str = key.display().to_string();
-
-        // Warm path. The cache lock covers only the map lookup; the identity
-        // `stat` (a filesystem round trip, slow on network mounts) runs after
-        // it is released so unrelated opens are not serialised behind it.
-        if let Some(handle) = self.lookup_valid(&key, mode) {
-            return Ok(handle);
-        }
-
-        self.counters.misses.fetch_add(1, Ordering::Relaxed);
-        let permit = self.acquire_descriptor();
-        // Another thread may have opened the same file while this one waited
-        // for a descriptor.
-        if let Some(handle) = self.lookup_valid(&key, mode) {
-            return Ok(handle);
-        }
-
-        // Open outside the cache lock: `open` is a blocking filesystem call.
-        let file = open_path_no_follow_current(&key, mode == OpenMode::Write, create)
-            .map_err(|e| StorageError::io(&path_str, e))?;
-        let file = Arc::new(LeasedFile::new(file, permit));
-        let identity = file_identity(&file).map_err(|e| StorageError::io(&path_str, e))?;
-        let now = Instant::now();
-
-        let mut entries = lock_reset_derived_cache(&self.entries);
-        if let Some(entry) = entries.get_mut(&key) {
-            // Lost a publish race: keep the winner's descriptor if it still
-            // serves this request, and let ours (and its permit) drop.
-            if mode_satisfies(entry.mode, mode) && entry.identity == identity {
-                entry.last_used = now;
-                entry.sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
-                return Ok(Arc::new(LeasedFileHandle::new(Arc::clone(&entry.file))));
-            }
-            entries.remove(&key);
-            self.counters.evictions.fetch_add(1, Ordering::Relaxed);
-        }
-        let seq = self.sequence.fetch_add(1, Ordering::Relaxed);
-        entries.insert(
-            key,
-            CachedFile {
-                file: file.clone(),
-                mode,
-                identity,
-                last_used: now,
-                sequence: seq,
-            },
-        );
-        self.enforce_capacity_locked(&mut entries);
-        Ok(Arc::new(LeasedFileHandle::new(file)))
-    }
-
-    /// A cached descriptor that serves `mode` and still names the same file.
-    /// A write descriptor is also opened for reading, so it serves reads
-    /// instead of being discarded and reopened read-only.
-    fn lookup_valid(&self, key: &Path, mode: OpenMode) -> Option<Arc<LeasedFileHandle>> {
-        let candidate = {
-            let now = Instant::now();
-            let mut entries = lock_reset_derived_cache(&self.entries);
-            self.sweep_idle_if_due_locked(&mut entries, now);
-            entries.get(key).and_then(|entry| {
-                mode_satisfies(entry.mode, mode).then(|| (Arc::clone(&entry.file), entry.identity))
-            })
-        };
-        let (file, identity) = candidate?;
-        let still_same = path_identity(key).ok() == Some(identity);
-        let mut entries = lock_reset_derived_cache(&self.entries);
-        match entries.get_mut(key) {
-            Some(entry) if Arc::ptr_eq(&entry.file, &file) => {
-                if still_same {
-                    entry.last_used = Instant::now();
-                    entry.sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
-                    self.counters.hits.fetch_add(1, Ordering::Relaxed);
-                    return Some(Arc::new(LeasedFileHandle::new(file)));
-                }
-                entries.remove(key);
-                self.counters.evictions.fetch_add(1, Ordering::Relaxed);
-                None
-            }
-            // Replaced or evicted while the identity check ran: treat as a miss.
-            _ => None,
-        }
+        self.catalog
+            .get_or_open_leased(&key, mode == OpenMode::Write, create)
+            .map_err(|error| StorageError::io(key.display().to_string(), error))
     }
 
     fn open_for_sync(&self, path: &Path) -> Result<Arc<LeasedFileHandle>, StorageError> {
         let key = normalized_key(path);
-        let path_str = key.display().to_string();
-        if let Some(handle) = self.lookup_valid(&key, OpenMode::Write) {
-            return Ok(handle);
-        }
-
-        let permit = self.acquire_descriptor();
-        if let Some(handle) = self.lookup_valid(&key, OpenMode::Write) {
-            return Ok(handle);
-        }
-        let file = open_path_no_follow_current(&key, true, false)
-            .map_err(|e| StorageError::io(&path_str, e))?;
-        Ok(Arc::new(LeasedFileHandle::new(Arc::new(LeasedFile::new(
-            file, permit,
-        )))))
+        self.catalog
+            .open_uncached_leased(&key, true, false)
+            .map_err(|error| StorageError::io(key.display().to_string(), error))
     }
 
     /// Writable cached paths, evicting entries whose file was replaced. Only
@@ -579,123 +451,26 @@ impl FilePool {
     /// scheduler's own dirty paths.
     #[cfg(test)]
     fn write_paths(&self) -> Vec<PathBuf> {
-        let mut entries = lock_reset_derived_cache(&self.entries);
-        let stale: Vec<PathBuf> = entries
-            .iter()
-            .filter(|(path, entry)| {
-                entry.mode == OpenMode::Write && path_identity(path).ok() != Some(entry.identity)
-            })
-            .map(|(path, _)| path.clone())
-            .collect();
-        for path in stale {
-            if entries.remove(&path).is_some() {
-                self.counters.evictions.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-        entries
-            .iter()
-            .filter(|(_, entry)| entry.mode == OpenMode::Write)
-            .map(|(path, _)| path.clone())
-            .collect()
+        self.catalog.cached_write_paths()
     }
 
     fn stats(&self) -> FilePoolStats {
-        let entries = lock_reset_derived_cache(&self.entries);
+        let stats = self.catalog.stats();
         FilePoolStats {
-            capacity: self.capacity,
-            open_files: entries.len(),
-            active_descriptors: self.descriptors.active(),
-            memory_bytes: entries
-                .keys()
-                .map(|path| {
-                    (std::mem::size_of::<PathBuf>() + path.as_os_str().as_encoded_bytes().len())
-                        .saturating_add(std::mem::size_of::<CachedFile>())
-                        as u64
-                })
-                .sum(),
-            hits: self.counters.hits.load(Ordering::Relaxed),
-            misses: self.counters.misses.load(Ordering::Relaxed),
-            evictions: self.counters.evictions.load(Ordering::Relaxed),
-            idle_closes: self.counters.idle_closes.load(Ordering::Relaxed),
+            capacity: stats.capacity,
+            open_files: stats.open_files,
+            active_descriptors: stats.active_descriptors,
+            memory_bytes: stats.memory_bytes,
+            hits: stats.hits,
+            misses: stats.misses,
+            evictions: stats.evictions,
+            idle_closes: stats.idle_closes,
         }
     }
 
-    /// Idle expiry is a full scan of the cache, so doing it on every hit made
-    /// each warm access pay for the whole map. Run it at most once per quarter
-    /// of the idle TTL (and at least once a second), which bounds how long an
-    /// expired descriptor can linger.
-    fn sweep_idle_if_due_locked(&self, entries: &mut HashMap<PathBuf, CachedFile>, now: Instant) {
-        if self.idle_ttl.is_zero() {
-            return;
-        }
-        let interval = (self.idle_ttl / 4).clamp(Duration::from_millis(1), Duration::from_secs(1));
-        let elapsed_ns = now.saturating_duration_since(self.epoch).as_nanos() as u64;
-        let last = self.last_sweep_ns.load(Ordering::Relaxed);
-        if last != 0 && elapsed_ns.saturating_sub(last) < interval.as_nanos() as u64 {
-            return;
-        }
-        self.last_sweep_ns
-            .store(elapsed_ns.max(1), Ordering::Relaxed);
-        self.sweep_idle_locked(entries, now);
-    }
-
-    fn sweep_idle_locked(&self, entries: &mut HashMap<PathBuf, CachedFile>, now: Instant) {
-        if self.idle_ttl.is_zero() {
-            return;
-        }
-        let before = entries.len();
-        entries.retain(|_, entry| now.duration_since(entry.last_used) < self.idle_ttl);
-        let closed = before.saturating_sub(entries.len()) as u64;
-        if closed > 0 {
-            self.counters
-                .idle_closes
-                .fetch_add(closed, Ordering::Relaxed);
-        }
-    }
-
-    fn enforce_capacity_locked(&self, entries: &mut HashMap<PathBuf, CachedFile>) {
-        while entries.len() > self.capacity {
-            if !self.evict_oldest_locked(entries) {
-                break;
-            }
-        }
-    }
-
-    fn acquire_descriptor(&self) -> DescriptorPermit {
-        loop {
-            if let Some(permit) = self.descriptors.try_acquire() {
-                return permit;
-            }
-
-            let generation = self.descriptors.generation();
-            {
-                let now = Instant::now();
-                let mut entries = lock_reset_derived_cache(&self.entries);
-                self.sweep_idle_locked(&mut entries, now);
-                if let Some(permit) = self.descriptors.try_acquire() {
-                    return permit;
-                }
-                // Cached descriptors and queued I/O share the same ceiling.
-                // Evict one entry; if it is still in-flight, wait for its
-                // operation reference to drop, then retry so newly-idle cache
-                // entries can be evicted instead of leaving waiters asleep.
-                self.evict_oldest_locked(&mut entries);
-            }
-            self.descriptors.wait_for_change(generation);
-        }
-    }
-
-    fn evict_oldest_locked(&self, entries: &mut HashMap<PathBuf, CachedFile>) -> bool {
-        let Some(path) = entries
-            .iter()
-            .min_by_key(|(_, entry)| entry.sequence)
-            .map(|(path, _)| path.clone())
-        else {
-            return false;
-        };
-        entries.remove(&path);
-        self.counters.evictions.fetch_add(1, Ordering::Relaxed);
-        true
+    #[cfg(test)]
+    fn active_descriptors(&self) -> usize {
+        self.catalog.active_descriptors()
     }
 }
 
@@ -4188,13 +3963,7 @@ pub async fn scheduled_write_with_shared_payload_lease(
 }
 
 fn normalized_key(path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(path)
-    }
+    normalized_storage_path(path).unwrap_or_else(|_| PathBuf::from(".").join(path))
 }
 
 fn class_index(class: IoClass) -> usize {
@@ -5497,12 +5266,12 @@ mod tests {
         let file = pool.get_or_open(&path, OpenMode::Read, false).unwrap();
 
         assert_eq!(file.metadata().unwrap().len(), 4);
-        assert_eq!(pool.descriptors.active(), 1);
+        assert_eq!(pool.active_descriptors(), 1);
         let stats = pool.stats();
         assert_eq!(stats.capacity, 0);
         assert_eq!(stats.open_files, 0);
         drop(file);
-        assert_eq!(pool.descriptors.active(), 0);
+        assert_eq!(pool.active_descriptors(), 0);
     }
 
     #[test]
@@ -5516,7 +5285,7 @@ mod tests {
         let first = pool
             .get_or_open(&first_path, OpenMode::Read, false)
             .unwrap();
-        assert_eq!(pool.descriptors.active(), 1);
+        assert_eq!(pool.active_descriptors(), 1);
 
         let (opened_tx, opened_rx) = mpsc::channel();
         let opener = {
@@ -5533,7 +5302,7 @@ mod tests {
             opened_rx.recv_timeout(Duration::from_millis(50)),
             Err(mpsc::RecvTimeoutError::Timeout)
         ));
-        assert_eq!(pool.descriptors.active(), 1);
+        assert_eq!(pool.active_descriptors(), 1);
 
         drop(first);
         let second = opened_rx
@@ -5541,9 +5310,9 @@ mod tests {
             .expect("descriptor waiter did not resume after the in-flight handle dropped");
         opener.join().unwrap();
         assert_eq!(second.metadata().unwrap().len(), 6);
-        assert_eq!(pool.descriptors.active(), 1);
+        assert_eq!(pool.active_descriptors(), 1);
         drop(second);
-        assert_eq!(pool.descriptors.active(), 1, "the cache retains one handle");
+        assert_eq!(pool.active_descriptors(), 1, "the cache retains one handle");
     }
 
     #[tokio::test]
@@ -6271,7 +6040,7 @@ mod tests {
                         let file = pool
                             .get_or_open(&path, OpenMode::Read, false)
                             .unwrap_or_else(|error| panic!("open {path:?} failed: {error}"));
-                        max_active.fetch_max(pool.descriptors.active(), Ordering::Relaxed);
+                        max_active.fetch_max(pool.active_descriptors(), Ordering::Relaxed);
                         std::thread::sleep(Duration::from_millis(30));
                         assert_eq!(file.metadata().unwrap().len(), 7);
                     })
@@ -6282,7 +6051,7 @@ mod tests {
                 worker.join().expect("file-pool worker panicked");
             }
             assert!(max_active.load(Ordering::Relaxed) <= ACTIVE_LIMIT);
-            assert!(pool.descriptors.active() <= ACTIVE_LIMIT);
+            assert!(pool.active_descriptors() <= ACTIVE_LIMIT);
             assert!(pool.stats().open_files <= ACTIVE_LIMIT);
             return;
         }
@@ -6355,18 +6124,12 @@ mod tests {
         let pool = Arc::new(FilePool::new(16, Duration::from_secs(30)));
         let old = pool.get_or_open(&path, OpenMode::Read, false).unwrap();
 
-        let poisoner = Arc::clone(&pool);
-        assert!(std::thread::spawn(move || {
-            let _guard = poisoner.entries.lock().unwrap();
-            panic!("poison the derived file pool");
-        })
-        .join()
-        .is_err());
-        assert!(pool.entries.is_poisoned());
+        pool.catalog.poison_for_test();
+        assert!(pool.catalog.cache_is_poisoned());
 
         let reopened = pool.get_or_open(&path, OpenMode::Read, false).unwrap();
         assert!(!Arc::ptr_eq(&old, &reopened));
-        assert!(!pool.entries.is_poisoned());
+        assert!(!pool.catalog.cache_is_poisoned());
     }
 
     #[test]
@@ -7236,6 +6999,8 @@ mod tests {
                 ..Default::default()
             },
         );
+        scheduler.device_queue = Arc::new(DeviceQueue::new(4, 4));
+        scheduler.device_queue_capacity = 4;
         let backend = Arc::new(ScriptedDiskBackend::new(1, 8));
         scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(backend.clone()));
         backend.inject(Operation::Write, Effect::HoldCompletion);
@@ -7748,6 +7513,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancelled_checkpoint_barrier_retains_admission_until_sync_completion() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("checkpoint-held.bin");
+        let resources = queued_disk_governor(QUEUED_DISK_JOB_OVERHEAD_BYTES);
+        let mut scheduler = MountScheduler::new(
+            StorageRootId::new(),
+            &SchedulerConfig {
+                profile: StorageProfile::Hdd,
+                storage_io: StorageIoConfig {
+                    durability_mode: DurabilityMode::Checkpoint,
+                    io_worker_threads: 1,
+                    io_queue_depth: 2,
+                    ..Default::default()
+                },
+                resources: Some(resources.clone()),
+                ..Default::default()
+            },
+        );
+        scheduler.device_queue = Arc::new(DeviceQueue::new(4, 4));
+        scheduler.device_queue_capacity = 4;
+        let backend = Arc::new(ScriptedDiskBackend::new(1, 8));
+        scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(backend.clone()));
+        scheduler
+            .write_at(
+                IoClass::PeerWrite,
+                &path,
+                0,
+                bytes::Bytes::from_static(b"checkpoint-payload"),
+                true,
+            )
+            .await
+            .unwrap();
+        assert_eq!(scheduler.stats().dirty_files, 1);
+        backend.inject(Operation::Sync, Effect::HoldCompletion);
+
+        let barrier_scheduler = scheduler.clone();
+        let barrier = tokio::spawn(async move { barrier_scheduler.sync_all_open_files().await });
+        backend.wait_until_completion_is_held().await;
+
+        let capacity = scheduler.stats().device_queue_capacity;
+        assert_eq!(scheduler.stats().device_queue_available, capacity - 1);
+        assert_eq!(
+            queued_disk_used_bytes(&resources),
+            QUEUED_DISK_JOB_OVERHEAD_BYTES
+        );
+        barrier.abort();
+        let _ = barrier.await;
+
+        assert_eq!(scheduler.stats().dirty_files, 1);
+        assert_eq!(scheduler.stats().device_queue_available, capacity - 1);
+        assert_eq!(
+            queued_disk_used_bytes(&resources),
+            QUEUED_DISK_JOB_OVERHEAD_BYTES
+        );
+        assert_eq!(
+            scheduler.stats().queued_disk_bytes,
+            QUEUED_DISK_JOB_OVERHEAD_BYTES
+        );
+
+        assert!(backend.release_next());
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while scheduler.stats().queued_disk_bytes != 0
+                || queued_disk_used_bytes(&resources) != 0
+                || scheduler.stats().device_queue_available != capacity
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("canceled checkpoint completion should release its admission");
+
+        assert_eq!(scheduler.stats().dirty_files, 1);
+        scheduler.sync_all_open_files().await.unwrap();
+        assert_eq!(scheduler.stats().dirty_files, 0);
+        assert_storage_admission_released(&scheduler);
+    }
+
+    #[tokio::test]
     async fn partial_write_then_error_is_not_reported_as_success() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("partial-write.bin");
@@ -7939,13 +7782,13 @@ mod tests {
         std::fs::write(&path, b"x").unwrap();
         let pool = FilePool::new(8, Duration::from_secs(3600));
         let _first = pool.get_or_open(&path, OpenMode::Read, false).unwrap();
-        let swept_at = pool.last_sweep_ns.load(Ordering::Relaxed);
+        let swept_at = pool.catalog.sweep_marker_ns();
         assert_ne!(swept_at, 0, "the first lookup sweeps");
         for _ in 0..50 {
             let _hit = pool.get_or_open(&path, OpenMode::Read, false).unwrap();
         }
         assert_eq!(
-            pool.last_sweep_ns.load(Ordering::Relaxed),
+            pool.catalog.sweep_marker_ns(),
             swept_at,
             "warm hits within the sweep interval must not rescan the cache"
         );

@@ -13,11 +13,15 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use crate::file_handle::{DescriptorLimiter, DescriptorPermit, LeasedFile, LeasedFileHandle};
-use crate::open::{file_matches_path, open_path_no_follow_current};
+use crate::open::{
+    identity_matches_path, normalized_storage_path, open_path_no_follow_current_identity,
+    FileIdentity,
+};
 
 /// Whether the cached handle is read-only or read+write. A read-only cache
 /// entry is removed when a read+write entry is published; existing operation
@@ -28,7 +32,9 @@ pub enum Access {
     Write,
 }
 
-type Key = (PathBuf, Access);
+fn access_satisfies(cached: Access, requested: Access) -> bool {
+    cached == requested || cached == Access::Write
+}
 
 /// An operation's shareable reference to an open file. Cloning this wrapper
 /// keeps its cache's descriptor permit alive with the actual descriptor.
@@ -57,16 +63,38 @@ impl Drop for OpenFile {
 #[derive(Debug)]
 struct Entry {
     handle: Arc<LeasedFile>,
+    identity: FileIdentity,
+    access: Access,
     tick: u64,
     last_used: Instant,
 }
 
 #[derive(Debug)]
 struct Inner {
-    map: HashMap<Key, Entry>,
-    /// LRU index: tick → key. Lowest tick is least-recently-used.
-    lru: BTreeMap<u64, Key>,
+    map: HashMap<Arc<Path>, Entry>,
+    /// LRU index: tick → shared path key. Lowest tick is least-recently-used.
+    lru: BTreeMap<u64, Arc<Path>>,
     next_tick: u64,
+}
+
+#[derive(Debug, Default)]
+struct Counters {
+    hits: AtomicU64,
+    misses: AtomicU64,
+    evictions: AtomicU64,
+    idle_closes: AtomicU64,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct HandleCacheStats {
+    pub capacity: usize,
+    pub open_files: usize,
+    pub active_descriptors: usize,
+    pub memory_bytes: u64,
+    pub hits: u64,
+    pub misses: u64,
+    pub evictions: u64,
+    pub idle_closes: u64,
 }
 
 /// Bounded LRU cache of open file handles. Cheap to clone (`Arc` inside).
@@ -76,6 +104,9 @@ pub struct HandleCache {
     cap: usize,
     idle_ttl: Duration,
     descriptors: Arc<DescriptorLimiter>,
+    counters: Arc<Counters>,
+    epoch: Instant,
+    last_sweep_ns: Arc<AtomicU64>,
 }
 
 impl HandleCache {
@@ -89,6 +120,9 @@ impl HandleCache {
             cap,
             idle_ttl,
             descriptors: DescriptorLimiter::new(cap),
+            counters: Arc::new(Counters::default()),
+            epoch: Instant::now(),
+            last_sweep_ns: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -98,6 +132,31 @@ impl HandleCache {
 
     pub(crate) fn active_descriptors(&self) -> usize {
         self.descriptors.active()
+    }
+
+    pub(crate) fn stats(&self) -> HandleCacheStats {
+        let inner = self.lock_inner();
+        let path_bytes = inner
+            .map
+            .keys()
+            .map(|path| path.as_os_str().as_encoded_bytes().len())
+            .fold(0usize, usize::saturating_add);
+        HandleCacheStats {
+            capacity: self.cap,
+            open_files: inner.map.len(),
+            active_descriptors: self.descriptors.active(),
+            // The map and LRU each retain an Arc path key, sharing the path
+            // allocation rather than cloning the path on every LRU touch.
+            memory_bytes: path_bytes.saturating_add(inner.map.len().saturating_mul(
+                2 * std::mem::size_of::<Arc<Path>>()
+                    + std::mem::size_of::<Entry>()
+                    + std::mem::size_of::<u64>(),
+            )) as u64,
+            hits: self.counters.hits.load(Ordering::Relaxed),
+            misses: self.counters.misses.load(Ordering::Relaxed),
+            evictions: self.counters.evictions.load(Ordering::Relaxed),
+            idle_closes: self.counters.idle_closes.load(Ordering::Relaxed),
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -132,18 +191,64 @@ impl HandleCache {
     /// syscall runs outside the lock; a concurrent opener racing the same
     /// key is resolved by keeping whichever landed first.
     pub fn get_or_open(&self, path: &Path, write: bool, create: bool) -> io::Result<Arc<OpenFile>> {
-        let key = Self::cache_key(path, write)?;
-        if let Some(file) = self.touch_for_access(&key) {
-            return Ok(Self::operation_handle(file));
+        self.get_or_open_file(path, write, create)
+            .map(Self::operation_handle)
+    }
+
+    /// Scheduler-facing operation handle. It retains the same catalog lease
+    /// without allocating an intermediate public wrapper.
+    pub(crate) fn get_or_open_leased(
+        &self,
+        path: &Path,
+        write: bool,
+        create: bool,
+    ) -> io::Result<Arc<LeasedFileHandle>> {
+        self.get_or_open_file(path, write, create)
+            .map(|file| Arc::new(LeasedFileHandle::new(file)))
+    }
+
+    /// Open a leased operation descriptor through the shared catalog without
+    /// retaining a cache entry on a miss. Checkpoint syncs use this path so a
+    /// one-off dirty-file sync does not fill the warm-read cache.
+    pub(crate) fn open_uncached_leased(
+        &self,
+        path: &Path,
+        write: bool,
+        create: bool,
+    ) -> io::Result<Arc<LeasedFileHandle>> {
+        let (path, access) = Self::cache_key(path, write)?;
+        if let Some(file) = self.touch_for_access(&path, access) {
+            return Ok(Arc::new(LeasedFileHandle::new(file)));
+        }
+        let permit = self.acquire_descriptor();
+        if let Some(file) = self.touch_for_access(&path, access) {
+            return Ok(Arc::new(LeasedFileHandle::new(file)));
+        }
+        let (file, _identity) = open_path_no_follow_current_identity(&path, write, create)?;
+        Ok(Arc::new(LeasedFileHandle::new(Arc::new(LeasedFile::new(
+            file, permit,
+        )))))
+    }
+
+    fn get_or_open_file(
+        &self,
+        path: &Path,
+        write: bool,
+        create: bool,
+    ) -> io::Result<Arc<LeasedFile>> {
+        let (path, access) = Self::cache_key(path, write)?;
+        if let Some(file) = self.touch_for_access(&path, access) {
+            return Ok(file);
         }
 
+        self.counters.misses.fetch_add(1, Ordering::Relaxed);
         // Reserve capacity before opening so concurrent misses cannot exceed
         // this cache's live-descriptor budget while the opens race.
         let permit = self.acquire_descriptor();
-        if let Some(file) = self.touch_for_access(&key) {
-            return Ok(Self::operation_handle(file));
+        if let Some(file) = self.touch_for_access(&path, access) {
+            return Ok(file);
         }
-        self.open_and_insert(key, write, create, permit)
+        self.open_and_insert(path, access, create, permit)
     }
 
     /// Async counterpart to [`HandleCache::get_or_open`]. Descriptor
@@ -155,170 +260,200 @@ impl HandleCache {
         write: bool,
         create: bool,
     ) -> io::Result<Arc<OpenFile>> {
-        let key = Self::cache_key(path, write)?;
-        if let Some(file) = self.touch_for_access(&key) {
-            return Ok(Self::operation_handle(file));
-        }
-
-        let permit = self.acquire_descriptor_async().await;
-        if let Some(file) = self.touch_for_access(&key) {
-            return Ok(Self::operation_handle(file));
-        }
-        self.open_and_insert(key, write, create, permit)
+        self.get_or_open_file_async(path, write, create)
+            .await
+            .map(Self::operation_handle)
     }
 
-    fn cache_key(path: &Path, write: bool) -> io::Result<Key> {
-        // Keep the public cache API usable with relative paths while making
-        // the cache key and secured open operation agree on one spelling.
-        // Relative paths are resolved against the process directory, never
-        // canonicalized through symlinks.
-        let path = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            std::env::current_dir()?.join(path)
-        };
+    async fn get_or_open_file_async(
+        &self,
+        path: &Path,
+        write: bool,
+        create: bool,
+    ) -> io::Result<Arc<LeasedFile>> {
+        let (path, access) = Self::cache_key(path, write)?;
+        if let Some(file) = self.touch_for_access(&path, access) {
+            return Ok(file);
+        }
+
+        self.counters.misses.fetch_add(1, Ordering::Relaxed);
+        let permit = self.acquire_descriptor_async().await;
+        if let Some(file) = self.touch_for_access(&path, access) {
+            return Ok(file);
+        }
+        self.open_and_insert(path, access, create, permit)
+    }
+
+    fn cache_key(path: &Path, write: bool) -> io::Result<(PathBuf, Access)> {
+        let path = normalized_storage_path(path)?;
         let access = if write { Access::Write } else { Access::Read };
         Ok((path, access))
     }
 
     fn open_and_insert(
         &self,
-        key: Key,
-        write: bool,
+        path: PathBuf,
+        access: Access,
         create: bool,
         permit: DescriptorPermit,
-    ) -> io::Result<Arc<OpenFile>> {
+    ) -> io::Result<Arc<LeasedFile>> {
         // Miss: open without holding the cache lock. On Unix this walks from `/`
         // through directory descriptors with O_NOFOLLOW, so a replaced
         // ancestor cannot redirect peer I/O outside the already-authorized
         // path. The final component is no-follow as well.
-        let file = open_path_no_follow_current(&key.0, write, create)?;
+        let (file, identity) =
+            open_path_no_follow_current_identity(&path, access == Access::Write, create)?;
         let file = Arc::new(LeasedFile::new(file, permit));
 
         loop {
             let existing = {
                 let inner = self.lock_inner();
-                let writable_key = (key.0.clone(), Access::Write);
-                let existing_key = if key.1 == Access::Read && inner.map.contains_key(&writable_key)
-                {
-                    Some(writable_key)
-                } else if inner.map.contains_key(&key) {
-                    Some(key.clone())
-                } else {
-                    None
-                };
-                existing_key.and_then(|existing_key| {
-                    inner
-                        .map
-                        .get(&existing_key)
-                        .map(|entry| (existing_key, Arc::clone(&entry.handle)))
+                inner.map.get(path.as_path()).and_then(|entry| {
+                    access_satisfies(entry.access, access)
+                        .then(|| (Arc::clone(&entry.handle), entry.identity))
                 })
             };
-            if let Some((existing_key, existing)) = existing {
+            if let Some((existing, existing_identity)) = existing {
                 // Path identity is filesystem I/O. Check it without holding
                 // the catalog mutex, then verify the candidate still owns the
                 // key before refreshing or removing it.
-                let still_same_path = file_matches_path(&existing, &key.0).unwrap_or(false);
+                let still_same_path =
+                    identity_matches_path(&path, existing_identity).unwrap_or(false);
                 let mut inner = self.lock_inner();
                 let is_current = inner
                     .map
-                    .get(&existing_key)
+                    .get(path.as_path())
                     .is_some_and(|entry| Arc::ptr_eq(&entry.handle, &existing));
                 if !is_current {
                     continue;
                 }
                 if still_same_path {
-                    return Ok(Self::operation_handle(existing));
+                    self.refresh_locked(&mut inner, &path);
+                    self.counters.hits.fetch_add(1, Ordering::Relaxed);
+                    return Ok(existing);
                 }
-                if let Some(entry) = inner.map.remove(&existing_key) {
+                if let Some(entry) = inner.map.remove(path.as_path()) {
                     inner.lru.remove(&entry.tick);
+                    self.counters.evictions.fetch_add(1, Ordering::Relaxed);
                 }
-                if existing_key != key {
-                    continue;
-                }
-                return Ok(self.insert_locked(&mut inner, &key, Arc::clone(&file)));
+                continue;
+            }
+
+            // Revalidate our own miss descriptor after any race-resolution
+            // work and immediately before publication. Path I/O stays
+            // outside the catalog mutex.
+            #[cfg(any(unix, windows))]
+            if !identity_matches_path(&path, identity)? {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "runtime storage path changed before catalog publication",
+                ));
             }
 
             let mut inner = self.lock_inner();
-            let writable_key = (key.0.clone(), Access::Write);
-            if inner.map.contains_key(&key)
-                || (key.1 == Access::Read && inner.map.contains_key(&writable_key))
+            if inner
+                .map
+                .get(path.as_path())
+                .is_some_and(|entry| access_satisfies(entry.access, access))
             {
                 continue;
             }
-            return Ok(self.insert_locked(&mut inner, &key, Arc::clone(&file)));
+            return Ok(self.insert_locked(&mut inner, path, Arc::clone(&file), identity, access));
         }
     }
 
-    fn insert_locked(&self, inner: &mut Inner, key: &Key, file: Arc<LeasedFile>) -> Arc<OpenFile> {
-        if key.1 == Access::Write {
-            let read_key = (key.0.clone(), Access::Read);
-            if let Some(entry) = inner.map.remove(&read_key) {
-                inner.lru.remove(&entry.tick);
-            }
+    fn insert_locked(
+        &self,
+        inner: &mut Inner,
+        path: PathBuf,
+        file: Arc<LeasedFile>,
+        identity: FileIdentity,
+        access: Access,
+    ) -> Arc<LeasedFile> {
+        if let Some(entry) = inner.map.remove(path.as_path()) {
+            inner.lru.remove(&entry.tick);
+            self.counters.evictions.fetch_add(1, Ordering::Relaxed);
         }
+        let key: Arc<Path> = Arc::from(path.into_boxed_path());
         let tick = inner.next_tick;
         inner.next_tick += 1;
-        inner.lru.insert(tick, key.clone());
+        inner.lru.insert(tick, Arc::clone(&key));
         inner.map.insert(
-            key.clone(),
+            key,
             Entry {
                 handle: Arc::clone(&file),
+                identity,
+                access,
                 tick,
                 last_used: Instant::now(),
             },
         );
-        Self::evict_to_cap(inner, self.cap);
-        Self::operation_handle(file)
+        self.evict_to_cap(inner, self.cap);
+        file
     }
 
     fn operation_handle(file: Arc<LeasedFile>) -> Arc<OpenFile> {
         Arc::new(OpenFile { file })
     }
 
-    fn touch(&self, key: &Key) -> Option<Arc<LeasedFile>> {
-        let file = {
-            let inner = self.lock_inner();
-            Arc::clone(&inner.map.get(key)?.handle)
+    fn touch(&self, path: &Path, access: Access) -> Option<Arc<LeasedFile>> {
+        let (file, identity) = {
+            let now = Instant::now();
+            let mut inner = self.lock_inner();
+            self.sweep_idle_if_due_locked(&mut inner, now);
+            let entry = inner.map.get(path)?;
+            if !access_satisfies(entry.access, access) {
+                return None;
+            }
+            (Arc::clone(&entry.handle), entry.identity)
         };
         // Do not hold the cache mutex across a filesystem identity check; a
         // slow stat on a network mount must not serialize unrelated paths.
-        let still_same_path = file_matches_path(&file, &key.0).unwrap_or(false);
+        let still_same_path = identity_matches_path(path, identity).unwrap_or(false);
         let mut inner = self.lock_inner();
         if !inner
             .map
-            .get(key)
+            .get(path)
             .is_some_and(|entry| Arc::ptr_eq(&entry.handle, &file))
         {
             return None;
         }
         if !still_same_path {
-            if let Some(entry) = inner.map.remove(key) {
+            if let Some(entry) = inner.map.remove(path) {
                 inner.lru.remove(&entry.tick);
+                self.counters.evictions.fetch_add(1, Ordering::Relaxed);
             }
             return None;
         }
+        self.refresh_locked(&mut inner, path);
+        self.counters.hits.fetch_add(1, Ordering::Relaxed);
+        Some(file)
+    }
+
+    fn refresh_locked(&self, inner: &mut Inner, path: &Path) {
+        let Some(key) = inner
+            .map
+            .get_key_value(path)
+            .map(|(key, _)| Arc::clone(key))
+        else {
+            return;
+        };
         let new_tick = inner.next_tick;
-        let entry = inner.map.get_mut(key)?;
+        let Some(entry) = inner.map.get_mut(path) else {
+            return;
+        };
         let old_tick = entry.tick;
         entry.tick = new_tick;
         entry.last_used = Instant::now();
         inner.next_tick += 1;
         inner.lru.remove(&old_tick);
-        inner.lru.insert(new_tick, key.clone());
-        Some(file)
+        inner.lru.insert(new_tick, key);
     }
 
-    /// Reads may reuse a read+write descriptor. Writes still look up only
-    /// their own key and never fall back to a read-only descriptor.
-    fn touch_for_access(&self, key: &Key) -> Option<Arc<LeasedFile>> {
-        if key.1 == Access::Read {
-            let writable_key = (key.0.clone(), Access::Write);
-            if let Some(file) = self.touch(&writable_key) {
-                return Some(file);
-            }
-        }
-        self.touch(key)
+    /// Reads may reuse a read+write descriptor; write requests only accept a
+    /// read+write entry.
+    fn touch_for_access(&self, path: &Path, access: Access) -> Option<Arc<LeasedFile>> {
+        self.touch(path, access)
     }
 
     /// Close handles untouched for longer than the idle TTL. Returns the
@@ -327,29 +462,68 @@ impl HandleCache {
     pub fn sweep_idle(&self) -> usize {
         let now = Instant::now();
         let mut inner = self.lock_inner();
-        let stale: Vec<Key> = inner
-            .map
-            .iter()
-            .filter(|(_, e)| now.duration_since(e.last_used) >= self.idle_ttl)
-            .map(|(k, _)| k.clone())
-            .collect();
-        for k in &stale {
-            if let Some(e) = inner.map.remove(k) {
-                inner.lru.remove(&e.tick);
-            }
-        }
-        stale.len()
+        self.sweep_idle_locked(&mut inner, now)
     }
 
-    fn evict_to_cap(inner: &mut Inner, cap: usize) {
+    fn sweep_idle_if_due_locked(&self, inner: &mut Inner, now: Instant) {
+        if self.idle_ttl.is_zero() {
+            return;
+        }
+        let interval = (self.idle_ttl / 4).clamp(Duration::from_millis(1), Duration::from_secs(1));
+        let elapsed_ns = now
+            .saturating_duration_since(self.epoch)
+            .as_nanos()
+            .min(u128::from(u64::MAX)) as u64;
+        let last = self.last_sweep_ns.load(Ordering::Relaxed);
+        if last != 0 && elapsed_ns.saturating_sub(last) < interval.as_nanos() as u64 {
+            return;
+        }
+        self.last_sweep_ns
+            .store(elapsed_ns.max(1), Ordering::Relaxed);
+        self.sweep_idle_locked(inner, now);
+    }
+
+    fn sweep_idle_locked(&self, inner: &mut Inner, now: Instant) -> usize {
+        if self.idle_ttl.is_zero() {
+            return 0;
+        }
+        let mut closed = 0usize;
+        loop {
+            let Some((&tick, key)) = inner.lru.first_key_value() else {
+                break;
+            };
+            let expired = inner
+                .map
+                .get(key.as_ref())
+                .is_none_or(|entry| now.duration_since(entry.last_used) >= self.idle_ttl);
+            if !expired {
+                break;
+            }
+            let key = inner
+                .lru
+                .remove(&tick)
+                .expect("LRU key present for iterated tick");
+            if inner.map.remove(key.as_ref()).is_some() {
+                closed += 1;
+            }
+        }
+        if closed > 0 {
+            self.counters
+                .idle_closes
+                .fetch_add(closed as u64, Ordering::Relaxed);
+        }
+        closed
+    }
+
+    fn evict_to_cap(&self, inner: &mut Inner, cap: usize) {
         while inner.map.len() > cap {
-            if !Self::evict_oldest(inner) {
+            if !self.evict_oldest(inner) {
                 break;
             }
         }
     }
 
-    fn evict_oldest(inner: &mut Inner) -> bool {
+    fn evict_oldest(&self, inner: &mut Inner) -> bool {
         let Some((&tick, _)) = inner.lru.iter().next() else {
             return false;
         };
@@ -357,8 +531,61 @@ impl HandleCache {
             .lru
             .remove(&tick)
             .expect("lru key present for iterated tick");
-        inner.map.remove(&key);
+        inner.map.remove(key.as_ref());
+        self.counters.evictions.fetch_add(1, Ordering::Relaxed);
         true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_write_paths(&self) -> Vec<PathBuf> {
+        let candidates = {
+            let inner = self.lock_inner();
+            inner
+                .map
+                .iter()
+                .filter(|(_, entry)| entry.access == Access::Write)
+                .map(|(key, entry)| (Arc::clone(key), Arc::clone(&entry.handle), entry.identity))
+                .collect::<Vec<_>>()
+        };
+        let mut paths = Vec::new();
+        for (key, file, identity) in candidates {
+            let still_same = identity_matches_path(&key, identity).unwrap_or(false);
+            let mut inner = self.lock_inner();
+            let current = inner
+                .map
+                .get(key.as_ref())
+                .is_some_and(|entry| Arc::ptr_eq(&entry.handle, &file));
+            if !current {
+                continue;
+            }
+            if still_same {
+                paths.push(key.to_path_buf());
+            } else if let Some(entry) = inner.map.remove(key.as_ref()) {
+                inner.lru.remove(&entry.tick);
+                self.counters.evictions.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        paths
+    }
+
+    #[cfg(test)]
+    pub(crate) fn poison_for_test(&self) {
+        let inner = Arc::clone(&self.inner);
+        let _ = std::thread::spawn(move || {
+            let _guard = inner.lock().unwrap();
+            panic!("poison the derived handle catalog");
+        })
+        .join();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cache_is_poisoned(&self) -> bool {
+        self.inner.is_poisoned()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sweep_marker_ns(&self) -> u64 {
+        self.last_sweep_ns.load(Ordering::Relaxed)
     }
 
     fn acquire_descriptor(&self) -> DescriptorPermit {
@@ -373,10 +600,11 @@ impl HandleCache {
                 if let Some(permit) = self.descriptors.try_acquire() {
                     return permit;
                 }
+                self.sweep_idle_locked(&mut inner, Instant::now());
                 // Evicting an in-flight entry may not free its descriptor
                 // yet. Operation/backend handle drops wake us to evict again
                 // once that file becomes idle.
-                Self::evict_oldest(&mut inner);
+                self.evict_oldest(&mut inner);
             }
             self.descriptors.wait_for_change(generation);
         }
@@ -394,7 +622,8 @@ impl HandleCache {
                 if let Some(permit) = self.descriptors.try_acquire() {
                     return permit;
                 }
-                Self::evict_oldest(&mut inner);
+                self.sweep_idle_locked(&mut inner, Instant::now());
+                self.evict_oldest(&mut inner);
             }
             self.descriptors.wait_for_change_async(generation).await;
         }
@@ -731,6 +960,21 @@ mod tests {
         std::thread::sleep(Duration::from_millis(40));
         assert_eq!(cache.sweep_idle(), 1);
         assert_eq!(cache.len(), 0);
+    }
+
+    #[test]
+    fn zero_idle_ttl_disables_expiry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = tmp_file(dir.path(), "no-idle-expiry.bin", b"x");
+        let cache = HandleCache::new(16, Duration::ZERO);
+        let first = cache.get_or_open(&path, false, false).unwrap();
+
+        assert_eq!(cache.sweep_idle(), 0);
+        assert_eq!(cache.len(), 1);
+
+        let second = cache.get_or_open(&path, false, false).unwrap();
+        assert!(Arc::ptr_eq(&first.file, &second.file));
+        assert_eq!(cache.len(), 1);
     }
 
     #[test]

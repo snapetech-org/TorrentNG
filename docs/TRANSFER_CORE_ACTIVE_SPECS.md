@@ -270,8 +270,9 @@ generation fences remain later IO tickets.
   `injected_read_failure_is_returned_without_marking_payload_dirty`,
   `injected_write_failure_is_returned_and_remains_dirty_until_barrier`,
   `cancelled_waiter_keeps_submitted_write_dirty_until_barrier`,
-  `partial_write_then_error_is_not_reported_as_success`, and
-  `failed_barrier_keeps_dirty_evidence_for_retry`.
+  `partial_write_then_error_is_not_reported_as_success`,
+  `failed_barrier_keeps_dirty_evidence_for_retry`, and
+  `dropping_backend_releases_and_joins_held_completion_workers`.
 - **Command or probe to run:** `cargo test -p rt-storage` during the requested
   bulk pass.
 - **Expected result:** injected read/write failures are returned; failed reads
@@ -423,17 +424,23 @@ original allocation without creating a second piece-sized copy.
 
 ### Scope
 
-Centralize platform file identity and replacement detection in `open.rs` and
-use it from scheduler and handle-cache paths. The scheduler's two cache
-implementations and a single secure file catalog remain to be unified.
+Centralize path normalization, platform file identity, and replacement
+detection in `open.rs`. `HandleCache` is the sole descriptor-cache
+implementation; the scheduler's `FilePool` is a narrow stats/open-policy
+adapter. `StorageRuntime` and scheduler resources keep separate maps so their
+existing resource identities and accounting remain valid, while using the
+same secure identity helpers and descriptor-lease implementation.
 
 ### Ownership and invariant
 
-- **Current owner:** scheduler `FilePool` and `HandleCache` each retain their
-  own bounded descriptor maps and leases; `open.rs` owns no-follow opens.
-- **Target owner:** one catalog owns secure normalized keys, identity checks,
-  descriptor leases, and cache lifecycle across scheduler and direct cache
-  users.
+- **Current owner:** `HandleCache` owns secure normalized path keys, identity
+  checks, descriptor leases, and cache lifecycle. `FilePool` delegates to it;
+  `StorageRuntime` and scheduler resources retain separate maps, while
+  `open.rs` owns no-follow opens and platform identity operations.
+- **Policy boundary:** each scheduler resource key and the direct runtime keep
+  their existing cache identity and capacity; all instances remain subject to
+  the shared process descriptor gate. A process-wide registry across those
+  owners is deferred until stats can identify and deduplicate cache ownership.
 - **Invariant preserved:** unlink/recreate or symlink replacement invalidates
   a cached descriptor before it serves a later path-based operation.
 - **Must not:** perform a filesystem identity check while holding the cache
@@ -446,14 +453,21 @@ implementations and a single secure file catalog remain to be unified.
   check before refreshing an entry.
 - A newly opened descriptor is checked against the current path before it is
   published; repeated replacement races fail after a bounded retry count.
+- Cache-hit validation uses the stored descriptor identity plus one path
+  identity lookup; it does not `fstat` the cached descriptor on every hit.
 - Reads can reuse a read+write descriptor, while read-only descriptors never
   serve writes.
+- The LRU index shares each path allocation and expiry checks only the stale
+  oldest prefix, avoiding a path-string clone and full-map scan on every hit.
 - Replacement, unlink/recreate, descriptor-budget, and in-flight-lease
-  regressions continue to cover the catalog lifecycle.
+  regressions continue to cover the catalog lifecycle; a zero idle TTL keeps
+  expiry disabled.
 - The public `HandleCache` reuses a current read+write descriptor for reads,
   never reuses read-only descriptors for writes, and removes a cached
   read-only entry when a read+write entry is published.
-- A single catalog and duplicate cache removal remain open work.
+- A process-wide map spanning scheduler and direct-runtime owners remains
+  open; merging it now would require separate cache identity in scheduler
+  metrics to avoid double-counting shared gauges and counters.
 
 ### Files and compatibility
 
@@ -469,12 +483,15 @@ implementations and a single secure file catalog remain to be unified.
 
 - **Regression source added or updated:**
   `read_only_handles_do_not_serve_writes_and_reads_reuse_writable_handle`,
-  plus existing cache and scheduler replacement cases.
+  `reopens_path_after_unlink_and_recreate`, `zero_idle_ttl_disables_expiry`,
+  `write_handle_snapshot_drops_replaced_paths`, plus existing descriptor
+  budget, in-flight lease, and scheduler cache-stat regressions.
 - **Command or probe to run:** `cargo test -p rt-storage` during the requested
   bulk pass.
-- **Expected result:** replaced files are reopened, identity checks do not
-  hold the cache lock during filesystem access, reads reuse writable handles,
-  and live leases continue to bound descriptors.
+- **Expected result:** scheduler and runtime use one cache implementation and
+  identity policy; replaced files are reopened; identity checks do not hold
+  the cache lock during filesystem access; reads reuse writable handles; and
+  live leases continue to bound descriptors.
 - **Executed on exact revision:** no.
 - **Artifact or report path:** pending bulk pass.
 - **External evidence still required:** NFS and real-device replacement
@@ -534,6 +551,10 @@ and the full injected-fault matrix remain open.
   later admission is rejected at each limit, and prove admission returns after
   backend completion. A strict-mode case cancels during the write's sync,
   retains dirty evidence, and recovers admission only after sync completion.
+- Canceling a checkpoint barrier while its per-file sync is held retains the
+  device and queued-byte admission until completion; because the canceled
+  caller cannot consume barrier evidence, dirty state remains for a later
+  successful barrier.
 - The full fault-injected device-service matrix remains open.
 
 ### Files and compatibility
@@ -553,6 +574,7 @@ and the full injected-fault matrix remain open.
   `cancelled_submitted_write_retains_memory_budget_until_completion`,
   `cancelled_submitted_readahead_read_retains_extra_bytes_until_completion`,
   `cancelled_strict_write_retains_admission_until_sync_completion`,
+  `cancelled_checkpoint_barrier_retains_admission_until_sync_completion`,
   `strict_write_sync_failure_releases_admission_and_preserves_dirty_evidence`,
   plus helper-level completion-owner lifetime cases for canceled read/write
   waiters and admission-release assertions for open and injected I/O failures.
