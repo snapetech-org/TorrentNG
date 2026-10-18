@@ -3727,8 +3727,11 @@ a whole-torrent scan for each requested block.
   sources covering live-block skips, cancellation rewind, received-block word
   boundaries, packed bitmap/cursor memory accounting, and remote-availability
   set-bit iteration are present; the pure hybrid ledger adapter covers padded
-  overlap, winner cancellation, zero-fill, and duplicate suppression, while
-  live hybrid actor cases remain open.
+  overlap, winner cancellation, zero-fill, and duplicate suppression, and
+  `transfer/sim.rs` now carries 64 seeded traces for piece-affinity exclusion,
+  endgame response arbitration, loser cancel projection, padding expansion,
+  late responses, canonical assembly, and generation reuse. Live hybrid actor
+  cases remain open.
 - **Command or probe:** run transfer-core simulator and engine regression
   suites only during the owner-requested bulk pass.
 - **Executed on exact revision:** no. No build or test commands were run for

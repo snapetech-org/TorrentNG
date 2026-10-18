@@ -6,7 +6,9 @@
 //! responses, late data after a choke, endgame duplicates, and pieces whose
 //! hash fails. After every event the oracle re-checks the ledger's invariants
 //! and the simulator's own conservation laws, so a regression anywhere in the
-//! ownership rules fails with a seed that reproduces it exactly.
+//! ownership rules fails with a seed that reproduces it exactly. A second
+//! seeded trace in the test module interleaves v1/v2 hybrid views, piece
+//! affinity, late responses, and connection-slot reuse.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -406,6 +408,340 @@ fn ledger_outstanding(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
+
+    use super::super::coords::{HybridGeometry, Plane};
+    use super::super::hybrid::{HybridLedger, HybridLedgerError, HybridReceiveOutcome};
+    use super::super::ledger::{CommitOutcome, ReserveError};
+    use rt_path::SafeRelPath;
+    use rt_piece_map::{FileSpan, PieceMap, V2FileSpan, V2PieceMap};
+
+    const HYBRID_BLOCK: u32 = 16 * 1024;
+
+    fn hybrid_geometry() -> HybridGeometry {
+        let payload = SafeRelPath::from_name("payload.bin", false).unwrap();
+        let padding = SafeRelPath::from_name("padding.bin", false).unwrap();
+        let v1 = PieceMap::new_with_padding(
+            32 * 1024,
+            vec![
+                FileSpan {
+                    file_index: 0,
+                    path: payload.clone(),
+                    content_offset: 0,
+                    length: 40 * 1024,
+                },
+                FileSpan {
+                    file_index: 1,
+                    path: padding,
+                    content_offset: 40 * 1024,
+                    length: 24 * 1024,
+                },
+                FileSpan {
+                    file_index: 2,
+                    path: SafeRelPath::from_name("tail.bin", false).unwrap(),
+                    content_offset: 64 * 1024,
+                    length: 24 * 1024,
+                },
+            ],
+            [1],
+        )
+        .unwrap();
+        let v2 = V2PieceMap::new(
+            32 * 1024,
+            vec![
+                V2FileSpan {
+                    file_index: 0,
+                    path: payload,
+                    piece_offset: 0,
+                    length: 40 * 1024,
+                    pad: false,
+                },
+                V2FileSpan {
+                    file_index: 1,
+                    path: SafeRelPath::from_name("tail.bin", false).unwrap(),
+                    piece_offset: 64 * 1024,
+                    length: 24 * 1024,
+                    pad: false,
+                },
+            ],
+        )
+        .unwrap();
+        HybridGeometry::new(v1, v2)
+    }
+
+    fn run_hybrid_affinity_trace(seed: u64) {
+        let mut rng = Rng::new(seed);
+        let mut ledger = HybridLedger::new(hybrid_geometry());
+        let first_plane = if rng.below(2) == 0 {
+            Plane::V1
+        } else {
+            Plane::V2
+        };
+        let second_plane = if first_plane == Plane::V1 {
+            Plane::V2
+        } else {
+            Plane::V1
+        };
+        let first = ledger.connect(first_plane, 8);
+        let second = ledger.connect(second_plane, 8);
+        let first_begin = u32::try_from(rng.below(2)).unwrap() * HYBRID_BLOCK;
+        let second_begin = HYBRID_BLOCK - first_begin;
+        let first_block = BlockExtent::new(0, first_begin, HYBRID_BLOCK);
+        let second_block = BlockExtent::new(0, second_begin, HYBRID_BLOCK);
+
+        assert_eq!(
+            ledger.reserve_piece_affine(first, first_block),
+            Ok(first_block),
+            "seed {seed}: first plane should acquire the canonical piece"
+        );
+        assert_eq!(
+            ledger.reserve_piece_affine(second, second_block),
+            Err(HybridLedgerError::Reserve(ReserveError::PieceOwnedByOther)),
+            "seed {seed}: the other plane must not split the piece assembly"
+        );
+        ledger.check_invariants().unwrap();
+        let started_at = rng.next_u64() % SEC;
+        assert_eq!(
+            ledger.commit(first, first_block, started_at).unwrap().0,
+            CommitOutcome::OnWire,
+            "seed {seed}: the winning request should enter flight"
+        );
+        ledger.check_invariants().unwrap();
+
+        for _ in 0..1 + rng.below(4) {
+            let (outcome, data) = ledger
+                .on_block_piece_affine(
+                    second,
+                    second_block,
+                    Bytes::from(vec![0x22; HYBRID_BLOCK as usize]),
+                )
+                .unwrap();
+            assert_eq!(outcome, HybridReceiveOutcome::IgnoredForPieceAffinity);
+            assert!(data.is_none());
+            ledger.check_invariants().unwrap();
+        }
+
+        let (first_outcome, first_data) = ledger
+            .on_block_piece_affine(
+                first,
+                first_block,
+                Bytes::from(vec![seed as u8; HYBRID_BLOCK as usize]),
+            )
+            .unwrap();
+        assert!(matches!(
+            first_outcome,
+            HybridReceiveOutcome::Accepted {
+                completed: None,
+                ..
+            }
+        ));
+        assert_eq!(
+            first_data.unwrap().canonical_extent,
+            first_block,
+            "seed {seed}: accepted data must be in the canonical v1 plane"
+        );
+        ledger.check_invariants().unwrap();
+
+        assert_eq!(
+            ledger.reserve_piece_affine(first, second_block),
+            Ok(second_block),
+            "seed {seed}: the same connection may continue its assembly"
+        );
+        assert_eq!(
+            ledger
+                .commit(first, second_block, started_at.saturating_add(MS))
+                .unwrap()
+                .0,
+            CommitOutcome::OnWire
+        );
+        ledger.check_invariants().unwrap();
+        let (second_outcome, second_data) = ledger
+            .on_block_piece_affine(
+                first,
+                second_block,
+                Bytes::from(vec![seed.wrapping_add(1) as u8; HYBRID_BLOCK as usize]),
+            )
+            .unwrap();
+        assert!(matches!(
+            second_outcome,
+            HybridReceiveOutcome::Accepted {
+                completed: Some(_),
+                ..
+            }
+        ));
+        assert_eq!(
+            second_data.unwrap().canonical_extent,
+            second_block,
+            "seed {seed}: completion must preserve canonical coordinates"
+        );
+        ledger.piece_verified(0);
+        assert!(
+            ledger.has_piece(0),
+            "seed {seed}: verified state must settle"
+        );
+        ledger.check_invariants().unwrap();
+
+        let stale_plane = if second_plane == Plane::V1 {
+            Plane::V2
+        } else {
+            Plane::V1
+        };
+        let disconnected = ledger.disconnect(second).unwrap();
+        assert!(disconnected.is_empty());
+        let replacement = ledger.connect(stale_plane, 8);
+        assert_eq!(replacement.slot, second.slot);
+        assert_ne!(replacement.generation, second.generation);
+        assert_eq!(
+            ledger.on_block_piece_affine(
+                second,
+                second_block,
+                Bytes::from(vec![0x33; HYBRID_BLOCK as usize]),
+            ),
+            Err(HybridLedgerError::UnknownConnection(second)),
+            "seed {seed}: a reused slot must reject the previous plane generation"
+        );
+        assert!(ledger.check_invariants().is_ok(), "seed {seed}");
+        assert!(ledger.disconnect(first).unwrap().is_empty());
+        assert!(ledger.disconnect(replacement).unwrap().is_empty());
+        ledger.check_invariants().unwrap();
+    }
+
+    fn run_hybrid_response_race(seed: u64) {
+        let mut rng = Rng::new(seed ^ 0xA5A5_5A5A_0123_4567);
+        let mut ledger = HybridLedger::new(hybrid_geometry());
+        let first_plane = if rng.below(2) == 0 {
+            Plane::V1
+        } else {
+            Plane::V2
+        };
+        let second_plane = if first_plane == Plane::V1 {
+            Plane::V2
+        } else {
+            Plane::V1
+        };
+        let first = ledger.connect(first_plane, 8);
+        let second = ledger.connect(second_plane, 8);
+        let v1_block = BlockExtent::new(1, 0, HYBRID_BLOCK);
+        let v2_block = BlockExtent::new(1, 0, HYBRID_BLOCK / 2);
+        let (first_block, second_block) = if first_plane == Plane::V1 {
+            (v1_block, v2_block)
+        } else {
+            (v2_block, v1_block)
+        };
+
+        assert_eq!(
+            ledger.reserve(first, first_block, &ReserveMode::Exclusive),
+            Ok(v1_block),
+            "seed {seed}: the first wire view should reserve canonical payload"
+        );
+        assert_eq!(
+            ledger.reserve(second, second_block, &ReserveMode::Endgame),
+            Ok(v1_block),
+            "seed {seed}: endgame duplicate must map to the same canonical range"
+        );
+        ledger.check_invariants().unwrap();
+        let now = rng.next_u64() % SEC;
+        if rng.below(2) == 0 {
+            assert_eq!(
+                ledger.commit(first, first_block, now).unwrap().0,
+                CommitOutcome::OnWire
+            );
+            assert_eq!(
+                ledger
+                    .commit(second, second_block, now.saturating_add(1))
+                    .unwrap()
+                    .0,
+                CommitOutcome::OnWire
+            );
+        } else {
+            assert_eq!(
+                ledger.commit(second, second_block, now).unwrap().0,
+                CommitOutcome::OnWire
+            );
+            assert_eq!(
+                ledger
+                    .commit(first, first_block, now.saturating_add(1))
+                    .unwrap()
+                    .0,
+                CommitOutcome::OnWire
+            );
+        }
+        ledger.check_invariants().unwrap();
+
+        let second_wins = rng.below(2) == 1;
+        let (winner, winner_plane, winner_block, loser, loser_plane, loser_block) = if second_wins {
+            (
+                second,
+                second_plane,
+                second_block,
+                first,
+                first_plane,
+                first_block,
+            )
+        } else {
+            (
+                first,
+                first_plane,
+                first_block,
+                second,
+                second_plane,
+                second_block,
+            )
+        };
+        let marker = seed as u8;
+        let wire_payload = match winner_plane {
+            Plane::V1 => {
+                let mut bytes = vec![marker; (HYBRID_BLOCK / 2) as usize];
+                bytes.resize(HYBRID_BLOCK as usize, 0);
+                Bytes::from(bytes)
+            }
+            Plane::V2 => Bytes::from(vec![marker; (HYBRID_BLOCK / 2) as usize]),
+        };
+        let (outcome, data) = ledger.on_block(winner, winner_block, wire_payload).unwrap();
+        let HybridReceiveOutcome::Accepted { actions, .. } = outcome else {
+            panic!("seed {seed}: first valid response should win endgame ownership");
+        };
+        assert_eq!(
+            actions.len(),
+            1,
+            "seed {seed}: the losing wire request should be canceled"
+        );
+        assert_eq!(actions[0].conn, loser);
+        assert_eq!(actions[0].block.plane, loser_plane);
+        assert_eq!(actions[0].block.extent, loser_block);
+        let data = data.expect("winning response returns canonical writer payload");
+        assert_eq!(data.canonical_extent, v1_block);
+        assert!(data.payload[..(HYBRID_BLOCK / 2) as usize]
+            .iter()
+            .all(|byte| *byte == marker));
+        assert!(data.payload[(HYBRID_BLOCK / 2) as usize..]
+            .iter()
+            .all(|byte| *byte == 0));
+        ledger.check_invariants().unwrap();
+
+        let losing_payload = match loser_plane {
+            Plane::V1 => {
+                let mut bytes = vec![marker; (HYBRID_BLOCK / 2) as usize];
+                bytes.resize(HYBRID_BLOCK as usize, 0);
+                Bytes::from(bytes)
+            }
+            Plane::V2 => Bytes::from(vec![marker; (HYBRID_BLOCK / 2) as usize]),
+        };
+        let (late_outcome, late_data) =
+            ledger.on_block(loser, loser_block, losing_payload).unwrap();
+        assert_eq!(late_outcome, HybridReceiveOutcome::Duplicate);
+        assert!(late_data.is_none());
+        assert_eq!(ledger.in_flight(), 0);
+        ledger.check_invariants().unwrap();
+        let (contributors, actions) = ledger.piece_failed_with_actions(1).unwrap();
+        assert!(contributors.contains(&winner));
+        assert!(actions.is_empty());
+        assert_eq!(ledger.piece_progress(1), None);
+        ledger.check_invariants().unwrap();
+        assert!(ledger.disconnect(first).unwrap().is_empty());
+        assert!(ledger.disconnect(second).unwrap().is_empty());
+        ledger.check_invariants().unwrap();
+    }
 
     #[test]
     fn many_seeds_complete_with_every_invariant_holding() {
@@ -486,5 +822,13 @@ mod tests {
         assert_eq!(report.duplicates, 0);
         assert_eq!(report.unsolicited, 0);
         assert_eq!(report.failed_pieces, 0);
+    }
+
+    #[test]
+    fn seeded_hybrid_plane_traces_preserve_piece_affinity_and_generations() {
+        for seed in 0..64 {
+            run_hybrid_affinity_trace(seed);
+            run_hybrid_response_race(seed);
+        }
     }
 }
