@@ -873,6 +873,7 @@ fn clear_dirty_path_if_operation(
 ) {
     if operation.storage_operation_id.is_none()
         || operation.device_operation_id.is_none()
+        || operation.device_queue_key.is_none()
         || operation.content_epoch.is_none()
         || operation.file_identity.is_none()
         || operation.write_sequence.is_none()
@@ -1296,13 +1297,15 @@ struct DiskSubmission {
 }
 
 /// Evidence carried with an admitted operation until its backend completion.
-/// The device sequence is local to the retained device queue; the file
-/// identity, content epoch, and write sequence bind dirty-path clearing to the
-/// operation. Payload reads and writes also retain their submitted byte range.
+/// The device sequence is local to the retained device queue and is therefore
+/// paired with that queue's key; file identity, content epoch, and write
+/// sequence bind dirty-path clearing. Payload reads and writes also retain
+/// their submitted byte range.
 #[derive(Debug, Default)]
 struct StorageOperationRecord {
     storage_operation_id: Option<StorageOperationId>,
     device_operation_id: Option<DeviceOperationId>,
+    device_queue_key: Option<Arc<str>>,
     file_identity: Option<FileIdentity>,
     content_epoch: Option<ContentEpoch>,
     byte_range: Option<StorageByteRange>,
@@ -1310,6 +1313,13 @@ struct StorageOperationRecord {
 }
 
 impl StorageOperationRecord {
+    fn bind_device_operation(&mut self, permit: &DeviceOperationPermit) {
+        debug_assert!(self.device_operation_id.is_none());
+        debug_assert!(self.device_queue_key.is_none());
+        self.device_operation_id = Some(permit.operation_id);
+        self.device_queue_key = Some(Arc::clone(&permit.queue.key));
+    }
+
     fn bind_file_identity(&mut self, identity: FileIdentity) {
         debug_assert!(self.file_identity.is_none_or(|current| current == identity));
         self.file_identity = Some(identity);
@@ -1351,7 +1361,7 @@ impl StorageOperationRecord {
 impl DiskSubmission {
     fn start_device_operation(&mut self, permit: DeviceOperationPermit) {
         debug_assert!(self._device_operation.is_none());
-        self.operation.device_operation_id = Some(permit.operation_id);
+        self.operation.bind_device_operation(&permit);
         self._device_operation = Some(permit);
     }
 
@@ -1365,6 +1375,10 @@ impl DiskSubmission {
 
     fn storage_operation_id(&self) -> Option<u64> {
         self.operation.storage_operation_id.map(|id| id.0)
+    }
+
+    fn device_queue_key(&self) -> Option<&str> {
+        self.operation.device_queue_key.as_deref()
     }
 
     fn bind_file_identity(&mut self, identity: FileIdentity) {
@@ -1643,6 +1657,9 @@ struct DeviceQueueState {
 }
 
 struct DeviceQueue {
+    /// Stable identity of the shared physical-device queue, or its bounded
+    /// storage-root fallback when topology could not be resolved.
+    key: Arc<str>,
     capacity: usize,
     active_limit: usize,
     state: Mutex<DeviceQueueState>,
@@ -1652,6 +1669,7 @@ impl std::fmt::Debug for DeviceQueue {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("DeviceQueue")
+            .field("key", &self.key)
             .field("capacity", &self.capacity)
             .field("active_limit", &self.active_limit)
             .finish_non_exhaustive()
@@ -1688,9 +1706,10 @@ struct DeviceWaiterGuard {
 }
 
 impl DeviceQueue {
-    fn new(capacity: usize, active_limit: usize) -> Self {
+    fn new(key: Arc<str>, capacity: usize, active_limit: usize) -> Self {
         let capacity = capacity.max(1);
         Self {
+            key,
             capacity,
             active_limit: active_limit.max(1).min(capacity),
             state: Mutex::new(DeviceQueueState {
@@ -1932,7 +1951,11 @@ fn device_queue_for(
         return queue;
     }
     queues.retain(|_, queue| queue.strong_count() > 0);
-    let queue = Arc::new(DeviceQueue::new(capacity, active_limit));
+    let queue = Arc::new(DeviceQueue::new(
+        Arc::from(key.as_str()),
+        capacity,
+        active_limit,
+    ));
     queues.insert(key, Arc::downgrade(&queue));
     queue
 }
@@ -2244,11 +2267,13 @@ async fn dispatch_peer_read_batch(
             operation_record.storage_operation_id = Some(storage_operation_id);
             operation_record.device_operation_id =
                 Some(DeviceOperationId(_device_queue.operation_id()));
+            operation_record.device_queue_key = Some(Arc::clone(&_device_queue.queue.key));
             operation_record.bind_file_identity(file.identity());
             operation_record.bind_byte_range(offset, len as u64);
             tracing::trace!(
                 storage_operation_id = operation_record.storage_operation_id.unwrap().0,
                 device_operation_id = operation_record.device_operation_id.unwrap().0,
+                device_queue_key = operation_record.device_queue_key.as_deref().unwrap_or("unknown"),
                 byte_offset = offset,
                 byte_length = len as u64,
                 class = ?IoClass::PeerRead,
@@ -2708,6 +2733,7 @@ impl MountScheduler {
         tracing::trace!(
             storage_operation_id = submission.storage_operation_id().unwrap_or_default(),
             device_operation_id = submission.device_operation_id().unwrap_or_default(),
+            device_queue_key = submission.device_queue_key().unwrap_or("unknown"),
             class = ?class,
             "dispatching storage-side blocking operation"
         );
@@ -2869,6 +2895,7 @@ impl MountScheduler {
         tracing::trace!(
             storage_operation_id = submission.storage_operation_id().unwrap_or_default(),
             device_operation_id = submission.device_operation_id().unwrap_or_default(),
+            device_queue_key = submission.device_queue_key().unwrap_or("unknown"),
             class = ?class,
             device_count = additional_permits.len().saturating_add(1),
             "dispatching multi-device blocking operation"
@@ -3186,6 +3213,7 @@ impl MountScheduler {
                 tracing::trace!(
                     storage_operation_id = submission.storage_operation_id().unwrap_or_default(),
                     device_operation_id = submission.device_operation_id().unwrap_or_default(),
+                    device_queue_key = submission.device_queue_key().unwrap_or("unknown"),
                     byte_offset = offset,
                     byte_length = read_len as u64,
                     class = ?class,
@@ -3388,6 +3416,7 @@ impl MountScheduler {
         tracing::trace!(
             storage_operation_id = submission.storage_operation_id().unwrap_or_default(),
             device_operation_id = submission.device_operation_id().unwrap_or_default(),
+            device_queue_key = submission.device_queue_key().unwrap_or("unknown"),
             byte_offset = offset,
             byte_length = written as u64,
             class = ?class,
@@ -3629,6 +3658,7 @@ impl MountScheduler {
         tracing::trace!(
             storage_operation_id = submission.storage_operation_id().unwrap_or_default(),
             device_operation_id = submission.device_operation_id().unwrap_or_default(),
+            device_queue_key = submission.device_queue_key().unwrap_or("unknown"),
             class = ?IoClass::Foreground,
             "dispatching file data sync"
         );
@@ -3868,6 +3898,7 @@ impl MountScheduler {
         tracing::trace!(
             storage_operation_id = submission.storage_operation_id().unwrap_or_default(),
             device_operation_id = submission.device_operation_id().unwrap_or_default(),
+            device_queue_key = submission.device_queue_key().unwrap_or("unknown"),
             class = ?IoClass::Foreground,
             "dispatching checkpoint file sync"
         );
@@ -5251,7 +5282,7 @@ mod tests {
 
     #[tokio::test]
     async fn cancelled_device_waiter_releases_bounded_queue_capacity() {
-        let queue = Arc::new(DeviceQueue::new(2, 1));
+        let queue = Arc::new(DeviceQueue::new(Arc::from("device:test"), 2, 1));
         let active = queue
             .acquire(IoClass::Metadata, "device-test".to_owned())
             .await
@@ -5272,6 +5303,40 @@ mod tests {
 
         drop(active);
         assert_eq!(queue.available(), 2);
+    }
+
+    #[tokio::test]
+    async fn device_operation_record_disambiguates_local_sequences_by_queue() {
+        let first_queue = Arc::new(DeviceQueue::new(Arc::from("device:first"), 1, 1));
+        let second_queue = Arc::new(DeviceQueue::new(Arc::from("device:second"), 1, 1));
+        let first_permit = first_queue
+            .acquire(IoClass::PeerRead, "first-device".to_owned())
+            .await
+            .unwrap();
+        let second_permit = second_queue
+            .acquire(IoClass::PeerRead, "second-device".to_owned())
+            .await
+            .unwrap();
+
+        let mut first_record = StorageOperationRecord::default();
+        first_record.storage_operation_id = Some(StorageOperationId(10));
+        first_record.bind_device_operation(&first_permit);
+        let mut second_record = StorageOperationRecord::default();
+        second_record.storage_operation_id = Some(StorageOperationId(11));
+        second_record.bind_device_operation(&second_permit);
+
+        assert_eq!(
+            first_record.device_operation_id,
+            second_record.device_operation_id
+        );
+        assert_eq!(
+            first_record.device_queue_key.as_deref(),
+            Some("device:first")
+        );
+        assert_eq!(
+            second_record.device_queue_key.as_deref(),
+            Some("device:second")
+        );
     }
 
     #[tokio::test]
@@ -6766,6 +6831,7 @@ mod tests {
         let mut first_operation = StorageOperationRecord::default();
         first_operation.storage_operation_id = Some(StorageOperationId(10));
         first_operation.device_operation_id = Some(DeviceOperationId(1));
+        first_operation.device_queue_key = Some(Arc::from("device:test"));
         first_operation.bind_byte_range(0, 16);
         first_operation.bind_dirty_path(first_state);
         mark_dirty_path(&dirty_paths, &dirty_path_epoch, path.clone(), identity, 2);
@@ -6782,6 +6848,7 @@ mod tests {
         let mut stale_write_sequence = StorageOperationRecord::default();
         stale_write_sequence.storage_operation_id = Some(StorageOperationId(12));
         stale_write_sequence.device_operation_id = Some(DeviceOperationId(3));
+        stale_write_sequence.device_queue_key = Some(Arc::from("device:test"));
         stale_write_sequence.bind_dirty_path(second_state);
         stale_write_sequence.write_sequence = Some(1);
         clear_dirty_path_if_operation(&dirty_paths, &path, &stale_write_sequence);
@@ -6790,6 +6857,7 @@ mod tests {
         let mut second_operation = StorageOperationRecord::default();
         second_operation.storage_operation_id = Some(StorageOperationId(11));
         second_operation.device_operation_id = Some(DeviceOperationId(2));
+        second_operation.device_queue_key = Some(Arc::from("device:test"));
         second_operation.bind_byte_range(0, 16);
         second_operation.bind_dirty_path(second_state);
         clear_dirty_path_if_operation(&dirty_paths, &path, &second_operation);
@@ -7934,7 +8002,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        scheduler.device_queue = Arc::new(DeviceQueue::new(4, 4));
+        scheduler.device_queue = Arc::new(DeviceQueue::new(Arc::from("device:scheduler"), 4, 4));
         scheduler.device_queue_capacity = 4;
         let backend = Arc::new(ScriptedDiskBackend::new(1, 8));
         scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(backend.clone()));
@@ -8471,7 +8539,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        scheduler.device_queue = Arc::new(DeviceQueue::new(4, 2));
+        scheduler.device_queue = Arc::new(DeviceQueue::new(Arc::from("device:scheduler"), 4, 2));
         scheduler.device_queue_capacity = 4;
         let backend = Arc::new(ScriptedDiskBackend::new(2, 4));
         scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(backend.clone()));
@@ -8543,7 +8611,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        scheduler.device_queue = Arc::new(DeviceQueue::new(4, 4));
+        scheduler.device_queue = Arc::new(DeviceQueue::new(Arc::from("device:scheduler"), 4, 4));
         scheduler.device_queue_capacity = 4;
         let backend = Arc::new(ScriptedDiskBackend::new(1, 8));
         scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(backend.clone()));
@@ -8696,7 +8764,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        scheduler.device_queue = Arc::new(DeviceQueue::new(4, 4));
+        scheduler.device_queue = Arc::new(DeviceQueue::new(Arc::from("device:scheduler"), 4, 4));
         scheduler.device_queue_capacity = 4;
         let backend = Arc::new(ScriptedDiskBackend::new(1, 8));
         scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(backend.clone()));

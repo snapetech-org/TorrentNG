@@ -248,11 +248,12 @@ injected read/write failures, partial-write failure, retry after a failed data
 barrier, and operation-level file identity fencing. Dirty path state binds each
 typed `ContentEpoch` to the descriptor identity that received it. The admitted
 `DiskSubmission` carries a `StorageOperationRecord` containing a process-wide
-operation identity, the device-local operation sequence, the captured file
-identity and content epoch, the per-file write sequence for dirty content,
-and payload read/write byte ranges where applicable through backend completion;
-only that record can clear the dirty state it covered. Coalesced peer reads
-also receive an operation identity and range for tracing.
+operation identity, the device-local operation sequence paired with its stable
+device-queue key, the captured file identity and content epoch, the per-file
+write sequence for dirty content, and payload read/write byte ranges where
+applicable through backend completion; only that record can clear the dirty
+state it covered. Coalesced peer reads also receive the sequence/key pair, an
+operation identity, and range for tracing.
 Securely opened descriptor leases carry that captured identity through queued
 and submitted operations. On Unix and Windows, reads, writes, and sync
 operations check that the descriptor's original identity still matches the
@@ -288,6 +289,8 @@ cuts, and platform fault qualification remain open.
   retryable. Platform-specific storage-failure qualification remains open.
 - The positioned-I/O helpers retry `Interrupted` and positive short progress;
   regression sources simulate short reads and writes across multiple calls.
+- Operation-record regressions prove local sequence values from distinct
+  device queues remain distinguishable by their stable queue keys.
 - Path-replacement regressions cover secure open, cached descriptor reopening,
   scheduler snapshots, and peer-read readahead (IO-004), plus held payload
   reads, writes, and checkpoint syncs. Dirty writes remain tied to the original
@@ -322,7 +325,8 @@ cuts, and platform fault qualification remain open.
   `failed_barrier_keeps_dirty_evidence_for_retry`,
   `cancelled_checkpoint_waiter_keeps_dirty_evidence_after_sync_failure`,
   `dropping_backend_releases_and_joins_held_completion_workers`, and
-  `replaced_path_after_held_read_is_not_returned_to_caller`.
+  `replaced_path_after_held_read_is_not_returned_to_caller`, and
+  `device_operation_record_disambiguates_local_sequences_by_queue`.
 - **Command or probe to run:** `cargo test -p rt-storage` during the requested
   bulk pass.
 - **Expected result:** injected read/write failures are returned; failed reads
@@ -572,14 +576,15 @@ still running. Strict writes retain the same admission through their own sync.
 
 The elevator worker already owns its independent request, queue, and device
 leases through its backend read. The operation record binds device-local
-sequence and file/content evidence; shared resource-credit transfer and the
-full injected-fault matrix remain open.
+sequence and stable queue identity with file/content evidence; shared
+resource-credit transfer and the full injected-fault matrix remain open.
 
 ### Ownership and invariant
 
 - **Current owner:** the scheduler admits queue and device slots plus queued
   bytes in `DiskSubmission`; its operation record carries the device-local
-  sequence and file/content evidence through completion helpers.
+  sequence, stable queue identity, and file/content evidence through
+  completion helpers.
 - **Target owner:** IO-006's device service owns one bounded operation record
   from admission through exactly one backend completion result.
 - **Invariant preserved:** dropping a waiter cannot make a queued slot or
