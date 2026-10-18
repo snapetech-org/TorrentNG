@@ -10,6 +10,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -452,6 +453,7 @@ struct V2PeerContext {
     peer_control: RateLimitCancellation,
     peer_generation: u64,
     upload_control: RateLimitCancellation,
+    piece_attempt_generation: Arc<AtomicU64>,
     local_have: Arc<RwLock<Arc<V2Bitmap>>>,
     have_updates: watch::Sender<()>,
     upload_unchoked: watch::Receiver<Arc<HashSet<PeerId>>>,
@@ -529,6 +531,15 @@ impl V2ProofCache {
 }
 
 impl V2PeerContext {
+    fn next_piece_attempt_generation(&self) -> u64 {
+        self.piece_attempt_generation
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |generation| {
+                generation.checked_add(1)
+            })
+            .map(|generation| generation + 1)
+            .expect("pure-v2 peer piece-attempt generation exhausted")
+    }
+
     fn file_is_wanted(&self, file_index: u32) -> bool {
         self.file_policy
             .get(&file_index)
@@ -546,6 +557,7 @@ impl V2PeerContext {
 }
 
 struct V2PieceAssembly {
+    generation: u64,
     region_len: u32,
     received: Vec<bool>,
     received_count: usize,
@@ -592,19 +604,31 @@ type V2UploadReadTask = BoxFuture<'static, V2UploadCompletion>;
 
 struct V2PieceCompletion {
     piece: u32,
+    generation: u64,
     bytes: u64,
     result: anyhow::Result<()>,
 }
 
 struct V2BlockCompletion {
     piece: u32,
+    generation: u64,
     begin: u32,
     result: Result<(), String>,
 }
 
+#[derive(Clone, Copy)]
+struct V2PendingCompletion {
+    generation: u64,
+    bytes: u64,
+}
+
 enum V2TransferCompletion {
     BlockStored(V2BlockCompletion),
-    BlockAdmissionCancelled { piece: u32, begin: u32 },
+    BlockAdmissionCancelled {
+        piece: u32,
+        generation: u64,
+        begin: u32,
+    },
     PieceVerified(V2PieceCompletion),
 }
 
@@ -621,6 +645,7 @@ impl Drop for V2UploadControlGuard {
 impl V2PieceAssembly {
     fn new(
         piece: u32,
+        generation: u64,
         region_len: u32,
         cap_bytes: usize,
         resources: &ResourceGovernor,
@@ -660,6 +685,7 @@ impl V2PieceAssembly {
             (None, Some(lease))
         };
         Ok(Self {
+            generation,
             region_len,
             received,
             received_count: 0,
@@ -2541,6 +2567,7 @@ impl V2TorrentTask {
             peer_control,
             peer_generation,
             upload_control: RateLimitCancellation::default(),
+            piece_attempt_generation: Arc::new(AtomicU64::new(0)),
             local_have: Arc::clone(&self.local_have),
             have_updates: self.have_updates.clone(),
             upload_unchoked: self.upload_unchoked.subscribe(),
@@ -3351,8 +3378,8 @@ async fn run_v2_peer_protocol(
     let mut outstanding = HashMap::<(u32, u32), V2OutstandingRequest>::new();
     let mut assemblies = HashMap::<u32, V2PieceAssembly>::new();
     let mut transfer_jobs = futures::stream::FuturesUnordered::<V2TransferTask>::new();
-    let mut pending_block_completions = HashMap::<(u32, u32), u64>::new();
-    let mut pending_piece_completions = HashMap::<u32, u64>::new();
+    let mut pending_block_completions = HashMap::<(u32, u32), V2PendingCompletion>::new();
+    let mut pending_piece_completions = HashMap::<u32, V2PendingCompletion>::new();
     let mut upload_reads = futures::stream::FuturesUnordered::<V2UploadReadTask>::new();
     let mut pending_upload_requests = VecDeque::new();
     let mut remote_availability_known = false;
@@ -3763,9 +3790,14 @@ async fn run_v2_peer_protocol(
                             return Err(error);
                         }
                     }
-                    V2TransferCompletion::BlockAdmissionCancelled { piece, begin } => {
+                    V2TransferCompletion::BlockAdmissionCancelled {
+                        piece,
+                        generation,
+                        begin,
+                    } => {
                         apply_v2_block_admission_cancelled(
                             piece,
+                            generation,
                             begin,
                             &mut assemblies,
                             &mut pending_block_completions,
@@ -4070,8 +4102,8 @@ async fn fill_v2_requests(
     outstanding: &mut HashMap<(u32, u32), V2OutstandingRequest>,
     assemblies: &mut HashMap<u32, V2PieceAssembly>,
     active_transfer_jobs: usize,
-    pending_block_completions: &HashMap<(u32, u32), u64>,
-    pending_piece_completions: &HashMap<u32, u64>,
+    pending_block_completions: &HashMap<(u32, u32), V2PendingCompletion>,
+    pending_piece_completions: &HashMap<u32, V2PendingCompletion>,
 ) -> anyhow::Result<()> {
     if context.peer_control.generation() != context.peer_generation {
         return Ok(());
@@ -4132,6 +4164,7 @@ async fn fill_v2_requests(
                 }
                 Some(V2PieceAssembly::new(
                     piece,
+                    context.next_piece_attempt_generation(),
                     region.length,
                     context.assembly_cap_bytes,
                     &context.resources,
@@ -4210,24 +4243,52 @@ async fn fill_v2_requests(
 fn update_v2_assembly_stats(
     peer: &mut V2PeerState,
     assemblies: &HashMap<u32, V2PieceAssembly>,
-    pending_block_completions: &HashMap<(u32, u32), u64>,
-    pending_piece_completions: &HashMap<u32, u64>,
+    pending_block_completions: &HashMap<(u32, u32), V2PendingCompletion>,
+    pending_piece_completions: &HashMap<u32, V2PendingCompletion>,
 ) {
     peer.assembly_buffers = (assemblies.len() + pending_piece_completions.len()) as u64;
     peer.assembly_bytes = assemblies
         .values()
         .filter_map(|assembly| assembly.data.as_ref().map(|data| data.len() as u64))
         .sum::<u64>()
-        .saturating_add(pending_block_completions.values().copied().sum())
-        .saturating_add(pending_piece_completions.values().copied().sum());
+        .saturating_add(
+            pending_block_completions
+                .values()
+                .map(|completion| completion.bytes)
+                .sum(),
+        )
+        .saturating_add(
+            pending_piece_completions
+                .values()
+                .map(|completion| completion.bytes)
+                .sum(),
+        );
 }
 
 fn apply_v2_block_completion(
     completion: V2BlockCompletion,
     assemblies: &mut HashMap<u32, V2PieceAssembly>,
-    pending_block_completions: &mut HashMap<(u32, u32), u64>,
+    pending_block_completions: &mut HashMap<(u32, u32), V2PendingCompletion>,
 ) -> anyhow::Result<()> {
-    pending_block_completions.remove(&(completion.piece, completion.begin));
+    let coordinate = (completion.piece, completion.begin);
+    if pending_block_completions
+        .get(&coordinate)
+        .map(|pending| pending.generation)
+        != Some(completion.generation)
+        || assemblies
+            .get(&completion.piece)
+            .map(|assembly| assembly.generation)
+            != Some(completion.generation)
+    {
+        if pending_block_completions
+            .get(&coordinate)
+            .is_some_and(|pending| pending.generation == completion.generation)
+        {
+            pending_block_completions.remove(&coordinate);
+        }
+        return Ok(());
+    }
+    pending_block_completions.remove(&coordinate);
     let error = completion.result.err();
     if let Some(assembly) = assemblies.get_mut(&completion.piece) {
         assembly.pending_blocks = assembly.pending_blocks.saturating_sub(1);
@@ -4256,11 +4317,27 @@ fn apply_v2_block_completion(
 
 fn apply_v2_block_admission_cancelled(
     piece: u32,
+    generation: u64,
     begin: u32,
     assemblies: &mut HashMap<u32, V2PieceAssembly>,
-    pending_block_completions: &mut HashMap<(u32, u32), u64>,
+    pending_block_completions: &mut HashMap<(u32, u32), V2PendingCompletion>,
 ) {
-    pending_block_completions.remove(&(piece, begin));
+    let coordinate = (piece, begin);
+    if pending_block_completions
+        .get(&coordinate)
+        .map(|pending| pending.generation)
+        != Some(generation)
+        || assemblies.get(&piece).map(|assembly| assembly.generation) != Some(generation)
+    {
+        if pending_block_completions
+            .get(&coordinate)
+            .is_some_and(|pending| pending.generation == generation)
+        {
+            pending_block_completions.remove(&coordinate);
+        }
+        return;
+    }
+    pending_block_completions.remove(&coordinate);
     if let Some(assembly) = assemblies.get_mut(&piece) {
         assembly.pending_blocks = assembly.pending_blocks.saturating_sub(1);
         assembly.failed = true;
@@ -4277,7 +4354,7 @@ fn apply_v2_block_admission_cancelled(
 fn start_ready_v2_piece_jobs(
     context: &V2PeerContext,
     assemblies: &mut HashMap<u32, V2PieceAssembly>,
-    pending_piece_completions: &mut HashMap<u32, u64>,
+    pending_piece_completions: &mut HashMap<u32, V2PendingCompletion>,
     transfer_jobs: &mut futures::stream::FuturesUnordered<V2TransferTask>,
 ) {
     while transfer_jobs.len() < V2_MAX_PENDING_TRANSFER_JOBS
@@ -4294,12 +4371,14 @@ fn start_ready_v2_piece_jobs(
             continue;
         };
         let bytes = u64::from(assembly.region_len);
+        let generation = assembly.generation;
         let job_context = context.clone();
-        pending_piece_completions.insert(piece, bytes);
+        pending_piece_completions.insert(piece, V2PendingCompletion { generation, bytes });
         transfer_jobs.push(Box::pin(async move {
             let result = complete_v2_piece_job(&job_context, piece, assembly).await;
             V2TransferCompletion::PieceVerified(V2PieceCompletion {
                 piece,
+                generation,
                 bytes,
                 result,
             })
@@ -4310,9 +4389,16 @@ fn start_ready_v2_piece_jobs(
 async fn apply_v2_piece_completion(
     context: &V2PeerContext,
     state: &Arc<Mutex<V2PeerState>>,
-    pending_piece_completions: &mut HashMap<u32, u64>,
+    pending_piece_completions: &mut HashMap<u32, V2PendingCompletion>,
     completion: V2PieceCompletion,
 ) {
+    if pending_piece_completions
+        .get(&completion.piece)
+        .map(|pending| pending.generation)
+        != Some(completion.generation)
+    {
+        return;
+    }
     pending_piece_completions.remove(&completion.piece);
     match completion.result {
         Ok(()) => {
@@ -4358,8 +4444,8 @@ async fn drain_v2_transfer_jobs(
     context: &V2PeerContext,
     state: &Arc<Mutex<V2PeerState>>,
     assemblies: &mut HashMap<u32, V2PieceAssembly>,
-    pending_block_completions: &mut HashMap<(u32, u32), u64>,
-    pending_piece_completions: &mut HashMap<u32, u64>,
+    pending_block_completions: &mut HashMap<(u32, u32), V2PendingCompletion>,
+    pending_piece_completions: &mut HashMap<u32, V2PendingCompletion>,
     transfer_jobs: &mut futures::stream::FuturesUnordered<V2TransferTask>,
 ) -> anyhow::Result<()> {
     let mut first_error = None;
@@ -4374,9 +4460,14 @@ async fn drain_v2_transfer_jobs(
                     }
                 }
             }
-            V2TransferCompletion::BlockAdmissionCancelled { piece, begin } => {
+            V2TransferCompletion::BlockAdmissionCancelled {
+                piece,
+                generation,
+                begin,
+            } => {
                 apply_v2_block_admission_cancelled(
                     piece,
+                    generation,
                     begin,
                     assemblies,
                     pending_block_completions,
@@ -4505,7 +4596,7 @@ async fn handle_v2_piece(
     outstanding: &mut HashMap<(u32, u32), V2OutstandingRequest>,
     assemblies: &mut HashMap<u32, V2PieceAssembly>,
     transfer_jobs: &mut futures::stream::FuturesUnordered<V2TransferTask>,
-    pending_block_completions: &mut HashMap<(u32, u32), u64>,
+    pending_block_completions: &mut HashMap<(u32, u32), V2PendingCompletion>,
     piece: u32,
     begin: u32,
     data: Bytes,
@@ -4545,6 +4636,7 @@ async fn handle_v2_piece(
     if let std::collections::hash_map::Entry::Vacant(entry) = assemblies.entry(piece) {
         entry.insert(V2PieceAssembly::new(
             piece_extent.piece,
+            context.next_piece_attempt_generation(),
             piece_extent.length,
             context.assembly_cap_bytes,
             &context.resources,
@@ -4563,9 +4655,16 @@ async fn handle_v2_piece(
     if !accepted {
         return Ok(());
     }
+    let generation = assemblies
+        .get(&piece)
+        .expect("accepted block retains its assembly")
+        .generation;
     pending_block_completions.insert(
         (piece, begin),
-        if in_memory { 0 } else { u64::from(expected) },
+        V2PendingCompletion {
+            generation,
+            bytes: if in_memory { 0 } else { u64::from(expected) },
+        },
     );
     let block_write = if in_memory {
         drop(request_memory_lease);
@@ -4591,7 +4690,11 @@ async fn handle_v2_piece(
             )
             .await
         {
-            return V2TransferCompletion::BlockAdmissionCancelled { piece, begin };
+            return V2TransferCompletion::BlockAdmissionCancelled {
+                piece,
+                generation,
+                begin,
+            };
         }
         let result = if let Some((data, path, offset, _memory_lease)) = block_write {
             let result = scheduled_write(
@@ -4611,6 +4714,7 @@ async fn handle_v2_piece(
         };
         V2TransferCompletion::BlockStored(V2BlockCompletion {
             piece,
+            generation,
             begin,
             result,
         })
@@ -5294,6 +5398,7 @@ mod tests {
             peer_control: RateLimitCancellation::default(),
             peer_generation: 0,
             upload_control: RateLimitCancellation::default(),
+            piece_attempt_generation: Arc::new(AtomicU64::new(0)),
             local_have: Arc::new(RwLock::new(Arc::new(local_have))),
             have_updates,
             upload_unchoked: slot_rx,
@@ -5526,7 +5631,7 @@ mod tests {
             },
         )]);
         let mut assemblies = HashMap::new();
-        assemblies.insert(3, V2PieceAssembly::new(3, 8, 1024, &resources).unwrap());
+        assemblies.insert(3, V2PieceAssembly::new(3, 1, 8, 1024, &resources).unwrap());
         let assembly_bytes =
             resources.snapshot().classes[MemoryClass::PieceAssembly as usize].used_bytes;
         assert!(assembly_bytes > 0);
@@ -5726,7 +5831,7 @@ mod tests {
                 .saturating_sub(1),
         )
         .unwrap();
-        let assembly = V2PieceAssembly::new(0, region_len, 0, &resources).unwrap();
+        let assembly = V2PieceAssembly::new(0, 1, region_len, 0, &resources).unwrap();
         assert_eq!(assembly.received.len(), block_count);
     }
 
@@ -6770,6 +6875,75 @@ mod tests {
             case.task.events_rx.try_recv(),
             Ok(V2PeerEvent::Downloaded { bytes, .. }) if bytes == MB_PIECE as u64
         ));
+    }
+
+    #[tokio::test]
+    async fn v2_stale_piece_attempt_completions_cannot_mutate_a_retry() {
+        let case = MultiBlock::new(MB_PIECE, false).await;
+        let context = case
+            .task
+            .peer_context("127.0.0.1:6881".parse().unwrap(), PeerId::new());
+        let state = Arc::new(Mutex::new(V2PeerState::new(
+            case.task.piece_map.piece_count as usize,
+        )));
+        let old_generation = context.next_piece_attempt_generation();
+        let new_generation = context.next_piece_attempt_generation();
+        let mut assemblies = HashMap::from([(
+            0,
+            V2PieceAssembly::new(0, new_generation, MB_PIECE as u32, 0, &context.resources)
+                .unwrap(),
+        )]);
+        assemblies.get_mut(&0).unwrap().pending_blocks = 1;
+        let mut pending_block_completions = HashMap::from([(
+            (0, 0),
+            V2PendingCompletion {
+                generation: new_generation,
+                bytes: MB_BLOCK as u64,
+            },
+        )]);
+
+        apply_v2_block_completion(
+            V2BlockCompletion {
+                piece: 0,
+                generation: old_generation,
+                begin: 0,
+                result: Err("late old write failure".into()),
+            },
+            &mut assemblies,
+            &mut pending_block_completions,
+        )
+        .unwrap();
+        assert_eq!(assemblies.get(&0).unwrap().pending_blocks, 1);
+        assert_eq!(
+            pending_block_completions.get(&(0, 0)).unwrap().generation,
+            new_generation
+        );
+
+        let mut pending_piece_completions = HashMap::from([(
+            0,
+            V2PendingCompletion {
+                generation: new_generation,
+                bytes: MB_PIECE as u64,
+            },
+        )]);
+        apply_v2_piece_completion(
+            &context,
+            &state,
+            &mut pending_piece_completions,
+            V2PieceCompletion {
+                piece: 0,
+                generation: old_generation,
+                bytes: MB_PIECE as u64,
+                result: Ok(()),
+            },
+        )
+        .await;
+
+        assert!(!case.have(0).await);
+        assert_eq!(
+            pending_piece_completions.get(&0).unwrap().generation,
+            new_generation
+        );
     }
 
     #[tokio::test]

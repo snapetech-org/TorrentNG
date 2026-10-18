@@ -802,9 +802,13 @@ job set; a piece stays unavailable until its completion is applied. Existing
 request and assembly memory leases remain alive through their storage/hash
 consumers.
 
-This is still partial: piece-attempt generation fencing and failure/reset
-qualification remain open. v1 lifecycle snapshots drain accepted work before
-shutdown, pause, recheck, and storage-move snapshots. Pure-v2 peer shutdown
+This is still partial: failure/reset and actor-level lifecycle qualification
+remain open. v1/hybrid block, verification, and aggregate-write jobs carry
+monotonically increasing piece-attempt generations, and stale completions
+cannot mutate a retry. Pure-v2 assemblies plus block and piece completions use
+per-peer monotonically increasing generations with the same stale-result
+fencing. v1 lifecycle snapshots drain accepted work before shutdown, pause,
+recheck, and storage-move snapshots. Pure-v2 peer shutdown
 uses a per-peer lifecycle generation to stop new request and upload work,
 cancels download-rate and upload-rate waits, and drains dispatched upload
 reads plus already-admitted storage and verification jobs before the torrent
@@ -825,7 +829,8 @@ lifecycle regression and bulk validation remain deferred.
   remains pending until its integrity result is applied; accepted work is
   serialized with piece reset and drained before v1 quiesce, move, and clean
   shutdown snapshots. Pure-v2 drains peer-owned work on protocol exit and
-  orderly torrent shutdown. Explicit generation fencing remains open.
+  orderly torrent shutdown. Both implementations fence completions by
+  piece-attempt generation; the broader failure/reset matrix remains open.
 - **Must not:** spawn untracked work, drop a payload lease before backend
   completion, advertise or persist unverified bytes as complete, or let an old
   job commit into a replacement attempt.
@@ -858,8 +863,8 @@ lifecycle regression and bulk validation remain deferred.
 - **Migration / rollback:** no runtime flag or persistent-format change has
   been added. The old synchronous helpers remain available for recheck and
   other non-peer paths; reverting the actor job routing remains a source
-  rollback until generation/failure fencing, actor-level v2 lifecycle cases,
-  and bulk evidence are reviewed.
+  rollback until v1/hybrid and pure-v2 failure cases, actor-level lifecycle
+  cases, and bulk evidence are reviewed.
 - **Feature flag or rollout boundary:** no separate flag; this is the
   production actor completion contract required before NET-114 integration.
 
@@ -879,10 +884,14 @@ lifecycle regression and bulk validation remain deferred.
   then cancels a blocked download-rate wait and confirms shutdown drains without
   publishing the canceled piece. `v2_peer_shutdown_cancels_a_backpressured_socket_send`
   covers a peer writer blocked by a non-reading socket. These sources are
-  authored but unrun; generation/failure fencing, actor-level disconnect/quiesce,
-  and broader lifecycle qualification remain open. The authored but unrun
+  authored but unrun; failure/reset cases, actor-level disconnect/quiesce, and
+  broader lifecycle qualification remain open. The authored but unrun
   `v2_peer_shutdown_drains_admitted_upload_reads` source holds a dispatched
   upload future and verifies shutdown drain waits for it to finish.
+  `stale_piece_attempt_completions_cannot_mutate_a_retry` covers v1/hybrid
+  block-write and verification completions from a replaced attempt, while
+  `v2_stale_piece_attempt_completions_cannot_mutate_a_retry` covers pure-v2
+  block-write and verification results from a replaced attempt.
 - **Command or probe to run:** focused actor and picker regressions during the
   requested bulk pass.
 - **Expected result:** actors process controls while accepted transfer work is

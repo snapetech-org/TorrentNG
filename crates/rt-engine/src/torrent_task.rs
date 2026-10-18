@@ -1327,6 +1327,7 @@ const MAX_TRANSFER_COMPLETION_JOBS: usize = 64;
 
 #[derive(Debug, Default)]
 struct PendingPieceWork {
+    generation: u64,
     writes_in_flight: usize,
     failed: bool,
     verify_ready: bool,
@@ -1339,17 +1340,20 @@ struct PendingPieceWork {
 enum TransferCompletion {
     BlockWritten {
         piece: u32,
+        generation: u64,
         offset: u32,
         length: u64,
         result: Result<(), String>,
     },
     PieceVerified {
         piece: u32,
+        generation: u64,
         result: VerifyResult,
         assembled: Option<(bytes::Bytes, Option<Arc<MemoryLease>>)>,
     },
     AggregatePieceWritten {
         piece: u32,
+        generation: u64,
         result: Result<(), String>,
     },
 }
@@ -2398,8 +2402,9 @@ pub struct TorrentTask {
     prepared_files: Arc<Mutex<HashSet<u32>>>,
     prepared_file_locks: Arc<tokio::sync::Mutex<HashMap<u32, Arc<tokio::sync::Mutex<()>>>>>,
     transfer_jobs: futures::stream::FuturesUnordered<TransferJobFuture>,
-    pending_transfer_blocks: HashSet<(u32, u32)>,
+    pending_transfer_blocks: HashMap<(u32, u32), u64>,
     pending_transfer_pieces: HashMap<u32, PendingPieceWork>,
+    next_transfer_generation: u64,
     paused: bool,
     /// The lifecycle state to restore when a recheck was requested for a
     /// dormant/paused task. Dormant tasks are constructed with `paused = true`
@@ -2762,8 +2767,9 @@ impl TorrentTask {
             prepared_files: Arc::new(Mutex::new(HashSet::new())),
             prepared_file_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             transfer_jobs: futures::stream::FuturesUnordered::new(),
-            pending_transfer_blocks: HashSet::new(),
+            pending_transfer_blocks: HashMap::new(),
             pending_transfer_pieces: HashMap::new(),
+            next_transfer_generation: 0,
             paused,
             recheck_restore_state: match initial_state {
                 TorrentState::Paused => Some(TorrentState::Paused),
@@ -9943,7 +9949,7 @@ mod tests {
         assert_eq!(task.transfer_jobs.len(), 1);
         assert!(task
             .pending_transfer_blocks
-            .contains(&(request.piece, request.begin)));
+            .contains_key(&(request.piece, request.begin)));
         assert!(!task
             .picker
             .is_block_received(request.piece as usize, request.begin));
@@ -9960,6 +9966,56 @@ mod tests {
                 .downloaded,
             0
         );
+    }
+
+    #[tokio::test]
+    async fn stale_piece_attempt_completions_cannot_mutate_a_retry() {
+        let fixture = crash_fixture(vec![0x31; 8], 4, 73).await;
+        let mut task = crash_task(&fixture, quiet_runtime(), StorageIoConfig::default()).await;
+        let peer_has = PieceBitmap::from_bools(&[true, false]);
+        task.picker.availability.add_have(0);
+        task.picker
+            .pick(&peer_has)
+            .expect("first attempt should be requestable");
+        let old_generation = task.ensure_pending_transfer_piece(0).generation;
+
+        task.fail_piece_transfer(0);
+        task.picker
+            .pick(&peer_has)
+            .expect("failed attempt should be requestable again");
+        let new_generation = task.ensure_pending_transfer_piece(0).generation;
+        assert_ne!(old_generation, new_generation);
+        task.pending_transfer_pieces
+            .get_mut(&0)
+            .unwrap()
+            .writes_in_flight = 1;
+        task.pending_transfer_blocks.insert((0, 0), new_generation);
+
+        task.handle_transfer_completion(TransferCompletion::BlockWritten {
+            piece: 0,
+            generation: old_generation,
+            offset: 0,
+            length: 4,
+            result: Err("late old write failure".into()),
+        })
+        .await;
+        task.handle_transfer_completion(TransferCompletion::PieceVerified {
+            piece: 0,
+            generation: old_generation,
+            result: VerifyResult::Invalid,
+            assembled: None,
+        })
+        .await;
+
+        let current = task.pending_transfer_pieces.get(&0).unwrap();
+        assert_eq!(current.generation, new_generation);
+        assert_eq!(current.writes_in_flight, 1);
+        assert!(!current.failed);
+        assert_eq!(
+            task.pending_transfer_blocks.get(&(0, 0)),
+            Some(&new_generation)
+        );
+        assert!(task.picker.is_piece_in_progress(0));
     }
 
     #[tokio::test]

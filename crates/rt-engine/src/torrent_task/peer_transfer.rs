@@ -392,6 +392,26 @@ impl TorrentTask {
         }
     }
 
+    pub(super) fn ensure_pending_transfer_piece(&mut self, piece: u32) -> &mut PendingPieceWork {
+        if !self.pending_transfer_pieces.contains_key(&piece) {
+            self.next_transfer_generation = self
+                .next_transfer_generation
+                .checked_add(1)
+                .expect("torrent transfer-attempt generation exhausted");
+            let generation = self.next_transfer_generation;
+            self.pending_transfer_pieces.insert(
+                piece,
+                PendingPieceWork {
+                    generation,
+                    ..PendingPieceWork::default()
+                },
+            );
+        }
+        self.pending_transfer_pieces
+            .get_mut(&piece)
+            .expect("transfer work was inserted or already existed")
+    }
+
     pub(super) async fn handle_block(&mut self, event: LeasedBlockEvent) {
         let piece = event.block.piece;
         let offset = event.block.offset;
@@ -409,7 +429,7 @@ impl TorrentTask {
             return;
         }
         if self.picker.is_block_received(piece as usize, offset)
-            || self.pending_transfer_blocks.contains(&(piece, offset))
+            || self.pending_transfer_blocks.contains_key(&(piece, offset))
         {
             debug!(
                 component = "torrent",
@@ -483,7 +503,7 @@ impl TorrentTask {
                 length: event.block.data.len() as u32,
             });
             if complete {
-                let work = self.pending_transfer_pieces.entry(piece).or_default();
+                let work = self.ensure_pending_transfer_piece(piece);
                 work.aggregate_write = true;
                 work.verify_ready = true;
             } else {
@@ -503,10 +523,12 @@ impl TorrentTask {
             self.picker.cancel_request(piece as usize, offset);
             return;
         }
-        let work = self.pending_transfer_pieces.entry(piece).or_default();
+        let work = self.ensure_pending_transfer_piece(piece);
+        let generation = work.generation;
         work.aggregate_write = false;
         work.writes_in_flight = work.writes_in_flight.saturating_add(1);
-        self.pending_transfer_blocks.insert((piece, offset));
+        self.pending_transfer_blocks
+            .insert((piece, offset), generation);
 
         let length = event.block.data.len() as u64;
         let context = self.transfer_io_context();
@@ -516,6 +538,7 @@ impl TorrentTask {
                 .map_err(|error| error.to_string());
             TransferCompletion::BlockWritten {
                 piece,
+                generation,
                 offset,
                 length,
                 result,
@@ -549,6 +572,7 @@ impl TorrentTask {
             };
             let writing_aggregate = work.aggregate_write_ready;
             let aggregate_piece = work.aggregate_write;
+            let generation = work.generation;
             let verified_payload = work.verified_payload.clone();
             let assembled = if !writing_aggregate && aggregate_piece {
                 self.piece_assemblies.get(&piece).and_then(|assembly| {
@@ -584,7 +608,11 @@ impl TorrentTask {
                     let result = write_transfer_piece(&context, piece, data, lease)
                         .await
                         .map_err(|error| error.to_string());
-                    TransferCompletion::AggregatePieceWritten { piece, result }
+                    TransferCompletion::AggregatePieceWritten {
+                        piece,
+                        generation,
+                        result,
+                    }
                 }));
             } else {
                 let hybrid_v2 = self.hybrid_v2.clone();
@@ -607,6 +635,7 @@ impl TorrentTask {
                     .await;
                     TransferCompletion::PieceVerified {
                         piece,
+                        generation,
                         result,
                         assembled,
                     }
@@ -619,11 +648,40 @@ impl TorrentTask {
         match completion {
             TransferCompletion::BlockWritten {
                 piece,
+                generation,
                 offset,
                 length,
                 result,
             } => {
-                self.pending_transfer_blocks.remove(&(piece, offset));
+                let coordinate = (piece, offset);
+                let block_generation = self.pending_transfer_blocks.get(&coordinate).copied();
+                let current_generation = self
+                    .pending_transfer_pieces
+                    .get(&piece)
+                    .map(|work| work.generation);
+                if block_generation != Some(generation) || current_generation != Some(generation) {
+                    if block_generation == Some(generation) {
+                        self.pending_transfer_blocks.remove(&coordinate);
+                    }
+                    if result.is_ok() {
+                        self.note_data_write();
+                        self.record_download(length).await;
+                    }
+                    debug!(
+                        component = "storage",
+                        operation = "apply_block_completion",
+                        torrent = %self.info_hash_hex,
+                        piece,
+                        offset,
+                        generation,
+                        result = "ignored",
+                        reason = "stale_transfer_generation",
+                        "ignoring a block completion from a replaced piece attempt"
+                    );
+                    self.start_ready_transfer_jobs();
+                    return;
+                }
+                self.pending_transfer_blocks.remove(&coordinate);
                 let Some(work) = self.pending_transfer_pieces.get_mut(&piece) else {
                     return;
                 };
@@ -690,9 +748,29 @@ impl TorrentTask {
             }
             TransferCompletion::PieceVerified {
                 piece,
+                generation,
                 result,
                 assembled,
             } => {
+                if self
+                    .pending_transfer_pieces
+                    .get(&piece)
+                    .map(|work| work.generation)
+                    != Some(generation)
+                {
+                    debug!(
+                        component = "storage",
+                        operation = "apply_piece_verification",
+                        torrent = %self.info_hash_hex,
+                        piece,
+                        generation,
+                        result = "ignored",
+                        reason = "stale_transfer_generation",
+                        "ignoring verification from a replaced piece attempt"
+                    );
+                    self.start_ready_transfer_jobs();
+                    return;
+                }
                 let Some(work) = self.pending_transfer_pieces.get_mut(&piece) else {
                     return;
                 };
@@ -726,44 +804,78 @@ impl TorrentTask {
                     self.persist_progress_throttled(false).await;
                 }
             }
-            TransferCompletion::AggregatePieceWritten { piece, result } => match result {
-                Ok(()) => {
-                    self.note_data_write();
-                    self.finish_verified_piece(piece).await;
-                    if !self.picker.is_complete() {
+            TransferCompletion::AggregatePieceWritten {
+                piece,
+                generation,
+                result,
+            } => {
+                if self
+                    .pending_transfer_pieces
+                    .get(&piece)
+                    .map(|work| work.generation)
+                    != Some(generation)
+                {
+                    if result.is_ok() {
+                        self.note_data_write();
+                    }
+                    debug!(
+                        component = "storage",
+                        operation = "apply_aggregate_write_completion",
+                        torrent = %self.info_hash_hex,
+                        piece,
+                        generation,
+                        result = "ignored",
+                        reason = "stale_transfer_generation",
+                        "ignoring aggregate write completion from a replaced piece attempt"
+                    );
+                    self.start_ready_transfer_jobs();
+                    return;
+                }
+                match result {
+                    Ok(()) => {
+                        self.note_data_write();
+                        self.finish_verified_piece(piece).await;
+                        if !self.picker.is_complete() {
+                            self.persist_progress_throttled(false).await;
+                        }
+                    }
+                    Err(error) => {
+                        warn!(
+                            component = "storage",
+                            operation = "write_completed_piece",
+                            torrent = %self.info_hash_hex,
+                            piece,
+                            result = "error",
+                            error = %error,
+                            "completed piece write failed"
+                        );
+                        self.fail_piece_transfer(piece);
                         self.persist_progress_throttled(false).await;
                     }
                 }
-                Err(error) => {
-                    warn!(
-                        component = "storage",
-                        operation = "write_completed_piece",
-                        torrent = %self.info_hash_hex,
-                        piece,
-                        result = "error",
-                        error = %error,
-                        "completed piece write failed"
-                    );
-                    self.fail_piece_transfer(piece);
-                    self.persist_progress_throttled(false).await;
-                }
-            },
+            }
         }
         self.start_ready_transfer_jobs();
     }
 
-    fn fail_piece_transfer(&mut self, piece: u32) {
+    pub(super) fn fail_piece_transfer(&mut self, piece: u32) {
         self.picker.reject_piece(piece as usize);
         self.restored_partial_pieces.remove(&piece);
         self.remove_piece_assembly(piece);
-        self.pending_transfer_pieces.remove(&piece);
+        if let Some(work) = self.pending_transfer_pieces.remove(&piece) {
+            self.pending_transfer_blocks
+                .retain(|_, generation| *generation != work.generation);
+        }
     }
 
     async fn finish_verified_piece(&mut self, piece: u32) {
         self.picker.mark_have(piece as usize);
         self.restored_partial_pieces.remove(&piece);
         self.remove_piece_assembly(piece);
-        self.pending_transfer_pieces.remove(&piece);
+        if let Some(work) = self.pending_transfer_pieces.remove(&piece) {
+            self.pending_transfer_blocks
+                .retain(|_, generation| *generation != work.generation);
+        }
         self.dirty_pieces_since_barrier.insert(piece);
         info!(
             component = "torrent",
