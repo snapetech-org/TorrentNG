@@ -3804,9 +3804,10 @@ lifecycle boundaries flush immediately.
 - **Regression source added or updated:** pure-v2 progress batching and
   database-failure retry in `torrent_task_v2.rs`; the v1 actor now owns one
   bounded cancellable webseed fetch outside its event loop, and a regression
-  source holds the HTTP body while querying the actor. Multi-file URL/range
-  mapping, BEP 47 padding, and excessive file-fanout bounds remain covered in
-  `torrent_task.rs`.
+  source holds the HTTP body while querying and pausing the actor, then
+  releases the body and confirms no payload reached storage. Multi-file
+  URL/range mapping, BEP 47 padding, and excessive file-fanout bounds remain
+  covered in `torrent_task.rs`.
 - **Command or probe:** run with the requested bulk engine suite; do not run
   this source independently before that pass.
 - **Executed on exact revision:** no.

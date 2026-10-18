@@ -13198,13 +13198,14 @@ mod tests {
                 }
                 request.extend_from_slice(&buffer[..read]);
             }
+            let _ = stream
+                .write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Length: 4\r\nContent-Range: bytes 0-3/4\r\nConnection: close\r\n\r\n")
+                .await;
             let _ = request_started_tx.send(());
             if release_response_rx.await.is_err() {
                 return;
             }
-            let _ = stream
-                .write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Length: 4\r\nContent-Range: bytes 0-3/4\r\nConnection: close\r\n\r\ndata")
-                .await;
+            let _ = stream.write_all(b"data").await;
             let _ = stream.shutdown().await;
         });
 
@@ -13311,6 +13312,10 @@ mod tests {
             .expect("torrent actor should shut down")
             .unwrap();
         server.await.unwrap();
+        assert!(
+            !temp.path().join("payload.bin").exists(),
+            "a response released after pause must not reach storage"
+        );
     }
 
     #[tokio::test]
