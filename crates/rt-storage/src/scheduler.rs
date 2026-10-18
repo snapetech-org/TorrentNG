@@ -1364,8 +1364,12 @@ struct StorageCreditEvidence {
 }
 
 #[cfg(test)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct StorageDispatchTestSnapshot {
+    storage_operation_id: Option<u64>,
+    device_operation_id: Option<u64>,
+    device_queue_key: Option<String>,
+    operation_kind: &'static str,
     credit: StorageCreditEvidence,
     byte_range: Option<StorageByteRange>,
     has_file_identity: bool,
@@ -1480,6 +1484,14 @@ impl DiskSubmission {
         #[cfg(test)]
         if operation_dispatches.len() < 64 {
             operation_dispatches.push(StorageDispatchTestSnapshot {
+                storage_operation_id: self.operation.storage_operation_id.map(|id| id.0),
+                device_operation_id: self.operation.device_operation_id.map(|id| id.0),
+                device_queue_key: self
+                    .operation
+                    .device_queue_key
+                    .as_ref()
+                    .map(ToString::to_string),
+                operation_kind,
                 credit,
                 byte_range: range,
                 has_file_identity: self.operation.file_identity.is_some(),
@@ -5471,7 +5483,7 @@ mod tests {
     }
 
     #[test]
-    fn storage_frame_queue_hash_credit_reconciles_live_snapshots() {
+    fn storage_frame_queue_multi_hash_credit_reconciles_live_snapshots() {
         let counters = Arc::new(StorageCounters::default());
         let resources = ResourceGovernor::new(Default::default());
         let frames = crate::frame::FramePool::new(64 * 1024);
@@ -5525,6 +5537,18 @@ mod tests {
             4096,
             HashQueueCredit::Shared(Arc::clone(&queued_bytes)),
         );
+        let second_queued_bytes = QueuedDiskBytes::reserve(
+            counters.clone(),
+            Some(&resources),
+            2048,
+            "second-hash-owner-test",
+        )
+        .unwrap();
+        let second_job_credit = second_queued_bytes.resource_credit();
+        let second_owner =
+            HashJobCreditOwner::new("v2_leaf", 2048, HashQueueCredit::Owned(second_queued_bytes));
+        let mut pipeline_credit = operation_credit;
+        pipeline_credit.include(second_job_credit);
         drop(queued_bytes);
         drop(frame);
 
@@ -5536,18 +5560,34 @@ mod tests {
         );
         assert_eq!(
             retained.classes[MemoryClass::QueuedDisk as usize].used_bytes,
-            QUEUED_DISK_JOB_OVERHEAD_BYTES
+            QUEUED_DISK_JOB_OVERHEAD_BYTES + 2048
         );
         assert_eq!(
-            operation_credit.governor_credit_bytes + operation_credit.shared_payload_lease_bytes,
+            pipeline_credit.governor_credit_bytes + pipeline_credit.shared_payload_lease_bytes,
             retained.total_used_bytes
         );
         assert_eq!(
             counters.queued_disk_bytes.load(Ordering::Relaxed),
-            queued_disk_charge(4096)
+            queued_disk_charge(4096) + queued_disk_charge(2048)
         );
 
         drop(owner);
+        let first_released = resources.snapshot();
+        assert_eq!(first_released.total_used_bytes, queued_disk_charge(2048));
+        assert_eq!(
+            first_released.classes[MemoryClass::PeerBuffer as usize].used_bytes,
+            0
+        );
+        assert_eq!(
+            first_released.classes[MemoryClass::QueuedDisk as usize].used_bytes,
+            queued_disk_charge(2048)
+        );
+        assert_eq!(
+            counters.queued_disk_bytes.load(Ordering::Relaxed),
+            queued_disk_charge(2048)
+        );
+
+        drop(second_owner);
 
         let released = resources.snapshot();
         assert_eq!(released.total_used_bytes, baseline.total_used_bytes);
@@ -5596,7 +5636,7 @@ mod tests {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
         assert_eq!(dispatches.len(), 1);
-        let dispatch = dispatches[0];
+        let dispatch = dispatches[0].clone();
         assert_eq!(
             dispatch.byte_range,
             Some(StorageByteRange {
@@ -5633,6 +5673,206 @@ mod tests {
         assert_eq!(&read.await.unwrap().unwrap()[..], b"payload");
         assert_storage_admission_released(&scheduler);
         assert_eq!(resources.snapshot().total_used_bytes, 0);
+    }
+
+    #[tokio::test]
+    async fn production_scheduler_multi_operation_credit_reconciles_until_completion() {
+        let dir = tempfile::tempdir().unwrap();
+        let first_read_path = dir.path().join("multi-read-first.bin");
+        let second_read_path = dir.path().join("multi-read-second.bin");
+        let write_path = dir.path().join("multi-write.bin");
+        std::fs::write(&first_read_path, b"read-one").unwrap();
+        std::fs::write(&second_read_path, b"second-data").unwrap();
+        std::fs::write(&write_path, b"--------").unwrap();
+
+        let resources = ResourceGovernor::new(Default::default());
+        let mut scheduler = MountScheduler::new(
+            StorageRootId::new(),
+            &SchedulerConfig {
+                profile: StorageProfile::Hdd,
+                max_queue: 4,
+                recheck_concurrency: 2,
+                storage_io: StorageIoConfig {
+                    io_worker_threads: 2,
+                    io_queue_depth: 4,
+                    peer_read_elevator_budget_ms: 0,
+                    ..Default::default()
+                },
+                resources: Some(resources.clone()),
+                ..Default::default()
+            },
+        );
+        scheduler.device_queue = Arc::new(DeviceQueue::new(
+            Arc::from("device:io001-multi-operation"),
+            4,
+            3,
+        ));
+        scheduler.device_queue_capacity = 4;
+        let backend = Arc::new(ScriptedDiskBackend::new(1, 8));
+        scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(backend.clone()));
+        backend.inject(Operation::Read, Effect::HoldCompletion);
+        backend.inject(Operation::Read, Effect::HoldCompletion);
+        backend.inject(Operation::Write, Effect::HoldCompletion);
+
+        let first_scheduler = scheduler.clone();
+        let first_path = first_read_path.clone();
+        let first_read = tokio::spawn(async move {
+            first_scheduler
+                .read_at(IoClass::Recheck, &first_path, 0, 8)
+                .await
+        });
+        backend.wait_until_completion_is_held().await;
+
+        let second_scheduler = scheduler.clone();
+        let second_path = second_read_path.clone();
+        let second_read = tokio::spawn(async move {
+            second_scheduler
+                .read_at(IoClass::Recheck, &second_path, 7, 4)
+                .await
+        });
+        backend.wait_until_completion_is_held().await;
+
+        let write_scheduler = scheduler.clone();
+        let lease = Arc::new(
+            resources
+                .try_acquire(MemoryClass::PeerBuffer, 8)
+                .expect("shared write payload lease fits the resource budget"),
+        );
+        let write = tokio::spawn(async move {
+            write_scheduler
+                .write_at_with_shared_payload_lease(
+                    IoClass::PeerWrite,
+                    &write_path,
+                    0,
+                    bytes::Bytes::from_static(b"payload!"),
+                    false,
+                    lease,
+                )
+                .await
+        });
+        backend.wait_until_completion_is_held().await;
+
+        assert_eq!(backend.pending_releases(), 3);
+        let dispatches = scheduler
+            .counters
+            .operation_dispatches
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        assert_eq!(dispatches.len(), 3);
+
+        let mut storage_operation_ids = dispatches
+            .iter()
+            .map(|dispatch| dispatch.storage_operation_id.expect("storage operation ID"))
+            .collect::<Vec<_>>();
+        storage_operation_ids.sort_unstable();
+        storage_operation_ids.dedup();
+        assert_eq!(storage_operation_ids.len(), 3);
+
+        let mut device_operation_ids = dispatches
+            .iter()
+            .map(|dispatch| dispatch.device_operation_id.expect("device operation ID"))
+            .collect::<Vec<_>>();
+        device_operation_ids.sort_unstable();
+        device_operation_ids.dedup();
+        assert_eq!(device_operation_ids.len(), 3);
+
+        let mut read_dispatches = 0;
+        let mut write_dispatches = 0;
+        for dispatch in &dispatches {
+            assert_eq!(
+                dispatch.device_queue_key.as_deref(),
+                Some("device:io001-multi-operation")
+            );
+            assert!(dispatch.has_file_identity);
+            assert!(dispatch.file_owner_retained);
+            assert_eq!(dispatch.device_queue_permits, 1);
+            assert_eq!(dispatch.credit.governor_credit_leases, 1);
+            assert_eq!(
+                dispatch.credit.governor_credit_bytes,
+                QUEUED_DISK_JOB_OVERHEAD_BYTES
+            );
+
+            match dispatch.operation_kind {
+                "positioned_read" => {
+                    read_dispatches += 1;
+                    assert!(!dispatch.payload_owner_retained);
+                    assert_eq!(
+                        dispatch.credit.frame_pool_charge_bytes_at_dispatch,
+                        16 * 1024
+                    );
+                    assert_eq!(dispatch.credit.shared_payload_lease_count, 0);
+                    assert!(matches!(
+                        dispatch.byte_range,
+                        Some(StorageByteRange { length: 8 | 4, .. })
+                    ));
+                }
+                "positioned_write" => {
+                    write_dispatches += 1;
+                    assert!(dispatch.payload_owner_retained);
+                    assert_eq!(dispatch.credit.frame_pool_charge_bytes_at_dispatch, 0);
+                    assert_eq!(dispatch.credit.shared_payload_lease_count, 1);
+                    assert_eq!(
+                        dispatch.credit.shared_payload_class,
+                        Some(MemoryClass::PeerBuffer)
+                    );
+                    assert_eq!(dispatch.credit.shared_payload_lease_bytes, 8);
+                    assert_eq!(dispatch.credit.shared_payload_view_bytes, 8);
+                    assert_eq!(
+                        dispatch.byte_range,
+                        Some(StorageByteRange {
+                            offset: 0,
+                            length: 8
+                        })
+                    );
+                }
+                other => panic!("unexpected storage operation kind {other}"),
+            }
+            assert_eq!(
+                dispatch.credit.logical_queued_bytes,
+                queued_disk_charge(
+                    dispatch
+                        .byte_range
+                        .expect("payload operation has a byte range")
+                        .length
+                )
+            );
+        }
+        assert_eq!(read_dispatches, 2);
+        assert_eq!(write_dispatches, 1);
+
+        let expected_logical_queue_bytes = dispatches
+            .iter()
+            .map(|dispatch| dispatch.credit.logical_queued_bytes)
+            .sum::<u64>();
+        let live_stats = scheduler.stats();
+        let live_resources = resources.snapshot();
+        assert_eq!(live_stats.queued_disk_bytes, expected_logical_queue_bytes);
+        assert_eq!(
+            live_resources.classes[MemoryClass::QueuedDisk as usize].used_bytes,
+            3 * QUEUED_DISK_JOB_OVERHEAD_BYTES
+        );
+        assert_eq!(
+            live_resources.classes[MemoryClass::PeerBuffer as usize].used_bytes,
+            8
+        );
+        assert_eq!(
+            live_stats.device_queue_capacity - live_stats.device_queue_available,
+            3
+        );
+
+        for _ in 0..3 {
+            assert!(backend.release_next());
+        }
+        assert_eq!(&first_read.await.unwrap().unwrap()[..], b"read-one");
+        assert_eq!(&second_read.await.unwrap().unwrap()[..], b"data");
+        write.await.unwrap().unwrap();
+        assert_storage_admission_released(&scheduler);
+        assert_eq!(resources.snapshot().total_used_bytes, 0);
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
+            0
+        );
     }
 
     fn hdd_scheduler() -> MountScheduler {

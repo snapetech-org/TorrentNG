@@ -109,9 +109,13 @@ lifetime events are implemented. The controlled frame/queue/hash owner-chain
 regression reconciles its dispatch record to live frame-pool and governor
 snapshots. A held-backend regression now also executes a real scheduler read
 and reconciles its dispatch credit, range, descriptor owner, frame charge, and
-device permit with live queue and governor snapshots through completion.
-Multi-operation/hash-pipeline reconciliation, crash cuts, and platform fault
-qualification remain open.
+device permit with live queue and governor snapshots through completion. New
+unrun source regressions hold two reads and a shared-payload write concurrently
+and reconcile their distinct storage/device IDs, owners, ranges, and per-class
+credits against live snapshots. The frame/queue/hash fixture now retains two
+independent hash-job owners, checks aggregate credit while both are held, and
+confirms partial and final release. Execution is pending the bulk pass; crash
+cuts and platform fault qualification remain open.
 
 Dirty evidence is tracked per normalized path, write sequence, and file
 identity. A barrier snapshots the dirty files and highest covered sequence for
@@ -144,10 +148,13 @@ lease and permit counts before/after, completion state, dirty sequences, and
 recovered content. Current dispatch/drop traces expose submitted credit and
 retained-owner counts; identity/growth/release and order-independent lossy
 coalesced-credit regressions, a deterministic frame/queue/hash owner-chain
-snapshot regression, and a held-backend production scheduler read reconciliation
-are authored. Multi-operation production snapshots across all credit classes
-remain required. Wall-clock sleeps and “usually happens” race tests
-do not satisfy this contract.
+snapshot regression, and held-backend production scheduler reconciliations are
+authored. The multi-operation source covers two reads plus a shared-payload
+write across unique storage/device identities, queue and frame credit, a shared
+payload lease, descriptors, and live governor snapshots. These sources remain
+unrun pending the bulk pass. Physical crash cuts and platform fault
+qualification remain required. Wall-clock sleeps and “usually happens” race
+tests do not satisfy this contract.
 
 ## Qualification boundary
 

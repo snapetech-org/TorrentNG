@@ -352,9 +352,12 @@ dispatch credit against live frame-pool and governor snapshots as owners are
 retained and dropped. A second regression now holds an actual scheduler read
 at backend completion and reconciles its dispatched queue credit, frame
 charge, descriptor identity, and device permit with live scheduler and
-governor state. Multi-operation/hash-pipeline reconciliation, restart cuts,
-and platform fault qualification remain open. Frame-pool charge attribution is
-present in read-dispatch traces.
+governor state. New sources now hold two reads and a shared-payload write at
+once, reconcile distinct storage/device IDs and per-operation credits against
+live scheduler snapshots, and verify that two hash owners release their
+credits independently. These sources remain unrun; restart cuts and platform
+fault qualification remain open. Frame-pool charge attribution is present in
+read-dispatch traces.
 
 ### Ownership and invariant
 
@@ -392,11 +395,14 @@ present in read-dispatch traces.
   and lossy, order-independent diagnostics when contributions are coalesced.
 - Controlled frame/queue/hash owner-chain regression sources reconcile rounded
   frame-pool charge and queued/shared-payload credit against live snapshots
-  through hash-owner drop. A production-scheduler regression holds a real
-  positioned read at its backend boundary and reconciles the captured operation
-  credit, byte range, descriptor owner, frame charge, and device permit against
-  live scheduler and governor snapshots through completion. Multi-operation
-  reconciliation and physical crash cuts remain open.
+  through hash-owner drop, with two independently retained hash jobs and
+  before/after governor snapshots. Production-scheduler regressions hold real
+  positioned reads at their backend boundaries and reconcile captured operation
+  IDs, byte ranges, descriptor owners, frame charges, shared-payload leases, and
+  device permits against live scheduler and governor snapshots. A three-operation
+  source holds two reads and one shared-payload write concurrently, then checks
+  each owner's credit through release. These sources remain unrun; physical
+  crash cuts and platform-specific fault qualification remain open.
 - Path-replacement regressions cover secure open, cached descriptor reopening,
   scheduler snapshots, and peer-read readahead (IO-004), plus held payload
   reads, writes, and checkpoint syncs. Dirty writes remain tied to the original
@@ -447,11 +453,15 @@ present in read-dispatch traces.
   `hash_job_owner_retains_queued_credit_until_drop`, plus the size-class charge assertion in
   `into_bytes_releases_charge_without_copying_payload`, and
   `traced_lease_identity_is_stable_through_growth_and_release`, and
-  `storage_frame_queue_hash_credit_reconciles_live_snapshots`; the
+  `storage_frame_queue_multi_hash_credit_reconciles_live_snapshots`; the
   `production_scheduler_dispatch_credit_matches_live_owners_until_completion`
   regression executes an admitted scheduler read against a held backend and
   checks dispatch evidence against live queue, device, and governor ownership;
-  order-independent credit-merge regression includes lease-ID diagnostics.
+  `production_scheduler_multi_operation_credit_reconciles_until_completion`
+  holds two reads and one shared-payload write and checks unique operation IDs,
+  ranges, owners, per-class credits, and live resource snapshots before and
+  after completion. All added sources are authored but unrun; order-independent
+  credit-merge regression includes lease-ID diagnostics.
 - **Command or probe to run:** `cargo test -p rt-storage` during the requested
   bulk pass.
 - **Expected result:** injected read/write failures are returned; failed reads
