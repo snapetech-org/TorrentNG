@@ -24,7 +24,7 @@ use crate::network_budget::GlobalNetworkBudget;
 use crate::storage_jobs::StorageJobDispatcher;
 use crate::tier::TierController;
 use crate::torrent_task::TorrentCmd;
-use rt_metrics::{ResourceGovernor, ResourceGovernorConfig};
+use rt_metrics::ResourceGovernor;
 
 pub(super) struct EngineRuntimeState {
     pub(super) torrent_chans: HashMap<String, mpsc::Sender<TorrentCmd>>,
@@ -139,7 +139,7 @@ pub(super) struct EngineStatsCache {
 impl EngineSubsystems {
     pub(super) fn new(
         dht_tx: Option<mpsc::Sender<DhtCommand>>,
-        resource_config: ResourceGovernorConfig,
+        resources: ResourceGovernor,
         network_budget: GlobalNetworkBudget,
         storage_jobs: StorageJobDispatcher,
     ) -> Self {
@@ -147,7 +147,7 @@ impl EngineSubsystems {
             dht_tx,
             #[cfg(not(test))]
             dht_task: None,
-            resources: ResourceGovernor::new(resource_config),
+            resources,
             network_budget,
             storage_jobs,
             stats_cache: None,

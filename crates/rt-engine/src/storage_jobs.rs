@@ -19,7 +19,11 @@ use tokio::sync::{mpsc, oneshot, Notify, Semaphore};
 use tokio::task::{JoinHandle, JoinSet};
 use tracing::{debug, warn};
 
-use rt_storage::{StorageError, StoragePlan, StoragePlanStep};
+use rt_path::StorageRootId;
+use rt_storage::{
+    MountScheduler, PlannedStorageAction, SchedulerConfig, StorageError, StoragePlan,
+    StoragePlanStep,
+};
 
 use crate::engine::unix_now_i64;
 
@@ -306,6 +310,7 @@ struct StorageJobRequest {
     plan: StoragePlan,
     completed_steps: Vec<usize>,
     roots: Vec<std::path::PathBuf>,
+    copy_scheduler: Option<MountScheduler>,
     db: Arc<Mutex<Connection>>,
     control: Arc<StorageJobControl>,
     completion: oneshot::Sender<StorageJobCompletion>,
@@ -317,6 +322,7 @@ struct StorageJobExecution {
     plan: StoragePlan,
     completed_steps: Vec<usize>,
     roots: Vec<std::path::PathBuf>,
+    copy_scheduler: Option<MountScheduler>,
     db: Arc<Mutex<Connection>>,
     control: Arc<StorageJobControl>,
 }
@@ -389,6 +395,9 @@ pub(crate) struct StorageJobDispatcher {
     /// mutex. Test-only dispatchers leave this unset and use the connection
     /// supplied to `submit`, which also supports in-memory SQLite fixtures.
     worker_db: Option<Arc<Mutex<Connection>>>,
+    /// Production copy plans share the configured storage resources and
+    /// device identity with torrent actors. Test dispatchers leave this unset.
+    scheduler_config: Option<SchedulerConfig>,
     max_inflight: usize,
     worker_count: usize,
     shutdown_tx: Option<oneshot::Sender<()>>,
@@ -412,7 +421,10 @@ impl Drop for StorageJobRegistration {
 }
 
 impl StorageJobDispatcher {
-    pub(crate) fn new(db_path: &Path) -> rusqlite::Result<Self> {
+    pub(crate) fn new(
+        db_path: &Path,
+        scheduler_config: SchedulerConfig,
+    ) -> rusqlite::Result<Self> {
         let connection = Connection::open(db_path)?;
         connection.execute_batch(
             "PRAGMA journal_mode = WAL;
@@ -424,11 +436,13 @@ impl StorageJobDispatcher {
         // commit collision on the worker thread instead of surfacing a
         // transient SQLITE_BUSY failure to the durable job protocol.
         connection.busy_timeout(Duration::from_secs(5))?;
-        Ok(Self::with_worker_db(
+        let mut dispatcher = Self::with_worker_db(
             Some(Arc::new(Mutex::new(connection))),
             DEFAULT_WORKER_COUNT,
             DEFAULT_QUEUE_CAPACITY,
-        ))
+        );
+        dispatcher.scheduler_config = Some(scheduler_config);
+        Ok(dispatcher)
     }
 
     #[cfg(test)]
@@ -438,6 +452,7 @@ impl StorageJobDispatcher {
             tx,
             controls: Arc::new(Mutex::new(HashMap::new())),
             worker_db: None,
+            scheduler_config: None,
             max_inflight: 2,
             worker_count: 1,
             shutdown_tx: None,
@@ -509,6 +524,7 @@ impl StorageJobDispatcher {
             tx,
             controls,
             worker_db,
+            scheduler_config: None,
             max_inflight,
             worker_count,
             shutdown_tx: Some(shutdown_tx),
@@ -709,6 +725,19 @@ impl StorageJobDispatcher {
         cancelled: bool,
     ) -> Result<(), String> {
         let db = self.worker_db.as_ref().cloned().unwrap_or(db);
+        let copy_destination = plan.steps.iter().find_map(|step| {
+            matches!(
+                step.action,
+                PlannedStorageAction::CopyVerifyRename | PlannedStorageAction::ImportExisting
+            )
+            .then(|| step.destination.as_deref())
+            .flatten()
+        });
+        let copy_scheduler = self.scheduler_config.as_ref().and_then(|config| {
+            copy_destination.map(|destination| {
+                MountScheduler::new_for_path(StorageRootId::new(), destination, config)
+            })
+        });
         let control = Arc::new(StorageJobControl::new(paused));
         if cancelled {
             control.apply(StorageJobAction::Cancel);
@@ -729,6 +758,7 @@ impl StorageJobDispatcher {
             plan,
             completed_steps,
             roots,
+            copy_scheduler,
             db,
             control,
             completion,
@@ -932,6 +962,7 @@ async fn run_storage_request(
         plan,
         completed_steps,
         roots,
+        copy_scheduler,
         db,
         control,
         completion,
@@ -1050,6 +1081,7 @@ async fn run_storage_request(
             plan: plan.clone(),
             completed_steps: completed_steps.clone(),
             roots: roots.clone(),
+            copy_scheduler: copy_scheduler.clone(),
             db: Arc::clone(&db),
             control: Arc::clone(&control),
         };
@@ -1355,6 +1387,7 @@ fn execute_storage_job(request: StorageJobExecution) -> StorageJobCompletion {
         plan,
         completed_steps,
         roots,
+        copy_scheduler,
         db,
         control,
     } = request;
@@ -1515,6 +1548,16 @@ fn execute_storage_job(request: StorageJobExecution) -> StorageJobCompletion {
         Err(cancelled_error())
     } else if control.is_shutdown() {
         Err(shutdown_error())
+    } else if let Some(scheduler) = copy_scheduler.as_ref() {
+        let scheduled_control = Arc::clone(&control);
+        rt_storage::execute_storage_plan_under_roots_with_device_scheduler(
+            &plan,
+            &roots,
+            &already_completed,
+            checkpoint,
+            move || scheduled_control.check_step_boundary(),
+            scheduler,
+        )
     } else {
         rt_storage::execute_storage_plan_under_roots_with_checkpoints_and_control(
             &plan,
@@ -2193,6 +2236,7 @@ mod tests {
             },
             completed_steps: Vec::new(),
             roots: vec![root.path().to_path_buf()],
+            copy_scheduler: None,
             db: Arc::clone(&db),
             control: Arc::new(StorageJobControl::new(false)),
         });
@@ -2614,6 +2658,7 @@ mod tests {
             },
             completed_steps: Vec::new(),
             roots: Vec::new(),
+            copy_scheduler: None,
             db,
             control,
             completion,
@@ -3316,7 +3361,8 @@ mod tests {
         )
         .unwrap();
         let db = Arc::new(Mutex::new(connection));
-        let mut dispatcher = StorageJobDispatcher::new(&db_path).unwrap();
+        let mut dispatcher =
+            StorageJobDispatcher::new(&db_path, SchedulerConfig::default()).unwrap();
         let root = tempfile::tempdir().unwrap();
         let plan = StoragePlan {
             dry_run: false,
@@ -3460,6 +3506,7 @@ mod tests {
             },
             completed_steps: Vec::new(),
             roots: vec![root.path().to_path_buf()],
+            copy_scheduler: None,
             db: Arc::clone(&db),
             control: Arc::new(StorageJobControl::new(false)),
         });
@@ -3531,6 +3578,7 @@ mod tests {
             plan,
             completed_steps: Vec::new(),
             roots: vec![root.path().to_path_buf()],
+            copy_scheduler: None,
             db: Arc::clone(&db),
             control: Arc::new(StorageJobControl::new(false)),
         });

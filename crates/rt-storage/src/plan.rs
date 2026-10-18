@@ -2,9 +2,15 @@ use std::collections::HashSet;
 #[cfg(windows)]
 use std::os::windows::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
-use crate::StorageError;
+use crate::{io_class::IoClass, scheduler::MountScheduler, StorageError};
 use rt_path::SafeRelPath;
+
+/// The secure copier streams through one 64 KiB buffer at a time. Charge that
+/// retained working set while a copy plan step is admitted to a device queue;
+/// payload length is I/O volume, not memory retained by the operation.
+const COPY_STREAM_WORKING_SET_BYTES: u64 = 64 * 1024;
 
 /// Bound recursive storage-plan walks below the stack-exhaustion threshold.
 /// Imported directories can be operator-provided and do not necessarily
@@ -1065,6 +1071,183 @@ where
             &check_control,
         )
     }
+}
+
+/// Execute a storage plan while routing each filesystem step through a
+/// mount's shared device dispatcher. The blocking filesystem closure remains
+/// owned by the scheduler through completion and rollback cleanup. Call this
+/// synchronous plan API from a Tokio blocking worker; the scheduler handoff
+/// itself is asynchronous.
+pub fn execute_storage_plan_under_roots_with_device_scheduler<F, C>(
+    plan: &StoragePlan,
+    roots: &[PathBuf],
+    completed_steps: &[usize],
+    checkpoint_step: F,
+    check_control: C,
+    scheduler: &MountScheduler,
+) -> Result<StoragePlanExecution, StorageError>
+where
+    F: FnMut(usize, &StoragePlanStep) -> Result<(), StorageError>,
+    C: Fn() -> Result<(), StorageError> + Send + Sync + 'static,
+{
+    ensure_plan_can_apply(plan)?;
+    let roots = canonical_roots(roots)?;
+    validate_plan_paths_under_roots(plan, &roots)?;
+    if plan.dry_run {
+        return Ok(StoragePlanExecution::default());
+    }
+    let checkpointed = completed_steps.iter().copied().collect::<HashSet<_>>();
+    let check_control = Arc::new(check_control);
+    let check_control_ref: &dyn Fn() -> Result<(), StorageError> = check_control.as_ref();
+    #[cfg(unix)]
+    {
+        execute_storage_plan_with_executor(
+            plan,
+            completed_steps,
+            checkpoint_step,
+            |step| {
+                execute_step_with_device_scheduler(
+                    step,
+                    &roots,
+                    scheduler,
+                    Arc::clone(&check_control),
+                )
+            },
+            |plan| rollback_plan_with_device_scheduler(plan, &roots, scheduler),
+            |index, _step| {
+                secure_fs::step_is_applied(plan, index, &roots, checkpointed.contains(&index))
+            },
+            check_control_ref,
+        )
+    }
+    #[cfg(windows)]
+    {
+        execute_storage_plan_with_executor(
+            plan,
+            completed_steps,
+            checkpoint_step,
+            |step| {
+                execute_step_with_device_scheduler(
+                    step,
+                    &roots,
+                    scheduler,
+                    Arc::clone(&check_control),
+                )
+            },
+            |plan| rollback_plan_with_device_scheduler(plan, &roots, scheduler),
+            |index, _step| {
+                windows_secure_fs::step_is_applied(
+                    plan,
+                    index,
+                    &roots,
+                    checkpointed.contains(&index),
+                )
+            },
+            check_control_ref,
+        )
+    }
+    #[cfg(all(not(unix), not(windows)))]
+    {
+        execute_storage_plan_with_executor(
+            plan,
+            completed_steps,
+            checkpoint_step,
+            |step| {
+                execute_step_with_device_scheduler(
+                    step,
+                    &roots,
+                    scheduler,
+                    Arc::clone(&check_control),
+                )
+            },
+            |plan| rollback_plan_with_device_scheduler(plan, &roots, scheduler),
+            |index, _step| storage_step_is_applied(plan, index, checkpointed.contains(&index)),
+            check_control_ref,
+        )
+    }
+}
+
+fn execute_step_with_device_scheduler<C>(
+    step: &StoragePlanStep,
+    roots: &[PathBuf],
+    scheduler: &MountScheduler,
+    check_control: Arc<C>,
+) -> Result<(), StorageError>
+where
+    C: ?Sized + Fn() -> Result<(), StorageError> + Send + Sync + 'static,
+{
+    let runtime = tokio::runtime::Handle::try_current().map_err(|error| {
+        StorageError::StagedMoveFailed {
+            step: "device-scheduler",
+            reason: format!("scheduled storage work requires a Tokio blocking worker: {error}"),
+        }
+    })?;
+    let step = step.clone();
+    let roots = roots.to_vec();
+    let scheduler = scheduler.clone();
+    let queued_bytes = if matches!(
+        step.action,
+        PlannedStorageAction::CopyVerifyRename | PlannedStorageAction::ImportExisting
+    ) {
+        COPY_STREAM_WORKING_SET_BYTES
+    } else {
+        0
+    };
+    runtime.block_on(scheduler.run_device_operation(
+        IoClass::MoveCopy,
+        queued_bytes,
+        move || execute_plan_step_for_platform(&step, &roots, check_control.as_ref()),
+    ))
+}
+
+fn rollback_plan_with_device_scheduler(
+    plan: &StoragePlan,
+    roots: &[PathBuf],
+    scheduler: &MountScheduler,
+) -> (Vec<StoragePlanStep>, Vec<(StoragePlanStep, String)>) {
+    let no_control: Arc<dyn Fn() -> Result<(), StorageError> + Send + Sync> =
+        Arc::new(|| Ok(()));
+    let mut rolled_back = Vec::new();
+    let mut failures = Vec::new();
+    for step in &plan.rollback_steps {
+        match execute_step_with_device_scheduler(
+            step,
+            roots,
+            scheduler,
+            Arc::clone(&no_control),
+        ) {
+            Ok(()) => rolled_back.push(step.clone()),
+            Err(error) => failures.push((step.clone(), error.to_string())),
+        }
+    }
+    (rolled_back, failures)
+}
+
+#[cfg(unix)]
+fn execute_plan_step_for_platform(
+    step: &StoragePlanStep,
+    roots: &[PathBuf],
+    check_control: &dyn Fn() -> Result<(), StorageError>,
+) -> Result<(), StorageError> {
+    secure_fs::execute_step_with_control(step, roots, check_control)
+}
+
+#[cfg(windows)]
+fn execute_plan_step_for_platform(
+    step: &StoragePlanStep,
+    roots: &[PathBuf],
+    check_control: &dyn Fn() -> Result<(), StorageError>,
+) -> Result<(), StorageError> {
+    windows_secure_fs::execute_step_with_control(step, roots, check_control)
+}
+
+#[cfg(all(not(unix), not(windows)))]
+fn execute_plan_step_for_platform(
+    step: &StoragePlanStep,
+    roots: &[PathBuf],
+    check_control: &dyn Fn() -> Result<(), StorageError>,
+) -> Result<(), StorageError> {
+    execute_step_with_control(step, check_control)
 }
 
 /// Run the plan's idempotent rollback steps under the same configured roots
@@ -2278,6 +2461,75 @@ fn same_filesystem(_source: &Path, _destination: &Path) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn secure_copy_plan_waits_for_mount_device_admission() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source.bin");
+        let destination = root.path().join("staged.bin");
+        std::fs::write(&source, b"copy me").unwrap();
+        let plan = StoragePlan {
+            dry_run: false,
+            can_apply: true,
+            issues: Vec::new(),
+            steps: vec![StoragePlanStep {
+                action: PlannedStorageAction::CopyVerifyRename,
+                source: Some(source),
+                destination: Some(destination.clone()),
+                bytes: 7,
+            }],
+            rollback_steps: Vec::new(),
+        };
+        let scheduler = MountScheduler::new(
+            rt_path::StorageRootId::new(),
+            &crate::SchedulerConfig {
+                max_queue: 1,
+                storage_io: crate::StorageIoConfig {
+                    io_worker_threads: 1,
+                    io_queue_depth: 1,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+        let active_scheduler = scheduler.clone();
+        let active = tokio::spawn(async move {
+            active_scheduler
+                .run_device_operation(IoClass::PeerRead, 1, move || {
+                    started_tx.send(()).unwrap();
+                    finish_rx.recv().unwrap();
+                    Ok(())
+                })
+                .await
+        });
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("device admission holder did not start");
+
+        let plan_root = root.path().to_path_buf();
+        let plan_scheduler = scheduler.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            execute_storage_plan_under_roots_with_device_scheduler(
+                &plan,
+                &[plan_root],
+                &[],
+                |_, _| Ok(()),
+                || Ok(()),
+                &plan_scheduler,
+            )
+        })
+        .await
+        .unwrap();
+
+        assert!(result
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("scheduler queue full")));
+        assert!(!destination.exists());
+        finish_tx.send(()).unwrap();
+        active.await.unwrap().unwrap();
+    }
 
     #[test]
     fn move_plan_uses_rename_on_same_filesystem() {

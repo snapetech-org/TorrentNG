@@ -60,8 +60,9 @@ pub use open::{
 pub use plan::{
     ensure_plan_can_apply, execute_storage_plan_under_roots,
     execute_storage_plan_under_roots_with_checkpoints,
-    execute_storage_plan_under_roots_with_checkpoints_and_control, plan_delete,
-    plan_delete_under_roots, plan_import, plan_import_under_roots, plan_move,
+    execute_storage_plan_under_roots_with_checkpoints_and_control,
+    execute_storage_plan_under_roots_with_device_scheduler, plan_delete, plan_delete_under_roots,
+    plan_import, plan_import_under_roots, plan_move,
     plan_move_under_roots, reconcile_storage_plan_under_roots, rollback_storage_plan_under_roots,
     DeletePlanRequest, ImportPlanRequest, MovePlanRequest, PlanIssue, PlannedStorageAction,
     StoragePlan, StoragePlanExecution, StoragePlanStep,

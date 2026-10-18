@@ -562,14 +562,14 @@ existing completion owner. Cache hits and file-open preparation happen before
 device admission so they do not occupy a physical-device slot.
 
 The live service currently covers scheduler positioned reads/writes/syncs,
-peer-read batches, preallocation, and extent probes. The follow-on tickets own
-the remaining consumers: IO-014 routes secure copy plans, IO-009 batches grouped
-barriers, and NET-114 supplies peer deadlines and choke-critical priorities.
-`MountScheduler::run_device_operation` now provides a reusable handoff for
-blocking disk work owned by another subsystem. It retains mount/device/byte
-admission through closure completion; secure-copy plans have not adopted the
-handoff yet. Cross-mount read coalescing and full injected-backend accounting
-remain open.
+peer-read batches, preallocation, extent probes, and secure storage-plan
+copy/import steps. Copy plans enter the destination mount's `MoveCopy` lane
+through `MountScheduler::run_device_operation`; the 64 KiB streaming buffer is
+charged while the operation owns mount/device admission. Cross-device source
+reads are still part of the destination-owned closure rather than separately
+admitted on the source device. IO-009 still owns grouped barriers, while
+NET-114 supplies peer deadlines and choke-critical priorities. Cross-mount
+read coalescing and full injected-backend accounting remain open.
 
 ### Ownership and invariant
 
@@ -600,9 +600,10 @@ remain open.
   completion. The service caps active operations to its backend dispatch
   window and bounds pending records by the remaining device queue depth.
 - `MountScheduler::run_device_operation` is the reusable dispatch handoff for
-  non-scheduler consumers. Routing secure-copy plans, peer
-  deadlines/choke-critical promotion, and grouped barriers belongs to IO-014,
-  NET-114, and IO-009 respectively.
+  non-scheduler consumers. Secure copy/import plan steps now use the
+  destination mount's `MoveCopy` lane; separately admitting source reads for
+  cross-device copies, peer deadlines/choke-critical promotion, and grouped
+  barriers remains in IO-014, NET-114, and IO-009 respectively.
 - Cancellation and injected-backend regression sources cover the full
   scheduler permit and queued-byte accounting path.
 
@@ -1307,6 +1308,88 @@ remain open.
 - **Artifact or report path:** pending bulk pass.
 - **External evidence still required:** filesystem/backend read amplification
   and throughput under realistic peer request patterns.
+
+## IO-014 — Schedule secure copies and verify each leaf once
+
+- **Priority / wave:** P1 / 10
+- **Prerequisites:** IO-006, IO-009, IO-012
+- **Owning component:** durable storage-plan worker and `rt-storage` secure
+  filesystem executor.
+- **Finding or capability:** secure copies must retain bounded admission while
+  preserving descriptor-anchored paths and one content verification per leaf.
+- **Status:** `wip`
+
+### Scope
+
+`CopyVerifyRename` and `ImportExisting` plan steps now dispatch through the
+destination mount's shared `DeviceQueue` in the `MoveCopy` lane. The worker
+passes the same `ResourceGovernor` and storage-I/O settings used by torrent
+actors. Checkpoint persistence stays outside the device permit, and the secure
+filesystem closure remains owned by the scheduler through cancellation and
+partial-copy cleanup. The charged working set is the copier's 64 KiB streaming
+buffer, not the payload length. F25's nested-entry copy-only behavior still
+verifies each copied leaf once per side.
+
+Cross-device source reads do not yet acquire a second device permit. Directory
+entry vectors are still collected by the root-confined verifier, and the
+background job is not yet split into copy/hash subjobs. Keep those as explicit
+gaps instead of claiming complete two-device scheduling or whole-tree memory
+qualification.
+
+### Ownership and invariant
+
+- **Current owner:** the durable storage worker checkpoints plan steps; the
+  destination mount scheduler owns queued bytes and the device permit until
+  the secure copy closure returns.
+- **Target owner:** one bounded storage service accounts for every physical
+  device touched by a copy while verification uses the shared hash service.
+- **Invariant preserved:** root-confined descriptor operations, rollback on
+  interrupted staging, and once-per-leaf content verification remain intact.
+- **Must not:** charge the full file length as retained memory or release
+  scheduler admission while a blocking copy can still mutate the destination.
+
+### Acceptance
+
+- Secure copy/import steps wait behind and share the configured destination
+  device queue across mounts.
+- Queued working-set bytes and the device permit remain owned until the copy
+  worker and cleanup finish after a durable job cancellation request.
+- Source reads on a different physical device are independently admitted, or
+  the evidence clearly records that limitation.
+- Nested directory copies hash each leaf once on each side and reject
+  same-length corruption.
+- Regression sources cover scheduler contention, cancellation cleanup,
+  cross-device admission, and once-per-leaf hashing.
+
+### Files and compatibility
+
+- **Expected code paths:** `crates/rt-storage/src/plan.rs`,
+  `crates/rt-storage/src/secure_fs.rs`, `crates/rt-storage/src/scheduler.rs`,
+  `crates/rt-engine/src/storage_jobs.rs`, and engine scheduler composition.
+- **State or wire compatibility:** no resume, storage-path, or peer-wire
+  format change.
+- **Migration / rollback:** the direct storage-plan path remains available to
+  non-engine callers; production plan copies use the configured device queue.
+- **Feature flag or rollout boundary:** no performance claim until bulk
+  correctness and storage measurements pass.
+
+### Evidence
+
+- **Regression source added or updated:**
+  `secure_copy_plan_waits_for_mount_device_admission` proves a queued plan does
+  not create its destination while the mount queue is full;
+  `external_device_handoff_shares_admission_across_mounts` covers shared device
+  admission, and the existing secure-copy hash-count and cleanup sources
+  remain in place. Cross-device source admission has no regression source yet.
+- **Command or probe to run:** storage plan, scheduler admission, cancellation,
+  secure-copy hash-count, and injected-backend suites in the deferred bulk pass.
+- **Expected result:** no copy begins before destination-device admission, no
+  permit or byte charge is released while accepted work remains active, and
+  rollback/reconciliation report uncertain filesystem state explicitly.
+- **Executed on exact revision:** no.
+- **Artifact or report path:** pending bulk pass.
+- **External evidence still required:** matched cross-device throughput and
+  memory results under realistic concurrent peer I/O.
 
 ## PERF-101 — Trial measurement contract and schemas
 

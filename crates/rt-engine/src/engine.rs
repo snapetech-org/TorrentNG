@@ -2042,8 +2042,21 @@ impl Engine {
             crash_safety_overridden,
         );
         let db = Arc::new(Mutex::new(conn));
-        let storage_jobs = StorageJobDispatcher::new(&config.db_path())
-            .context("opening storage worker database")?;
+        let resources = ResourceGovernor::new(resource_config_from_config(&config));
+        let mut storage_job_io = storage_io_config_from_config(&config);
+        // Copy-only schedulers do not serve peer reads, so avoid spawning the
+        // HDD peer-read batching task for each durable plan dispatcher.
+        storage_job_io.peer_read_elevator_budget_ms = 0;
+        let storage_jobs = StorageJobDispatcher::new(
+            &config.db_path(),
+            SchedulerConfig {
+                max_queue: config.storage.io_queue_depth,
+                storage_io: storage_job_io,
+                resources: Some(resources.clone()),
+                ..SchedulerConfig::default()
+            },
+        )
+        .context("opening storage worker database")?;
         #[cfg(not(test))]
         let db_worker = DbWorker::new(config.db_path());
         #[cfg(not(test))]
@@ -2068,7 +2081,7 @@ impl Engine {
             )),
             services: subsystems::EngineSubsystems::new(
                 None,
-                resource_config_from_config(&config),
+                resources,
                 network_budget,
                 storage_jobs,
             ),
