@@ -6546,6 +6546,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn strict_write_sync_failure_releases_admission_and_preserves_dirty_evidence() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("strict-sync-failure.bin");
+        let resources = queued_disk_governor(QUEUED_DISK_JOB_OVERHEAD_BYTES);
+        let scheduler = MountScheduler::new(
+            StorageRootId::new(),
+            &SchedulerConfig {
+                profile: StorageProfile::Hdd,
+                storage_io: StorageIoConfig {
+                    durability_mode: DurabilityMode::Strict,
+                    ..Default::default()
+                },
+                resources: Some(resources.clone()),
+                ..Default::default()
+            },
+        );
+        let (scheduler, backend) = scheduler_with_scripted_backend_for(scheduler);
+        backend.inject(Operation::Sync, Effect::Fail(io::ErrorKind::Other));
+
+        let write = scheduler
+            .write_at(
+                IoClass::PeerWrite,
+                &path,
+                0,
+                bytes::Bytes::from_static(b"strict-payload"),
+                true,
+            )
+            .await;
+
+        assert!(write.is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"strict-payload");
+        assert_eq!(scheduler.stats().dirty_files, 1);
+        assert_storage_admission_released(&scheduler);
+        assert_eq!(queued_disk_used_bytes(&resources), 0);
+
+        scheduler.sync_all_open_files().await.unwrap();
+        assert_eq!(scheduler.stats().dirty_files, 0);
+        assert_storage_admission_released(&scheduler);
+        assert_eq!(queued_disk_used_bytes(&resources), 0);
+    }
+
+    #[tokio::test]
     async fn cancelled_waiter_keeps_submitted_write_dirty_until_barrier() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("late-write.bin");

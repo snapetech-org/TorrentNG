@@ -521,7 +521,9 @@ and the full injected-fault matrix remain open.
 - Strict writes hold admission through their fdatasync; checkpoint writes
   release it only after the write completion.
 - Pre-submission open failures and injected read, write, partial-write, and
-  barrier failures assert that queued bytes and device slots are returned.
+  barrier failures assert that queued bytes and device slots are returned. A
+  strict-write sync failure also returns admission while preserving dirty
+  evidence for a later successful barrier.
 - End-to-end scheduler regressions cancel submitted writes while completion is
   held, prove queue slots and queued-disk memory leases stay charged, verify
   later admission is rejected at each limit, and prove admission returns after
@@ -546,6 +548,7 @@ and the full injected-fault matrix remain open.
   `cancelled_submitted_write_retains_memory_budget_until_completion`,
   `cancelled_submitted_readahead_read_retains_extra_bytes_until_completion`,
   `cancelled_strict_write_retains_admission_until_sync_completion`,
+  `strict_write_sync_failure_releases_admission_and_preserves_dirty_evidence`,
   plus helper-level completion-owner lifetime cases for canceled read/write
   waiters and admission-release assertions for open and injected I/O failures.
 - **Command or probe to run:** `cargo test -p rt-storage` and the scripted
