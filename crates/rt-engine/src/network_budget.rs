@@ -258,15 +258,36 @@ impl SharedRateLimiter {
     pub(crate) fn set_limit(&self, limit: Option<u64>) {
         let limit = limit.filter(|limit| *limit > 0);
         let mut state = self.lock_state();
-        if state.limit_bytes_per_sec == limit {
+        let old_limit = state.limit_bytes_per_sec;
+        if old_limit == limit {
             return;
         }
-        let capacity = limit
-            .map(|limit| limit.max(MAX_INITIAL_BURST_BYTES))
-            .unwrap_or(u64::MAX);
+
+        // First settle credit at the old rate. Changing a setting must not
+        // create a fresh burst, and lowering a rate must clamp rather than
+        // carry credit above the new bucket capacity.
+        let now = Instant::now();
+        let accrued = match old_limit {
+            Some(old_rate) => {
+                let elapsed = now.saturating_duration_since(state.updated_at);
+                let old_capacity = old_rate.max(MAX_INITIAL_BURST_BYTES);
+                state
+                    .tokens
+                    .saturating_add(refilled_bytes(elapsed, old_rate))
+                    .min(old_capacity)
+            }
+            None => 0,
+        };
+
+        state.tokens = match (old_limit, limit) {
+            // Unlimited credit is not stored. Turning a limiter on starts at
+            // zero so an old `u64::MAX` sentinel cannot grant a burst.
+            (None, Some(_)) => 0,
+            (_, None) => u64::MAX,
+            (Some(_), Some(new_rate)) => accrued.min(new_rate.max(MAX_INITIAL_BURST_BYTES)),
+        };
         state.limit_bytes_per_sec = limit;
-        state.tokens = capacity;
-        state.updated_at = Instant::now();
+        state.updated_at = now;
         drop(state);
         self.limit_changed.cancel();
     }
@@ -515,6 +536,51 @@ mod tests {
         // Runtime API updates may persist and reapply an unchanged effective
         // limit. That is not a grant of a new token-bucket burst.
         limiter.set_limit(Some(1));
+        let waiter_limiter = Arc::clone(&limiter);
+        let waiter = tokio::spawn(async move { waiter_limiter.acquire(1).await });
+        tokio::task::yield_now().await;
+        assert!(!waiter.is_finished());
+
+        tokio::time::advance(Duration::from_secs(1)).await;
+        waiter.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn changing_limited_rate_preserves_credit_without_minting_a_burst() {
+        let limiter = Arc::new(SharedRateLimiter::new(Some(1)));
+        limiter.acquire(MAX_INITIAL_BURST_BYTES).await;
+        limiter.set_limit(Some(2));
+
+        let waiter_limiter = Arc::clone(&limiter);
+        let waiter = tokio::spawn(async move { waiter_limiter.acquire(1).await });
+        tokio::task::yield_now().await;
+        assert!(!waiter.is_finished());
+
+        tokio::time::advance(Duration::from_secs(1)).await;
+        waiter.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn changed_limited_rate_accrues_old_credit_then_clamps_to_new_capacity() {
+        let limiter = SharedRateLimiter::new(Some(100_000));
+        limiter.acquire(50_000).await;
+        tokio::time::advance(Duration::from_millis(250)).await;
+
+        limiter.set_limit(Some(60_000));
+
+        assert_eq!(
+            limiter.lock_state().tokens,
+            MAX_INITIAL_BURST_BYTES,
+            "75,000 bytes of old-rate credit must clamp to the new 64 KiB capacity"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn enabling_limited_rate_after_unlimited_starts_without_credit() {
+        let limiter = Arc::new(SharedRateLimiter::new(None));
+        limiter.set_limit(Some(1));
+        assert_eq!(limiter.lock_state().tokens, 0);
+
         let waiter_limiter = Arc::clone(&limiter);
         let waiter = tokio::spawn(async move { waiter_limiter.acquire(1).await });
         tokio::task::yield_now().await;

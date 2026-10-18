@@ -1344,7 +1344,11 @@ cancellation/refund, and shared source scheduling.
 
 - **Current owner:** `GlobalNetworkBudget` and torrent/peer actors hold the
   existing process and torrent limit state; the pure `RateTree` is not yet
-  wired to live peers.
+  wired to live peers. The existing shared token bucket now settles elapsed
+  credit at the old rate, clamps limited-to-limited updates to the new
+  capacity, and starts empty when changing from unlimited to limited. This
+  preserves the no-new-burst rule during the reversible migration, but does
+  not provide the `RateTree`'s hierarchical peer fairness.
 - **Target owner:** one process-shared tree owns global and per-torrent byte
   credit, peer fairness progress, unsettled grant/refund accounting, and the
   next-wakeup index.
@@ -1404,6 +1408,10 @@ cancellation/refund, and shared source scheduling.
   cleanup, deadline-filtered bounded wake batches, unknown peers, repeated
   torrent-limit updates, and
   `reused_ledger_connections_are_isolated_between_torrents`.
+- **Live limiter regression sources:** a changed limited rate preserves
+  existing credit without granting a fresh burst, accrued old-rate credit is
+  clamped to a reduced bucket capacity, and unlimited-to-limited begins with
+  zero tokens.
 - **Command or probe to run:** pure scheduler regressions and the engine rate
   integration suites during the requested bulk pass.
 - **Expected result:** deterministic grants conserve each configured budget,
