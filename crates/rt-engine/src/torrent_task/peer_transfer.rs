@@ -1,6 +1,8 @@
 //! Peer protocol events, block scheduling, piece assembly, and transfer accounting.
 //! Torrent state and storage completion remain ordered by the task actor.
 
+use crate::transfer::window::rate_credit_blocks;
+
 use super::*;
 
 impl TorrentTask {
@@ -449,11 +451,13 @@ impl TorrentTask {
                 / u64::from(MAX_BLOCK_SIZE),
         )
         .unwrap_or(usize::MAX);
-        let credit_blocks = if download_limited {
-            usize::try_from(download_tokens / u64::from(MAX_BLOCK_SIZE)).unwrap_or(usize::MAX)
-        } else {
-            usize::MAX
-        };
+        let torrent_credit_blocks =
+            rate_credit_blocks(download_limited.then_some(download_tokens), MAX_BLOCK_SIZE);
+        let global_credit_blocks = rate_credit_blocks(
+            self.network_budget.download().available_credit_bytes(),
+            MAX_BLOCK_SIZE,
+        );
+        let credit_blocks = torrent_credit_blocks.min(global_credit_blocks);
         let (device_queue_capacity, device_queue_available) = self.storage.device_queue_load();
         let device_backlog = if device_queue_capacity == 0 {
             f64::NAN

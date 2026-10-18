@@ -72,7 +72,7 @@ use crate::transfer::obligations::{
     InboundDecision, InboundObligations, Reject as InboundReject,
     RejectReason as InboundRejectReason, Served as InboundServed,
 };
-use crate::transfer::window::{WindowConfig, WindowController, WindowInputs};
+use crate::transfer::window::{rate_credit_blocks, WindowConfig, WindowController, WindowInputs};
 use crate::{EnginePeerSnapshot, EngineTorrentLimits, EngineWebseedSnapshot, TorrentRuntimeStats};
 
 const V2_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -4623,16 +4623,20 @@ async fn fill_v2_requests(
         device_queue_capacity.saturating_sub(device_queue_available) as f64
             / device_queue_capacity as f64
     };
+    let global_credit_blocks = rate_credit_blocks(
+        context.network_budget.download().available_credit_bytes(),
+        rt_peer_wire::message::MAX_BLOCK_SIZE,
+    );
     let request_window = state
         .lock()
         .map(|peer| {
             peer.request_window.window(&WindowInputs {
                 useful_missing: usize::MAX,
                 outstanding: pipeline_inflight,
-                // The download limiter charges payload as it is accepted for
-                // storage. It does not currently expose reservable credits at
-                // request time; NET-107 will supply that scheduler input.
-                credit_blocks: usize::MAX,
+                // This is an advisory current-credit snapshot, not a
+                // cross-torrent reservation. The peer still pays the shared
+                // bucket when payload bytes arrive.
+                credit_blocks: global_credit_blocks,
                 buffer_blocks,
                 device_backlog,
             })

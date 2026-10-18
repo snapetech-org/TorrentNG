@@ -239,6 +239,27 @@ impl SharedRateLimiter {
         self.limit_changed.cancel();
     }
 
+    /// Snapshot currently available download credit without reserving it.
+    ///
+    /// Adaptive request windows use this as an admission hint so they shrink
+    /// peer pipelines to the one-block progress floor while the process-wide
+    /// bucket is empty.
+    /// It is deliberately not a reservation: multiple torrents may observe
+    /// the same credit, and received payload bytes are still charged by
+    /// `acquire` when they arrive.
+    pub(crate) fn available_credit_bytes(&self) -> Option<u64> {
+        let mut state = self.lock_state();
+        let limit = state.limit_bytes_per_sec?;
+        let now = Instant::now();
+        let elapsed = now.saturating_duration_since(state.updated_at);
+        state.updated_at = now;
+        let refill = (elapsed.as_nanos().saturating_mul(u128::from(limit)) / 1_000_000_000)
+            .min(u128::from(u64::MAX)) as u64;
+        let capacity = limit.max(MAX_INITIAL_BURST_BYTES);
+        state.tokens = state.tokens.saturating_add(refill).min(capacity);
+        Some(state.tokens)
+    }
+
     pub(crate) async fn acquire(&self, bytes: u64) {
         if bytes == 0 {
             return;
@@ -393,6 +414,26 @@ mod tests {
         assert!(!waiter.is_finished());
         tokio::time::advance(Duration::from_secs(1)).await;
         waiter.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn available_credit_snapshot_tracks_spend_without_reserving() {
+        let limiter = SharedRateLimiter::new(Some(1_000));
+        assert_eq!(
+            limiter.available_credit_bytes(),
+            Some(MAX_INITIAL_BURST_BYTES)
+        );
+
+        limiter.acquire(8 * 1024).await;
+        assert_eq!(
+            limiter.available_credit_bytes(),
+            Some(MAX_INITIAL_BURST_BYTES - 8 * 1024)
+        );
+        assert_eq!(
+            SharedRateLimiter::new(None).available_credit_bytes(),
+            None,
+            "an unlimited bucket must not constrain a request window"
+        );
     }
 
     #[tokio::test(start_paused = true)]

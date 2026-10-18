@@ -74,7 +74,8 @@ pub struct WindowInputs {
     pub useful_missing: usize,
     /// Requests already outstanding to this peer.
     pub outstanding: usize,
-    /// Blocks the rate scheduler would currently grant (min over levels).
+    /// Advisory rate credit in blocks. Call sites may preserve one block of
+    /// progress so a limited bucket can refill and trigger another request.
     pub credit_blocks: usize,
     /// Blocks of buffer capacity that can still be committed.
     pub buffer_blocks: usize,
@@ -92,6 +93,20 @@ impl WindowInputs {
             device_backlog: 0.0,
         }
     }
+}
+
+/// Convert an optional byte-credit snapshot into a request-window bound.
+/// Limited buckets retain one request as a progress path even when the
+/// current snapshot is empty; the payload path will wait for and charge the
+/// actual bytes. An unlimited bucket imposes no window bound.
+pub fn rate_credit_blocks(available_bytes: Option<u64>, block_bytes: u32) -> usize {
+    let Some(available_bytes) = available_bytes else {
+        return usize::MAX;
+    };
+    let block_bytes = u64::from(block_bytes.max(1));
+    usize::try_from(available_bytes / block_bytes)
+        .unwrap_or(usize::MAX)
+        .max(1)
 }
 
 #[derive(Debug, Clone)]
@@ -312,6 +327,14 @@ mod tests {
             ..WindowInputs::unconstrained(10_000)
         };
         assert_eq!(controller.to_request(&full), 0);
+    }
+
+    #[test]
+    fn rate_credit_keeps_one_request_for_progress() {
+        assert_eq!(rate_credit_blocks(None, 16 * 1024), usize::MAX);
+        assert_eq!(rate_credit_blocks(Some(0), 16 * 1024), 1);
+        assert_eq!(rate_credit_blocks(Some(8 * 1024), 16 * 1024), 1);
+        assert_eq!(rate_credit_blocks(Some(32 * 1024), 16 * 1024), 2);
     }
 
     #[test]
