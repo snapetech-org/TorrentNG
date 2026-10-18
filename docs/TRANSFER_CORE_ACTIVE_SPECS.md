@@ -445,6 +445,9 @@ implementations and a single secure file catalog remain to be unified.
   serve writes.
 - Replacement, unlink/recreate, descriptor-budget, and in-flight-lease
   regressions continue to cover the catalog lifecycle.
+- The public `HandleCache` reuses a current read+write descriptor for reads,
+  never reuses read-only descriptors for writes, and removes a cached
+  read-only entry when a read+write entry is published.
 - A single catalog and duplicate cache removal remain open work.
 
 ### Files and compatibility
@@ -459,13 +462,14 @@ implementations and a single secure file catalog remain to be unified.
 
 ### Evidence
 
-- **Regression source added or updated:** existing cache replacement and
-  scheduler replacement cases; no new test was added in this slice.
+- **Regression source added or updated:**
+  `read_only_handles_do_not_serve_writes_and_reads_reuse_writable_handle`,
+  plus existing cache and scheduler replacement cases.
 - **Command or probe to run:** `cargo test -p rt-storage` during the requested
   bulk pass.
 - **Expected result:** replaced files are reopened, identity checks do not
-  hold the cache lock during filesystem access, and live leases continue to
-  bound descriptors.
+  hold the cache lock during filesystem access, reads reuse writable handles,
+  and live leases continue to bound descriptors.
 - **Executed on exact revision:** no.
 - **Artifact or report path:** pending bulk pass.
 - **External evidence still required:** NFS and real-device replacement

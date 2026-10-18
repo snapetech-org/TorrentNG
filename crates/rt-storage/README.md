@@ -23,8 +23,10 @@ scheduler used by the TorrentNG client.
   budget. `FilePoolStats.open_files` counts cached entries;
   `active_descriptors` includes cached, opening, and in-flight leases. These are
   per-cache counts; Prometheus also exports aggregate managed-storage lease
-  use, capacity, and admission waits. Unrelated process descriptors remain
-  outside this storage budget.
+  use, capacity, and admission waits. Reads reuse a cached read+write descriptor;
+  publishing a writable entry replaces the read-only cache entry, while any
+  existing read lease keeps its descriptor charged until the operation ends.
+  Unrelated process descriptors remain outside this storage budget.
 - Disk operations are submitted through the selected `DiskBackend`, behind
   per-mount bounded queues and one shared `DeviceQueue` per detected physical
   device, instead of Tokio's shared blocking pool. Unknown device identity uses

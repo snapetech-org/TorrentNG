@@ -19,8 +19,9 @@ use std::time::{Duration, Instant};
 use crate::file_handle::{DescriptorLimiter, DescriptorPermit, LeasedFile, LeasedFileHandle};
 use crate::open::{file_matches_path, open_path_no_follow_current};
 
-/// Whether the cached handle is read-only or read+write. A path may have
-/// one of each (a reader and a writer fd) live simultaneously.
+/// Whether the cached handle is read-only or read+write. A read-only cache
+/// entry is removed when a read+write entry is published; existing operation
+/// leases keep its descriptor alive until their work completes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Access {
     Read,
@@ -132,13 +133,16 @@ impl HandleCache {
     /// key is resolved by keeping whichever landed first.
     pub fn get_or_open(&self, path: &Path, write: bool, create: bool) -> io::Result<Arc<OpenFile>> {
         let key = Self::cache_key(path, write)?;
-        if let Some(file) = self.touch(&key) {
+        if let Some(file) = self.touch_for_access(&key) {
             return Ok(Self::operation_handle(file));
         }
 
         // Reserve capacity before opening so concurrent misses cannot exceed
         // this cache's live-descriptor budget while the opens race.
         let permit = self.acquire_descriptor();
+        if let Some(file) = self.touch_for_access(&key) {
+            return Ok(Self::operation_handle(file));
+        }
         self.open_and_insert(key, write, create, permit)
     }
 
@@ -152,11 +156,14 @@ impl HandleCache {
         create: bool,
     ) -> io::Result<Arc<OpenFile>> {
         let key = Self::cache_key(path, write)?;
-        if let Some(file) = self.touch(&key) {
+        if let Some(file) = self.touch_for_access(&key) {
             return Ok(Self::operation_handle(file));
         }
 
         let permit = self.acquire_descriptor_async().await;
+        if let Some(file) = self.touch_for_access(&key) {
+            return Ok(Self::operation_handle(file));
+        }
         self.open_and_insert(key, write, create, permit)
     }
 
@@ -191,12 +198,24 @@ impl HandleCache {
         loop {
             let existing = {
                 let inner = self.lock_inner();
-                inner
-                    .map
-                    .get(&key)
-                    .map(|entry| Arc::clone(&entry.handle))
+                let writable_key = (key.0.clone(), Access::Write);
+                let existing_key = if key.1 == Access::Read
+                    && inner.map.contains_key(&writable_key)
+                {
+                    Some(writable_key)
+                } else if inner.map.contains_key(&key) {
+                    Some(key.clone())
+                } else {
+                    None
+                };
+                existing_key.and_then(|existing_key| {
+                    inner
+                        .map
+                        .get(&existing_key)
+                        .map(|entry| (existing_key, Arc::clone(&entry.handle)))
+                })
             };
-            if let Some(existing) = existing {
+            if let Some((existing_key, existing)) = existing {
                 // Path identity is filesystem I/O. Check it without holding
                 // the catalog mutex, then verify the candidate still owns the
                 // key before refreshing or removing it.
@@ -204,7 +223,7 @@ impl HandleCache {
                 let mut inner = self.lock_inner();
                 let is_current = inner
                     .map
-                    .get(&key)
+                    .get(&existing_key)
                     .is_some_and(|entry| Arc::ptr_eq(&entry.handle, &existing));
                 if !is_current {
                     continue;
@@ -212,14 +231,20 @@ impl HandleCache {
                 if still_same_path {
                     return Ok(Self::operation_handle(existing));
                 }
-                if let Some(entry) = inner.map.remove(&key) {
+                if let Some(entry) = inner.map.remove(&existing_key) {
                     inner.lru.remove(&entry.tick);
+                }
+                if existing_key != key {
+                    continue;
                 }
                 return Ok(self.insert_locked(&mut inner, &key, Arc::clone(&file)));
             }
 
             let mut inner = self.lock_inner();
-            if inner.map.contains_key(&key) {
+            let writable_key = (key.0.clone(), Access::Write);
+            if inner.map.contains_key(&key)
+                || (key.1 == Access::Read && inner.map.contains_key(&writable_key))
+            {
                 continue;
             }
             return Ok(self.insert_locked(&mut inner, &key, Arc::clone(&file)));
@@ -233,6 +258,12 @@ impl HandleCache {
         key: &Key,
         file: Arc<LeasedFile>,
     ) -> Arc<OpenFile> {
+        if key.1 == Access::Write {
+            let read_key = (key.0.clone(), Access::Read);
+            if let Some(entry) = inner.map.remove(&read_key) {
+                inner.lru.remove(&entry.tick);
+            }
+        }
         let tick = inner.next_tick;
         inner.next_tick += 1;
         inner.lru.insert(tick, key.clone());
@@ -283,6 +314,18 @@ impl HandleCache {
         inner.lru.remove(&old_tick);
         inner.lru.insert(new_tick, key.clone());
         Some(file)
+    }
+
+    /// Reads may reuse a read+write descriptor. Writes still look up only
+    /// their own key and never fall back to a read-only descriptor.
+    fn touch_for_access(&self, key: &Key) -> Option<Arc<LeasedFile>> {
+        if key.1 == Access::Read {
+            let writable_key = (key.0.clone(), Access::Write);
+            if let Some(file) = self.touch(&writable_key) {
+                return Some(file);
+            }
+        }
+        self.touch(key)
     }
 
     /// Close handles untouched for longer than the idle TTL. Returns the
@@ -407,14 +450,27 @@ mod tests {
     }
 
     #[test]
-    fn read_and_write_handles_are_distinct() {
+    fn read_only_handles_do_not_serve_writes_and_reads_reuse_writable_handle() {
         let dir = tempfile::tempdir().unwrap();
         let p = tmp_file(dir.path(), "rw.bin", b"data");
         let cache = HandleCache::new(16, Duration::from_secs(30));
 
-        cache.get_or_open(&p, false, false).unwrap();
-        cache.get_or_open(&p, true, false).unwrap();
-        assert_eq!(cache.len(), 2);
+        let read_only = cache.get_or_open(&p, false, false).unwrap();
+        let writable = cache.get_or_open(&p, true, false).unwrap();
+        assert!(!Arc::ptr_eq(&read_only.file, &writable.file));
+        assert_eq!(
+            cache.len(),
+            1,
+            "the writable entry replaces the read cache entry"
+        );
+        assert_eq!(cache.descriptors.active(), 2);
+
+        let read_after_write = cache.get_or_open(&p, false, false).unwrap();
+        assert!(Arc::ptr_eq(&writable.file, &read_after_write.file));
+        assert_eq!(cache.descriptors.active(), 2);
+
+        drop(read_only);
+        assert_eq!(cache.descriptors.active(), 1);
     }
 
     #[test]
