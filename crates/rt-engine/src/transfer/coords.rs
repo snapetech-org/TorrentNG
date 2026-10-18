@@ -417,6 +417,14 @@ impl HybridGeometry {
         }
     }
 
+    /// Select which protocol view supplies piece coordinates to
+    /// [`PieceGeometry`]. V1 remains the default for callers that are still
+    /// migrating from the legacy hybrid actor.
+    pub fn with_download_plane(mut self, plane: Plane) -> Self {
+        self.download_plane = plane;
+        self
+    }
+
     pub fn v1(&self) -> &PieceMap {
         &self.v1
     }
@@ -787,6 +795,23 @@ mod tests {
         // ...but v1 piece 1 spans a.bin's tail and b.bin, while v2 piece 1 is
         // only a.bin's tail: same index, different content.
         assert!(!hybrid.ranges_match(1, 1));
+    }
+
+    #[test]
+    fn hybrid_geometry_can_select_the_v2_download_view() {
+        let hybrid = HybridGeometry::new(v1_map(), v2_map()).with_download_plane(Plane::V2);
+
+        assert_eq!(hybrid.download_plane(), Plane::V2);
+        assert_eq!(hybrid.piece_count(), 3);
+        assert_eq!(hybrid.piece_len(2), Some(24 * 1024));
+        assert_eq!(
+            hybrid.content_ranges(2)[0]
+                .path
+                .as_ref()
+                .unwrap()
+                .as_display(),
+            "b.bin"
+        );
     }
 
     #[test]
