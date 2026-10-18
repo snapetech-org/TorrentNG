@@ -1707,7 +1707,9 @@ with zero or greater-than-one-block lengths are refused. The configured byte
 ceiling has a one-wire-block minimum, then acts as a hard cap. A disconnect ends
 protocol obligations but does not release capacity for reads already dispatched
 to storage. Actor integration and independent read/write progress remain
-NET-106/NET-114.
+NET-106/NET-114. The live identity table is capped by `max_connections`; its
+default mirrors the daemon's current 200-peer default, and the live adapter must
+pass the configured `network.max_peers` value.
 
 ### Ownership and invariant
 
@@ -1715,8 +1717,9 @@ NET-106/NET-114.
   the pure service is not live.
 - **Target owner:** the shared upload service owns accepted request obligations
   and in-flight read accounting until storage completion.
-- **Invariant preserved:** queued and active reads stay within per-peer queue,
-  global job, per-peer job, and byte limits; a connection identity is not
+- **Invariant preserved:** live registrations stay within the process-wide
+  connection cap; queued and active reads stay within per-peer queue, global
+  job, per-peer job, and byte limits; a connection identity is not
   reused while a storage read from that generation is live; completed reads
   for a closed peer are discarded without reopening admission early.
 - **Must not:** drop valid demand because of an arbitrary time window or reclaim
@@ -1730,13 +1733,17 @@ NET-106/NET-114.
   dispatches.
 - Job and byte budgets bound dispatched reads, including after disconnect;
   one valid block is admitted even when configuration is below one block.
+- The process-wide live registration table never exceeds `max_connections`;
+  disconnected generations with unfinished reads remain bounded by the job
+  limit and do not consume a live-registration slot.
 - Re-registering a live connection identity is refused, including while its
   disconnected generation still owns an unfinished read.
 - Equal ledger connection slots and generations in separate torrents remain
   distinct registrations; disconnecting one cannot remove the other's work.
 - Regression sources cover queue bounds, byte bounds, fairness, invalid wire
   lengths, connection-generation reuse, choke, cancel, and disconnect
-  completion ownership.
+  completion ownership. Add a global-registration-capacity case before bulk
+  validation.
 - NET-114 routes live v1, v2, and hybrid uploads through the service before the
   capability is considered integrated.
 

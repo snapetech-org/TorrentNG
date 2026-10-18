@@ -16,8 +16,16 @@ use std::collections::{HashMap, VecDeque};
 use super::coords::{BlockExtent, TransferPeerId, BLOCK_SIZE};
 use super::obligations::{InboundDecision, InboundObligations, Reject, Served};
 
+/// Mirrors `NetworkConfig::max_peers`' current default. The live adapter must
+/// override this with the configured daemon-wide peer cap when it is added.
+const DEFAULT_MAX_UPLOAD_CONNECTIONS: usize = 200;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UploadLimits {
+    /// Live torrent/connection identities retained by this process-wide
+    /// service. Disconnected generations with unfinished reads remain bounded
+    /// separately by `max_in_flight_jobs`.
+    pub max_connections: usize,
     /// Maximum queued plus in-service request obligations per connection.
     pub max_queue_per_conn: usize,
     /// Reads in flight across all connections.
@@ -32,6 +40,7 @@ pub struct UploadLimits {
 impl Default for UploadLimits {
     fn default() -> Self {
         Self {
+            max_connections: DEFAULT_MAX_UPLOAD_CONNECTIONS,
             max_queue_per_conn: 4_096,
             max_in_flight_jobs: 64,
             max_in_flight_bytes: 16 * 1024 * 1024,
@@ -87,9 +96,13 @@ impl UploadService {
 
     /// Register one fresh torrent/connection generation. Refuse a duplicate
     /// live identity, including one whose previous storage read has not
-    /// completed.
+    /// completed, or refuse admission when the process-wide connection table
+    /// is full.
     pub fn register(&mut self, conn: TransferPeerId, fast_negotiated: bool) -> bool {
         if self.conns.contains_key(&conn) || self.jobs.values().any(|job| job.conn == conn) {
+            return false;
+        }
+        if self.conns.len() >= self.limits.max_connections {
             return false;
         }
         self.conns.insert(
