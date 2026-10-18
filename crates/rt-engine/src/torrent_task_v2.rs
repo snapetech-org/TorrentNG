@@ -8363,6 +8363,203 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn v2_webseed_held_body_keeps_actor_responsive_and_pause_cancels_storage() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let content = vec![0x31; rt_peer_wire::message::MAX_BLOCK_SIZE as usize];
+        let raw = v2_raw_with_content(&content);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let webseed_addr = listener.local_addr().unwrap();
+        let (headers_sent_tx, headers_sent_rx) = tokio::sync::oneshot::channel();
+        let (release_body_tx, release_body_rx) = tokio::sync::oneshot::channel();
+        let response_headers = format!(
+            "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes 0-{}/{}\r\nConnection: close\r\n\r\n",
+            content.len(),
+            content.len().saturating_sub(1),
+            content.len()
+        );
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 1024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = stream.read(&mut buffer).await.unwrap();
+                if read == 0 {
+                    return;
+                }
+                request.extend_from_slice(&buffer[..read]);
+            }
+            if stream.write_all(response_headers.as_bytes()).await.is_err() {
+                return;
+            }
+            let _ = headers_sent_tx.send(());
+            if release_body_rx.await.is_ok() {
+                let _ = stream.write_all(&content).await;
+            }
+            let _ = stream.shutdown().await;
+        });
+
+        let (mut task, cmd_tx, _fixture) =
+            v2_task_not_started_with_commands(quiet_v2_runtime(), &raw, content.len() as u64).await;
+        Arc::make_mut(&mut task.meta)
+            .webseeds
+            .push(format!("http://{webseed_addr}/"));
+        task.egress_policy = OutboundEgressPolicy {
+            allow_loopback: true,
+            ..OutboundEgressPolicy::default()
+        };
+        task.tracker_tiers.clear();
+        task.private_tracker_key = None;
+        let payload_path = task.meta.files[0].path.resolve(&task.save_root);
+        let actor = tokio::spawn(task.run());
+
+        timeout(Duration::from_secs(2), headers_sent_rx)
+            .await
+            .expect("pure-v2 webseed response headers did not arrive")
+            .expect("webseed server dropped before sending headers");
+
+        let (reply, result) = tokio::sync::oneshot::channel();
+        cmd_tx
+            .send(TorrentCmd::GetWebseeds { reply })
+            .await
+            .unwrap();
+        let snapshots = timeout(Duration::from_secs(1), result)
+            .await
+            .expect("pure-v2 actor should answer while the HTTP body is held")
+            .unwrap();
+        assert_eq!(snapshots.len(), 1);
+        assert!(snapshots[0].is_downloading);
+
+        let (reply, result) = tokio::sync::oneshot::channel();
+        cmd_tx
+            .send(TorrentCmd::Pause { reply: Some(reply) })
+            .await
+            .unwrap();
+        assert_eq!(
+            timeout(Duration::from_secs(1), result)
+                .await
+                .expect("pause should cancel the held pure-v2 webseed fetch")
+                .unwrap(),
+            Ok(())
+        );
+
+        let (reply, result) = tokio::sync::oneshot::channel();
+        cmd_tx
+            .send(TorrentCmd::GetWebseeds { reply })
+            .await
+            .unwrap();
+        let snapshots = timeout(Duration::from_secs(1), result)
+            .await
+            .expect("pure-v2 webseed status should remain queryable after pause")
+            .unwrap();
+        assert_eq!(snapshots.len(), 1);
+        assert!(!snapshots[0].is_downloading);
+
+        release_body_tx.send(()).unwrap();
+        cmd_tx.send(TorrentCmd::Shutdown).await.unwrap();
+        timeout(Duration::from_secs(2), actor)
+            .await
+            .expect("pure-v2 actor should shut down after the held body is released")
+            .unwrap();
+        server.await.unwrap();
+        assert!(
+            !payload_path.exists(),
+            "a response released after pause must not reach storage"
+        );
+    }
+
+    #[tokio::test]
+    async fn v2_webseed_storage_failure_drops_attempt_without_publishing_piece() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let content = vec![0x42; rt_peer_wire::message::MAX_BLOCK_SIZE as usize];
+        let raw = v2_raw_with_content(&content);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let webseed_addr = listener.local_addr().unwrap();
+        let response_content = content.clone();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 1024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = stream.read(&mut buffer).await.unwrap();
+                if read == 0 {
+                    return;
+                }
+                request.extend_from_slice(&buffer[..read]);
+            }
+            let response_headers = format!(
+                "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes 0-{}/{}\r\nConnection: close\r\n\r\n",
+                response_content.len(),
+                response_content.len().saturating_sub(1),
+                response_content.len()
+            );
+            stream.write_all(response_headers.as_bytes()).await.unwrap();
+            stream.write_all(&response_content).await.unwrap();
+            stream.shutdown().await.unwrap();
+        });
+
+        let (mut task, _fixture) =
+            v2_task_not_started(quiet_v2_runtime(), &raw, content.len() as u64).await;
+        Arc::make_mut(&mut task.meta)
+            .webseeds
+            .push(format!("http://{webseed_addr}/"));
+        task.egress_policy = OutboundEgressPolicy {
+            allow_loopback: true,
+            ..OutboundEgressPolicy::default()
+        };
+        task.assembly_cap_bytes = 0;
+        let payload_path = task.meta.files[0].path.resolve(&task.save_root);
+        std::fs::create_dir(&payload_path).unwrap();
+        let baseline_piece_assembly_bytes =
+            task.resources.snapshot().classes[MemoryClass::PieceAssembly as usize].used_bytes;
+
+        assert!(task.ensure_v2_webseed_runtime());
+        assert!(task.start_v2_webseed_block().await);
+        let fetch_result = {
+            let fetch = task
+                .webseed
+                .as_mut()
+                .and_then(|webseed| webseed.fetch.as_mut())
+                .expect("webseed scheduler should start the HTTP fetch");
+            (&mut fetch.task).await
+        };
+        assert!(fetch_result.as_ref().is_ok_and(|result| result.is_ok()));
+        server.await.unwrap();
+        task.finish_v2_webseed_fetch(fetch_result).await;
+
+        let completion = task
+            .webseed
+            .as_mut()
+            .expect("webseed runtime remains live")
+            .transfer_jobs
+            .next()
+            .await
+            .expect("webseed block should report storage completion");
+        let V2TransferCompletion::BlockStored(block_completion) = &completion else {
+            panic!("single-block webseed spill should report block storage completion")
+        };
+        assert!(block_completion.result.is_err());
+        task.handle_v2_webseed_transfer_completion(completion).await;
+
+        assert!(payload_path.is_dir());
+        assert!(!task.local_have.read().await.get(0));
+        let ledger = task.transfer_ledger.lock().unwrap();
+        assert_eq!(ledger.in_flight(), 0);
+        assert_eq!(ledger.piece_progress(0), None);
+        drop(ledger);
+        let webseed = task.webseed.as_ref().unwrap();
+        assert!(webseed.outstanding.is_empty());
+        assert!(webseed.assemblies.is_empty());
+        assert!(webseed.pending_block_completions.is_empty());
+        assert!(webseed.pending_piece_completions.is_empty());
+        assert_eq!(
+            task.resources.snapshot().classes[MemoryClass::PieceAssembly as usize].used_bytes,
+            baseline_piece_assembly_bytes
+        );
+    }
+
+    #[tokio::test]
     async fn v2_webseed_merkle_mismatch_backs_off_the_piece_source() {
         let content = vec![0x41; rt_peer_wire::message::MAX_BLOCK_SIZE as usize];
         let raw = v2_raw_with_content(&content);
@@ -9674,6 +9871,17 @@ mod tests {
         raw: &[u8],
         total_length: u64,
     ) -> (V2TorrentTask, V2Fixture) {
+        let (task, cmd_tx, fixture) =
+            v2_task_not_started_with_commands(runtime, raw, total_length).await;
+        std::mem::forget(cmd_tx);
+        (task, fixture)
+    }
+
+    async fn v2_task_not_started_with_commands(
+        runtime: Arc<CrashSafetyRuntime>,
+        raw: &[u8],
+        total_length: u64,
+    ) -> (V2TorrentTask, mpsc::Sender<TorrentCmd>, V2Fixture) {
         let temp = tempfile::tempdir().unwrap();
         let raw = raw.to_vec();
         let rt_metainfo::TorrentMeta::V2(meta) = rt_metainfo::parse_torrent(&raw).unwrap() else {
@@ -9694,7 +9902,6 @@ mod tests {
         let registry = Arc::new(RwLock::new(SessionRegistry::new()));
         registry.write().await.add(entry).unwrap();
         let (cmd_tx, cmd_rx) = mpsc::channel(4);
-        std::mem::forget(cmd_tx);
         let mut task = V2TorrentTask::new(
             meta,
             temp.path().to_path_buf(),
@@ -9721,6 +9928,7 @@ mod tests {
         task.attach_crash_safety(runtime);
         (
             task,
+            cmd_tx,
             V2Fixture {
                 temp,
                 registry,

@@ -4066,11 +4066,14 @@ Completion and lifecycle boundaries flush immediately.
   snapshots, and timeout cancellation with ledger cleanup. Candidate traversal
   uses bitmap-word skips and round-robin cursor advancement; peer-request
   expiry wakes the scheduler. A source-affinity regression source checks that
-  a Merkle mismatch backs off the contributing seed; all these sources remain
-  authored but unrun.
+  a Merkle mismatch backs off the contributing seed. New pure-v2 regressions
+  hold a real HTTP body while status and pause commands are served, then prove
+  the late body does not reach storage; another sends a valid ranged response
+  into a deliberately unwriteable file target and checks the failed piece
+  releases ledger and assembly ownership without publishing local-have state.
+  All these sources remain authored but unrun.
 - **Command or probe:** run with the requested bulk engine suite; do not run
   this source independently before that pass.
 - **Executed on exact revision:** no.
-- **Remaining:** a shared peer/webseed source scheduler, held-response and
-  storage-failure coverage for the pure-v2 HTTP path, live-source workloads,
-  and the bulk pass.
+- **Remaining:** a shared peer/webseed source scheduler, live-source
+  workloads, and the bulk pass.
