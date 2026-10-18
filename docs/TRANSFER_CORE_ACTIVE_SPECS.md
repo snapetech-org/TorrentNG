@@ -2688,6 +2688,102 @@ scale pass; its source is not capacity evidence.
 - **External evidence still required:** production-binary 10k/100k restore,
   process-attributed resource samples, mixed activity, and repeated trials.
 
+## PERF-110 — Reproducible paired-run catalog and schedule
+
+- **Priority / wave:** P0 / 6
+- **Prerequisites:** PERF-103, PERF-104, PERF-105, PERF-106, PERF-107, PERF-109
+- **Owning component:** certification tooling.
+- **Finding or capability:** paired comparisons need a fixed workload catalog,
+  randomized order, and explicit exclusions before a runner can create trial
+  evidence.
+- **Status:** `wip`
+
+### Scope
+
+This spec interprets the ticket's “28-case catalog” as the seven checked-in
+client adapters crossed with the four checked-in fixture profiles. This is a
+separate efficiency catalog from the 28-row protocol correctness matrix in
+`docs/INTEROP_MATRIX.md`. The plan generator records all 28 slots, including
+known unsupported combinations, and produces a seeded schedule for pinned
+clients. The `candidate` label means only “not known to be unsupported by this
+catalog”; client/profile compatibility still needs a runtime preflight before
+the trial is considered eligible.
+
+The current known exclusions are the `urtorrent` runner's v2 and hybrid slots:
+it accepts private v1 metainfo only. Unpinned clients and profile/repetition
+pairs with fewer than two candidate clients are explicit exclusions. Every
+scheduled pair holds profile and repetition fixed while randomizing client
+order, so the future runner can reuse one identical fixture and environment
+for its paired clients.
+
+### Ownership and invariant
+
+- **Current owner:** `paired_plan.py` builds the catalog, seed-bound plan, and
+  immutable output; `validate_artifact.py paired-plan` validates its schema,
+  catalog digest, and deterministic schedule.
+- **Target owner:** PERF-110's process runner consumes the plan, performs
+  compatibility preflight, prepares shared fixtures and network state, starts
+  each client, observes independent resources, and emits PERF-101 trial and
+  manifest artifacts.
+- **Invariant preserved:** every included schedule slot is pinned and
+  catalogued; the seed, schedule algorithm, adapter pins, and fixture-profile
+  digest are retained with the plan; no pair compares different profiles.
+- **Must not:** treat `candidate` as verified client support, label a plan as
+  measured evidence, silently skip a failed or incompatible trial, or conflate
+  this efficiency catalog with protocol interop correctness.
+
+### Acceptance
+
+- The catalog contains exactly seven adapter IDs by four profile IDs and has a
+  canonical SHA-256 digest over its workload definitions and the profile-file
+  digest.
+- A caller supplies a valid pin file, unsigned 64-bit seed, and 1–100
+  repetitions. The plan records the pin and catalog digests and the explicit
+  `sha256-fisher-yates-v1` scheduling algorithm.
+- Pair-group and client order are randomized reproducibly from the seed. Every
+  pair uses one profile and repetition, has distinct clients, and includes all
+  pinned candidate clients for that profile. Pairs with fewer than two clients
+  are excluded with a reason.
+- Unsupported and unpinned catalog slots are listed with reasons. A runtime
+  compatibility preflight must reject or explicitly exclude unsupported
+  candidates before any measurements begin.
+- Plan output is exclusive, mode `0600`, schema-validated, and rejected if its
+  catalog digest or deterministic schedule no longer matches its identity.
+- Regression sources cover the 28 slots, balanced pairs, stable scheduling,
+  exclusions, tamper rejection, bounds, and exclusive output.
+
+### Files and compatibility
+
+- **Expected code paths:** `scripts/transfer_rebuild/paired_plan.py`,
+  `scripts/transfer_rebuild/fixtures.py`,
+  `scripts/transfer_rebuild/validate_artifact.py`,
+  `certification/transfer-rebuild/paired-plan.schema.json`, harness README,
+  and `scripts/test_transfer_rebuild_paired_plan.py`.
+- **State or wire compatibility:** additive `transfer-paired-plan-v1`
+  certification artifact; no runtime product format changes.
+- **Migration / rollback:** none; plans are standalone artifacts and can be
+  regenerated from pinned inputs and the recorded seed.
+- **Feature flag or rollout boundary:** no comparison or performance claim is
+  permitted from the schedule alone. Compatibility preflight, process launch,
+  trial/manifest production, independent observation, and bulk validation
+  remain required.
+
+### Evidence
+
+- **Regression source added or updated:**
+  `scripts/test_transfer_rebuild_paired_plan.py` and paired-plan semantic
+  validation in `scripts/transfer_rebuild/validate_artifact.py`.
+- **Command or probe to run:** planner, schema-validator, and regression cases
+  during the requested bulk pass.
+- **Expected result:** byte-identical plan content for identical inputs;
+  schema-valid catalog and schedule; tampered identity or ordering rejected;
+  no output overwrite.
+- **Executed on exact revision:** no.
+- **Artifact or report path:** none; generation and validation source only.
+- **External evidence still required:** pinned compatibility preflight for each
+  candidate slot, actual paired process execution, complete trial records,
+  independent resources, and dedicated-host results.
+
 ## PERF-113 — Descriptive paired scorecard
 
 - **Priority / wave:** P1 / 7

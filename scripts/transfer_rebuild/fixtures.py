@@ -124,6 +124,13 @@ def load_fixture_profile(path: Path, profile_id: str) -> dict[str, object]:
         document = json.loads(profile_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError(f"cannot read fixture profiles: {error}") from error
+    return load_fixture_profile_document(document, profile_id)
+
+
+def load_fixture_profile_document(document: object, profile_id: str) -> dict[str, object]:
+    """Validate and load one profile from an already-read JSON document."""
+    if not isinstance(profile_id, str) or _PROFILE_ID.fullmatch(profile_id) is None:
+        raise ValueError("fixture profile id is invalid")
     if (
         not isinstance(document, dict)
         or set(document) != {"format", "profiles"}

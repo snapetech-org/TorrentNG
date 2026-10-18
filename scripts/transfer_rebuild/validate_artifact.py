@@ -34,6 +34,7 @@ SCHEMAS = {
     "ceiling-input": ROOT / "certification/transfer-rebuild/ceiling-input.schema.json",
     "ceiling": ROOT / "certification/transfer-rebuild/ceiling-report.schema.json",
     "scorecard": ROOT / "certification/transfer-rebuild/scorecard.schema.json",
+    "paired-plan": ROOT / "certification/transfer-rebuild/paired-plan.schema.json",
 }
 CLIENT_OBSERVATION_KIND = "transfer-client-observation-v1"
 CACHE_STATE_KIND = "transfer-cache-state-v1"
@@ -789,7 +790,11 @@ def validate(
     verify_referenced_files: bool = False,
 ) -> list[str]:
     schema = _load_json(SCHEMAS[kind])
-    artifact = _load_json(artifact_path)
+    artifact = (
+        _load_strict_json(artifact_path)
+        if kind == "paired-plan"
+        else _load_json(artifact_path)
+    )
     try:
         Draft202012Validator.check_schema(schema)
     except SchemaError as error:
@@ -806,6 +811,13 @@ def validate(
         formatted.extend(f"$.{error}" for error in _cache_state_errors(artifact))
     if kind == "network-control" and not formatted and isinstance(artifact, dict):
         formatted.extend(f"$.{error}" for error in _network_control_errors(artifact))
+    if kind == "paired-plan" and not formatted:
+        transfer_tools = str(ROOT / "scripts/transfer_rebuild")
+        if transfer_tools not in sys.path:
+            sys.path.insert(0, transfer_tools)
+        from paired_plan import paired_plan_errors
+
+        formatted.extend(f"$.{error}" for error in paired_plan_errors(artifact))
     if (
         verify_referenced_files
         and kind == "manifest"

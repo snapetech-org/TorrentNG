@@ -318,6 +318,48 @@ production-daemon RSS or descriptor evidence; PERF-102 and PERF-110 own those
 separate-process trials. Existing direct-registry and synthetic-database cases
 remain useful for lower-level regressions and are explicitly named as proxies.
 
+## PERF-110 paired plan
+
+`paired_plan.py` creates a reproducible plan for seven pinned client adapters
+crossed with the four profiles in `fixture_profiles.json`. This is the
+efficiency workload catalog, separate from the 28-row protocol correctness
+matrix in `docs/INTEROP_MATRIX.md`. The catalog binds a SHA-256 digest of the
+profile file and records every client/profile slot. `urtorrent` v2 and hybrid
+slots are explicitly unsupported because its pinned runner accepts private v1
+metainfo only. An unpinned client is excluded from the schedule with a reason.
+
+Create the plan in a new task-owned directory with a valid
+`transfer-client-pins-v1` file:
+
+```sh
+python3 scripts/transfer_rebuild/paired_plan.py \
+  --pins /path/to/task-scratch/client-pins.json \
+  --output /path/to/task-scratch/transfer-run/paired-plan.json \
+  --repetitions 10 \
+  --seed 17
+
+python3 scripts/transfer_rebuild/validate_artifact.py paired-plan \
+  /path/to/task-scratch/transfer-run/paired-plan.json
+```
+
+The scheduler uses the versioned `sha256-fisher-yates-v1` algorithm and
+records its seed, plan identity, pins digest, catalog digest, exclusions, pair
+IDs, and trial order. Each pair fixes the fixture profile and repetition while
+randomizing the order of its pinned candidate clients. A pair with fewer than
+two clients is excluded. The plan is written exclusively with mode `0600`; an
+existing output is never replaced. Its schema validator also recomputes the
+catalog digest and seeded schedule, so edits to the plan are rejected.
+
+`candidate` means the checked-in catalog does not already know that a slot is
+unsupported; it does not prove the pinned client can run that protocol. A
+compatibility preflight must qualify every candidate before the runner starts
+measurements. The current source creates the plan only: it does not generate
+large payload fixtures, create namespaces, launch clients, observe their
+process trees, or emit trial records. Those parts and all runtime results are
+still open under PERF-110. Regression sources are in
+`scripts/test_transfer_rebuild_paired_plan.py` and are reserved for the
+requested bulk pass; none have been run.
+
 ## Task-scoped network control
 
 `network_control.py` applies a pinned loss-free egress profile to a `tngt*`

@@ -1294,6 +1294,11 @@ def load_pins(path: Path) -> dict[str, dict[str, Any]]:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise AdapterError(f"cannot read pin file: {error}") from error
+    return load_pins_document(data)
+
+
+def load_pins_document(data: object) -> dict[str, dict[str, Any]]:
+    """Validate pin data from an already-read JSON document."""
     if not isinstance(data, dict) or data.get("schema_version") != PINS_SCHEMA_VERSION:
         raise AdapterError(f"pin file schema_version must be {PINS_SCHEMA_VERSION!r}")
     clients = data.get("clients")
