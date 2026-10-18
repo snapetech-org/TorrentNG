@@ -44,6 +44,26 @@ network-control record to the trial.
 The result schema is described in
 [`measurement-contract.md`](../../certification/transfer-rebuild/measurement-contract.md).
 
+## Native client process supervision
+
+`process_supervisor.py` supplies the PERF-110 runner's native-process
+lifecycle primitive. It accepts a pinned absolute executable and an explicit
+argument array, opens and hashes the executable without following its final
+path component, and executes that same opened file. It never interprets shell
+syntax or inherits the invoking process environment; callers provide the
+specific environment entries the client needs. Logs are new mode-`0600` files
+created below an existing no-symlink directory tree.
+
+The returned handle binds PID, `/proc` start time, and executable device/inode.
+Its `runtime_identity()` fields match the native identity used by
+`adapters.py`; an optional per-trial PID file is created exclusively with mode
+`0600`. Shutdown uses a Linux pidfd and refuses to signal after that identity changes.
+The client command must stay in the foreground; daemonizing wrappers are not
+valid launch targets. This primitive does not create namespaces, containers,
+or trial records. The paired runner still has to connect it to each adapter,
+the isolated seed process, resource observation, and manifest emission. No
+client was launched while adding this source.
+
 ## Trial and manifest validation
 
 Install the pinned schema validator and validate each record before adding it
