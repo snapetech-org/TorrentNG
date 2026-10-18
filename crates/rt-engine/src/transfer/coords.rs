@@ -131,6 +131,9 @@ pub enum GeometryError {
     BlockTooLarge {
         length: u32,
     },
+    InvalidContentMap {
+        piece: u32,
+    },
     OutOfBounds {
         piece: u32,
         end: u64,
@@ -149,6 +152,12 @@ impl fmt::Display for GeometryError {
             }
             Self::ZeroLength => write!(f, "zero-length block"),
             Self::BlockTooLarge { length } => write!(f, "block of {length} bytes is too large"),
+            Self::InvalidContentMap { piece } => {
+                write!(
+                    f,
+                    "piece {piece} content map does not cover its full extent"
+                )
+            }
             Self::OutOfBounds {
                 piece,
                 end,
@@ -172,6 +181,47 @@ pub trait PieceGeometry {
     fn piece_len(&self, piece: u32) -> Option<u32>;
     /// The content `piece` covers, in piece order.
     fn content_ranges(&self, piece: u32) -> Vec<ContentRange>;
+
+    /// Project a wire block onto its file ranges, preserving synthetic pad
+    /// spans. Piece maps return ranges in piece order, so their lengths also
+    /// identify where a block intersects each file when v1 padding shifts the
+    /// v2 view's block coordinates.
+    fn block_content_ranges(&self, block: BlockExtent) -> Result<Vec<ContentRange>, GeometryError> {
+        self.validate_served_block(block)?;
+        let piece_len = u64::from(self.piece_len(block.piece).ok_or(
+            GeometryError::PieceOutOfRange {
+                piece: block.piece,
+                piece_count: self.piece_count(),
+            },
+        )?);
+        let block_start = u64::from(block.begin);
+        let block_end = block.end();
+        let mut piece_offset = 0u64;
+        let mut projected = Vec::new();
+
+        for mut range in self.content_ranges(block.piece) {
+            let range_end = piece_offset
+                .checked_add(range.length)
+                .filter(|end| *end <= piece_len)
+                .ok_or(GeometryError::InvalidContentMap { piece: block.piece })?;
+            let overlap_start = block_start.max(piece_offset);
+            let overlap_end = block_end.min(range_end);
+            if overlap_start < overlap_end {
+                range.file_offset = range
+                    .file_offset
+                    .checked_add(overlap_start - piece_offset)
+                    .ok_or(GeometryError::InvalidContentMap { piece: block.piece })?;
+                range.length = overlap_end - overlap_start;
+                projected.push(range);
+            }
+            piece_offset = range_end;
+        }
+
+        if piece_offset != piece_len {
+            return Err(GeometryError::InvalidContentMap { piece: block.piece });
+        }
+        Ok(projected)
+    }
 
     fn piece_extent(&self, piece: u32) -> Option<PieceExtent> {
         self.piece_len(piece)
@@ -359,16 +409,41 @@ impl HybridGeometry {
             .into_iter()
             .filter(|range| !range.pad)
             .collect::<Vec<_>>();
-        v1.len() == v2.len()
-            && v1.iter().zip(&v2).all(|(left, right)| {
-                let same_file = match (&left.path, &right.path) {
-                    (Some(left), Some(right)) => left == right,
-                    (None, None) => left.file_index == right.file_index,
-                    _ => false,
-                };
-                same_file && left.file_offset == right.file_offset && left.length == right.length
-            })
+        same_content_ranges(&v1, &v2)
     }
+
+    /// Whether two wire blocks from different planes cover the same real
+    /// payload bytes. Padding bytes are omitted because they have no v2 file
+    /// range and are synthesized by the hybrid v1 view.
+    pub fn blocks_match_content(&self, v1: BlockExtent, v2: BlockExtent) -> bool {
+        let Ok(v1_ranges) = self.v1.block_content_ranges(v1) else {
+            return false;
+        };
+        let Ok(v2_ranges) = self.v2.block_content_ranges(v2) else {
+            return false;
+        };
+        let v1_payload = v1_ranges
+            .into_iter()
+            .filter(|range| !range.pad)
+            .collect::<Vec<_>>();
+        let v2_payload = v2_ranges
+            .into_iter()
+            .filter(|range| !range.pad)
+            .collect::<Vec<_>>();
+        !v1_payload.is_empty() && same_content_ranges(&v1_payload, &v2_payload)
+    }
+}
+
+fn same_content_ranges(left: &[ContentRange], right: &[ContentRange]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            let same_file = match (&left.path, &right.path) {
+                (Some(left), Some(right)) => left == right,
+                (None, None) => left.file_index == right.file_index,
+                _ => false,
+            };
+            same_file && left.file_offset == right.file_offset && left.length == right.length
+        })
 }
 
 impl PieceGeometry for HybridGeometry {
@@ -643,6 +718,25 @@ mod tests {
         assert!(hybrid.ranges_match(1, 1));
         assert!(hybrid.ranges_match(2, 2));
         assert!(!hybrid.ranges_match(1, 2));
+
+        // The v1 wire block includes 8 KiB of real data plus 8 KiB of
+        // synthetic padding; the v2 plane requests only the real 8 KiB.
+        assert!(hybrid.blocks_match_content(
+            BlockExtent::new(1, 0, BLOCK_SIZE),
+            BlockExtent::new(1, 0, 8 * 1024),
+        ));
+        assert!(hybrid.blocks_match_content(
+            BlockExtent::new(2, 0, 24 * 1024),
+            BlockExtent::new(2, 0, 24 * 1024),
+        ));
+        assert!(!hybrid.blocks_match_content(
+            BlockExtent::new(1, BLOCK_SIZE, BLOCK_SIZE),
+            BlockExtent::new(1, 0, 8 * 1024),
+        ));
+        assert!(!hybrid.blocks_match_content(
+            BlockExtent::new(1, 0, BLOCK_SIZE),
+            BlockExtent::new(2, 0, 16 * 1024),
+        ));
     }
 
     #[test]

@@ -3449,6 +3449,11 @@ rate/window/upload services remain open.
   arbitration path.
   `PiecePicker` still ranks candidates and holds restored-partial projection
   state; v2 actor maps retain response leases and peer-local assemblies.
+- **Geometry foundation:** `PieceGeometry::block_content_ranges` projects a
+  wire block into path/offset spans while retaining v1 synthetic padding;
+  `HybridGeometry::blocks_match_content` identifies equivalent payload when a
+  padded v1 block and its v2 block have different lengths. The live actor
+  ledger does not use this projection yet.
 - **Target owner:** each protocol adapter submits candidates to one shared
   content owner, while immutable payload, storage completion, and durability
   evidence retain their existing explicit owners.
@@ -3485,8 +3490,9 @@ rate/window/upload services remain open.
 
 ### Evidence
 
-- **Regression sources:** ledger failure/expiry cancellation, v1 actor
-  lifecycle, webseed ledger ownership, and pure-v2
+- **Regression sources:** padded hybrid block-range projection, ledger
+  failure/expiry cancellation, v1 actor lifecycle, webseed ledger ownership,
+  and pure-v2
   reservation/response/action-routing/timeout sources are present; hybrid
   dual-view cases remain open.
 - **Command or probe:** run transfer-core simulator and engine regression
