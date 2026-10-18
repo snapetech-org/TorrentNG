@@ -615,11 +615,13 @@ device admission so they do not occupy a physical-device slot.
 
 The live service currently covers scheduler positioned reads/writes/syncs,
 peer-read batches, preallocation, extent probes, and secure storage-plan
-copy/import steps. Plan steps enter the destination mount's `MoveCopy` lane;
-source and destination paths each contribute physical-device admission, with
-all touched device queues acquired in stable key order. The 64 KiB streaming
-buffer is charged once while the operation owns mount/device admission. IO-009
-still owns grouped barriers, while NET-114 supplies peer deadlines and
+copy/import steps. Checkpoint barriers group ready file fences by resolved
+device and dispatch bounded batches through that device's queue, preserving a
+separate completion watermark for each path. Plan steps enter the destination
+mount's `MoveCopy` lane; source and destination paths each contribute
+physical-device admission, with all touched device queues acquired in stable
+key order. The 64 KiB streaming buffer is charged once while the operation
+owns mount/device admission. NET-114 still owns peer deadlines and
 choke-critical priorities. Cross-mount read coalescing and full
 injected-backend accounting remain open.
 
@@ -655,8 +657,9 @@ injected-backend accounting remain open.
   non-scheduler consumers. `run_device_operation_with_paths` admits every
   touched physical device in stable key order; secure copy/import steps use
   this path so reverse-direction copies cannot deadlock. Peer
-  deadlines/choke-critical promotion and grouped barriers remain in NET-114
-  and IO-009 respectively.
+  deadlines/choke-critical promotion remain in NET-114. Checkpoint barriers
+  resolve path groups before admission and dispatch a bounded same-device
+  batch while preserving per-path fences and operation identities.
 - Canceling a caller after an external handoff starts does not release its
   queue slot, physical-device permit, or queued-byte lease before the blocking
   closure completes; another mount sharing the device remains backpressured
@@ -1381,11 +1384,11 @@ Order checkpoint barriers against writes to each normalized path and across
 the scheduler's complete path set. Ordinary writes share scheduler admission
 and each file gate, so they remain concurrent. A checkpoint takes scheduler
 write admission exclusively, waits for admitted write/preallocation/sync
-operations, snapshots dirty and active paths, then syncs those paths one at a
-time under exclusive per-file fences. Later writes, including writes to a new
-path, remain queued until the evidence is dropped after the resume commit.
-Dirty generations remain separate from per-file sequence watermarks so a newer
-generation cannot be accidentally cleared.
+operations, snapshots dirty and active paths, then groups them by resolved
+device and dispatches bounded batches of ready per-file fences. Later writes,
+including writes to a new path, remain queued until the evidence is dropped
+after the resume commit. Dirty generations remain separate from per-file
+sequence watermarks so a newer generation cannot be accidentally cleared.
 
 ### Ownership and invariant
 
@@ -1394,8 +1397,9 @@ generation cannot be accidentally cleared.
   fences, its dirty-generation map, and completion watchers for submitted
   writes and syncs. Full checkpoint barriers run in an owned task so dropping
   a waiter does not cancel a partially completed path snapshot.
-- **Target owner:** IO-006's shared device service batches ready per-file
-  fences by device while each path retains its own completion watermark.
+- **Target owner:** IO-006's shared device service receives bounded batches
+  of ready per-file fences grouped by resolved device; each path retains its
+  own completion watermark and device operation identity.
 - **Invariant preserved:** a scheduler-wide checkpoint admits no later
   write/preallocation/sync operation until every path in its stable snapshot
   has completed `fdatasync`; per-file fences, the detached barrier task, and
@@ -1403,7 +1407,8 @@ generation cannot be accidentally cleared.
   successful result keeps scheduler write admission in its evidence until the
   resume commit drops it.
 - **Must not:** clear a newer generation, sync a clean unrelated descriptor,
-  or let preallocation/write completion pass a barrier queued behind it.
+  open more descriptors than the bounded batch permits, or let
+  preallocation/write completion pass a barrier queued behind it.
 
 ### Acceptance
 
@@ -1421,11 +1426,16 @@ generation cannot be accidentally cleared.
   strict write clears only its own generation.
 - `sync_all_open_files` keeps descriptor use bounded and syncs only its
   scheduler's dirty or active paths.
+- Ready paths on one resolved device enter a bounded batch together; batch
+  size does not exceed the device dispatch window, handle-pool capacity, or
+  mount queue capacity, and each path retains an independent fence and dirty
+  generation.
 - `sync_all_open_files_with_evidence` returns an opaque proof only after every
   path in the barrier succeeds; it reports synced-file count and the stable
   scheduler write-sequence watermark, and it retains write admission until
   the proof is dropped after its resume commit.
-- Per-device grouped barrier batching is still part of IO-006 and remains open.
+- Per-device batching is implemented as bounded path groups; regression and
+  storage fault-matrix evidence remain pending the requested bulk pass.
 
 ### Files and compatibility
 
@@ -1440,8 +1450,9 @@ generation cannot be accidentally cleared.
 
 - **Regression source added or updated:** existing canceled-writer,
   dirty-generation, and failed-barrier retry sources; held-sync regressions
-  cover a new-path write queued behind the scheduler-wide checkpoint and a
-  canceled waiter whose barrier must finish a multi-path snapshot first.
+  cover a new-path write queued behind the scheduler-wide checkpoint, a
+  canceled waiter whose barrier must finish a multi-path snapshot, and
+  same-device paths entering one bounded batch before either sync completes.
 - **Command or probe to run:** storage fault matrix and barrier ordering
   regressions during the requested bulk pass.
 - **Expected result:** a returned barrier covers every earlier admitted write

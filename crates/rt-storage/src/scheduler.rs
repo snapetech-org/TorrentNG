@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant};
 
+use futures::future::join_all;
 use once_cell::sync::Lazy;
 use tokio::sync::{
     mpsc::{self as tokio_mpsc, error::TrySendError},
@@ -1043,7 +1044,7 @@ struct QueuedDiskBytes {
 
 #[derive(Debug)]
 struct DiskSubmission {
-    _queued_bytes: QueuedDiskBytes,
+    _queued_bytes: Arc<QueuedDiskBytes>,
     _queue: OwnedSemaphorePermit,
     _device_operation: Option<DeviceOperationPermit>,
 }
@@ -2559,38 +2560,50 @@ impl MountScheduler {
     ) -> Result<DiskSubmission, StorageError> {
         let mount = format!("storage-root-{}", self.storage_root.0);
         let queued_bytes = match shared_payload_lease {
-            Some(lease) => QueuedDiskBytes::reserve_shared_payload(
+            Some(lease) => Arc::new(QueuedDiskBytes::reserve_shared_payload(
                 self.counters.clone(),
                 self.resources.as_ref(),
                 queued_bytes,
                 lease,
                 mount,
-            )?,
-            None => QueuedDiskBytes::reserve(
+            )?),
+            None => Arc::new(QueuedDiskBytes::reserve(
                 self.counters.clone(),
                 self.resources.as_ref(),
                 queued_bytes,
                 mount,
-            )?,
+            )?),
         };
-        let queue = self
-            .queue_sem
-            .clone()
-            .try_acquire_owned()
-            .map_err(|err| match err {
-                TryAcquireError::NoPermits => {
-                    self.counters.queue_full.fetch_add(1, Ordering::Relaxed);
-                    StorageError::QueueFull {
-                        mount: format!("storage-root-{}", self.storage_root.0),
-                    }
+        self.reserve_mount_submission_with_queued_bytes(queued_bytes)
+    }
+
+    fn reserve_mount_submission_with_queued_bytes(
+        &self,
+        queued_bytes: Arc<QueuedDiskBytes>,
+    ) -> Result<DiskSubmission, StorageError> {
+        self.try_reserve_mount_submission_with_queued_bytes(queued_bytes)?
+            .ok_or_else(|| {
+                self.counters.queue_full.fetch_add(1, Ordering::Relaxed);
+                StorageError::QueueFull {
+                    mount: format!("storage-root-{}", self.storage_root.0),
                 }
-                TryAcquireError::Closed => StorageError::Cancelled,
-            })?;
-        Ok(DiskSubmission {
+            })
+    }
+
+    fn try_reserve_mount_submission_with_queued_bytes(
+        &self,
+        queued_bytes: Arc<QueuedDiskBytes>,
+    ) -> Result<Option<DiskSubmission>, StorageError> {
+        let queue = match self.queue_sem.clone().try_acquire_owned() {
+            Ok(queue) => queue,
+            Err(TryAcquireError::NoPermits) => return Ok(None),
+            Err(TryAcquireError::Closed) => return Err(StorageError::Cancelled),
+        };
+        Ok(Some(DiskSubmission {
             _queued_bytes: queued_bytes,
             _queue: queue,
             _device_operation: None,
-        })
+        }))
     }
 
     async fn acquire_device_operation(
@@ -3283,12 +3296,16 @@ impl MountScheduler {
     async fn sync_all_open_files_with_evidence_inner(
         &self,
     ) -> Result<DurabilityBarrierEvidence, StorageError> {
-        let pool = self.file_pool.clone();
-        let disk_backend = self.disk_backend.clone();
         let dirty_paths = self.dirty_paths.clone();
         let counters = self.counters.clone();
         let started = Instant::now();
         let mut submission = Some(self.reserve_mount_submission(0)?);
+        let barrier_queued_bytes = Arc::clone(
+            &submission
+                .as_ref()
+                .expect("checkpoint admission is reserved")
+                ._queued_bytes,
+        );
         let write_admission_guard = Arc::clone(&self.write_admission_gate).write_owned().await;
         let mut paths_to_sync: BTreeSet<PathBuf> = {
             let dirty = lock_recover(&dirty_paths);
@@ -3301,87 +3318,185 @@ impl MountScheduler {
         // clean) files, serially and possibly across devices. Include active
         // fences as well as dirty paths so a write still opening its file is
         // ordered before this barrier even though it has not marked dirty yet.
-        // Do not open all dirty files at once. The dirty set can be much
-        // larger than the descriptor-cache capacity; syncing each path
-        // sequentially keeps evicted handles from accumulating in a vector.
-        // Each path's exclusive fence waits for all admitted writes and keeps
-        // later writes behind this file's durable watermark.
-        let mut synced_file_count = 0u64;
+        // Resolve each path once and collect ready barriers by physical
+        // device. A batch is bounded by the device dispatch window, shared
+        // handle-cache capacity, and mount queue. File handles are still
+        // opened before device admission, and each path keeps its own fence
+        // and dirty generation. This keeps descriptor use bounded while
+        // avoiding a device-queue round trip for every path in a large
+        // checkpoint.
+        let mut device_groups: BTreeMap<String, (String, Arc<DeviceQueue>, Vec<PathBuf>)> =
+            BTreeMap::new();
+        let scheduler_device_key = device_queue_key(self.storage_root, self.device_id.as_deref());
         for path in paths_to_sync {
             let key = normalized_key(&path);
-            let file_sync_fence = self.file_sync_fences.for_path(&key);
-            let fence_guard = Arc::clone(&file_sync_fence.gate).write_owned().await;
-            let watermark = file_sync_fence.watermark();
-            let expected_generation = lock_recover(&dirty_paths).get(&key).copied();
-            let current_submission = submission
-                .take()
-                .expect("sync-all submission is returned after each file");
-            let (file, mut current_submission) = match self
-                .io_pool
-                .run({
-                    let pool = pool.clone();
-                    let key = key.clone();
-                    move || {
-                        pool.open_for_sync(&key)
-                            .map(|file| (file, current_submission))
+            let topology = detect_storage_topology(&key);
+            let device_id = topology.device_id.map(|device| device.0);
+            let device_key = device_queue_key(self.storage_root, device_id.as_deref());
+            let mount = device_id
+                .as_deref()
+                .map(|device| format!("storage-device-{device}"))
+                .unwrap_or_else(|| format!("storage-root-{}", self.storage_root.0));
+            let queue = if device_key == scheduler_device_key {
+                Arc::clone(&self.device_queue)
+            } else {
+                device_queue_for(
+                    self.storage_root,
+                    device_id.as_deref(),
+                    self.device_queue_capacity,
+                    self.device_queue.active_limit,
+                )
+            };
+            let group = device_groups
+                .entry(device_key)
+                .or_insert_with(|| (mount, queue, Vec::new()));
+            group.2.push(key);
+        }
+
+        let mut synced_file_count = 0u64;
+        let mut reusable_submissions = Vec::with_capacity(1);
+        if let Some(submission) = submission.take() {
+            reusable_submissions.push(submission);
+        }
+        for (_, (mount, queue, paths)) in device_groups {
+            let mut path_index = 0;
+            while path_index < paths.len() {
+                let cache_capacity = self.file_pool.stats().capacity.max(1);
+                let in_flight_mount_capacity = self
+                    .queue_sem
+                    .available_permits()
+                    .saturating_add(reusable_submissions.len())
+                    .max(1);
+                let batch_limit = queue
+                    .active_limit
+                    .min(cache_capacity)
+                    .min(self.io_config.io_queue_depth.max(1))
+                    .min(in_flight_mount_capacity)
+                    .max(1);
+                let mut batch = Vec::with_capacity(batch_limit);
+                while batch.len() < batch_limit && path_index < paths.len() {
+                    let path = paths[path_index].clone();
+                    let current_submission = match reusable_submissions.pop() {
+                        Some(submission) => submission,
+                        None => match self.try_reserve_mount_submission_with_queued_bytes(
+                            Arc::clone(&barrier_queued_bytes),
+                        )? {
+                            Some(submission) => submission,
+                            None if !batch.is_empty() => break,
+                            None => {
+                                self.counters.queue_full.fetch_add(1, Ordering::Relaxed);
+                                return Err(StorageError::QueueFull {
+                                    mount: format!("storage-root-{}", self.storage_root.0),
+                                });
+                            }
+                        },
+                    };
+                    batch.push((path, current_submission));
+                    path_index += 1;
+                }
+
+                let outcomes = join_all(batch.into_iter().map(|(path, submission)| {
+                    self.sync_checkpoint_file(path, mount.clone(), Arc::clone(&queue), submission)
+                }))
+                .await;
+                let mut first_error = None;
+                for outcome in outcomes {
+                    match outcome {
+                        Ok(submission) => {
+                            synced_file_count = synced_file_count.saturating_add(1);
+                            reusable_submissions.push(submission);
+                        }
+                        Err(error) if first_error.is_none() => first_error = Some(error),
+                        Err(_) => {}
                     }
-                })
-                .await
-            {
-                Ok(file_and_submission) => file_and_submission,
-                Err(error) => {
-                    if matches!(error, StorageError::QueueFull { .. }) {
-                        counters.queue_full.fetch_add(1, Ordering::Relaxed);
-                    }
+                }
+                if let Some(error) = first_error {
                     return Err(error);
                 }
-            };
-            current_submission
-                .start_device_operation(self.acquire_device_operation(IoClass::Foreground).await?);
-            tracing::trace!(
-                device_operation_id = current_submission
-                    .device_operation_id()
-                    .unwrap_or_default(),
-                class = ?IoClass::Foreground,
-                "dispatching checkpoint file sync"
-            );
-            let (fence_guard, current_submission) = match await_backend_io_with_fence(
-                &key,
-                backend_completion_with_fence(
-                    disk_backend.fdatasync_leased(file),
-                    fence_guard,
-                    current_submission,
-                ),
-                None,
-            )
-            .await
-            {
-                Ok(((), fence_guard, submission)) => (fence_guard, submission),
-                Err(error) => {
-                    if matches!(error, StorageError::QueueFull { .. }) {
-                        counters.queue_full.fetch_add(1, Ordering::Relaxed);
-                    }
-                    return Err(error);
-                }
-            };
-            file_sync_fence.mark_synced(watermark);
-            synced_file_count = synced_file_count.saturating_add(1);
-            if let Some(expected_generation) = expected_generation {
-                clear_dirty_path_if_generation(&dirty_paths, &key, expected_generation);
             }
-            drop(fence_guard);
-            let mut current_submission = current_submission;
-            current_submission.finish_device_operation();
-            submission = Some(current_submission);
         }
         record_sync_completion(&counters, started);
         let write_sequence_watermark = self.write_sequence.load(Ordering::Acquire);
+        drop(reusable_submissions);
         drop(submission);
+        drop(barrier_queued_bytes);
         Ok(DurabilityBarrierEvidence {
             synced_file_count,
             write_sequence_watermark,
             _write_admission_guard: write_admission_guard,
         })
+    }
+
+    async fn sync_checkpoint_file(
+        &self,
+        key: PathBuf,
+        mount: String,
+        queue: Arc<DeviceQueue>,
+        mut submission: DiskSubmission,
+    ) -> Result<DiskSubmission, StorageError> {
+        let file_sync_fence = self.file_sync_fences.for_path(&key);
+        let fence_guard = Arc::clone(&file_sync_fence.gate).write_owned().await;
+        let watermark = file_sync_fence.watermark();
+        let expected_generation = lock_recover(&self.dirty_paths).get(&key).copied();
+        let (file, mut submission) = match self
+            .io_pool
+            .run({
+                let pool = Arc::clone(&self.file_pool);
+                let key = key.clone();
+                move || pool.open_for_sync(&key).map(|file| (file, submission))
+            })
+            .await
+        {
+            Ok(file_and_submission) => file_and_submission,
+            Err(error) => {
+                if matches!(error, StorageError::QueueFull { .. }) {
+                    self.counters.queue_full.fetch_add(1, Ordering::Relaxed);
+                }
+                return Err(error);
+            }
+        };
+        let device_operation = queue.acquire(IoClass::Foreground, mount).await;
+        let device_operation = match device_operation {
+            Ok(permit) => permit,
+            Err(error) => {
+                if matches!(error, StorageError::QueueFull { .. }) {
+                    self.counters.queue_full.fetch_add(1, Ordering::Relaxed);
+                }
+                return Err(error);
+            }
+        };
+        submission.start_device_operation(device_operation);
+        tracing::trace!(
+            device_operation_id = submission.device_operation_id().unwrap_or_default(),
+            class = ?IoClass::Foreground,
+            "dispatching checkpoint file sync"
+        );
+        let (fence_guard, mut submission) = match await_backend_io_with_fence(
+            &key,
+            backend_completion_with_fence(
+                self.disk_backend.fdatasync_leased(file),
+                fence_guard,
+                submission,
+            ),
+            None,
+        )
+        .await
+        {
+            Ok(((), fence_guard, submission)) => (fence_guard, submission),
+            Err(error) => {
+                if matches!(error, StorageError::QueueFull { .. }) {
+                    self.counters.queue_full.fetch_add(1, Ordering::Relaxed);
+                }
+                return Err(error);
+            }
+        };
+        file_sync_fence.mark_synced(watermark);
+        if let Some(expected_generation) = expected_generation {
+            clear_dirty_path_if_generation(&self.dirty_paths, &key, expected_generation);
+        }
+        drop(fence_guard);
+        submission.finish_device_operation();
+        Ok(submission)
     }
 
     /// Whether this platform has a page-cache drop primitive at all
@@ -7522,6 +7637,78 @@ mod tests {
         assert_eq!(scheduler.stats().dirty_files, 1);
         assert_eq!(std::fs::read(first_path).unwrap(), b"before-barrier");
         assert_eq!(std::fs::read(later_path).unwrap(), b"after-barrier");
+    }
+
+    #[tokio::test]
+    async fn checkpoint_barrier_dispatches_same_device_paths_as_a_bounded_batch() {
+        let dir = tempfile::tempdir().unwrap();
+        let first_path = dir.path().join("batch-first.bin");
+        let second_path = dir.path().join("batch-second.bin");
+        let mut scheduler = MountScheduler::new_for_path(
+            StorageRootId::new(),
+            dir.path(),
+            &SchedulerConfig {
+                profile: StorageProfile::Hdd,
+                max_queue: 4,
+                storage_io: StorageIoConfig {
+                    file_pool_size: 2,
+                    io_worker_threads: 2,
+                    io_queue_depth: 4,
+                    durability_mode: DurabilityMode::Checkpoint,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        scheduler.device_queue = Arc::new(DeviceQueue::new(4, 2));
+        scheduler.device_queue_capacity = 4;
+        let backend = Arc::new(ScriptedDiskBackend::new(2, 4));
+        scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(backend.clone()));
+        scheduler
+            .write_at(
+                IoClass::PeerWrite,
+                &first_path,
+                0,
+                bytes::Bytes::from_static(b"first-dirty-path"),
+                false,
+            )
+            .await
+            .unwrap();
+        scheduler
+            .write_at(
+                IoClass::PeerWrite,
+                &second_path,
+                0,
+                bytes::Bytes::from_static(b"second-dirty-path"),
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(scheduler.stats().dirty_files, 2);
+        backend.inject(Operation::Sync, Effect::HoldCompletion);
+        backend.inject(Operation::Sync, Effect::HoldCompletion);
+
+        let barrier_scheduler = scheduler.clone();
+        let barrier =
+            tokio::spawn(
+                async move { barrier_scheduler.sync_all_open_files_with_evidence().await },
+            );
+        tokio::time::timeout(Duration::from_secs(1), async {
+            backend.wait_until_completion_is_held().await;
+            backend.wait_until_completion_is_held().await;
+        })
+        .await
+        .expect("both same-device paths should enter the bounded checkpoint batch");
+        assert_eq!(backend.pending_releases(), 2);
+        assert_eq!(scheduler.stats().device_queue_available, 2);
+
+        assert!(backend.release_next());
+        assert!(backend.release_next());
+        let evidence = barrier.await.unwrap().unwrap();
+        assert_eq!(evidence.synced_file_count(), 2);
+        assert_eq!(scheduler.stats().dirty_files, 0);
+        drop(evidence);
+        assert_storage_admission_released(&scheduler);
     }
 
     #[tokio::test]
