@@ -21,7 +21,7 @@ trait ScheduledFileCopy: Send {
 }
 
 #[cfg(unix)]
-impl ScheduledFileCopy for secure_fs::FileCopyCursor {
+impl ScheduledFileCopy for secure_fs::CopyCursor {
     fn advance_quantum(
         &mut self,
         check_control: &dyn Fn() -> Result<(), StorageError>,
@@ -35,7 +35,7 @@ impl ScheduledFileCopy for secure_fs::FileCopyCursor {
 }
 
 #[cfg(windows)]
-impl ScheduledFileCopy for windows_secure_fs::FileCopyCursor {
+impl ScheduledFileCopy for windows_secure_fs::CopyCursor {
     fn advance_quantum(
         &mut self,
         check_control: &dyn Fn() -> Result<(), StorageError>,

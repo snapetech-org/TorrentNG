@@ -63,6 +63,45 @@ pub(crate) struct FileCopyCursor {
     source_hash: Sha1,
     destination_hash: Sha1,
     phase: FileCopyPhase,
+    copy_only: bool,
+    cleanup_on_error: bool,
+}
+
+pub(crate) enum CopyCursor {
+    File(FileCopyCursor),
+    Directory(DirectoryCopyCursor),
+}
+
+impl CopyCursor {
+    #[cfg(test)]
+    pub(crate) fn copied_bytes(&self) -> u64 {
+        match self {
+            Self::File(cursor) => cursor.copied_bytes,
+            Self::Directory(cursor) => cursor.copied_bytes.saturating_add(
+                cursor
+                    .active_file
+                    .as_ref()
+                    .map_or(0, |file| file.copied_bytes),
+            ),
+        }
+    }
+
+    pub(crate) fn advance_quantum(
+        &mut self,
+        check_control: &dyn Fn() -> Result<(), StorageError>,
+    ) -> Result<bool, StorageError> {
+        match self {
+            Self::File(cursor) => cursor.advance_quantum(check_control),
+            Self::Directory(cursor) => cursor.advance_quantum(check_control),
+        }
+    }
+
+    pub(crate) fn discard_partial_destination(&mut self) -> Result<(), StorageError> {
+        match self {
+            Self::File(cursor) => cursor.discard_partial_destination(),
+            Self::Directory(cursor) => cursor.discard_partial_destination(),
+        }
+    }
 }
 
 pub(crate) fn start_file_copy_cursor(
@@ -72,13 +111,64 @@ pub(crate) fn start_file_copy_cursor(
     roots: &[PathBuf],
     check_control: &dyn Fn() -> Result<(), StorageError>,
     is_import: bool,
-) -> Result<(Option<FileCopyCursor>, bool), StorageError> {
+) -> Result<(Option<CopyCursor>, bool), StorageError> {
     check_control()?;
     let source_entry = required_entry(source, roots, false, "copy-source")?;
     let source_metadata = entry_metadata(&source_entry, "copy-source")?;
     ensure_supported_entry(&source_metadata, source, "copy-source")?;
     if source_metadata.is_dir() {
-        return Ok((None, false));
+        let destination_entry = required_entry(destination, roots, true, "copy-destination")?;
+        ensure_missing(&destination_entry, "destination")?;
+        destination_entry
+            .parent
+            .create_dir(Path::new(&destination_entry.name))
+            .map_err(|error| StorageError::io(destination.display().to_string(), error))?;
+        let result = (|| {
+            let source_dir = open_child_directory(
+                &source_entry.parent,
+                &source_entry.name,
+                source,
+                "copy-source",
+            )?;
+            let destination_dir = open_child_directory(
+                &destination_entry.parent,
+                &destination_entry.name,
+                destination,
+                "copy-destination",
+            )?;
+            let frame = DirectoryCopyFrame::new(
+                source_dir,
+                destination_dir,
+                source.to_path_buf(),
+                destination.to_path_buf(),
+                0,
+                DirectoryCopyPhase::Copy,
+            )?;
+            Ok(DirectoryCopyCursor {
+                source: source_entry,
+                destination: destination_entry,
+                roots: roots.to_vec(),
+                expected_bytes,
+                copied_bytes: 0,
+                active_file: None,
+                phase: DirectoryCopyPhase::Copy,
+                stack: vec![frame],
+            })
+        })();
+        return match result {
+            Ok(cursor) => Ok((Some(CopyCursor::Directory(cursor)), false)),
+            Err(error) => {
+                if let Err(cleanup_error) = safe_delete(destination, roots, true, &|| Ok(())) {
+                    return Err(StorageError::FilesystemStateUncertain {
+                        step: "copy-cleanup",
+                        reason: format!(
+                            "{error}; failed to remove partial destination: {cleanup_error}"
+                        ),
+                    });
+                }
+                Err(error)
+            }
+        };
     }
     if is_import && expected_bytes != u64::MAX && source_metadata.len() != expected_bytes {
         return Err(safe_path_short_io(
@@ -94,7 +184,7 @@ pub(crate) fn start_file_copy_cursor(
     let destination_copy = open_copy_file(&destination_entry, true)?;
 
     Ok((
-        Some(FileCopyCursor {
+        Some(CopyCursor::File(FileCopyCursor {
             source: source_entry,
             destination: destination_entry,
             source_copy: Some(source_copy),
@@ -106,7 +196,9 @@ pub(crate) fn start_file_copy_cursor(
             source_hash: Sha1::new(),
             destination_hash: Sha1::new(),
             phase: FileCopyPhase::Copy,
-        }),
+            copy_only: false,
+            cleanup_on_error: true,
+        })),
         false,
     ))
 }
@@ -145,6 +237,450 @@ fn open_copy_file(entry: &Entry, create_new: bool) -> Result<File, StorageError>
     Ok(file)
 }
 
+fn entry_from_directory(
+    directory: &Dir,
+    name: &std::ffi::OsStr,
+    path: &Path,
+) -> Result<Entry, StorageError> {
+    Ok(Entry {
+        parent: crate::open::reopen_windows_directory(directory)
+            .map_err(|error| StorageError::io(path.display().to_string(), error))?,
+        _ancestor_directories: Vec::new(),
+        name: name.to_os_string(),
+        path: path.to_path_buf(),
+    })
+}
+
+fn start_file_copy_cursor_at(
+    source: &Entry,
+    destination: &Entry,
+    expected_bytes: u64,
+) -> Result<FileCopyCursor, StorageError> {
+    let source_metadata = entry_metadata(source, "copy-source")?;
+    ensure_supported_entry(&source_metadata, &source.path, "copy-source")?;
+    if !source_metadata.is_file() {
+        return Err(plan_error(
+            "copy-source",
+            &format!("not a regular file: {}", source.path.display()),
+        ));
+    }
+    ensure_missing(destination, "destination")?;
+    let source = entry_from_directory(&source.parent, &source.name, &source.path)?;
+    let destination =
+        entry_from_directory(&destination.parent, &destination.name, &destination.path)?;
+    let source_copy = open_copy_file(&source, false)?;
+    let destination_copy = open_copy_file(&destination, true)?;
+    let source_bytes = source_copy
+        .metadata()
+        .map_err(|error| StorageError::io(source.path.display().to_string(), error))?
+        .len();
+    let expected_bytes = if expected_bytes == u64::MAX {
+        source_bytes
+    } else {
+        expected_bytes
+    };
+    Ok(FileCopyCursor {
+        source,
+        destination,
+        source_copy: Some(source_copy),
+        destination_copy: Some(destination_copy),
+        source_verify: None,
+        destination_verify: None,
+        expected_bytes,
+        copied_bytes: 0,
+        source_hash: Sha1::new(),
+        destination_hash: Sha1::new(),
+        phase: FileCopyPhase::Copy,
+        copy_only: true,
+        cleanup_on_error: false,
+    })
+}
+
+fn start_file_verification_cursor_at(
+    source: &Entry,
+    destination: &Entry,
+) -> Result<FileCopyCursor, StorageError> {
+    let source_metadata = entry_metadata(source, "verify-content-source")?;
+    let destination_metadata = entry_metadata(destination, "verify-content-destination")?;
+    ensure_supported_entry(&source_metadata, &source.path, "verify-content-source")?;
+    ensure_supported_entry(
+        &destination_metadata,
+        &destination.path,
+        "verify-content-destination",
+    )?;
+    if !source_metadata.is_file() || !destination_metadata.is_file() {
+        return Err(plan_error(
+            "verify-content",
+            &format!("file type differs at {}", source.path.display()),
+        ));
+    }
+    if source_metadata.len() != destination_metadata.len() {
+        return Err(safe_path_short_io(
+            &destination.path,
+            source_metadata.len(),
+            destination_metadata.len(),
+        ));
+    }
+    let source = entry_from_directory(&source.parent, &source.name, &source.path)?;
+    let destination =
+        entry_from_directory(&destination.parent, &destination.name, &destination.path)?;
+    let source_verify = open_copy_file(&source, false)?;
+    let destination_verify = open_copy_file(&destination, false)?;
+    Ok(FileCopyCursor {
+        source,
+        destination,
+        source_copy: None,
+        destination_copy: None,
+        source_verify: Some(source_verify),
+        destination_verify: Some(destination_verify),
+        expected_bytes: source_metadata.len(),
+        copied_bytes: 0,
+        source_hash: Sha1::new(),
+        destination_hash: Sha1::new(),
+        phase: FileCopyPhase::HashSource,
+        copy_only: true,
+        cleanup_on_error: false,
+    })
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DirectoryCopyPhase {
+    Copy,
+    Verify,
+}
+
+struct WindowsDirectoryReader {
+    entries: cap_std::fs::ReadDir,
+    path: PathBuf,
+}
+
+impl WindowsDirectoryReader {
+    fn new(directory: &Dir, path: &Path) -> Result<Self, StorageError> {
+        Ok(Self {
+            entries: directory
+                .entries()
+                .map_err(|error| StorageError::io(path.display().to_string(), error))?,
+            path: path.to_path_buf(),
+        })
+    }
+
+    fn next_name(&mut self) -> Result<Option<OsString>, StorageError> {
+        let Some(item) = self.entries.next() else {
+            return Ok(None);
+        };
+        item.map(|entry| Some(entry.file_name()))
+            .map_err(|error| StorageError::io(self.path.display().to_string(), error))
+    }
+}
+
+struct DirectoryCopyFrame {
+    source_dir: Dir,
+    destination_dir: Dir,
+    source_path: PathBuf,
+    destination_path: PathBuf,
+    depth: usize,
+    source_reader: WindowsDirectoryReader,
+    destination_reader: Option<WindowsDirectoryReader>,
+    checking_destination: bool,
+}
+
+impl DirectoryCopyFrame {
+    fn new(
+        source_dir: Dir,
+        destination_dir: Dir,
+        source_path: PathBuf,
+        destination_path: PathBuf,
+        depth: usize,
+        phase: DirectoryCopyPhase,
+    ) -> Result<Self, StorageError> {
+        let source_reader = WindowsDirectoryReader::new(&source_dir, &source_path)?;
+        let destination_reader = if phase == DirectoryCopyPhase::Verify {
+            Some(WindowsDirectoryReader::new(
+                &destination_dir,
+                &destination_path,
+            )?)
+        } else {
+            None
+        };
+        Ok(Self {
+            source_dir,
+            destination_dir,
+            source_path,
+            destination_path,
+            depth,
+            source_reader,
+            destination_reader,
+            checking_destination: false,
+        })
+    }
+}
+
+struct DirectoryCopyCursor {
+    source: Entry,
+    destination: Entry,
+    roots: Vec<PathBuf>,
+    expected_bytes: u64,
+    copied_bytes: u64,
+    active_file: Option<FileCopyCursor>,
+    phase: DirectoryCopyPhase,
+    stack: Vec<DirectoryCopyFrame>,
+}
+
+impl DirectoryCopyCursor {
+    fn advance_quantum(
+        &mut self,
+        check_control: &dyn Fn() -> Result<(), StorageError>,
+    ) -> Result<bool, StorageError> {
+        match self.advance_quantum_inner(check_control) {
+            Ok(complete) => Ok(complete),
+            Err(error) => Err(self.cleanup_partial_destination(error)),
+        }
+    }
+
+    fn advance_quantum_inner(
+        &mut self,
+        check_control: &dyn Fn() -> Result<(), StorageError>,
+    ) -> Result<bool, StorageError> {
+        check_control()?;
+        if self.active_file.is_some() {
+            let complete = self
+                .active_file
+                .as_mut()
+                .expect("active file was present")
+                .advance_quantum(check_control)?;
+            if complete {
+                let file = self.active_file.take().expect("active file was present");
+                if self.phase == DirectoryCopyPhase::Copy {
+                    let next = self
+                        .copied_bytes
+                        .checked_add(file.copied_bytes)
+                        .ok_or_else(|| plan_error("copy-size", "copied byte count overflow"))?;
+                    if self.expected_bytes != u64::MAX && next > self.expected_bytes {
+                        return Err(safe_path_short_io(
+                            &self.destination.path,
+                            self.expected_bytes,
+                            next,
+                        ));
+                    }
+                    self.copied_bytes = next;
+                }
+            }
+            return Ok(false);
+        }
+        match self.phase {
+            DirectoryCopyPhase::Copy => self.advance_copy_tree(check_control),
+            DirectoryCopyPhase::Verify => self.advance_verify_tree(check_control),
+        }
+    }
+
+    fn advance_copy_tree(
+        &mut self,
+        check_control: &dyn Fn() -> Result<(), StorageError>,
+    ) -> Result<bool, StorageError> {
+        check_control()?;
+        let Some(index) = self.stack.len().checked_sub(1) else {
+            if self.expected_bytes != u64::MAX && self.copied_bytes != self.expected_bytes {
+                return Err(safe_path_short_io(
+                    &self.destination.path,
+                    self.expected_bytes,
+                    self.copied_bytes,
+                ));
+            }
+            let source_dir = open_child_directory(
+                &self.source.parent,
+                &self.source.name,
+                &self.source.path,
+                "verify-content-source",
+            )?;
+            let destination_dir = open_child_directory(
+                &self.destination.parent,
+                &self.destination.name,
+                &self.destination.path,
+                "verify-content-destination",
+            )?;
+            self.stack.push(DirectoryCopyFrame::new(
+                source_dir,
+                destination_dir,
+                self.source.path.clone(),
+                self.destination.path.clone(),
+                0,
+                DirectoryCopyPhase::Verify,
+            )?);
+            self.phase = DirectoryCopyPhase::Verify;
+            return Ok(false);
+        };
+        let Some(name) = self.stack[index].source_reader.next_name()? else {
+            self.stack.pop();
+            return Ok(false);
+        };
+        let source_path = self.stack[index].source_path.join(&name);
+        let destination_path = self.stack[index].destination_path.join(&name);
+        let source_entry =
+            entry_from_directory(&self.stack[index].source_dir, &name, &source_path)?;
+        let destination_entry =
+            entry_from_directory(&self.stack[index].destination_dir, &name, &destination_path)?;
+        let source_metadata = entry_metadata(&source_entry, "copy-source")?;
+        ensure_supported_entry(&source_metadata, &source_path, "copy-source")?;
+        if source_metadata.is_dir() {
+            let depth = self.stack[index].depth.saturating_add(1);
+            ensure_storage_tree_depth(depth, &source_path, "copy-tree-depth")?;
+            self.stack[index]
+                .destination_dir
+                .create_dir(Path::new(&name))
+                .map_err(|error| StorageError::io(destination_path.display().to_string(), error))?;
+            let source_dir = open_child_directory(
+                &self.stack[index].source_dir,
+                &name,
+                &source_path,
+                "copy-source",
+            )?;
+            let destination_dir = open_child_directory(
+                &self.stack[index].destination_dir,
+                &name,
+                &destination_path,
+                "copy-destination",
+            )?;
+            self.stack.push(DirectoryCopyFrame::new(
+                source_dir,
+                destination_dir,
+                source_path,
+                destination_path,
+                depth,
+                DirectoryCopyPhase::Copy,
+            )?);
+            return Ok(false);
+        }
+        self.active_file = Some(start_file_copy_cursor_at(
+            &source_entry,
+            &destination_entry,
+            u64::MAX,
+        )?);
+        Ok(false)
+    }
+
+    fn advance_verify_tree(
+        &mut self,
+        check_control: &dyn Fn() -> Result<(), StorageError>,
+    ) -> Result<bool, StorageError> {
+        check_control()?;
+        let Some(index) = self.stack.len().checked_sub(1) else {
+            return Ok(true);
+        };
+        if !self.stack[index].checking_destination {
+            let Some(name) = self.stack[index].source_reader.next_name()? else {
+                self.stack[index].checking_destination = true;
+                return Ok(false);
+            };
+            let source_path = self.stack[index].source_path.join(&name);
+            let destination_path = self.stack[index].destination_path.join(&name);
+            let source_entry =
+                entry_from_directory(&self.stack[index].source_dir, &name, &source_path)?;
+            let destination_entry =
+                entry_from_directory(&self.stack[index].destination_dir, &name, &destination_path)?;
+            let source_metadata = entry_metadata(&source_entry, "verify-content-source")?;
+            let destination_metadata =
+                entry_metadata(&destination_entry, "verify-content-destination")?;
+            ensure_supported_entry(&source_metadata, &source_path, "verify-content-source")?;
+            ensure_supported_entry(
+                &destination_metadata,
+                &destination_path,
+                "verify-content-destination",
+            )?;
+            if source_metadata.is_dir() && destination_metadata.is_dir() {
+                let depth = self.stack[index].depth.saturating_add(1);
+                ensure_storage_tree_depth(depth, &source_path, "verify-tree-depth")?;
+                let source_dir = open_child_directory(
+                    &self.stack[index].source_dir,
+                    &name,
+                    &source_path,
+                    "verify-content-source",
+                )?;
+                let destination_dir = open_child_directory(
+                    &self.stack[index].destination_dir,
+                    &name,
+                    &destination_path,
+                    "verify-content-destination",
+                )?;
+                self.stack.push(DirectoryCopyFrame::new(
+                    source_dir,
+                    destination_dir,
+                    source_path,
+                    destination_path,
+                    depth,
+                    DirectoryCopyPhase::Verify,
+                )?);
+                return Ok(false);
+            }
+            if !source_metadata.is_file() || !destination_metadata.is_file() {
+                return Err(plan_error(
+                    "verify-content",
+                    &format!("file type differs at {}", source_path.display()),
+                ));
+            }
+            self.active_file = Some(start_file_verification_cursor_at(
+                &source_entry,
+                &destination_entry,
+            )?);
+            return Ok(false);
+        }
+
+        let Some(name) = self.stack[index]
+            .destination_reader
+            .as_mut()
+            .expect("verification frame has destination reader")
+            .next_name()?
+        else {
+            self.stack.pop();
+            return Ok(false);
+        };
+        let source_path = self.stack[index].source_path.join(&name);
+        let destination_path = self.stack[index].destination_path.join(&name);
+        let source_entry =
+            entry_from_directory(&self.stack[index].source_dir, &name, &source_path)?;
+        let destination_entry =
+            entry_from_directory(&self.stack[index].destination_dir, &name, &destination_path)?;
+        let source_metadata = entry_metadata(&source_entry, "verify-content-source")?;
+        let destination_metadata =
+            entry_metadata(&destination_entry, "verify-content-destination")?;
+        ensure_supported_entry(&source_metadata, &source_path, "verify-content-source")?;
+        ensure_supported_entry(
+            &destination_metadata,
+            &destination_path,
+            "verify-content-destination",
+        )?;
+        if source_metadata.is_dir() != destination_metadata.is_dir()
+            || source_metadata.is_file() != destination_metadata.is_file()
+        {
+            return Err(plan_error(
+                "verify-content",
+                &format!("directory entries differ at {}", destination_path.display()),
+            ));
+        }
+        Ok(false)
+    }
+
+    fn cleanup_partial_destination(&mut self, error: StorageError) -> StorageError {
+        match self.discard_partial_destination() {
+            Ok(()) => error,
+            Err(cleanup_error) => StorageError::FilesystemStateUncertain {
+                step: "copy-cleanup",
+                reason: format!("{error}; failed to clean partial destination: {cleanup_error}"),
+            },
+        }
+    }
+
+    fn discard_partial_destination(&mut self) -> Result<(), StorageError> {
+        self.active_file.take();
+        self.stack.clear();
+        safe_delete(&self.destination.path, &self.roots, true, &|| Ok(())).map_err(|error| {
+            StorageError::FilesystemStateUncertain {
+                step: "copy-cleanup",
+                reason: format!("failed to remove partial destination: {error}"),
+            }
+        })
+    }
+}
+
 impl FileCopyCursor {
     pub(crate) fn advance_quantum(
         &mut self,
@@ -152,7 +688,8 @@ impl FileCopyCursor {
     ) -> Result<bool, StorageError> {
         match self.advance_quantum_inner(check_control) {
             Ok(complete) => Ok(complete),
-            Err(error) => Err(self.cleanup_partial_destination(error)),
+            Err(error) if self.cleanup_on_error => Err(self.cleanup_partial_destination(error)),
+            Err(error) => Err(error),
         }
     }
 
@@ -211,6 +748,9 @@ impl FileCopyCursor {
                     })?;
                 self.source_copy.take();
                 self.destination_copy.take();
+                if self.copy_only {
+                    return Ok(true);
+                }
                 self.source_verify = Some(open_copy_file(&self.source, false)?);
                 self.destination_verify = Some(open_copy_file(&self.destination, false)?);
                 self.phase = FileCopyPhase::HashSource;
@@ -1676,9 +2216,9 @@ mod tests {
 
         let mut complete = false;
         while !complete {
-            let copied_before = cursor.copied_bytes;
+            let copied_before = cursor.copied_bytes();
             complete = cursor.advance_quantum(&no_control).unwrap();
-            let copied_this_quantum = cursor.copied_bytes - copied_before;
+            let copied_this_quantum = cursor.copied_bytes() - copied_before;
             assert!(copied_this_quantum <= SECURE_COPY_QUANTUM_BYTES as u64);
         }
 
@@ -1713,6 +2253,90 @@ mod tests {
         assert!(
             !destination.exists(),
             "cancelled copy leaves no partial file"
+        );
+    }
+
+    #[test]
+    fn directory_copy_cursor_preempts_and_verifies_streamed_tree() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        let source = root.join("source");
+        let nested = source.join("nested/deeper");
+        std::fs::create_dir_all(&nested).unwrap();
+        let first = vec![0x51; SECURE_COPY_QUANTUM_BYTES * 3 + 19];
+        let second = vec![0xa7; SECURE_COPY_QUANTUM_BYTES + 7];
+        std::fs::write(source.join("first.bin"), &first).unwrap();
+        std::fs::write(nested.join("second.bin"), &second).unwrap();
+        let destination = root.join("destination");
+        let roots = vec![configured_root(&root)];
+        let no_control = || Ok(());
+
+        let (cursor, already_complete) = start_file_copy_cursor(
+            &source,
+            &destination,
+            (first.len() + second.len()) as u64,
+            &roots,
+            &no_control,
+            false,
+        )
+        .unwrap();
+        assert!(!already_complete);
+        let mut cursor = cursor.expect("directory copies use the resumable cursor");
+        let mut quanta = 0;
+        loop {
+            let before = cursor.copied_bytes();
+            let complete = cursor.advance_quantum(&no_control).unwrap();
+            let advanced = cursor.copied_bytes().saturating_sub(before);
+            assert!(advanced <= SECURE_COPY_QUANTUM_BYTES as u64);
+            quanta += 1;
+            if complete {
+                break;
+            }
+        }
+
+        assert!(
+            quanta > 10,
+            "copy and verification should yield between bounded steps"
+        );
+        assert_eq!(std::fs::read(destination.join("first.bin")).unwrap(), first);
+        assert_eq!(
+            std::fs::read(destination.join("nested/deeper/second.bin")).unwrap(),
+            second
+        );
+    }
+
+    #[test]
+    fn directory_copy_cursor_cancellation_removes_partial_tree() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        let source = root.join("source");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("payload.bin"),
+            vec![0x33; SECURE_COPY_QUANTUM_BYTES * 3],
+        )
+        .unwrap();
+        let destination = root.join("destination");
+        let roots = vec![configured_root(&root)];
+        let no_control = || Ok(());
+        let (cursor, _) =
+            start_file_copy_cursor(&source, &destination, u64::MAX, &roots, &no_control, false)
+                .unwrap();
+        let mut cursor = cursor.expect("directory copies use the resumable cursor");
+        assert!(!cursor.advance_quantum(&no_control).unwrap());
+        assert!(!cursor.advance_quantum(&no_control).unwrap());
+        assert!(destination.join("payload.bin").exists());
+
+        let cancelled = || {
+            Err(StorageError::StagedMoveFailed {
+                step: "cancel",
+                reason: "copy cancelled".to_owned(),
+            })
+        };
+        assert!(cursor.advance_quantum(&cancelled).is_err());
+        assert!(
+            !destination.exists(),
+            "cancelled tree copy leaves no partial tree"
         );
     }
 
