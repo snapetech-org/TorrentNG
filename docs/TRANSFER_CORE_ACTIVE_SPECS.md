@@ -2070,3 +2070,79 @@ unrelated hosts, or replace the matched whole-client trials.
 - **Artifact or report path:** pending calibration and bulk pass.
 - **External evidence still required:** repeated network, disk, hash, and RTT
   calibration on the dedicated comparison host.
+
+## PERF-113 — Descriptive paired scorecard
+
+- **Priority / wave:** P1 / 7
+- **Prerequisites:** PERF-101, PERF-102, PERF-104, PERF-110
+- **Owning component:** certification analysis tooling.
+- **Finding or capability:** comparisons must retain exact pairing, workload
+  identity, accounting domains, exclusions, and uncertainty without turning
+  proposed numbers into unapproved release thresholds.
+- **Status:** `wip`
+
+### Scope
+
+Read a validated manifest and its linked trial records, form comparison groups
+only from identical workload and environment signatures, and calculate
+pairwise client ratios with deterministic percentile-bootstrap 95% intervals
+for their median. Preserve per-pair observations and reasons for excluded
+attempts. The scorecard is descriptive; it does not make release decisions or
+adopt the proposal in `TRANSFER_CORE_REBUILD.md`.
+
+### Ownership and invariant
+
+- **Current owner:** `scorecard.py` consumes immutable PERF-101 manifest
+  evidence; PERF-110 remains responsible for producing randomized paired runs.
+- **Target owner:** the paired runner and scorecard report remain separate
+  stages so an analysis can be reproduced from a retained manifest.
+- **Invariant preserved:** client comparisons use the same pair IDs and exact
+  workload/environment identity; RSS, PSS, cgroup domains, CPU, I/O, and energy
+  are not silently conflated.
+- **Must not:** compare unpaired history, drop failed attempts silently, infer
+  missing resources as zero, or treat the sample minimum as a pass/fail gate.
+
+### Acceptance
+
+- The input manifest and referenced trial/artifact digests validate before
+  analysis.
+- Only complete trials with passing applicable integrity enter comparisons;
+  each excluded pair has an explicit reason.
+- A paired comparison reports each ratio, median ratio, deterministic
+  percentile-bootstrap 95% interval, paired count, and informational minimum
+  sample status.
+- Resource ratios retain their metric direction and accounting domain;
+  missing counters remain `null` or are absent from that comparison.
+- Client and resampling work are bounded; output is exclusive, mode `0600`, and
+  conforms to `transfer-scorecard-v1`.
+- The report states that no performance threshold was applied. Proposed
+  thresholds require a separate decision before results are observed.
+- Regression sources cover deterministic intervals, signature normalization,
+  failed/incomplete exclusion, malformed pair membership, and work bounds.
+
+### Files and compatibility
+
+- **Expected code paths:** `scripts/transfer_rebuild/scorecard.py`, the
+  scorecard schema and validator, measurement contract, harness README, and
+  `scripts/test_transfer_rebuild_scorecard.py`.
+- **State or wire compatibility:** additive `transfer-scorecard-v1` report;
+  trial and manifest formats do not change.
+- **Migration / rollback:** none; scorecards can be regenerated from retained
+  manifests and the pinned analysis revision.
+- **Feature flag or rollout boundary:** no superiority or release claim until
+  PERF-110 produces complete paired samples and PERF-113 receives the bulk
+  pass. No threshold is adopted here.
+
+### Evidence
+
+- **Regression source added or updated:**
+  `scripts/test_transfer_rebuild_scorecard.py`.
+- **Command or probe to run:** scorecard and artifact-validator regressions in
+  the requested bulk pass.
+- **Expected result:** deterministic paired ratios and intervals; malformed,
+  unpaired, or incomplete evidence is rejected or explicitly excluded.
+- **Executed on exact revision:** no.
+- **Artifact or report path:** pending PERF-110 paired runs and bulk pass.
+- **External evidence still required:** a complete randomized paired workload
+  set on the selected comparison host; scorecard source alone is not a
+  performance result.

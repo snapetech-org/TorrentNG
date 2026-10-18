@@ -159,6 +159,17 @@ No proposed scorecard number in `docs/TRANSFER_CORE_REBUILD.md` is adopted by
 this schema. Threshold adoption and release gates require a separate owner
 decision before results are observed.
 
+The descriptive `transfer-scorecard-v1` report groups only trials with matching
+workload and environment identities, then pairs clients by `pair_id`. It emits
+each pair's metric values and client-B/client-A ratio, plus a deterministic
+paired percentile-bootstrap 95% interval for the median ratio. Its minimum
+sample indicator is informational; the report does not apply performance
+thresholds or declare a winner. Incomplete, failed, unmeasured, invalid, and
+integrity-failing download or seed trials remain listed as excluded pairs with
+their reasons. Resource accounting domains remain separate and unavailable
+counters remain null. The scorecard schema is validated independently from the
+trial and manifest schemas.
+
 The shared harness primitives in `scripts/transfer_rebuild/measurement.py`
 implement a file-backed matched-start gate, per-file unique-range accounting,
 and distinct monotonic phase durations. The barrier directory is trial-owned

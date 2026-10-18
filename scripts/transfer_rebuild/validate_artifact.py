@@ -33,6 +33,7 @@ SCHEMAS = {
     "network-control": ROOT / "certification/transfer-rebuild/network-control.schema.json",
     "ceiling-input": ROOT / "certification/transfer-rebuild/ceiling-input.schema.json",
     "ceiling": ROOT / "certification/transfer-rebuild/ceiling-report.schema.json",
+    "scorecard": ROOT / "certification/transfer-rebuild/scorecard.schema.json",
 }
 CLIENT_OBSERVATION_KIND = "transfer-client-observation-v1"
 CACHE_STATE_KIND = "transfer-cache-state-v1"

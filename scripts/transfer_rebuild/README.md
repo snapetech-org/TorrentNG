@@ -58,6 +58,34 @@ Cold/warm trials must link a verified `transfer-cache-state-v1` artifact;
 manifest validation checks that the observed fixture and requested state match
 the trial and rejects a partial or unsupported state claim.
 
+## Paired scorecard
+
+`scorecard.py` builds a descriptive comparison from a validated manifest. It
+groups only identical workload and environment signatures, pairs observations
+by `pair_id`, excludes incomplete or invalid transfer outcomes, and reports
+per-pair ratios with a deterministic percentile-bootstrap 95% interval for the
+median ratio. RSS, PSS, cgroup memory, CPU, I/O, descriptors, threads, and energy
+remain separate metrics; unavailable measurements stay absent or `null`.
+`minimum_sample_met` is informational. The scorecard applies no performance
+threshold and does not establish that one client is superior.
+
+```sh
+python3 scripts/transfer_rebuild/scorecard.py \
+  --manifest /path/to/task-scratch/transfer-run/manifest.json \
+  --output /path/to/task-scratch/transfer-run/scorecard.json \
+  --bootstrap-samples 10000 \
+  --seed 17
+python3 scripts/transfer_rebuild/validate_artifact.py scorecard \
+  /path/to/task-scratch/transfer-run/scorecard.json
+```
+
+The scorecard retains pair-level metric samples, manifest digest, comparison
+signature, excluded-pair reasons, and sample counts. Output is created
+exclusively with mode `0600`. Safety limits cap input trials, clients per
+comparison group, and total resampled values. Regression sources are in
+`scripts/test_transfer_rebuild_scorecard.py`; they belong in the requested bulk
+pass and have not been run.
+
 ## Independent capacity ceilings
 
 `ceilings.py` derives diagnostic upload/download limits from a
