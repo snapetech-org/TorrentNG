@@ -795,7 +795,10 @@ cross-plane immutable spans, or integrate hybrid payload ownership.
 
 The pure `Ledger` owns per-piece block state and per-connection reservations,
 reconciles response/commit event reordering, accepts useful late data, and
-returns bounded protocol actions. v1, pure-v2, hybrid, and storage execution
+returns bounded protocol actions. A conservative 64 MiB logical piece-state
+budget, a 4,096-live-connection ceiling, a 1,024-request per-peer ceiling, a
+65,536-owner torrent ceiling, and a four-owner endgame cap keep its principal
+retained collections bounded. v1, pure-v2, hybrid, and storage execution
 remain on their reference paths until NET-114.
 
 ### Ownership and invariant
@@ -817,6 +820,9 @@ remain on their reference paths until NET-114.
   and in-flight totals.
 - Response-before-commit is reconciled once; its pending reconciliation
   history and late-response tombstones have hard per-connection caps.
+- Piece-state admission and release preserve the configured logical byte
+  budget; live connections, peer request depth, torrent-wide in-flight
+  ownership, and endgame duplicate owners have explicit hard ceilings.
 - A useful tombstoned response may supersede a replacement request and
   returns cancellation actions for the replacement owners.
 - Completion, hash failure, choke, reject, timeout, disconnect, resume-have,
@@ -837,8 +843,9 @@ remain on their reference paths until NET-114.
 ### Evidence
 
 - **Regression source added or updated:** ledger transition cases and seeded
-  simulator replay; current additions include bounded commit history and late
-  data superseding a replacement reservation.
+  simulator replay; current additions include bounded commit history, late
+  data superseding a replacement reservation, byte-budget lifecycle, bounded
+  connection registration, and request/endgame caps.
 - **Command or probe to run:** transfer-core and simulator tests during the
   requested bulk pass.
 - **Expected result:** all transitions preserve ledger conservation and all

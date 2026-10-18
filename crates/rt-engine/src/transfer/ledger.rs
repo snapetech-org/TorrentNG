@@ -32,8 +32,18 @@ use super::Nanos;
 
 /// Default ceiling on requests one connection may have outstanding.
 pub const DEFAULT_REMOTE_REQQ: usize = 250;
+/// Hard ceiling on request and tombstone state retained for one connection.
+pub const MAX_REMOTE_REQQ: usize = 1_024;
+/// Hard ceiling on live connection state retained by one ledger.
+pub const MAX_CONNECTIONS: usize = 4_096;
 /// Default bound on pieces being acquired at once.
 pub const DEFAULT_MAX_IN_PROGRESS_PIECES: usize = 1024;
+/// Hard logical-memory ceiling for in-progress piece state.
+pub const MAX_IN_PROGRESS_BYTES: usize = 64 * 1024 * 1024;
+/// Hard ceiling on request-owner entries across the torrent.
+pub const MAX_IN_FLIGHT: usize = 65_536;
+/// Bound the number of connections that may own one endgame block.
+const MAX_ENDGAME_OWNERS_PER_BLOCK: usize = 4;
 /// Hard ceiling for per-connection late-event history, even when a peer
 /// advertises an implausibly large request queue.
 const MAX_RECENT_BLOCKS_PER_CONNECTION: usize = 1024;
@@ -59,7 +69,10 @@ pub enum ReserveError {
     /// This connection already owns the block.
     AlreadyOwned,
     ConnectionFull,
+    GlobalRequestLimit,
+    TooManyOwners,
     TooManyPieces,
+    InProgressByteLimit,
     /// The piece is complete and awaiting verification.
     AwaitingVerification,
     /// The piece is already complete and verified.
@@ -131,16 +144,34 @@ struct PieceState {
     sources: Vec<Option<ConnectionId>>,
     received: u32,
     awaiting_verification: bool,
+    budget_bytes: usize,
 }
 
 impl PieceState {
     fn new(blocks: u32) -> Self {
+        let blocks = blocks as usize;
         Self {
-            slots: vec![Slot::Missing; blocks as usize],
-            sources: vec![None; blocks as usize],
+            slots: vec![Slot::Missing; blocks],
+            sources: vec![None; blocks],
             received: 0,
             awaiting_verification: false,
+            budget_bytes: Self::estimated_bytes(blocks),
         }
+    }
+
+    fn estimated_bytes(blocks: usize) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(blocks.saturating_mul(std::mem::size_of::<Slot>()))
+            .saturating_add(blocks.saturating_mul(std::mem::size_of::<Option<ConnectionId>>()))
+            // A reserved slot owns a small Vec. Charge for its maximum bounded
+            // endgame owner capacity, not only its inline Vec header.
+            .saturating_add(
+                blocks
+                    .saturating_mul(MAX_ENDGAME_OWNERS_PER_BLOCK)
+                    .saturating_mul(std::mem::size_of::<Owner>()),
+            )
+            // Include a conservative hash-table/key allowance for this state.
+            .saturating_add(std::mem::size_of::<(u32, PieceState)>() + 32)
     }
 
     fn is_complete(&self) -> bool {
@@ -277,7 +308,12 @@ pub struct Ledger<G: PieceGeometry> {
     free_slots: Vec<u32>,
     pieces: HashMap<u32, PieceState>,
     have: HaveSet,
+    max_connections: usize,
+    active_connections: usize,
     max_in_progress: usize,
+    max_in_progress_bytes: usize,
+    max_in_flight: usize,
+    in_progress_bytes: usize,
     in_flight: usize,
 }
 
@@ -291,13 +327,36 @@ impl<G: PieceGeometry> Ledger<G> {
             free_slots: Vec::new(),
             pieces: HashMap::new(),
             have: HaveSet::new(pieces),
+            max_connections: MAX_CONNECTIONS,
+            active_connections: 0,
             max_in_progress: DEFAULT_MAX_IN_PROGRESS_PIECES,
+            max_in_progress_bytes: MAX_IN_PROGRESS_BYTES,
+            max_in_flight: MAX_IN_FLIGHT,
+            in_progress_bytes: 0,
             in_flight: 0,
         }
     }
 
     pub fn with_max_in_progress(mut self, max: usize) -> Self {
-        self.max_in_progress = max.max(1);
+        self.max_in_progress = max.clamp(1, DEFAULT_MAX_IN_PROGRESS_PIECES);
+        self
+    }
+
+    /// Set a lower live-connection bound before registering peers.
+    pub fn with_max_connections(mut self, max: usize) -> Self {
+        self.max_connections = max.min(MAX_CONNECTIONS);
+        self
+    }
+
+    /// Set a lower logical state budget before opening pieces.
+    pub fn with_max_in_progress_bytes(mut self, max: usize) -> Self {
+        self.max_in_progress_bytes = max.min(MAX_IN_PROGRESS_BYTES);
+        self
+    }
+
+    /// Set a lower torrent-wide bound for in-flight request ownership.
+    pub fn with_max_in_flight(mut self, max: usize) -> Self {
+        self.max_in_flight = max.min(MAX_IN_FLIGHT);
         self
     }
 
@@ -311,9 +370,13 @@ impl<G: PieceGeometry> Ledger<G> {
 
     // ---- connections ------------------------------------------------------
 
-    pub fn connect(&mut self, remote_reqq: usize) -> ConnectionId {
-        let state = ConnState::new(remote_reqq.max(1));
-        if let Some(slot) = self.free_slots.pop() {
+    /// Register a peer when the bounded connection table has capacity.
+    pub fn try_connect(&mut self, remote_reqq: usize) -> Option<ConnectionId> {
+        if self.active_connections >= self.max_connections {
+            return None;
+        }
+        let state = ConnState::new(remote_reqq.clamp(1, MAX_REMOTE_REQQ));
+        let conn = if let Some(slot) = self.free_slots.pop() {
             let entry = &mut self.conns[slot as usize];
             entry.generation = entry.generation.wrapping_add(1);
             entry.state = Some(state);
@@ -331,12 +394,21 @@ impl<G: PieceGeometry> Ledger<G> {
                 slot,
                 generation: 1,
             }
-        }
+        };
+        self.active_connections += 1;
+        Some(conn)
+    }
+
+    /// Infallible convenience for bounded simulations and fixtures.
+    /// Runtime adapters should use [`Self::try_connect`] and handle saturation.
+    pub fn connect(&mut self, remote_reqq: usize) -> ConnectionId {
+        self.try_connect(remote_reqq)
+            .expect("transfer ledger connection limit reached")
     }
 
     pub fn set_remote_reqq(&mut self, conn: ConnectionId, reqq: usize) {
         if let Some(state) = self.conn_mut(conn) {
-            state.reqq = reqq.max(1);
+            state.reqq = reqq.clamp(1, MAX_REMOTE_REQQ);
             state.trim_history();
         }
     }
@@ -373,6 +445,7 @@ impl<G: PieceGeometry> Ledger<G> {
         let Some(state) = entry.state.take() else {
             return Vec::new();
         };
+        self.active_connections = self.active_connections.saturating_sub(1);
         self.free_slots.push(conn.slot);
         let mut released = Vec::new();
         for block in state.outstanding {
@@ -406,7 +479,14 @@ impl<G: PieceGeometry> Ledger<G> {
         if self.pieces.len() >= self.max_in_progress {
             return Err(ReserveError::TooManyPieces);
         }
-        self.pieces.insert(piece, PieceState::new(blocks));
+        let state = PieceState::new(blocks);
+        if self.in_progress_bytes.saturating_add(state.budget_bytes)
+            > self.max_in_progress_bytes
+        {
+            return Err(ReserveError::InProgressByteLimit);
+        }
+        self.in_progress_bytes = self.in_progress_bytes.saturating_add(state.budget_bytes);
+        self.pieces.insert(piece, state);
         Ok(())
     }
 
@@ -426,6 +506,9 @@ impl<G: PieceGeometry> Ledger<G> {
             .ok_or(ReserveError::UnknownConnection)?;
         if outstanding_len.0 >= outstanding_len.1 {
             return Err(ReserveError::ConnectionFull);
+        }
+        if self.in_flight >= self.max_in_flight {
+            return Err(ReserveError::GlobalRequestLimit);
         }
         self.begin_piece(block.piece)?;
         let state = self
@@ -450,6 +533,9 @@ impl<G: PieceGeometry> Ledger<G> {
                 }
                 if *mode != ReserveMode::Endgame {
                     return Err(ReserveError::OwnedByOther);
+                }
+                if owners.len() >= MAX_ENDGAME_OWNERS_PER_BLOCK {
+                    return Err(ReserveError::TooManyOwners);
                 }
                 owners.push(Owner {
                     conn,
@@ -781,9 +867,15 @@ impl<G: PieceGeometry> Ledger<G> {
             .unwrap_or_default()
     }
 
+    fn take_piece_state(&mut self, piece: u32) -> Option<PieceState> {
+        let state = self.pieces.remove(&piece)?;
+        self.in_progress_bytes = self.in_progress_bytes.saturating_sub(state.budget_bytes);
+        Some(state)
+    }
+
     /// The piece verified: it is now `have` and its acquisition state is freed.
     pub fn piece_verified(&mut self, piece: u32) {
-        if let Some(state) = self.pieces.remove(&piece) {
+        if let Some(state) = self.take_piece_state(piece) {
             // No block of a verified piece can still be reserved.
             debug_assert!(state.is_complete());
         }
@@ -794,7 +886,7 @@ impl<G: PieceGeometry> Ledger<G> {
     /// again. Returns the contributors for blame.
     pub fn piece_failed(&mut self, piece: u32) -> Vec<ConnectionId> {
         let sources = self.contributors(piece);
-        self.pieces.remove(&piece);
+        self.take_piece_state(piece);
         self.have.clear(piece);
         sources
     }
@@ -802,7 +894,7 @@ impl<G: PieceGeometry> Ledger<G> {
     /// Mark a piece already held (resume data, recheck result).
     pub fn mark_have(&mut self, piece: u32) -> Vec<Action> {
         let mut actions = Vec::new();
-        if let Some(state) = self.pieces.remove(&piece) {
+        if let Some(state) = self.take_piece_state(piece) {
             for (index, slot) in state.slots.into_iter().enumerate() {
                 if let Slot::Reserved(owners) = slot {
                     if let Some(block) = self.geometry.block_extent(piece, index as u32) {
@@ -843,6 +935,7 @@ impl<G: PieceGeometry> Ledger<G> {
             }
         }
         self.pieces.clear();
+        self.in_progress_bytes = 0;
         self.in_flight = 0;
         for entry in &mut self.conns {
             if let Some(state) = entry.state.as_mut() {
@@ -879,6 +972,11 @@ impl<G: PieceGeometry> Ledger<G> {
         self.pieces.len()
     }
 
+    /// Conservative logical allocation reserved by in-progress piece state.
+    pub fn in_progress_bytes(&self) -> usize {
+        self.in_progress_bytes
+    }
+
     pub fn piece_progress(&self, piece: u32) -> Option<(u32, u32)> {
         self.pieces
             .get(&piece)
@@ -890,7 +988,13 @@ impl<G: PieceGeometry> Ledger<G> {
     pub fn check_invariants(&self) -> Result<(), String> {
         let mut owned: HashMap<ConnectionId, HashSet<BlockExtent>> = HashMap::new();
         let mut total = 0usize;
+        let mut total_state_bytes = 0usize;
         for (&piece_index, piece) in &self.pieces {
+            let expected_bytes = PieceState::estimated_bytes(piece.slots.len());
+            if piece.budget_bytes != expected_bytes {
+                return Err(format!("piece {piece_index} has a stale byte estimate"));
+            }
+            total_state_bytes = total_state_bytes.saturating_add(piece.budget_bytes);
             let mut received = 0u32;
             for (index, slot) in piece.slots.iter().enumerate() {
                 let block = self
@@ -902,6 +1006,9 @@ impl<G: PieceGeometry> Ledger<G> {
                     Slot::Reserved(owners) => {
                         if owners.is_empty() {
                             return Err(format!("{block:?} reserved with no owner"));
+                        }
+                        if owners.len() > MAX_ENDGAME_OWNERS_PER_BLOCK {
+                            return Err(format!("{block:?} exceeds its endgame owner limit"));
                         }
                         let mut seen = HashSet::new();
                         for owner in owners {
@@ -933,6 +1040,29 @@ impl<G: PieceGeometry> Ledger<G> {
         if total != self.in_flight {
             return Err(format!("in_flight {} != owners {total}", self.in_flight));
         }
+        if self.in_flight > self.max_in_flight {
+            return Err(format!(
+                "in-flight request count {} exceeds {}",
+                self.in_flight, self.max_in_flight
+            ));
+        }
+        let active_connections = self.conns.iter().filter(|entry| entry.state.is_some()).count();
+        if active_connections != self.active_connections
+            || self.active_connections > self.max_connections
+        {
+            return Err(format!(
+                "active connection accounting {} != {active_connections} or exceeds {}",
+                self.active_connections, self.max_connections
+            ));
+        }
+        if total_state_bytes != self.in_progress_bytes
+            || self.in_progress_bytes > self.max_in_progress_bytes
+        {
+            return Err(format!(
+                "in-progress byte accounting {} != {total_state_bytes} or exceeds {}",
+                self.in_progress_bytes, self.max_in_progress_bytes
+            ));
+        }
         for (slot, entry) in self.conns.iter().enumerate() {
             let Some(state) = entry.state.as_ref() else {
                 continue;
@@ -949,8 +1079,11 @@ impl<G: PieceGeometry> Ledger<G> {
                     expected.len()
                 ));
             }
-            if state.outstanding.len() > state.reqq {
-                return Err(format!("{conn} exceeds its request queue"));
+            if state.outstanding.len() > MAX_REMOTE_REQQ {
+                return Err(format!("{conn} exceeds the hard request queue ceiling"));
+            }
+            if !(1..=MAX_REMOTE_REQQ).contains(&state.reqq) {
+                return Err(format!("{conn} has an invalid request queue limit"));
             }
             if state.tombstones.len() != state.tombstone_set.len()
                 || state.tombstones.len() > state.tombstone_cap()
@@ -989,6 +1122,116 @@ mod tests {
 
     fn block(piece: u32, index: u32) -> BlockExtent {
         BlockExtent::new(piece, index * 16 * KIB, 16 * KIB)
+    }
+
+    #[test]
+    fn in_progress_state_obeys_byte_budget_and_releases_on_lifecycle_events() {
+        let state_bytes = PieceState::estimated_bytes(2);
+        let mut ledger = ledger().with_max_in_progress_bytes(state_bytes);
+        let conn = ledger.connect(8);
+
+        ledger
+            .reserve(conn, block(0, 0), &ReserveMode::Exclusive)
+            .unwrap();
+        assert_eq!(ledger.in_progress_bytes(), state_bytes);
+        assert_eq!(
+            ledger.reserve(conn, block(1, 0), &ReserveMode::Exclusive),
+            Err(ReserveError::InProgressByteLimit)
+        );
+
+        assert!(matches!(
+            ledger.on_block(conn, block(0, 0)),
+            ReceiveOutcome::Accepted { .. }
+        ));
+        ledger
+            .reserve(conn, block(0, 1), &ReserveMode::Exclusive)
+            .unwrap();
+        assert!(matches!(
+            ledger.on_block(conn, block(0, 1)),
+            ReceiveOutcome::Accepted {
+                completed: Some(_),
+                ..
+            }
+        ));
+        ledger.piece_verified(0);
+        assert_eq!(ledger.in_progress_bytes(), 0);
+
+        ledger
+            .reserve(conn, block(1, 0), &ReserveMode::Exclusive)
+            .unwrap();
+        ledger.piece_failed(1);
+        assert_eq!(ledger.in_progress_bytes(), 0);
+
+        ledger
+            .reserve(conn, block(2, 0), &ReserveMode::Exclusive)
+            .unwrap();
+        ledger.advance_epoch();
+        assert_eq!(ledger.in_progress_bytes(), 0);
+        ledger.check_invariants().unwrap();
+    }
+
+    #[test]
+    fn advertised_request_depth_and_endgame_owners_are_hard_capped() {
+        let mut ledger = ledger();
+        let too_deep = ledger.connect(usize::MAX);
+        assert_eq!(ledger.conn_ref(too_deep).unwrap().reqq, MAX_REMOTE_REQQ);
+        ledger.set_remote_reqq(too_deep, usize::MAX);
+        assert_eq!(ledger.conn_ref(too_deep).unwrap().reqq, MAX_REMOTE_REQQ);
+
+        let mut owners = vec![too_deep];
+        owners.extend((0..MAX_ENDGAME_OWNERS_PER_BLOCK).map(|_| ledger.connect(8)));
+        for (index, conn) in owners.iter().copied().take(MAX_ENDGAME_OWNERS_PER_BLOCK).enumerate() {
+            let mode = if index == 0 {
+                ReserveMode::Exclusive
+            } else {
+                ReserveMode::Endgame
+            };
+            ledger.reserve(conn, block(0, 0), &mode).unwrap();
+        }
+        assert_eq!(
+            ledger.reserve(
+                *owners.last().unwrap(),
+                block(0, 0),
+                &ReserveMode::Endgame
+            ),
+            Err(ReserveError::TooManyOwners)
+        );
+        ledger.check_invariants().unwrap();
+    }
+
+    #[test]
+    fn connection_table_is_bounded_and_reuses_a_new_generation() {
+        let mut ledger = ledger().with_max_connections(1);
+        let first = ledger.try_connect(8).unwrap();
+        assert!(ledger.try_connect(8).is_none());
+
+        ledger.disconnect(first);
+        let replacement = ledger.try_connect(8).unwrap();
+
+        assert_eq!(replacement.slot, first.slot);
+        assert_ne!(replacement.generation, first.generation);
+        ledger.check_invariants().unwrap();
+    }
+
+    #[test]
+    fn global_request_budget_reopens_after_an_obligation_is_released() {
+        let mut ledger = ledger().with_max_in_flight(1);
+        let conn = ledger.connect(8);
+        let first = block(0, 0);
+        let second = block(0, 1);
+
+        ledger
+            .reserve(conn, first, &ReserveMode::Exclusive)
+            .unwrap();
+        assert_eq!(
+            ledger.reserve(conn, second, &ReserveMode::Exclusive),
+            Err(ReserveError::GlobalRequestLimit)
+        );
+        assert_eq!(ledger.on_reject(conn, first), RejectOutcome::Released);
+        ledger
+            .reserve(conn, second, &ReserveMode::Exclusive)
+            .unwrap();
+        ledger.check_invariants().unwrap();
     }
 
     #[test]
