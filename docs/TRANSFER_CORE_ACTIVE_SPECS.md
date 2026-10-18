@@ -523,7 +523,8 @@ and the full injected-fault matrix remain open.
 - End-to-end scheduler regressions cancel submitted writes while completion is
   held, prove queue slots and queued-disk memory leases stay charged, verify
   later admission is rejected at each limit, and prove admission returns after
-  backend completion.
+  backend completion. A strict-mode case cancels during the write's sync,
+  retains dirty evidence, and recovers admission only after sync completion.
 - The full fault-injected device-service matrix remains open.
 
 ### Files and compatibility
@@ -540,13 +541,17 @@ and the full injected-fault matrix remain open.
 
 - **Regression source added or updated:**
   `cancelled_submitted_write_retains_queue_slot_until_completion`,
-  `cancelled_submitted_write_retains_memory_budget_until_completion`, and
-  helper-level completion-owner lifetime cases for canceled read/write waiters.
+  `cancelled_submitted_write_retains_memory_budget_until_completion`,
+  `cancelled_submitted_readahead_read_retains_extra_bytes_until_completion`,
+  `cancelled_strict_write_retains_admission_until_sync_completion`,
+  plus helper-level completion-owner lifetime cases for canceled read/write
+  waiters.
 - **Command or probe to run:** `cargo test -p rt-storage` and the scripted
   backend cancellation matrix during the requested bulk pass.
 - **Expected result:** accepted work holds its queue/device/byte owner until
-  backend completion; each bounded admission path recovers after completion,
-  with no leak after pre-submission failure.
+  backend completion; queue-slot and memory-budget admission recover after
+  completion, including strict-write sync and the extra charge for an expanded
+  peer read, with no leak after pre-submission failure.
 - **Executed on exact revision:** no.
 - **Artifact or report path:** pending bulk pass.
 - **External evidence still required:** cancellation and queue behavior under

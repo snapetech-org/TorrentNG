@@ -6492,6 +6492,13 @@ mod tests {
         })
     }
 
+    fn queued_disk_used_bytes(resources: &ResourceGovernor) -> u64 {
+        resources
+            .snapshot()
+            .classes[MemoryClass::QueuedDisk as usize]
+            .used_bytes
+    }
+
     #[tokio::test]
     async fn injected_read_failure_is_returned_without_marking_payload_dirty() {
         let dir = tempfile::tempdir().unwrap();
@@ -6781,6 +6788,196 @@ mod tests {
             resources.snapshot().classes[MemoryClass::QueuedDisk as usize].used_bytes,
             0
         );
+    }
+
+    #[tokio::test]
+    async fn cancelled_submitted_readahead_read_retains_extra_bytes_until_completion() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("readahead-held.bin");
+        std::fs::write(&path, vec![0xAB_u8; 4096]).unwrap();
+        let readahead_bytes = 2048;
+        let resources = queued_disk_governor(readahead_bytes as u64);
+        let mut scheduler = MountScheduler::new(
+            StorageRootId::new(),
+            &SchedulerConfig {
+                profile: StorageProfile::Hdd,
+                storage_io: StorageIoConfig {
+                    io_worker_threads: 1,
+                    io_queue_depth: 2,
+                    peer_read_readahead_bytes: readahead_bytes,
+                    peer_read_readahead_sequential_only: false,
+                    peer_read_cache_entries: 1,
+                    ..Default::default()
+                },
+                resources: Some(resources.clone()),
+                ..Default::default()
+            },
+        );
+        let backend = Arc::new(ScriptedDiskBackend::new(1, 8));
+        scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(
+            backend.clone(),
+        ));
+        backend.inject(Operation::Read, Effect::HoldCompletion);
+
+        let read_scheduler = scheduler.clone();
+        let read_path = path.clone();
+        let read = tokio::spawn(async move {
+            read_scheduler
+                .read_at(IoClass::PeerRead, &read_path, 0, 4)
+                .await
+        });
+
+        backend.wait_until_completion_is_held().await;
+        let charged = readahead_bytes as u64;
+        assert_eq!(scheduler.stats().queued_disk_bytes, charged);
+        assert_eq!(queued_disk_used_bytes(&resources), charged);
+        read.abort();
+        let _ = read.await;
+
+        assert_eq!(scheduler.stats().queued_disk_bytes, charged);
+        assert_eq!(
+            queued_disk_used_bytes(&resources),
+            charged,
+            "caller cancellation must retain the expanded read charge"
+        );
+        let denied = scheduler
+            .read_at(IoClass::Foreground, &path, 0, 4)
+            .await;
+        assert!(matches!(denied, Err(StorageError::QueueFull { .. })));
+        assert_eq!(scheduler.stats().queued_disk_bytes, charged);
+        assert_eq!(queued_disk_used_bytes(&resources), charged);
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::QueuedDisk as usize].denied_allocations,
+            1
+        );
+
+        assert!(backend.release_next());
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while scheduler.stats().queued_disk_bytes != 0
+                || queued_disk_used_bytes(&resources) != 0
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("backend completion should release the expanded read charge");
+
+        let bytes = scheduler
+            .read_at(IoClass::Foreground, &path, 0, 4)
+            .await
+            .unwrap();
+        assert_eq!(bytes.as_ref(), &[0xAB; 4]);
+        assert_eq!(scheduler.stats().queued_disk_bytes, 0);
+        assert_eq!(queued_disk_used_bytes(&resources), 0);
+    }
+
+    #[tokio::test]
+    async fn cancelled_strict_write_retains_admission_until_sync_completion() {
+        let dir = tempfile::tempdir().unwrap();
+        let first_path = dir.path().join("strict-held.bin");
+        let later_path = dir.path().join("strict-later.bin");
+        let resources = queued_disk_governor(QUEUED_DISK_JOB_OVERHEAD_BYTES);
+        let mut scheduler = MountScheduler::new(
+            StorageRootId::new(),
+            &SchedulerConfig {
+                profile: StorageProfile::Hdd,
+                max_queue: 4,
+                storage_io: StorageIoConfig {
+                    io_worker_threads: 1,
+                    io_queue_depth: 2,
+                    durability_mode: DurabilityMode::Strict,
+                    peer_read_elevator_budget_ms: 0,
+                    ..Default::default()
+                },
+                resources: Some(resources.clone()),
+                ..Default::default()
+            },
+        );
+        let backend = Arc::new(ScriptedDiskBackend::new(1, 8));
+        scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(
+            backend.clone(),
+        ));
+        backend.inject(Operation::Sync, Effect::HoldCompletion);
+
+        let write_scheduler = scheduler.clone();
+        let write_path = first_path.clone();
+        let write = tokio::spawn(async move {
+            write_scheduler
+                .write_at(
+                    IoClass::PeerWrite,
+                    &write_path,
+                    0,
+                    bytes::Bytes::from_static(b"strict-payload"),
+                    true,
+                )
+                .await
+        });
+
+        backend.wait_until_completion_is_held().await;
+        assert_eq!(
+            scheduler.stats().queued_disk_bytes,
+            QUEUED_DISK_JOB_OVERHEAD_BYTES
+        );
+        assert_eq!(
+            queued_disk_used_bytes(&resources),
+            QUEUED_DISK_JOB_OVERHEAD_BYTES
+        );
+        write.abort();
+        let _ = write.await;
+
+        assert_eq!(scheduler.stats().dirty_files, 1);
+        assert_eq!(
+            scheduler.stats().queued_disk_bytes,
+            QUEUED_DISK_JOB_OVERHEAD_BYTES
+        );
+        assert_eq!(
+            queued_disk_used_bytes(&resources),
+            QUEUED_DISK_JOB_OVERHEAD_BYTES,
+            "caller cancellation must retain admission through strict sync"
+        );
+        let denied = scheduler
+            .write_at(
+                IoClass::PeerWrite,
+                &later_path,
+                0,
+                bytes::Bytes::from_static(b"later"),
+                true,
+            )
+            .await;
+        assert!(matches!(denied, Err(StorageError::QueueFull { .. })));
+        assert_eq!(queued_disk_used_bytes(&resources), QUEUED_DISK_JOB_OVERHEAD_BYTES);
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::QueuedDisk as usize].denied_allocations,
+            1
+        );
+
+        assert!(backend.release_next());
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while scheduler.stats().queued_disk_bytes != 0
+                || queued_disk_used_bytes(&resources) != 0
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("strict-sync completion should release queue and byte admission");
+        assert_eq!(scheduler.stats().dirty_files, 1);
+
+        scheduler.sync_all_open_files().await.unwrap();
+        assert_eq!(scheduler.stats().dirty_files, 0);
+        scheduler
+            .write_at(
+                IoClass::PeerWrite,
+                &later_path,
+                0,
+                bytes::Bytes::from_static(b"later"),
+                true,
+            )
+            .await
+            .unwrap();
+        assert_eq!(scheduler.stats().queued_disk_bytes, 0);
+        assert_eq!(queued_disk_used_bytes(&resources), 0);
+        assert_eq!(std::fs::read(first_path).unwrap(), b"strict-payload");
     }
 
     #[tokio::test]
