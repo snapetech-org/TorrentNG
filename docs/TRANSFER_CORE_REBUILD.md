@@ -357,8 +357,9 @@ test pass establishes correctness of the landed slices only.
 
 ### Immediate code sequence
 
-1. **SYS-012** — add production-shaped compatibility and platform fixtures
-   before the shared actors become the only execution path.
+1. **SYS-012** — production-shaped compatibility fixtures and Windows smoke
+   wiring are authored. No further source gap is recorded in the current
+   review; keep the Linux/Windows runs in the final bulk pass before cutover.
 2. **Close the current P0 contract slices** — finish the open parts of
    **IO-001/004/005/006/007**, **NET-101–105/110**, and
    **PERF-101–106**. IO-007 now has live hybrid dual-view verification; its
