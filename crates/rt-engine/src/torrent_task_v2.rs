@@ -3185,10 +3185,7 @@ fn validate_remote_v2_handshake(
 
 /// Update the peer's local choke state and return the corresponding wire
 /// transition only when the selected slot set actually changed.
-fn set_v2_upload_unchoked(
-    state: &Arc<Mutex<V2PeerState>>,
-    unchoked: bool,
-) -> Option<Message> {
+fn set_v2_upload_unchoked(state: &Arc<Mutex<V2PeerState>>, unchoked: bool) -> Option<Message> {
     let mut peer = state.lock().ok()?;
     let currently_unchoked = !peer.upload_choked;
     if currently_unchoked == unchoked {
@@ -3949,8 +3946,7 @@ async fn reject_v2_request(
     begin: u32,
     length: u32,
 ) -> anyhow::Result<()> {
-    if let Some(message) =
-        v2_request_rejection_message(remote_supports_fast, piece, begin, length)
+    if let Some(message) = v2_request_rejection_message(remote_supports_fast, piece, begin, length)
     {
         framed.send(message).await?;
     }
@@ -3992,9 +3988,7 @@ fn release_v2_rejected_request(
 ) -> bool {
     let coordinate = (piece, begin);
     match outstanding.entry(coordinate) {
-        std::collections::hash_map::Entry::Occupied(entry)
-            if entry.get().length == length =>
-        {
+        std::collections::hash_map::Entry::Occupied(entry) if entry.get().length == length => {
             drop(entry.remove());
             true
         }
@@ -4378,15 +4372,9 @@ mod tests {
     fn v2_upload_slot_changes_send_only_required_choke_transitions() {
         let state = Arc::new(Mutex::new(V2PeerState::new(0)));
         assert_eq!(set_v2_upload_unchoked(&state, false), None);
-        assert_eq!(
-            set_v2_upload_unchoked(&state, true),
-            Some(Message::Unchoke)
-        );
+        assert_eq!(set_v2_upload_unchoked(&state, true), Some(Message::Unchoke));
         assert_eq!(set_v2_upload_unchoked(&state, true), None);
-        assert_eq!(
-            set_v2_upload_unchoked(&state, false),
-            Some(Message::Choke)
-        );
+        assert_eq!(set_v2_upload_unchoked(&state, false), Some(Message::Choke));
         assert_eq!(set_v2_upload_unchoked(&state, false), None);
     }
 
@@ -4427,20 +4415,13 @@ mod tests {
             (3, 0),
             V2OutstandingRequest {
                 length: 4,
-                _memory_lease: Some(
-                    resources
-                        .try_acquire(MemoryClass::PeerBuffer, 4)
-                        .unwrap(),
-                ),
+                _memory_lease: Some(resources.try_acquire(MemoryClass::PeerBuffer, 4).unwrap()),
             },
         )]);
         let mut assemblies = HashMap::new();
-        assemblies.insert(
-            3,
-            V2PieceAssembly::new(3, 8, 1024, &resources).unwrap(),
-        );
-        let assembly_bytes = resources.snapshot().classes[MemoryClass::PieceAssembly as usize]
-            .used_bytes;
+        assemblies.insert(3, V2PieceAssembly::new(3, 8, 1024, &resources).unwrap());
+        let assembly_bytes =
+            resources.snapshot().classes[MemoryClass::PieceAssembly as usize].used_bytes;
         assert!(assembly_bytes > 0);
 
         apply_v2_remote_choke(true, &mut outstanding, &mut assemblies);
@@ -5683,8 +5664,7 @@ mod tests {
     async fn v2_request_admission_retries_after_capacity_returns_and_owns_each_block() {
         let content = mb_content(2 * MB_PIECE);
         let raw = v2_raw_with_piece_length(&content, MB_PIECE);
-        let (task, _fx) =
-            v2_task_not_started(quiet_v2_runtime(), &raw, content.len() as u64).await;
+        let (task, _fx) = v2_task_not_started(quiet_v2_runtime(), &raw, content.len() as u64).await;
         let context = task.peer_context("127.0.0.1:6881".parse().unwrap(), PeerId::new());
         let resources = context.resources.clone();
         let piece_count = task.piece_map.piece_count as usize;
@@ -5757,12 +5737,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(outstanding.len(), 4);
-        for (piece, begin) in [
-            (0, 0),
-            (0, MB_BLOCK as u32),
-            (1, 0),
-            (1, MB_BLOCK as u32),
-        ] {
+        for (piece, begin) in [(0, 0), (0, MB_BLOCK as u32), (1, 0), (1, MB_BLOCK as u32)] {
             assert!(outstanding.contains_key(&(piece, begin)));
             let message = tokio::time::timeout(Duration::from_secs(1), remote.next())
                 .await
@@ -5788,12 +5763,7 @@ mod tests {
             .sum::<u64>();
         let owned_bytes = outstanding
             .values()
-            .map(|request| {
-                request
-                    ._memory_lease
-                    .as_ref()
-                    .map_or(0, MemoryLease::bytes)
-            })
+            .map(|request| request._memory_lease.as_ref().map_or(0, MemoryLease::bytes))
             .sum::<u64>();
         assert_eq!(owned_bytes, request_bytes);
         assert_eq!(

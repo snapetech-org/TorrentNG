@@ -653,9 +653,9 @@ impl EngineStats {
         let storage_profile = storage_profile_label(&storage.profile).to_string();
         let shared_device_queue_already_counted =
             storage_device_id.as_deref().is_some_and(|device_id| {
-                self.storage_device_latencies.iter().any(|device| {
-                    device.device_id == device_id
-                })
+                self.storage_device_latencies
+                    .iter()
+                    .any(|device| device.device_id == device_id)
             });
         if !shared_device_queue_already_counted {
             self.storage_device_queue_capacity = self

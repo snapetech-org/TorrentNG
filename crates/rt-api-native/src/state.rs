@@ -370,11 +370,8 @@ impl AppState {
                 (
                     revision,
                     {
-                        let (torrents, filters) = apply_snapshot_hashes(
-                            &registry,
-                            &previous,
-                            &changed_hashes,
-                        );
+                        let (torrents, filters) =
+                            apply_snapshot_hashes(&registry, &previous, &changed_hashes);
                         (Arc::new(torrents), Arc::new(filters))
                     },
                     true,

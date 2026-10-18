@@ -8,8 +8,8 @@ use tokio::sync::{mpsc, oneshot, Notify, Semaphore};
 // Using std::time::Instant here would make the refill calculation below see
 // real wall-clock time regardless of virtual time advances, which live-locks
 // a paused-clock test into an infinite near-zero-wait retry loop.
-use tokio::time::Instant;
 use rt_utp::{UtpEndpoint, UtpRuntime};
+use tokio::time::Instant;
 
 const MAX_INITIAL_BURST_BYTES: u64 = 64 * 1024;
 

@@ -1,3 +1,4 @@
+pub use crate::window::sequence_before;
 use crate::{
     congestion::{DelaySample, UtpCongestionController},
     error::UtpError,
@@ -5,7 +6,6 @@ use crate::{
     selective_ack::SelectiveAck,
     window::{SendWindow, MAX_WINDOW_PACKETS},
 };
-pub use crate::window::sequence_before;
 
 pub const DEFAULT_INITIAL_WINDOW_BYTES: u32 = 64 * 1024;
 pub const DEFAULT_MTU_PAYLOAD_BYTES: usize = 1_352;
@@ -513,10 +513,7 @@ impl UtpConnection {
         self.send_window.record(self.seq_nr, payload_len)?;
         self.newest_sent = self.seq_nr;
         self.seq_nr = self.seq_nr.wrapping_add(1);
-        self.oldest_unacked = self
-            .send_window
-            .oldest_sequence()
-            .unwrap_or(self.seq_nr);
+        self.oldest_unacked = self.send_window.oldest_sequence().unwrap_or(self.seq_nr);
         Ok(())
     }
 
@@ -533,10 +530,7 @@ impl UtpConnection {
             .find(|extension| extension.kind == SelectiveAck::EXTENSION_KIND)
             .map(|extension| extension.data.as_slice());
         let bytes_acked = self.send_window.acknowledge(ack_nr, selective_ack);
-        self.oldest_unacked = self
-            .send_window
-            .oldest_sequence()
-            .unwrap_or(self.seq_nr);
+        self.oldest_unacked = self.send_window.oldest_sequence().unwrap_or(self.seq_nr);
         Ok(bytes_acked)
     }
 

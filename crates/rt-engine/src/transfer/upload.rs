@@ -74,9 +74,7 @@ pub struct UploadService {
 
 impl UploadService {
     pub fn new(mut limits: UploadLimits) -> Self {
-        limits.max_in_flight_bytes = limits
-            .max_in_flight_bytes
-            .max(u64::from(BLOCK_SIZE));
+        limits.max_in_flight_bytes = limits.max_in_flight_bytes.max(u64::from(BLOCK_SIZE));
         Self {
             limits,
             conns: HashMap::new(),
@@ -423,7 +421,10 @@ mod tests {
         assert_eq!(service.queued(conn), 1);
 
         service.finish(first.id, Served::Sent);
-        assert!(service.next_job().is_some(), "the completion frees its charge");
+        assert!(
+            service.next_job().is_some(),
+            "the completion frees its charge"
+        );
         service.check_invariants().unwrap();
     }
 
@@ -462,7 +463,10 @@ mod tests {
         service.admit(replacement, block(1, 0), true);
         assert_eq!(service.in_flight_jobs(), 1);
         assert_eq!(service.in_flight_bytes(), 16 * 1024);
-        assert!(service.next_job().is_none(), "the backend read is still charged");
+        assert!(
+            service.next_job().is_none(),
+            "the backend read is still charged"
+        );
         assert!(
             service.finish(job.id, Served::Sent).is_none(),
             "late result ignored"

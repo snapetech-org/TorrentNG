@@ -156,8 +156,7 @@ impl Choker {
         let holder_valid = self.optimistic_id.is_some_and(|id| {
             interested.iter().any(|peer| peer.id == id) && !unchoked_ids.contains(&id)
         });
-        if now.saturating_duration_since(self.last_optimistic_rotate)
-            >= OPTIMISTIC_ROTATE_INTERVAL
+        if now.saturating_duration_since(self.last_optimistic_rotate) >= OPTIMISTIC_ROTATE_INTERVAL
             || !holder_valid
         {
             let candidates: Vec<&PeerSnapshot> =
@@ -317,7 +316,10 @@ mod tests {
         }
 
         assert_eq!(first_trace, replay_trace);
-        let visited = first_trace.iter().copied().collect::<std::collections::HashSet<_>>();
+        let visited = first_trace
+            .iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>();
         assert_eq!(visited.len(), 4);
     }
 

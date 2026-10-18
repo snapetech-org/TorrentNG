@@ -13,7 +13,7 @@ use tokio::sync::{
 };
 use tracing::instrument;
 
-use rt_hash::{merkle_root, BlockHash};
+use rt_hash::{merkle_root, BlockHash, MerkleAccumulator, V2_BLOCK_SIZE};
 use rt_metrics::{MemoryClass, MemoryLease, ResourceGovernor};
 use rt_path::{StorageProfile, StorageRootId};
 use sha1::{Digest, Sha1};
@@ -92,6 +92,18 @@ pub struct IoRequest {
     pub file_path: PathBuf,
     pub offset: u64,
     pub len: usize,
+}
+
+/// Hash results for one immutable hybrid piece payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HybridPieceHashes {
+    pub v1_sha1: [u8; 20],
+    /// Root over the content's actual 16 KiB leaves, suitable for a file that
+    /// fits in one v2 piece.
+    pub v2_file_root: [u8; 32],
+    /// Root padded to the full piece's leaf count, suitable for a v2 piece
+    /// layer entry, including a short final file piece.
+    pub v2_piece_root: [u8; 32],
 }
 
 /// Opaque evidence that a scheduler-wide payload durability barrier completed.
@@ -1248,6 +1260,10 @@ struct QueuedDiskBytes {
     bytes: u64,
     counters: Arc<StorageCounters>,
     _lease: Option<MemoryLease>,
+    /// A shared payload lease accounts for bytes already charged to another
+    /// owner (for example a completed piece assembly) while keeping that
+    /// owner alive through queued or active backend work.
+    _shared_payload_lease: Option<Arc<MemoryLease>>,
 }
 
 #[derive(Debug)]
@@ -1326,6 +1342,50 @@ impl QueuedDiskBytes {
             bytes,
             counters,
             _lease: lease,
+            _shared_payload_lease: None,
+        })
+    }
+
+    fn reserve_shared_payload(
+        counters: Arc<StorageCounters>,
+        resources: Option<&ResourceGovernor>,
+        payload_bytes: u64,
+        payload_lease: Arc<MemoryLease>,
+        mount: impl Into<String>,
+    ) -> Result<Self, StorageError> {
+        let mount = mount.into();
+        if payload_lease.bytes() < payload_bytes {
+            return Err(StorageError::io(
+                mount,
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "shared payload lease is smaller than the queued view",
+                ),
+            ));
+        }
+
+        // The payload allocation is already charged by its original owner.
+        // Reserve only per-job queue overhead here, while keeping the logical
+        // queued-byte counter comparable with ordinary owned submissions.
+        let overhead = QUEUED_DISK_JOB_OVERHEAD_BYTES;
+        let lease = if let Some(resources) = resources {
+            let Some(lease) = resources.try_acquire(MemoryClass::QueuedDisk, overhead) else {
+                counters.queue_full.fetch_add(1, Ordering::Relaxed);
+                return Err(StorageError::QueueFull { mount });
+            };
+            Some(lease)
+        } else {
+            None
+        };
+        let bytes = queued_disk_charge(payload_bytes);
+        counters
+            .queued_disk_bytes
+            .fetch_add(bytes, Ordering::Relaxed);
+        Ok(Self {
+            bytes,
+            counters,
+            _lease: lease,
+            _shared_payload_lease: Some(payload_lease),
         })
     }
 }
@@ -1342,6 +1402,29 @@ impl Drop for QueuedDiskBytes {
 
 fn queued_disk_charge(payload_bytes: u64) -> u64 {
     payload_bytes.max(QUEUED_DISK_JOB_OVERHEAD_BYTES)
+}
+
+fn validate_hybrid_piece_hash_geometry(
+    data: &bytes::Bytes,
+    v2_content_len: usize,
+    piece_length: usize,
+) -> Result<(), StorageError> {
+    if v2_content_len == 0
+        || v2_content_len > data.len()
+        || data.len() > piece_length
+        || piece_length < V2_BLOCK_SIZE
+        || !piece_length.is_power_of_two()
+        || !piece_length.is_multiple_of(V2_BLOCK_SIZE)
+    {
+        return Err(StorageError::io(
+            "rt-storage-hash",
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid hybrid piece hash geometry",
+            ),
+        ));
+    }
+    Ok(())
 }
 
 async fn await_backend_io<T>(
@@ -1378,11 +1461,7 @@ fn backend_write_completion_with_cache_invalidation<G: Send + 'static, O: Send +
     completion_rx
 }
 
-fn backend_completion_with_fence<
-    T: Send + 'static,
-    G: Send + 'static,
-    O: Send + 'static,
->(
+fn backend_completion_with_fence<T: Send + 'static, G: Send + 'static, O: Send + 'static>(
     rx: oneshot::Receiver<io::Result<T>>,
     fence_guard: G,
     operation_owner: O,
@@ -1405,8 +1484,7 @@ async fn await_backend_io_with_fence<T, G, O>(
     rx: oneshot::Receiver<(io::Result<T>, G, O)>,
     expected_len: Option<usize>,
 ) -> Result<(T, G, O), StorageError> {
-    let (result, fence_guard, operation_owner) =
-        rx.await.map_err(|_| StorageError::Cancelled)?;
+    let (result, fence_guard, operation_owner) = rx.await.map_err(|_| StorageError::Cancelled)?;
     match result {
         Ok(value) => Ok((value, fence_guard, operation_owner)),
         Err(error) if error.kind() == io::ErrorKind::WouldBlock => Err(StorageError::QueueFull {
@@ -1486,6 +1564,16 @@ struct DeviceQueue {
     state: Mutex<DeviceQueueState>,
 }
 
+impl std::fmt::Debug for DeviceQueue {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DeviceQueue")
+            .field("capacity", &self.capacity)
+            .field("active_limit", &self.active_limit)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Resolved device queues for a multi-path operation. Long-running cursors
 /// prepare this once so each bounded quantum does not repeat filesystem
 /// topology discovery.
@@ -1497,6 +1585,16 @@ struct DeviceOperationPermit {
     queue: Arc<DeviceQueue>,
     operation_id: u64,
     armed: bool,
+}
+
+impl std::fmt::Debug for DeviceOperationPermit {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DeviceOperationPermit")
+            .field("operation_id", &self.operation_id)
+            .field("armed", &self.armed)
+            .finish_non_exhaustive()
+    }
 }
 
 struct DeviceWaiterGuard {
@@ -1754,10 +1852,7 @@ fn device_queue_for(
     queue
 }
 
-fn device_queue_key(
-    storage_root: StorageRootId,
-    device_id: Option<&str>,
-) -> String {
+fn device_queue_key(storage_root: StorageRootId, device_id: Option<&str>) -> String {
     match device_id {
         Some(device_id) => format!("device:{device_id}"),
         None => format!("storage-root:{}", storage_root.0),
@@ -2030,10 +2125,7 @@ async fn dispatch_peer_read_batch(
     {
         Ok((key, file)) => {
             let _device_queue = match device_queue
-                .acquire(
-                    IoClass::PeerRead,
-                    "storage-peer-read-elevator".to_owned(),
-                )
+                .acquire(IoClass::PeerRead, "storage-peer-read-elevator".to_owned())
                 .await
             {
                 Ok(permit) => permit,
@@ -2044,7 +2136,7 @@ async fn dispatch_peer_read_batch(
                     return batch
                         .requests
                         .into_iter()
-                        .map(|request| (request.tx, Err(error.clone())))
+                        .map(|request| (request.tx, Err(error.clone_for_waiter())))
                         .collect();
                 }
             };
@@ -2259,10 +2351,8 @@ impl MountScheduler {
         // or resize the shared device service according to which mount starts
         // first.
         let requested_device_queue_capacity = io_config.io_queue_depth.max(1);
-        let device_dispatch_window = disk_backend.device_dispatch_window(
-            io_config.io_worker_threads,
-            requested_device_queue_capacity,
-        );
+        let device_dispatch_window = disk_backend
+            .device_dispatch_window(io_config.io_worker_threads, requested_device_queue_capacity);
         let device_queue = device_queue_for(
             storage_root,
             device_id.as_deref(),
@@ -2572,10 +2662,7 @@ impl MountScheduler {
             .await
     }
 
-    pub(crate) fn device_queue_set_for_paths(
-        &self,
-        paths: &[PathBuf],
-    ) -> DeviceQueueSet {
+    pub(crate) fn device_queue_set_for_paths(&self, paths: &[PathBuf]) -> DeviceQueueSet {
         let mut queues = Vec::with_capacity(paths.len());
         for path in paths {
             let topology = detect_storage_topology(path);
@@ -2687,12 +2774,30 @@ impl MountScheduler {
     }
 
     fn reserve_mount_submission(&self, queued_bytes: u64) -> Result<DiskSubmission, StorageError> {
-        let queued_bytes = QueuedDiskBytes::reserve(
-            self.counters.clone(),
-            self.resources.as_ref(),
-            queued_bytes,
-            format!("storage-root-{}", self.storage_root.0),
-        )?;
+        self.reserve_mount_submission_with_shared_payload_lease(queued_bytes, None)
+    }
+
+    fn reserve_mount_submission_with_shared_payload_lease(
+        &self,
+        queued_bytes: u64,
+        shared_payload_lease: Option<Arc<MemoryLease>>,
+    ) -> Result<DiskSubmission, StorageError> {
+        let mount = format!("storage-root-{}", self.storage_root.0);
+        let queued_bytes = match shared_payload_lease {
+            Some(lease) => QueuedDiskBytes::reserve_shared_payload(
+                self.counters.clone(),
+                self.resources.as_ref(),
+                queued_bytes,
+                lease,
+                mount,
+            )?,
+            None => QueuedDiskBytes::reserve(
+                self.counters.clone(),
+                self.resources.as_ref(),
+                queued_bytes,
+                mount,
+            )?,
+        };
         let queue = self
             .queue_sem
             .clone()
@@ -2728,7 +2833,7 @@ impl MountScheduler {
             )
             .await;
         match device_operation {
-            Ok(permit) => permit,
+            Ok(permit) => Ok(permit),
             Err(error) => {
                 if matches!(error, StorageError::QueueFull { .. }) {
                     self.counters.queue_full.fetch_add(1, Ordering::Relaxed);
@@ -2879,8 +2984,8 @@ impl MountScheduler {
                             } else {
                                 readahead_bytes
                             })
-                                .min(file_len.saturating_sub(offset) as usize)
-                                .max(len)
+                            .min(file_len.saturating_sub(offset) as usize)
+                            .max(len)
                         }
                     } else {
                         len
@@ -3049,9 +3154,37 @@ impl MountScheduler {
         data: bytes::Bytes,
         create: bool,
     ) -> Result<(), StorageError> {
+        self.write_at_inner(class, path, offset, data, create, None)
+            .await
+    }
+
+    /// Write a view of an allocation already covered by `payload_lease`.
+    /// The lease remains owned by the submitted operation through backend
+    /// completion without charging the shared payload a second time.
+    pub async fn write_at_with_shared_payload_lease(
+        &self,
+        class: IoClass,
+        path: &Path,
+        offset: u64,
+        data: bytes::Bytes,
+        create: bool,
+        payload_lease: Arc<MemoryLease>,
+    ) -> Result<(), StorageError> {
+        self.write_at_inner(class, path, offset, data, create, Some(payload_lease))
+            .await
+    }
+
+    async fn write_at_inner(
+        &self,
+        class: IoClass,
+        path: &Path,
+        offset: u64,
+        data: bytes::Bytes,
+        create: bool,
+        shared_payload_lease: Option<Arc<MemoryLease>>,
+    ) -> Result<(), StorageError> {
         checked_file_range_end(path, offset, data.len() as u64)?;
-        let write_admission_guard =
-            Arc::clone(&self.write_admission_gate).read_owned().await;
+        let write_admission_guard = Arc::clone(&self.write_admission_gate).read_owned().await;
         let key = normalized_key(path);
         let strict = self.io_config.durability_mode == DurabilityMode::Strict;
         let file_sync_fence = self.file_sync_fences.for_path(&key);
@@ -3070,7 +3203,10 @@ impl MountScheduler {
         let counters = self.counters.clone();
         let path = path.to_path_buf();
         let started = Instant::now();
-        let submission = self.reserve_mount_submission(data.len() as u64)?;
+        let submission = self.reserve_mount_submission_with_shared_payload_lease(
+            data.len() as u64,
+            shared_payload_lease,
+        )?;
         // Invalidate both before and after the write. A concurrent read that
         // started before the write may finish with old bytes after the first
         // invalidation; the epoch check in `peer_read_cache_store` prevents it
@@ -3110,8 +3246,7 @@ impl MountScheduler {
         // failed write costs one redundant fdatasync, which is harmless.
         let write_sequence = file_sync_fence.issue_write_sequence();
         let _write_watermark = next_saturating_sequence(&self.write_sequence);
-        let write_generation =
-            mark_dirty_path(&dirty_paths, &dirty_path_generation, key.clone());
+        let write_generation = mark_dirty_path(&dirty_paths, &dirty_path_generation, key.clone());
         let (file_write_guard, admission_guard, submission) = match await_backend_io_with_fence(
             &key,
             backend_write_completion_with_cache_invalidation(
@@ -3194,8 +3329,7 @@ impl MountScheduler {
         len: u64,
         mode: PreallocationMode,
     ) -> Result<(), StorageError> {
-        let write_admission_guard =
-            Arc::clone(&self.write_admission_gate).read_owned().await;
+        let write_admission_guard = Arc::clone(&self.write_admission_gate).read_owned().await;
         let pool = self.file_pool.clone();
         let dirty_paths = self.dirty_paths.clone();
         let dirty_path_generation = self.dirty_path_generation.clone();
@@ -3282,8 +3416,7 @@ impl MountScheduler {
     }
 
     pub async fn sync_data(&self, path: &Path) -> Result<(), StorageError> {
-        let write_admission_guard =
-            Arc::clone(&self.write_admission_gate).read_owned().await;
+        let write_admission_guard = Arc::clone(&self.write_admission_gate).read_owned().await;
         let pool = self.file_pool.clone();
         let disk_backend = self.disk_backend.clone();
         let dirty_paths = self.dirty_paths.clone();
@@ -3313,9 +3446,8 @@ impl MountScheduler {
                 return Err(error);
             }
         };
-        submission.start_device_operation(
-            self.acquire_device_operation(IoClass::Foreground).await?,
-        );
+        submission
+            .start_device_operation(self.acquire_device_operation(IoClass::Foreground).await?);
         tracing::trace!(
             device_operation_id = submission.device_operation_id().unwrap_or_default(),
             class = ?IoClass::Foreground,
@@ -3370,14 +3502,10 @@ impl MountScheduler {
         let counters = self.counters.clone();
         let started = Instant::now();
         let mut submission = Some(self.reserve_mount_submission(0)?);
-        let write_admission_guard =
-            Arc::clone(&self.write_admission_gate).write_owned().await;
+        let write_admission_guard = Arc::clone(&self.write_admission_gate).write_owned().await;
         let mut paths_to_sync: BTreeSet<PathBuf> = {
             let dirty = lock_recover(&dirty_paths);
-            dirty
-                .keys()
-                .cloned()
-                .collect()
+            dirty.keys().cloned().collect()
         };
         paths_to_sync.extend(self.file_sync_fences.active_paths());
         // Sync exactly the files this scheduler wrote. The descriptor pool is
@@ -3421,9 +3549,8 @@ impl MountScheduler {
                     return Err(error);
                 }
             };
-            current_submission.start_device_operation(
-                self.acquire_device_operation(IoClass::Foreground).await?,
-            );
+            current_submission
+                .start_device_operation(self.acquire_device_operation(IoClass::Foreground).await?);
             tracing::trace!(
                 device_operation_id = current_submission
                     .device_operation_id()
@@ -3571,14 +3698,41 @@ impl MountScheduler {
     }
 
     pub async fn hash_sha1(&self, data: bytes::Bytes) -> Result<[u8; 20], StorageError> {
+        self.hash_sha1_inner(data, None).await
+    }
+
+    /// Hash a shared immutable payload whose allocation is already charged
+    /// to `payload_lease`.
+    pub async fn hash_sha1_with_shared_payload_lease(
+        &self,
+        data: bytes::Bytes,
+        payload_lease: Arc<MemoryLease>,
+    ) -> Result<[u8; 20], StorageError> {
+        self.hash_sha1_inner(data, Some(payload_lease)).await
+    }
+
+    async fn hash_sha1_inner(
+        &self,
+        data: bytes::Bytes,
+        shared_payload_lease: Option<Arc<MemoryLease>>,
+    ) -> Result<[u8; 20], StorageError> {
         let counters = self.counters.clone();
         let started = Instant::now();
-        let queued_bytes = QueuedDiskBytes::reserve(
-            counters.clone(),
-            self.resources.as_ref(),
-            data.len() as u64,
-            "rt-storage-hash",
-        )?;
+        let queued_bytes = match shared_payload_lease {
+            Some(lease) => QueuedDiskBytes::reserve_shared_payload(
+                counters.clone(),
+                self.resources.as_ref(),
+                data.len() as u64,
+                lease,
+                "rt-storage-hash",
+            )?,
+            None => QueuedDiskBytes::reserve(
+                counters.clone(),
+                self.resources.as_ref(),
+                data.len() as u64,
+                "rt-storage-hash",
+            )?,
+        };
         let result = self
             .hash_pool
             .run(move || {
@@ -3615,6 +3769,198 @@ impl MountScheduler {
         let mut attempts = 0;
         loop {
             match self.hash_sha1(data.clone()).await {
+                Err(StorageError::QueueFull { .. }) if attempts < MAX_HASH_QUEUE_RETRIES => {
+                    attempts += 1;
+                    if attempts.is_multiple_of(16) {
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    } else {
+                        tokio::task::yield_now().await;
+                    }
+                }
+                result => return result,
+            }
+        }
+    }
+
+    /// Retry transient queue pressure while a shared payload lease stays
+    /// attached to every submitted or attempted immutable view.
+    pub async fn hash_sha1_retry_queue_full_with_shared_payload_lease(
+        &self,
+        data: bytes::Bytes,
+        payload_lease: Arc<MemoryLease>,
+    ) -> Result<[u8; 20], StorageError> {
+        let mut attempts = 0;
+        loop {
+            match self
+                .hash_sha1_with_shared_payload_lease(data.clone(), Arc::clone(&payload_lease))
+                .await
+            {
+                Err(StorageError::QueueFull { .. }) if attempts < MAX_HASH_QUEUE_RETRIES => {
+                    attempts += 1;
+                    if attempts.is_multiple_of(16) {
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    } else {
+                        tokio::task::yield_now().await;
+                    }
+                }
+                result => return result,
+            }
+        }
+    }
+
+    /// Compute both integrity views of a hybrid piece from the same immutable
+    /// bytes in one bounded hash-pool job. `v2_content_len` excludes synthetic
+    /// BEP 47 padding present in the v1 piece. The two v2 roots cover the
+    /// single-file root shape and the full piece-layer shape; the caller picks
+    /// the one authenticated by that file's metainfo.
+    pub async fn hash_hybrid_piece(
+        &self,
+        data: bytes::Bytes,
+        v2_content_len: usize,
+        piece_length: usize,
+    ) -> Result<HybridPieceHashes, StorageError> {
+        validate_hybrid_piece_hash_geometry(&data, v2_content_len, piece_length)?;
+        let queued_bytes = Arc::new(QueuedDiskBytes::reserve(
+            self.counters.clone(),
+            self.resources.as_ref(),
+            data.len() as u64,
+            "rt-storage-hash",
+        )?);
+        self.hash_hybrid_piece_with_reserved_bytes(data, v2_content_len, piece_length, queued_bytes)
+            .await
+    }
+
+    async fn hash_hybrid_piece_with_reserved_bytes(
+        &self,
+        data: bytes::Bytes,
+        v2_content_len: usize,
+        piece_length: usize,
+        queued_bytes: Arc<QueuedDiskBytes>,
+    ) -> Result<HybridPieceHashes, StorageError> {
+        let counters = self.counters.clone();
+        let started = Instant::now();
+        let piece_leaf_count = piece_length / V2_BLOCK_SIZE;
+        let result = self
+            .hash_pool
+            .run(move || {
+                let _queued_bytes = queued_bytes;
+                let v1_sha1 = Sha1::digest(&data).into();
+                let mut accumulator = MerkleAccumulator::new();
+                for leaf in data[..v2_content_len].chunks(V2_BLOCK_SIZE) {
+                    accumulator.push(BlockHash::of(leaf).0);
+                }
+                let v2_file_root = accumulator.clone().finish();
+                let v2_piece_root =
+                    accumulator
+                        .finish_padded_to(piece_leaf_count)
+                        .ok_or_else(|| {
+                            StorageError::io(
+                                "rt-storage-hash",
+                                io::Error::new(
+                                    io::ErrorKind::InvalidInput,
+                                    "hybrid piece leaf count exceeds v2 piece geometry",
+                                ),
+                            )
+                        })?;
+                counters.hash_ops.fetch_add(1, Ordering::Relaxed);
+                let latency_ns = latency_ns_since(started);
+                counters
+                    .hash_latency_ns
+                    .fetch_add(latency_ns, Ordering::Relaxed);
+                record_latency_bucket(&counters.hash_latency_buckets, latency_ns);
+                Ok(HybridPieceHashes {
+                    v1_sha1,
+                    v2_file_root,
+                    v2_piece_root,
+                })
+            })
+            .await;
+        if matches!(result, Err(StorageError::QueueFull { .. })) {
+            self.counters.queue_full.fetch_add(1, Ordering::Relaxed);
+        }
+        result
+    }
+
+    /// Retry transient saturation while the original immutable payload and
+    /// one queued-byte reservation remain owned across every attempt.
+    pub async fn hash_hybrid_piece_retry_queue_full(
+        &self,
+        data: bytes::Bytes,
+        v2_content_len: usize,
+        piece_length: usize,
+    ) -> Result<HybridPieceHashes, StorageError> {
+        self.hash_hybrid_piece_retry_queue_full_inner(data, v2_content_len, piece_length, None)
+            .await
+    }
+
+    /// Retry a shared hybrid payload without charging its backing allocation
+    /// to the queued-disk class a second time.
+    pub async fn hash_hybrid_piece_retry_queue_full_with_shared_payload_lease(
+        &self,
+        data: bytes::Bytes,
+        v2_content_len: usize,
+        piece_length: usize,
+        payload_lease: Arc<MemoryLease>,
+    ) -> Result<HybridPieceHashes, StorageError> {
+        self.hash_hybrid_piece_retry_queue_full_inner(
+            data,
+            v2_content_len,
+            piece_length,
+            Some(payload_lease),
+        )
+        .await
+    }
+
+    async fn hash_hybrid_piece_retry_queue_full_inner(
+        &self,
+        data: bytes::Bytes,
+        v2_content_len: usize,
+        piece_length: usize,
+        shared_payload_lease: Option<Arc<MemoryLease>>,
+    ) -> Result<HybridPieceHashes, StorageError> {
+        validate_hybrid_piece_hash_geometry(&data, v2_content_len, piece_length)?;
+        let mut attempts = 0;
+        let queued_bytes = loop {
+            let reservation = match shared_payload_lease.as_ref() {
+                Some(lease) => QueuedDiskBytes::reserve_shared_payload(
+                    self.counters.clone(),
+                    self.resources.as_ref(),
+                    data.len() as u64,
+                    Arc::clone(lease),
+                    "rt-storage-hash",
+                ),
+                None => QueuedDiskBytes::reserve(
+                    self.counters.clone(),
+                    self.resources.as_ref(),
+                    data.len() as u64,
+                    "rt-storage-hash",
+                ),
+            };
+            match reservation {
+                Ok(reservation) => break Arc::new(reservation),
+                Err(StorageError::QueueFull { .. }) if attempts < MAX_HASH_QUEUE_RETRIES => {
+                    attempts += 1;
+                    if attempts.is_multiple_of(16) {
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    } else {
+                        tokio::task::yield_now().await;
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        };
+
+        attempts = 0;
+        loop {
+            match self
+                .hash_hybrid_piece_with_reserved_bytes(
+                    data.clone(),
+                    v2_content_len,
+                    piece_length,
+                    queued_bytes.clone(),
+                )
+                .await
+            {
                 Err(StorageError::QueueFull { .. }) if attempts < MAX_HASH_QUEUE_RETRIES => {
                     attempts += 1;
                     if attempts.is_multiple_of(16) {
@@ -3824,6 +4170,21 @@ pub async fn scheduled_write(
     create: bool,
 ) -> Result<(), StorageError> {
     scheduler.write_at(class, path, offset, data, create).await
+}
+
+#[instrument(skip(scheduler, data, payload_lease), fields(path = %path.display(), offset, len = data.len()))]
+pub async fn scheduled_write_with_shared_payload_lease(
+    scheduler: &MountScheduler,
+    class: IoClass,
+    path: &Path,
+    offset: u64,
+    data: bytes::Bytes,
+    create: bool,
+    payload_lease: Arc<MemoryLease>,
+) -> Result<(), StorageError> {
+    scheduler
+        .write_at_with_shared_payload_lease(class, path, offset, data, create, payload_lease)
+        .await
 }
 
 fn normalized_key(path: &Path) -> PathBuf {
@@ -4462,14 +4823,14 @@ mod tests {
             second_config.storage_io.clone(),
             Some(topology),
         );
-        assert!(Arc::ptr_eq(
-            &first.device_queue,
-            &second.device_queue
-        ));
+        assert!(Arc::ptr_eq(&first.device_queue, &second.device_queue));
         assert!(!Arc::ptr_eq(&first.queue_sem, &second.queue_sem));
         let _held = first
             .device_queue
-            .acquire(IoClass::Foreground, "storage-device-shared-device".to_owned())
+            .acquire(
+                IoClass::Foreground,
+                "storage-device-shared-device".to_owned(),
+            )
             .await
             .unwrap();
 
@@ -4510,8 +4871,7 @@ mod tests {
                 let (sender, receiver) = oneshot::channel();
                 receivers.push(receiver);
                 let id = take_device_sequence(&mut state.next_waiter_id);
-                state.pending[device_class_index(class)]
-                    .push_back(DeviceWaiter { id, sender });
+                state.pending[device_class_index(class)].push_back(DeviceWaiter { id, sender });
             }
         }
 
@@ -4669,12 +5029,18 @@ mod tests {
             .recv_timeout(Duration::from_secs(2))
             .expect("external operation did not start on the storage pool");
 
-        assert_eq!(first.stats().queued_disk_bytes, QUEUED_DISK_JOB_OVERHEAD_BYTES);
+        assert_eq!(
+            first.stats().queued_disk_bytes,
+            QUEUED_DISK_JOB_OVERHEAD_BYTES
+        );
         assert_eq!(first.device_queue.available(), 0);
         operation.abort();
         assert!(operation.await.unwrap_err().is_cancelled());
 
-        assert_eq!(first.stats().queued_disk_bytes, QUEUED_DISK_JOB_OVERHEAD_BYTES);
+        assert_eq!(
+            first.stats().queued_disk_bytes,
+            QUEUED_DISK_JOB_OVERHEAD_BYTES
+        );
         assert_eq!(
             resources.snapshot().classes[MemoryClass::QueuedDisk as usize].used_bytes,
             QUEUED_DISK_JOB_OVERHEAD_BYTES,
@@ -4686,7 +5052,10 @@ mod tests {
             .run_device_operation(IoClass::PeerRead, 8, || Ok(()))
             .await;
         assert!(matches!(denied, Err(StorageError::QueueFull { .. })));
-        assert_eq!(first.stats().queued_disk_bytes, QUEUED_DISK_JOB_OVERHEAD_BYTES);
+        assert_eq!(
+            first.stats().queued_disk_bytes,
+            QUEUED_DISK_JOB_OVERHEAD_BYTES
+        );
 
         finish_tx.send(()).unwrap();
         tokio::time::timeout(Duration::from_secs(1), async {
@@ -5480,6 +5849,132 @@ mod tests {
             1
         );
         assert_eq!(stats.dirty_files, 0);
+    }
+
+    #[tokio::test]
+    async fn hybrid_piece_hashes_share_payload_and_separate_padding_views() {
+        let content: Vec<u8> = (0..(V2_BLOCK_SIZE + 17))
+            .map(|index| (index % 251) as u8)
+            .collect();
+        let piece_length = 4 * V2_BLOCK_SIZE;
+        let mut piece = content.clone();
+        piece.resize(piece_length, 0);
+        let expected_v1: [u8; 20] = Sha1::digest(&piece).into();
+        let v2_leaves: Vec<[u8; 32]> = content
+            .chunks(V2_BLOCK_SIZE)
+            .map(|leaf| BlockHash::of(leaf).0)
+            .collect();
+        let expected_file_root = merkle_root(&v2_leaves);
+        let expected_piece_root = rt_hash::piece_layer_hash(&content, piece_length).unwrap();
+        let scheduler = hdd_scheduler();
+
+        let hashes = scheduler
+            .hash_hybrid_piece(bytes::Bytes::from(piece), content.len(), piece_length)
+            .await
+            .unwrap();
+
+        assert_eq!(hashes.v1_sha1, expected_v1);
+        assert_eq!(hashes.v2_file_root, expected_file_root);
+        assert_eq!(hashes.v2_piece_root, expected_piece_root);
+        assert_eq!(scheduler.stats().hash_ops, 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancelled_queued_hybrid_hash_retains_shared_payload_lease_until_dequeued() {
+        let resources = queued_disk_governor(1024 * 1024);
+        let scheduler = MountScheduler::new(
+            StorageRootId::new(),
+            &SchedulerConfig {
+                profile: StorageProfile::Ssd,
+                storage_io: StorageIoConfig {
+                    file_pool_size: 37,
+                    idle_file_ttl_secs: 3601,
+                    io_worker_threads: 1,
+                    io_queue_depth: 8,
+                    hash_worker_threads: 1,
+                    hash_queue_depth: 1,
+                    ..Default::default()
+                },
+                resources: Some(resources.clone()),
+                ..Default::default()
+            },
+        );
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let blocker = tokio::spawn({
+            let pool = scheduler.hash_pool.clone();
+            async move {
+                pool.run(move || {
+                    started_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    Ok::<_, StorageError>(())
+                })
+                .await
+            }
+        });
+        started_rx.recv().unwrap();
+
+        let data = bytes::Bytes::from(vec![0x5a; V2_BLOCK_SIZE * 2]);
+        let payload_len = data.len() as u64;
+        let payload_lease = Arc::new(
+            resources
+                .try_acquire(MemoryClass::PieceAssembly, payload_len)
+                .unwrap(),
+        );
+        let hash = tokio::spawn({
+            let scheduler = scheduler.clone();
+            async move {
+                scheduler
+                    .hash_hybrid_piece_retry_queue_full_with_shared_payload_lease(
+                        data,
+                        V2_BLOCK_SIZE * 2,
+                        V2_BLOCK_SIZE * 2,
+                        payload_lease,
+                    )
+                    .await
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while scheduler.hash_pool.queued() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("hybrid hash did not reach the bounded worker queue");
+        assert_eq!(scheduler.stats().queued_disk_bytes, payload_len);
+        assert_eq!(
+            queued_disk_used_bytes(&resources),
+            QUEUED_DISK_JOB_OVERHEAD_BYTES
+        );
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::PieceAssembly as usize].used_bytes,
+            payload_len
+        );
+
+        hash.abort();
+        assert!(hash.await.unwrap_err().is_cancelled());
+        assert_eq!(
+            queued_disk_used_bytes(&resources),
+            QUEUED_DISK_JOB_OVERHEAD_BYTES,
+            "canceling the waiter must not release queue overhead owned by a queued closure"
+        );
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::PieceAssembly as usize].used_bytes,
+            payload_len,
+            "canceling the waiter must not release the shared payload lease"
+        );
+
+        release_tx.send(()).unwrap();
+        blocker.await.unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while queued_disk_used_bytes(&resources) != 0
+                || resources.snapshot().classes[MemoryClass::PieceAssembly as usize].used_bytes != 0
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("canceled queued hash did not release its bytes after dequeue");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -6563,9 +7058,7 @@ mod tests {
         mut scheduler: MountScheduler,
     ) -> (MountScheduler, Arc<ScriptedDiskBackend>) {
         let backend = Arc::new(ScriptedDiskBackend::new(1, 8));
-        scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(
-            backend.clone(),
-        ));
+        scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(backend.clone()));
         (scheduler, backend)
     }
 
@@ -6584,10 +7077,7 @@ mod tests {
     }
 
     fn queued_disk_used_bytes(resources: &ResourceGovernor) -> u64 {
-        resources
-            .snapshot()
-            .classes[MemoryClass::QueuedDisk as usize]
-            .used_bytes
+        resources.snapshot().classes[MemoryClass::QueuedDisk as usize].used_bytes
     }
 
     fn assert_storage_admission_released(scheduler: &MountScheduler) {
@@ -6747,9 +7237,7 @@ mod tests {
             },
         );
         let backend = Arc::new(ScriptedDiskBackend::new(1, 8));
-        scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(
-            backend.clone(),
-        ));
+        scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(backend.clone()));
         backend.inject(Operation::Write, Effect::HoldCompletion);
 
         let write_scheduler = scheduler.clone();
@@ -6827,6 +7315,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancelled_shared_payload_write_retains_owner_lease_until_completion() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shared-payload-held.bin");
+        let payload = bytes::Bytes::from_static(b"payload");
+        let resources = queued_disk_governor(QUEUED_DISK_JOB_OVERHEAD_BYTES);
+        let mut scheduler = MountScheduler::new(
+            StorageRootId::new(),
+            &SchedulerConfig {
+                profile: StorageProfile::Hdd,
+                max_queue: 1,
+                storage_io: StorageIoConfig {
+                    io_worker_threads: 1,
+                    io_queue_depth: 1,
+                    peer_read_elevator_budget_ms: 0,
+                    ..Default::default()
+                },
+                resources: Some(resources.clone()),
+                ..Default::default()
+            },
+        );
+        let backend = Arc::new(ScriptedDiskBackend::new(1, 8));
+        scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(backend.clone()));
+        backend.inject(Operation::Write, Effect::HoldCompletion);
+        let payload_lease = Arc::new(
+            resources
+                .try_acquire(MemoryClass::PieceAssembly, payload.len() as u64)
+                .unwrap(),
+        );
+
+        let write_scheduler = scheduler.clone();
+        let write_path = path.clone();
+        let write_lease = Arc::clone(&payload_lease);
+        let write = tokio::spawn(async move {
+            write_scheduler
+                .write_at_with_shared_payload_lease(
+                    IoClass::PeerWrite,
+                    &write_path,
+                    0,
+                    payload,
+                    true,
+                    write_lease,
+                )
+                .await
+        });
+
+        backend.wait_until_completion_is_held().await;
+        drop(payload_lease);
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::PieceAssembly as usize].used_bytes,
+            b"payload".len() as u64
+        );
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::QueuedDisk as usize].used_bytes,
+            QUEUED_DISK_JOB_OVERHEAD_BYTES
+        );
+        write.abort();
+        let _ = write.await;
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::PieceAssembly as usize].used_bytes,
+            b"payload".len() as u64,
+            "the submitted backend operation must retain the shared owner lease"
+        );
+
+        assert!(backend.release_next());
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while resources.snapshot().classes[MemoryClass::PieceAssembly as usize].used_bytes != 0
+                || queued_disk_used_bytes(&resources) != 0
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("backend completion should release shared payload and queue leases");
+        assert_eq!(std::fs::read(path).unwrap(), b"payload");
+    }
+
+    #[tokio::test]
     async fn cancelled_submitted_write_retains_memory_budget_until_completion() {
         let dir = tempfile::tempdir().unwrap();
         let first_path = dir.path().join("memory-held.bin");
@@ -6847,9 +7412,7 @@ mod tests {
             },
         );
         let backend = Arc::new(ScriptedDiskBackend::new(1, 8));
-        scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(
-            backend.clone(),
-        ));
+        scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(backend.clone()));
         backend.inject(Operation::Write, Effect::HoldCompletion);
 
         let write_scheduler = scheduler.clone();
@@ -6955,9 +7518,7 @@ mod tests {
             },
         );
         let backend = Arc::new(ScriptedDiskBackend::new(1, 8));
-        scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(
-            backend.clone(),
-        ));
+        scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(backend.clone()));
         backend.inject(Operation::Read, Effect::HoldCompletion);
 
         let read_scheduler = scheduler.clone();
@@ -6981,9 +7542,7 @@ mod tests {
             charged,
             "caller cancellation must retain the expanded read charge"
         );
-        let denied = scheduler
-            .read_at(IoClass::Foreground, &path, 0, 4)
-            .await;
+        let denied = scheduler.read_at(IoClass::Foreground, &path, 0, 4).await;
         assert!(matches!(denied, Err(StorageError::QueueFull { .. })));
         assert_eq!(scheduler.stats().queued_disk_bytes, charged);
         assert_eq!(queued_disk_used_bytes(&resources), charged);
@@ -7035,9 +7594,7 @@ mod tests {
             },
         );
         let backend = Arc::new(ScriptedDiskBackend::new(1, 8));
-        scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(
-            backend.clone(),
-        ));
+        scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(backend.clone()));
         backend.inject(Operation::Sync, Effect::HoldCompletion);
 
         let write_scheduler = scheduler.clone();
@@ -7086,7 +7643,10 @@ mod tests {
             )
             .await;
         assert!(matches!(denied, Err(StorageError::QueueFull { .. })));
-        assert_eq!(queued_disk_used_bytes(&resources), QUEUED_DISK_JOB_OVERHEAD_BYTES);
+        assert_eq!(
+            queued_disk_used_bytes(&resources),
+            QUEUED_DISK_JOB_OVERHEAD_BYTES
+        );
         assert_eq!(
             resources.snapshot().classes[MemoryClass::QueuedDisk as usize].denied_allocations,
             1
@@ -7141,11 +7701,10 @@ mod tests {
         backend.inject(Operation::Sync, Effect::HoldCompletion);
 
         let barrier_scheduler = scheduler.clone();
-        let barrier = tokio::spawn(async move {
-            barrier_scheduler
-                .sync_all_open_files_with_evidence()
-                .await
-        });
+        let barrier =
+            tokio::spawn(
+                async move { barrier_scheduler.sync_all_open_files_with_evidence().await },
+            );
         backend.wait_until_completion_is_held().await;
         assert_eq!(backend.pending_releases(), 1);
 
@@ -7342,9 +7901,11 @@ mod tests {
 
         assert_eq!(streams.files.len(), PeerReadStreams::MAX_TRACKED_FILES);
         assert!(streams.observe(hot, 48, 16, 128, false).0);
-        assert!(!streams
-            .observe(Path::new("/payload/0.bin"), 16, 16, 128, false)
-            .0);
+        assert!(
+            !streams
+                .observe(Path::new("/payload/0.bin"), 16, 16, 128, false)
+                .0
+        );
     }
 
     #[test]

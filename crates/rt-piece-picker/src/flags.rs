@@ -32,7 +32,9 @@ impl PieceFlags {
     }
 
     pub(crate) fn memory_bytes(&self) -> usize {
-        self.words.capacity().saturating_mul(std::mem::size_of::<u64>())
+        self.words
+            .capacity()
+            .saturating_mul(std::mem::size_of::<u64>())
     }
 
     pub(crate) fn len(&self) -> usize {

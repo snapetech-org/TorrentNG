@@ -151,6 +151,38 @@ impl MerkleAccumulator {
             .expect("merkle accumulator did not produce a root")
     }
 
+    /// Finish after padding the current leaves with zero-hash leaves to an
+    /// exact power-of-two count. Piece layers use the full piece geometry even
+    /// when the final file piece contains fewer data leaves.
+    pub fn finish_padded_to(mut self, target_leaf_count: usize) -> Option<[u8; 32]> {
+        if target_leaf_count == 0
+            || !target_leaf_count.is_power_of_two()
+            || self.leaf_count > target_leaf_count
+        {
+            return None;
+        }
+        if self.leaf_count == 0 {
+            return Some(zero_subtree_hash(
+                target_leaf_count.trailing_zeros() as usize
+            ));
+        }
+
+        let mut cursor = self.leaf_count;
+        while cursor < target_leaf_count {
+            let remaining = target_leaf_count - cursor;
+            let aligned_level = cursor.trailing_zeros() as usize;
+            let remaining_level = (usize::BITS - 1 - remaining.leading_zeros()) as usize;
+            let level = aligned_level.min(remaining_level);
+            let width = 1usize.checked_shl(level as u32)?;
+            self.push_node(zero_subtree_hash(level), level);
+            cursor = cursor.checked_add(width)?;
+        }
+
+        self.levels
+            .get_mut(target_leaf_count.trailing_zeros() as usize)?
+            .take()
+    }
+
     fn push_node(&mut self, mut node: [u8; 32], mut level: usize) {
         loop {
             let existing = self
@@ -258,6 +290,37 @@ mod tests {
                 "leaf_count={leaf_count}"
             );
         }
+    }
+
+    #[test]
+    fn merkle_accumulator_matches_exact_piece_padding() {
+        const TARGET: usize = 64;
+        for leaf_count in 0..=TARGET {
+            let leaves: Vec<[u8; 32]> = (0..leaf_count)
+                .map(|index| BlockHash::of(&[(index % 251) as u8]).0)
+                .collect();
+            let mut padded = leaves.clone();
+            padded.resize(TARGET, [0u8; 32]);
+            let mut accumulator = MerkleAccumulator::new();
+            for leaf in leaves {
+                accumulator.push(leaf);
+            }
+
+            assert_eq!(
+                accumulator.finish_padded_to(TARGET),
+                Some(merkle_root(&padded)),
+                "leaf_count={leaf_count}"
+            );
+        }
+    }
+
+    #[test]
+    fn merkle_accumulator_rejects_invalid_padding_targets() {
+        let mut accumulator = MerkleAccumulator::new();
+        accumulator.push(BlockHash::of(b"leaf").0);
+        assert_eq!(accumulator.clone().finish_padded_to(0), None);
+        assert_eq!(accumulator.clone().finish_padded_to(3), None);
+        assert_eq!(accumulator.finish_padded_to(1), None);
     }
 
     #[test]

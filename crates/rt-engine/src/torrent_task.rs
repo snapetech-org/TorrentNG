@@ -32,9 +32,12 @@ use rt_fastresume::{
     ImportPolicy, PartialPieceState, PieceState, RecheckReason, RecoveryAction, RecoveryInputs,
     MAX_FASTRESUME_BLOCKS_PER_PARTIAL_PIECE,
 };
+use rt_hash::V2_BLOCK_SIZE;
 #[cfg(test)]
 use rt_metainfo::{torrent_info_bytes, TorrentMeta};
-use rt_metainfo::{torrent_info_bytes_with_allocation_reservation, TorrentFileV1, TorrentMetaV1};
+use rt_metainfo::{
+    torrent_info_bytes_with_allocation_reservation, TorrentFileV1, TorrentMetaV1, TorrentMetaV2,
+};
 use rt_metrics::{MemoryClass, MemoryLease, ResourceGovernor};
 use rt_path::{StorageProfile, StorageRootId};
 use rt_peer_manager::{
@@ -50,8 +53,9 @@ use rt_piece_map::{FileSpan, PieceMap};
 use rt_piece_picker::{Availability, BlockRequest, PieceAvailability, PiecePicker, MAX_BLOCK_SIZE};
 use rt_session::{SessionRegistry, TorrentEntry, TorrentState};
 use rt_storage::{
-    scheduler::{scheduled_read_owned, scheduled_write},
-    IoClass, MountScheduler, PieceVerifier, SchedulerConfig, StorageIoConfig, VerifyResult,
+    scheduler::{scheduled_read_owned, scheduled_write, scheduled_write_with_shared_payload_lease},
+    HybridV2PieceExpectation, IoClass, MountScheduler, PieceVerifier, SchedulerConfig,
+    StorageIoConfig, VerifyResult,
 };
 #[cfg(test)]
 use rt_tracker::{AnnounceResponse, TrackerError};
@@ -325,6 +329,36 @@ pub(crate) fn persistent_torrent_metadata_memory_bytes(meta: &TorrentMetaV1) -> 
         .saturating_add(webseed_count.saturating_mul(std::mem::size_of::<i64>()))
         .saturating_add(webseed_count.saturating_mul(std::mem::size_of::<Option<Instant>>()));
 
+    total
+}
+
+/// Estimate the v1 task graph plus the compact v2 verification projection
+/// retained by a hybrid task. The original v2 paths, raw info dictionary,
+/// tracker strings, and name are dropped after the projection is built.
+pub(crate) fn persistent_hybrid_metadata_memory_bytes(
+    v1: &TorrentMetaV1,
+    v2: &TorrentMetaV2,
+) -> usize {
+    let payload_file_count = v1
+        .files
+        .iter()
+        .filter(|file| !file.pad && file.length > 0)
+        .count();
+    let mut total = persistent_torrent_metadata_memory_bytes(v1)
+        .saturating_add(std::mem::size_of::<HybridV2Meta>())
+        .saturating_add(payload_file_count.saturating_mul(std::mem::size_of::<HybridV2File>()))
+        .saturating_add(
+            v2.piece_layers
+                .capacity()
+                .saturating_mul(std::mem::size_of::<([u8; 32], Vec<[u8; 32]>)>()),
+        );
+    for hashes in v2.piece_layers.values() {
+        total = total.saturating_add(
+            hashes
+                .capacity()
+                .saturating_mul(std::mem::size_of::<[u8; 32]>()),
+        );
+    }
     total
 }
 
@@ -1303,10 +1337,7 @@ impl LeasedBlockEvent {
         })
     }
 
-    fn with_shared_lease(
-        block: BlockEvent,
-        memory_lease: Option<Arc<MemoryLease>>,
-    ) -> Self {
+    fn with_shared_lease(block: BlockEvent, memory_lease: Option<Arc<MemoryLease>>) -> Self {
         Self {
             block,
             _memory_lease: memory_lease,
@@ -1326,7 +1357,11 @@ impl LeasedBlockEvent {
     #[cfg(test)]
     fn uncharged_for_test(piece: u32, offset: u32, data: bytes::Bytes) -> Self {
         Self {
-            block: BlockEvent { piece, offset, data },
+            block: BlockEvent {
+                piece,
+                offset,
+                data,
+            },
             _memory_lease: None,
         }
     }
@@ -1339,13 +1374,31 @@ impl LeasedBlockEvent {
 #[derive(Debug)]
 struct PieceAssembly {
     data: Vec<u8>,
+    /// Once every block has arrived, freeze the original allocation into an
+    /// immutable view. Hashing and file writes can then share it without
+    /// copying the completed piece.
+    completed_data: Option<bytes::Bytes>,
     received: Vec<bool>,
     last_used: Instant,
-    /// The data allocation is part of the process-wide piece-assembly
-    /// budget for as long as this assembly remains live. Tests that exercise
-    /// the standalone value constructor may omit the lease; production
-    /// insertion always uses `with_memory_lease`.
-    _memory_lease: Option<MemoryLease>,
+    /// The data allocation stays in the process-wide piece-assembly budget
+    /// while this assembly or any shared payload view remains live. Tests
+    /// that exercise the standalone value constructor may omit the lease;
+    /// production insertion always uses `with_memory_lease`.
+    _memory_lease: Option<Arc<MemoryLease>>,
+}
+
+#[derive(Debug)]
+struct LeasedPiecePayload {
+    data: Vec<u8>,
+    /// The immutable Bytes owner holds this lease until its last shared view
+    /// is dropped, even if the torrent task is cancelled during queued I/O.
+    _memory_lease: Option<Arc<MemoryLease>>,
+}
+
+impl AsRef<[u8]> for LeasedPiecePayload {
+    fn as_ref(&self) -> &[u8] {
+        &self.data
+    }
 }
 
 impl PieceAssembly {
@@ -1361,9 +1414,10 @@ impl PieceAssembly {
     fn new_with_lease(len: usize, memory_lease: Option<MemoryLease>) -> Self {
         Self {
             data: vec![0; len],
+            completed_data: None,
             received: vec![false; len.div_ceil(MAX_BLOCK_SIZE as usize)],
             last_used: Instant::now(),
-            _memory_lease: memory_lease,
+            _memory_lease: memory_lease.map(Arc::new),
         }
     }
 
@@ -1373,12 +1427,12 @@ impl PieceAssembly {
         let end = start
             .checked_add(block.len())
             .ok_or_else(|| anyhow::anyhow!("piece block offset overflow"))?;
-        if end > self.data.len() {
+        if end > self.len() {
             anyhow::bail!(
                 "piece block range {}..{} exceeds piece length {}",
                 start,
                 end,
-                self.data.len()
+                self.len()
             );
         }
         let block_idx = start / MAX_BLOCK_SIZE as usize;
@@ -1386,14 +1440,26 @@ impl PieceAssembly {
             anyhow::bail!("piece block index {block_idx} out of range");
         };
         if *received {
-            if self.data[start..end] == *block {
+            if self.data()[start..end] == *block {
                 return Ok(());
             }
             anyhow::bail!("conflicting duplicate block at offset {offset}");
         }
         self.data[start..end].copy_from_slice(block);
         *received = true;
+        if self.is_complete() {
+            self.completed_data = Some(bytes::Bytes::from_owner(LeasedPiecePayload {
+                data: std::mem::take(&mut self.data),
+                _memory_lease: self._memory_lease.clone(),
+            }));
+        }
         Ok(())
+    }
+
+    fn data(&self) -> &[u8] {
+        self.completed_data
+            .as_deref()
+            .unwrap_or(self.data.as_slice())
     }
 
     fn is_complete(&self) -> bool {
@@ -1413,24 +1479,39 @@ impl PieceAssembly {
             let start = block_idx.saturating_mul(MAX_BLOCK_SIZE as usize);
             let end = start
                 .saturating_add(MAX_BLOCK_SIZE as usize)
-                .min(self.data.len());
+                .min(self.len());
             if start >= end {
                 continue;
             }
             let len = end - start;
-            let lease = reserve_peer_event_bytes(resources, len)?;
-            let data = bytes::Bytes::copy_from_slice(&self.data[start..end]);
-            blocks.push((
-                start as u32,
-                LeasedBlockEvent::new(
-                    BlockEvent {
-                        piece,
-                        offset: start as u32,
-                        data,
-                    },
-                    lease,
-                )?,
-            ));
+            let offset = start as u32;
+            if let Some(data) = &self.completed_data {
+                blocks.push((
+                    offset,
+                    LeasedBlockEvent::with_shared_lease(
+                        BlockEvent {
+                            piece,
+                            offset,
+                            data: data.slice(start..end),
+                        },
+                        self._memory_lease.clone(),
+                    ),
+                ));
+            } else {
+                let lease = reserve_peer_event_bytes(resources, len)?;
+                let data = bytes::Bytes::copy_from_slice(&self.data[start..end]);
+                blocks.push((
+                    offset,
+                    LeasedBlockEvent::new(
+                        BlockEvent {
+                            piece,
+                            offset,
+                            data,
+                        },
+                        lease,
+                    )?,
+                ));
+            }
         }
         Ok(blocks)
     }
@@ -1441,12 +1522,13 @@ impl PieceAssembly {
     fn into_received_blocks(self, piece: u32) -> anyhow::Result<Vec<(u32, LeasedBlockEvent)>> {
         let Self {
             data,
+            completed_data,
             received,
             _memory_lease,
             ..
         } = self;
-        let data = bytes::Bytes::from(data);
-        let memory_lease = _memory_lease.map(Arc::new);
+        let data = completed_data.unwrap_or_else(|| bytes::Bytes::from(data));
+        let memory_lease = _memory_lease;
         let mut blocks = Vec::new();
         blocks.try_reserve_exact(received.len())?;
         for (block_idx, is_received) in received.into_iter().enumerate() {
@@ -1477,7 +1559,7 @@ impl PieceAssembly {
     }
 
     fn len(&self) -> usize {
-        self.data.len()
+        self.data().len()
     }
 }
 
@@ -1750,9 +1832,105 @@ impl Drop for UploadReadTasks {
     }
 }
 
+#[derive(Debug)]
+struct HybridV2Meta {
+    piece_length: u64,
+    files: Vec<HybridV2File>,
+    piece_layers: HashMap<[u8; 32], Vec<[u8; 32]>>,
+    valid_layout: bool,
+}
+
+#[derive(Debug)]
+struct HybridV2File {
+    /// The v1 file index used by `PieceMap`; v1 padding entries can make this
+    /// differ from the file's v2 index.
+    file_index: u32,
+    length: u64,
+    piece_offset: u64,
+    pieces_root: Option<[u8; 32]>,
+}
+
+impl HybridV2Meta {
+    fn from_validated_views(v1: &TorrentMetaV1, v2: TorrentMetaV2) -> Self {
+        let v1_payload_count = v1
+            .files
+            .iter()
+            .filter(|file| !file.pad && file.length > 0)
+            .count();
+        let mut files = Vec::with_capacity(v1_payload_count);
+        let mut v1_files = v1.files.iter().filter(|file| !file.pad && file.length > 0);
+        let mut valid_layout = v1.piece_length == v2.piece_length
+            && v2.piece_length >= V2_BLOCK_SIZE as u64
+            && v2.piece_length.is_power_of_two();
+
+        for v2_file in v2.files.iter().filter(|file| !file.pad && file.length > 0) {
+            let Some(v1_file) = v1_files.next() else {
+                valid_layout = false;
+                break;
+            };
+            if v1_file.length != v2_file.length || v1_file.offset != v2_file.piece_offset {
+                valid_layout = false;
+            }
+            files.push(HybridV2File {
+                file_index: v1_file.index,
+                length: v2_file.length,
+                piece_offset: v2_file.piece_offset,
+                pieces_root: v2_file.pieces_root,
+            });
+        }
+        if v1_files.next().is_some() {
+            valid_layout = false;
+        }
+
+        Self {
+            piece_length: v2.piece_length,
+            files,
+            piece_layers: v2.piece_layers,
+            valid_layout,
+        }
+    }
+
+    fn piece_expectation(&self, piece: u32) -> Option<HybridV2PieceExpectation> {
+        if !self.valid_layout || self.piece_length == 0 {
+            return None;
+        }
+        let piece_start = u64::from(piece).checked_mul(self.piece_length)?;
+        let file_index = self
+            .files
+            .partition_point(|file| file.piece_offset <= piece_start)
+            .checked_sub(1)?;
+        let file = self.files.get(file_index)?;
+        let file_end = file.piece_offset.checked_add(file.length)?;
+        if piece_start >= file_end {
+            return None;
+        }
+
+        let file_offset = piece_start.checked_sub(file.piece_offset)?;
+        let content_len = file.length.checked_sub(file_offset)?.min(self.piece_length);
+        let pieces_root = file.pieces_root?;
+        let (expected_root, piece_leaf_count) = if file.length <= self.piece_length {
+            (pieces_root, None)
+        } else {
+            let layer_index = usize::try_from(file_offset / self.piece_length).ok()?;
+            let root = *self.piece_layers.get(&pieces_root)?.get(layer_index)?;
+            let leaf_count = usize::try_from(self.piece_length / V2_BLOCK_SIZE as u64).ok()?;
+            (root, Some(leaf_count))
+        };
+
+        Some(HybridV2PieceExpectation {
+            file_index: file.file_index,
+            file_offset,
+            content_len,
+            expected_root,
+            piece_leaf_count,
+        })
+    }
+}
+
 pub struct TorrentTask {
     info_hash_hex: String,
     meta: TorrentMetaV1,
+    hybrid_v2: Option<HybridV2Meta>,
     /// Exact bencoded `info` bytes used for BEP 9 upload responses. This is
     /// shared by every peer instead of being rebuilt and copied per
     /// connection. The allocation is retained under the metadata budget for
@@ -1915,6 +2093,20 @@ impl Drop for TorrentTask {
 impl TorrentTask {
     pub(crate) fn attach_torrent_metadata_memory_lease(&mut self, lease: MemoryLease) {
         self._torrent_metadata_memory_lease = Some(lease);
+    }
+
+    pub(crate) fn attach_hybrid_v2_metadata(&mut self, meta: TorrentMetaV2) {
+        let projection = HybridV2Meta::from_validated_views(&self.meta, meta);
+        if !projection.valid_layout {
+            warn!(
+                component = "torrent",
+                operation = "hybrid_metadata_projection",
+                torrent = %self.info_hash_hex,
+                result = "invalid",
+                "hybrid v2 metadata did not match the validated v1 file layout"
+            );
+        }
+        self.hybrid_v2 = Some(projection);
     }
 
     /// Share the engine's crash-safety runtime with this task.
@@ -2144,6 +2336,7 @@ impl TorrentTask {
         let mut task = TorrentTask {
             info_hash_hex,
             meta,
+            hybrid_v2: None,
             metadata,
             _metadata_memory_lease: metadata_memory_lease,
             _file_policy_memory_lease: None,
@@ -4552,10 +4745,26 @@ impl TorrentTask {
     }
 
     async fn write_block(&self, block: &BlockEvent) -> anyhow::Result<()> {
+        self.write_block_inner(block, None).await
+    }
+
+    async fn write_leased_block(&self, event: &LeasedBlockEvent) -> anyhow::Result<()> {
+        self.write_block_inner(&event.block, event._memory_lease.clone())
+            .await
+    }
+
+    async fn write_block_inner(
+        &self,
+        block: &BlockEvent,
+        shared_payload_lease: Option<Arc<MemoryLease>>,
+    ) -> anyhow::Result<()> {
         let block_len = u32::try_from(block.data.len())
             .map_err(|_| anyhow::anyhow!("peer block length does not fit in u32"))?;
-        self.piece_map
-            .validate_request_block(BlockExtent::new(block.piece, block.offset, block_len))?;
+        self.piece_map.validate_request_block(BlockExtent::new(
+            block.piece,
+            block.offset,
+            block_len,
+        ))?;
         let regions = self
             .piece_map
             .validate_request(block.piece, block.offset, block_len)?;
@@ -4564,12 +4773,13 @@ impl TorrentTask {
         for region in regions {
             let region_len = usize::try_from(region.length)
                 .map_err(|_| anyhow::anyhow!("piece region length does not fit in memory"))?;
-            let end = data_offset
+            let start = data_offset;
+            let end = start
                 .checked_add(region_len)
                 .ok_or_else(|| anyhow::anyhow!("piece region data offset overflow"))?;
             let region_data = block
                 .data
-                .get(data_offset..end)
+                .get(start..end)
                 .ok_or_else(|| anyhow::anyhow!("peer block does not cover mapped piece regions"))?;
             if region.pad {
                 if region_data.iter().any(|byte| *byte != 0) {
@@ -4587,17 +4797,32 @@ impl TorrentTask {
             let path = file.path.resolve(&self.save_root);
             self.prepare_file_once(file.index, &path, file.length)
                 .await?;
-            let data = bytes::Bytes::copy_from_slice(region_data);
             data_offset = end;
-            scheduled_write(
-                &self.storage,
-                IoClass::PeerWrite,
-                &path,
-                region.file_offset,
-                data,
-                true,
-            )
-            .await?;
+            match shared_payload_lease.as_ref() {
+                Some(lease) => {
+                    scheduled_write_with_shared_payload_lease(
+                        &self.storage,
+                        IoClass::PeerWrite,
+                        &path,
+                        region.file_offset,
+                        block.data.slice(start..end),
+                        true,
+                        Arc::clone(lease),
+                    )
+                    .await?;
+                }
+                None => {
+                    scheduled_write(
+                        &self.storage,
+                        IoClass::PeerWrite,
+                        &path,
+                        region.file_offset,
+                        bytes::Bytes::copy_from_slice(region_data),
+                        true,
+                    )
+                    .await?;
+                }
+            }
         }
 
         if data_offset != block.data.len() {
@@ -4608,10 +4833,16 @@ impl TorrentTask {
     }
 
     async fn write_completed_piece(&self, piece: u32) -> anyhow::Result<()> {
-        let assembly = self
+        let (data, payload_lease) = self
             .piece_assemblies
             .get(&piece)
             .filter(|assembly| assembly.is_complete())
+            .and_then(|assembly| {
+                Some((
+                    assembly.completed_data.as_ref()?.clone(),
+                    assembly._memory_lease.clone(),
+                ))
+            })
             .ok_or_else(|| anyhow::anyhow!("piece {piece} is not fully assembled"))?;
         let regions = self.piece_map.piece_to_file_regions(piece)?;
         for region in regions {
@@ -4634,20 +4865,36 @@ impl TorrentTask {
             let end = start
                 .checked_add(region_len)
                 .ok_or_else(|| anyhow::anyhow!("piece region data offset overflow"))?;
-            let region_data = assembly
-                .data
-                .get(start..end)
-                .ok_or_else(|| anyhow::anyhow!("piece assembly does not cover mapped region"))?;
-            let data = bytes::Bytes::copy_from_slice(region_data);
-            scheduled_write(
-                &self.storage,
-                IoClass::PeerWrite,
-                &path,
-                region.file_offset,
-                data,
-                true,
-            )
-            .await?;
+            anyhow::ensure!(
+                data.get(start..end).is_some(),
+                "piece assembly does not cover mapped region"
+            );
+            let region_data = data.slice(start..end);
+            match payload_lease.as_ref() {
+                Some(lease) => {
+                    scheduled_write_with_shared_payload_lease(
+                        &self.storage,
+                        IoClass::PeerWrite,
+                        &path,
+                        region.file_offset,
+                        region_data,
+                        true,
+                        Arc::clone(lease),
+                    )
+                    .await?;
+                }
+                None => {
+                    scheduled_write(
+                        &self.storage,
+                        IoClass::PeerWrite,
+                        &path,
+                        region.file_offset,
+                        region_data,
+                        true,
+                    )
+                    .await?;
+                }
+            }
         }
         self.note_data_write();
         Ok(())
@@ -4676,14 +4923,22 @@ impl TorrentTask {
     }
 
     async fn verify_piece(&self, piece: u32) -> VerifyResult {
-        PieceVerifier::new(
+        let verifier = PieceVerifier::new(
             &self.save_root,
             &self.storage,
             &self.piece_map,
             &self.meta.pieces,
-        )
-        .verify_piece(piece)
-        .await
+        );
+        match &self.hybrid_v2 {
+            Some(meta) => match meta.piece_expectation(piece) {
+                Some(expectation) => verifier.verify_hybrid_piece(piece, &expectation).await,
+                None => VerifyResult::Missing {
+                    file_index: 0,
+                    reason: format!("no authenticated v2 file range for hybrid piece {piece}"),
+                },
+            },
+            None => verifier.verify_piece(piece).await,
+        }
     }
 
     async fn verify_completed_piece(&mut self, piece: u32) -> VerifyResult {
@@ -4700,8 +4955,80 @@ impl TorrentTask {
                     reason: format!("no hash for piece {piece}"),
                 };
             };
-            let data = bytes::Bytes::copy_from_slice(&assembly.data);
-            match self.storage.hash_sha1_retry_queue_full(data).await {
+            let Some(data) = assembly.completed_data.as_ref().cloned() else {
+                return VerifyResult::Missing {
+                    file_index: 0,
+                    reason: format!("completed piece {piece} has no immutable payload"),
+                };
+            };
+            let payload_lease = assembly._memory_lease.clone();
+            if let Some(hybrid_v2) = &self.hybrid_v2 {
+                let Some(expectation) = hybrid_v2.piece_expectation(piece) else {
+                    return VerifyResult::Missing {
+                        file_index: 0,
+                        reason: format!("no authenticated v2 file range for hybrid piece {piece}"),
+                    };
+                };
+                let Ok(piece_length) = usize::try_from(self.meta.piece_length) else {
+                    return VerifyResult::Missing {
+                        file_index: expectation.file_index,
+                        reason: "hybrid piece length does not fit memory address space".to_owned(),
+                    };
+                };
+                let Ok(v2_content_len) = usize::try_from(expectation.content_len) else {
+                    return VerifyResult::Missing {
+                        file_index: expectation.file_index,
+                        reason: "hybrid content length does not fit memory address space"
+                            .to_owned(),
+                    };
+                };
+                let hashes = match payload_lease.as_ref() {
+                    Some(lease) => {
+                        self.storage
+                            .hash_hybrid_piece_retry_queue_full_with_shared_payload_lease(
+                                data,
+                                v2_content_len,
+                                piece_length,
+                                Arc::clone(lease),
+                            )
+                            .await
+                    }
+                    None => {
+                        self.storage
+                            .hash_hybrid_piece_retry_queue_full(data, v2_content_len, piece_length)
+                            .await
+                    }
+                };
+                return match hashes {
+                    Ok(hashes) if hashes.v1_sha1 == *expected => {
+                        let actual_v2 = match expectation.piece_leaf_count {
+                            Some(_) => hashes.v2_piece_root,
+                            None => hashes.v2_file_root,
+                        };
+                        if actual_v2 == expectation.expected_root {
+                            return VerifyResult::Valid;
+                        }
+                        VerifyResult::Invalid
+                    }
+                    Ok(_) => VerifyResult::Invalid,
+                    Err(error) => VerifyResult::Missing {
+                        file_index: expectation.file_index,
+                        reason: error.to_string(),
+                    },
+                };
+            }
+            let hash = match payload_lease.as_ref() {
+                Some(lease) => {
+                    self.storage
+                        .hash_sha1_retry_queue_full_with_shared_payload_lease(
+                            data,
+                            Arc::clone(lease),
+                        )
+                        .await
+                }
+                None => self.storage.hash_sha1_retry_queue_full(data).await,
+            };
+            match hash {
                 Ok(actual) if &actual == expected => return VerifyResult::Valid,
                 Ok(_) => return VerifyResult::Invalid,
                 Err(e) => {
@@ -5664,10 +5991,7 @@ impl TorrentTask {
             };
             let mut success = true;
             for (offset, data) in blocks {
-                if let Err(error) = self
-                    .write_block(&data.block)
-                    .await
-                {
+                if let Err(error) = self.write_leased_block(&data).await {
                     warn!(
                         component = "fastresume",
                         operation = "flush_piece_assembly",
@@ -8231,6 +8555,219 @@ mod tests {
     }
 
     #[test]
+    fn hybrid_v2_projection_maps_files_after_v1_padding() {
+        let piece_length = (V2_BLOCK_SIZE * 2) as u64;
+        let first_length = piece_length + 17;
+        let padding_length = piece_length - 17;
+        let second_offset = piece_length * 2;
+        let first_path = SafeRelPath::from_name("first.bin", false).unwrap();
+        let second_path = SafeRelPath::from_name("second.bin", false).unwrap();
+        let v1 = TorrentMetaV1 {
+            info_hash: [1; 20],
+            announce: None,
+            announce_list: Vec::new(),
+            webseeds: Vec::new(),
+            comment: None,
+            created_by: None,
+            creation_date: None,
+            name: "hybrid".to_owned(),
+            piece_length,
+            pieces: vec![[0; 20]; 3],
+            files: vec![
+                TorrentFileV1 {
+                    index: 0,
+                    length: first_length,
+                    path: first_path.clone(),
+                    offset: 0,
+                    pad: false,
+                },
+                TorrentFileV1 {
+                    index: 1,
+                    length: padding_length,
+                    path: SafeRelPath::from_name("padding", false).unwrap(),
+                    offset: first_length,
+                    pad: true,
+                },
+                TorrentFileV1 {
+                    index: 2,
+                    length: 11,
+                    path: second_path.clone(),
+                    offset: second_offset,
+                    pad: false,
+                },
+            ],
+            private: false,
+            raw: Vec::new(),
+        };
+        let v2 = TorrentMetaV2 {
+            info_hash_v2: [2; 32],
+            announce: None,
+            announce_list: Vec::new(),
+            webseeds: Vec::new(),
+            comment: None,
+            created_by: None,
+            creation_date: None,
+            name: "hybrid".to_owned(),
+            piece_length,
+            files: vec![
+                rt_metainfo::TorrentFileV2 {
+                    index: 0,
+                    length: first_length,
+                    path: first_path,
+                    offset: 0,
+                    piece_offset: 0,
+                    pieces_root: Some([9; 32]),
+                    pad: false,
+                },
+                rt_metainfo::TorrentFileV2 {
+                    index: 1,
+                    length: 11,
+                    path: second_path,
+                    offset: first_length,
+                    piece_offset: second_offset,
+                    pieces_root: Some([8; 32]),
+                    pad: false,
+                },
+            ],
+            piece_layers: HashMap::from([([9; 32], vec![[1; 32], [2; 32]])]),
+            private: false,
+            raw: Vec::new(),
+        };
+
+        let projection = HybridV2Meta::from_validated_views(&v1, v2);
+
+        assert!(projection.valid_layout);
+        assert_eq!(
+            projection.piece_expectation(1),
+            Some(HybridV2PieceExpectation {
+                file_index: 0,
+                file_offset: piece_length,
+                content_len: 17,
+                expected_root: [2; 32],
+                piece_leaf_count: Some(2),
+            })
+        );
+        assert_eq!(
+            projection.piece_expectation(2),
+            Some(HybridV2PieceExpectation {
+                file_index: 2,
+                file_offset: 0,
+                content_len: 11,
+                expected_root: [8; 32],
+                piece_leaf_count: None,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn hybrid_memory_completion_requires_both_integrity_views() {
+        let temp = tempfile::tempdir().unwrap();
+        let content = b"short hybrid payload";
+        let piece_length = (V2_BLOCK_SIZE * 2) as u64;
+        let mut piece = content.to_vec();
+        piece.resize(piece_length as usize, 0);
+        let v1_hash: [u8; 20] = Sha1::digest(&piece).into();
+        let path = SafeRelPath::from_name("hybrid.bin", false).unwrap();
+        let conn = Connection::open_in_memory().unwrap();
+        rt_db::migrate(&conn).unwrap();
+        let db = Arc::new(Mutex::new(conn));
+        let (_cmd_tx, cmd_rx) = mpsc::channel(1);
+        let mut task = TorrentTask::new(
+            TorrentMetaV1 {
+                info_hash: [3; 20],
+                announce: None,
+                announce_list: Vec::new(),
+                webseeds: Vec::new(),
+                comment: None,
+                created_by: None,
+                creation_date: None,
+                name: "hybrid.bin".to_owned(),
+                piece_length,
+                pieces: vec![v1_hash],
+                files: vec![
+                    TorrentFileV1 {
+                        index: 0,
+                        length: content.len() as u64,
+                        path: path.clone(),
+                        offset: 0,
+                        pad: false,
+                    },
+                    TorrentFileV1 {
+                        index: 1,
+                        length: piece_length - content.len() as u64,
+                        path: SafeRelPath::from_name("padding", false).unwrap(),
+                        offset: content.len() as u64,
+                        pad: true,
+                    },
+                ],
+                private: false,
+                raw: Vec::new(),
+            },
+            temp.path().to_path_buf(),
+            false,
+            TorrentState::Downloading,
+            Arc::new(RwLock::new(SessionRegistry::new())),
+            DbExecutor::direct(Arc::clone(&db)),
+            ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default()),
+            cmd_rx,
+            temp.path().join("fastresume"),
+            8,
+            6881,
+            10,
+            10,
+            60,
+            1024 * 1024,
+            StorageIoConfig::default(),
+            false,
+            OutboundEgressPolicy::default(),
+            GlobalNetworkBudget::unlimited(),
+            10_000,
+            None,
+        )
+        .await;
+        let v2_file_root = rt_hash::BlockHash::of(content).0;
+        task.attach_hybrid_v2_metadata(TorrentMetaV2 {
+            info_hash_v2: [4; 32],
+            announce: None,
+            announce_list: Vec::new(),
+            webseeds: Vec::new(),
+            comment: None,
+            created_by: None,
+            creation_date: None,
+            name: "hybrid.bin".to_owned(),
+            piece_length,
+            files: vec![rt_metainfo::TorrentFileV2 {
+                index: 0,
+                length: content.len() as u64,
+                path,
+                offset: 0,
+                piece_offset: 0,
+                pieces_root: Some(v2_file_root),
+                pad: false,
+            }],
+            piece_layers: HashMap::new(),
+            private: false,
+            raw: Vec::new(),
+        });
+        let mut assembly = PieceAssembly::new(piece.len());
+        assembly
+            .insert(0, &piece[..MAX_BLOCK_SIZE as usize])
+            .unwrap();
+        assembly
+            .insert(MAX_BLOCK_SIZE, &piece[MAX_BLOCK_SIZE as usize..])
+            .unwrap();
+        task.piece_assemblies.insert(0, assembly);
+
+        assert_eq!(task.verify_completed_piece(0).await, VerifyResult::Valid);
+        task.hybrid_v2.as_mut().unwrap().files[0].pieces_root = Some([0; 32]);
+        assert_eq!(
+            task.verify_completed_piece(0).await,
+            VerifyResult::Invalid,
+            "matching v1 SHA-1 cannot certify a mismatched v2 file root"
+        );
+    }
+
+    #[test]
     fn choke_state_does_not_commit_when_peer_mailbox_is_full() {
         let (tx, mut rx) = mpsc::channel(1);
         let control = RateLimitCancellation::default();
@@ -8378,10 +8915,8 @@ mod tests {
             begin: MAX_BLOCK_SIZE,
             length: MAX_BLOCK_SIZE,
         };
-        let (retained, cancelled) = TorrentTask::reconcile_fast_choke_requests(
-            vec![queued, on_wire],
-            vec![on_wire],
-        );
+        let (retained, cancelled) =
+            TorrentTask::reconcile_fast_choke_requests(vec![queued, on_wire], vec![on_wire]);
 
         assert_eq!(retained, vec![on_wire]);
         assert_eq!(cancelled, vec![queued]);
@@ -8629,10 +9164,7 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(
-            before.downloaded,
-            0
-        );
+        assert_eq!(before.downloaded, 0);
 
         task.persist_progress().await;
 
@@ -8646,7 +9178,13 @@ mod tests {
             .unwrap();
         assert_eq!(row.uploaded, 2);
         assert_eq!(row.downloaded, 4);
-        assert!(db_worker.metrics_handle().snapshot().batch_transactions_total >= 1);
+        assert!(
+            db_worker
+                .metrics_handle()
+                .snapshot()
+                .batch_transactions_total
+                >= 1
+        );
         drop(task);
         db_worker.shutdown(Duration::from_secs(1)).await;
 
@@ -10533,21 +11071,9 @@ mod tests {
             None,
         )];
 
-        assert!(take_matching_outstanding(
-            &mut outstanding,
-            4,
-            16_384,
-            8_192
-        )
-        .is_none());
+        assert!(take_matching_outstanding(&mut outstanding, 4, 16_384, 8_192).is_none());
         assert_eq!(outstanding.len(), 1);
-        assert!(take_matching_outstanding(
-            &mut outstanding,
-            4,
-            16_384,
-            16_384
-        )
-        .is_some());
+        assert!(take_matching_outstanding(&mut outstanding, 4, 16_384, 16_384).is_some());
         assert!(outstanding.is_empty());
     }
 
@@ -10569,7 +11095,10 @@ mod tests {
         let lease = reserve_peer_event_bytes(&resources, 4).unwrap();
         let mut fast_outstanding = vec![OutstandingRequest::new(request, Some(lease))];
 
-        assert_eq!(take_choked_requests(&mut fast_outstanding, true), vec![request]);
+        assert_eq!(
+            take_choked_requests(&mut fast_outstanding, true),
+            vec![request]
+        );
         assert_eq!(fast_outstanding.len(), 1);
         assert_eq!(
             resources.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
@@ -10578,7 +11107,10 @@ mod tests {
 
         let lease = reserve_peer_event_bytes(&resources, 4).unwrap();
         let mut legacy_outstanding = vec![OutstandingRequest::new(request, Some(lease))];
-        assert_eq!(take_choked_requests(&mut legacy_outstanding, false), vec![request]);
+        assert_eq!(
+            take_choked_requests(&mut legacy_outstanding, false),
+            vec![request]
+        );
         assert!(legacy_outstanding.is_empty());
         assert_eq!(
             resources.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
@@ -10645,8 +11177,58 @@ mod tests {
             .insert(MAX_BLOCK_SIZE, &[2; MAX_BLOCK_SIZE as usize])
             .unwrap();
         assert!(assembly.is_complete());
-        assert_eq!(assembly.data[0], 1);
-        assert_eq!(assembly.data[MAX_BLOCK_SIZE as usize], 2);
+        assert_eq!(assembly.data()[0], 1);
+        assert_eq!(assembly.data()[MAX_BLOCK_SIZE as usize], 2);
+    }
+
+    #[test]
+    fn completed_piece_freezes_and_reuses_its_assembly_allocation() {
+        let mut assembly = PieceAssembly::new(MAX_BLOCK_SIZE as usize);
+        let original_allocation = assembly.data.as_ptr();
+        let resources = ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default());
+
+        assembly
+            .insert(0, &[0xA5; MAX_BLOCK_SIZE as usize])
+            .unwrap();
+
+        let completed = assembly.completed_data.as_ref().unwrap();
+        assert_eq!(completed.as_ptr(), original_allocation);
+        assert_eq!(completed[0], 0xA5);
+        let blocks = assembly.received_blocks(&resources, 0).unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].1.block.data.as_ptr(), completed.as_ptr());
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
+            0,
+            "completed payload slices should not reserve copied block buffers"
+        );
+    }
+
+    #[test]
+    fn completed_payload_views_keep_piece_lease_after_assembly_is_dropped() {
+        let piece_len = MAX_BLOCK_SIZE as usize;
+        let resources = ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default());
+        let lease = resources
+            .try_acquire(MemoryClass::PieceAssembly, piece_len as u64)
+            .unwrap();
+        let mut assembly = PieceAssembly::with_memory_lease(piece_len, lease);
+        assembly
+            .insert(0, &[0x5A; MAX_BLOCK_SIZE as usize])
+            .unwrap();
+        let payload_view = assembly.completed_data.as_ref().unwrap().slice(0..128);
+
+        assert!(assembly._memory_lease.is_some());
+        drop(assembly);
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::PieceAssembly as usize].used_bytes,
+            piece_len as u64,
+            "a queued Bytes view must keep the complete backing allocation charged"
+        );
+        drop(payload_view);
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::PieceAssembly as usize].used_bytes,
+            0
+        );
     }
 
     #[test]
@@ -10657,11 +11239,14 @@ mod tests {
             .try_acquire(MemoryClass::PieceAssembly, piece_len as u64)
             .unwrap();
         let mut assembly = PieceAssembly::with_memory_lease(piece_len, lease);
-        assembly.insert(0, &[0xA1; MAX_BLOCK_SIZE as usize]).unwrap();
+        assembly
+            .insert(0, &[0xA1; MAX_BLOCK_SIZE as usize])
+            .unwrap();
         assembly
             .insert(MAX_BLOCK_SIZE, &[0xB2; MAX_BLOCK_SIZE as usize])
             .unwrap();
 
+        let completed_ptr = assembly.completed_data.as_ref().unwrap().as_ptr();
         let mut blocks = assembly.into_received_blocks(7).unwrap();
         assert_eq!(blocks.len(), 2);
         assert_eq!(
@@ -10670,6 +11255,11 @@ mod tests {
         );
         assert_eq!(blocks[0].1.block.data[0], 0xA1);
         assert_eq!(blocks[1].1.block.data[0], 0xB2);
+        assert_eq!(blocks[0].1.block.data.as_ptr(), completed_ptr);
+        assert_eq!(
+            blocks[1].1.block.data.as_ptr(),
+            completed_ptr.wrapping_add(MAX_BLOCK_SIZE as usize)
+        );
 
         let last = blocks.pop().unwrap();
         drop(blocks);
@@ -13068,7 +13658,7 @@ mod tests {
             id: peer_id,
             download_generation: 0,
         })
-            .unwrap();
+        .unwrap();
         let request = BlockRequest {
             piece: 3,
             begin: 0,
@@ -13076,16 +13666,18 @@ mod tests {
         };
         let mut outstanding = Vec::new();
 
-        assert!(!send_choke_event(
-            &tx,
-            peer,
-            peer_id,
-            0,
-            false,
-            vec![request],
-            &mut outstanding,
-        )
-        .await);
+        assert!(
+            !send_choke_event(
+                &tx,
+                peer,
+                peer_id,
+                0,
+                false,
+                vec![request],
+                &mut outstanding,
+            )
+            .await
+        );
         assert_eq!(drain_outstanding(&mut outstanding), vec![request]);
     }
 
@@ -13099,8 +13691,8 @@ mod tests {
             id: peer_id,
             download_generation: 0,
         })
-            .await
-            .unwrap();
+        .await
+        .unwrap();
 
         let sender = tokio::spawn(async move {
             send_peer_disconnect_event(
@@ -13641,11 +14233,7 @@ mod tests {
         let late_piece = PeerEvent::Piece {
             peer: "127.0.0.1:6881".parse().unwrap(),
             id: peer_id,
-            block: LeasedBlockEvent::uncharged_for_test(
-                0,
-                0,
-                bytes::Bytes::from_static(b"late"),
-            ),
+            block: LeasedBlockEvent::uncharged_for_test(0, 0, bytes::Bytes::from_static(b"late")),
         };
 
         assert!(peer_event_if_active(false, active_event).is_some());

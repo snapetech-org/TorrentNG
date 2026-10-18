@@ -87,8 +87,7 @@ impl SendWindow {
     /// payload bytes newly acknowledged by this packet.
     pub fn acknowledge(&mut self, ack_nr: u16, selective_ack: Option<&[u8]>) -> u32 {
         let oldest = self.packets.front().copied();
-        let cumulative_is_fresh = oldest
-            .is_none_or(|oldest| !sequence_before(ack_nr, oldest));
+        let cumulative_is_fresh = oldest.is_none_or(|oldest| !sequence_before(ack_nr, oldest));
         let mut newly_acked_bytes = 0u32;
 
         let packet_count = self.packets.len();
@@ -103,8 +102,8 @@ impl SendWindow {
             if packet.sequence != sequence {
                 continue;
             }
-            let cumulatively_acked = cumulative_is_fresh
-                && (sequence == ack_nr || sequence_before(sequence, ack_nr));
+            let cumulatively_acked =
+                cumulative_is_fresh && (sequence == ack_nr || sequence_before(sequence, ack_nr));
             let offset = sequence.wrapping_sub(ack_nr);
             let selectively_acked = offset >= 2
                 && selective_ack.is_some_and(|bits| {

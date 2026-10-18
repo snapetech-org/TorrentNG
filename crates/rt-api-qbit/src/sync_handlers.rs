@@ -49,60 +49,59 @@ pub async fn handle_sync_maindata(
         )
     };
     let empty_entries = Arc::new(ChunkedVec::from_vec(Vec::<rt_session::TorrentEntry>::new()));
-    let (revision, full_update, entries, torrents_removed) = if requested_revision
-        .is_some_and(|requested| requested == current_revision)
-    {
-        (current_revision, false, empty_entries, Vec::new())
-    } else {
-        let delta = if let Some(requested_revision) =
-            requested_revision.filter(|requested| *requested <= current_revision)
-        {
-            let registry = state.registry.read().await;
-            // qBittorrent's RID is the continuation cursor. Returning the
-            // page cursor lets the next sync request drain a large backlog
-            // without constructing one oversized delta response.
-            registry
-                .delta_since_page(requested_revision, REGISTRY_DELTA_PAGE_MAX)
-                .map(|page| {
-                    let entries = page
-                        .changed
-                        .into_iter()
-                        .filter_map(|hash| registry.get(&hash))
-                        .collect::<Vec<_>>();
-                    let removed = page
-                        .removed
-                        .into_iter()
-                        .filter(|hash| registry.get(hash).is_none())
-                        .collect::<Vec<_>>();
-                    (
-                        page.through_revision,
-                        Arc::new(ChunkedVec::from_vec(entries)),
-                        removed,
-                    )
-                })
+    let (revision, full_update, entries, torrents_removed) =
+        if requested_revision.is_some_and(|requested| requested == current_revision) {
+            (current_revision, false, empty_entries, Vec::new())
         } else {
-            None
-        };
-        if let Some((revision, entries, removed)) = delta {
-            (revision, false, entries, removed)
-        } else {
-            // Full updates use the shared snapshot cache. This remains
-            // O(N) when the registry changes, but repeated qBit polling
-            // no longer clones every TorrentEntry independently of the
-            // TorrentNG/SSE snapshot consumers.
-            let snapshot = match state.torrent_snapshot(None).await {
-                Ok(snapshot) => snapshot,
-                Err(TorrentSnapshotError::Expired { revision }) => {
-                    return (
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        format!("failed to build torrent snapshot at revision {revision}"),
-                    )
-                        .into_response();
-                }
+            let delta = if let Some(requested_revision) =
+                requested_revision.filter(|requested| *requested <= current_revision)
+            {
+                let registry = state.registry.read().await;
+                // qBittorrent's RID is the continuation cursor. Returning the
+                // page cursor lets the next sync request drain a large backlog
+                // without constructing one oversized delta response.
+                registry
+                    .delta_since_page(requested_revision, REGISTRY_DELTA_PAGE_MAX)
+                    .map(|page| {
+                        let entries = page
+                            .changed
+                            .into_iter()
+                            .filter_map(|hash| registry.get(&hash))
+                            .collect::<Vec<_>>();
+                        let removed = page
+                            .removed
+                            .into_iter()
+                            .filter(|hash| registry.get(hash).is_none())
+                            .collect::<Vec<_>>();
+                        (
+                            page.through_revision,
+                            Arc::new(ChunkedVec::from_vec(entries)),
+                            removed,
+                        )
+                    })
+            } else {
+                None
             };
-            (snapshot.revision, true, snapshot.entries, Vec::new())
-        }
-    };
+            if let Some((revision, entries, removed)) = delta {
+                (revision, false, entries, removed)
+            } else {
+                // Full updates use the shared snapshot cache. This remains
+                // O(N) when the registry changes, but repeated qBit polling
+                // no longer clones every TorrentEntry independently of the
+                // TorrentNG/SSE snapshot consumers.
+                let snapshot = match state.torrent_snapshot(None).await {
+                    Ok(snapshot) => snapshot,
+                    Err(TorrentSnapshotError::Expired { revision }) => {
+                        return (
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            format!("failed to build torrent snapshot at revision {revision}"),
+                        )
+                            .into_response();
+                    }
+                };
+                (snapshot.revision, true, snapshot.entries, Vec::new())
+            }
+        };
     let torrent_count = entries.len();
     let include_live = torrent_count <= QBIT_LIVE_PROJECTION_MAX_ENTRIES;
     let estimate = estimate_qbit_torrent_info_page_bytes(entries.iter(), include_live);

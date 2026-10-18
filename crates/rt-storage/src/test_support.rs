@@ -28,7 +28,10 @@ pub(crate) enum Operation {
 pub(crate) enum Effect {
     Fail(io::ErrorKind),
     HoldCompletion,
-    WritePrefixThenFail { prefix_bytes: usize, kind: io::ErrorKind },
+    WritePrefixThenFail {
+        prefix_bytes: usize,
+        kind: io::ErrorKind,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -77,7 +80,10 @@ impl ScriptedDiskBackend {
             .rules
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if rules.front().is_some_and(|rule| rule.operation == operation) {
+        if rules
+            .front()
+            .is_some_and(|rule| rule.operation == operation)
+        {
             rules.pop_front().map(|rule| rule.effect)
         } else {
             None
@@ -116,7 +122,10 @@ impl ScriptedDiskBackend {
                 control.ready.notify_one();
                 let _ = wait.recv();
                 let result = forced_error.map_or(result, |kind| {
-                    Err(io::Error::new(kind, "injected storage fault after partial write"))
+                    Err(io::Error::new(
+                        kind,
+                        "injected storage fault after partial write",
+                    ))
                 });
                 let _ = reply.send(result);
             })
@@ -186,9 +195,7 @@ impl DiskBackend for ScriptedDiskBackend {
                 self.hold(inner, reply, None);
                 receiver
             }
-            Some(Effect::WritePrefixThenFail { .. }) => {
-                self.fail(io::ErrorKind::InvalidInput)
-            }
+            Some(Effect::WritePrefixThenFail { .. }) => self.fail(io::ErrorKind::InvalidInput),
             None => self.delegate.pread(file, frame, offset),
         }
     }
@@ -209,9 +216,7 @@ impl DiskBackend for ScriptedDiskBackend {
             }
             Some(Effect::WritePrefixThenFail { prefix_bytes, kind }) => {
                 let prefix_len = prefix_bytes.min(data.len());
-                let inner = self
-                    .delegate
-                    .pwrite(file, data.slice(..prefix_len), offset);
+                let inner = self.delegate.pwrite(file, data.slice(..prefix_len), offset);
                 let (reply, receiver) = oneshot::channel();
                 self.hold(inner, reply, Some(kind));
                 receiver
@@ -229,9 +234,7 @@ impl DiskBackend for ScriptedDiskBackend {
                 self.hold(inner, reply, None);
                 receiver
             }
-            Some(Effect::WritePrefixThenFail { .. }) => {
-                self.fail(io::ErrorKind::InvalidInput)
-            }
+            Some(Effect::WritePrefixThenFail { .. }) => self.fail(io::ErrorKind::InvalidInput),
             None => self.delegate.fdatasync(file),
         }
     }

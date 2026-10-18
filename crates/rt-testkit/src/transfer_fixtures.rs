@@ -204,10 +204,7 @@ fn v1_entries_value<'a>(entries: &'a [V1FileEntry]) -> BValue<'a> {
         .iter()
         .map(|entry| {
             let mut fields = vec![
-                (
-                    b"length".as_slice(),
-                    BValue::Int(entry.length as i64),
-                ),
+                (b"length".as_slice(), BValue::Int(entry.length as i64)),
                 (
                     b"path".as_slice(),
                     BValue::List(
@@ -320,8 +317,15 @@ mod tests {
         let fixtures = transfer_compatibility_matrix();
 
         assert_eq!(
-            fixtures.iter().map(|fixture| fixture.protocol).collect::<Vec<_>>(),
-            vec![TransferProtocol::V1, TransferProtocol::V2, TransferProtocol::Hybrid]
+            fixtures
+                .iter()
+                .map(|fixture| fixture.protocol)
+                .collect::<Vec<_>>(),
+            vec![
+                TransferProtocol::V1,
+                TransferProtocol::V2,
+                TransferProtocol::Hybrid
+            ]
         );
         for fixture in fixtures {
             let repeated = transfer_compatibility_fixture(fixture.protocol);
@@ -441,10 +445,7 @@ mod tests {
         PieceMap::new_with_padding(piece_length, spans, padding).unwrap()
     }
 
-    fn piece_map_from_v2(
-        files: &[rt_metainfo::TorrentFileV2],
-        piece_length: u64,
-    ) -> V2PieceMap {
+    fn piece_map_from_v2(files: &[rt_metainfo::TorrentFileV2], piece_length: u64) -> V2PieceMap {
         let spans = files
             .iter()
             .map(|file| V2FileSpan {

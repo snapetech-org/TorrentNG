@@ -1133,7 +1133,8 @@ where
         return Ok(StoragePlanExecution::default());
     }
     let checkpointed = completed_steps.iter().copied().collect::<HashSet<_>>();
-    let check_control = Arc::new(check_control);
+    let check_control: Arc<dyn Fn() -> Result<(), StorageError> + Send + Sync> =
+        Arc::new(check_control);
     let check_control_ref: &dyn Fn() -> Result<(), StorageError> = check_control.as_ref();
     #[cfg(unix)]
     {
@@ -1203,21 +1204,17 @@ where
     }
 }
 
-fn execute_step_with_device_scheduler<C>(
+fn execute_step_with_device_scheduler(
     step: &StoragePlanStep,
     roots: &[PathBuf],
     scheduler: &MountScheduler,
-    check_control: Arc<C>,
-) -> Result<(), StorageError>
-where
-    C: ?Sized + Fn() -> Result<(), StorageError> + Send + Sync + 'static,
-{
-    let runtime = tokio::runtime::Handle::try_current().map_err(|error| {
-        StorageError::StagedMoveFailed {
+    check_control: Arc<dyn Fn() -> Result<(), StorageError> + Send + Sync>,
+) -> Result<(), StorageError> {
+    let runtime =
+        tokio::runtime::Handle::try_current().map_err(|error| StorageError::StagedMoveFailed {
             step: "device-scheduler",
             reason: format!("scheduled storage work requires a Tokio blocking worker: {error}"),
-        }
-    })?;
+        })?;
     let step = step.clone();
     let roots = roots.to_vec();
     let scheduler = scheduler.clone();
@@ -1245,19 +1242,20 @@ where
         let cursor_roots = roots.to_vec();
         let cursor_control = Arc::clone(&check_control);
         let allow_hard_link = matches!(step.action, PlannedStorageAction::ImportExisting);
-        let (cursor, already_complete) = runtime.block_on(scheduler.run_device_operation_with_queue_set(
-            IoClass::MoveCopy,
-            COPY_STREAM_WORKING_SET_BYTES,
-            &device_queues,
-            move || {
-                start_file_copy_cursor(
-                    &cursor_step,
-                    &cursor_roots,
-                    cursor_control.as_ref(),
-                    allow_hard_link,
-                )
-            },
-        ))?;
+        let (cursor, already_complete) =
+            runtime.block_on(scheduler.run_device_operation_with_queue_set(
+                IoClass::MoveCopy,
+                COPY_STREAM_WORKING_SET_BYTES,
+                &device_queues,
+                move || {
+                    start_file_copy_cursor(
+                        &cursor_step,
+                        &cursor_roots,
+                        cursor_control.as_ref(),
+                        allow_hard_link,
+                    )
+                },
+            ))?;
 
         if already_complete {
             return Ok(());
@@ -1280,38 +1278,38 @@ where
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .is_some();
                 let operation_future = scheduler.run_device_operation_with_queue_set(
-                        IoClass::MoveCopy,
-                        COPY_STREAM_WORKING_SET_BYTES,
-                        &device_queues,
-                        move || {
-                            operation_started_flag.store(true, Ordering::Relaxed);
-                            let mut slot = operation_cursor_slot
-                                .lock()
-                                .unwrap_or_else(|poisoned| poisoned.into_inner());
-                            let Some(cursor) = slot.as_mut() else {
-                                return Err(StorageError::Cancelled);
+                    IoClass::MoveCopy,
+                    COPY_STREAM_WORKING_SET_BYTES,
+                    &device_queues,
+                    move || {
+                        operation_started_flag.store(true, Ordering::Relaxed);
+                        let mut slot = operation_cursor_slot
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        let Some(cursor) = slot.as_mut() else {
+                            return Err(StorageError::Cancelled);
+                        };
+                        let abort_reason = operation_abort_reason
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .take();
+                        if let Some(error) = abort_reason {
+                            let cleanup = cursor.discard_partial_destination();
+                            slot.take();
+                            return match cleanup {
+                                Ok(()) => Err(error),
+                                Err(cleanup_error) => Err(cleanup_error),
                             };
-                            let abort_reason = operation_abort_reason
-                                .lock()
-                                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                                .take();
-                            if let Some(error) = abort_reason {
-                                let cleanup = cursor.discard_partial_destination();
+                        }
+                        match cursor.advance_quantum(quantum_control.as_ref()) {
+                            Ok(complete) => Ok(complete),
+                            Err(error) => {
                                 slot.take();
-                                return match cleanup {
-                                    Ok(()) => Err(error),
-                                    Err(cleanup_error) => Err(cleanup_error),
-                                };
+                                Err(error)
                             }
-                            match cursor.advance_quantum(quantum_control.as_ref()) {
-                                Ok(complete) => Ok(complete),
-                                Err(error) => {
-                                    slot.take();
-                                    Err(error)
-                                }
-                            }
-                        },
-                    );
+                        }
+                    },
+                );
                 let outcome = runtime.block_on(async {
                     tokio::pin!(operation_future);
                     if cleanup_pending {
@@ -1385,15 +1383,12 @@ where
 }
 
 #[cfg(unix)]
-fn start_file_copy_cursor<C>(
+fn start_file_copy_cursor(
     step: &StoragePlanStep,
     roots: &[PathBuf],
-    check_control: &C,
+    check_control: &dyn Fn() -> Result<(), StorageError>,
     allow_hard_link: bool,
-) -> Result<(Option<Box<dyn ScheduledFileCopy>>, bool), StorageError>
-where
-    C: ?Sized + Fn() -> Result<(), StorageError>,
-{
+) -> Result<(Option<Box<dyn ScheduledFileCopy>>, bool), StorageError> {
     let source = required_path(step.source.as_ref(), "copy-source")?;
     let destination = required_path(step.destination.as_ref(), "copy-destination")?;
     secure_fs::start_file_copy_cursor(
@@ -1413,28 +1408,22 @@ where
 }
 
 #[cfg(all(not(unix), not(windows)))]
-fn start_file_copy_cursor<C>(
+fn start_file_copy_cursor(
     _step: &StoragePlanStep,
     _roots: &[PathBuf],
-    _check_control: &C,
+    _check_control: &dyn Fn() -> Result<(), StorageError>,
     _allow_hard_link: bool,
-) -> Result<(Option<Box<dyn ScheduledFileCopy>>, bool), StorageError>
-where
-    C: ?Sized + Fn() -> Result<(), StorageError>,
-{
+) -> Result<(Option<Box<dyn ScheduledFileCopy>>, bool), StorageError> {
     Ok((None, false))
 }
 
 #[cfg(windows)]
-fn start_file_copy_cursor<C>(
+fn start_file_copy_cursor(
     step: &StoragePlanStep,
     roots: &[PathBuf],
-    check_control: &C,
+    check_control: &dyn Fn() -> Result<(), StorageError>,
     allow_hard_link: bool,
-) -> Result<(Option<Box<dyn ScheduledFileCopy>>, bool), StorageError>
-where
-    C: ?Sized + Fn() -> Result<(), StorageError>,
-{
+) -> Result<(Option<Box<dyn ScheduledFileCopy>>, bool), StorageError> {
     let source = required_path(step.source.as_ref(), "copy-source")?;
     let destination = required_path(step.destination.as_ref(), "copy-destination")?;
     windows_secure_fs::start_file_copy_cursor(
@@ -1458,17 +1447,11 @@ fn rollback_plan_with_device_scheduler(
     roots: &[PathBuf],
     scheduler: &MountScheduler,
 ) -> (Vec<StoragePlanStep>, Vec<(StoragePlanStep, String)>) {
-    let no_control: Arc<dyn Fn() -> Result<(), StorageError> + Send + Sync> =
-        Arc::new(|| Ok(()));
+    let no_control: Arc<dyn Fn() -> Result<(), StorageError> + Send + Sync> = Arc::new(|| Ok(()));
     let mut rolled_back = Vec::new();
     let mut failures = Vec::new();
     for step in &plan.rollback_steps {
-        match execute_step_with_device_scheduler(
-            step,
-            roots,
-            scheduler,
-            Arc::clone(&no_control),
-        ) {
+        match execute_step_with_device_scheduler(step, roots, scheduler, Arc::clone(&no_control)) {
             Ok(()) => rolled_back.push(step.clone()),
             Err(error) => failures.push((step.clone(), error.to_string())),
         }
@@ -2071,7 +2054,6 @@ fn rollback_plan(plan: &StoragePlan) -> (Vec<StoragePlanStep>, Vec<(StoragePlanS
     (rolled_back, failures)
 }
 
-#[cfg(any(not(unix), test))]
 pub(crate) fn required_path<'a>(
     path: Option<&'a PathBuf>,
     step: &'static str,

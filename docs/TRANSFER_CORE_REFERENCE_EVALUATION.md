@@ -80,7 +80,9 @@ as a wire-behavior oracle, replays captured sessions, uses isolated
 integration fixtures, and makes in-flight buffer ownership explicit. Those
 are concrete techniques to adopt in TorrentNG's own boundaries and
 qualification without adopting its runtime or raising TorrentNG's Rust 1.88
-floor.
+floor. The crate's published copy counters and documented copy budget also
+make a useful benchmark lesson: count data movement explicitly, then compare
+it under matched workloads instead of inferring efficiency from architecture.
 
 Do not copy qBittorrent source while learning from its wire behavior. The
 `urtorrent` project records qBittorrent's GPL boundary and uses libtorrent's
@@ -114,6 +116,10 @@ correctness and matched whole-client efficiency evidence.
   useful ownership examples. TorrentNG already has cancellation-retained
   storage and transfer leases; the bulk pass must establish that the full
   actor paths preserve those charges across late completion.
+- `urtorrent` records payload copies and hash readback bytes as runtime
+  counters and documents expected copy counts by transport. Add equivalent
+  per-path counters to the comparison contract where TorrentNG can observe
+  them, then measure their relationship to CPU and verified goodput.
 
 These are hypotheses and implementation lessons, not claimed TorrentNG wins.
 PERF-103 now includes a direct `urtorrent` 0.14.3 library runner as a
@@ -186,11 +192,13 @@ integration cost.
 - [rqbit v9.0.1 release notes](https://github.com/ikatson/rqbit/releases/tag/v9.0.1)
 - [rqbit supported features](https://github.com/ikatson/rqbit#features)
 - [rqbit BEP 52 implementation design issue](https://github.com/ikatson/rqbit/issues/546)
-- [`urtorrent` project charter and engineering rules](https://github.com/giejqf/urtorrent/blob/main/AGENTS.md)
-- [`urtorrent` 0.14.3 workspace manifest](https://github.com/giejqf/urtorrent/blob/main/Cargo.toml)
-- [`urtorrent` pinned toolchain](https://github.com/giejqf/urtorrent/blob/main/rust-toolchain.toml)
+- [`urtorrent` 0.14.3 project charter and engineering rules](https://github.com/giejqf/urtorrent/blob/v0.14.3/AGENTS.md)
+- [`urtorrent` 0.14.3 workspace manifest](https://github.com/giejqf/urtorrent/blob/v0.14.3/Cargo.toml)
+- [`urtorrent` 0.14.3 pinned toolchain](https://github.com/giejqf/urtorrent/blob/v0.14.3/rust-toolchain.toml)
 - [`urtorrent` 0.14.3 public API and scope](https://docs.rs/urtorrent/0.14.3/urtorrent/)
 - [`urtorrent` picker extent-affinity implementation](https://docs.rs/urtorrent-picker/0.14.3/urtorrent_picker/)
+- [`urtorrent` 0.14.3 copy counters](https://docs.rs/urtorrent/0.14.3/urtorrent/struct.SessionStats.html)
+- [`urtorrent` 0.14.3 performance and copy budget](https://github.com/giejqf/urtorrent/blob/v0.14.3/docs/perf.md)
 - [libtorrent repository and license](https://github.com/arvidn/libtorrent)
 - [libtorrent 2.1 manual](https://github.com/arvidn/libtorrent/blob/RC_2_1/docs/manual.rst)
 - [TorrentNG uTP evaluation](TRANSFER_CORE_UTP_EVALUATION.md)

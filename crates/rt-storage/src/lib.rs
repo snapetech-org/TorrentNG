@@ -62,14 +62,17 @@ pub use plan::{
     execute_storage_plan_under_roots_with_checkpoints,
     execute_storage_plan_under_roots_with_checkpoints_and_control,
     execute_storage_plan_under_roots_with_device_scheduler, plan_delete, plan_delete_under_roots,
-    plan_import, plan_import_under_roots, plan_move,
-    plan_move_under_roots, reconcile_storage_plan_under_roots, rollback_storage_plan_under_roots,
-    DeletePlanRequest, ImportPlanRequest, MovePlanRequest, PlanIssue, PlannedStorageAction,
-    StoragePlan, StoragePlanExecution, StoragePlanStep,
+    plan_import, plan_import_under_roots, plan_move, plan_move_under_roots,
+    reconcile_storage_plan_under_roots, rollback_storage_plan_under_roots, DeletePlanRequest,
+    ImportPlanRequest, MovePlanRequest, PlanIssue, PlannedStorageAction, StoragePlan,
+    StoragePlanExecution, StoragePlanStep,
 };
 pub use scheduler::{
     preallocation_mode_for_topology, DurabilityBarrierEvidence, DurabilityMode, FilePoolStats,
-    IoRequest, MountScheduler, PreallocationMode, SchedulerConfig, StorageIoConfig, StorageIoStats,
-    StorageRead, STORAGE_LATENCY_BUCKETS_NS, STORAGE_LATENCY_BUCKET_COUNT,
+    HybridPieceHashes, IoRequest, MountScheduler, PreallocationMode, SchedulerConfig,
+    StorageIoConfig, StorageIoStats, StorageRead, STORAGE_LATENCY_BUCKETS_NS,
+    STORAGE_LATENCY_BUCKET_COUNT,
 };
-pub use verify::{PieceVerifier, V2FileHash, V2FileVerifier, VerifyResult};
+pub use verify::{
+    HybridV2PieceExpectation, PieceVerifier, V2FileHash, V2FileVerifier, VerifyResult,
+};

@@ -144,9 +144,9 @@ impl ReorderBuffer {
         }
 
         if distance != 0 {
-            let slots = self.slots.get_or_insert_with(|| {
-                (0..MAX_WINDOW_PACKETS).map(|_| None).collect()
-            });
+            let slots = self
+                .slots
+                .get_or_insert_with(|| (0..MAX_WINDOW_PACKETS).map(|_| None).collect());
             let slot = usize::from(sequence) % slots.len();
             if slots[slot].is_some() {
                 return ReorderInsert::Rejected;
@@ -644,10 +644,7 @@ impl UtpRuntime {
     }
 
     /// Replace the endpoint for one family after a listener rebind.
-    pub async fn replace_endpoint(
-        &self,
-        endpoint: UtpEndpoint,
-    ) -> Result<(), UtpError> {
+    pub async fn replace_endpoint(&self, endpoint: UtpEndpoint) -> Result<(), UtpError> {
         let local = endpoint.local_addr()?;
         let mut endpoints = self.endpoints.lock().await;
         if endpoints.shutdown {
@@ -736,10 +733,7 @@ impl UtpRuntime {
                 endpoint.retire_listener().await;
                 *slot = Some(endpoint);
             }
-            (
-                slot.as_ref().ok_or(UtpError::Closed)?.clone(),
-                idle_retired,
-            )
+            (slot.as_ref().ok_or(UtpError::Closed)?.clone(), idle_retired)
         };
         for retired in idle_retired {
             retired.shutdown().await?;
@@ -1038,9 +1032,8 @@ impl UtpStream {
         let mut offset = 0;
 
         loop {
-            self.pending_send.retain(|pending| {
-                self.conn.packet_is_unacknowledged(pending.sequence)
-            });
+            self.pending_send
+                .retain(|pending| self.conn.packet_is_unacknowledged(pending.sequence));
             while offset < payload.len() && self.pending_send.len() < MAX_WINDOW_PACKETS {
                 // The remote window, congestion window, and local retransmit
                 // budget all constrain admission. A zero window blocks until
@@ -1070,9 +1063,8 @@ impl UtpStream {
                 offset += chunk_len;
             }
 
-            self.pending_send.retain(|pending| {
-                self.conn.packet_is_unacknowledged(pending.sequence)
-            });
+            self.pending_send
+                .retain(|pending| self.conn.packet_is_unacknowledged(pending.sequence));
             if offset == payload.len() && self.pending_send.is_empty() {
                 return Ok(());
             }
@@ -1111,9 +1103,8 @@ impl UtpStream {
             };
 
             let action = self.process_inbound_packet(received).await?;
-            self.pending_send.retain(|pending| {
-                self.conn.packet_is_unacknowledged(pending.sequence)
-            });
+            self.pending_send
+                .retain(|pending| self.conn.packet_is_unacknowledged(pending.sequence));
             match action {
                 InboundAction::Close | InboundAction::Reset => return Err(UtpError::Closed),
                 _ => {}
@@ -1269,9 +1260,7 @@ impl UtpStream {
             match self.process_inbound_packet(packet).await? {
                 InboundAction::DeliverPayload => return Ok(!self.read_buf.is_empty()),
                 InboundAction::Close | InboundAction::Reset => return Ok(false),
-                InboundAction::None
-                | InboundAction::SendState
-                | InboundAction::BufferPayload => {}
+                InboundAction::None | InboundAction::SendState | InboundAction::BufferPayload => {}
             }
         }
     }
@@ -1753,7 +1742,10 @@ mod tests {
                 extensions: Vec::new(),
                 payload: Vec::new(),
             };
-            socket.send_to(&state.encode().unwrap(), peer).await.unwrap();
+            socket
+                .send_to(&state.encode().unwrap(), peer)
+                .await
+                .unwrap();
 
             let mut received = Vec::new();
             while received.len() < 4 {

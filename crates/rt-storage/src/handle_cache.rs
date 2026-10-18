@@ -199,8 +199,7 @@ impl HandleCache {
             let existing = {
                 let inner = self.lock_inner();
                 let writable_key = (key.0.clone(), Access::Write);
-                let existing_key = if key.1 == Access::Read
-                    && inner.map.contains_key(&writable_key)
+                let existing_key = if key.1 == Access::Read && inner.map.contains_key(&writable_key)
                 {
                     Some(writable_key)
                 } else if inner.map.contains_key(&key) {
@@ -249,15 +248,9 @@ impl HandleCache {
             }
             return Ok(self.insert_locked(&mut inner, &key, Arc::clone(&file)));
         }
-
     }
 
-    fn insert_locked(
-        &self,
-        inner: &mut Inner,
-        key: &Key,
-        file: Arc<LeasedFile>,
-    ) -> Arc<OpenFile> {
+    fn insert_locked(&self, inner: &mut Inner, key: &Key, file: Arc<LeasedFile>) -> Arc<OpenFile> {
         if key.1 == Access::Write {
             let read_key = (key.0.clone(), Access::Read);
             if let Some(entry) = inner.map.remove(&read_key) {

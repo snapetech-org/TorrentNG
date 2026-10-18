@@ -93,19 +93,22 @@ pub(crate) fn start_file_copy_cursor(
     let source_copy = open_copy_file(&source_entry, false)?;
     let destination_copy = open_copy_file(&destination_entry, true)?;
 
-    Ok((Some(FileCopyCursor {
-        source: source_entry,
-        destination: destination_entry,
-        source_copy: Some(source_copy),
-        destination_copy: Some(destination_copy),
-        source_verify: None,
-        destination_verify: None,
-        expected_bytes,
-        copied_bytes: 0,
-        source_hash: Sha1::new(),
-        destination_hash: Sha1::new(),
-        phase: FileCopyPhase::Copy,
-    }), false))
+    Ok((
+        Some(FileCopyCursor {
+            source: source_entry,
+            destination: destination_entry,
+            source_copy: Some(source_copy),
+            destination_copy: Some(destination_copy),
+            source_verify: None,
+            destination_verify: None,
+            expected_bytes,
+            copied_bytes: 0,
+            source_hash: Sha1::new(),
+            destination_hash: Sha1::new(),
+            phase: FileCopyPhase::Copy,
+        }),
+        false,
+    ))
 }
 
 fn open_copy_file(entry: &Entry, create_new: bool) -> Result<File, StorageError> {
@@ -166,7 +169,9 @@ impl FileCopyCursor {
                     .as_mut()
                     .expect("copy phase retains source descriptor")
                     .read(&mut buffer)
-                    .map_err(|error| StorageError::io(self.source.path.display().to_string(), error))?;
+                    .map_err(|error| {
+                        StorageError::io(self.source.path.display().to_string(), error)
+                    })?;
                 if read != 0 {
                     let next = self
                         .copied_bytes
@@ -217,7 +222,9 @@ impl FileCopyCursor {
                     .as_mut()
                     .expect("source hash phase retains source descriptor")
                     .read(&mut buffer)
-                    .map_err(|error| StorageError::io(self.source.path.display().to_string(), error))?;
+                    .map_err(|error| {
+                        StorageError::io(self.source.path.display().to_string(), error)
+                    })?;
                 if read == 0 {
                     self.phase = FileCopyPhase::HashDestination;
                 } else {
@@ -239,9 +246,7 @@ impl FileCopyCursor {
                     return Ok(false);
                 }
 
-                if self.source_hash.clone().finalize()
-                    != self.destination_hash.clone().finalize()
-                {
+                if self.source_hash.clone().finalize() != self.destination_hash.clone().finalize() {
                     return Err(plan_error(
                         "verify-content",
                         &format!(
@@ -1102,8 +1107,8 @@ fn verify_directory_contents(
         .map_err(|error| StorageError::io(destination_path.display().to_string(), error))?
     {
         check_control()?;
-        let item = item
-            .map_err(|error| StorageError::io(destination_path.display().to_string(), error))?;
+        let item =
+            item.map_err(|error| StorageError::io(destination_path.display().to_string(), error))?;
         let name = item.file_name();
         let destination_child = Entry {
             parent: crate::open::reopen_windows_directory(destination)
@@ -1148,7 +1153,11 @@ fn verify_directory_contents(
                 "verify-content-source",
             ));
         }
-        ensure_supported_entry(&source_metadata, &source_child.path, "verify-content-source")?;
+        ensure_supported_entry(
+            &source_metadata,
+            &source_child.path,
+            "verify-content-source",
+        )?;
     }
     Ok(())
 }
@@ -1636,8 +1645,7 @@ mod tests {
         std::fs::write(destination.join("extra.bin"), b"extra").unwrap();
         let roots = vec![configured_root(&root)];
 
-        let error =
-            verify_content_matches(&source, &destination, &roots, &|| Ok(())).unwrap_err();
+        let error = verify_content_matches(&source, &destination, &roots, &|| Ok(())).unwrap_err();
         assert!(error
             .to_string()
             .contains("directory entries differ between"));
@@ -1687,15 +1695,9 @@ mod tests {
         std::fs::write(&source, vec![0x33; SECURE_COPY_QUANTUM_BYTES * 2]).unwrap();
         let roots = vec![configured_root(&root)];
         let no_control = || Ok(());
-        let (cursor, complete) = start_file_copy_cursor(
-            &source,
-            &destination,
-            u64::MAX,
-            &roots,
-            &no_control,
-            false,
-        )
-        .unwrap();
+        let (cursor, complete) =
+            start_file_copy_cursor(&source, &destination, u64::MAX, &roots, &no_control, false)
+                .unwrap();
         assert!(!complete);
         let mut cursor = cursor.expect("regular files should use the chunked cursor");
         assert!(!cursor.advance_quantum(&no_control).unwrap());
@@ -1708,7 +1710,10 @@ mod tests {
             })
         };
         assert!(cursor.advance_quantum(&cancelled).is_err());
-        assert!(!destination.exists(), "cancelled copy leaves no partial file");
+        assert!(
+            !destination.exists(),
+            "cancelled copy leaves no partial file"
+        );
     }
 
     #[test]

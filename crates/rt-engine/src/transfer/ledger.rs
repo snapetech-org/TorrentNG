@@ -222,7 +222,8 @@ impl ConnState {
 
     fn take_pending_commit_ignore(&mut self, block: &BlockExtent) -> bool {
         if self.pending_commit_ignore_set.remove(block) {
-            self.pending_commit_ignores.retain(|candidate| candidate != block);
+            self.pending_commit_ignores
+                .retain(|candidate| candidate != block);
             true
         } else {
             false
@@ -480,9 +481,7 @@ impl<G: PieceGeometry> Ledger<G> {
             return Err(ReserveError::TooManyPieces);
         }
         let state = PieceState::new(blocks);
-        if self.in_progress_bytes.saturating_add(state.budget_bytes)
-            > self.max_in_progress_bytes
-        {
+        if self.in_progress_bytes.saturating_add(state.budget_bytes) > self.max_in_progress_bytes {
             return Err(ReserveError::InProgressByteLimit);
         }
         self.in_progress_bytes = self.in_progress_bytes.saturating_add(state.budget_bytes);
@@ -1046,7 +1045,11 @@ impl<G: PieceGeometry> Ledger<G> {
                 self.in_flight, self.max_in_flight
             ));
         }
-        let active_connections = self.conns.iter().filter(|entry| entry.state.is_some()).count();
+        let active_connections = self
+            .conns
+            .iter()
+            .filter(|entry| entry.state.is_some())
+            .count();
         if active_connections != self.active_connections
             || self.active_connections > self.max_connections
         {
@@ -1180,7 +1183,12 @@ mod tests {
 
         let mut owners = vec![too_deep];
         owners.extend((0..MAX_ENDGAME_OWNERS_PER_BLOCK).map(|_| ledger.connect(8)));
-        for (index, conn) in owners.iter().copied().take(MAX_ENDGAME_OWNERS_PER_BLOCK).enumerate() {
+        for (index, conn) in owners
+            .iter()
+            .copied()
+            .take(MAX_ENDGAME_OWNERS_PER_BLOCK)
+            .enumerate()
+        {
             let mode = if index == 0 {
                 ReserveMode::Exclusive
             } else {
@@ -1189,11 +1197,7 @@ mod tests {
             ledger.reserve(conn, block(0, 0), &mode).unwrap();
         }
         assert_eq!(
-            ledger.reserve(
-                *owners.last().unwrap(),
-                block(0, 0),
-                &ReserveMode::Endgame
-            ),
+            ledger.reserve(*owners.last().unwrap(), block(0, 0), &ReserveMode::Endgame),
             Err(ReserveError::TooManyOwners)
         );
         ledger.check_invariants().unwrap();
@@ -1364,10 +1368,7 @@ mod tests {
             CommitOutcome::Orphaned,
             "evicted commit history degrades to a harmless orphan"
         );
-        assert_eq!(
-            ledger.commit(conn, latest, 1).0,
-            CommitOutcome::Reconciled
-        );
+        assert_eq!(ledger.commit(conn, latest, 1).0, CommitOutcome::Reconciled);
         ledger.check_invariants().unwrap();
     }
 
@@ -1512,7 +1513,10 @@ mod tests {
         ledger
             .reserve(busy_peer, block(1, 0), &ReserveMode::Exclusive)
             .unwrap();
-        assert_eq!(ledger.on_block(late_peer, late_block), ReceiveOutcome::Unsolicited);
+        assert_eq!(
+            ledger.on_block(late_peer, late_block),
+            ReceiveOutcome::Unsolicited
+        );
         ledger.check_invariants().unwrap();
 
         ledger

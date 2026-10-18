@@ -565,26 +565,28 @@ pub(crate) fn start_file_copy_cursor(
         ));
     }
 
-    let destination_copy =
-        create_file_at(&destination_parent, &destination_name, destination)?;
+    let destination_copy = create_file_at(&destination_parent, &destination_name, destination)?;
 
-    Ok((Some(FileCopyCursor {
-        source_parent,
-        source_name,
-        source_path: source.to_path_buf(),
-        destination_parent,
-        destination_name,
-        destination_path: destination.to_path_buf(),
-        source_copy: Some(source_copy),
-        destination_copy: Some(destination_copy),
-        source_verify: None,
-        destination_verify: None,
-        expected_bytes,
-        copied_bytes: 0,
-        source_hash: Sha1::new(),
-        destination_hash: Sha1::new(),
-        phase: FileCopyPhase::Copy,
-    }), false))
+    Ok((
+        Some(FileCopyCursor {
+            source_parent,
+            source_name,
+            source_path: source.to_path_buf(),
+            destination_parent,
+            destination_name,
+            destination_path: destination.to_path_buf(),
+            source_copy: Some(source_copy),
+            destination_copy: Some(destination_copy),
+            source_verify: None,
+            destination_verify: None,
+            expected_bytes,
+            copied_bytes: 0,
+            source_hash: Sha1::new(),
+            destination_hash: Sha1::new(),
+            phase: FileCopyPhase::Copy,
+        }),
+        false,
+    ))
 }
 
 impl FileCopyCursor {
@@ -611,7 +613,9 @@ impl FileCopyCursor {
                     .as_mut()
                     .expect("copy phase retains source descriptor")
                     .read(&mut buffer)
-                    .map_err(|error| StorageError::io(self.source_path.display().to_string(), error))?;
+                    .map_err(|error| {
+                        StorageError::io(self.source_path.display().to_string(), error)
+                    })?;
                 if read != 0 {
                     let next = self
                         .copied_bytes
@@ -672,7 +676,9 @@ impl FileCopyCursor {
                     .as_mut()
                     .expect("source hash phase retains source descriptor")
                     .read(&mut buffer)
-                    .map_err(|error| StorageError::io(self.source_path.display().to_string(), error))?;
+                    .map_err(|error| {
+                        StorageError::io(self.source_path.display().to_string(), error)
+                    })?;
                 if read == 0 {
                     self.phase = FileCopyPhase::HashDestination;
                 } else {
@@ -745,9 +751,7 @@ impl FileCopyCursor {
         sync_directory(&self.destination_parent, &self.destination_path).map_err(|error| {
             staged_uncertain(
                 "copy-cleanup-sync",
-                format!(
-                    "removed partial destination but failed to sync its parent: {error}"
-                ),
+                format!("removed partial destination but failed to sync its parent: {error}"),
             )
         })
     }
@@ -1911,11 +1915,7 @@ fn directory_names_batch(directory: &File, path: &Path) -> Result<Vec<OsString>,
 /// callbacks can use the pinned directory fd without sharing its read offset.
 /// Returning `false` stops after the current entry and is used by bounded
 /// deletion batches.
-fn visit_directory_names<F>(
-    directory: &File,
-    path: &Path,
-    mut visit: F,
-) -> Result<(), StorageError>
+fn visit_directory_names<F>(directory: &File, path: &Path, mut visit: F) -> Result<(), StorageError>
 where
     F: FnMut(OsString) -> Result<bool, StorageError>,
 {
@@ -2144,7 +2144,12 @@ mod tests {
         for name in first_batch {
             std::fs::remove_file(root.path().join(name)).unwrap();
         }
-        assert_eq!(directory_names_batch(&directory, root.path()).unwrap().len(), 1);
+        assert_eq!(
+            directory_names_batch(&directory, root.path())
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -2158,12 +2163,8 @@ mod tests {
         std::fs::write(destination.join("payload.bin"), b"same bytes").unwrap();
         std::fs::write(destination.join("extra.bin"), b"extra").unwrap();
 
-        let error = verify_content(
-            &source,
-            &destination,
-            &[root.path().to_path_buf()],
-        )
-        .unwrap_err();
+        let error =
+            verify_content(&source, &destination, &[root.path().to_path_buf()]).unwrap_err();
         assert!(error
             .to_string()
             .contains("destination directory has entries absent from source"));
@@ -2265,15 +2266,9 @@ mod tests {
         std::fs::write(&source, vec![0x33; SECURE_COPY_QUANTUM_BYTES * 2]).unwrap();
         let roots = vec![directory.path().to_path_buf()];
         let no_control = || Ok(());
-        let (cursor, complete) = start_file_copy_cursor(
-            &source,
-            &destination,
-            u64::MAX,
-            &roots,
-            &no_control,
-            false,
-        )
-        .unwrap();
+        let (cursor, complete) =
+            start_file_copy_cursor(&source, &destination, u64::MAX, &roots, &no_control, false)
+                .unwrap();
         assert!(!complete);
         let mut cursor = cursor.expect("regular files should use the chunked cursor");
         assert!(!cursor.advance_quantum(&no_control).unwrap());
@@ -2286,7 +2281,10 @@ mod tests {
             })
         };
         assert!(cursor.advance_quantum(&cancelled).is_err());
-        assert!(!destination.exists(), "cancelled copy leaves no partial file");
+        assert!(
+            !destination.exists(),
+            "cancelled copy leaves no partial file"
+        );
     }
 
     #[test]
@@ -2296,15 +2294,8 @@ mod tests {
         let destination = directory.path().join("destination.bin");
         std::fs::write(&source, b"shared payload").unwrap();
         let roots = vec![directory.path().to_path_buf()];
-        let (cursor, complete) = start_file_copy_cursor(
-            &source,
-            &destination,
-            14,
-            &roots,
-            &|| Ok(()),
-            true,
-        )
-        .unwrap();
+        let (cursor, complete) =
+            start_file_copy_cursor(&source, &destination, 14, &roots, &|| Ok(()), true).unwrap();
 
         if complete {
             assert!(cursor.is_none());

@@ -352,12 +352,7 @@ impl Availability {
         self.candidates.push(piece as u32);
     }
 
-    fn bucket_insert(
-        buckets: &mut Vec<Vec<u32>>,
-        positions: &mut [u32],
-        count: u32,
-        piece: u32,
-    ) {
+    fn bucket_insert(buckets: &mut Vec<Vec<u32>>, positions: &mut [u32], count: u32, piece: u32) {
         if count == 0 {
             return;
         }
@@ -372,12 +367,7 @@ impl Availability {
         buckets[idx].push(piece);
     }
 
-    fn bucket_remove(
-        buckets: &mut [Vec<u32>],
-        positions: &mut [u32],
-        count: u32,
-        piece: u32,
-    ) {
+    fn bucket_remove(buckets: &mut [Vec<u32>], positions: &mut [u32], count: u32, piece: u32) {
         if count == 0 {
             return;
         }
@@ -722,7 +712,13 @@ mod tests {
         let rarity_one_bucket = &av.buckets[1];
         assert_eq!(rarity_one_bucket.len(), remaining_in_first_bucket);
         assert!(rarity_one_bucket.capacity() <= rarity_one_bucket.len() * 4);
-        assert!(av.bucket_positions.iter().all(|position| *position != NO_POSITION));
-        assert!(av.candidate_positions.iter().all(|position| *position != NO_POSITION));
+        assert!(av
+            .bucket_positions
+            .iter()
+            .all(|position| *position != NO_POSITION));
+        assert!(av
+            .candidate_positions
+            .iter()
+            .all(|position| *position != NO_POSITION));
     }
 }

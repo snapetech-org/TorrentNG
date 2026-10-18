@@ -959,11 +959,7 @@ impl SessionRegistry {
     /// infohash once per page, rather than cloning every record and string.
     /// A stale cursor returns `None` so the caller can rebuild from a
     /// snapshot. Requests larger than `REGISTRY_DELTA_PAGE_MAX` are capped.
-    pub fn delta_since_page(
-        &self,
-        revision: u64,
-        limit: usize,
-    ) -> Option<RegistryDeltaPage> {
+    pub fn delta_since_page(&self, revision: u64, limit: usize) -> Option<RegistryDeltaPage> {
         let current_revision = self.revision;
         if revision >= current_revision {
             return Some(RegistryDeltaPage {

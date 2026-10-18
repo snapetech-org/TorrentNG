@@ -364,7 +364,8 @@ original allocation without creating a second piece-sized copy.
   the peer loop carries the lease into the received event; webseed fetch
   reserves its response body.
 - **Target owner:** the private LeasedBlockEvent carries both content and
-  reservation until the final async consumer releases it.
+  reservation into storage, which retains the same lease through backend
+  completion without charging a shared payload a second time.
 - **Invariant preserved:** dropping a stale, rejected, cancelled, or completed
   event releases its reservation only after its bytes stop being retained.
 - **Must not:** release a webseed body reservation when fetch returns, or lose
@@ -374,6 +375,9 @@ original allocation without creating a second piece-sized copy.
 ### Acceptance
 
 - Peer and webseed events retain their lease through actor handling.
+- Leased block writes use immutable `Bytes` slices and keep the original
+  payload lease through cancellation and backend finish; they add only the
+  per-job queue overhead charge.
 - A webseed fetch regression proves the body charge remains live after the
   fetch helper returns and releases when the event drops.
 - Evicted spill ranges share the original immutable allocation and lease.
@@ -395,7 +399,8 @@ original allocation without creating a second piece-sized copy.
 - **Regression source added or updated:** webseed event lease lifetime,
   piece-assembly copied-range lease accounting, and
   evicted_block_views_share_the_assembly_memory_lease, plus the NET-103
-  request-to-event ownership regression.
+  request-to-event ownership regression and a shared-payload storage
+  cancellation regression.
 - **Command or probe to run:** targeted rt-engine lease and spill regressions
   during the requested bulk pass.
 - **Expected result:** charges remain live through the final event/slice owner
@@ -691,21 +696,29 @@ injected-backend accounting remain open.
 `MountScheduler` already shares a bounded hash worker pool across schedulers
 with matching storage configuration. v1 recheck streams SHA-1 updates, v2
 recheck hashes up to 64 leaves per job, and the final streaming Merkle fold now
-runs as one hash-pool job. The remaining work is a common immutable content
-view that can feed v1 and v2 verification without copying or rereading the same
-piece, including file-boundary and BEP 47 padding behavior. Hybrid production
-metadata currently enters the v1 actor, so this view is not live yet.
+runs as one hash-pool job. Hybrid metadata now enters the v1 actor with a
+compact v2 projection containing aligned file ranges and authenticated piece
+layers. The in-memory completion path computes SHA-1, the file root, and the
+piece-layer root from one immutable piece buffer and one bounded pool job; the
+disk fallback streams each file range once and checks both roots while keeping
+BEP 47 padding only in the v1 view. The projection maps v2 files back to v1
+file indexes because synthetic v1 pad files shift those indexes.
 
 ### Ownership and invariant
 
-- **Current owner:** each verification task owns its piece/file geometry and
-  its immutable `Bytes`; the scheduler owns bounded hash-worker admission.
-- **Target owner:** the shared transfer/storage boundary derives v1 and v2
-  ranges from one immutable content lease and retains it until all requested
-  hash jobs finish.
+- **Current owner:** the v1 task owns hybrid piece/file geometry and its
+  mutable assembly lease. Once complete, the task freezes that allocation
+  into immutable `Bytes` whose owner carries the lease, shared by hashing,
+  spill blocks, and file writes; storage queues retain each view through
+  backend completion and charge only per-job overhead in addition to the
+  existing payload reservation.
+- **Target owner:** NET-114 moves the same content span and reservation into
+  the shared transfer/storage boundary without changing v1/v2 root semantics.
 - **Invariant preserved:** queue rejection cannot consume the caller's only
   hash state or release the payload lease early; v1 and v2 views refer to the
-  same verified content while preserving their distinct padding rules.
+  same verified content while preserving their distinct padding rules. A
+  completed in-memory piece has one payload allocation until its verification
+  and aggregate writes finish.
 - **Must not:** retain one leaf hash per byte range for a whole large file or
   duplicate payload buffers just to change hash geometry.
 
@@ -714,19 +727,33 @@ metadata currently enters the v1 actor, so this view is not live yet.
 - Hash workers remain bounded by the shared queue and owned resource limits.
 - Large-file v2 verification batches leaf hashes and folds the root off the
   async executor without retaining all leaf hashes.
-- Hybrid tests cover ranges that align, cross v1/v2 boundaries, include v1
-  padding, and end at a short final file piece; both hashes must be checked.
-- Cancellation and queue-full retry retain immutable content and capacity
-  ownership through the final hash completion.
+- Hybrid memory and disk paths check both v1 and authenticated v2 roots;
+  regressions cover v1 padding, a short final piece, the one-piece file-root
+  shape, v1/v2 index differences, a v2-only expected-root mismatch, and
+  zero-copy freezing/slicing of the completed piece allocation.
+- Hash-pool retries retain the immutable content and one queued-byte
+  reservation across saturation; shared payload jobs carry the existing
+  allocation lease and charge queue overhead once. A canceled queued closure
+  retains both until dequeue, while the active closure owns them through
+  finish.
 
 ### Evidence
 
 - **Regression source added or updated:**
   `rt-storage::verify::v2_file_verify_batches_leaf_hashing_per_chunk` now
-  asserts three leaf batches plus one root job. Hybrid shared-view and
-  cancellation cases remain open.
-- **Command or probe to run:** `cargo test -p rt-storage verify::tests` and the
-  focused hybrid actor regressions in the deferred bulk pass.
+  asserts three leaf batches plus one root job; hybrid scheduler, streaming
+  verifier, memory-completion, and compact metadata-projection regressions now
+  cover shared payload roots, padding, short tails, v2-only mismatch, and the
+  v1 index shift after a pad file. `completed_piece_freezes_and_reuses_its_assembly_allocation`
+  checks pointer identity and confirms completed spill views do not allocate
+  peer-buffer copies; `completed_payload_views_keep_piece_lease_after_assembly_is_dropped`
+  verifies a queued immutable view keeps the original allocation charged
+  after the actor-side assembly is gone.
+  `cancelled_queued_hybrid_hash_retains_shared_payload_lease_until_dequeued`
+  covers waiter cancellation while the accepted hash closure remains queued.
+  Sources remain unrun.
+- **Command or probe to run:** the focused storage verifier, scheduler, and
+  engine regressions in the deferred bulk pass.
 - **Executed on exact revision:** no.
 - **Artifact or report path:** pending bulk pass.
 - **External evidence still required:** none for the bounded hash contract;

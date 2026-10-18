@@ -93,7 +93,8 @@ mod storage_control;
 mod subsystems;
 use crate::tier::{DormantTorrentSnapshot, TierController, TierEvent, TierInput, TierPolicy};
 use crate::torrent_task::{
-    persistent_torrent_metadata_memory_bytes, TorrentCmd, TorrentTask, MAX_PEER_SNAPSHOT_ITEMS,
+    persistent_hybrid_metadata_memory_bytes, persistent_torrent_metadata_memory_bytes, TorrentCmd,
+    TorrentTask, MAX_PEER_SNAPSHOT_ITEMS,
 };
 use crate::torrent_task_v2::{
     persistent_torrent_metadata_memory_bytes_v2, v2_piece_index_memory_bytes, V2TorrentTask,
@@ -1225,7 +1226,21 @@ fn reserve_torrent_metadata_memory_for_meta(
 ) -> CmdResult<Option<MemoryLease>> {
     match meta {
         TorrentMeta::V1(meta) => reserve_torrent_metadata_memory(resources, meta).map(Some),
-        TorrentMeta::Hybrid(meta, _) => reserve_torrent_metadata_memory(resources, meta).map(Some),
+        TorrentMeta::Hybrid(meta, v2) => {
+            let bytes =
+                u64::try_from(persistent_hybrid_metadata_memory_bytes(meta, v2)).map_err(|_| {
+                    "hybrid torrent metadata memory estimate does not fit in u64".to_owned()
+                })?;
+            resources
+                .try_acquire(MemoryClass::Metadata, bytes)
+                .map(Some)
+                .ok_or_else(|| {
+                    format!(
+                        "hybrid torrent metadata allocation of {bytes} bytes denied for {} v1 files",
+                        meta.files.len()
+                    )
+                })
+        }
         TorrentMeta::V2(meta) => reserve_torrent_metadata_memory_v2(resources, meta).map(Some),
     }
 }
@@ -6722,28 +6737,27 @@ impl Engine {
             is_private,
             parse_memory_lease,
         } = prepared;
-        let piece_index_memory_lease =
-            match reserve_piece_index_memory_for_meta(
-                &self.services.resources,
-                &meta,
-                self.config.network.max_peers,
-            ) {
-                Ok(Some(lease)) => lease,
-                Ok(None) => {
-                    self.fail_torrent_promotion_actions(
-                        &info_hash,
-                        actions,
-                        "torrent promotion lost its piece-index memory reservation".to_owned(),
-                    )
+        let piece_index_memory_lease = match reserve_piece_index_memory_for_meta(
+            &self.services.resources,
+            &meta,
+            self.config.network.max_peers,
+        ) {
+            Ok(Some(lease)) => lease,
+            Ok(None) => {
+                self.fail_torrent_promotion_actions(
+                    &info_hash,
+                    actions,
+                    "torrent promotion lost its piece-index memory reservation".to_owned(),
+                )
+                .await;
+                return;
+            }
+            Err(error) => {
+                self.fail_torrent_promotion_actions(&info_hash, actions, error)
                     .await;
-                    return;
-                }
-                Err(error) => {
-                    self.fail_torrent_promotion_actions(&info_hash, actions, error)
-                        .await;
-                    return;
-                }
-            };
+                return;
+            }
+        };
         let torrent_metadata_memory_lease =
             match reserve_torrent_metadata_memory_for_meta(&self.services.resources, &meta) {
                 Ok(Some(lease)) => lease,
@@ -7188,13 +7202,12 @@ impl Engine {
         let meta = parse_torrent(&raw).map_err(|e| e.to_string())?;
         let info_hash = meta_dht_info_hash(&meta);
         let is_private = meta.is_private();
-        let piece_index_memory_lease =
-            reserve_piece_index_memory_for_meta(
-                &self.services.resources,
-                &meta,
-                self.config.network.max_peers,
-            )?
-                .ok_or_else(|| "v2 torrent lost its piece-index memory reservation".to_owned())?;
+        let piece_index_memory_lease = reserve_piece_index_memory_for_meta(
+            &self.services.resources,
+            &meta,
+            self.config.network.max_peers,
+        )?
+        .ok_or_else(|| "v2 torrent lost its piece-index memory reservation".to_owned())?;
         let torrent_metadata_memory_lease =
             reserve_torrent_metadata_memory_for_meta(&self.services.resources, &meta)?
                 .ok_or_else(|| "torrent lost its metadata memory reservation".to_owned())?;

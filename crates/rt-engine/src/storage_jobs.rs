@@ -424,10 +424,7 @@ impl Drop for StorageJobRegistration {
 }
 
 impl StorageJobDispatcher {
-    pub(crate) fn new(
-        db_path: &Path,
-        scheduler_config: SchedulerConfig,
-    ) -> rusqlite::Result<Self> {
+    pub(crate) fn new(db_path: &Path, scheduler_config: SchedulerConfig) -> rusqlite::Result<Self> {
         let connection = Connection::open(db_path)?;
         connection.execute_batch(
             "PRAGMA journal_mode = WAL;

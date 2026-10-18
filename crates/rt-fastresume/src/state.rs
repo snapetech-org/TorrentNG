@@ -812,15 +812,11 @@ mod tests {
             )
             .await
             .unwrap();
-        let evidence = scheduler
-            .sync_all_open_files_with_evidence()
-            .await
-            .unwrap();
+        let evidence = scheduler.sync_all_open_files_with_evidence().await.unwrap();
 
         let hash = test_hash();
         let hash_hex = hex::encode(hash);
-        let mut state =
-            FastresumeState::new_empty(&hash, 5, ImportPolicy::RequireVerification);
+        let mut state = FastresumeState::new_empty(&hash, 5, ImportPolicy::RequireVerification);
         state.set_dirty_pieces_since_barrier([3, 1, 3, 99]);
         let store = crate::FastresumeStore::new(dir.path().join("resume"));
         store

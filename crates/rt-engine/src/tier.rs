@@ -391,10 +391,7 @@ where
 
     fn keys_for_ids(&self, ids: Vec<TorrentKeyId>) -> Vec<K> {
         ids.into_iter()
-            .filter_map(|id| {
-                self.key_for_id(id)
-                    .map(|key| K::from(key.to_string()))
-            })
+            .filter_map(|id| self.key_for_id(id).map(|key| K::from(key.to_string())))
             .collect()
     }
 
@@ -413,10 +410,7 @@ where
         }
     }
 
-    fn clear_dormant_snapshot_id(
-        &mut self,
-        id: TorrentKeyId,
-    ) -> Option<DormantTorrentSnapshot> {
+    fn clear_dormant_snapshot_id(&mut self, id: TorrentKeyId) -> Option<DormantTorrentSnapshot> {
         let snapshot = self.dormant_snapshots.remove(&id)?;
         self.dormant_heap_bytes = self
             .dormant_heap_bytes
@@ -1339,14 +1333,10 @@ mod tests {
                 key.clone(),
                 DormantTorrentSnapshot::new(key, TorrentState::Stopped, None, Some(now)),
             );
-            controller.reschedule_idle_check(
-                format!("{index:040x}"),
-                now + Duration::from_secs(60),
-            );
-            controller.schedule_tracker_check(
-                format!("{index:040x}"),
-                now + Duration::from_secs(120),
-            );
+            controller
+                .reschedule_idle_check(format!("{index:040x}"), now + Duration::from_secs(60));
+            controller
+                .schedule_tracker_check(format!("{index:040x}"), now + Duration::from_secs(120));
         }
         let owner = controller.estimated_owner_bytes();
         // The old estimate counted only the snapshot's string capacity.

@@ -45,6 +45,63 @@ pub enum StorageError {
 }
 
 impl StorageError {
+    /// Copy an error for each waiter sharing a failed storage operation.
+    /// `std::io::Error` is not `Clone`, so preserve its OS code when present
+    /// and otherwise retain its kind and message.
+    pub(crate) fn clone_for_waiter(&self) -> Self {
+        match self {
+            Self::Io { path, source } => Self::Io {
+                path: path.clone(),
+                source: source.raw_os_error().map_or_else(
+                    || std::io::Error::new(source.kind(), source.to_string()),
+                    std::io::Error::from_raw_os_error,
+                ),
+            },
+            Self::DiskFull {
+                root,
+                needed,
+                available,
+            } => Self::DiskFull {
+                root: root.clone(),
+                needed: *needed,
+                available: *available,
+            },
+            Self::PermissionDenied { path } => Self::PermissionDenied { path: path.clone() },
+            Self::FileNotFound { path } => Self::FileNotFound { path: path.clone() },
+            Self::Cancelled => Self::Cancelled,
+            Self::ShortIo {
+                path,
+                expected,
+                actual,
+            } => Self::ShortIo {
+                path: path.clone(),
+                expected: *expected,
+                actual: *actual,
+            },
+            Self::QueueFull { mount } => Self::QueueFull {
+                mount: mount.clone(),
+            },
+            Self::StagedMoveFailed { step, reason } => Self::StagedMoveFailed {
+                step,
+                reason: reason.clone(),
+            },
+            Self::FilesystemStateUncertain { step, reason } => Self::FilesystemStateUncertain {
+                step,
+                reason: reason.clone(),
+            },
+            Self::Path(error) => Self::Path(error.clone()),
+            Self::RefuseShrink {
+                path,
+                current_len,
+                requested_len,
+            } => Self::RefuseShrink {
+                path: path.clone(),
+                current_len: *current_len,
+                requested_len: *requested_len,
+            },
+        }
+    }
+
     /// Return whether the error means the executor cannot prove that the
     /// filesystem is back in a state where an owning torrent may safely run.
     pub fn requires_manual_recovery(&self) -> bool {

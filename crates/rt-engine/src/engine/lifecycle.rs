@@ -904,6 +904,7 @@ impl Engine {
         &mut self,
         info_hash_hex: String,
         meta: TorrentMetaV1,
+        hybrid_v2: Option<TorrentMetaV2>,
         save: PathBuf,
         paused: bool,
         initial_state: TorrentState,
@@ -938,6 +939,9 @@ impl Engine {
             Some(piece_index_memory_lease),
         )
         .await;
+        if let Some(hybrid_meta) = hybrid_v2 {
+            task.attach_hybrid_v2_metadata(hybrid_meta);
+        }
         task.attach_torrent_metadata_memory_lease(torrent_metadata_memory_lease);
         task.attach_crash_safety(Arc::clone(&self.services.crash_safety));
         let handle = spawn_supervised(self.runtime.task_exits.guard(&info_hash_hex), task.run());
@@ -979,6 +983,7 @@ impl Engine {
                 self.spawn_torrent_task(
                     info_hash_hex,
                     meta,
+                    None,
                     save,
                     paused,
                     initial_state,
@@ -987,10 +992,11 @@ impl Engine {
                 )
                 .await
             }
-            TorrentMeta::Hybrid(meta, _) => {
+            TorrentMeta::Hybrid(meta, v2) => {
                 self.spawn_torrent_task(
                     info_hash_hex,
                     *meta,
+                    Some(v2),
                     save,
                     paused,
                     initial_state,

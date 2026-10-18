@@ -98,11 +98,7 @@ impl TorrentTask {
                     handle.interested = false;
                 }
             }
-            PeerEvent::Piece {
-                peer,
-                block,
-                ..
-            } => {
+            PeerEvent::Piece { peer, block, .. } => {
                 // A peer task can race shutdown and leave one final block in
                 // the bounded event channel. Once its handle is gone, that
                 // block is stale and must not be written after a recheck or a
@@ -464,7 +460,7 @@ impl TorrentTask {
             }
         }
         if !aggregate_piece_write {
-            if let Err(e) = self.write_block(&block).await {
+            if let Err(e) = self.write_block_inner(&block, _memory_lease.clone()).await {
                 warn!(
                     component = "storage",
                     operation = "write_block",
@@ -671,7 +667,7 @@ impl TorrentTask {
                 }
             };
             for (offset, data) in received_blocks {
-                if let Err(error) = self.write_block(&data.block).await {
+                if let Err(error) = self.write_leased_block(&data).await {
                     warn!(
                         component = "storage",
                         operation = "spill_piece_assembly",

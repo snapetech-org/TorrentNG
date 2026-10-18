@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use futures::future;
-use rt_hash::MerkleAccumulator;
+use rt_hash::{MerkleAccumulator, V2_BLOCK_SIZE};
 use rt_path::SafeRelPath;
 use sha1::{Digest as Sha1Digest, Sha1};
 use tracing::instrument;
@@ -33,6 +33,22 @@ pub struct V2FileHash {
     pub path: SafeRelPath,
     pub length: u64,
     pub pieces_root: Option<[u8; 32]>,
+}
+
+/// The authenticated v2 view associated with one hybrid v1 piece. Hybrid
+/// metadata validation guarantees that the file range begins on the same
+/// piece boundary in both address spaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HybridV2PieceExpectation {
+    pub file_index: u32,
+    pub file_offset: u64,
+    pub content_len: u64,
+    pub expected_root: [u8; 32],
+    /// `Some` for a piece-layer entry, whose final partial file piece is
+    /// padded with zero-hash leaves to the full v2 piece size. `None` for a
+    /// file no larger than one piece, whose file root pads only to the next
+    /// power-of-two leaf count.
+    pub piece_leaf_count: Option<usize>,
 }
 
 /// Verifies piece data against expected SHA-1 hashes by reading directly
@@ -68,8 +84,26 @@ impl<'a> PieceVerifier<'a> {
     /// The very first read and the very last hash are not overlapped with
     /// anything (pipeline prologue/epilogue), which is the normal shape of
     /// software pipelining.
-    #[instrument(skip(self), fields(piece))]
     pub async fn verify_piece(&self, piece: u32) -> VerifyResult {
+        self.verify_piece_inner(piece, None).await
+    }
+
+    /// Verify a hybrid piece's v1 hash and authenticated v2 file/piece root
+    /// while each payload range is read only once.
+    pub async fn verify_hybrid_piece(
+        &self,
+        piece: u32,
+        expectation: &HybridV2PieceExpectation,
+    ) -> VerifyResult {
+        self.verify_piece_inner(piece, Some(expectation)).await
+    }
+
+    #[instrument(skip(self, v2), fields(piece))]
+    async fn verify_piece_inner(
+        &self,
+        piece: u32,
+        v2: Option<&HybridV2PieceExpectation>,
+    ) -> VerifyResult {
         let regions = match self.piece_map.piece_to_file_regions(piece) {
             Ok(r) => r,
             Err(e) => {
@@ -89,6 +123,30 @@ impl<'a> PieceVerifier<'a> {
                 }
             }
         };
+
+        if let Some(expectation) = v2 {
+            let mut payload_regions = regions.iter().filter(|region| !region.pad);
+            let matches_geometry = payload_regions.next().is_some_and(|region| {
+                region.file_index == expectation.file_index
+                    && region.file_offset == expectation.file_offset
+                    && region.length == expectation.content_len
+                    && payload_regions.next().is_none()
+            });
+            let valid_padding = expectation.piece_leaf_count.is_none_or(|leaf_count| {
+                leaf_count.is_power_of_two()
+                    && expectation.content_len.div_ceil(V2_BLOCK_SIZE as u64) <= leaf_count as u64
+            });
+            if !matches_geometry
+                || expectation.content_len == 0
+                || !expectation.file_offset.is_multiple_of(V2_BLOCK_SIZE as u64)
+                || !valid_padding
+            {
+                return VerifyResult::Missing {
+                    file_index: expectation.file_index,
+                    reason: "hybrid v2 file range does not match the v1 piece geometry".to_owned(),
+                };
+            }
+        }
 
         // Flatten the piece's file regions into a fixed read-chunk plan up
         // front (region index, file offset, length) so the pipeline below
@@ -113,6 +171,8 @@ impl<'a> PieceVerifier<'a> {
         }
 
         let mut hasher = Sha1::new();
+        let mut v2_accumulator = v2.map(|_| MerkleAccumulator::new());
+        let mut v2_hashed_bytes = 0u64;
 
         // Prologue: start the first chunk's read. There is nothing to
         // overlap it with yet.
@@ -133,20 +193,37 @@ impl<'a> PieceVerifier<'a> {
             None => None,
         };
 
-        for (i, &(region_index, _, _)) in chunks.iter().enumerate() {
+        for (i, &(region_index, chunk_offset, chunk_len)) in chunks.iter().enumerate() {
             let data = pending
                 .take()
                 .expect("verify pipeline lost its buffered chunk");
             match chunks.get(i + 1) {
                 Some(&(next_region_index, next_offset, next_len)) => {
                     // Steady state: hash the chunk in hand while prefetching
-                    // the next one. Both futures are polled concurrently by
-                    // `future::join`, so the next chunk's disk read overlaps
-                    // the current chunk's SHA-1 update on the hash pool.
+                    // the next one. For hybrid content, submit its v2 leaf
+                    // batch beside the v1 update so both views use this read.
                     let next_region = &regions[next_region_index];
                     let hash_fut = recheck_hash_sha1_update(self.scheduler, &hasher, &data);
+                    let v2_region = v2.is_some_and(|expectation| {
+                        !regions[region_index].pad
+                            && regions[region_index].file_index == expectation.file_index
+                            && byte_range_within(
+                                chunk_offset,
+                                chunk_len,
+                                expectation.file_offset,
+                                expectation.content_len,
+                            )
+                    });
+                    let v2_hash_fut = async {
+                        if v2_region {
+                            recheck_hash_v2_leaves(self.scheduler, &data, V2_BLOCK_SIZE).await
+                        } else {
+                            Ok(Vec::new())
+                        }
+                    };
                     let read_fut = self.read_region_chunk(next_region, next_offset, next_len);
-                    let (hash_result, read_result) = future::join(hash_fut, read_fut).await;
+                    let (hash_result, v2_result, read_result) =
+                        future::join3(hash_fut, v2_hash_fut, read_fut).await;
                     hasher = match hash_result {
                         Ok(updated) => updated,
                         Err(e) => {
@@ -156,6 +233,23 @@ impl<'a> PieceVerifier<'a> {
                             };
                         }
                     };
+                    if v2_region {
+                        let leaves = match v2_result {
+                            Ok(leaves) => leaves,
+                            Err(error) => {
+                                return VerifyResult::Missing {
+                                    file_index: regions[region_index].file_index,
+                                    reason: error.to_string(),
+                                };
+                            }
+                        };
+                        if let Some(accumulator) = v2_accumulator.as_mut() {
+                            for leaf in leaves {
+                                accumulator.push(leaf);
+                            }
+                        }
+                        v2_hashed_bytes = v2_hashed_bytes.saturating_add(data.len() as u64);
+                    }
                     pending = match read_result {
                         Ok(data) => Some(data),
                         Err(e) => {
@@ -169,7 +263,26 @@ impl<'a> PieceVerifier<'a> {
                 }
                 None => {
                     // Epilogue: the last chunk has nothing left to prefetch.
-                    match recheck_hash_sha1_update(self.scheduler, &hasher, &data).await {
+                    let v2_region = v2.is_some_and(|expectation| {
+                        !regions[region_index].pad
+                            && regions[region_index].file_index == expectation.file_index
+                            && byte_range_within(
+                                chunk_offset,
+                                chunk_len,
+                                expectation.file_offset,
+                                expectation.content_len,
+                            )
+                    });
+                    let hash_fut = recheck_hash_sha1_update(self.scheduler, &hasher, &data);
+                    let v2_hash_fut = async {
+                        if v2_region {
+                            recheck_hash_v2_leaves(self.scheduler, &data, V2_BLOCK_SIZE).await
+                        } else {
+                            Ok(Vec::new())
+                        }
+                    };
+                    let (hash_result, v2_result) = future::join(hash_fut, v2_hash_fut).await;
+                    match hash_result {
                         Ok(updated) => hasher = updated,
                         Err(e) => {
                             return VerifyResult::Missing {
@@ -178,12 +291,50 @@ impl<'a> PieceVerifier<'a> {
                             };
                         }
                     }
+                    if v2_region {
+                        let leaves = match v2_result {
+                            Ok(leaves) => leaves,
+                            Err(error) => {
+                                return VerifyResult::Missing {
+                                    file_index: regions[region_index].file_index,
+                                    reason: error.to_string(),
+                                };
+                            }
+                        };
+                        if let Some(accumulator) = v2_accumulator.as_mut() {
+                            for leaf in leaves {
+                                accumulator.push(leaf);
+                            }
+                        }
+                        v2_hashed_bytes = v2_hashed_bytes.saturating_add(data.len() as u64);
+                    }
                 }
             }
         }
 
         let actual: [u8; 20] = hasher.finalize().into();
-        if &actual == expected {
+        let v1_matches = &actual == expected;
+        let v2_matches = match v2 {
+            Some(expectation) if v2_hashed_bytes == expectation.content_len => {
+                let root = match (v2_accumulator, expectation.piece_leaf_count) {
+                    (Some(accumulator), Some(leaf_count)) => {
+                        accumulator.finish_padded_to(leaf_count)
+                    }
+                    (Some(accumulator), None) => Some(accumulator.finish()),
+                    (None, _) => None,
+                };
+                root == Some(expectation.expected_root)
+            }
+            Some(expectation) => {
+                return VerifyResult::Missing {
+                    file_index: expectation.file_index,
+                    reason: "hybrid v2 hashing did not cover the authenticated file range"
+                        .to_owned(),
+                };
+            }
+            None => true,
+        };
+        if v1_matches && v2_matches {
             tracing::debug!(
                 component = "storage",
                 operation = "verify_piece",
@@ -198,6 +349,8 @@ impl<'a> PieceVerifier<'a> {
                 operation = "verify_piece",
                 piece,
                 result = "invalid",
+                v1_matches,
+                v2_matches,
                 "piece hash mismatch"
             );
             VerifyResult::Invalid
@@ -415,6 +568,16 @@ async fn recheck_read_owned(
     }
 }
 
+fn byte_range_within(start: u64, len: u64, outer_start: u64, outer_len: u64) -> bool {
+    let Some(end) = start.checked_add(len) else {
+        return false;
+    };
+    let Some(outer_end) = outer_start.checked_add(outer_len) else {
+        return false;
+    };
+    start >= outer_start && end <= outer_end
+}
+
 async fn recheck_hash_sha1_update(
     scheduler: &MountScheduler,
     hasher: &Sha1,
@@ -477,10 +640,7 @@ async fn recheck_finish_v2_merkle_root(
 ) -> Result<[u8; 32], StorageError> {
     let mut attempts = 0;
     loop {
-        match scheduler
-            .finish_v2_merkle_root(accumulator.clone())
-            .await
-        {
+        match scheduler.finish_v2_merkle_root(accumulator.clone()).await {
             Ok(root) => return Ok(root),
             Err(error @ StorageError::QueueFull { .. }) => {
                 if !retry_recheck_queue_full(&mut attempts).await {
@@ -531,7 +691,7 @@ async fn recheck_data_extents(
 mod tests {
     use super::*;
     use crate::scheduler::scheduled_write;
-    use rt_hash::{merkle_root, BlockHash};
+    use rt_hash::{merkle_root, piece_layer_hash, BlockHash, V2_BLOCK_SIZE};
     use rt_path::SafeRelPath;
     use rt_piece_map::{FileSpan, PieceMap};
     use sha1::{Digest, Sha1};
@@ -616,6 +776,100 @@ mod tests {
 
         assert_eq!(verifier.verify_piece(0).await, VerifyResult::Valid);
         assert!(!dir.path().join(".pad/13").exists());
+    }
+
+    #[tokio::test]
+    async fn verify_hybrid_short_final_piece_excludes_bep47_padding_from_v2_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let piece_length = V2_BLOCK_SIZE * 2;
+        let content: Vec<u8> = (0..piece_length + 17)
+            .map(|index| (index % 239) as u8)
+            .collect();
+        std::fs::write(dir.path().join("payload.bin"), &content).unwrap();
+        let padding_length = piece_length - 17;
+        let mut final_v1_piece = content[piece_length..].to_vec();
+        final_v1_piece.resize(piece_length, 0);
+        let hashes = [
+            piece_hash(&content[..piece_length]),
+            piece_hash(&final_v1_piece),
+        ];
+        let files = vec![
+            FileSpan {
+                file_index: 0,
+                path: SafeRelPath::from_name("payload.bin", false).unwrap(),
+                content_offset: 0,
+                length: content.len() as u64,
+            },
+            FileSpan {
+                file_index: 1,
+                path: SafeRelPath::from_components(&[".pad", "32751"], false).unwrap(),
+                content_offset: content.len() as u64,
+                length: padding_length as u64,
+            },
+        ];
+        let piece_map = PieceMap::new_with_padding(piece_length as u64, files, [1]).unwrap();
+        let scheduler = ssd_scheduler();
+        let verifier = PieceVerifier::new(dir.path(), &scheduler, &piece_map, &hashes);
+        let valid_expectation = HybridV2PieceExpectation {
+            file_index: 0,
+            file_offset: piece_length as u64,
+            content_len: 17,
+            expected_root: piece_layer_hash(&content[piece_length..], piece_length).unwrap(),
+            piece_leaf_count: Some(2),
+        };
+
+        assert_eq!(
+            verifier.verify_hybrid_piece(1, &valid_expectation).await,
+            VerifyResult::Valid
+        );
+        let mut wrong_v2_root = valid_expectation;
+        wrong_v2_root.expected_root[0] ^= 1;
+        assert_eq!(
+            verifier.verify_hybrid_piece(1, &wrong_v2_root).await,
+            VerifyResult::Invalid,
+            "a valid v1 hash must not hide a mismatch in the authenticated v2 view"
+        );
+        assert!(!dir.path().join(".pad/32751").exists());
+    }
+
+    #[tokio::test]
+    async fn verify_hybrid_single_piece_file_uses_its_file_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let piece_length = V2_BLOCK_SIZE * 2;
+        let content = b"short v2 file";
+        std::fs::write(dir.path().join("short.bin"), content).unwrap();
+        let mut v1_piece = content.to_vec();
+        v1_piece.resize(piece_length, 0);
+        let hashes = [piece_hash(&v1_piece)];
+        let files = vec![
+            FileSpan {
+                file_index: 0,
+                path: SafeRelPath::from_name("short.bin", false).unwrap(),
+                content_offset: 0,
+                length: content.len() as u64,
+            },
+            FileSpan {
+                file_index: 1,
+                path: SafeRelPath::from_components(&[".pad", "32755"], false).unwrap(),
+                content_offset: content.len() as u64,
+                length: (piece_length - content.len()) as u64,
+            },
+        ];
+        let piece_map = PieceMap::new_with_padding(piece_length as u64, files, [1]).unwrap();
+        let scheduler = ssd_scheduler();
+        let verifier = PieceVerifier::new(dir.path(), &scheduler, &piece_map, &hashes);
+        let expectation = HybridV2PieceExpectation {
+            file_index: 0,
+            file_offset: 0,
+            content_len: content.len() as u64,
+            expected_root: v2_file_root(content),
+            piece_leaf_count: None,
+        };
+
+        assert_eq!(
+            verifier.verify_hybrid_piece(0, &expectation).await,
+            VerifyResult::Valid
+        );
     }
 
     #[tokio::test]

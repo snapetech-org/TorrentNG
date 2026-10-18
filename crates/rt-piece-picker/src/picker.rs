@@ -186,10 +186,7 @@ impl PiecePicker {
     /// bucket ladder, and bookkeeping slack. Runtime accounting can be more
     /// precise through `memory_bytes`, which uses current vector capacities.
     pub fn memory_bytes_for_piece_count(piece_count: usize) -> usize {
-        Self::memory_bytes_for_piece_count_with_max_peers(
-            piece_count,
-            DEFAULT_ESTIMATED_MAX_PEERS,
-        )
+        Self::memory_bytes_for_piece_count_with_max_peers(piece_count, DEFAULT_ESTIMATED_MAX_PEERS)
     }
 
     /// Estimate the persistent picker index for a configured peer ceiling.
