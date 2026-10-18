@@ -760,15 +760,20 @@ mod tests {
 
         // The large first bucket contains no peer-held pieces, so its bounded
         // probes fall through to the set-bit walk.
-        let mut peer = vec![false; 512];
-        peer[400] = true;
-        peer[401] = true;
+        let mut pieces = vec![false; 512];
+        pieces[400] = true;
+        pieces[401] = true;
+        let peer = CountingPeerAvailability {
+            pieces,
+            set_walks: std::cell::Cell::new(0),
+        };
         let mut rng = rand::rngs::StdRng::seed_from_u64(0x5eed);
         let selected: std::collections::BTreeSet<_> = (0..128)
             .filter_map(|_| av.rarest_matching_random_from_peer(&peer, |_| true, &mut rng))
             .collect();
 
         assert_eq!(selected, [400, 401].into_iter().collect());
+        assert_eq!(peer.set_walks.get(), 128);
     }
 
     #[test]
