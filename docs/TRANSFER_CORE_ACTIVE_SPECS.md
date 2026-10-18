@@ -1386,6 +1386,9 @@ cancellation/refund, and shared source scheduling.
 - The due-peer query returns only indexed peers at or before the supplied
   deadline, respects its caller-provided batch bound, and leaves entries
   indexed until a grant attempt reconciles them.
+- Limit changes and refunds can enumerate a bounded batch of parked peers even
+  when their old deadlines are still in the future; each retry reconciles or
+  updates its existing deadline index entry.
 - Limit changes and refunds promptly reconsider affected parked requests, so
   an earlier eligibility time is not hidden by a stale timer deadline.
 - Live v1, pure-v2, and webseed adapters use the same service before the
@@ -1412,7 +1415,8 @@ cancellation/refund, and shared source scheduling.
   weight updates, index
   cleanup, deadline-filtered bounded wake batches, unknown peers, repeated
   torrent-limit updates, and
-  `reused_ledger_connections_are_isolated_between_torrents`.
+  `reused_ledger_connections_are_isolated_between_torrents`; bounded waiter
+  batches also cover immediate reconsideration after a global limit change.
 - **Live limiter regression sources:** a changed limited rate preserves
   existing credit without granting a fresh burst, accrued old-rate credit is
   clamped to a reduced bucket capacity, runtime unlimited-to-limited begins

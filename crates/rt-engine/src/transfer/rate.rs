@@ -483,6 +483,18 @@ impl RateTree {
             .map(|(_, peer_id)| *peer_id)
             .collect()
     }
+
+    /// Return a bounded batch of all parked peers, ordered by retry deadline.
+    /// A live adapter uses this after a limit change or refund, which can make
+    /// a peer eligible before its old deadline. Entries remain indexed until
+    /// `try_grant` reconciles each wait.
+    pub fn waiting_peers(&self, limit: usize) -> Vec<RatePeerId> {
+        self.wake_queue
+            .iter()
+            .take(limit)
+            .map(|(_, peer_id)| *peer_id)
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -617,6 +629,39 @@ mod tests {
             Grant::Granted
         );
         assert_eq!(tree.due_peers(deadline, 1), vec![second_waiter]);
+    }
+
+    #[test]
+    fn parked_peers_can_be_reconsidered_in_bounded_batches_after_limit_change() {
+        let first_waiter = peer(1, 1);
+        let second_waiter = peer(2, 1);
+        let mut tree = RateTree::new(Some(1024), 0);
+        tree.add_torrent(TorrentKey(1), None, 0);
+        tree.add_torrent(TorrentKey(2), None, 0);
+        tree.add_peer(first_waiter, 1);
+        tree.add_peer(second_waiter, 1);
+
+        assert_eq!(tree.try_grant(first_waiter, BLOCK, 0), Grant::Granted);
+        assert_eq!(tree.try_grant(second_waiter, BLOCK, 0), Grant::Granted);
+        assert!(matches!(
+            tree.try_grant(first_waiter, BLOCK, 0),
+            Grant::Wait { .. }
+        ));
+        assert!(matches!(
+            tree.try_grant(second_waiter, BLOCK, 0),
+            Grant::Wait { .. }
+        ));
+
+        tree.set_global_limit(None, 0);
+        assert!(tree.due_peers(0, 2).is_empty(), "old deadlines are stale");
+        assert!(tree.waiting_peers(0).is_empty());
+        assert_eq!(tree.waiting_peers(1), vec![first_waiter]);
+        assert_eq!(tree.waiting_peers(2), vec![first_waiter, second_waiter]);
+
+        assert_eq!(tree.try_grant(first_waiter, BLOCK, 0), Grant::Granted);
+        assert_eq!(tree.waiting_peers(1), vec![second_waiter]);
+        assert_eq!(tree.try_grant(second_waiter, BLOCK, 0), Grant::Granted);
+        assert!(tree.waiting_peers(2).is_empty());
     }
 
     #[test]
