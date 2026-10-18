@@ -244,14 +244,16 @@ portable scheduler. This slice covers cancellation after backend submission,
 injected read/write failures, partial-write failure, retry after a failed data
 barrier, and operation-level file identity fencing. Dirty path state binds each
 typed `ContentEpoch` to the descriptor identity that received it. The admitted
-`DiskSubmission` carries a `StorageOperationRecord` containing the device-local
-operation sequence plus the captured file identity and content epoch through
-backend completion; only that record can clear the dirty state it covered.
+`DiskSubmission` carries a `StorageOperationRecord` containing a process-wide
+operation identity, the device-local operation sequence, and the captured file
+identity and content epoch through backend completion; only that record can
+clear the dirty state it covered. Coalesced peer reads also receive a
+process-wide identity for tracing.
 Securely opened descriptor leases carry that captured identity through queued
 and submitted operations. On Unix and Windows, reads, writes, and sync
 operations check that the descriptor's original identity still matches the
 current path at their completion boundary; a mismatch fails as uncertain, and
-writes keep dirty evidence intact. Full operation-lease accounting, restart
+writes keep dirty evidence intact. Full resource-credit accounting, restart
 cuts, and platform fault qualification remain open.
 
 ### Ownership and invariant

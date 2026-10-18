@@ -819,6 +819,23 @@ struct ContentEpoch(u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DeviceOperationId(u64);
 
+/// Process-wide identity for one admitted storage operation. Unlike the
+/// device sequence, this identity remains unique when work crosses mounts or
+/// is dispatched through a different physical-device queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct StorageOperationId(u64);
+
+static NEXT_STORAGE_OPERATION_ID: AtomicU64 = AtomicU64::new(1);
+
+fn allocate_storage_operation_id() -> Option<StorageOperationId> {
+    NEXT_STORAGE_OPERATION_ID
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            current.checked_add(1)
+        })
+        .ok()
+        .map(StorageOperationId)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DirtyPathState {
     content_epoch: ContentEpoch,
@@ -845,7 +862,8 @@ fn clear_dirty_path_if_operation(
     path: &Path,
     operation: &StorageOperationRecord,
 ) {
-    if operation.device_operation_id.is_none()
+    if operation.storage_operation_id.is_none()
+        || operation.device_operation_id.is_none()
         || operation.content_epoch.is_none()
         || operation.file_identity.is_none()
     {
@@ -1272,6 +1290,7 @@ struct DiskSubmission {
 /// epoch and file identity bind any dirty-path clearing to this operation.
 #[derive(Debug, Default)]
 struct StorageOperationRecord {
+    storage_operation_id: Option<StorageOperationId>,
     device_operation_id: Option<DeviceOperationId>,
     file_identity: Option<FileIdentity>,
     content_epoch: Option<ContentEpoch>,
@@ -1310,6 +1329,10 @@ impl DiskSubmission {
 
     fn device_operation_id(&self) -> Option<u64> {
         self.operation.device_operation_id.map(|id| id.0)
+    }
+
+    fn storage_operation_id(&self) -> Option<u64> {
+        self.operation.storage_operation_id.map(|id| id.0)
     }
 
     fn bind_file_identity(&mut self, identity: FileIdentity) {
@@ -2170,15 +2193,27 @@ async fn dispatch_peer_read_batch(
                         .collect();
                 }
             };
-            tracing::trace!(
-                device_operation_id = _device_queue.operation_id(),
-                class = ?IoClass::PeerRead,
-                "dispatching coalesced peer read"
-            );
             batch.requests.retain(|request| !request.tx.is_closed());
             if batch.requests.is_empty() {
                 return Vec::new();
             }
+            let Some(storage_operation_id) = allocate_storage_operation_id() else {
+                let error = StorageError::io(
+                    "storage operation identity",
+                    io::Error::other("process-wide storage operation identity space exhausted"),
+                );
+                return batch
+                    .requests
+                    .into_iter()
+                    .map(|request| (request.tx, Err(error.clone_for_waiter())))
+                    .collect();
+            };
+            tracing::trace!(
+                storage_operation_id = storage_operation_id.0,
+                device_operation_id = _device_queue.operation_id(),
+                class = ?IoClass::PeerRead,
+                "dispatching coalesced peer read"
+            );
             let frame = match global_frame_pool().try_acquire(len) {
                 Some(frame) => frame,
                 None => {
@@ -2631,6 +2666,7 @@ impl MountScheduler {
         let mut submission = self.reserve_mount_submission(queued_bytes)?;
         submission.start_device_operation(self.acquire_device_operation(class).await?);
         tracing::trace!(
+            storage_operation_id = submission.storage_operation_id().unwrap_or_default(),
             device_operation_id = submission.device_operation_id().unwrap_or_default(),
             class = ?class,
             "dispatching storage-side blocking operation"
@@ -2791,6 +2827,7 @@ impl MountScheduler {
         submission.start_device_operation(primary);
         let additional_permits = permits.collect::<Vec<_>>();
         tracing::trace!(
+            storage_operation_id = submission.storage_operation_id().unwrap_or_default(),
             device_operation_id = submission.device_operation_id().unwrap_or_default(),
             class = ?class,
             device_count = additional_permits.len().saturating_add(1),
@@ -2860,8 +2897,17 @@ impl MountScheduler {
             Err(TryAcquireError::NoPermits) => return Ok(None),
             Err(TryAcquireError::Closed) => return Err(StorageError::Cancelled),
         };
+        let storage_operation_id = allocate_storage_operation_id().ok_or_else(|| {
+            StorageError::io(
+                "storage operation identity",
+                io::Error::other("process-wide storage operation identity space exhausted"),
+            )
+        })?;
         Ok(Some(DiskSubmission {
-            operation: StorageOperationRecord::default(),
+            operation: StorageOperationRecord {
+                storage_operation_id: Some(storage_operation_id),
+                ..StorageOperationRecord::default()
+            },
             _queued_bytes: queued_bytes,
             _queue: queue,
             _device_operation: None,
@@ -3096,6 +3142,7 @@ impl MountScheduler {
                     }
                 })?;
                 tracing::trace!(
+                    storage_operation_id = submission.storage_operation_id().unwrap_or_default(),
                     device_operation_id = submission.device_operation_id().unwrap_or_default(),
                     class = ?class,
                     "dispatching positioned read"
@@ -3294,6 +3341,7 @@ impl MountScheduler {
         let written = data.len();
         submission.start_device_operation(self.acquire_device_operation(class).await?);
         tracing::trace!(
+            storage_operation_id = submission.storage_operation_id().unwrap_or_default(),
             device_operation_id = submission.device_operation_id().unwrap_or_default(),
             class = ?class,
             "dispatching positioned write"
@@ -3520,6 +3568,7 @@ impl MountScheduler {
         submission
             .start_device_operation(self.acquire_device_operation(IoClass::Foreground).await?);
         tracing::trace!(
+            storage_operation_id = submission.storage_operation_id().unwrap_or_default(),
             device_operation_id = submission.device_operation_id().unwrap_or_default(),
             class = ?IoClass::Foreground,
             "dispatching file data sync"
@@ -3758,6 +3807,7 @@ impl MountScheduler {
         };
         submission.start_device_operation(device_operation);
         tracing::trace!(
+            storage_operation_id = submission.storage_operation_id().unwrap_or_default(),
             device_operation_id = submission.device_operation_id().unwrap_or_default(),
             class = ?IoClass::Foreground,
             "dispatching checkpoint file sync"
@@ -6654,6 +6704,7 @@ mod tests {
 
         let first_state = mark_dirty_path(&dirty_paths, &dirty_path_epoch, path.clone(), identity);
         let mut first_operation = StorageOperationRecord::default();
+        first_operation.storage_operation_id = Some(StorageOperationId(10));
         first_operation.device_operation_id = Some(DeviceOperationId(1));
         first_operation.bind_dirty_path(first_state);
         mark_dirty_path(&dirty_paths, &dirty_path_epoch, path.clone(), identity);
@@ -6668,10 +6719,18 @@ mod tests {
         assert_eq!(dirty_paths.lock().unwrap().len(), 1);
 
         let mut second_operation = StorageOperationRecord::default();
+        second_operation.storage_operation_id = Some(StorageOperationId(11));
         second_operation.device_operation_id = Some(DeviceOperationId(2));
         second_operation.bind_dirty_path(second_state);
         clear_dirty_path_if_operation(&dirty_paths, &path, &second_operation);
         assert!(dirty_paths.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn storage_operation_ids_are_process_wide_and_monotonic() {
+        let first = allocate_storage_operation_id().unwrap();
+        let second = allocate_storage_operation_id().unwrap();
+        assert!(second.0 > first.0);
     }
 
     #[test]

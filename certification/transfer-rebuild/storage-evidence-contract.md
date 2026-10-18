@@ -54,15 +54,17 @@ previous epoch or file generation may release resources and report
 diagnostics, but cannot publish content into the current generation.
 
 Current implementation: `LeasedFile` carries the secure-open identity and
-descriptor permit together; `DiskSubmission` carries the per-mount queue
-permit, shared physical-device permit, and queued-disk byte charge through
-queued open and backend completion watchers. The device admission pool is
-keyed by physical device identity rather than mount profile; unidentified
-topology falls back to a storage-root-scoped pool. Strict writes move the same
-submission through their data sync. Dirty writes retain their sequence and
-file identity, and reads recheck the descriptor identity against the current
-path before returning. A unified operation/content-epoch record and complete
-cross-boundary resource-credit accounting remain open.
+descriptor permit together; `DiskSubmission` carries a process-wide typed
+`StorageOperationId`, its device-local sequence, file identity and content
+epoch, plus the per-mount queue permit, shared physical-device permit, and
+queued-disk byte charge through queued open and backend completion watchers.
+Dirty clearing requires the admitted record and exact file/content identity.
+Coalesced peer reads receive a process-wide ID for tracing. The device
+admission pool is keyed by physical device identity rather than mount profile;
+unidentified topology falls back to a storage-root-scoped pool. Strict writes
+move the same submission through their data sync. Reads recheck the descriptor
+identity against the current path before returning. Full cross-boundary
+resource-credit accounting remains open.
 
 Dirty evidence is tracked per normalized path, write sequence, and file
 identity. A barrier snapshots the dirty files and highest covered sequence for
