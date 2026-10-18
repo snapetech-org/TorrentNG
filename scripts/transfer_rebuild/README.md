@@ -392,12 +392,12 @@ pass.
 
 ## PERF-112 v2 and restart invariants
 
-The `rt-metrics` integration source admits deterministic v1, pure-v2, and
-hybrid fixtures through the production engine, verifies their existing payload
-files through the storage recheck path, and persists their completed state
-across a clean restart. It damages one pure-v2 payload byte between runs and
-requires resume-time verification to mark that torrent incomplete while the
-unchanged v1 and hybrid payloads remain complete.
+The `rt-metrics` integration source transfers deterministic v1, pure-v2, and
+hybrid fixtures between isolated production engines over loopback TCP. It
+checks receiver payload bytes, persists completed state across a clean restart,
+then damages one pure-v2 payload byte between runs. Resume-time verification
+must mark that torrent incomplete while the unchanged v1 and hybrid payloads
+remain complete.
 
 Run this source during the requested bulk pass:
 
@@ -405,11 +405,12 @@ Run this source during the requested bulk pass:
 cargo test -p rt-metrics --test transfer_invariants -- --nocapture
 ```
 
-This exercises metainfo admission, disk hashing, persistence, and restart
-recheck. It does not simulate peer transfer, establish useful goodput, qualify
-crash cuts, or prove the durability properties owned by IO-009/IO-010. The
-PERF-110 paired runner must separately validate downloaded bytes and record
-applicable protocol support before emitting comparable transfer results.
+This exercises metainfo admission, peer-wire transfer, disk hashing,
+persistence, and restart recheck. It is a small correctness case, not a
+goodput result; it does not qualify crash cuts or prove the durability
+properties owned by IO-009/IO-010. The PERF-110 paired runner must separately
+validate downloaded bytes and record applicable protocol support before
+emitting comparable transfer results.
 
 ## Task-scoped network control
 

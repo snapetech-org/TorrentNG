@@ -2876,25 +2876,27 @@ threshold tests or whole-client performance evidence.
 
 ### Scope
 
-Use the deterministic v1, pure-v2, and hybrid compatibility fixtures through
-the production engine API and storage recheck path. Persist paused completion
-state through a clean engine shutdown and restore it from the same database and
-metainfo blobs. Change one byte in the pure-v2 payload between process
-lifetimes, then require resume-time verification to demote that torrent while
-the unchanged v1 and hybrid payloads remain complete. This checks full engine
-admission, storage hashing, state persistence, restart, and recheck behavior;
-it does not simulate a network swarm or establish transfer goodput.
+Use the deterministic v1, pure-v2, and hybrid compatibility fixtures between
+two production engine instances over loopback TCP. The receiver must obtain
+all payload files through the real peer-wire, storage, and verification paths.
+Persist paused completion state through a clean receiver shutdown and restore
+it from the same database and metainfo blobs. Change one byte in the pure-v2
+payload between process lifetimes, then require resume-time verification to
+demote that torrent while the unchanged v1 and hybrid payloads remain
+complete. This is a small correctness transfer and restart case, not a
+transfer-rate or whole-client performance result.
 
 ### Ownership and invariant
 
 - **Current owner:** `rt-testkit` defines payload-derived protocol fixtures;
-  `rt-engine` owns real metainfo admission, storage verification, and durable
-  registry updates; the `rt-metrics` integration target observes lifecycle
-  results across restart.
+  `rt-engine` owns real metainfo admission, peer transfer, storage
+  verification, and registry updates; the `rt-metrics` integration target
+  observes lifecycle results across restart.
 - **Target owner:** PERF-110's paired runner must run clients against pinned
   v2/hybrid fixtures and invoke integrity/restart gates before a trial can be
   treated as comparable.
-- **Invariant preserved:** a torrent that was previously complete is not
+- **Invariant preserved:** the receiver gets exact expected payload bytes over
+  the actual TCP peer path; a torrent that was previously complete is not
   trusted after restart until its current payload verifies; v1, pure-v2, and
   hybrid identities remain distinct, and hybrid pad bytes stay zero-filled.
 - **Must not:** label local storage recheck as a peer transfer, accept the
@@ -2903,11 +2905,13 @@ it does not simulate a network swarm or establish transfer goodput.
 
 ### Acceptance
 
-- Materialize each protocol fixture under its name-wrapped save path, with
-  separate roots and the expected hybrid padding file.
-- Admit the raw metainfo through `EngineHandle::add_torrent_raw_with_labels`,
-  use the production task to verify existing bytes, and observe all three
-  cases reach complete state with zero bytes remaining.
+- Start isolated seed and receiver engines on task-scoped loopback ports.
+- Materialize each seed fixture under its name-wrapped save path, leave
+  receiver payloads absent, and create the expected hybrid padding file.
+- Admit raw metainfo through `EngineHandle::add_torrent_raw_with_labels`,
+  connect the receiver with `EngineHandle::add_peers`, and observe all three
+  cases reach complete state with zero bytes remaining and exact payload-file
+  bytes at the receiver.
 - Pause the completed entries, shut down cleanly, and restore all three from
   the same database and metainfo blobs with their protocol identities and
   completed counters intact.
@@ -2931,9 +2935,9 @@ it does not simulate a network swarm or establish transfer goodput.
 ### Evidence
 
 - **Regression source added or updated:**
-  `persisted_v2_completion_is_rechecked_after_restart` exercises the v1,
-  pure-v2, and hybrid engine paths and corrupts only the pure-v2 content
-  between restarts.
+  `persisted_v2_completion_is_rechecked_after_restart` transfers the v1,
+  pure-v2, and hybrid fixtures between production engine instances, verifies
+  receiver bytes, and corrupts only pure-v2 content between restarts.
 - **Command or probe to run:**
   `cargo test -p rt-metrics --test transfer_invariants -- --nocapture`
   during the requested bulk pass.
