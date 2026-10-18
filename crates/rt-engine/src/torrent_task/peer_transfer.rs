@@ -20,7 +20,7 @@ impl TorrentTask {
                 self.transfer_rate_torrent,
                 handle.transfer_conn,
             ));
-        self.transfer_ledger.disconnect(handle.transfer_conn);
+        self.transfer_ledger.disconnect_peer(handle.transfer_conn);
     }
 
     pub(super) fn ensure_transfer_piece_memory(
@@ -290,12 +290,57 @@ impl TorrentTask {
             return;
         }
         match event {
+            PeerEvent::PlaneSelected { peer, plane, .. } => {
+                let Some(transfer_conn) = self
+                    .active_peers
+                    .get(&peer)
+                    .map(|handle| handle.transfer_conn)
+                else {
+                    return;
+                };
+                if !self
+                    .transfer_ledger
+                    .set_connection_plane(transfer_conn, plane)
+                {
+                    warn!(
+                        component = "transfer",
+                        operation = "select_peer_plane",
+                        torrent = %self.info_hash_hex,
+                        peer = %peer,
+                        plane = ?plane,
+                        result = "rejected",
+                        reason = "ledger_connection_not_idle_or_hybrid",
+                        "closing peer whose negotiated plane cannot be bound to its ledger"
+                    );
+                    if let Some(abort) = self
+                        .active_peers
+                        .get(&peer)
+                        .and_then(|handle| handle.abort.as_ref())
+                    {
+                        abort.abort();
+                    }
+                    return;
+                }
+                if let Some(handle) = self.active_peers.get_mut(&peer) {
+                    handle.plane = plane;
+                }
+            }
             PeerEvent::Bitfield {
                 peer,
-                pieces,
+                mut pieces,
                 _memory_lease,
                 ..
             } => {
+                let plane = self.active_peers.get(&peer).map(|handle| handle.plane);
+                if let Some(plane) = plane {
+                    if plane == Plane::V2 {
+                        for piece in 0..pieces.len() {
+                            if !self.plane_piece_has_content(plane, piece as u32) {
+                                pieces.set(piece, false);
+                            }
+                        }
+                    }
+                }
                 if let Some(handle) = self.active_peers.get_mut(&peer) {
                     reconcile_peer_availability(
                         &mut self.picker.availability,
@@ -307,6 +352,10 @@ impl TorrentTask {
                 self.refill_peer_requests(peer).await;
             }
             PeerEvent::Have { peer, piece, .. } => {
+                let plane = self.active_peers.get(&peer).map(|handle| handle.plane);
+                if plane.is_some_and(|plane| !self.plane_piece_has_content(plane, piece)) {
+                    return;
+                }
                 if let Some(handle) = self.active_peers.get_mut(&peer) {
                     if !handle.peer_has.get(piece as usize).unwrap_or(false) {
                         handle.peer_has.set(piece as usize, true);
@@ -359,13 +408,13 @@ impl TorrentTask {
                 if let Some(transfer_conn) = transfer_conn {
                     if fast_negotiated {
                         for request in not_sent {
-                            self.transfer_ledger.on_reject(
+                            self.transfer_ledger.on_reject_peer(
                                 transfer_conn,
                                 BlockExtent::new(request.piece, request.begin, request.length),
                             );
                         }
                     } else {
-                        self.transfer_ledger.on_choke(transfer_conn, false);
+                        self.transfer_ledger.on_choke_peer(transfer_conn, false);
                     }
                 }
                 for req in outstanding {
@@ -391,7 +440,7 @@ impl TorrentTask {
                     return;
                 };
                 let now = self.transfer_now();
-                let (outcome, actions) = self.transfer_ledger.commit(
+                let (outcome, actions) = self.transfer_ledger.commit_peer(
                     transfer_conn,
                     BlockExtent::new(request.piece, request.begin, request.length),
                     now,
@@ -421,7 +470,11 @@ impl TorrentTask {
                     block.block.piece,
                     block.block.offset,
                 );
-                record_peer_transfer(handle, false, block.len() as u64);
+                record_peer_transfer(
+                    handle,
+                    false,
+                    block.network_bytes.unwrap_or_else(|| block.len() as u64),
+                );
                 self.handle_block_with_owner(block, Some(transfer_conn), Some(peer))
                     .await;
                 self.refill_peer_requests(peer).await;
@@ -432,7 +485,7 @@ impl TorrentTask {
                     .get(&peer)
                     .map(|handle| handle.transfer_conn)
                 {
-                    self.transfer_ledger.on_reject(
+                    self.transfer_ledger.on_reject_peer(
                         transfer_conn,
                         BlockExtent::new(rejected.piece, rejected.begin, rejected.length),
                     );
@@ -471,7 +524,7 @@ impl TorrentTask {
                             self.transfer_rate_torrent,
                             handle.transfer_conn,
                         ));
-                    self.transfer_ledger.disconnect(handle.transfer_conn);
+                    self.transfer_ledger.disconnect_peer(handle.transfer_conn);
                 }
                 for req in outstanding {
                     self.picker.cancel_request(req.piece as usize, req.begin);
@@ -492,7 +545,7 @@ impl TorrentTask {
                         .get(&peer)
                         .map(|handle| handle.transfer_conn)
                     {
-                        self.transfer_ledger.on_reject(
+                        self.transfer_ledger.on_reject_peer(
                             transfer_conn,
                             BlockExtent::new(req.piece, req.begin, req.length),
                         );
@@ -639,6 +692,7 @@ impl TorrentTask {
             return;
         }
         let transfer_conn = handle.transfer_conn;
+        let plane = handle.plane;
         let download_rate = handle.download_rate;
         let download_rate_started = handle.download_rate_window_started;
         let useful_fresh = self
@@ -715,6 +769,10 @@ impl TorrentTask {
             let transfer_piece_memory_leases = &mut self.transfer_piece_memory_leases;
             let resources = &self.resources;
             let network_budget = &self.network_budget;
+            let hybrid_geometry = self
+                .hybrid_v2
+                .as_ref()
+                .and_then(|hybrid| hybrid.geometry.clone());
             let rate_peer = TransferPeerId::new(self.transfer_rate_torrent, transfer_conn);
             let Some(handle) = peers.get_mut(&peer) else {
                 return;
@@ -730,6 +788,35 @@ impl TorrentTask {
                         (req, ReserveMode::Endgame)
                     }
                 };
+                let block = BlockExtent::new(req.piece, req.begin, req.length);
+                let wire_block = match plane {
+                    Plane::V1 => Some(block),
+                    Plane::V2 => hybrid_geometry
+                        .as_ref()
+                        .and_then(|geometry| geometry.canonical_v2_block_for_v1(block)),
+                };
+                let synthesize_padding = wire_block.is_none()
+                    && plane == Plane::V2
+                    && hybrid_geometry
+                        .as_ref()
+                        .and_then(|geometry| geometry.v1().block_content_ranges(block).ok())
+                        .is_some_and(|ranges| {
+                            !ranges.is_empty() && ranges.iter().all(|range| range.content.pad)
+                        });
+                if wire_block.is_none() && !synthesize_padding {
+                    picker.cancel_request(req.piece as usize, req.begin);
+                    debug!(
+                        component = "transfer",
+                        operation = "map_hybrid_download_request",
+                        torrent = %self.info_hash_hex,
+                        peer = %peer,
+                        piece = req.piece,
+                        begin = req.begin,
+                        result = "deferred",
+                        "picker candidate has no matching extent on the negotiated peer plane"
+                    );
+                    break;
+                }
                 let Some(memory_lease) =
                     resources.try_acquire(MemoryClass::PeerBuffer, u64::from(req.length))
                 else {
@@ -747,8 +834,7 @@ impl TorrentTask {
                     picker.cancel_request(req.piece as usize, req.begin);
                     break;
                 }
-                let block = BlockExtent::new(req.piece, req.begin, req.length);
-                if let Err(error) = transfer_ledger.reserve(transfer_conn, block, &mode) {
+                if let Err(error) = transfer_ledger.reserve_peer(transfer_conn, block, &mode) {
                     picker.cancel_request(req.piece as usize, req.begin);
                     if transfer_ledger.piece_progress(req.piece).is_none() {
                         transfer_piece_memory_leases.remove(&req.piece);
@@ -766,11 +852,13 @@ impl TorrentTask {
                     );
                     break;
                 }
-                let rate_grant =
-                    match network_budget.try_acquire_download(rate_peer, u64::from(req.length)) {
-                        Ok(RateAdmissionAttempt::Granted(grant)) => grant,
+                let rate_grant = if let Some(wire_block) = wire_block {
+                    match network_budget
+                        .try_acquire_download(rate_peer, u64::from(wire_block.length))
+                    {
+                        Ok(RateAdmissionAttempt::Granted(grant)) => Some(grant),
                         Ok(RateAdmissionAttempt::Wait(delay)) => {
-                            transfer_ledger.on_reject(transfer_conn, block);
+                            transfer_ledger.on_reject_peer(transfer_conn, block);
                             picker.cancel_request(req.piece as usize, req.begin);
                             if transfer_ledger.piece_progress(req.piece).is_none() {
                                 transfer_piece_memory_leases.remove(&req.piece);
@@ -780,7 +868,7 @@ impl TorrentTask {
                             break;
                         }
                         Err(error) => {
-                            transfer_ledger.on_reject(transfer_conn, block);
+                            transfer_ledger.on_reject_peer(transfer_conn, block);
                             picker.cancel_request(req.piece as usize, req.begin);
                             if transfer_ledger.piece_progress(req.piece).is_none() {
                                 transfer_piece_memory_leases.remove(&req.piece);
@@ -789,7 +877,10 @@ impl TorrentTask {
                             rate_admission_error = Some(error.to_string());
                             break;
                         }
-                    };
+                    }
+                } else {
+                    None
+                };
                 if handle
                     .cmd_tx
                     .try_send(PeerCommand::Request {
@@ -800,7 +891,7 @@ impl TorrentTask {
                     })
                     .is_err()
                 {
-                    transfer_ledger.on_reject(transfer_conn, block);
+                    transfer_ledger.on_reject_peer(transfer_conn, block);
                     queue_full = queue_full.saturating_add(1);
                     picker.cancel_request(req.piece as usize, req.begin);
                     break;
@@ -880,6 +971,14 @@ impl TorrentTask {
         self.handle_block_with_owner(event, None, None).await;
     }
 
+    fn reject_transfer_block(&mut self, conn: ConnectionId, block: BlockExtent, peer_owned: bool) {
+        if peer_owned {
+            self.transfer_ledger.on_reject_peer(conn, block);
+        } else {
+            self.transfer_ledger.on_reject(conn, block);
+        }
+    }
+
     async fn handle_block_with_owner(
         &mut self,
         event: LeasedBlockEvent,
@@ -889,12 +988,15 @@ impl TorrentTask {
         let piece = event.block.piece;
         let offset = event.block.offset;
         let block_length = u32::try_from(event.block.data.len()).unwrap_or(u32::MAX);
+        let network_bytes = event
+            .network_bytes
+            .unwrap_or_else(|| u64::from(block_length));
         let transfer_block = BlockExtent::new(piece, offset, block_length);
         let accepted_at = self.transfer_now();
         let response_delay = event.response_delay_nanos;
         if !self.picker.is_piece_in_progress(piece as usize) {
             if let Some(conn) = transfer_conn {
-                self.transfer_ledger.on_reject(conn, transfer_block);
+                self.reject_transfer_block(conn, transfer_block, peer.is_some());
             }
             debug!(
                 component = "torrent",
@@ -912,7 +1014,7 @@ impl TorrentTask {
             || self.pending_transfer_blocks.contains_key(&(piece, offset))
         {
             if let Some(conn) = transfer_conn {
-                self.transfer_ledger.on_reject(conn, transfer_block);
+                self.reject_transfer_block(conn, transfer_block, peer.is_some());
             }
             debug!(
                 component = "torrent",
@@ -932,7 +1034,7 @@ impl TorrentTask {
             .is_some_and(|work| work.failed)
         {
             if let Some(conn) = transfer_conn {
-                self.transfer_ledger.on_reject(conn, transfer_block);
+                self.reject_transfer_block(conn, transfer_block, peer.is_some());
             }
             self.picker.cancel_request(piece as usize, offset);
             return;
@@ -951,7 +1053,7 @@ impl TorrentTask {
                 "peer supplied non-zero or malformed BEP 47 padding data"
             );
             if let Some(conn) = transfer_conn {
-                self.transfer_ledger.on_reject(conn, transfer_block);
+                self.reject_transfer_block(conn, transfer_block, peer.is_some());
             }
             self.picker.cancel_request(piece as usize, offset);
             let has_in_flight_writes =
@@ -972,13 +1074,19 @@ impl TorrentTask {
             // payload would exceed this torrent's storage-work bound. Return
             // both owners so the block can be requested again.
             if let Some(conn) = transfer_conn {
-                self.transfer_ledger.on_reject(conn, transfer_block);
+                self.reject_transfer_block(conn, transfer_block, peer.is_some());
             }
             self.picker.cancel_request(piece as usize, offset);
             return;
         }
         if let Some(conn) = transfer_conn {
-            match self.transfer_ledger.on_block(conn, transfer_block) {
+            let outcome = if peer.is_some() {
+                self.transfer_ledger
+                    .on_block_peer_piece_affine(conn, transfer_block)
+            } else {
+                self.transfer_ledger.on_block(conn, transfer_block)
+            };
+            match outcome {
                 ReceiveOutcome::Accepted { actions, .. } => {
                     self.apply_transfer_actions(actions);
                     if let Some(peer) = peer {
@@ -988,7 +1096,7 @@ impl TorrentTask {
                             }
                             handle
                                 .request_window
-                                .on_delivery(u64::from(block_length), accepted_at);
+                                .on_delivery(network_bytes, accepted_at);
                         }
                     }
                 }
@@ -1546,10 +1654,14 @@ impl TorrentTask {
         if self.super_seeding && self.picker.is_complete() {
             return;
         }
+        let v2_piece_has_content = self.plane_piece_has_content(Plane::V2, piece);
         let peers: Vec<SocketAddr> = self.active_peers.keys().copied().collect();
         let mut queue_full = 0u64;
         for peer in peers {
             if let Some(handle) = self.active_peers.get_mut(&peer) {
+                if handle.plane == Plane::V2 && !v2_piece_has_content {
+                    continue;
+                }
                 if !Self::try_send_have(&handle.cmd_tx, &mut handle.pending_have, piece) {
                     queue_full = queue_full.saturating_add(1);
                 }
@@ -1704,7 +1816,7 @@ impl TorrentTask {
                     self.transfer_rate_torrent,
                     transfer_conn,
                 ));
-            self.transfer_ledger.disconnect(transfer_conn);
+            self.transfer_ledger.disconnect_peer(transfer_conn);
             let _ = tx.try_send(PeerCommand::Shutdown);
             if let Some(abort) = abort {
                 abort.abort();

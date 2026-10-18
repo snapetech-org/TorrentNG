@@ -8,8 +8,9 @@
 //! queue. This module is the pure state machine for the *inbound* half (what
 //! peers ask of us); the outbound half (what we asked) lives in the ledger.
 //!
-//! The wire obligation does not depend on the hash plane; the live v1 and
-//! pure-v2 peer loops currently use this owner, while hybrid remains pending.
+//! The wire obligation does not depend on the hash plane. Live v1, pure-v2,
+//! and hybrid peer loops use this owner after translating v2 requests to the
+//! actor's canonical v1 coordinates and projecting replies back to the wire.
 
 use std::collections::{HashSet, VecDeque};
 

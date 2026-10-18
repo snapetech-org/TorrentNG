@@ -383,6 +383,22 @@ impl<G: PieceGeometry> LiveTransferLedger<G> {
         }
     }
 
+    /// Reserve canonical v1 work for live peers. Hybrid wire conversion stays
+    /// at the socket boundary, while piece affinity is enforced in the one
+    /// shared owner across v1 and v2 connections.
+    pub fn reserve_peer(
+        &mut self,
+        conn: ConnectionId,
+        block: BlockExtent,
+        mode: &ReserveMode,
+    ) -> Result<(), ReserveError> {
+        self.used = true;
+        match &mut self.inner {
+            LiveLedgerInner::V1(ledger) => ledger.reserve(conn, block, mode),
+            LiveLedgerInner::Hybrid(ledger) => ledger.reserve_canonical_piece_affine(conn, block),
+        }
+    }
+
     pub fn commit(
         &mut self,
         conn: ConnectionId,
@@ -396,11 +412,32 @@ impl<G: PieceGeometry> LiveTransferLedger<G> {
         }
     }
 
+    pub fn commit_peer(
+        &mut self,
+        conn: ConnectionId,
+        block: BlockExtent,
+        now: Nanos,
+    ) -> (CommitOutcome, Vec<Action>) {
+        self.used = true;
+        match &mut self.inner {
+            LiveLedgerInner::V1(ledger) => ledger.commit(conn, block, now),
+            LiveLedgerInner::Hybrid(ledger) => ledger.commit_canonical(conn, block, now),
+        }
+    }
+
     pub fn on_reject(&mut self, conn: ConnectionId, block: BlockExtent) -> RejectOutcome {
         self.used = true;
         match &mut self.inner {
             LiveLedgerInner::V1(ledger) => ledger.on_reject(conn, block),
             LiveLedgerInner::Hybrid(ledger) => ledger.on_reject_v1(conn, block),
+        }
+    }
+
+    pub fn on_reject_peer(&mut self, conn: ConnectionId, block: BlockExtent) -> RejectOutcome {
+        self.used = true;
+        match &mut self.inner {
+            LiveLedgerInner::V1(ledger) => ledger.on_reject(conn, block),
+            LiveLedgerInner::Hybrid(ledger) => ledger.on_reject_canonical(conn, block),
         }
     }
 
@@ -412,6 +449,18 @@ impl<G: PieceGeometry> LiveTransferLedger<G> {
         }
     }
 
+    pub fn on_block_peer_piece_affine(
+        &mut self,
+        conn: ConnectionId,
+        block: BlockExtent,
+    ) -> ReceiveOutcome {
+        self.used = true;
+        match &mut self.inner {
+            LiveLedgerInner::V1(ledger) => ledger.on_block(conn, block),
+            LiveLedgerInner::Hybrid(ledger) => ledger.on_block_canonical_piece_affine(conn, block),
+        }
+    }
+
     pub fn on_choke(&mut self, conn: ConnectionId, fast_negotiated: bool) -> Vec<BlockExtent> {
         self.used = true;
         match &mut self.inner {
@@ -420,11 +469,27 @@ impl<G: PieceGeometry> LiveTransferLedger<G> {
         }
     }
 
+    pub fn on_choke_peer(&mut self, conn: ConnectionId, fast_negotiated: bool) -> Vec<BlockExtent> {
+        self.used = true;
+        match &mut self.inner {
+            LiveLedgerInner::V1(ledger) => ledger.on_choke(conn, fast_negotiated),
+            LiveLedgerInner::Hybrid(ledger) => ledger.on_choke_canonical(conn, fast_negotiated),
+        }
+    }
+
     pub fn disconnect(&mut self, conn: ConnectionId) -> Vec<BlockExtent> {
         self.used = true;
         match &mut self.inner {
             LiveLedgerInner::V1(ledger) => ledger.disconnect(conn),
             LiveLedgerInner::Hybrid(ledger) => ledger.disconnect_v1(conn),
+        }
+    }
+
+    pub fn disconnect_peer(&mut self, conn: ConnectionId) -> Vec<BlockExtent> {
+        self.used = true;
+        match &mut self.inner {
+            LiveLedgerInner::V1(ledger) => ledger.disconnect(conn),
+            LiveLedgerInner::Hybrid(ledger) => ledger.disconnect_canonical(conn),
         }
     }
 

@@ -23,6 +23,20 @@ impl TorrentTask {
             );
             return;
         }
+        let Some(plane) =
+            incoming_hybrid_plane(self.meta.info_hash, self.hybrid_v2.as_deref(), &handshake)
+        else {
+            debug!(
+                component = "peer",
+                operation = "accept_incoming",
+                torrent = %self.info_hash_hex,
+                peer = %peer_addr,
+                result = "rejected",
+                reason = "unknown_hybrid_infohash_or_missing_v2_capability",
+                "rejecting incoming handshake that does not match a supported torrent plane"
+            );
+            return;
+        };
         if self.registry.read().await.is_peer_banned(peer_addr) {
             debug!(
                 component = "peer",
@@ -49,7 +63,9 @@ impl TorrentTask {
             return;
         }
         let info_hash = self.meta.info_hash;
-        let Some((peer_id, peer_cmd_rx)) = self.register_peer(peer_addr, peer_permit) else {
+        let Some((peer_id, peer_cmd_rx)) =
+            self.register_peer_on_plane(peer_addr, peer_permit, plane)
+        else {
             debug!(
                 component = "peer",
                 operation = "register_incoming",
@@ -135,6 +151,20 @@ impl TorrentTask {
             );
             return;
         }
+        let Some(plane) =
+            incoming_hybrid_plane(self.meta.info_hash, self.hybrid_v2.as_deref(), &handshake)
+        else {
+            debug!(
+                component = "peer",
+                operation = "accept_incoming_utp",
+                torrent = %self.info_hash_hex,
+                peer = %peer_addr,
+                result = "rejected",
+                reason = "unknown_hybrid_infohash_or_missing_v2_capability",
+                "rejecting incoming uTP handshake that does not match a supported torrent plane"
+            );
+            return;
+        };
         if self.registry.read().await.is_peer_banned(peer_addr) {
             debug!(
                 component = "peer",
@@ -161,7 +191,9 @@ impl TorrentTask {
             return;
         }
         let info_hash = self.meta.info_hash;
-        let Some((peer_id, peer_cmd_rx)) = self.register_peer(peer_addr, peer_permit) else {
+        let Some((peer_id, peer_cmd_rx)) =
+            self.register_peer_on_plane(peer_addr, peer_permit, plane)
+        else {
             debug!(
                 component = "peer",
                 operation = "register_incoming_utp",
@@ -233,7 +265,22 @@ impl TorrentTask {
         let upload_control = peer.upload_control.clone();
         let shutdown_control = peer.shutdown_control.clone();
         let rate_peer = TransferPeerId::new(self.transfer_rate_torrent, peer.transfer_conn);
-        let piece_count = self.picker.piece_count();
+        let piece_count = match peer.plane {
+            Plane::V1 => self.picker.piece_count(),
+            Plane::V2 => {
+                let count = self
+                    .hybrid_v2
+                    .as_ref()?
+                    .geometry
+                    .as_ref()?
+                    .v2()
+                    .piece_count() as usize;
+                if count != self.picker.piece_count() {
+                    return None;
+                }
+                count
+            }
+        };
         // Reserve the upload-side dense availability map before constructing
         // it. A torrent with a large piece count must not make every peer
         // connection allocate a bitmap that the governor would reject.
@@ -241,20 +288,24 @@ impl TorrentTask {
             MemoryClass::PeerBuffer,
             PieceBitmap::memory_bytes_for_len(piece_count),
         )?;
-        let have_pieces = if self.super_seeding && self.picker.is_complete() {
-            super_seed_visible_pieces(&self.picker, piece_count, peer_addr)
-        } else {
-            let mut have_pieces = PieceBitmap::new(piece_count);
-            for piece in 0..piece_count {
-                if self.picker.have_piece(piece) {
-                    have_pieces.set(piece, true);
-                }
+        let mut available_pieces = PieceBitmap::new(piece_count);
+        for piece in 0..piece_count {
+            if self.plane_piece_has_content(peer.plane, piece as u32)
+                && self.picker.have_piece(piece)
+            {
+                available_pieces.set(piece, true);
             }
-            have_pieces
+        }
+        let have_pieces = if self.super_seeding && self.picker.is_complete() {
+            super_seed_visible_pieces(&available_pieces, piece_count, peer_addr)
+        } else {
+            available_pieces
         };
         Some(UploadContext {
             save_root: self.save_root.clone(),
             piece_map: self.piece_map.clone(),
+            hybrid_v2: self.hybrid_v2.clone(),
+            plane: peer.plane,
             storage: self.storage.clone(),
             resources: self.resources.clone(),
             have_pieces,
@@ -272,10 +323,31 @@ impl TorrentTask {
         })
     }
 
+    pub(super) fn plane_piece_has_content(&self, plane: Plane, piece: u32) -> bool {
+        match plane {
+            Plane::V1 => true,
+            Plane::V2 => self
+                .hybrid_v2
+                .as_ref()
+                .and_then(|hybrid| hybrid.geometry.as_ref())
+                .and_then(|geometry| geometry.v2().piece_to_file(piece).ok())
+                .is_some_and(|region| !region.pad),
+        }
+    }
+
     pub(super) fn register_peer(
         &mut self,
         addr: SocketAddr,
         peer_permit: OwnedSemaphorePermit,
+    ) -> Option<(PeerId, mpsc::Receiver<PeerCommand>)> {
+        self.register_peer_on_plane(addr, peer_permit, Plane::V1)
+    }
+
+    pub(super) fn register_peer_on_plane(
+        &mut self,
+        addr: SocketAddr,
+        peer_permit: OwnedSemaphorePermit,
+        plane: Plane,
     ) -> Option<(PeerId, mpsc::Receiver<PeerCommand>)> {
         // Must hold a full adaptive request window plus control messages.
         let (cmd_tx, cmd_rx) = mpsc::channel(PEER_REQUEST_PIPELINE_ADAPTIVE_MAX * 2);
@@ -292,7 +364,7 @@ impl TorrentTask {
             .try_acquire(MemoryClass::PeerBuffer, bitmap_bytes)?;
         let transfer_conn = self
             .transfer_ledger
-            .try_connect(PEER_REQUEST_PIPELINE_ADAPTIVE_MAX)?;
+            .try_connect_on_plane(plane, PEER_REQUEST_PIPELINE_ADAPTIVE_MAX)?;
         self.network_budget
             .register_transfer_peer(TransferPeerId::new(
                 self.transfer_rate_torrent,
@@ -305,6 +377,7 @@ impl TorrentTask {
             PeerHandle {
                 id,
                 transfer_conn,
+                plane,
                 cmd_tx,
                 upload_control: RateLimitCancellation::default(),
                 shutdown_control: RateLimitCancellation::default(),

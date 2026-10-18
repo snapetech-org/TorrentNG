@@ -3819,9 +3819,12 @@ fastresume block state is restored into the live ledger and charged to
 PeerBuffer alongside picker resume projection. Pure-v2 retains peer-local piece
 assembly and uses atomic affinity checks so one connection owns each active
 piece. A centralized 60-second ledger expiry routes Cancel actions to peer
-tasks and drops matching actor requests. Hybrid dual-view arbitration,
-concurrent shared source scheduling, and shared rate/window/upload services
-remain open.
+tasks and drops matching actor requests. Hybrid live peers now negotiate v1 or
+v2 identity and run requests, responses, upload obligations, and availability
+through canonical v1 actor coordinates with wire-plane projection. Matched live
+hybrid qualification remains open. Concurrent shared source scheduling and
+shared rate/window/upload services across peer and webseed sources also remain
+open.
 Each pure-v2 assembly also keeps a forward request cursor over received and
 on-wire blocks. Matching Cancel and Reject responses rewind the cursor. Its
 received-block state is stored as a packed bitmap; both bitmap and cursor are
@@ -3857,11 +3860,14 @@ a whole-torrent scan for each requested block.
   cancellation actions back to each connection's plane. Its piece-affine
   reserve/receive methods apply the peer-local assembly rule after projecting
   coordinates, so a v1 and a v2 connection cannot split one canonical piece.
-  Live hybrid-v1 actors use it through `LiveTransferLedger`; the facade now
-  exposes v2-plane lifecycle operations, but the peer handshake and scheduler
-  do not use those operations yet. The facade can rebind a hybrid connection
-  to the negotiated plane only while it has no reserved or on-wire requests;
-  that guard is in place for the upcoming handshake cutover.
+  Live hybrid actors use it through `LiveTransferLedger`: incoming peers bind
+  their plane at admission, outgoing peers bind after the BEP 3 handshake, and
+  the idle-only rebind guard prevents changing plane with requests outstanding.
+  The actor maps Request, Cancel, Reject, and Piece coordinates at the peer
+  boundary, synthesizes v1 padding blocks locally for v2 downloads, and
+  projects canonical upload data and obligation replies back to v2 wire ranges.
+  V2 availability bitfields omit alignment-gap pieces; download rate grants and
+  transfer counters use actual wire payload lengths.
 - **Target owner:** each protocol adapter submits candidates to one shared
   content owner, while immutable payload, storage completion, and durability
   evidence retain their existing explicit owners.
@@ -3905,15 +3911,16 @@ a whole-torrent scan for each requested block.
 - The live facade admits v2-plane connections only after validated hybrid
   geometry is attached. Its plane-aware reserve, commit, response, choke,
   disconnect, expiry, verification-failure, and completion operations all
-  route through the same canonical owner and return wire-plane actions.
+  route through the same canonical owner and return wire-plane actions. The
+  production peer adapter translates request/cancel/reject/piece coordinates,
+  fills v1-only padding locally, and serves projected v2 upload ranges.
 - Peer request, ledger connection, piece state, source jobs, rate queues, and
   upload obligations stay within measured resource caps.
-- On the live v1, hybrid-v1, and pure-v2 paths, negotiated BEP 10 `reqq`
+- On the live v1, hybrid-v1, hybrid-v2, and pure-v2 paths, negotiated BEP 10 `reqq`
   updates the actor request window and its ledger connection bound together,
   clamped to that actor's request-window maximum; an omitted value restores
   that local cap, while reducing the bound stops new reservations without
-  revoking existing wire obligations. Hybrid-v2 handshake and scheduling
-  remain open.
+  revoking existing wire obligations.
 - Simulator and actor regressions pass, then matched v1/v2/hybrid live
   workloads show correct payload and lifecycle parity before the reference
   paths are removed.
@@ -3945,11 +3952,20 @@ a whole-torrent scan for each requested block.
   `peer_reqq_updates_the_live_v1_and_hybrid_ledger_bounds` and
   `v2_remote_reqq_bounds_the_peer_window_and_shared_ledger` cover negotiated
   connection limits in the live v1, hybrid-v1, and pure-v2 paths.
+  `hybrid_v2_projection_maps_files_after_v1_padding` also covers v1/v2
+  handshake-plane selection and rejects a truncated v2 hash without the v2
+  capability bit. `hybrid_v2_upload_projects_canonical_padding_out_of_wire_payload`
+  covers a canonical v1 upload extent projected to its shorter v2 payload and
+  verifies the canonical buffer lease remains charged.
+  `hybrid_v2_peer_loop_translates_download_and_upload_wire_ranges` covers the
+  production peer loop's shortened v2 Request, zero-padded canonical Piece,
+  upload obligation mapping, and projected v2 Piece response. These actor
+  sources are authored but unrun; matched hybrid live workloads remain open.
   `live_hybrid_v2_plane_returns_data_in_canonical_v1_coordinates` covers the
   new live facade's v2 admission, reservation, wire commit, response, and
   canonical data projection with synthetic BEP 47 padding, then checks the
-  second file's v2 piece after the preceding v1 pad extent; production actor
-  handshake/scheduling remain open.
+  second file's v2 piece after the preceding v1 pad extent. Live actor wiring
+  is now present, but its regression sources and simulator remain unrun.
 - **Command or probe:** run transfer-core simulator and engine regression
   suites only during the owner-requested bulk pass.
 - **Executed on exact revision:** no. No build or test commands were run for

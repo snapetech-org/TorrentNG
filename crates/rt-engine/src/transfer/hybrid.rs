@@ -154,6 +154,20 @@ impl HybridLedger {
         self.ledger.reserve(conn, block, mode)
     }
 
+    /// Reserve a canonical v1 block for an actor that translates wire
+    /// coordinates at the peer boundary. The connection may speak either
+    /// plane; ownership remains in the ledger's canonical v1 geometry.
+    pub fn reserve_canonical_piece_affine(
+        &mut self,
+        conn: ConnectionId,
+        block: BlockExtent,
+    ) -> Result<(), ReserveError> {
+        if !self.is_live(conn) {
+            return Err(ReserveError::UnknownConnection);
+        }
+        self.ledger.reserve_piece_affine(conn, block)
+    }
+
     pub fn commit_v1(
         &mut self,
         conn: ConnectionId,
@@ -166,8 +180,27 @@ impl HybridLedger {
         self.ledger.commit(conn, block, now)
     }
 
+    pub fn commit_canonical(
+        &mut self,
+        conn: ConnectionId,
+        block: BlockExtent,
+        now: Nanos,
+    ) -> (CommitOutcome, Vec<Action>) {
+        if !self.is_live(conn) {
+            return (CommitOutcome::StaleConnection, Vec::new());
+        }
+        self.ledger.commit(conn, block, now)
+    }
+
     pub fn on_reject_v1(&mut self, conn: ConnectionId, block: BlockExtent) -> RejectOutcome {
         if self.plane(conn) != Some(Plane::V1) {
+            return RejectOutcome::StaleConnection;
+        }
+        self.ledger.on_reject(conn, block)
+    }
+
+    pub fn on_reject_canonical(&mut self, conn: ConnectionId, block: BlockExtent) -> RejectOutcome {
+        if !self.is_live(conn) {
             return RejectOutcome::StaleConnection;
         }
         self.ledger.on_reject(conn, block)
@@ -180,6 +213,17 @@ impl HybridLedger {
         self.ledger.on_block(conn, block)
     }
 
+    pub fn on_block_canonical_piece_affine(
+        &mut self,
+        conn: ConnectionId,
+        block: BlockExtent,
+    ) -> ReceiveOutcome {
+        if !self.is_live(conn) {
+            return ReceiveOutcome::StaleConnection;
+        }
+        self.ledger.on_block_piece_affine(conn, block)
+    }
+
     pub fn on_choke_v1(&mut self, conn: ConnectionId, fast_negotiated: bool) -> Vec<BlockExtent> {
         if self.plane(conn) != Some(Plane::V1) {
             return Vec::new();
@@ -187,8 +231,27 @@ impl HybridLedger {
         self.ledger.on_choke(conn, fast_negotiated)
     }
 
+    pub fn on_choke_canonical(
+        &mut self,
+        conn: ConnectionId,
+        fast_negotiated: bool,
+    ) -> Vec<BlockExtent> {
+        if !self.is_live(conn) {
+            return Vec::new();
+        }
+        self.ledger.on_choke(conn, fast_negotiated)
+    }
+
     pub fn disconnect_v1(&mut self, conn: ConnectionId) -> Vec<BlockExtent> {
         if self.plane(conn) != Some(Plane::V1) {
+            return Vec::new();
+        }
+        self.connection_planes.remove(&conn);
+        self.ledger.disconnect(conn)
+    }
+
+    pub fn disconnect_canonical(&mut self, conn: ConnectionId) -> Vec<BlockExtent> {
+        if !self.connection_planes.contains_key(&conn) {
             return Vec::new();
         }
         self.connection_planes.remove(&conn);

@@ -208,7 +208,7 @@ impl TorrentTask {
                 self.transfer_rate_torrent,
                 handle.transfer_conn,
             ));
-        self.transfer_ledger.disconnect(handle.transfer_conn);
+        self.transfer_ledger.disconnect_peer(handle.transfer_conn);
         let _ = handle.cmd_tx.try_send(PeerCommand::Shutdown);
         if let Some(abort) = handle.abort {
             abort.abort();

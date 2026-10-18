@@ -1725,6 +1725,11 @@ fn evict_piece_assemblies_to_budget(
 
 #[derive(Debug)]
 enum PeerEvent {
+    PlaneSelected {
+        peer: SocketAddr,
+        id: PeerId,
+        plane: Plane,
+    },
     Bitfield {
         peer: SocketAddr,
         id: PeerId,
@@ -1808,7 +1813,8 @@ enum PeerEvent {
 impl PeerEvent {
     fn identity(&self) -> (SocketAddr, PeerId) {
         match self {
-            Self::Bitfield { peer, id, .. }
+            Self::PlaneSelected { peer, id, .. }
+            | Self::Bitfield { peer, id, .. }
             | Self::Have { peer, id, .. }
             | Self::Unchoked { peer, id, .. }
             | Self::Choked { peer, id, .. }
@@ -1830,6 +1836,7 @@ impl PeerEvent {
 struct PeerHandle {
     id: PeerId,
     transfer_conn: ConnectionId,
+    plane: Plane,
     cmd_tx: mpsc::Sender<PeerCommand>,
     upload_control: RateLimitCancellation,
     shutdown_control: RateLimitCancellation,
@@ -1881,7 +1888,7 @@ enum PeerCommand {
         /// Acquired before enqueue; moves into the peer loop's outstanding
         /// request and is settled when the matching payload arrives.
         memory_lease: MemoryLease,
-        rate_grant: RateAdmissionGrant,
+        rate_grant: Option<RateAdmissionGrant>,
     },
     /// Endgame loser cancellation. The peer loop keeps an on-wire request and
     /// its response lease outstanding because a Piece or Reject may still
@@ -1904,6 +1911,8 @@ struct UploadContext {
     // scale. `PieceMap` is only ever read after construction (never
     // mutated), so an `Arc` clone here is a cheap refcount bump instead.
     piece_map: Arc<PieceMap>,
+    hybrid_v2: Option<Arc<HybridV2Meta>>,
+    plane: Plane,
     storage: MountScheduler,
     resources: ResourceGovernor,
     have_pieces: PieceBitmap,
@@ -1921,10 +1930,82 @@ struct UploadContext {
     upload_rate: UploadRateAdmission,
 }
 
+impl UploadContext {
+    fn hybrid_v2_wire_hash(&self) -> Option<[u8; 20]> {
+        hybrid_v2_wire_hash(self.hybrid_v2.as_deref())
+    }
+
+    fn outgoing_plane(&self, v1_info_hash: [u8; 20], remote: &Handshake) -> anyhow::Result<Plane> {
+        outgoing_hybrid_plane(v1_info_hash, self.hybrid_v2.as_deref(), remote)
+    }
+
+    fn peer_wire_hash(&self, v1_info_hash: [u8; 20], plane: Plane) -> Option<[u8; 20]> {
+        match plane {
+            Plane::V1 => Some(v1_info_hash),
+            Plane::V2 => self.hybrid_v2_wire_hash(),
+        }
+    }
+
+    fn canonical_to_wire_block(&self, block: BlockExtent) -> Option<BlockExtent> {
+        match self.plane {
+            Plane::V1 => Some(block),
+            Plane::V2 => self
+                .hybrid_v2
+                .as_ref()?
+                .geometry
+                .as_ref()?
+                .canonical_v2_block_for_v1(block),
+        }
+    }
+
+    fn wire_to_canonical_block(&self, block: BlockExtent) -> Option<BlockExtent> {
+        match self.plane {
+            Plane::V1 => Some(block),
+            Plane::V2 => self
+                .hybrid_v2
+                .as_ref()?
+                .geometry
+                .as_ref()?
+                .canonical_v1_block_for_v2(block),
+        }
+    }
+
+    fn expand_wire_block(
+        &self,
+        block: BlockExtent,
+        payload: &bytes::Bytes,
+    ) -> Option<(BlockExtent, bytes::Bytes)> {
+        match self.plane {
+            Plane::V1 => Some((block, payload.clone())),
+            Plane::V2 => {
+                let (canonical, expanded) = self
+                    .hybrid_v2
+                    .as_ref()?
+                    .geometry
+                    .as_ref()?
+                    .expand_v2_block_to_v1(block, payload)?;
+                Some((canonical, bytes::Bytes::from(expanded)))
+            }
+        }
+    }
+
+    fn v1_block_is_padding_only(&self, block: BlockExtent) -> bool {
+        self.hybrid_v2
+            .as_ref()
+            .and_then(|hybrid| hybrid.geometry.as_ref())
+            .and_then(|geometry| geometry.v1().block_content_ranges(block).ok())
+            .is_some_and(|ranges| {
+                !ranges.is_empty() && ranges.iter().all(|range| range.content.pad)
+            })
+    }
+}
+
 #[derive(Clone)]
 struct UploadReadContext {
     save_root: PathBuf,
     piece_map: Arc<PieceMap>,
+    hybrid_v2: Option<Arc<HybridV2Meta>>,
+    plane: Plane,
     storage: MountScheduler,
     resources: ResourceGovernor,
     upload_control: RateLimitCancellation,
@@ -1945,9 +2026,39 @@ struct LeasedUploadBlock {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct UploadRequest {
+    /// Canonical v1 coordinate used by storage and inbound obligations.
     piece: u32,
     begin: u32,
     length: u32,
+    /// Coordinate echoed on this peer's negotiated wire plane.
+    wire_piece: u32,
+    wire_begin: u32,
+    wire_length: u32,
+}
+
+impl UploadRequest {
+    fn new(canonical: BlockExtent, wire: BlockExtent) -> Self {
+        Self {
+            piece: canonical.piece,
+            begin: canonical.offset,
+            length: canonical.length,
+            wire_piece: wire.piece,
+            wire_begin: wire.offset,
+            wire_length: wire.length,
+        }
+    }
+
+    fn from_wire(block: BlockExtent) -> Self {
+        Self::new(block, block)
+    }
+
+    fn canonical_block(self) -> BlockExtent {
+        BlockExtent::new(self.piece, self.begin, self.length)
+    }
+
+    fn wire_block(self) -> BlockExtent {
+        BlockExtent::new(self.wire_piece, self.wire_begin, self.wire_length)
+    }
 }
 
 type UploadReadResult = (UploadRequest, anyhow::Result<LeasedUploadBlock>, bool);
@@ -1983,6 +2094,7 @@ impl Drop for UploadReadTasks {
 
 #[derive(Debug, Clone)]
 struct HybridV2Meta {
+    info_hash_v2: [u8; 32],
     piece_length: u64,
     files: Vec<HybridV2File>,
     /// Retains the v2 piece map and shares the task's existing v1 map.
@@ -2035,13 +2147,23 @@ impl HybridV2Meta {
             .map(Arc::new)
             .map(|v2_piece_map| Arc::new(HybridGeometry::new(v1_piece_map, v2_piece_map)));
         valid_layout &= geometry.is_some();
+        if let Some(geometry) = &geometry {
+            // The live hybrid adapter deliberately keeps v1 piece numbers as
+            // canonical actor coordinates. A v2 wire plane is safe only when
+            // both validated views expose the same global piece index range.
+            valid_layout &= PieceGeometry::piece_count(geometry.v1())
+                == PieceGeometry::piece_count(geometry.v2());
+        }
 
         for v2_file in v2.files.iter().filter(|file| !file.pad && file.length > 0) {
             let Some(v1_file) = v1_files.next() else {
                 valid_layout = false;
                 break;
             };
-            if v1_file.length != v2_file.length || v1_file.offset != v2_file.piece_offset {
+            if v1_file.path != v2_file.path
+                || v1_file.length != v2_file.length
+                || v1_file.offset != v2_file.piece_offset
+            {
                 valid_layout = false;
             }
             files.push(HybridV2File {
@@ -2057,6 +2179,7 @@ impl HybridV2Meta {
         files.sort_unstable_by_key(|file| file.v2_file_index);
 
         Self {
+            info_hash_v2: v2.info_hash_v2,
             piece_length: v2.piece_length,
             files,
             geometry,
@@ -2096,6 +2219,37 @@ impl HybridV2Meta {
             piece_leaf_count,
         })
     }
+}
+
+fn incoming_hybrid_plane(
+    v1_info_hash: [u8; 20],
+    hybrid_v2: Option<&HybridV2Meta>,
+    handshake: &Handshake,
+) -> Option<Plane> {
+    if handshake.info_hash == v1_info_hash {
+        return Some(Plane::V1);
+    }
+    let v2_wire_hash = hybrid_v2_wire_hash(hybrid_v2)?;
+    (handshake.info_hash == v2_wire_hash && handshake.reserved.supports_v2()).then_some(Plane::V2)
+}
+
+fn hybrid_v2_wire_hash(hybrid_v2: Option<&HybridV2Meta>) -> Option<[u8; 20]> {
+    let hybrid = hybrid_v2.filter(|hybrid| hybrid.valid_layout)?;
+    hybrid.info_hash_v2[..20].try_into().ok()
+}
+
+fn outgoing_hybrid_plane(
+    v1_info_hash: [u8; 20],
+    hybrid_v2: Option<&HybridV2Meta>,
+    remote: &Handshake,
+) -> anyhow::Result<Plane> {
+    if remote.info_hash == v1_info_hash {
+        return Ok(Plane::V1);
+    }
+    if hybrid_v2_wire_hash(hybrid_v2) == Some(remote.info_hash) && remote.reserved.supports_v2() {
+        return Ok(Plane::V2);
+    }
+    anyhow::bail!("peer returned an unknown or unsupported hybrid infohash")
 }
 
 #[derive(Clone)]
@@ -7356,9 +7510,25 @@ async fn run_outgoing_peer_with_policy(
             .connect(addr)
             .await
         {
-            Ok(stream) => match prepare_outgoing_utp_peer(addr, info_hash, &upload, stream).await {
-                Ok((peer_io, fast)) => {
+            Ok(stream) => match prepare_outgoing_utp_peer(addr, info_hash, &mut upload, stream)
+                .await
+            {
+                Ok((peer_io, fast, plane)) => {
                     upload.fast_negotiated = fast;
+                    upload.plane = plane;
+                    if plane == Plane::V2
+                        && !send_peer_event(
+                            &peer_event_tx,
+                            PeerEvent::PlaneSelected {
+                                peer: addr,
+                                id: peer_id,
+                                plane,
+                            },
+                        )
+                        .await
+                    {
+                        anyhow::bail!("torrent task stopped before binding hybrid peer plane");
+                    }
                     Ok(run_peer_loop(
                         addr,
                         peer_id,
@@ -7419,7 +7589,11 @@ async fn run_outgoing_peer(
     let our_hs = Handshake {
         info_hash,
         peer_id: crate::peer_id::our_peer_id(),
-        reserved: ExtensionFlags::with_extension_protocol_and_fast(),
+        reserved: if upload.hybrid_v2_wire_hash().is_some() {
+            ExtensionFlags::with_v2_support()
+        } else {
+            ExtensionFlags::with_extension_protocol_and_fast()
+        },
     };
     // Send our handshake as raw bytes before the codec takes over.
     {
@@ -7430,7 +7604,7 @@ async fn run_outgoing_peer(
             .map_err(|_| anyhow::anyhow!("peer handshake write timed out"))??;
     }
 
-    let (remote_supports_extension, remote_supports_fast) = {
+    let (remote_supports_extension, remote_supports_fast, plane) = {
         use tokio::io::AsyncReadExt;
         let mut hs_buf = [0u8; 68];
         tokio::time::timeout(
@@ -7439,18 +7613,31 @@ async fn run_outgoing_peer(
         )
         .await??;
         let remote_hs = Handshake::parse(&hs_buf)?;
-        if remote_hs.info_hash != info_hash {
-            anyhow::bail!("info_hash mismatch from {addr}");
-        }
         if remote_hs.peer_id == crate::peer_id::our_peer_id() {
             anyhow::bail!("peer handshake identifies this client");
         }
+        let plane = upload.outgoing_plane(info_hash, &remote_hs)?;
         (
             remote_hs.reserved.supports_extension_protocol(),
             remote_hs.reserved.supports_fast_extension(),
+            plane,
         )
     };
 
+    upload.plane = plane;
+    if plane == Plane::V2
+        && !send_peer_event(
+            &peer_event_tx,
+            PeerEvent::PlaneSelected {
+                peer: addr,
+                id: peer_id,
+                plane,
+            },
+        )
+        .await
+    {
+        anyhow::bail!("torrent task stopped before binding hybrid peer plane");
+    }
     let mut peer_io = PeerIo::Tcp(framed);
     send_extension_handshake(
         &mut peer_io,
@@ -7506,13 +7693,17 @@ async fn run_outgoing_utp_peer(
 async fn prepare_outgoing_utp_peer(
     addr: SocketAddr,
     info_hash: [u8; 20],
-    upload: &UploadContext,
+    upload: &mut UploadContext,
     mut stream: UtpStream,
-) -> anyhow::Result<(PeerIo, bool)> {
+) -> anyhow::Result<(PeerIo, bool, Plane)> {
     let our_hs = Handshake {
         info_hash,
         peer_id: crate::peer_id::our_peer_id(),
-        reserved: ExtensionFlags::with_extension_protocol_and_fast(),
+        reserved: if upload.hybrid_v2_wire_hash().is_some() {
+            ExtensionFlags::with_v2_support()
+        } else {
+            ExtensionFlags::with_extension_protocol_and_fast()
+        },
     };
     timeout(
         PEER_SOCKET_WRITE_TIMEOUT,
@@ -7524,12 +7715,11 @@ async fn prepare_outgoing_utp_peer(
     let mut hs_buf = [0u8; 68];
     tokio::time::timeout(Duration::from_secs(10), stream.read_exact(&mut hs_buf)).await??;
     let remote_hs = Handshake::parse(&hs_buf)?;
-    if remote_hs.info_hash != info_hash {
-        anyhow::bail!("info_hash mismatch from {addr}");
-    }
     if remote_hs.peer_id == crate::peer_id::our_peer_id() {
         anyhow::bail!("peer handshake identifies this client");
     }
+    let plane = upload.outgoing_plane(info_hash, &remote_hs)?;
+    upload.plane = plane;
     let remote_supports_extension = remote_hs.reserved.supports_extension_protocol();
     let remote_supports_fast = remote_hs.reserved.supports_fast_extension();
 
@@ -7550,7 +7740,7 @@ async fn prepare_outgoing_utp_peer(
     )
     .await?;
     peer_io.send(Message::Interested).await?;
-    Ok((peer_io, remote_supports_fast))
+    Ok((peer_io, remote_supports_fast, plane))
 }
 
 async fn run_established_utp_peer(
@@ -7562,8 +7752,23 @@ async fn run_established_utp_peer(
     mut upload: UploadContext,
     stream: UtpStream,
 ) -> anyhow::Result<PeerLoopExit> {
-    let (peer_io, fast) = prepare_outgoing_utp_peer(addr, info_hash, &upload, stream).await?;
+    let (peer_io, fast, plane) =
+        prepare_outgoing_utp_peer(addr, info_hash, &mut upload, stream).await?;
     upload.fast_negotiated = fast;
+    upload.plane = plane;
+    if plane == Plane::V2
+        && !send_peer_event(
+            &peer_event_tx,
+            PeerEvent::PlaneSelected {
+                peer: addr,
+                id: peer_id,
+                plane,
+            },
+        )
+        .await
+    {
+        anyhow::bail!("torrent task stopped before binding hybrid peer plane");
+    }
 
     Ok(run_peer_loop(
         addr,
@@ -7596,10 +7801,17 @@ async fn run_incoming_peer(
         1,
     );
 
+    let wire_info_hash = upload
+        .peer_wire_hash(info_hash, upload.plane)
+        .ok_or_else(|| anyhow::anyhow!("incoming peer plane has no hybrid wire hash"))?;
     let our_hs = Handshake {
-        info_hash,
+        info_hash: wire_info_hash,
         peer_id: crate::peer_id::our_peer_id(),
-        reserved: ExtensionFlags::with_extension_protocol_and_fast(),
+        reserved: if upload.hybrid_v2_wire_hash().is_some() {
+            ExtensionFlags::with_v2_support()
+        } else {
+            ExtensionFlags::with_extension_protocol_and_fast()
+        },
     };
     {
         use tokio::io::AsyncWriteExt;
@@ -7653,10 +7865,17 @@ async fn run_incoming_utp_peer(
     remote_supports_extension: bool,
     remote_supports_fast: bool,
 ) -> anyhow::Result<PeerLoopExit> {
+    let wire_info_hash = upload
+        .peer_wire_hash(info_hash, upload.plane)
+        .ok_or_else(|| anyhow::anyhow!("incoming uTP peer plane has no hybrid wire hash"))?;
     let our_hs = Handshake {
-        info_hash,
+        info_hash: wire_info_hash,
         peer_id: crate::peer_id::our_peer_id(),
-        reserved: ExtensionFlags::with_extension_protocol_and_fast(),
+        reserved: if upload.hybrid_v2_wire_hash().is_some() {
+            ExtensionFlags::with_v2_support()
+        } else {
+            ExtensionFlags::with_extension_protocol_and_fast()
+        },
     };
     timeout(
         PEER_SOCKET_WRITE_TIMEOUT,
@@ -8076,12 +8295,62 @@ async fn run_peer_loop(
                             // Choked event releases its reservation.
                             continue;
                         }
+                        let canonical_block = BlockExtent::new(req.piece, req.begin, req.length);
+                        let Some(wire_block) = upload.canonical_to_wire_block(canonical_block)
+                        else {
+                            if upload.plane != Plane::V2
+                                || !upload.v1_block_is_padding_only(canonical_block)
+                            {
+                                outstanding.push(OutstandingRequest::with_rate_grant(
+                                    req,
+                                    req,
+                                    Some(memory_lease),
+                                    rate_grant,
+                                ));
+                                anyhow::bail!(
+                                    "hybrid v2 peer request has no matching wire content range"
+                                );
+                            }
+
+                            // BEP 47 padding has no v2 wire request. Synthesize
+                            // its canonical zero block locally so a v2 peer
+                            // can complete the same v1 piece assembly.
+                            drop(rate_grant);
+                            let block = LeasedBlockEvent::with_optional_lease(
+                                BlockEvent {
+                                    piece: req.piece,
+                                    offset: req.begin,
+                                    data: bytes::Bytes::from(vec![0; req.length as usize]),
+                                },
+                                Some(memory_lease),
+                                Some(0),
+                            )?
+                            .with_network_bytes(0);
+                            if !send_peer_event(
+                                &peer_event_tx,
+                                PeerEvent::Piece {
+                                    peer: addr,
+                                    id: peer_id,
+                                    block,
+                                },
+                            )
+                            .await
+                            {
+                                break;
+                            }
+                            continue;
+                        };
+                        let wire_req = BlockRequest {
+                            piece: wire_block.piece,
+                            begin: wire_block.offset,
+                            length: wire_block.length,
+                        };
                         if let Err(error) = peer_io
                             .send(Message::Request {
-                            piece: req.piece,
-                            begin: req.begin,
-                            length: req.length,
-                        })
+                                piece: wire_req.piece,
+                                begin: wire_req.begin,
+                                length: wire_req.length,
+                            })
                         .await
                         {
                             // The torrent actor reserved this block before
@@ -8091,6 +8360,7 @@ async fn run_peer_loop(
                             // strand the block as permanently requested.
                             outstanding.push(OutstandingRequest::with_rate_grant(
                                 req,
+                                wire_req,
                                 Some(memory_lease),
                                 rate_grant,
                             ));
@@ -8098,6 +8368,7 @@ async fn run_peer_loop(
                         }
                         outstanding.push(OutstandingRequest::with_rate_grant(
                             req,
+                            wire_req,
                             Some(memory_lease),
                             rate_grant,
                         ));
@@ -8120,11 +8391,16 @@ async fn run_peer_loop(
                                 && outstanding.req.begin == request.begin
                                 && outstanding.req.length == request.length
                         }) {
+                            let Some(wire_block) = upload.canonical_to_wire_block(
+                                BlockExtent::new(request.piece, request.begin, request.length),
+                            ) else {
+                                continue;
+                            };
                             peer_io
                                 .send(Message::Cancel {
-                                    piece: request.piece,
-                                    begin: request.begin,
-                                    length: request.length,
+                                    piece: wire_block.piece,
+                                    begin: wire_block.offset,
+                                    length: wire_block.length,
                                 })
                                 .await?;
                         }
@@ -8138,13 +8414,9 @@ async fn run_peer_loop(
                         upload_choked = true;
                         peer_io.send(Message::Choke).await?;
                         for reject in upload_obligations.on_local_choke() {
-                            send_upload_obligation_reject(&mut peer_io, reject).await?;
+                            send_upload_obligation_reject(&mut peer_io, &upload, reject).await?;
                         }
-                        start_upload_reads(
-                            &mut upload_reads,
-                            &mut upload_obligations,
-                            &upload,
-                        );
+                        start_upload_reads(&mut upload_reads, &mut upload_obligations, &upload)?;
                         if !upload.fast_negotiated {
                             // A local choke invalidates reads that were
                             // admitted under the previous upload state. Abort
@@ -8158,11 +8430,7 @@ async fn run_peer_loop(
                         upload_choked = false;
                         upload_obligations.on_local_unchoke();
                         peer_io.send(Message::Unchoke).await?;
-                        start_upload_reads(
-                            &mut upload_reads,
-                            &mut upload_obligations,
-                            &upload,
-                        );
+                        start_upload_reads(&mut upload_reads, &mut upload_obligations, &upload)?;
                     }
                     PeerCommand::Shutdown => {
                         upload.upload_control.cancel();
@@ -8332,6 +8600,7 @@ async fn run_peer_loop(
                     }
                     Message::Piece { piece, begin, data } => {
                         let data_len = data.len() as u32;
+                        let wire_extent = BlockExtent::new(piece, begin, data_len);
                         let Some(mut requested) =
                             take_matching_outstanding(&mut outstanding, piece, begin, data_len)
                         else {
@@ -8344,6 +8613,25 @@ async fn run_peer_loop(
                             );
                             continue;
                         };
+                        let Some((canonical_extent, canonical_data)) =
+                            upload.expand_wire_block(wire_extent, &data)
+                        else {
+                            outstanding.push(requested);
+                            anyhow::bail!(
+                                "peer piece response does not map to the selected hybrid content plane"
+                            );
+                        };
+                        let expected_canonical = BlockExtent::new(
+                            requested.req.piece,
+                            requested.req.begin,
+                            requested.req.length,
+                        );
+                        if canonical_extent != expected_canonical {
+                            outstanding.push(requested);
+                            anyhow::bail!(
+                                "peer piece response mapped to a different canonical request"
+                            );
+                        }
                         let response_delay_nanos = Instant::now()
                             .saturating_duration_since(requested.sent_at)
                             .as_nanos()
@@ -8353,21 +8641,19 @@ async fn run_peer_loop(
                         // it went on wire. Charge the bytes that arrived and
                         // keep the protocol loop free while the actor waits for
                         // storage admission.
-                        requested
-                            .rate_grant
-                            .take()
-                            .expect("on-wire request retains its rate grant")
-                            .settle(u64::from(data_len));
+                        if let Some(grant) = requested.rate_grant.take() {
+                            grant.settle(u64::from(data_len));
+                        }
                         let block = match LeasedBlockEvent::with_optional_lease(
                             BlockEvent {
-                                piece,
-                                offset: begin,
-                                data,
+                                piece: canonical_extent.piece,
+                                offset: canonical_extent.offset,
+                                data: canonical_data,
                             },
                             requested.memory_lease.take(),
                             Some(response_delay_nanos),
                         ) {
-                            Ok(block) => block,
+                            Ok(block) => block.with_network_bytes(u64::from(data_len)),
                             Err(error) => {
                                 outstanding.push(OutstandingRequest::new(requested.req, None));
                                 debug!(
@@ -8406,14 +8692,9 @@ async fn run_peer_loop(
                         begin,
                         length,
                     } => {
-                        let rejected = BlockRequest {
-                            piece,
-                            begin,
-                            length,
-                        };
-                        if take_matching_outstanding(&mut outstanding, piece, begin, length)
-                            .is_none()
-                        {
+                        let Some(requested) =
+                            take_matching_outstanding(&mut outstanding, piece, begin, length)
+                        else {
                             debug!(
                                 component = "peer",
                                 operation = "handle_reject",
@@ -8426,7 +8707,8 @@ async fn run_peer_loop(
                                 "ignoring reject for a request that is not outstanding"
                             );
                             continue;
-                        }
+                        };
+                        let rejected = requested.req;
                         if !send_peer_event(
                             &peer_event_tx,
                             PeerEvent::RequestRejected {
@@ -8488,13 +8770,21 @@ async fn run_peer_loop(
                         }
                     }
                     Message::Request { piece, begin, length } => {
-                        let block = BlockExtent::new(piece, begin, length);
-                        let request = UploadRequest {
-                            piece,
-                            begin,
-                            length,
+                        let wire_block = BlockExtent::new(piece, begin, length);
+                        let Some(block) = upload.wire_to_canonical_block(wire_block) else {
+                            reject_upload_request(
+                                &mut peer_io,
+                                &upload,
+                                UploadRequest::from_wire(wire_block),
+                            )
+                            .await?;
+                            continue;
                         };
-                        let have_piece = upload.have_pieces.get(piece as usize).unwrap_or(false);
+                        let request = UploadRequest::new(block, wire_block);
+                        let have_piece = upload
+                            .have_pieces
+                            .get(block.piece as usize)
+                            .unwrap_or(false);
                         let decision = upload_obligations.on_request(block, have_piece);
                         if matches!(
                             decision,
@@ -8520,7 +8810,7 @@ async fn run_peer_loop(
                                 &mut upload_reads,
                                 &mut upload_obligations,
                                 &upload,
-                            ),
+                            )?,
                             InboundDecision::Reject(_) => {
                                 reject_upload_request(&mut peer_io, &upload, request).await?;
                             }
@@ -8528,9 +8818,12 @@ async fn run_peer_loop(
                         }
                     }
                     Message::Cancel { piece, begin, length } => {
-                        let block = BlockExtent::new(piece, begin, length);
+                        let wire_block = BlockExtent::new(piece, begin, length);
+                        let Some(block) = upload.wire_to_canonical_block(wire_block) else {
+                            continue;
+                        };
                         if let Some(reject) = upload_obligations.on_cancel(block) {
-                            send_upload_obligation_reject(&mut peer_io, reject).await?;
+                            send_upload_obligation_reject(&mut peer_io, &upload, reject).await?;
                         }
                     }
                     Message::Choke => {
@@ -8720,7 +9013,7 @@ async fn run_peer_loop(
                         break;
                     }
                 };
-                let block_extent = BlockExtent::new(request.piece, request.begin, request.length);
+                let block_extent = request.canonical_block();
                 match result {
                     Ok(_block) if rate_interrupted => {
                         // Rate admission runs with the bounded read task, so
@@ -8736,6 +9029,7 @@ async fn run_peer_loop(
                             } else {
                                 finish_upload_obligation(
                                     &mut peer_io,
+                                    &upload,
                                     &mut upload_obligations,
                                     block_extent,
                                     InboundServed::Discarded,
@@ -8755,8 +9049,8 @@ async fn run_peer_loop(
                         let bytes = data.len() as u64;
                         peer_io
                             .send(Message::Piece {
-                                piece: request.piece,
-                                begin: request.begin,
+                                piece: request.wire_piece,
+                                begin: request.wire_begin,
                                 data,
                             })
                             .await?;
@@ -8777,6 +9071,7 @@ async fn run_peer_loop(
                         }
                         finish_upload_obligation(
                             &mut peer_io,
+                            &upload,
                             &mut upload_obligations,
                             block_extent,
                             InboundServed::Sent,
@@ -8790,6 +9085,7 @@ async fn run_peer_loop(
                         // a Fast peer is told the request will not be served.
                         finish_upload_obligation(
                             &mut peer_io,
+                            &upload,
                             &mut upload_obligations,
                             block_extent,
                             InboundServed::Discarded,
@@ -8810,6 +9106,7 @@ async fn run_peer_loop(
                         );
                         finish_upload_obligation(
                             &mut peer_io,
+                            &upload,
                             &mut upload_obligations,
                             block_extent,
                             InboundServed::Failed,
@@ -8817,11 +9114,7 @@ async fn run_peer_loop(
                         .await?;
                     }
                 }
-                start_upload_reads(
-                    &mut upload_reads,
-                    &mut upload_obligations,
-                    &upload,
-                );
+                start_upload_reads(&mut upload_reads, &mut upload_obligations, &upload)?;
             }
             _ = timeout_tick.tick() => {
                 if last_activity.elapsed() > PEER_IDLE_TIMEOUT {
@@ -8938,7 +9231,10 @@ fn metadata_response(piece: u32, metadata: &[u8]) -> UtMetadataMessage {
 
 #[derive(Debug)]
 struct OutstandingRequest {
+    /// Canonical v1 coordinate exposed to the torrent actor.
     req: BlockRequest,
+    /// Coordinate used for matching replies on this connection's wire plane.
+    wire_req: BlockRequest,
     sent_at: Instant,
     /// Expected response capacity remains charged until the block event takes
     /// ownership or this request reaches a terminal lifecycle path.
@@ -8952,6 +9248,7 @@ impl OutstandingRequest {
     fn new(req: BlockRequest, memory_lease: Option<MemoryLease>) -> Self {
         Self {
             req,
+            wire_req: req,
             sent_at: Instant::now(),
             memory_lease,
             rate_grant: None,
@@ -8960,14 +9257,16 @@ impl OutstandingRequest {
 
     fn with_rate_grant(
         req: BlockRequest,
+        wire_req: BlockRequest,
         memory_lease: Option<MemoryLease>,
-        rate_grant: RateAdmissionGrant,
+        rate_grant: Option<RateAdmissionGrant>,
     ) -> Self {
         Self {
             req,
+            wire_req,
             sent_at: Instant::now(),
             memory_lease,
-            rate_grant: Some(rate_grant),
+            rate_grant,
         }
     }
 }
@@ -9005,19 +9304,18 @@ async fn send_have_state(
 
 async fn read_upload_block(
     upload: &UploadReadContext,
-    piece: u32,
-    begin: u32,
-    length: u32,
+    request: UploadRequest,
 ) -> anyhow::Result<LeasedUploadBlock> {
+    let canonical = request.canonical_block();
+    let length = canonical.length;
     if length == 0 || length > MAX_BLOCK_SIZE {
         anyhow::bail!("invalid upload block length {length}");
     }
-    PieceGeometry::validate_served_block(
-        &upload.piece_map,
-        BlockExtent::new(piece, begin, length),
-    )?;
+    PieceGeometry::validate_served_block(&upload.piece_map, canonical)?;
     let lease = reserve_peer_upload_bytes(&upload.resources, length)?;
-    let regions = upload.piece_map.validate_request(piece, begin, length)?;
+    let regions = upload
+        .piece_map
+        .validate_request(canonical.piece, canonical.offset, length)?;
     let mut data = Vec::with_capacity(length as usize);
     for region in regions {
         if region.pad {
@@ -9042,8 +9340,27 @@ async fn read_upload_block(
             length
         );
     }
+    let canonical_data = bytes::Bytes::from(data);
+    let (wire, data) = match upload.plane {
+        Plane::V1 => (canonical, canonical_data),
+        Plane::V2 => {
+            let Some((wire, data)) = upload
+                .hybrid_v2
+                .as_ref()
+                .and_then(|hybrid| hybrid.geometry.as_ref())
+                .and_then(|geometry| geometry.project_v1_block_to_v2(canonical, canonical_data))
+            else {
+                anyhow::bail!("canonical upload block has no matching v2 content range");
+            };
+            (wire, data)
+        }
+    };
+    anyhow::ensure!(
+        wire == request.wire_block(),
+        "projected upload block does not match its admitted wire request"
+    );
     Ok(LeasedUploadBlock {
-        data: bytes::Bytes::from(data),
+        data,
         _lease: lease,
         rate_grant: None,
     })
@@ -9059,9 +9376,9 @@ async fn reject_upload_request(
     if upload.fast_negotiated {
         peer_io
             .send(Message::Reject {
-                piece: request.piece,
-                begin: request.begin,
-                length: request.length,
+                piece: request.wire_piece,
+                begin: request.wire_begin,
+                length: request.wire_length,
             })
             .await?;
     }
@@ -9070,13 +9387,16 @@ async fn reject_upload_request(
 
 async fn send_upload_obligation_reject(
     peer_io: &mut PeerIo,
+    upload: &UploadContext,
     reject: InboundReject,
 ) -> anyhow::Result<()> {
-    let block = reject.block;
+    let block = upload
+        .canonical_to_wire_block(reject.block)
+        .ok_or_else(|| anyhow::anyhow!("upload rejection has no matching wire extent"))?;
     peer_io
         .send(Message::Reject {
             piece: block.piece,
-            begin: block.begin,
+            begin: block.offset,
             length: block.length,
         })
         .await?;
@@ -9085,12 +9405,13 @@ async fn send_upload_obligation_reject(
 
 async fn finish_upload_obligation(
     peer_io: &mut PeerIo,
+    upload: &UploadContext,
     obligations: &mut InboundObligations,
     block: BlockExtent,
     served: InboundServed,
 ) -> anyhow::Result<()> {
     if let Some(reject) = obligations.finish(block, served) {
-        send_upload_obligation_reject(peer_io, reject).await?;
+        send_upload_obligation_reject(peer_io, upload, reject).await?;
     }
     Ok(())
 }
@@ -9099,10 +9420,12 @@ fn start_upload_reads(
     upload_reads: &mut futures::stream::FuturesUnordered<tokio::task::JoinHandle<UploadReadResult>>,
     obligations: &mut InboundObligations,
     upload: &UploadContext,
-) {
+) -> anyhow::Result<()> {
     let read_context = UploadReadContext {
         save_root: upload.save_root.clone(),
         piece_map: upload.piece_map.clone(),
+        hybrid_v2: upload.hybrid_v2.clone(),
+        plane: upload.plane,
         storage: upload.storage.clone(),
         resources: upload.resources.clone(),
         upload_control: upload.upload_control.clone(),
@@ -9112,21 +9435,16 @@ fn start_upload_reads(
         let Some(block) = obligations.next_request() else {
             break;
         };
-        let request = UploadRequest {
-            piece: block.piece,
-            begin: block.begin,
-            length: block.length,
+        let Some(wire_block) = upload.canonical_to_wire_block(block) else {
+            obligations.close();
+            anyhow::bail!("accepted upload obligation has no matching wire extent");
         };
+        let request = UploadRequest::new(block, wire_block);
         let read_context_for_task = read_context.clone();
         upload_reads.push(tokio::spawn(async move {
             let result = match timeout(
                 PEER_UPLOAD_READ_TIMEOUT,
-                read_upload_block(
-                    &read_context_for_task,
-                    request.piece,
-                    request.begin,
-                    request.length,
-                ),
+                read_upload_block(&read_context_for_task, request),
             )
             .await
             {
@@ -9164,6 +9482,7 @@ fn start_upload_reads(
             (request, result, rate_interrupted)
         }));
     }
+    Ok(())
 }
 
 fn abort_upload_reads(
@@ -9252,7 +9571,7 @@ fn take_matching_outstanding(
     length: u32,
 ) -> Option<OutstandingRequest> {
     let Some(pos) = outstanding.iter().position(|out| {
-        out.req.piece == piece && out.req.begin == begin && out.req.length == length
+        out.wire_req.piece == piece && out.wire_req.begin == begin && out.wire_req.length == length
     }) else {
         return None;
     };
@@ -9516,6 +9835,377 @@ mod tests {
                 piece_leaf_count: None,
             })
         );
+
+        let v1_handshake = Handshake {
+            reserved: ExtensionFlags::default(),
+            info_hash: v1.info_hash,
+            peer_id: [3; 20],
+        };
+        let v2_wire_hash: [u8; 20] = projection.info_hash_v2[..20].try_into().unwrap();
+        let v2_handshake = Handshake {
+            reserved: ExtensionFlags::with_v2_support(),
+            info_hash: v2_wire_hash,
+            peer_id: [4; 20],
+        };
+        let v2_without_capability = Handshake {
+            reserved: ExtensionFlags::default(),
+            ..v2_handshake.clone()
+        };
+        assert_eq!(
+            incoming_hybrid_plane(v1.info_hash, Some(&projection), &v1_handshake),
+            Some(Plane::V1)
+        );
+        assert_eq!(
+            incoming_hybrid_plane(v1.info_hash, Some(&projection), &v2_handshake),
+            Some(Plane::V2)
+        );
+        assert_eq!(
+            incoming_hybrid_plane(v1.info_hash, Some(&projection), &v2_without_capability),
+            None
+        );
+        assert!(matches!(
+            outgoing_hybrid_plane(v1.info_hash, Some(&projection), &v2_handshake),
+            Ok(Plane::V2)
+        ));
+        assert!(
+            outgoing_hybrid_plane(v1.info_hash, Some(&projection), &v2_without_capability).is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn hybrid_v2_upload_projects_canonical_padding_out_of_wire_payload() {
+        let dir = tempfile::tempdir().unwrap();
+        let piece_length = 16 * 1024u64;
+        let payload_path = SafeRelPath::from_name("payload.bin", false).unwrap();
+        let second_path = SafeRelPath::from_name("second.bin", false).unwrap();
+        std::fs::write(payload_path.resolve(dir.path()), b"abc").unwrap();
+        std::fs::write(second_path.resolve(dir.path()), b"xyz").unwrap();
+        let v1 = TorrentMetaV1 {
+            info_hash: [5; 20],
+            announce: None,
+            announce_list: Vec::new(),
+            webseeds: Vec::new(),
+            comment: None,
+            created_by: None,
+            creation_date: None,
+            name: "hybrid-upload".to_owned(),
+            piece_length,
+            pieces: vec![[0; 20]; 2],
+            files: vec![
+                TorrentFileV1 {
+                    index: 0,
+                    length: 3,
+                    path: payload_path,
+                    offset: 0,
+                    pad: false,
+                },
+                TorrentFileV1 {
+                    index: 1,
+                    length: piece_length - 3,
+                    path: SafeRelPath::from_components(&[".pad", "16381"], false).unwrap(),
+                    offset: 3,
+                    pad: true,
+                },
+                TorrentFileV1 {
+                    index: 2,
+                    length: 3,
+                    path: second_path.clone(),
+                    offset: piece_length,
+                    pad: false,
+                },
+            ],
+            private: false,
+            raw: Vec::new(),
+        };
+        let v2 = TorrentMetaV2 {
+            info_hash_v2: [6; 32],
+            announce: None,
+            announce_list: Vec::new(),
+            webseeds: Vec::new(),
+            comment: None,
+            created_by: None,
+            creation_date: None,
+            name: "hybrid-upload".to_owned(),
+            piece_length,
+            files: vec![
+                rt_metainfo::TorrentFileV2 {
+                    index: 0,
+                    length: 3,
+                    path: SafeRelPath::from_name("payload.bin", false).unwrap(),
+                    offset: 0,
+                    piece_offset: 0,
+                    pieces_root: Some([7; 32]),
+                    pad: false,
+                },
+                rt_metainfo::TorrentFileV2 {
+                    index: 1,
+                    length: 3,
+                    path: second_path,
+                    offset: 3,
+                    piece_offset: piece_length,
+                    pieces_root: Some([8; 32]),
+                    pad: false,
+                },
+            ],
+            piece_layers: HashMap::new(),
+            private: false,
+            raw: Vec::new(),
+        };
+        let piece_map = build_piece_map(v1.piece_length, &v1.files).unwrap();
+        let hybrid = Arc::new(HybridV2Meta::from_validated_views(
+            &v1,
+            piece_map.clone(),
+            v2,
+        ));
+        assert!(hybrid.valid_layout);
+        let geometry = hybrid.geometry.as_ref().unwrap();
+        let canonical = BlockExtent::new(0, 0, 16 * 1024);
+        let wire = geometry.canonical_v2_block_for_v1(canonical).unwrap();
+        assert_eq!(wire, BlockExtent::new(0, 0, 3));
+
+        let resources = ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default());
+        let upload = UploadReadContext {
+            save_root: dir.path().to_path_buf(),
+            piece_map,
+            hybrid_v2: Some(hybrid),
+            plane: Plane::V2,
+            storage: MountScheduler::new_for_path(
+                StorageRootId::new(),
+                dir.path(),
+                &SchedulerConfig {
+                    profile: StorageProfile::Unknown,
+                    ..Default::default()
+                },
+            ),
+            resources: resources.clone(),
+            upload_control: RateLimitCancellation::default(),
+            upload_rate: test_upload_rate_admission(None, 0).await,
+        };
+        let block = read_upload_block(&upload, UploadRequest::new(canonical, wire))
+            .await
+            .unwrap();
+
+        assert_eq!(block.data.as_ref(), b"abc");
+        assert_eq!(block.data.len(), wire.length as usize);
+        assert_eq!(block._lease.bytes(), u64::from(canonical.length));
+        drop(block);
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn hybrid_v2_peer_loop_translates_download_and_upload_wire_ranges() {
+        let dir = tempfile::tempdir().unwrap();
+        let piece_length = 16 * 1024u64;
+        let payload_path = SafeRelPath::from_name("payload.bin", false).unwrap();
+        std::fs::write(payload_path.resolve(dir.path()), b"abc").unwrap();
+        let v1 = TorrentMetaV1 {
+            info_hash: [9; 20],
+            announce: None,
+            announce_list: Vec::new(),
+            webseeds: Vec::new(),
+            comment: None,
+            created_by: None,
+            creation_date: None,
+            name: "hybrid-peer".to_owned(),
+            piece_length,
+            pieces: vec![[0; 20]],
+            files: vec![
+                TorrentFileV1 {
+                    index: 0,
+                    length: 3,
+                    path: payload_path.clone(),
+                    offset: 0,
+                    pad: false,
+                },
+                TorrentFileV1 {
+                    index: 1,
+                    length: piece_length - 3,
+                    path: SafeRelPath::from_components(&[".pad", "16381"], false).unwrap(),
+                    offset: 3,
+                    pad: true,
+                },
+            ],
+            private: false,
+            raw: Vec::new(),
+        };
+        let v2 = TorrentMetaV2 {
+            info_hash_v2: [10; 32],
+            announce: None,
+            announce_list: Vec::new(),
+            webseeds: Vec::new(),
+            comment: None,
+            created_by: None,
+            creation_date: None,
+            name: "hybrid-peer".to_owned(),
+            piece_length,
+            files: vec![rt_metainfo::TorrentFileV2 {
+                index: 0,
+                length: 3,
+                path: payload_path,
+                offset: 0,
+                piece_offset: 0,
+                pieces_root: Some([11; 32]),
+                pad: false,
+            }],
+            piece_layers: HashMap::new(),
+            private: false,
+            raw: Vec::new(),
+        };
+        let piece_map = build_piece_map(v1.piece_length, &v1.files).unwrap();
+        let hybrid = Arc::new(HybridV2Meta::from_validated_views(
+            &v1,
+            piece_map.clone(),
+            v2,
+        ));
+        assert!(hybrid.valid_layout);
+
+        let resources = ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default());
+        let upload = UploadContext {
+            save_root: dir.path().to_path_buf(),
+            piece_map,
+            hybrid_v2: Some(hybrid),
+            plane: Plane::V2,
+            storage: MountScheduler::new_for_path(
+                StorageRootId::new(),
+                dir.path(),
+                &SchedulerConfig {
+                    profile: StorageProfile::Unknown,
+                    ..Default::default()
+                },
+            ),
+            resources: resources.clone(),
+            have_pieces: PieceBitmap::from_bools(&[true]),
+            _bitmap_memory_lease: None,
+            metadata: None,
+            is_private: false,
+            pex_enabled: false,
+            fast_negotiated: false,
+            upload_control: RateLimitCancellation::default(),
+            shutdown_control: RateLimitCancellation::default(),
+            upload_rate: test_upload_rate_admission(None, 0).await,
+        };
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = listener.local_addr().unwrap();
+        let remote_stream = TcpStream::connect(peer_addr).await.unwrap();
+        let (server_stream, _) = listener.accept().await.unwrap();
+        let mut remote = Framed::new(remote_stream, PeerCodec::default());
+        let (peer_event_tx, mut peer_event_rx) = mpsc::channel(16);
+        let (peer_cmd_tx, peer_cmd_rx) = mpsc::channel(8);
+        let peer_loop = tokio::spawn(run_peer_loop(
+            peer_addr,
+            PeerId::new(),
+            PeerIo::Tcp(Framed::new(server_stream, PeerCodec::default())),
+            peer_event_tx,
+            peer_cmd_rx,
+            upload,
+            false,
+        ));
+
+        remote.send(Message::Unchoke).await.unwrap();
+        assert!(matches!(
+            timeout(Duration::from_secs(1), peer_event_rx.recv())
+                .await
+                .unwrap(),
+            Some(PeerEvent::Unchoked { .. })
+        ));
+        let canonical = BlockRequest {
+            piece: 0,
+            begin: 0,
+            length: 16 * 1024,
+        };
+        let memory_lease =
+            reserve_peer_event_bytes(&resources, u64::from(canonical.length)).unwrap();
+        peer_cmd_tx
+            .send(PeerCommand::Request {
+                request: canonical,
+                download_generation: 0,
+                memory_lease,
+                rate_grant: None,
+            })
+            .await
+            .unwrap();
+        loop {
+            let message = timeout(Duration::from_secs(1), remote.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            if let Message::Request {
+                piece,
+                begin,
+                length,
+            } = message
+            {
+                assert_eq!((piece, begin, length), (0, 0, 3));
+                break;
+            }
+        }
+        remote
+            .send(Message::Piece {
+                piece: 0,
+                begin: 0,
+                data: bytes::Bytes::from_static(b"abc"),
+            })
+            .await
+            .unwrap();
+        let received = loop {
+            match timeout(Duration::from_secs(1), peer_event_rx.recv())
+                .await
+                .unwrap()
+                .unwrap()
+            {
+                PeerEvent::Piece { block, .. } => break block,
+                _ => continue,
+            }
+        };
+        assert_eq!(received.block.piece, 0);
+        assert_eq!(received.block.offset, 0);
+        assert_eq!(received.block.data.len(), 16 * 1024);
+        assert_eq!(&received.block.data[..3], b"abc");
+        assert!(received.block.data[3..].iter().all(|byte| *byte == 0));
+        assert_eq!(received.network_bytes, Some(3));
+        drop(received);
+
+        peer_cmd_tx.send(PeerCommand::Unchoke).await.unwrap();
+        assert!(matches!(
+            timeout(Duration::from_secs(1), remote.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap(),
+            Message::Unchoke
+        ));
+        remote
+            .send(Message::Request {
+                piece: 0,
+                begin: 0,
+                length: 3,
+            })
+            .await
+            .unwrap();
+        loop {
+            let message = timeout(Duration::from_secs(2), remote.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            if let Message::Piece { piece, begin, data } = message {
+                assert_eq!((piece, begin), (0, 0));
+                assert_eq!(data.as_ref(), b"abc");
+                break;
+            }
+        }
+
+        drop(remote);
+        let exit = timeout(Duration::from_secs(2), peer_loop)
+            .await
+            .expect("hybrid peer loop did not stop after remote close")
+            .unwrap();
+        assert!(exit.outstanding.is_empty());
     }
 
     #[tokio::test]
@@ -12296,6 +12986,11 @@ mod tests {
                     begin: 0,
                     length: 16_384,
                 },
+                wire_req: BlockRequest {
+                    piece: 1,
+                    begin: 0,
+                    length: 16_384,
+                },
                 sent_at: Instant::now() - Duration::from_secs(120),
                 memory_lease: None,
                 rate_grant: None,
@@ -12347,7 +13042,12 @@ mod tests {
             begin: 0,
             length: 4,
         };
-        let mut outstanding = vec![OutstandingRequest::with_rate_grant(request, None, grant)];
+        let mut outstanding = vec![OutstandingRequest::with_rate_grant(
+            request,
+            request,
+            None,
+            Some(grant),
+        )];
         assert_eq!(
             take_timed_out_requests(&mut outstanding, Duration::ZERO),
             vec![request]
@@ -14498,6 +15198,8 @@ mod tests {
         let upload = UploadContext {
             save_root: temp.path().to_path_buf(),
             piece_map,
+            hybrid_v2: None,
+            plane: Plane::V1,
             storage: MountScheduler::new_for_path(
                 StorageRootId::new(),
                 temp.path(),
@@ -14746,6 +15448,8 @@ mod tests {
         let upload = UploadContext {
             save_root: dir.path().to_path_buf(),
             piece_map,
+            hybrid_v2: None,
+            plane: Plane::V1,
             storage: MountScheduler::new_for_path(
                 StorageRootId::new(),
                 dir.path(),
@@ -14769,11 +15473,14 @@ mod tests {
         let read_context = UploadReadContext {
             save_root: upload.save_root.clone(),
             piece_map: upload.piece_map.clone(),
+            hybrid_v2: None,
+            plane: Plane::V1,
             storage: upload.storage.clone(),
             resources: upload.resources.clone(),
             upload_control: upload.upload_control.clone(),
         };
-        let block = read_upload_block(&read_context, 0, 0, 16 * 1024)
+        let extent = BlockExtent::new(0, 0, 16 * 1024);
+        let block = read_upload_block(&read_context, UploadRequest::from_wire(extent))
             .await
             .unwrap();
 
@@ -14811,6 +15518,8 @@ mod tests {
         let upload = UploadReadContext {
             save_root: dir.path().to_path_buf(),
             piece_map,
+            hybrid_v2: None,
+            plane: Plane::V1,
             storage: MountScheduler::new_for_path(
                 StorageRootId::new(),
                 dir.path(),
@@ -14824,7 +15533,10 @@ mod tests {
             upload_control: RateLimitCancellation::default(),
         };
 
-        let block = read_upload_block(&upload, 0, 0, 16).await.unwrap();
+        let extent = BlockExtent::new(0, 0, 16);
+        let block = read_upload_block(&upload, UploadRequest::from_wire(extent))
+            .await
+            .unwrap();
         let mut expected = b"abc".to_vec();
         expected.resize(16, 0);
         assert_eq!(block.data.as_ref(), expected.as_slice());
@@ -15208,6 +15920,8 @@ mod tests {
         let upload = UploadContext {
             save_root: root.to_path_buf(),
             piece_map,
+            hybrid_v2: None,
+            plane: Plane::V1,
             storage: storage.clone(),
             resources: ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default()),
             have_pieces: PieceBitmap::from_bools(&[true]),
@@ -15532,6 +16246,8 @@ mod tests {
         let upload = UploadContext {
             save_root: temp.path().to_path_buf(),
             piece_map,
+            hybrid_v2: None,
+            plane: Plane::V1,
             storage: MountScheduler::new_for_path(
                 StorageRootId::new(),
                 temp.path(),
@@ -15630,6 +16346,8 @@ mod tests {
         let upload = UploadContext {
             save_root: temp.path().to_path_buf(),
             piece_map,
+            hybrid_v2: None,
+            plane: Plane::V1,
             storage: storage.clone(),
             resources: ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default()),
             have_pieces: PieceBitmap::from_bools(&[true]),
@@ -15727,6 +16445,8 @@ mod tests {
         let upload = UploadContext {
             save_root: temp.path().to_path_buf(),
             piece_map,
+            hybrid_v2: None,
+            plane: Plane::V1,
             storage: MountScheduler::new_for_path(
                 StorageRootId::new(),
                 temp.path(),
@@ -15796,6 +16516,8 @@ mod tests {
         let upload = UploadContext {
             save_root: temp.path().to_path_buf(),
             piece_map,
+            hybrid_v2: None,
+            plane: Plane::V1,
             storage: MountScheduler::new_for_path(
                 StorageRootId::new(),
                 temp.path(),
@@ -15917,6 +16639,8 @@ mod tests {
         let upload = UploadContext {
             save_root: temp.path().to_path_buf(),
             piece_map,
+            hybrid_v2: None,
+            plane: Plane::V1,
             storage: MountScheduler::new_for_path(
                 StorageRootId::new(),
                 temp.path(),
@@ -15962,7 +16686,7 @@ mod tests {
                 request,
                 download_generation: 0,
                 memory_lease: request_lease,
-                rate_grant,
+                rate_grant: Some(rate_grant),
             })
             .await
             .unwrap();
@@ -16003,6 +16727,8 @@ mod tests {
         let upload = UploadContext {
             save_root: temp.path().to_path_buf(),
             piece_map,
+            hybrid_v2: None,
+            plane: Plane::V1,
             storage: MountScheduler::new_for_path(
                 StorageRootId::new(),
                 temp.path(),
@@ -16052,7 +16778,7 @@ mod tests {
                 request,
                 download_generation: 0,
                 memory_lease: request_lease,
-                rate_grant,
+                rate_grant: Some(rate_grant),
             })
             .await
             .unwrap();
@@ -16407,6 +17133,7 @@ mod tests {
                     .transfer_ledger
                     .try_connect(PEER_REQUEST_PIPELINE_ADAPTIVE_MAX)
                     .unwrap(),
+                plane: Plane::V1,
                 cmd_tx: peer_cmd_tx,
                 upload_control: RateLimitCancellation::default(),
                 shutdown_control: RateLimitCancellation::default(),
