@@ -420,6 +420,347 @@ fn secure_copy(
     )
 }
 
+const SECURE_COPY_QUANTUM_BYTES: usize = 64 * 1024;
+
+#[derive(Clone, Copy)]
+enum FileCopyPhase {
+    Copy,
+    HashSource,
+    HashDestination,
+}
+
+/// A root-confined regular-file copy whose disk work is advanced in bounded
+/// quanta. The cursor retains only descriptors and hash state between device
+/// admissions; the 64 KiB scratch buffer exists only inside `advance_quantum`.
+pub(crate) struct FileCopyCursor {
+    source_parent: File,
+    source_name: OsString,
+    source_path: PathBuf,
+    destination_parent: File,
+    destination_name: OsString,
+    destination_path: PathBuf,
+    source_copy: Option<File>,
+    destination_copy: Option<File>,
+    source_verify: Option<File>,
+    destination_verify: Option<File>,
+    expected_bytes: u64,
+    copied_bytes: u64,
+    source_hash: Sha1,
+    destination_hash: Sha1,
+    phase: FileCopyPhase,
+}
+
+pub(crate) fn start_file_copy_cursor(
+    source: &Path,
+    destination: &Path,
+    expected_bytes: u64,
+    roots: &[PathBuf],
+    check_control: &dyn Fn() -> Result<(), StorageError>,
+    allow_hard_link: bool,
+) -> Result<(Option<FileCopyCursor>, bool), StorageError> {
+    check_control()?;
+    let (source_parent, source_name) = open_parent(source, roots, false, "copy-source")?;
+    let source_type = entry_type(&source_parent, &source_name, source)?;
+    if source_type.is_symlink() {
+        return Err(unsafe_symlink(source, "copy-source"));
+    }
+    if source_type.is_dir() {
+        return Ok((None, false));
+    }
+    if !source_type.is_file() {
+        return Err(staged(
+            "copy-source",
+            format!("unsupported file type: {}", source.display()),
+        ));
+    }
+
+    let (destination_parent, destination_name) =
+        open_parent(destination, roots, true, "copy-destination")?;
+    ensure_destination_available(&destination_parent, &destination_name, destination)?;
+
+    if allow_hard_link {
+        verify_expected_length(
+            &source_parent,
+            &source_name,
+            expected_bytes,
+            source,
+            check_control,
+        )?;
+        let source_c = c_name(&source_name, source)?;
+        let destination_c = c_name(&destination_name, destination)?;
+        let linked = unsafe {
+            libc::linkat(
+                source_parent.as_raw_fd(),
+                source_c.as_ptr(),
+                destination_parent.as_raw_fd(),
+                destination_c.as_ptr(),
+                0,
+            )
+        } == 0;
+        if linked {
+            let verification = verify_expected_length(
+                &destination_parent,
+                &destination_name,
+                expected_bytes,
+                destination,
+                check_control,
+            );
+            if let Err(error) = verification {
+                if let Err(cleanup_error) =
+                    unlink_at(&destination_parent, &destination_name, destination, 0)
+                {
+                    return Err(staged_uncertain(
+                        "import-cleanup",
+                        format!(
+                            "{error}; failed to remove hard-link destination {}: {cleanup_error}",
+                            destination.display()
+                        ),
+                    ));
+                }
+                if let Err(sync_error) = sync_directory(&destination_parent, destination) {
+                    return Err(staged_uncertain(
+                        "import-cleanup-sync",
+                        format!(
+                            "{error}; removed hard-link destination but failed to sync its parent: {sync_error}"
+                        ),
+                    ));
+                }
+                return Err(error);
+            }
+            sync_directory(&source_parent, source).map_err(|error| {
+                staged_uncertain(
+                    "import-sync",
+                    format!(
+                        "hard-link import committed but failed to sync source directory {}: {error}",
+                        source.display()
+                    ),
+                )
+            })?;
+            sync_directory(&destination_parent, destination).map_err(|error| {
+                staged_uncertain(
+                    "import-sync",
+                    format!(
+                        "hard-link import committed but failed to sync destination directory {}: {error}",
+                        destination.display()
+                    ),
+                )
+            })?;
+            return Ok((None, true));
+        }
+    }
+
+    let source_copy = open_file_at(
+        &source_parent,
+        &source_name,
+        source,
+        libc::O_RDONLY | libc::O_NONBLOCK,
+    )?;
+    let source_metadata = source_copy
+        .metadata()
+        .map_err(|error| StorageError::io(source.display().to_string(), error))?;
+    if !source_metadata.file_type().is_file() {
+        return Err(staged(
+            "copy-source",
+            format!("not a regular file: {}", source.display()),
+        ));
+    }
+
+    let destination_copy =
+        create_file_at(&destination_parent, &destination_name, destination)?;
+
+    Ok((Some(FileCopyCursor {
+        source_parent,
+        source_name,
+        source_path: source.to_path_buf(),
+        destination_parent,
+        destination_name,
+        destination_path: destination.to_path_buf(),
+        source_copy: Some(source_copy),
+        destination_copy: Some(destination_copy),
+        source_verify: None,
+        destination_verify: None,
+        expected_bytes,
+        copied_bytes: 0,
+        source_hash: Sha1::new(),
+        destination_hash: Sha1::new(),
+        phase: FileCopyPhase::Copy,
+    }), false))
+}
+
+impl FileCopyCursor {
+    pub(crate) fn advance_quantum(
+        &mut self,
+        check_control: &dyn Fn() -> Result<(), StorageError>,
+    ) -> Result<bool, StorageError> {
+        match self.advance_quantum_inner(check_control) {
+            Ok(complete) => Ok(complete),
+            Err(error) => Err(self.cleanup_partial_destination(error)),
+        }
+    }
+
+    fn advance_quantum_inner(
+        &mut self,
+        check_control: &dyn Fn() -> Result<(), StorageError>,
+    ) -> Result<bool, StorageError> {
+        check_control()?;
+        let mut buffer = [0u8; SECURE_COPY_QUANTUM_BYTES];
+        match self.phase {
+            FileCopyPhase::Copy => {
+                let read = self
+                    .source_copy
+                    .as_mut()
+                    .expect("copy phase retains source descriptor")
+                    .read(&mut buffer)
+                    .map_err(|error| StorageError::io(self.source_path.display().to_string(), error))?;
+                if read != 0 {
+                    let next = self
+                        .copied_bytes
+                        .checked_add(read as u64)
+                        .ok_or_else(|| staged("copy-size", "copied byte count overflow"))?;
+                    if self.expected_bytes != u64::MAX && next > self.expected_bytes {
+                        return Err(short_copy_io(
+                            &self.destination_path,
+                            self.expected_bytes,
+                            next,
+                        ));
+                    }
+                    self.destination_copy
+                        .as_mut()
+                        .expect("copy phase retains destination descriptor")
+                        .write_all(&buffer[..read])
+                        .map_err(|error| {
+                            StorageError::io(self.destination_path.display().to_string(), error)
+                        })?;
+                    self.copied_bytes = next;
+                    return Ok(false);
+                }
+
+                if self.expected_bytes != u64::MAX && self.copied_bytes != self.expected_bytes {
+                    return Err(short_copy_io(
+                        &self.destination_path,
+                        self.expected_bytes,
+                        self.copied_bytes,
+                    ));
+                }
+                self.destination_copy
+                    .as_ref()
+                    .expect("copy phase retains destination descriptor")
+                    .sync_all()
+                    .map_err(|error| {
+                        StorageError::io(self.destination_path.display().to_string(), error)
+                    })?;
+                self.source_copy.take();
+                self.destination_copy.take();
+                self.source_verify = Some(open_file_at(
+                    &self.source_parent,
+                    &self.source_name,
+                    &self.source_path,
+                    libc::O_RDONLY | libc::O_NONBLOCK,
+                )?);
+                self.destination_verify = Some(open_file_at(
+                    &self.destination_parent,
+                    &self.destination_name,
+                    &self.destination_path,
+                    libc::O_RDONLY | libc::O_NONBLOCK,
+                )?);
+                self.phase = FileCopyPhase::HashSource;
+                Ok(false)
+            }
+            FileCopyPhase::HashSource => {
+                let read = self
+                    .source_verify
+                    .as_mut()
+                    .expect("source hash phase retains source descriptor")
+                    .read(&mut buffer)
+                    .map_err(|error| StorageError::io(self.source_path.display().to_string(), error))?;
+                if read == 0 {
+                    self.phase = FileCopyPhase::HashDestination;
+                } else {
+                    self.source_hash.update(&buffer[..read]);
+                }
+                Ok(false)
+            }
+            FileCopyPhase::HashDestination => {
+                let read = self
+                    .destination_verify
+                    .as_mut()
+                    .expect("destination hash phase retains destination descriptor")
+                    .read(&mut buffer)
+                    .map_err(|error| {
+                        StorageError::io(self.destination_path.display().to_string(), error)
+                    })?;
+                if read != 0 {
+                    self.destination_hash.update(&buffer[..read]);
+                    return Ok(false);
+                }
+
+                if self.source_hash.clone().finalize() != self.destination_hash.clone().finalize() {
+                    return Err(staged(
+                        "verify-content",
+                        format!(
+                            "content hash mismatch after copy: {} != {}",
+                            self.source_path.display(),
+                            self.destination_path.display()
+                        ),
+                    ));
+                }
+                sync_directory(&self.destination_parent, &self.destination_path)?;
+                Ok(true)
+            }
+        }
+    }
+
+    fn cleanup_partial_destination(&mut self, error: StorageError) -> StorageError {
+        match self.discard_partial_destination() {
+            Ok(()) => error,
+            Err(cleanup_error) => staged_uncertain(
+                "copy-cleanup",
+                format!("{error}; failed to clean partial destination: {cleanup_error}"),
+            ),
+        }
+    }
+
+    pub(crate) fn discard_partial_destination(&mut self) -> Result<(), StorageError> {
+        self.source_copy.take();
+        self.destination_copy.take();
+        self.source_verify.take();
+        self.destination_verify.take();
+        let no_control = || Ok(());
+        remove_entry_at(
+            &self.destination_parent,
+            &self.destination_name,
+            &self.destination_path,
+            true,
+            &no_control,
+        )
+        .map_err(|error| {
+            staged_uncertain(
+                "copy-cleanup",
+                format!(
+                    "failed to remove partial destination {}: {error}",
+                    self.destination_path.display()
+                ),
+            )
+        })?;
+        sync_directory(&self.destination_parent, &self.destination_path).map_err(|error| {
+            staged_uncertain(
+                "copy-cleanup-sync",
+                format!(
+                    "removed partial destination but failed to sync its parent: {error}"
+                ),
+            )
+        })
+    }
+}
+
+fn short_copy_io(path: &Path, expected: u64, actual: u64) -> StorageError {
+    StorageError::ShortIo {
+        path: path.display().to_string(),
+        expected: expected.min(usize::MAX as u64) as usize,
+        actual: actual.min(usize::MAX as u64) as usize,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn secure_copy_entry(
     source_parent: &File,
@@ -1882,5 +2223,100 @@ mod tests {
             std::fs::read(destination.join("d0/d1/d2/d3/d4/d5/payload.bin")).unwrap(),
             b"payload"
         );
+    }
+
+    #[test]
+    fn regular_file_copy_cursor_advances_in_bounded_quanta() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.bin");
+        let destination = directory.path().join("destination.bin");
+        let payload = vec![0x5a; SECURE_COPY_QUANTUM_BYTES * 3 + 17];
+        std::fs::write(&source, &payload).unwrap();
+        let roots = vec![directory.path().to_path_buf()];
+        let no_control = || Ok(());
+        let (cursor, complete) = start_file_copy_cursor(
+            &source,
+            &destination,
+            payload.len() as u64,
+            &roots,
+            &no_control,
+            false,
+        )
+        .unwrap();
+        assert!(!complete);
+        let mut cursor = cursor.expect("regular files should use the chunked cursor");
+
+        let mut complete = false;
+        while !complete {
+            let copied_before = cursor.copied_bytes;
+            complete = cursor.advance_quantum(&no_control).unwrap();
+            let copied_this_quantum = cursor.copied_bytes - copied_before;
+            assert!(copied_this_quantum <= SECURE_COPY_QUANTUM_BYTES as u64);
+        }
+
+        assert_eq!(std::fs::read(destination).unwrap(), payload);
+    }
+
+    #[test]
+    fn regular_file_copy_cursor_cancellation_removes_partial_destination() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.bin");
+        let destination = directory.path().join("destination.bin");
+        std::fs::write(&source, vec![0x33; SECURE_COPY_QUANTUM_BYTES * 2]).unwrap();
+        let roots = vec![directory.path().to_path_buf()];
+        let no_control = || Ok(());
+        let (cursor, complete) = start_file_copy_cursor(
+            &source,
+            &destination,
+            u64::MAX,
+            &roots,
+            &no_control,
+            false,
+        )
+        .unwrap();
+        assert!(!complete);
+        let mut cursor = cursor.expect("regular files should use the chunked cursor");
+        assert!(!cursor.advance_quantum(&no_control).unwrap());
+        assert!(destination.exists());
+
+        let cancelled = || {
+            Err(StorageError::StagedMoveFailed {
+                step: "cancel",
+                reason: "copy cancelled".to_owned(),
+            })
+        };
+        assert!(cursor.advance_quantum(&cancelled).is_err());
+        assert!(!destination.exists(), "cancelled copy leaves no partial file");
+    }
+
+    #[test]
+    fn regular_file_import_keeps_the_hard_link_fast_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.bin");
+        let destination = directory.path().join("destination.bin");
+        std::fs::write(&source, b"shared payload").unwrap();
+        let roots = vec![directory.path().to_path_buf()];
+        let (cursor, complete) = start_file_copy_cursor(
+            &source,
+            &destination,
+            14,
+            &roots,
+            &|| Ok(()),
+            true,
+        )
+        .unwrap();
+
+        if complete {
+            assert!(cursor.is_none());
+            use std::os::unix::fs::MetadataExt;
+            assert_eq!(
+                std::fs::metadata(&source).unwrap().ino(),
+                std::fs::metadata(&destination).unwrap().ino()
+            );
+        } else {
+            let mut cursor = cursor.expect("unsupported hard links should fall back to copying");
+            while !cursor.advance_quantum(&|| Ok(())).unwrap() {}
+        }
+        assert_eq!(std::fs::read(&destination).unwrap(), b"shared payload");
     }
 }

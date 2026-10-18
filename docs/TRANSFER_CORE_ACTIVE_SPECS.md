@@ -1332,11 +1332,21 @@ destination paths are resolved to physical-device queues and admitted in
 stable key order, covering source reads, staging writes, final renames, source
 deletion, and rollback. The worker passes the same `ResourceGovernor` and
 storage-I/O settings used by torrent actors. Checkpoint persistence stays
-outside the device permits, and the secure filesystem closure remains owned by
-the scheduler through cancellation and partial-copy cleanup. The charged
-working set is the copier's 64 KiB streaming buffer, not the payload length.
-F25's nested-entry copy-only behavior still verifies each copied leaf once per
-side.
+outside device permits. The durable plan worker owns cursor state, while the
+scheduler owns each blocking quantum and its in-quantum cleanup through
+completion. The charged
+working set is one 64 KiB streaming buffer, not the payload length. Regular
+file `CopyVerifyRename` work is split into copy, source-hash, and destination-
+hash quanta; each quantum reacquires all touched device queues before it does
+I/O, then yields before the next admission. The physical queue set is
+resolved once for the plan step and reused rather than rediscovering mount
+topology for every chunk. The cursor keeps only confined descriptors and hash
+state between quanta. A failed or cancelled quantum
+closes its handles and removes the partial destination while device admission
+is still held. If the scheduler rejects further admission, the retained cursor
+uses its root-confined descriptors for terminal cleanup before returning the
+admission error. F25's nested-entry copy-only behavior still verifies each
+copied leaf once per side.
 
 When physical-device IDs are unavailable, all copy jobs through the engine's
 storage dispatcher share its stable fallback queue. This conservatively bounds
@@ -1345,15 +1355,20 @@ unknown devices without assuming two paths are independent.
 Directory verification now streams entries on Unix and Windows without
 materializing per-directory name vectors. Unix recursive deletion retains at
 most 256 names per batch and restarts enumeration after each batch, so removing
-entries cannot invalidate an active directory cursor. The background job is
-not yet split into copy/hash subjobs; large copies still hold their admitted
-device slots until the secure step completes.
+entries cannot invalidate an active directory cursor. Regular-file
+`CopyVerifyRename` steps and regular-file imports that cannot use a hard link
+now yield device slots between bounded copy and hash quanta. Directory-tree
+copies still hold their admitted device slots for the full secure step;
+same-filesystem `ImportExisting` retains its one-operation hard-link fast path.
+Final file sync and recursive directory traversal are not preemptible yet.
 
 ### Ownership and invariant
 
 - **Current owner:** the durable storage worker checkpoints plan steps; the
-  destination mount scheduler owns queued bytes and the source/destination
-  device permits until the secure filesystem closure returns.
+  destination mount scheduler owns each quantum's queued bytes and the
+  source/destination device permits until that blocking quantum and its local
+  cleanup return. The cursor retains root-confined descriptors and hash state
+  between admissions.
 - **Target owner:** one bounded storage service accounts for every physical
   device touched by a copy while verification uses the shared hash service.
 - **Invariant preserved:** root-confined descriptor operations, rollback on
@@ -1365,8 +1380,16 @@ device slots until the secure step completes.
 
 - Secure copy/import steps wait behind and share the configured destination
   device queue across mounts.
-- Queued working-set bytes and the device permit remain owned until the copy
-  worker and cleanup finish after a durable job cancellation request.
+- Queued working-set bytes and the device permit remain owned until an admitted
+  quantum and its cleanup finish. Cancellation between quanta is handled by
+  the next admitted quantum before its permit is released.
+- Regular-file copies and both verification reads process
+  no more than 64 KiB per device admission, then release permits before the
+  next quantum; one-block-per-quantum and cancellation cleanup regressions
+  cover Unix and Windows.
+- Directory-tree copies and final syncs remain explicitly identified where a
+  full step can still hold device slots; same-filesystem `ImportExisting`
+  retains the single-operation hard-link fast path.
 - Source reads, destination writes, renames, deletes, and rollback mutations
   acquire admission for every touched physical device in a global order.
 - Opposing cross-device copies cannot deadlock while holding device permits.
@@ -1402,6 +1425,11 @@ device slots until the secure step completes.
   and cleanup sources remain in place; `directory_name_stream_visits_all_entries`
   and `directory_deletion_batches_bound_retained_names` cover the streaming
   iterator and bounded Unix deletion batch;
+  `regular_file_copy_cursor_advances_in_bounded_quanta` and
+  `regular_file_copy_cursor_cancellation_removes_partial_destination` cover
+  bounded file work and cancellation cleanup on Unix and Windows;
+  `regular_file_import_keeps_the_hard_link_fast_path` protects the Unix
+  same-filesystem import optimization;
   `streamed_tree_verification_rejects_destination_only_entries` preserves
   exact directory-content matching without a name set on Unix, and
   `windows_secure_fs::tests::streamed_directory_verification_rejects_destination_only_entries`

@@ -2,15 +2,51 @@ use std::collections::HashSet;
 #[cfg(windows)]
 use std::os::windows::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::{io_class::IoClass, scheduler::MountScheduler, StorageError};
 use rt_path::SafeRelPath;
 
-/// The secure copier streams through one 64 KiB buffer at a time. Charge that
-/// retained working set while a copy plan step is admitted to a device queue;
-/// payload length is I/O volume, not memory retained by the operation.
+/// Each scheduled secure-copy quantum uses one 64 KiB buffer. Payload length
+/// is I/O volume, not memory retained by the operation.
 const COPY_STREAM_WORKING_SET_BYTES: u64 = 64 * 1024;
+
+trait ScheduledFileCopy: Send {
+    fn advance_quantum(
+        &mut self,
+        check_control: &dyn Fn() -> Result<(), StorageError>,
+    ) -> Result<bool, StorageError>;
+    fn discard_partial_destination(&mut self) -> Result<(), StorageError>;
+}
+
+#[cfg(unix)]
+impl ScheduledFileCopy for secure_fs::FileCopyCursor {
+    fn advance_quantum(
+        &mut self,
+        check_control: &dyn Fn() -> Result<(), StorageError>,
+    ) -> Result<bool, StorageError> {
+        self.advance_quantum(check_control)
+    }
+
+    fn discard_partial_destination(&mut self) -> Result<(), StorageError> {
+        self.discard_partial_destination()
+    }
+}
+
+#[cfg(windows)]
+impl ScheduledFileCopy for windows_secure_fs::FileCopyCursor {
+    fn advance_quantum(
+        &mut self,
+        check_control: &dyn Fn() -> Result<(), StorageError>,
+    ) -> Result<bool, StorageError> {
+        self.advance_quantum(check_control)
+    }
+
+    fn discard_partial_destination(&mut self) -> Result<(), StorageError> {
+        self.discard_partial_destination()
+    }
+}
 
 /// Bound recursive storage-plan walks below the stack-exhaustion threshold.
 /// Imported directories can be operator-provided and do not necessarily
@@ -1199,12 +1235,222 @@ where
         .chain(step.destination.iter())
         .cloned()
         .collect::<Vec<_>>();
-    runtime.block_on(scheduler.run_device_operation_with_paths(
+    let device_queues = scheduler.device_queue_set_for_paths(&touched_paths);
+
+    if matches!(
+        step.action,
+        PlannedStorageAction::CopyVerifyRename | PlannedStorageAction::ImportExisting
+    ) {
+        let cursor_step = step.clone();
+        let cursor_roots = roots.to_vec();
+        let cursor_control = Arc::clone(&check_control);
+        let allow_hard_link = matches!(step.action, PlannedStorageAction::ImportExisting);
+        let (cursor, already_complete) = runtime.block_on(scheduler.run_device_operation_with_queue_set(
+            IoClass::MoveCopy,
+            COPY_STREAM_WORKING_SET_BYTES,
+            &device_queues,
+            move || {
+                start_file_copy_cursor(
+                    &cursor_step,
+                    &cursor_roots,
+                    cursor_control.as_ref(),
+                    allow_hard_link,
+                )
+            },
+        ))?;
+
+        if already_complete {
+            return Ok(());
+        }
+        if let Some(cursor) = cursor {
+            // Admission can be full between quanta. Keep the cursor outside
+            // the submitted closure so a rejected submission cannot drop a
+            // partially created destination without cleaning it up.
+            let cursor_slot = Arc::new(Mutex::new(Some(cursor)));
+            let abort_reason = Arc::new(Mutex::new(None::<StorageError>));
+            loop {
+                let operation_cursor_slot = Arc::clone(&cursor_slot);
+                let operation_abort_reason = Arc::clone(&abort_reason);
+                let operation_started = Arc::new(AtomicBool::new(false));
+                let operation_started_flag = Arc::clone(&operation_started);
+                let quantum_control = Arc::clone(&check_control);
+                let operation_control = Arc::clone(&check_control);
+                let cleanup_pending = abort_reason
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .is_some();
+                let operation_future = scheduler.run_device_operation_with_queue_set(
+                        IoClass::MoveCopy,
+                        COPY_STREAM_WORKING_SET_BYTES,
+                        &device_queues,
+                        move || {
+                            operation_started_flag.store(true, Ordering::Relaxed);
+                            let mut slot = operation_cursor_slot
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                            let Some(cursor) = slot.as_mut() else {
+                                return Err(StorageError::Cancelled);
+                            };
+                            let abort_reason = operation_abort_reason
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                .take();
+                            if let Some(error) = abort_reason {
+                                let cleanup = cursor.discard_partial_destination();
+                                slot.take();
+                                return match cleanup {
+                                    Ok(()) => Err(error),
+                                    Err(cleanup_error) => Err(cleanup_error),
+                                };
+                            }
+                            match cursor.advance_quantum(quantum_control.as_ref()) {
+                                Ok(complete) => Ok(complete),
+                                Err(error) => {
+                                    slot.take();
+                                    Err(error)
+                                }
+                            }
+                        },
+                    );
+                let outcome = runtime.block_on(async {
+                    tokio::pin!(operation_future);
+                    if cleanup_pending {
+                        return Ok(operation_future.await);
+                    }
+                    // Release a queued waiter promptly on cancellation, then
+                    // submit cleanup as its own admitted operation.
+                    loop {
+                        tokio::select! {
+                            result = &mut operation_future => break Ok(result),
+                            _ = tokio::time::sleep(std::time::Duration::from_millis(25)) => {
+                                if let Err(error) = operation_control() {
+                                    break Err(error);
+                                }
+                            }
+                        }
+                    }
+                });
+                let result = match outcome {
+                    Ok(result) => result,
+                    Err(cancel_error) => {
+                        let mut abort_reason = abort_reason
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        if abort_reason.is_none() {
+                            *abort_reason = Some(cancel_error);
+                        }
+                        runtime.block_on(tokio::task::yield_now());
+                        continue;
+                    }
+                };
+                match result {
+                    Ok(true) => return Ok(()),
+                    Ok(false) => {}
+                    Err(error) if operation_started.load(Ordering::Relaxed) => {
+                        let mut slot = cursor_slot
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        if let Some(cursor) = slot.as_mut() {
+                            if let Err(cleanup_error) = cursor.discard_partial_destination() {
+                                return Err(cleanup_error);
+                            }
+                            slot.take();
+                        }
+                        return Err(error);
+                    }
+                    Err(error) if matches!(error, StorageError::QueueFull { .. }) => {}
+                    Err(error) => {
+                        let mut slot = cursor_slot
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        if let Some(mut cursor) = slot.take() {
+                            if let Err(cleanup_error) = cursor.discard_partial_destination() {
+                                return Err(cleanup_error);
+                            }
+                        }
+                        return Err(error);
+                    }
+                }
+                runtime.block_on(tokio::task::yield_now());
+            }
+        }
+    }
+
+    runtime.block_on(scheduler.run_device_operation_with_queue_set(
         IoClass::MoveCopy,
         queued_bytes,
-        &touched_paths,
+        &device_queues,
         move || execute_plan_step_for_platform(&step, &roots, check_control.as_ref()),
     ))
+}
+
+#[cfg(unix)]
+fn start_file_copy_cursor<C>(
+    step: &StoragePlanStep,
+    roots: &[PathBuf],
+    check_control: &C,
+    allow_hard_link: bool,
+) -> Result<(Option<Box<dyn ScheduledFileCopy>>, bool), StorageError>
+where
+    C: ?Sized + Fn() -> Result<(), StorageError>,
+{
+    let source = required_path(step.source.as_ref(), "copy-source")?;
+    let destination = required_path(step.destination.as_ref(), "copy-destination")?;
+    secure_fs::start_file_copy_cursor(
+        source,
+        destination,
+        step.bytes,
+        roots,
+        check_control,
+        allow_hard_link,
+    )
+    .map(|(cursor, complete)| {
+        (
+            cursor.map(|cursor| Box::new(cursor) as Box<dyn ScheduledFileCopy>),
+            complete,
+        )
+    })
+}
+
+#[cfg(all(not(unix), not(windows)))]
+fn start_file_copy_cursor<C>(
+    _step: &StoragePlanStep,
+    _roots: &[PathBuf],
+    _check_control: &C,
+    _allow_hard_link: bool,
+) -> Result<(Option<Box<dyn ScheduledFileCopy>>, bool), StorageError>
+where
+    C: ?Sized + Fn() -> Result<(), StorageError>,
+{
+    Ok((None, false))
+}
+
+#[cfg(windows)]
+fn start_file_copy_cursor<C>(
+    step: &StoragePlanStep,
+    roots: &[PathBuf],
+    check_control: &C,
+    allow_hard_link: bool,
+) -> Result<(Option<Box<dyn ScheduledFileCopy>>, bool), StorageError>
+where
+    C: ?Sized + Fn() -> Result<(), StorageError>,
+{
+    let source = required_path(step.source.as_ref(), "copy-source")?;
+    let destination = required_path(step.destination.as_ref(), "copy-destination")?;
+    windows_secure_fs::start_file_copy_cursor(
+        source,
+        destination,
+        step.bytes,
+        roots,
+        check_control,
+        allow_hard_link,
+    )
+    .map(|(cursor, complete)| {
+        (
+            cursor.map(|cursor| Box::new(cursor) as Box<dyn ScheduledFileCopy>),
+            complete,
+        )
+    })
 }
 
 fn rollback_plan_with_device_scheduler(

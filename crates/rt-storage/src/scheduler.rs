@@ -1486,6 +1486,13 @@ struct DeviceQueue {
     state: Mutex<DeviceQueueState>,
 }
 
+/// Resolved device queues for a multi-path operation. Long-running cursors
+/// prepare this once so each bounded quantum does not repeat filesystem
+/// topology discovery.
+pub(crate) struct DeviceQueueSet {
+    additional_queues: Vec<(String, String, Arc<DeviceQueue>)>,
+}
+
 struct DeviceOperationPermit {
     queue: Arc<DeviceQueue>,
     operation_id: u64,
@@ -2560,8 +2567,17 @@ impl MountScheduler {
         T: Send + 'static,
         F: FnOnce() -> Result<T, StorageError> + Send + 'static,
     {
-        let mut queues = Vec::with_capacity(additional_paths.len());
-        for path in additional_paths {
+        let queues = self.device_queue_set_for_paths(additional_paths);
+        self.run_device_operation_with_queue_set(class, queued_bytes, &queues, operation)
+            .await
+    }
+
+    pub(crate) fn device_queue_set_for_paths(
+        &self,
+        paths: &[PathBuf],
+    ) -> DeviceQueueSet {
+        let mut queues = Vec::with_capacity(paths.len());
+        for path in paths {
             let topology = detect_storage_topology(path);
             let device_id = topology.device_id.map(|device| device.0);
             let device_key = device_queue_key(self.storage_root, device_id.as_deref());
@@ -2577,8 +2593,32 @@ impl MountScheduler {
             );
             queues.push((device_key, mount, queue));
         }
-        self.run_device_operation_with_queues(class, queued_bytes, queues, operation)
-            .await
+        queues.sort_by(|left, right| left.0.cmp(&right.0));
+        let mut seen = HashSet::with_capacity(queues.len());
+        queues.retain(|(_, _, queue)| seen.insert(Arc::as_ptr(queue) as usize));
+        DeviceQueueSet {
+            additional_queues: queues,
+        }
+    }
+
+    pub(crate) async fn run_device_operation_with_queue_set<T, F>(
+        &self,
+        class: IoClass,
+        queued_bytes: u64,
+        queue_set: &DeviceQueueSet,
+        operation: F,
+    ) -> Result<T, StorageError>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> Result<T, StorageError> + Send + 'static,
+    {
+        self.run_device_operation_with_queues(
+            class,
+            queued_bytes,
+            queue_set.additional_queues.clone(),
+            operation,
+        )
+        .await
     }
 
     async fn run_device_operation_with_queues<T, F>(
