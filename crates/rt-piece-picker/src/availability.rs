@@ -6,6 +6,7 @@
 use rand::Rng;
 
 use crate::flags::PieceFlags;
+use crate::picker::PieceAvailability;
 
 #[derive(Debug, Clone)]
 pub struct Availability {
@@ -29,6 +30,7 @@ pub struct Availability {
 
 const NO_POSITION: u32 = u32::MAX;
 const RANDOM_CANDIDATE_PROBES: usize = 32;
+const SPARSE_FALLBACK_BUCKET_MIN: usize = RANDOM_CANDIDATE_PROBES * 4;
 
 impl Availability {
     pub fn new(piece_count: usize) -> Self {
@@ -165,38 +167,44 @@ impl Availability {
         None
     }
 
-    /// Select uniformly from matching candidates in the rarest bucket that
-    /// contains a match. Reservoir sampling avoids allocating a temporary
-    /// candidate list and prevents low piece indexes from winning every tie.
-    pub(crate) fn rarest_matching_random<F, R>(
+    /// Choose uniformly from requestable peer-held pieces at the lowest
+    /// availability count. Small buckets are fully checked after bounded
+    /// probes miss. For a large bucket, walk the peer's set bits once and use
+    /// reservoir sampling across its actually available requestable pieces
+    /// instead of testing every torrent candidate against the peer bitmap.
+    pub(crate) fn rarest_matching_random_from_peer<A, F, R>(
         &self,
+        peer_has: &A,
         mut predicate: F,
         rng: &mut R,
     ) -> Option<usize>
     where
+        A: PieceAvailability + ?Sized,
         F: FnMut(usize) -> bool,
         R: Rng + ?Sized,
     {
-        for bucket in self.buckets.iter().skip(1) {
-            if bucket.is_empty() {
-                continue;
-            }
-            // Most peers advertise a meaningful share of a swarm. Sample
-            // first so a large equal-rarity bucket does not require a full
-            // walk for the common case. If the bounded sample misses, use
-            // reservoir sampling across the bucket; this keeps the result
-            // uniform among matches, including sparse peer bitfields.
+        for bucket in self
+            .buckets
+            .iter()
+            .skip(1)
+            .filter(|bucket| !bucket.is_empty())
+        {
             for _ in 0..bucket.len().min(RANDOM_CANDIDATE_PROBES) {
                 let piece = bucket[rng.random_range(0..bucket.len())] as usize;
-                if predicate(piece) {
+                if peer_has.has_piece(piece) && predicate(piece) {
                     return Some(piece);
                 }
             }
-            let mut matched = 0usize;
+
+            if bucket.len() >= SPARSE_FALLBACK_BUCKET_MIN {
+                return self.rarest_matching_from_peer_set(peer_has, &mut predicate, rng);
+            }
+
             let mut selected = None;
+            let mut matched = 0usize;
             for &piece in bucket {
                 let piece = piece as usize;
-                if predicate(piece) {
+                if peer_has.has_piece(piece) && predicate(piece) {
                     matched = matched.saturating_add(1);
                     if rng.random_range(0..matched) == 0 {
                         selected = Some(piece);
@@ -208,6 +216,45 @@ impl Availability {
             }
         }
         None
+    }
+
+    fn rarest_matching_from_peer_set<A, F, R>(
+        &self,
+        peer_has: &A,
+        predicate: &mut F,
+        rng: &mut R,
+    ) -> Option<usize>
+    where
+        A: PieceAvailability + ?Sized,
+        F: FnMut(usize) -> bool,
+        R: Rng + ?Sized,
+    {
+        let mut selected = None;
+        let mut selected_count = u32::MAX;
+        let mut tied = 0usize;
+        peer_has.for_each_set_piece(self.counts.len(), &mut |piece| {
+            if piece >= self.counts.len()
+                || self.candidate_positions[piece] == NO_POSITION
+                || !predicate(piece)
+            {
+                return;
+            }
+            let count = self.counts[piece];
+            if count == 0 {
+                return;
+            }
+            if count < selected_count {
+                selected = Some(piece);
+                selected_count = count;
+                tied = 1;
+            } else if count == selected_count {
+                tied = tied.saturating_add(1);
+                if rng.random_range(0..tied) == 0 {
+                    selected = Some(piece);
+                }
+            }
+        });
+        selected
     }
 
     /// Select uniformly from matching active candidates. Unlike the rarity
@@ -427,6 +474,26 @@ impl Availability {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct CountingPeerAvailability {
+        pieces: Vec<bool>,
+        set_walks: std::cell::Cell<usize>,
+    }
+
+    impl PieceAvailability for CountingPeerAvailability {
+        fn has_piece(&self, piece: usize) -> bool {
+            self.pieces.get(piece).copied().unwrap_or(false)
+        }
+
+        fn for_each_set_piece(&self, piece_count: usize, visitor: &mut dyn FnMut(usize)) {
+            self.set_walks.set(self.set_walks.get() + 1);
+            for piece in 0..piece_count {
+                if self.has_piece(piece) {
+                    visitor(piece);
+                }
+            }
+        }
+    }
 
     #[test]
     fn add_bitfield_increments_counts() {
@@ -671,12 +738,89 @@ mod tests {
         for piece in 0..8 {
             av.add_have(piece);
         }
+        let peer = vec![true; 8];
         let mut rng = rand::rngs::StdRng::seed_from_u64(0x5eed);
         let selected: std::collections::BTreeSet<_> = (0..128)
-            .filter_map(|_| av.rarest_matching_random(|_| true, &mut rng))
+            .filter_map(|_| av.rarest_matching_random_from_peer(&peer, |_| true, &mut rng))
             .collect();
 
         assert_eq!(selected, (0..8).collect());
+    }
+
+    #[test]
+    fn sparse_peer_fallback_selects_uniformly_from_its_rarest_matches() {
+        use rand::SeedableRng;
+
+        let mut av = Availability::new(512);
+        for piece in 0..512 {
+            av.add_have(piece);
+        }
+        av.add_have(400);
+        av.add_have(401);
+
+        // The large first bucket contains no peer-held pieces, so its bounded
+        // probes fall through to the set-bit walk.
+        let mut peer = vec![false; 512];
+        peer[400] = true;
+        peer[401] = true;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0x5eed);
+        let selected: std::collections::BTreeSet<_> = (0..128)
+            .filter_map(|_| av.rarest_matching_random_from_peer(&peer, |_| true, &mut rng))
+            .collect();
+
+        assert_eq!(selected, [400, 401].into_iter().collect());
+    }
+
+    #[test]
+    fn sparse_peer_fallback_skips_retired_or_unrequestable_matches() {
+        use rand::SeedableRng;
+
+        let mut av = Availability::new(512);
+        for piece in 0..512 {
+            av.add_have(piece);
+        }
+        av.add_have(400);
+        av.add_have(401);
+        av.retire(400);
+
+        let mut peer = vec![false; 512];
+        peer[400] = true;
+        peer[401] = true;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0x5eed);
+
+        assert_eq!(
+            av.rarest_matching_random_from_peer(&peer, |piece| piece != 401, &mut rng),
+            None
+        );
+        assert_eq!(
+            av.rarest_matching_random_from_peer(&peer, |_| true, &mut rng),
+            Some(401)
+        );
+    }
+
+    #[test]
+    fn small_empty_rarity_bucket_does_not_force_a_peer_set_walk() {
+        use rand::SeedableRng;
+
+        let mut av = Availability::new(64);
+        av.add_have(0);
+        for piece in 1..64 {
+            av.add_have(piece);
+            av.add_have(piece);
+        }
+        let mut pieces = vec![false; 64];
+        pieces[32] = true;
+        let peer = CountingPeerAvailability {
+            pieces,
+            set_walks: std::cell::Cell::new(0),
+        };
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0x5eed);
+
+        assert_eq!(
+            av.rarest_matching_random_from_peer(&peer, |_| true, &mut rng),
+            Some(32)
+        );
+        assert_eq!(peer.set_walks.get(), 0);
     }
 
     #[test]

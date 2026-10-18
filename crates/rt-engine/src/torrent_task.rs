@@ -585,6 +585,27 @@ impl PieceAvailability for PieceBitmap {
     fn has_piece(&self, piece: usize) -> bool {
         self.get(piece).unwrap_or(false)
     }
+
+    fn for_each_set_piece(&self, piece_count: usize, visitor: &mut dyn FnMut(usize)) {
+        let piece_count = piece_count.min(self.len);
+        for (word_index, word) in self.words.iter().copied().enumerate() {
+            let base = word_index.saturating_mul(u64::BITS as usize);
+            if base >= piece_count {
+                break;
+            }
+            let valid_bits = (piece_count - base).min(u64::BITS as usize);
+            let mut pending = if valid_bits == u64::BITS as usize {
+                word
+            } else {
+                word & ((1_u64 << valid_bits) - 1)
+            };
+            while pending != 0 {
+                let piece = base + pending.trailing_zeros() as usize;
+                visitor(piece);
+                pending &= pending - 1;
+            }
+        }
+    }
 }
 
 /// Messages from the engine to a running torrent task.
@@ -11277,6 +11298,21 @@ mod tests {
             bitfield_to_pieces(&[0b1010_0000], 4).unwrap(),
             vec![true, false, true, false]
         );
+    }
+
+    #[test]
+    fn peer_bitmap_set_iteration_visits_only_valid_set_pieces() {
+        let mut pieces = PieceBitmap::new(65);
+        pieces.set(0, true);
+        pieces.set(63, true);
+        pieces.set(64, true);
+        let mut visited = Vec::new();
+        pieces.for_each_set_piece(64, &mut |piece| visited.push(piece));
+
+        assert_eq!(visited, [0, 63]);
+        visited.clear();
+        pieces.for_each_set_piece(65, &mut |piece| visited.push(piece));
+        assert_eq!(visited, [0, 63, 64]);
     }
 
     #[test]

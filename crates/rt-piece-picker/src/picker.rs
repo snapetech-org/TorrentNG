@@ -37,6 +37,17 @@ pub struct BlockRequest {
 /// without expanding them into one `bool` per piece for every request fill.
 pub trait PieceAvailability {
     fn has_piece(&self, piece: usize) -> bool;
+
+    /// Visit set pieces in ascending order. Implementations backed by packed
+    /// bitmaps should override this to skip unset words. The default keeps
+    /// small or test-only availability sources source-compatible.
+    fn for_each_set_piece(&self, piece_count: usize, visitor: &mut dyn FnMut(usize)) {
+        for piece in 0..piece_count {
+            if self.has_piece(piece) {
+                visitor(piece);
+            }
+        }
+    }
 }
 
 impl PieceAvailability for [bool] {
@@ -567,8 +578,9 @@ impl PiecePicker {
         &self,
         peer_has: &A,
     ) -> Option<usize> {
-        self.availability.rarest_matching_random(
-            |piece| self.piece_is_requestable(piece) && peer_has.has_piece(piece),
+        self.availability.rarest_matching_random_from_peer(
+            peer_has,
+            |piece| self.piece_is_requestable(piece),
             &mut rand::rng(),
         )
     }

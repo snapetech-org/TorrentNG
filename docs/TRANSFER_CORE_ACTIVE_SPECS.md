@@ -181,6 +181,10 @@ The live v1/v2 actor integration to the shared ledger remains NET-114.
 - Selection chooses uniformly among matching peers in the rarest matching
   bucket; sampling is bounded for the common case and falls back to uniform
   reservoir sampling when matches are sparse.
+- When probes miss in a large bucket, packed peer availability is traversed by
+  set bits once to find the rarest requestable match, avoiding a
+  candidate-by-candidate bitmap check for sparse peer bitfields. Small buckets
+  are checked directly before selection advances to the next rarity.
 - Sources with out-of-band full availability, including webseeds, randomize
   zero-availability ties too.
 - In-progress pieces keep a forward cursor to the first block that may still
@@ -196,7 +200,8 @@ The live v1/v2 actor integration to the shared ledger remains NET-114.
 ### Files and compatibility
 
 - **Expected code paths:** `crates/rt-piece-picker/src/{availability,flags,picker}.rs`,
-  engine reservation accounting, picker README.
+  `crates/rt-engine/src/torrent_task.rs` packed peer availability, engine
+  reservation accounting, picker README.
 - **State or wire compatibility:** no resume or wire-format change.
 - **Migration / rollback:** none; the reference API remains the current picker.
 - **Feature flag or rollout boundary:** none; qualification is required before
@@ -205,7 +210,8 @@ The live v1/v2 actor integration to the shared ledger remains NET-114.
 ### Evidence
 
 - **Regression source added or updated:** availability bucket movement,
-  seeded random tie, candidate lifecycle, request cancellation, and picker
+  seeded random tie, sparse peer fallback and equal-rarity selection,
+  candidate lifecycle, request cancellation, and picker
   memory estimate cases; block cursor advancement, cancellation rewind,
   partial restore, and reset cases; packed receipt-bit boundaries, duplicate
   counting, invalid tail indexes, and bitmap memory accounting.
