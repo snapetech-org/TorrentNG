@@ -28,6 +28,7 @@ pub(crate) enum Operation {
 pub(crate) enum Effect {
     Fail(io::ErrorKind),
     HoldCompletion,
+    HoldCompletionThenFail(io::ErrorKind),
     WritePrefixThenFail {
         prefix_bytes: usize,
         kind: io::ErrorKind,
@@ -213,6 +214,12 @@ impl DiskBackend for ScriptedDiskBackend {
                 self.hold(inner, reply, None);
                 receiver
             }
+            Some(Effect::HoldCompletionThenFail(kind)) => {
+                let inner = self.delegate.pread(file, frame, offset);
+                let (reply, receiver) = oneshot::channel();
+                self.hold(inner, reply, Some(kind));
+                receiver
+            }
             Some(Effect::WritePrefixThenFail { .. }) => self.fail(io::ErrorKind::InvalidInput),
             None => self.delegate.pread(file, frame, offset),
         }
@@ -230,6 +237,12 @@ impl DiskBackend for ScriptedDiskBackend {
                 let inner = self.delegate.pwrite(file, data, offset);
                 let (reply, receiver) = oneshot::channel();
                 self.hold(inner, reply, None);
+                receiver
+            }
+            Some(Effect::HoldCompletionThenFail(kind)) => {
+                let inner = self.delegate.pwrite(file, data, offset);
+                let (reply, receiver) = oneshot::channel();
+                self.hold(inner, reply, Some(kind));
                 receiver
             }
             Some(Effect::WritePrefixThenFail { prefix_bytes, kind }) => {
@@ -250,6 +263,12 @@ impl DiskBackend for ScriptedDiskBackend {
                 let inner = self.delegate.fdatasync(file);
                 let (reply, receiver) = oneshot::channel();
                 self.hold(inner, reply, None);
+                receiver
+            }
+            Some(Effect::HoldCompletionThenFail(kind)) => {
+                let inner = self.delegate.fdatasync(file);
+                let (reply, receiver) = oneshot::channel();
+                self.hold(inner, reply, Some(kind));
                 receiver
             }
             Some(Effect::WritePrefixThenFail { .. }) => self.fail(io::ErrorKind::InvalidInput),

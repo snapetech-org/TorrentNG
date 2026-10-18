@@ -7619,7 +7619,10 @@ mod tests {
         );
         let backend = Arc::new(ScriptedDiskBackend::new(1, 8));
         scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(backend.clone()));
-        backend.inject(Operation::Sync, Effect::HoldCompletion);
+        backend.inject(
+            Operation::Sync,
+            Effect::HoldCompletionThenFail(io::ErrorKind::Other),
+        );
 
         let write_scheduler = scheduler.clone();
         let write_path = first_path.clone();

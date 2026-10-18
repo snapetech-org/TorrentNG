@@ -578,6 +578,9 @@ and the full injected-fault matrix remain open.
   `strict_write_sync_failure_releases_admission_and_preserves_dirty_evidence`,
   plus helper-level completion-owner lifetime cases for canceled read/write
   waiters and admission-release assertions for open and injected I/O failures.
+  The strict-write cancellation case also injects a sync error after the
+  submitted sync completes, proving canceled callers retain admission until
+  completion while the failed result leaves dirty evidence for retry.
 - **Command or probe to run:** `cargo test -p rt-storage` and the scripted
   backend cancellation matrix during the requested bulk pass.
 - **Expected result:** accepted work holds its queue/device/byte owner until
