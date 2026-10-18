@@ -169,6 +169,21 @@ impl HybridLedger {
         Ok(canonical)
     }
 
+    /// Reserve a block while keeping every block of its canonical v1 piece
+    /// on this connection. The check and reservation happen atomically in
+    /// the underlying ledger, even when the wire block came from the v2 view.
+    pub fn reserve_piece_affine(
+        &mut self,
+        conn: ConnectionId,
+        block: BlockExtent,
+    ) -> Result<BlockExtent, HybridLedgerError> {
+        let canonical = self.to_canonical(conn, block)?;
+        self.ledger
+            .reserve_piece_affine(conn, canonical)
+            .map_err(HybridLedgerError::Reserve)?;
+        Ok(canonical)
+    }
+
     /// Confirm that the writer placed the request on the wire.
     pub fn commit(
         &mut self,
@@ -199,6 +214,28 @@ impl HybridLedger {
         block: BlockExtent,
         payload: Bytes,
     ) -> Result<(HybridReceiveOutcome, Option<HybridBlockData>), HybridLedgerError> {
+        self.on_block_inner(conn, block, payload, false)
+    }
+
+    /// Receive a block for a peer-local assembly that cannot combine payload
+    /// from different connections. A late response from the other plane is
+    /// ignored once another connection owns activity in the canonical piece.
+    pub fn on_block_piece_affine(
+        &mut self,
+        conn: ConnectionId,
+        block: BlockExtent,
+        payload: Bytes,
+    ) -> Result<(HybridReceiveOutcome, Option<HybridBlockData>), HybridLedgerError> {
+        self.on_block_inner(conn, block, payload, true)
+    }
+
+    fn on_block_inner(
+        &mut self,
+        conn: ConnectionId,
+        block: BlockExtent,
+        payload: Bytes,
+        piece_affine: bool,
+    ) -> Result<(HybridReceiveOutcome, Option<HybridBlockData>), HybridLedgerError> {
         let plane = self
             .plane(conn)
             .ok_or(HybridLedgerError::UnknownConnection(conn))?;
@@ -214,6 +251,14 @@ impl HybridLedger {
             });
         }
         let canonical = self.to_canonical(conn, block)?;
+
+        if piece_affine
+            && self
+                .ledger
+                .piece_has_foreign_activity(conn, canonical.piece)
+        {
+            return Ok((HybridReceiveOutcome::IgnoredForPieceAffinity, None));
+        }
 
         // Prepare the bounded expansion before mutating ledger state. It is
         // at most one wire block and the caller has already reserved its
@@ -233,7 +278,11 @@ impl HybridLedger {
             }
         };
 
-        let outcome = self.ledger.on_block(conn, canonical);
+        let outcome = if piece_affine {
+            self.ledger.on_block_piece_affine(conn, canonical)
+        } else {
+            self.ledger.on_block(conn, canonical)
+        };
         match outcome {
             ReceiveOutcome::Accepted {
                 completed,
@@ -627,6 +676,45 @@ mod tests {
                 },
             }]
         );
+    }
+
+    #[test]
+    fn piece_affine_reservation_is_shared_across_hybrid_planes() {
+        let mut ledger = HybridLedger::new(geometry());
+        let v1 = ledger.connect(Plane::V1, 8);
+        let v2 = ledger.connect(Plane::V2, 8);
+        let v1_block = BlockExtent::new(1, 0, 16 * 1024);
+        let v2_block = BlockExtent::new(1, 0, 8 * 1024);
+
+        assert_eq!(ledger.reserve_piece_affine(v1, v1_block), Ok(v1_block));
+        assert_eq!(
+            ledger.reserve_piece_affine(v2, v2_block),
+            Err(HybridLedgerError::Reserve(ReserveError::PieceOwnedByOther))
+        );
+        assert_eq!(ledger.in_flight(), 1);
+        ledger.check_invariants().unwrap();
+    }
+
+    #[test]
+    fn piece_affine_receive_ignores_foreign_hybrid_piece_activity() {
+        let mut ledger = HybridLedger::new(geometry());
+        let v1 = ledger.connect(Plane::V1, 8);
+        let v2 = ledger.connect(Plane::V2, 8);
+        let v1_block = BlockExtent::new(1, 0, 16 * 1024);
+        let v2_block = BlockExtent::new(1, 0, 8 * 1024);
+        ledger
+            .reserve(v1, v1_block, &ReserveMode::Exclusive)
+            .unwrap();
+        ledger.reserve(v2, v2_block, &ReserveMode::Endgame).unwrap();
+
+        let (outcome, data) = ledger
+            .on_block_piece_affine(v2, v2_block, Bytes::from(vec![0x5a; 8 * 1024]))
+            .unwrap();
+        assert_eq!(outcome, HybridReceiveOutcome::IgnoredForPieceAffinity);
+        assert_eq!(data, None);
+        assert_eq!(ledger.in_flight(), 2);
+        assert_eq!(ledger.piece_progress(1), Some((0, 2)));
+        ledger.check_invariants().unwrap();
     }
 
     #[test]

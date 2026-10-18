@@ -3661,8 +3661,10 @@ a whole-torrent scan for each requested block.
   `transfer::hybrid::HybridLedger` adapter now binds each connection to its
   wire plane, arbitrates both coordinate views in one canonical v1 ledger,
   returns accepted v2 bytes with v1 padding synthesized, and projects ledger
-  cancellation actions back to each connection's plane. The production actor
-  ledger does not use this adapter yet.
+  cancellation actions back to each connection's plane. Its piece-affine
+  reserve/receive methods apply the peer-local assembly rule after projecting
+  coordinates, so a v1 and a v2 connection cannot split one canonical piece.
+  The production actor ledger does not use this adapter yet.
 - **Target owner:** each protocol adapter submits candidates to one shared
   content owner, while immutable payload, storage completion, and durability
   evidence retain their existing explicit owners.
@@ -3701,6 +3703,8 @@ a whole-torrent scan for each requested block.
   are requested again.
 - Hybrid v1/v2 views arbitrate the same payload without duplicate writes or
   mismatched piece geometry.
+- Hybrid piece-affine reservation and response handling apply ownership
+  checks to canonical v1 pieces across both wire planes.
 - Peer request, ledger connection, piece state, source jobs, rate queues, and
   upload obligations stay within measured resource caps.
 - Simulator and actor regressions pass, then matched v1/v2/hybrid live
@@ -3715,7 +3719,8 @@ a whole-torrent scan for each requested block.
   shared hybrid ownership when v1 and v2 requests overlap one padded payload
   extent, one winning response canceling the other plane in its own
   coordinates, duplicate suppression after canonicalization, generation-safe
-  plane reuse, and malformed response lengths preserving ownership,
+  plane reuse, malformed response lengths preserving ownership, and
+  piece-affine reservation/response handling across the two planes,
   ledger failure/expiry cancellation, v1 actor lifecycle, webseed ledger
   ownership, and pure-v2
   reservation/response/action-routing/timeout sources and a request-cursor
