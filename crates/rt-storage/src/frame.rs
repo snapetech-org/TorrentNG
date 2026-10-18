@@ -237,6 +237,11 @@ impl Frame {
         self.len
     }
 
+    /// Bytes charged to the frame-pool cap, including size-class rounding.
+    pub(crate) fn charged_bytes(&self) -> u64 {
+        self.charge
+    }
+
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -521,6 +526,7 @@ mod tests {
         let pool = FramePool::new(1024 * 1024);
         let mut frame = pool.try_acquire(4096).unwrap();
         frame.as_mut_slice()[..5].copy_from_slice(b"hello");
+        assert_eq!(frame.charged_bytes(), 16 * 1024);
         assert_eq!(pool.in_use_bytes(), 16 * 1024);
 
         let bytes = frame.into_bytes();

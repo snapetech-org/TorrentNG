@@ -1319,6 +1319,8 @@ impl Drop for DiskSubmission {
             resource_credit_shared_payload_leases = credit.shared_payload_lease_count,
             resource_credit_shared_payload_lease_bytes = credit.shared_payload_lease_bytes,
             resource_credit_shared_payload_view_bytes = credit.shared_payload_view_bytes,
+            resource_credit_frame_pool_charge_bytes_at_dispatch =
+                credit.frame_pool_charge_bytes_at_dispatch,
             "storage operation owner released"
         );
     }
@@ -1338,6 +1340,7 @@ struct StorageCreditEvidence {
     shared_payload_lease_count: u64,
     shared_payload_lease_bytes: u64,
     shared_payload_view_bytes: u64,
+    frame_pool_charge_bytes_at_dispatch: u64,
 }
 
 /// Evidence carried with an admitted operation until its backend completion.
@@ -1453,6 +1456,8 @@ impl DiskSubmission {
             resource_credit_shared_payload_leases = credit.shared_payload_lease_count,
             resource_credit_shared_payload_lease_bytes = credit.shared_payload_lease_bytes,
             resource_credit_shared_payload_view_bytes = credit.shared_payload_view_bytes,
+            resource_credit_frame_pool_charge_bytes_at_dispatch =
+                credit.frame_pool_charge_bytes_at_dispatch,
             descriptor_owner_retained = self._file_owner.is_some(),
             write_payload_owner_retained = self._payload_owner.is_some(),
             operation_kind,
@@ -1482,6 +1487,12 @@ impl DiskSubmission {
 
     fn bind_dirty_path(&mut self, state: DirtyPathState) {
         self.operation.bind_dirty_path(state);
+    }
+
+    fn record_frame_pool_charge(&mut self, frame: &Frame) {
+        self.operation
+            .resource_credit
+            .include_frame_pool_charge(frame.charged_bytes());
     }
 }
 
@@ -1594,11 +1605,18 @@ impl QueuedDiskBytes {
             shared_payload_lease_count: if shared_payload.is_some() { 1 } else { 0 },
             shared_payload_lease_bytes: shared_payload.map_or(0, MemoryLease::bytes),
             shared_payload_view_bytes: self.shared_payload_view_bytes.unwrap_or_default(),
+            frame_pool_charge_bytes_at_dispatch: 0,
         }
     }
 }
 
 impl StorageCreditEvidence {
+    fn include_frame_pool_charge(&mut self, bytes: u64) {
+        self.frame_pool_charge_bytes_at_dispatch = self
+            .frame_pool_charge_bytes_at_dispatch
+            .saturating_add(bytes);
+    }
+
     fn include(&mut self, other: Self) {
         self.governor_credit_leases = self
             .governor_credit_leases
@@ -1618,6 +1636,9 @@ impl StorageCreditEvidence {
         self.shared_payload_view_bytes = self
             .shared_payload_view_bytes
             .saturating_add(other.shared_payload_view_bytes);
+        self.frame_pool_charge_bytes_at_dispatch = self
+            .frame_pool_charge_bytes_at_dispatch
+            .saturating_add(other.frame_pool_charge_bytes_at_dispatch);
         if self.shared_payload_classes_mixed || other.shared_payload_classes_mixed {
             self.shared_payload_class = None;
             self.shared_payload_classes_mixed = true;
@@ -2421,27 +2442,6 @@ async fn dispatch_peer_read_batch(
                     .resource_credit
                     .include(request._queued_bytes.resource_credit());
             }
-            let credit = operation_record.resource_credit;
-            tracing::trace!(
-                storage_operation_id = operation_record.storage_operation_id.unwrap().0,
-                device_operation_id = operation_record.device_operation_id.unwrap().0,
-                device_queue_key = operation_record.device_queue_key.as_deref().unwrap_or("unknown"),
-                byte_offset = offset,
-                byte_length = len as u64,
-                queued_request_count = batch.requests.len(),
-                resource_credit_governor_leases = credit.governor_credit_leases,
-                resource_credit_governor_bytes = credit.governor_credit_bytes,
-                resource_credit_logical_queued_bytes = credit.logical_queued_bytes,
-                resource_credit_shared_payload_class = ?credit.shared_payload_class,
-                resource_credit_shared_payload_classes_mixed = credit.shared_payload_classes_mixed,
-                resource_credit_shared_payload_leases = credit.shared_payload_lease_count,
-                resource_credit_shared_payload_lease_bytes = credit.shared_payload_lease_bytes,
-                resource_credit_shared_payload_view_bytes = credit.shared_payload_view_bytes,
-                class = ?IoClass::PeerRead,
-                mount_queue_permits = 1,
-                device_queue_permits = 1,
-                "dispatching coalesced peer read"
-            );
             let frame = match global_frame_pool().try_acquire(len) {
                 Some(frame) => frame,
                 None => {
@@ -2460,6 +2460,32 @@ async fn dispatch_peer_read_batch(
                         .collect();
                 }
             };
+            operation_record
+                .resource_credit
+                .include_frame_pool_charge(frame.charged_bytes());
+            let credit = operation_record.resource_credit;
+            tracing::trace!(
+                storage_operation_id = operation_record.storage_operation_id.unwrap().0,
+                device_operation_id = operation_record.device_operation_id.unwrap().0,
+                device_queue_key = operation_record.device_queue_key.as_deref().unwrap_or("unknown"),
+                byte_offset = offset,
+                byte_length = len as u64,
+                queued_request_count = batch.requests.len(),
+                resource_credit_governor_leases = credit.governor_credit_leases,
+                resource_credit_governor_bytes = credit.governor_credit_bytes,
+                resource_credit_logical_queued_bytes = credit.logical_queued_bytes,
+                resource_credit_shared_payload_class = ?credit.shared_payload_class,
+                resource_credit_shared_payload_classes_mixed = credit.shared_payload_classes_mixed,
+                resource_credit_shared_payload_leases = credit.shared_payload_lease_count,
+                resource_credit_shared_payload_lease_bytes = credit.shared_payload_lease_bytes,
+                resource_credit_shared_payload_view_bytes = credit.shared_payload_view_bytes,
+                resource_credit_frame_pool_charge_bytes_at_dispatch =
+                    credit.frame_pool_charge_bytes_at_dispatch,
+                class = ?IoClass::PeerRead,
+                mount_queue_permits = 1,
+                device_queue_permits = 1,
+                "dispatching coalesced peer read"
+            );
             match await_backend_io_with_expected(
                 &key,
                 disk_backend.pread_leased(file.clone(), frame, offset),
@@ -3375,6 +3401,7 @@ impl MountScheduler {
                         mount: "scheduler-read-frame".to_string(),
                     }
                 })?;
+                submission.record_frame_pool_charge(&frame);
                 submission.trace_dispatch("positioned_read", class, 1);
                 let frame = match await_backend_io_with_fence(
                     &key,
@@ -5005,6 +5032,22 @@ mod tests {
         let config = StorageIoConfig::default();
         assert_eq!(config.io_worker_threads, 2);
         assert_eq!(config.hash_worker_threads, 1);
+    }
+
+    #[test]
+    fn storage_credit_keeps_frame_pool_charge_separate_from_governor_bytes() {
+        let mut first = StorageCreditEvidence {
+            governor_credit_bytes: 4096,
+            ..StorageCreditEvidence::default()
+        };
+        first.include_frame_pool_charge(64 * 1024);
+
+        let mut coalesced = StorageCreditEvidence::default();
+        coalesced.include_frame_pool_charge(16 * 1024);
+        first.include(coalesced);
+
+        assert_eq!(first.governor_credit_bytes, 4096);
+        assert_eq!(first.frame_pool_charge_bytes_at_dispatch, 80 * 1024);
     }
 
     fn hdd_scheduler() -> MountScheduler {

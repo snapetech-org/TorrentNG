@@ -267,15 +267,19 @@ operation identity, and range for tracing. A `DiskSubmission` directly retains
 the opened descriptor handle and an immutable write-payload reference through
 backend completion. Dispatch and owner-drop traces record logical queued bytes,
 governor-backed queue credit, shared payload class/lease/view bytes, permit
-counts, and retained descriptor/payload owners; coalesced peer reads aggregate
-their retained requests' queued credits.
+counts, and retained descriptor/payload owners. Read dispatch also records the
+frame-pool charge after size-class rounding; coalesced peer reads aggregate
+their retained requests' queued credits and record their single frame charge
+separately from governor-backed bytes.
 Securely opened descriptor leases carry that captured identity through queued
 and submitted operations. On Unix and Windows, reads, writes, and sync
 operations check that the descriptor's original identity still matches the
 current path at their completion boundary; a mismatch fails as uncertain, and
-writes keep dirty evidence intact. Stable lease identities, frame/hash credit
+writes keep dirty evidence intact. Stable lease identities, hash credit
 reconciliation, deterministic credit before/after assertions, restart cuts,
-and platform fault qualification remain open.
+and platform fault qualification remain open. Frame-pool charge attribution
+is now present in read-dispatch traces; consumer-lifetime reconciliation is
+still open.
 
 ### Ownership and invariant
 
@@ -314,10 +318,12 @@ and platform fault qualification remain open.
   `FilesystemStateUncertain` before stale read bytes reach the caller and
   without clearing dirty evidence. Completion owners retain descriptor and
   immutable write-payload references; traces expose their queue credit and
-  retained permit/owner counts. Regression sources must still assert credit
-  values before and after cancellation/completion across storage frames,
-  queued work, and hash work. Crash cuts and platform-specific fault
-  qualification remain open.
+  retained permit/owner counts. Read dispatch records the actual frame-pool
+  charge, including size-class rounding, separately from governor-backed queue
+  bytes. Regression sources cover that separation and the frame-pool charge
+  calculation; deterministic before/after assertions across storage frames,
+  queued work, and hash work remain open. Crash cuts and platform-specific
+  fault qualification remain open.
 
 ### Files and compatibility
 
@@ -345,7 +351,10 @@ and platform fault qualification remain open.
   `cancelled_checkpoint_waiter_keeps_dirty_evidence_after_sync_failure`,
   `dropping_backend_releases_and_joins_held_completion_workers`, and
   `replaced_path_after_held_read_is_not_returned_to_caller`, and
-  `device_operation_record_disambiguates_local_sequences_by_queue`.
+  `device_operation_record_disambiguates_local_sequences_by_queue`, plus
+  `storage_credit_keeps_frame_pool_charge_separate_from_governor_bytes` and
+  the size-class charge assertion in
+  `into_bytes_releases_charge_without_copying_payload`.
 - **Command or probe to run:** `cargo test -p rt-storage` during the requested
   bulk pass.
 - **Expected result:** injected read/write failures are returned; failed reads

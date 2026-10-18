@@ -8,7 +8,10 @@ caller is canceled. Disk submissions also retain the opened descriptor handle
 and an immutable write-payload reference until completion. Dispatch and
 owner-drop traces record logical queued bytes, governor-backed queue credit,
 shared payload class/lease/view bytes, permit counts, and retained
-descriptor/payload owners; coalesced peer reads aggregate their queued credits.
+descriptor/payload owners. Read dispatch also records the actual frame-pool
+charge after size-class rounding; coalesced peer reads aggregate their queued
+credits and report their one shared frame charge separately from
+governor-backed bytes.
 The helper-level owner regressions are authored but unrun. Dropping the
 scripted backend releases any held test completions to avoid leaving a blocked
 helper thread during failure cleanup. Zero-progress read/write error mapping
@@ -19,7 +22,8 @@ Windows, payload reads, writes, and data/checkpoint syncs verify that identity
 against the current path at operation boundaries; a mismatch prevents stale
 read bytes from returning and leaves dirty write evidence intact. Held-read,
 held-write, and held-checkpoint-sync replacement regression sources are
-authored but unrun. Stable lease identities, frame/hash credit reconciliation,
+authored but unrun. Frame-pool charge attribution is now present in read
+dispatch traces. Stable lease identities, consumer/hash credit reconciliation,
 crash cuts, and the remaining fault-matrix cases are still open.
 
 ## Evidence states
@@ -73,12 +77,14 @@ descriptor handle and, for writes, an immutable `Bytes` reference until
 backend completion. Dispatch and owner-drop traces expose logical queued bytes,
 governor-backed queue credit, shared payload class and lease/view byte counts,
 and retained permit/owner counts. Coalesced peer reads report the aggregate
-queued credits of their retained requests. The device admission pool is keyed
+queued credits of their retained requests and the size-class charge of their
+single shared frame, separately from governor-backed bytes. The device
+admission pool is keyed
 by physical device identity rather than mount profile; unidentified topology
 falls back to a storage-root-scoped pool. Strict writes move the same
 submission through their data sync. Reads recheck the descriptor identity
-against the current path before returning. Stable lease identities, frame and
-hash credit reconciliation, deterministic credit before/after assertions,
+against the current path before returning. Stable lease identities, consumer
+and hash credit reconciliation, deterministic credit before/after assertions,
 crash cuts, and platform fault qualification remain open.
 
 Dirty evidence is tracked per normalized path, write sequence, and file
