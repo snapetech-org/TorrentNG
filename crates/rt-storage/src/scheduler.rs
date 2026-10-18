@@ -4618,6 +4618,96 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancelled_external_handoff_retains_admission_until_completion() {
+        let resources = queued_disk_governor(4 * QUEUED_DISK_JOB_OVERHEAD_BYTES);
+        let topology = StorageTopology {
+            device_id: Some(DeviceId("external-cancel-device".to_owned())),
+            profile: StorageProfile::Hdd,
+            fs_type: Some("ext4".to_owned()),
+            cow: false,
+        };
+        let config = SchedulerConfig {
+            profile: StorageProfile::Hdd,
+            max_queue: 1,
+            storage_io: StorageIoConfig {
+                io_worker_threads: 1,
+                io_queue_depth: 1,
+                ..Default::default()
+            },
+            resources: Some(resources.clone()),
+            ..Default::default()
+        };
+        let first = MountScheduler::new_with_profile_and_io_config(
+            StorageRootId::new(),
+            &config,
+            StorageProfile::Hdd,
+            config.storage_io.clone(),
+            Some(topology.clone()),
+        );
+        let second = MountScheduler::new_with_profile_and_io_config(
+            StorageRootId::new(),
+            &config,
+            StorageProfile::Hdd,
+            config.storage_io.clone(),
+            Some(topology),
+        );
+        assert!(Arc::ptr_eq(&first.device_queue, &second.device_queue));
+
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+        let first_operation_scheduler = first.clone();
+        let operation = tokio::spawn(async move {
+            first_operation_scheduler
+                .run_device_operation(IoClass::MoveCopy, 64, move || {
+                    started_tx.send(()).unwrap();
+                    finish_rx.recv().unwrap();
+                    Ok(())
+                })
+                .await
+        });
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("external operation did not start on the storage pool");
+
+        assert_eq!(first.stats().queued_disk_bytes, QUEUED_DISK_JOB_OVERHEAD_BYTES);
+        assert_eq!(first.device_queue.available(), 0);
+        operation.abort();
+        assert!(operation.await.unwrap_err().is_cancelled());
+
+        assert_eq!(first.stats().queued_disk_bytes, QUEUED_DISK_JOB_OVERHEAD_BYTES);
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::QueuedDisk as usize].used_bytes,
+            QUEUED_DISK_JOB_OVERHEAD_BYTES,
+            "canceling the caller must retain the external operation's byte lease"
+        );
+        assert_eq!(first.device_queue.available(), 0);
+
+        let denied = second
+            .run_device_operation(IoClass::PeerRead, 8, || Ok(()))
+            .await;
+        assert!(matches!(denied, Err(StorageError::QueueFull { .. })));
+        assert_eq!(first.stats().queued_disk_bytes, QUEUED_DISK_JOB_OVERHEAD_BYTES);
+
+        finish_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while first.stats().queued_disk_bytes != 0 || first.device_queue.available() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("external completion should return byte and device admission");
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::QueuedDisk as usize].used_bytes,
+            0
+        );
+        second
+            .run_device_operation(IoClass::PeerRead, 8, || Ok(()))
+            .await
+            .unwrap();
+        assert_eq!(second.device_queue.available(), 1);
+    }
+
+    #[tokio::test]
     async fn multi_device_handoff_holds_source_and_destination_until_completion() {
         let config = SchedulerConfig {
             profile: StorageProfile::Hdd,

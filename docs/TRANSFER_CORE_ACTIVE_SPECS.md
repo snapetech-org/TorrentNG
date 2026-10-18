@@ -630,6 +630,10 @@ injected-backend accounting remain open.
   this path so reverse-direction copies cannot deadlock. Peer
   deadlines/choke-critical promotion and grouped barriers remain in NET-114
   and IO-009 respectively.
+- Canceling a caller after an external handoff starts does not release its
+  queue slot, physical-device permit, or queued-byte lease before the blocking
+  closure completes; another mount sharing the device remains backpressured
+  until that completion.
 - Cancellation and injected-backend regression sources cover the full
   scheduler permit and queued-byte accounting path.
 
@@ -656,9 +660,12 @@ injected-backend accounting remain open.
   now also checks that caller cancellation retains the device slot until the
   injected backend completion; `external_device_handoff_shares_admission_across_mounts`
   checks that an external blocking operation shares device admission across
-  schedulers; `multi_device_handoff_holds_source_and_destination_until_completion`
-  checks both physical-device permits remain held through external work. These
-  sources are not run.
+  schedulers; `cancelled_external_handoff_retains_admission_until_completion`
+  checks that a canceled external caller retains the shared device permit and
+  queued-byte lease until the blocking closure returns;
+  `multi_device_handoff_holds_source_and_destination_until_completion` checks
+  both physical-device permits remain held through external work. These sources
+  are not run.
 - **Command or probe to run:** `cargo test -p rt-storage` in the requested bulk
   pass.
 - **Expected result:** every device-bound operation uses the same bounded
