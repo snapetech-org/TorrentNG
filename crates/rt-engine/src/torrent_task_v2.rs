@@ -2388,7 +2388,19 @@ impl V2TorrentTask {
                 false
             }
             TorrentCmd::GetWebseeds { reply } => {
-                let _ = reply.send(Vec::<EngineWebseedSnapshot>::new());
+                let _ = reply.send(
+                    self.meta
+                        .webseeds
+                        .iter()
+                        .cloned()
+                        .map(|url| EngineWebseedSnapshot {
+                            url,
+                            is_downloading: false,
+                            download_rate: 0,
+                            failures: 0,
+                        })
+                        .collect(),
+                );
                 false
             }
             TorrentCmd::GetRuntimeStats { reply } => {

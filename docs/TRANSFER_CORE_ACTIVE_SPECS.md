@@ -3968,7 +3968,8 @@ drops its connection and wakes the source deadline.
 It maps multi-file blocks to bounded per-file HTTP ranges and synthesizes BEP
 47 padding locally; each block reuses one DNS-validated, address-pinned HTTP
 client across its file ranges;
-pure-v2 still has no webseed execution. v1 already batches progress at its
+pure-v2 exposes configured webseed URLs in its source snapshot, but still has
+no webseed execution. v1 already batches progress at its
 five-second dirty-stat flush, and pure-v2 now batches upload/download
 statistics at the existing five-second runtime flush. Completion and
 lifecycle boundaries flush immediately.
@@ -4018,7 +4019,9 @@ lifecycle boundaries flush immediately.
   active peer. A regression source holds the HTTP body while querying and
   pausing the actor, then releases the body and confirms no payload reaches
   storage. Multi-file URL/range mapping, BEP 47 padding, and excessive
-  file-fanout bounds remain covered in `torrent_task.rs`.
+  file-fanout bounds remain covered in `torrent_task.rs`. Pure-v2 source
+  snapshots now expose configured webseed URLs; execution coverage remains
+  open.
 - **Command or probe:** run with the requested bulk engine suite; do not run
   this source independently before that pass.
 - **Executed on exact revision:** no.
