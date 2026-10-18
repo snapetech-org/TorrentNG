@@ -518,6 +518,60 @@ impl<G: PieceGeometry> Ledger<G> {
         Ok(())
     }
 
+    /// Restore unverified block indexes from fastresume into the authoritative
+    /// piece ledger. A complete restored bitmap is deliberately discarded:
+    /// partial resume data is never sufficient evidence to mark a piece `have`.
+    /// Invalid and duplicate indexes are ignored, matching the picker's
+    /// defensive restore behavior.
+    pub fn restore_partial_blocks(
+        &mut self,
+        piece: u32,
+        block_indexes: &[u32],
+    ) -> Result<bool, ReserveError> {
+        if self.have.get(piece) {
+            return Err(ReserveError::Have);
+        }
+        let block_count = self.geometry.block_count(piece).ok_or_else(|| {
+            ReserveError::Invalid(GeometryError::PieceOutOfRange {
+                piece,
+                piece_count: self.geometry.piece_count(),
+            })
+        })?;
+        if self.pieces.get(&piece).is_some_and(|state| {
+            state.awaiting_verification
+                || state
+                    .slots
+                    .iter()
+                    .any(|slot| !matches!(slot, Slot::Missing))
+        }) {
+            return Ok(false);
+        }
+        self.begin_piece(piece)?;
+        let state = self.pieces.get_mut(&piece).expect("piece opened above");
+        debug_assert_eq!(state.slots.len(), block_count as usize);
+        for &block_index in block_indexes {
+            let restored = state
+                .slots
+                .get_mut(block_index as usize)
+                .is_some_and(|slot| {
+                    if matches!(slot, Slot::Missing) {
+                        *slot = Slot::Received;
+                        true
+                    } else {
+                        false
+                    }
+                });
+            if restored {
+                state.received = state.received.saturating_add(1);
+            }
+        }
+        let restored_partial = state.received > 0 && !state.is_complete();
+        if !restored_partial {
+            self.take_piece_state(piece);
+        }
+        Ok(restored_partial)
+    }
+
     /// Reserve one specific block for `conn`.
     pub fn reserve(
         &mut self,
@@ -1864,6 +1918,47 @@ mod tests {
         );
         assert!(ledger.owns(second, active));
         assert_eq!(ledger.piece_progress(0), Some((0, 2)));
+        ledger.check_invariants().unwrap();
+    }
+
+    #[test]
+    fn restored_partial_blocks_count_toward_shared_piece_completion() {
+        let mut ledger = ledger();
+        assert!(ledger.restore_partial_blocks(0, &[0, 0, u32::MAX]).unwrap());
+        assert_eq!(ledger.piece_progress(0), Some((1, 2)));
+        assert!(!ledger.has_piece(0));
+
+        let conn = ledger.connect(8);
+        let missing = block(0, 1);
+        ledger
+            .reserve(conn, missing, &ReserveMode::Exclusive)
+            .unwrap();
+        assert_eq!(ledger.commit(conn, missing, 10).0, CommitOutcome::OnWire);
+        assert_eq!(
+            ledger.on_block(conn, missing),
+            ReceiveOutcome::Accepted {
+                completed: Some(PieceExtent {
+                    piece: 0,
+                    length: 32 * KIB,
+                }),
+                late: false,
+                actions: Vec::new(),
+            }
+        );
+        assert!(
+            !ledger.has_piece(0),
+            "received data still requires verification"
+        );
+        ledger.piece_verified(0);
+        assert!(ledger.has_piece(0));
+
+        // A stale partial record that claims every block is not verification
+        // evidence and must not make the piece available.
+        assert!(!ledger.restore_partial_blocks(1, &[0, 1, 1]).unwrap());
+        assert!(!ledger.has_piece(1));
+        assert_eq!(ledger.piece_progress(1), None);
+        assert!(!ledger.restore_partial_blocks(2, &[u32::MAX]).unwrap());
+        assert_eq!(ledger.piece_progress(2), None);
         ledger.check_invariants().unwrap();
     }
 

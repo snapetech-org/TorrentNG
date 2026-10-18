@@ -5152,16 +5152,7 @@ impl TorrentTask {
             }
         }
         for partial in &state.partial_pieces {
-            self.picker
-                .restore_partial_piece(partial.piece as usize, &partial.received_blocks);
-            if self
-                .picker
-                .partial_pieces()
-                .iter()
-                .any(|(piece, _)| *piece == partial.piece)
-            {
-                self.restored_partial_pieces.insert(partial.piece);
-            }
+            self.restore_partial_transfer_state(partial.piece, &partial.received_blocks);
         }
 
         {
@@ -12382,6 +12373,8 @@ mod tests {
         assert!(task.restore_fastresume().await);
         assert!(task.restored_partial_pieces.contains(&0));
         assert!(!task.can_aggregate_piece_write(0));
+        assert_eq!(task.transfer_ledger.piece_progress(0), Some((1, 2)));
+        assert!(task.transfer_piece_memory_leases.contains_key(&0));
 
         task.picker.availability.add_have(0);
         let request = task.picker.pick(&PieceBitmap::from_bools(&[true])).unwrap();
@@ -12395,8 +12388,10 @@ mod tests {
         task.drain_transfer_jobs().await;
 
         assert!(task.picker.is_complete());
+        assert!(task.transfer_ledger.has_piece(0));
         assert!(task.piece_assemblies.is_empty());
         assert!(!task.restored_partial_pieces.contains(&0));
+        assert!(!task.transfer_piece_memory_leases.contains_key(&0));
         let on_disk = std::fs::read(file_path).unwrap();
         assert_eq!(&on_disk[..first.len()], first.as_slice());
         assert_eq!(&on_disk[first.len()..], second.as_slice());

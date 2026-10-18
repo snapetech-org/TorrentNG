@@ -1041,13 +1041,14 @@ reservations use piece affinity because those assemblies are not shared.
 ### Ownership and invariant
 
 - **Current owner:** the ledger owns live v1/hybrid-v1 and pure-v2 outbound
-  reservations, connection generations, received-block arbitration, and
-  applicable cancellation actions. `PiecePicker` remains the candidate-ranking
-  and restored-partial projection. Pure-v2 actor maps retain response leases
-  and per-peer assembly state, with atomic piece-affinity reservation.
+  reservations, connection generations, received-block arbitration,
+  fastresume-restored partial blocks, and applicable cancellation actions.
+  `PiecePicker` remains the candidate-ranking and resume projection. Pure-v2
+  actor maps retain response leases and per-peer assembly state, with atomic
+  piece-affinity reservation.
 - **Target owner:** NET-114 extends the same ownership contract to hybrid
-  dual-view transfers, restored partial state, and storage completion, with
-  storage retaining payload bytes until verification commits.
+  dual-view transfers and storage completion, with storage retaining payload
+  bytes until verification commits.
 - **Invariant preserved:** each missing block is reserved once outside
   endgame; connection generations isolate stale events; received blocks are
   verified as complete pieces before `have` is set.
@@ -1064,10 +1065,13 @@ reservations use piece affinity because those assemblies are not shared.
 - Piece-state admission and release preserve the configured logical byte
   budget; live connections, peer request depth, torrent-wide in-flight
   ownership, and endgame duplicate owners have explicit hard ceilings.
+- Fastresume partial blocks seed the ledger's received slots under the same
+  PeerBuffer charge as live piece state; a complete partial bitmap is discarded
+  and can never mark a piece available without verification.
 - A useful tombstoned response may supersede a replacement request and
   returns cancellation actions for the replacement owners.
 - Completion, hash failure, choke, reject, timeout, disconnect, resume-have,
-  and epoch advance have regression sources.
+  partial resume, and epoch advance have regression sources.
 - Seeded simulation replays churn, loss, late replies, and hash failures with
   an invariant check after every event.
 
@@ -3437,12 +3441,14 @@ arrive, drain all currently ready completions, and preserve the portable
 Move request reservation, response arbitration, and terminal request cleanup
 from actor-local state into the shared transfer core in reversible protocol
 slices. The live ledger owns v1/hybrid-v1 and pure-v2 peer acquisition, plus
-the serial v1 webseed fallback through a temporary source connection. Pure-v2
-retains peer-local piece assembly and uses atomic affinity checks so one
-connection owns each active piece. A centralized 60-second ledger expiry
-routes Cancel actions to peer tasks and drops matching actor requests. Hybrid
-dual-view arbitration, concurrent shared source scheduling, and shared
-rate/window/upload services remain open.
+the serial v1 webseed fallback through a temporary source connection. Partial
+fastresume block state is restored into the live ledger and charged to
+PeerBuffer alongside picker resume projection. Pure-v2 retains peer-local piece
+assembly and uses atomic affinity checks so one connection owns each active
+piece. A centralized 60-second ledger expiry routes Cancel actions to peer
+tasks and drops matching actor requests. Hybrid dual-view arbitration,
+concurrent shared source scheduling, and shared rate/window/upload services
+remain open.
 
 ### Ownership and invariant
 
@@ -3450,9 +3456,10 @@ rate/window/upload services remain open.
   pure-v2 peer reservations, socket-write commits, received-block arbitration,
   timeout expiry, and completion/failure cleanup. Serial webseed requests use
   a temporary, memory-accounted ledger connection and enter the same response
-  arbitration path.
-  `PiecePicker` still ranks candidates and holds restored-partial projection
-  state; v2 actor maps retain response leases and peer-local assemblies.
+  arbitration path. Fastresume partial blocks also populate ledger received
+  slots under an explicit PeerBuffer lease; the picker retains its candidate
+  and resume projection. V2 actor maps retain response leases and peer-local
+  assemblies.
 - **Geometry foundation:** `PieceGeometry::block_content_ranges` projects a
   wire block into path/offset spans while retaining v1 synthetic padding;
   `HybridGeometry::blocks_match_content` identifies equivalent payload when a
@@ -3486,6 +3493,10 @@ rate/window/upload services remain open.
   temporary connection and piece-state allocations are charged to
   `MemoryClass::PeerBuffer`. One transient ledger slot is reserved beyond the
   configured peer cap; peer admission itself is unchanged.
+- Restored partial blocks occupy ledger received slots before live acquisition;
+  a full or empty/malformed partial bitmap is not treated as verified, and
+  failure to admit its state rolls the picker projection back so those blocks
+  are requested again.
 - Hybrid v1/v2 views arbitrate the same payload without duplicate writes or
   mismatched piece geometry.
 - Peer request, ledger connection, piece state, source jobs, rate queues, and
@@ -3496,7 +3507,8 @@ rate/window/upload services remain open.
 
 ### Evidence
 
-- **Regression sources:** padded hybrid block-range projection and zero-fill,
+- **Regression sources:** partial-resume ledger completion and verification
+  boundary, padded hybrid block-range projection and zero-fill,
   ledger failure/expiry cancellation, v1 actor lifecycle, webseed ledger
   ownership, and pure-v2
   reservation/response/action-routing/timeout sources are present; hybrid

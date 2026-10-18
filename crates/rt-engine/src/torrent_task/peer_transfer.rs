@@ -44,6 +44,68 @@ impl TorrentTask {
         true
     }
 
+    pub(super) fn restore_partial_transfer_state(
+        &mut self,
+        piece: u32,
+        received_blocks: &[u32],
+    ) -> bool {
+        if self.restored_partial_pieces.contains(&piece) {
+            return true;
+        }
+        let piece_index = piece as usize;
+        self.picker
+            .restore_partial_piece(piece_index, received_blocks);
+        if !self.picker.is_piece_in_progress(piece_index) {
+            return false;
+        }
+
+        let Some(bytes) = self.transfer_ledger.estimated_piece_state_bytes(piece) else {
+            self.picker.reject_piece(piece_index);
+            return false;
+        };
+        let Ok(bytes) = u64::try_from(bytes) else {
+            self.picker.reject_piece(piece_index);
+            return false;
+        };
+        if self.transfer_piece_memory_leases.try_reserve(1).is_err()
+            || self.restored_partial_pieces.try_reserve(1).is_err()
+        {
+            self.picker.reject_piece(piece_index);
+            return false;
+        }
+        let Some(lease) = self.resources.try_acquire(MemoryClass::PeerBuffer, bytes) else {
+            self.picker.reject_piece(piece_index);
+            return false;
+        };
+        match self
+            .transfer_ledger
+            .restore_partial_blocks(piece, received_blocks)
+        {
+            Ok(true) => {
+                self.transfer_piece_memory_leases.insert(piece, lease);
+                self.restored_partial_pieces.insert(piece);
+                true
+            }
+            Ok(false) => {
+                self.picker.reject_piece(piece_index);
+                false
+            }
+            Err(error) => {
+                debug!(
+                    component = "transfer",
+                    operation = "restore_partial_piece",
+                    torrent = %self.info_hash_hex,
+                    piece,
+                    result = "discarded",
+                    reason = ?error,
+                    "fastresume partial piece could not enter the shared ledger; its blocks will be re-requested"
+                );
+                self.picker.reject_piece(piece_index);
+                false
+            }
+        }
+    }
+
     fn release_transfer_piece_memory(&mut self, piece: u32) {
         self.transfer_piece_memory_leases.remove(&piece);
     }
