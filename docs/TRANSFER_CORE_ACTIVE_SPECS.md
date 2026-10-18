@@ -815,7 +815,8 @@ reads plus already-admitted storage and verification jobs before the torrent
 task finishes joining peers. Queued upload requests are discarded at shutdown.
 The same signal preempts framed sends and hash-proof waits owned by the peer
 loop, so a blocked socket writer does not prevent the drain; actor-level
-lifecycle regression and bulk validation remain deferred.
+command-loop, disconnect/quiesce regressions and bulk validation remain
+deferred.
 
 ### Ownership and invariant
 
@@ -888,6 +889,9 @@ lifecycle regression and bulk validation remain deferred.
   broader lifecycle qualification remain open. The authored but unrun
   `v2_peer_shutdown_drains_admitted_upload_reads` source holds a dispatched
   upload future and verifies shutdown drain waits for it to finish.
+  `v2_torrent_shutdown_cancels_and_joins_peer_tasks` exercises the torrent
+  owner’s cancellation-and-join path; command-loop, disconnect/quiesce, and
+  broader lifecycle qualification remain open.
   `stale_piece_attempt_completions_cannot_mutate_a_retry` covers v1/hybrid
   block-write and verification completions from a replaced attempt, while
   `v2_stale_piece_attempt_completions_cannot_mutate_a_retry` covers pure-v2

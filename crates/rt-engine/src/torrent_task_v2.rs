@@ -5569,6 +5569,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn v2_torrent_shutdown_cancels_and_joins_peer_tasks() {
+        let content = vec![0x42u8; rt_peer_wire::message::MAX_BLOCK_SIZE as usize];
+        let raw = v2_raw_with_piece_length(&content, content.len());
+        let (mut task, _fixture) =
+            v2_task_not_started(quiet_v2_runtime(), &raw, content.len() as u64).await;
+        let peer_addr = "127.0.0.1:6881".parse().unwrap();
+        let peer_control = RateLimitCancellation::default();
+        let peer_generation = peer_control.generation();
+        let peer_control_for_task = peer_control.clone();
+        let (joined_tx, joined_rx) = tokio::sync::oneshot::channel();
+        let peer_task = tokio::spawn(async move {
+            peer_control_for_task.wait_for_change(peer_generation).await;
+            let _ = joined_tx.send(());
+        });
+        let choker_id = PeerId::new();
+        let peer_state = Arc::new(Mutex::new(V2PeerState::new(
+            task.piece_map.piece_count as usize,
+        )));
+        let bitmap_memory_lease = task
+            .resources
+            .try_acquire(MemoryClass::PeerBuffer, 1)
+            .unwrap();
+        task.peers.insert(
+            peer_addr,
+            V2PeerHandle {
+                state: peer_state,
+                choker_id,
+                peer_control,
+                task: peer_task,
+                _bitmap_memory_lease: bitmap_memory_lease,
+            },
+        );
+
+        timeout(Duration::from_secs(1), task.shutdown_peers())
+            .await
+            .expect("torrent shutdown should join canceled peer tasks");
+        joined_rx
+            .await
+            .expect("peer task should observe cancellation before join completes");
+        assert!(task.peers.is_empty());
+    }
+
+    #[tokio::test]
     async fn v2_peer_shutdown_drains_admitted_upload_reads() {
         let (release_read, read_completion) = tokio::sync::oneshot::channel();
         let mut upload_reads = futures::stream::FuturesUnordered::<V2UploadReadTask>::new();
