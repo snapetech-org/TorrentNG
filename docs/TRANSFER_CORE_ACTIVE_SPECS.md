@@ -224,9 +224,10 @@ The live v1/v2 actor integration to the shared ledger remains NET-114.
 ### Scope
 
 Document storage evidence and introduce deterministic backend faults for the
-portable scheduler. This slice covers cancellation after backend submission
-and partial-write failure. Operation leases, file replacement, restart cuts,
-and full generation fences remain later IO tickets.
+portable scheduler. This slice covers cancellation after backend submission,
+injected read/write failures, partial-write failure, and retry after a failed
+data barrier. Operation leases, file replacement, restart cuts, and full
+generation fences remain later IO tickets.
 
 ### Ownership and invariant
 
@@ -266,14 +267,17 @@ and full generation fences remain later IO tickets.
 ### Evidence
 
 - **Regression source added or updated:**
-  `cancelled_waiter_keeps_submitted_write_dirty_until_barrier` and
-  `partial_write_then_error_is_not_reported_as_success` and
+  `injected_read_failure_is_returned_without_marking_payload_dirty`,
+  `injected_write_failure_is_returned_and_remains_dirty_until_barrier`,
+  `cancelled_waiter_keeps_submitted_write_dirty_until_barrier`,
+  `partial_write_then_error_is_not_reported_as_success`, and
   `failed_barrier_keeps_dirty_evidence_for_retry`.
 - **Command or probe to run:** `cargo test -p rt-storage` during the requested
   bulk pass.
-- **Expected result:** cancellation retains dirty ownership through barrier;
-  partial failure remains an error, and a failed barrier preserves dirty state
-  for retry.
+- **Expected result:** injected read/write failures are returned; failed reads
+  do not dirty payload state, failed writes remain dirty until a barrier,
+  cancellation retains dirty ownership through a barrier, partial failure
+  remains an error, and a failed barrier preserves dirty state for retry.
 - **Executed on exact revision:** no.
 - **Artifact or report path:** pending bulk pass.
 - **External evidence still required:** real-device and filesystem-specific

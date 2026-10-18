@@ -6478,6 +6478,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn injected_read_failure_is_returned_without_marking_payload_dirty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("read-failure.bin");
+        std::fs::write(&path, b"payload").unwrap();
+        let (scheduler, backend) = scheduler_with_scripted_backend();
+        backend.inject(Operation::Read, Effect::Fail(io::ErrorKind::Other));
+
+        let read = scheduler.read_at(IoClass::Recheck, &path, 0, 7).await;
+
+        assert!(read.is_err());
+        assert_eq!(scheduler.stats().dirty_files, 0);
+    }
+
+    #[tokio::test]
+    async fn injected_write_failure_is_returned_and_remains_dirty_until_barrier() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("write-failure.bin");
+        let (scheduler, backend) = scheduler_with_scripted_backend();
+        backend.inject(Operation::Write, Effect::Fail(io::ErrorKind::Other));
+
+        let write = scheduler
+            .write_at(
+                IoClass::PeerWrite,
+                &path,
+                0,
+                bytes::Bytes::from_static(b"payload"),
+                true,
+            )
+            .await;
+
+        assert!(write.is_err());
+        assert_eq!(scheduler.stats().dirty_files, 1);
+        scheduler.sync_all_open_files().await.unwrap();
+        assert_eq!(scheduler.stats().dirty_files, 0);
+    }
+
+    #[tokio::test]
     async fn cancelled_waiter_keeps_submitted_write_dirty_until_barrier() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("late-write.bin");
