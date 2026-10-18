@@ -8,7 +8,7 @@
 use rt_bencode::{encode, BValue};
 use rt_hash::{merkle_root, piece_layer_hash, BlockHash, InfoHashV2, V2_BLOCK_SIZE};
 use rt_metainfo::{parse_torrent, torrent_info_bytes, TorrentMeta};
-use rt_piece_map::{FileSpan, PieceMap};
+use rt_piece_map::{FileSpan, PieceMap, V2FileSpan, V2PieceMap};
 use sha1::{Digest, Sha1};
 
 /// Geometry shared by the fixture's v1 and v2 views.
@@ -357,6 +357,21 @@ mod tests {
                     assert_eq!(v2.piece_layers.len(), 1);
                     assert_info_hashes_match_encoded_info(&fixture, None, Some(&v2.info_hash_v2));
                     assert_v2_hashes_match_payload(&fixture, &v2);
+                    let map = piece_map_from_v2(&v2.files, v2.piece_length);
+                    assert_eq!(map.logical_length, 74_537);
+                    assert_eq!(map.piece_count, 3);
+                    let alpha_tail = map.piece_to_file(1).unwrap();
+                    assert_eq!(alpha_tail.file_index, v2.files[0].index);
+                    assert_eq!(alpha_tail.file_offset, TRANSFER_FIXTURE_PIECE_LENGTH as u64);
+                    assert_eq!(alpha_tail.length, 232);
+                    let beta_piece = map.piece_to_file(2).unwrap();
+                    assert_eq!(beta_piece.file_index, v2.files[2].index);
+                    assert_eq!(beta_piece.file_offset, 0);
+                    assert_eq!(beta_piece.length, 9_001);
+                    assert!(map
+                        .piece_ranges_for_file_indices(&[v2.files[1].index])
+                        .unwrap()
+                        .is_empty());
                 }
                 (TransferProtocol::Hybrid, TorrentMeta::Hybrid(v1, v2)) => {
                     assert_eq!(v1.pieces.len(), 3);
@@ -375,6 +390,13 @@ mod tests {
                     assert_eq!(v2.logical_length(), 74_537);
                     assert_eq!(v2.piece_count(), 3);
                     assert_v2_hashes_match_payload(&fixture, &v2);
+                    let v2_map = piece_map_from_v2(&v2.files, v2.piece_length);
+                    assert_eq!(v2_map.logical_length, map.total_length);
+                    assert_eq!(v2_map.piece_count, 3);
+                    assert!(v2_map
+                        .piece_ranges_for_file_indices(&[v2.files[1].index])
+                        .unwrap()
+                        .is_empty());
 
                     let pad_indexes = v1
                         .files
@@ -417,6 +439,23 @@ mod tests {
             .map(|file| file.index)
             .collect::<Vec<_>>();
         PieceMap::new_with_padding(piece_length, spans, padding).unwrap()
+    }
+
+    fn piece_map_from_v2(
+        files: &[rt_metainfo::TorrentFileV2],
+        piece_length: u64,
+    ) -> V2PieceMap {
+        let spans = files
+            .iter()
+            .map(|file| V2FileSpan {
+                file_index: file.index,
+                path: file.path.clone(),
+                piece_offset: file.piece_offset,
+                length: file.length,
+                pad: file.pad,
+            })
+            .collect();
+        V2PieceMap::new(piece_length, spans).unwrap()
     }
 
     fn assert_v1_hashes_match_payload(
