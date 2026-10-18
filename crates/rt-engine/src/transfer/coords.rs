@@ -9,6 +9,7 @@
 
 use std::fmt;
 
+use rt_path::SafeRelPath;
 use rt_piece_map::{PieceMap, V2PieceMap};
 
 /// BEP 3 block size the core requests; also the largest block it will serve.
@@ -49,8 +50,12 @@ pub struct PieceExtent {
 }
 
 /// A canonical content range, independent of piece numbering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ContentRange {
+    /// Root-confined identity used to compare ranges across v1 and v2 views.
+    /// Numeric file indexes are retained for storage lookup but can differ
+    /// when v1 includes BEP 47 padding entries.
+    pub path: Option<SafeRelPath>,
     pub file_index: u32,
     pub file_offset: u64,
     pub length: u64,
@@ -225,6 +230,7 @@ impl PieceGeometry for PieceMap {
                 regions
                     .into_iter()
                     .map(|region| ContentRange {
+                        path: Some(region.path),
                         file_index: region.file_index,
                         file_offset: region.file_offset,
                         length: region.length,
@@ -271,6 +277,7 @@ impl PieceGeometry for V2PieceMap {
         self.piece_to_file(piece)
             .map(|region| {
                 vec![ContentRange {
+                    path: Some(region.path),
                     file_index: region.file_index,
                     file_offset: region.file_offset,
                     length: u64::from(region.length),
@@ -317,13 +324,27 @@ impl HybridGeometry {
     /// identically; callers use it to decide whether one read can feed both
     /// hash views (see the batched hash service).
     pub fn ranges_match(&self, v1_piece: u32, v2_piece: u32) -> bool {
-        let strip = |ranges: Vec<ContentRange>| {
-            ranges
-                .into_iter()
-                .filter(|range| !range.pad)
-                .collect::<Vec<_>>()
-        };
-        strip(self.v1.content_ranges(v1_piece)) == strip(self.v2.content_ranges(v2_piece))
+        let v1 = self
+            .v1
+            .content_ranges(v1_piece)
+            .into_iter()
+            .filter(|range| !range.pad)
+            .collect::<Vec<_>>();
+        let v2 = self
+            .v2
+            .content_ranges(v2_piece)
+            .into_iter()
+            .filter(|range| !range.pad)
+            .collect::<Vec<_>>();
+        v1.len() == v2.len()
+            && v1.iter().zip(&v2).all(|(left, right)| {
+                let same_file = match (&left.path, &right.path) {
+                    (Some(left), Some(right)) => left == right,
+                    (None, None) => left.file_index == right.file_index,
+                    _ => false,
+                };
+                same_file && left.file_offset == right.file_offset && left.length == right.length
+            })
     }
 }
 
@@ -403,6 +424,7 @@ impl PieceGeometry for UniformGeometry {
         self.piece_len(piece)
             .map(|length| {
                 vec![ContentRange {
+                    path: None,
                     file_index: 0,
                     file_offset: u64::from(piece) * u64::from(self.piece_len),
                     length: u64::from(length),
@@ -541,6 +563,63 @@ mod tests {
         // ...but v1 piece 1 spans a.bin's tail and b.bin, while v2 piece 1 is
         // only a.bin's tail: same index, different content.
         assert!(!hybrid.ranges_match(1, 1));
+    }
+
+    #[test]
+    fn hybrid_ranges_match_across_v1_padding_index_shift() {
+        let a_path = SafeRelPath::from_name("a.bin", false).unwrap();
+        let b_path = SafeRelPath::from_name("b.bin", false).unwrap();
+        let v1 = PieceMap::new_with_padding(
+            32 * 1024,
+            vec![
+                FileSpan {
+                    file_index: 0,
+                    path: a_path.clone(),
+                    content_offset: 0,
+                    length: 40 * 1024,
+                },
+                FileSpan {
+                    file_index: 1,
+                    path: SafeRelPath::from_name("padding.bin", false).unwrap(),
+                    content_offset: 40 * 1024,
+                    length: 24 * 1024,
+                },
+                FileSpan {
+                    file_index: 2,
+                    path: b_path.clone(),
+                    content_offset: 64 * 1024,
+                    length: 24 * 1024,
+                },
+            ],
+            [1],
+        )
+        .unwrap();
+        let v2 = V2PieceMap::new(
+            32 * 1024,
+            vec![
+                V2FileSpan {
+                    file_index: 0,
+                    path: a_path,
+                    piece_offset: 0,
+                    length: 40 * 1024,
+                    pad: false,
+                },
+                V2FileSpan {
+                    file_index: 1,
+                    path: b_path,
+                    piece_offset: 64 * 1024,
+                    length: 24 * 1024,
+                    pad: false,
+                },
+            ],
+        )
+        .unwrap();
+        let hybrid = HybridGeometry::new(v1, v2);
+
+        assert!(hybrid.ranges_match(0, 0));
+        assert!(hybrid.ranges_match(1, 1));
+        assert!(hybrid.ranges_match(2, 2));
+        assert!(!hybrid.ranges_match(1, 2));
     }
 
     #[test]
