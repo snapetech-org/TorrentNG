@@ -63,6 +63,14 @@ pub struct ContentRange {
     pub pad: bool,
 }
 
+/// A file range as it appears inside one wire block.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BlockContentRange {
+    /// Byte offset within the peer-wire block.
+    pub block_offset: u32,
+    pub content: ContentRange,
+}
+
 /// Which piece numbering a geometry describes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Plane {
@@ -186,7 +194,10 @@ pub trait PieceGeometry {
     /// spans. Piece maps return ranges in piece order, so their lengths also
     /// identify where a block intersects each file when v1 padding shifts the
     /// v2 view's block coordinates.
-    fn block_content_ranges(&self, block: BlockExtent) -> Result<Vec<ContentRange>, GeometryError> {
+    fn block_content_ranges(
+        &self,
+        block: BlockExtent,
+    ) -> Result<Vec<BlockContentRange>, GeometryError> {
         self.validate_served_block(block)?;
         let piece_len = u64::from(self.piece_len(block.piece).ok_or(
             GeometryError::PieceOutOfRange {
@@ -207,12 +218,17 @@ pub trait PieceGeometry {
             let overlap_start = block_start.max(piece_offset);
             let overlap_end = block_end.min(range_end);
             if overlap_start < overlap_end {
+                let block_offset = u32::try_from(overlap_start - block_start)
+                    .map_err(|_| GeometryError::InvalidContentMap { piece: block.piece })?;
                 range.file_offset = range
                     .file_offset
                     .checked_add(overlap_start - piece_offset)
                     .ok_or(GeometryError::InvalidContentMap { piece: block.piece })?;
                 range.length = overlap_end - overlap_start;
-                projected.push(range);
+                projected.push(BlockContentRange {
+                    block_offset,
+                    content: range,
+                });
             }
             piece_offset = range_end;
         }
@@ -422,28 +438,86 @@ impl HybridGeometry {
         let Ok(v2_ranges) = self.v2.block_content_ranges(v2) else {
             return false;
         };
-        let v1_payload = v1_ranges
-            .into_iter()
-            .filter(|range| !range.pad)
-            .collect::<Vec<_>>();
-        let v2_payload = v2_ranges
-            .into_iter()
-            .filter(|range| !range.pad)
-            .collect::<Vec<_>>();
-        !v1_payload.is_empty() && same_content_ranges(&v1_payload, &v2_payload)
+        same_block_payload_ranges(&v1_ranges, &v2_ranges)
+    }
+
+    /// Return the v1 ledger extent that represents a valid aligned v2 request.
+    /// In a padded hybrid, the v1 extent can be longer because its trailing
+    /// bytes include synthetic padding.
+    pub fn canonical_v1_block_for_v2(&self, v2_block: BlockExtent) -> Option<BlockExtent> {
+        self.v2.validate_request_block(v2_block).ok()?;
+        let v1_block = self
+            .v1
+            .block_extent(v2_block.piece, v2_block.block_index())?;
+        self.blocks_match_content(v1_block, v2_block)
+            .then_some(v1_block)
+    }
+
+    /// Expand a v2 payload block into its v1 ledger extent, filling BEP 47
+    /// padding with zeros. The caller must hold a lease for the returned
+    /// v1-sized buffer before calling this bounded, pure conversion.
+    pub fn expand_v2_block_to_v1(
+        &self,
+        v2_block: BlockExtent,
+        payload: &[u8],
+    ) -> Option<(BlockExtent, Vec<u8>)> {
+        if payload.len() != usize::try_from(v2_block.length).ok()? {
+            return None;
+        }
+        let v1_block = self.canonical_v1_block_for_v2(v2_block)?;
+        let source_ranges = self.v2.block_content_ranges(v2_block).ok()?;
+        let target_ranges = self.v1.block_content_ranges(v1_block).ok()?;
+        if !same_block_payload_ranges(&target_ranges, &source_ranges) {
+            return None;
+        }
+
+        let mut expanded = vec![0; usize::try_from(v1_block.length).ok()?];
+        let mut source_payload = source_ranges.iter().filter(|range| !range.content.pad);
+        for target in target_ranges.iter().filter(|range| !range.content.pad) {
+            let source = source_payload.next()?;
+            let length = usize::try_from(target.content.length).ok()?;
+            let target_start = usize::try_from(target.block_offset).ok()?;
+            let source_start = usize::try_from(source.block_offset).ok()?;
+            let target_end = target_start.checked_add(length)?;
+            let source_end = source_start.checked_add(length)?;
+            expanded
+                .get_mut(target_start..target_end)?
+                .copy_from_slice(payload.get(source_start..source_end)?);
+        }
+        Some((v1_block, expanded))
     }
 }
 
 fn same_content_ranges(left: &[ContentRange], right: &[ContentRange]) -> bool {
     left.len() == right.len()
-        && left.iter().zip(right).all(|(left, right)| {
-            let same_file = match (&left.path, &right.path) {
-                (Some(left), Some(right)) => left == right,
-                (None, None) => left.file_index == right.file_index,
-                _ => false,
-            };
-            same_file && left.file_offset == right.file_offset && left.length == right.length
-        })
+        && left
+            .iter()
+            .zip(right)
+            .all(|(left, right)| same_content_range(left, right))
+}
+
+fn same_content_range(left: &ContentRange, right: &ContentRange) -> bool {
+    let same_file = match (&left.path, &right.path) {
+        (Some(left), Some(right)) => left == right,
+        (None, None) => left.file_index == right.file_index,
+        _ => false,
+    };
+    same_file && left.file_offset == right.file_offset && left.length == right.length
+}
+
+fn same_block_payload_ranges(left: &[BlockContentRange], right: &[BlockContentRange]) -> bool {
+    let mut left = left.iter().filter(|range| !range.content.pad);
+    let mut right = right.iter().filter(|range| !range.content.pad);
+    let mut matched_payload = false;
+    loop {
+        match (left.next(), right.next()) {
+            (Some(left), Some(right)) if same_content_range(&left.content, &right.content) => {
+                matched_payload = true;
+            }
+            (None, None) => return matched_payload,
+            _ => return false,
+        }
+    }
 }
 
 impl PieceGeometry for HybridGeometry {
@@ -729,6 +803,14 @@ mod tests {
             BlockExtent::new(2, 0, 24 * 1024),
             BlockExtent::new(2, 0, 24 * 1024),
         ));
+        let v2_tail = BlockExtent::new(1, 0, 8 * 1024);
+        let v2_tail_data = vec![0x5a; 8 * 1024];
+        let (v1_tail, expanded) = hybrid
+            .expand_v2_block_to_v1(v2_tail, &v2_tail_data)
+            .expect("v2 tail maps to its padded v1 wire block");
+        assert_eq!(v1_tail, BlockExtent::new(1, 0, BLOCK_SIZE));
+        assert!(expanded[..8 * 1024].iter().all(|byte| *byte == 0x5a));
+        assert!(expanded[8 * 1024..].iter().all(|byte| *byte == 0));
         assert!(!hybrid.blocks_match_content(
             BlockExtent::new(1, BLOCK_SIZE, BLOCK_SIZE),
             BlockExtent::new(1, 0, 8 * 1024),
