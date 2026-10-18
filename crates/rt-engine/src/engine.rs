@@ -250,6 +250,10 @@ const MAX_TORRENT_PROMOTION_WORKERS: usize = 4;
 // detached queries from multiplying the 64-MiB blob cap by the full query
 // task budget.
 const MAX_TORRENT_METADATA_LOADS: usize = 4;
+// Admit only a small queue behind the active metadata readers. Excess loads
+// fail before retaining another 64-MiB blob request or adding a blocking-pool
+// job; callers can retry after the existing worker turn completes.
+const MAX_TORRENT_METADATA_LOAD_WAITERS: usize = 32;
 // Pure-v2 rechecks do not have a live torrent actor or storage-job dispatcher
 // to provide implicit admission. Each verifier can read a complete payload,
 // so keep these detached filesystem workers bounded independently of the
@@ -309,6 +313,7 @@ static DHT_REGISTRATION_SWEEPS: AtomicUsize = AtomicUsize::new(0);
 static DHT_REGISTRATION_BUDGET: OnceLock<Arc<Semaphore>> = OnceLock::new();
 static TORRENT_PROMOTION_BUDGET: OnceLock<Arc<Semaphore>> = OnceLock::new();
 static TORRENT_METADATA_LOAD_BUDGET: OnceLock<Arc<Semaphore>> = OnceLock::new();
+static TORRENT_METADATA_LOAD_ADMISSION: OnceLock<Arc<Semaphore>> = OnceLock::new();
 static PURE_V2_RECHECK_TASKS: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(not(test))]
@@ -960,6 +965,24 @@ fn torrent_metadata_load_budget() -> Arc<Semaphore> {
     TORRENT_METADATA_LOAD_BUDGET
         .get_or_init(|| Arc::new(Semaphore::new(MAX_TORRENT_METADATA_LOADS)))
         .clone()
+}
+
+fn torrent_metadata_load_admission() -> Arc<Semaphore> {
+    TORRENT_METADATA_LOAD_ADMISSION
+        .get_or_init(|| {
+            Arc::new(Semaphore::new(
+                MAX_TORRENT_METADATA_LOADS + MAX_TORRENT_METADATA_LOAD_WAITERS,
+            ))
+        })
+        .clone()
+}
+
+fn try_acquire_metadata_load_admission(
+    budget: Arc<Semaphore>,
+) -> Result<tokio::sync::OwnedSemaphorePermit, String> {
+    budget
+        .try_acquire_owned()
+        .map_err(|_| "torrent metadata load queue is full".to_owned())
 }
 
 fn is_storage_job_busy_error(error: &str) -> bool {
@@ -10487,15 +10510,20 @@ async fn load_torrent_metadata_bounded(
     resources: ResourceGovernor,
     info_hash: String,
 ) -> CmdResult<EngineTorrentMetadata> {
+    let admission_permit = try_acquire_metadata_load_admission(torrent_metadata_load_admission())?;
     let budget = torrent_metadata_load_budget();
-    let Some(_budget_permit) = budget.acquire_owned().await.ok() else {
+    let Some(active_permit) = budget.acquire_owned().await.ok() else {
         return Err("torrent metadata load budget is closed".to_owned());
     };
-    match tokio::task::spawn_blocking(move || {
+    let worker = tokio::task::spawn_blocking(move || {
+        // Keep both permits in the blocking closure. Cancelling the async
+        // caller cannot release admission while a non-cancellable blocking
+        // parse is still reading and expanding metadata.
+        let _admission_permit = admission_permit;
+        let _active_permit = active_permit;
         load_torrent_metadata_from_sources(&config, &db, &resources, &info_hash)
-    })
-    .await
-    {
+    });
+    match worker.await {
         Ok(result) => result.map_err(|error| error.to_string()),
         Err(error) => Err(crate::task_join_error_summary("metadata worker", &error)),
     }
@@ -11449,6 +11477,15 @@ mod tests {
     use rt_metainfo::{TorrentFileV1, TorrentFileV2};
     use rt_path::SafeRelPath;
     use std::future;
+
+    #[test]
+    fn metadata_load_admission_rejects_when_the_bounded_queue_is_full() {
+        let budget = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
+        let permit = try_acquire_metadata_load_admission(Arc::clone(&budget)).unwrap();
+        assert!(try_acquire_metadata_load_admission(Arc::clone(&budget)).is_err());
+        drop(permit);
+        assert!(try_acquire_metadata_load_admission(budget).is_ok());
+    }
 
     #[test]
     fn legacy_completed_state_restores_as_seeding() {

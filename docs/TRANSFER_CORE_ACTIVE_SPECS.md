@@ -2166,6 +2166,85 @@ adding a file-backed actor regression that opts into the production
 - **External evidence still required:** hosted current-commit CI remains a
   release gate, not part of this ticket.
 
+## SYS-010 — Bounded discovery and control I/O
+
+- **Priority / wave:** P1 / 4
+- **Prerequisites:** SYS-004, SYS-008
+- **Owning component:** tracker workers, outbound DNS admission, DHT bootstrap
+  and registration, and engine metadata loading.
+- **Finding or capability:** F35 plus bounded process-wide admission for
+  discovery I/O and detached metadata work.
+- **Status:** `wip`
+
+### Scope
+
+Bound tracker announces across torrents, share one no-wait DNS budget across
+tracker/webseed egress and IPv4/IPv6 DHT bootstrap, and cap persisted metadata
+projection loads that wait for blocking parsing. Keep optional scrape work
+independent of announce delivery. Existing DHT registration, retry, sweep,
+command-delivery, bootstrap node, answer-count, and deadline limits remain part
+of the same control-I/O contract. Magnet completion, torrent promotion, DHT
+registration, and pure-v2 recheck keep their own admission budgets; they do not
+consume the projection-load semaphore.
+
+### Ownership and invariant
+
+- **Current owner:** `TrackerWorkers` owns each torrent's announce futures;
+  process semaphores own global announce, scrape, and DNS admission; the DHT
+  task owns bootstrap and registration; `load_torrent_metadata_bounded` owns
+  persisted projection-load permits.
+- **Invariant preserved:** accepted announce responses reach their torrent
+  actor before optional scrape work; saturated budgets do not create an
+  unbounded waiter or detached-task queue; DNS permits cover resolution only.
+- **Overload behavior:** tracker work stays due for a later actor turn, optional
+  scrapes are skipped, DNS lookups fail quickly, and projection-load requests
+  are rejected when the bounded active-plus-waiting admission is full.
+- **Must not:** hold a global announce permit while scraping, release projection
+  permits when an async caller is cancelled but `spawn_blocking` is still
+  running, or collect unbounded resolver answers.
+
+### Acceptance
+
+- At most 8 tracker announces run per torrent and 64 process-wide; announce
+  result channels retain at most 8 items per torrent.
+- Optional HTTP scrapes remain capped process-wide at 4 and use a separate
+  result channel sized to that cap.
+- Tracker, webseed, and DHT bootstrap share a non-queuing 32-lookup DNS budget;
+  each lookup retains its existing deadline and 64-address ceiling.
+- DHT bootstrap remains capped at 256 nodes, a 10-second aggregate window, and
+  5 seconds per node. Registration parse concurrency is 32, detached
+  registration/retry tasks are capped at 256, sweeps at 1, and command delivery
+  at 5 seconds.
+- Persisted metadata projection loads allow 4 active jobs and at most 32
+  additional admitted callers; the blocking closure owns both permits until
+  parsing exits, even if its async caller is cancelled. Other parser entry
+  points remain governed by their separately documented admission budgets.
+- Saturation and scrape progress have regression sources; bulk qualification
+  confirms overload recovery and whole-session responsiveness.
+
+### Files and compatibility
+
+- **Expected code paths:** `outbound_resolver.rs`, `egress_policy.rs`,
+  `tracker_runtime.rs`, `dht_task.rs`, `engine.rs`, and the rebuild ledger.
+- **State or wire compatibility:** no tracker protocol, DHT wire, metadata, or
+  database format changes; only local admission and retained queue bounds.
+- **Migration / rollback:** none.
+- **Feature flag or rollout boundary:** existing bounds apply to all
+  outbound-discovery paths.
+
+### Evidence
+
+- **Regression sources:** `dns_budget_rejects_excess_work_without_a_wait_queue`,
+  `tracker_worker_availability_obeys_the_process_wide_limit`,
+  `metadata_load_admission_rejects_when_the_bounded_queue_is_full`, and the
+  existing bounded-answer and announce-before-scrape regressions.
+- **Command or probe:** run the targeted resolver, tracker-worker, metadata
+  loader, and DHT bootstrap suites during the requested bulk pass.
+- **Executed on exact revision:** no.
+- **Artifact or report path:** pending bulk pass.
+- **External evidence still required:** mixed-load responsiveness and recovery
+  under saturated tracker, DNS, DHT, and metadata budgets.
+
 ## SYS-011 — Passive, owner-specific metrics
 
 - **Priority / wave:** P0 / 2

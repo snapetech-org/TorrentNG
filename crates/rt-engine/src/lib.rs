@@ -6,6 +6,7 @@ pub mod egress_policy;
 pub mod engine;
 mod metadata_task;
 pub(crate) mod network_budget;
+mod outbound_resolver;
 pub mod peer_id;
 pub mod peer_ingress;
 mod peer_listener;

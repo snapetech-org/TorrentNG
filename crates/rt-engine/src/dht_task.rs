@@ -21,6 +21,7 @@ use tracing::{debug, info, warn};
 
 use crate::command::EngineCmd;
 use crate::egress_policy::OutboundEgressPolicy;
+use crate::outbound_resolver::try_acquire_dns_lookup;
 use crate::torrent_task::TorrentCmd;
 
 const DHT_ANNOUNCED_PEERS_PER_INFO_HASH_CAP: usize = 512;
@@ -828,31 +829,47 @@ impl DhtTask {
             }
             let node = self.bootstrap_nodes[node_index].clone();
             let resolve_timeout = remaining.min(DHT_BOOTSTRAP_NODE_TIMEOUT);
-            let addrs =
-                match tokio::time::timeout(resolve_timeout, tokio::net::lookup_host(&node)).await {
-                    Ok(Ok(addrs)) => addrs,
-                    Ok(Err(e)) => {
-                        warn!(
-                            component = "dht",
-                            operation = "bootstrap_resolve",
-                                node = %node,
-                                result = "error",
-                                error = %e,
-                                "DHT bootstrap resolve failed"
-                        );
-                        continue;
-                    }
-                    Err(_) => {
-                        warn!(
-                            component = "dht",
-                            operation = "bootstrap_resolve",
+            let dns_permit = match try_acquire_dns_lookup() {
+                Ok(permit) => permit,
+                Err(()) => {
+                    warn!(
+                        component = "dht",
+                        operation = "bootstrap_resolve",
+                        node = %node,
+                        result = "dropped",
+                        reason = "dns_lookup_budget",
+                        "DHT bootstrap lookup skipped because the shared DNS budget is full"
+                    );
+                    continue;
+                }
+            };
+            let resolution =
+                tokio::time::timeout(resolve_timeout, tokio::net::lookup_host(&node)).await;
+            drop(dns_permit);
+            let addrs = match resolution {
+                Ok(Ok(addrs)) => addrs,
+                Ok(Err(e)) => {
+                    warn!(
+                        component = "dht",
+                        operation = "bootstrap_resolve",
                             node = %node,
-                            result = "timeout",
-                            "DHT bootstrap resolve timed out"
-                        );
-                        continue;
-                    }
-                };
+                            result = "error",
+                            error = %e,
+                            "DHT bootstrap resolve failed"
+                    );
+                    continue;
+                }
+                Err(_) => {
+                    warn!(
+                        component = "dht",
+                        operation = "bootstrap_resolve",
+                        node = %node,
+                        result = "timeout",
+                        "DHT bootstrap resolve timed out"
+                    );
+                    continue;
+                }
+            };
             let addrs = addrs
                 .take(MAX_DHT_BOOTSTRAP_ADDRESSES.saturating_add(1))
                 .collect::<Vec<_>>();
@@ -1980,12 +1997,27 @@ impl DhtV6Task {
             let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
                 break;
             };
-            let addrs = match timeout(
+            let dns_permit = match try_acquire_dns_lookup() {
+                Ok(permit) => permit,
+                Err(()) => {
+                    warn!(
+                        component = "dht",
+                        operation = "bootstrap_resolve_ipv6",
+                        node = %node,
+                        result = "dropped",
+                        reason = "dns_lookup_budget",
+                        "IPv6 DHT bootstrap lookup skipped because the shared DNS budget is full"
+                    );
+                    continue;
+                }
+            };
+            let resolution = timeout(
                 remaining.min(DHT_BOOTSTRAP_NODE_TIMEOUT),
                 tokio::net::lookup_host(&node),
             )
-            .await
-            {
+            .await;
+            drop(dns_permit);
+            let addrs = match resolution {
                 Ok(Ok(addrs)) => addrs
                     .filter(SocketAddr::is_ipv6)
                     .take(MAX_DHT_BOOTSTRAP_ADDRESSES.saturating_add(1))

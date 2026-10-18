@@ -7,6 +7,7 @@ use std::sync::{
 };
 use std::time::Duration;
 
+use crate::outbound_resolver::try_acquire_dns_lookup;
 use rt_config::TrackerConfig;
 use tokio::net::lookup_host;
 use tokio::time::timeout;
@@ -223,6 +224,10 @@ impl OutboundEgressPolicy {
             RESOLUTION_FAILED_TOTAL.fetch_add(1, Ordering::Relaxed);
             EgressPolicyError::MissingPort
         })?;
+        let _dns_permit = try_acquire_dns_lookup().map_err(|_| {
+            RESOLUTION_FAILED_TOTAL.fetch_add(1, Ordering::Relaxed);
+            EgressPolicyError::Resolution("DNS lookup budget exhausted".to_owned())
+        })?;
         let resolved = timeout(resolve_timeout, lookup_host((host.as_str(), port)))
             .await
             .map_err(|_| {
@@ -233,6 +238,7 @@ impl OutboundEgressPolicy {
                 RESOLUTION_FAILED_TOTAL.fetch_add(1, Ordering::Relaxed);
                 EgressPolicyError::Resolution(error.to_string())
             })?;
+        drop(_dns_permit);
         let addresses = match bounded_resolved_addresses(resolved) {
             Ok(addresses) => addresses,
             Err(error) => {

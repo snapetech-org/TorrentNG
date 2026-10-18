@@ -6,6 +6,7 @@
 //! torrent actor while it is waiting on I/O.
 
 use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use rt_metrics::{MemoryClass, MemoryLease, ResourceGovernor};
@@ -16,7 +17,7 @@ use rt_tracker::{
     TrackerState, MAX_TRACKER_PEERS, MAX_TRACKER_STATE_ID_BYTES, MAX_TRACKER_STATE_TEXT_BYTES,
 };
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Semaphore};
 use tracing::warn;
 use url::Url;
 
@@ -25,11 +26,13 @@ use crate::egress_policy::{OutboundEgressPolicy, OutboundTargetKind};
 const MAX_TRACKER_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const MAX_TRACKER_UDP_RESPONSE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_TRACKER_ANNOUNCES_IN_FLIGHT: usize = 8;
+pub(crate) const MAX_PROCESS_TRACKER_ANNOUNCES_IN_FLIGHT: usize = 64;
 /// Process-wide cap on optional HTTP scrapes. Scrapes are statistics only, so
 /// when the cap is reached the scrape is skipped instead of queued.
 const MAX_SCRAPES_IN_FLIGHT: usize = 4;
 static SCRAPE_PERMITS: tokio::sync::Semaphore =
     tokio::sync::Semaphore::const_new(MAX_SCRAPES_IN_FLIGHT);
+static TRACKER_ANNOUNCE_PERMITS: OnceLock<Arc<Semaphore>> = OnceLock::new();
 pub(crate) const STOPPED_TRACKER_ANNOUNCE_DEADLINE: Duration = Duration::from_secs(10);
 // A parsed compact response can grow its peer vector once more when a
 // response contains both `peers` and `peers6`; the actor then materializes a
@@ -38,6 +41,12 @@ pub(crate) const STOPPED_TRACKER_ANNOUNCE_DEADLINE: Duration = Duration::from_se
 const TRACKER_RESPONSE_PEER_VECTOR_CAPACITY_MULTIPLIER: usize = 2;
 
 pub(crate) type TrackerKey = (usize, usize);
+
+fn process_tracker_announce_budget() -> Arc<Semaphore> {
+    TRACKER_ANNOUNCE_PERMITS
+        .get_or_init(|| Arc::new(Semaphore::new(MAX_PROCESS_TRACKER_ANNOUNCES_IN_FLIGHT)))
+        .clone()
+}
 
 /// Return a URL log label without userinfo, path, query, or fragment. These
 /// fields may contain tracker passkeys, webseed credentials, or access tokens.
@@ -206,8 +215,8 @@ pub(crate) struct TrackerWorkers {
 
 impl TrackerWorkers {
     pub(crate) fn new() -> Self {
-        let (result_tx, result_rx) = mpsc::channel(128);
-        let (scrape_tx, scrape_rx) = mpsc::channel(128);
+        let (result_tx, result_rx) = mpsc::channel(MAX_TRACKER_ANNOUNCES_IN_FLIGHT);
+        let (scrape_tx, scrape_rx) = mpsc::channel(MAX_SCRAPES_IN_FLIGHT);
         Self {
             result_tx,
             result_rx,
@@ -227,7 +236,13 @@ impl TrackerWorkers {
     }
 
     pub(crate) fn available(&self) -> usize {
-        MAX_TRACKER_ANNOUNCES_IN_FLIGHT.saturating_sub(self.inflight.len())
+        self.available_with_process_capacity(process_tracker_announce_budget().available_permits())
+    }
+
+    fn available_with_process_capacity(&self, process_available: usize) -> usize {
+        MAX_TRACKER_ANNOUNCES_IN_FLIGHT
+            .saturating_sub(self.inflight.len())
+            .min(process_available)
     }
 
     pub(crate) fn contains(&self, key: TrackerKey) -> bool {
@@ -250,6 +265,9 @@ impl TrackerWorkers {
             if self.inflight.contains_key(&spec.key) {
                 continue;
             }
+            let Ok(announce_permit) = process_tracker_announce_budget().try_acquire_owned() else {
+                break;
+            };
 
             let TrackerAnnounceSpec {
                 key,
@@ -264,6 +282,7 @@ impl TrackerWorkers {
             let scrape_tx = self.scrape_tx.clone();
             let scrape_enabled = self.scrape_enabled;
             let worker = tokio::spawn(async move {
+                let announce_permit = announce_permit;
                 let response =
                     announce_tracker(&worker_context, &worker_url, event, tracker_id.as_deref())
                         .await;
@@ -296,6 +315,7 @@ impl TrackerWorkers {
                     );
                     return;
                 }
+                drop(announce_permit);
                 // The announce result, with its peers, is already delivered.
                 // The scrape is best effort and capped process-wide.
                 if wants_scrape {
@@ -670,7 +690,7 @@ mod tests {
         first_tracker_key, is_udp_tracker_url, next_tracker_key, protocol_numwant,
         reserve_tracker_response_bytes, tracker_keys_for_announce,
         tracker_keys_for_stopped_announce, url_log_target, TrackerWorkers,
-        MAX_TRACKER_ANNOUNCES_IN_FLIGHT,
+        MAX_PROCESS_TRACKER_ANNOUNCES_IN_FLIGHT, MAX_TRACKER_ANNOUNCES_IN_FLIGHT,
     };
     use rt_metrics::{MemoryClass, ResourceGovernor, ResourceGovernorConfig, MEMORY_CLASS_COUNT};
     use rt_tracker::{TrackerState, MAX_TRACKER_PEERS};
@@ -747,8 +767,19 @@ mod tests {
     #[test]
     fn tracker_worker_budget_is_explicit_and_bounded() {
         let workers = TrackerWorkers::new();
-        assert_eq!(workers.available(), MAX_TRACKER_ANNOUNCES_IN_FLIGHT);
+        assert_eq!(
+            workers.available_with_process_capacity(MAX_PROCESS_TRACKER_ANNOUNCES_IN_FLIGHT),
+            MAX_TRACKER_ANNOUNCES_IN_FLIGHT
+        );
+        assert!(workers.available() <= MAX_TRACKER_ANNOUNCES_IN_FLIGHT);
         assert!(!workers.contains((0, 0)));
+    }
+
+    #[test]
+    fn tracker_worker_availability_obeys_the_process_wide_limit() {
+        let workers = TrackerWorkers::new();
+        assert_eq!(workers.available_with_process_capacity(3), 3);
+        assert_eq!(workers.available_with_process_capacity(0), 0);
     }
 
     #[test]
