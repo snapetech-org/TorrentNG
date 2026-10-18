@@ -3333,6 +3333,81 @@ adopt the proposal in `TRANSFER_CORE_REBUILD.md`.
   `scripts/test_transfer_rebuild_scorecard.py`.
 - **State or wire compatibility:** additive `transfer-scorecard-v1` report;
   trial and manifest formats do not change.
+
+## PERF-114 — Source-bound result manifest assembly
+
+- **Priority / wave:** P0 / 8
+- **Prerequisites:** PERF-101, PERF-113
+- **Owning component:** certification evidence tooling.
+- **Finding or capability:** text-grep certification can associate an older
+  `PASS` with new code; qualification needs one immutable manifest that binds
+  every attempt and referenced artifact to the exact measured source.
+- **Status:** `wip`
+
+### Scope
+
+`manifest.py` accepts the exact clean committed worktree, every trial JSON
+record, and each additional schema-kind artifact. It hashes the evidence,
+validates the complete manifest and all linked files, rechecks input digests and
+source identity, and publishes a new mode-`0600` manifest atomically. The
+manifest records complete, incomplete, invalid, failed, and unmeasured
+outcomes; it never reduces a run to a text summary.
+
+### Ownership and invariant
+
+- **Current owner:** `scripts/transfer_rebuild/manifest.py` assembles evidence;
+  `validate_artifact.py` owns schema, link, and semantic validation.
+- **Target owner:** PERF-110's paired executor emits trials and calls this
+  writer; analysis and CI consume the retained manifest.
+- **Invariant preserved:** every referenced file is a regular file below the
+  manifest directory, outside the measured source checkout, with a checked
+  SHA-256 and matching trial/source identity. A generated manifest describes
+  one clean Git commit.
+- **Must not:** overwrite evidence, silently omit failed attempts, accept
+  symlinks/path escapes, or claim that a dirty flag identifies uncommitted
+  source contents.
+
+### Acceptance
+
+- At least one trial is required; duplicate trial IDs and duplicate evidence
+  paths are rejected.
+- The writer rejects dirty worktrees, source mismatches, evidence under the
+  measured checkout, non-regular or symlink paths, malformed/ambiguous JSON,
+  digest changes during collection, and an existing output path.
+- Before publication, trial and manifest schemas plus all referenced artifact
+  digests and identities validate; source and input digests are checked again.
+- Publication is exclusive, atomic, mode `0600`, and synced before success is
+  reported.
+- Regression sources cover all trial outcomes, clean-source binding, dirty
+  source rejection, in-tree evidence, duplicate IDs, and overwrite rejection.
+- Paired executor integration, cross-platform support, tests, and bulk
+  qualification remain open.
+
+### Files and compatibility
+
+- **Expected code paths:** `scripts/transfer_rebuild/manifest.py`,
+  `scripts/test_transfer_rebuild_validator.py`, the measurement contract,
+  harness README, rebuild ledger, and capability summary.
+- **State or wire compatibility:** no schema change; generates existing
+  `transfer-manifest-v1` records.
+- **Migration / rollback:** none; the writer creates a new artifact and never
+  edits existing manifests.
+- **Feature flag or rollout boundary:** none; paired measurements remain
+  unqualified until PERF-110 and the requested bulk pass are complete.
+
+### Evidence
+
+- **Regression source added:** `TransferManifestWriterTests` in
+  `scripts/test_transfer_rebuild_validator.py` covers all outcome values,
+  digest-linked observation artifacts, source cleanliness, evidence location,
+  duplicate JSON fields and trial IDs, and exclusive output.
+- **Command or probe to run:** the focused manifest/validator suite during the
+  requested bulk pass.
+- **Executed on exact revision:** no. No tests or builds were run for this
+  slice.
+- **Artifact or report path:** pending PERF-110 paired-run integration.
+- **External evidence still required:** exact matched client observations and
+  trial outputs from the paired executor.
 - **Migration / rollback:** none; scorecards can be regenerated from retained
   manifests and the pinned analysis revision.
 - **Feature flag or rollout boundary:** no superiority or release claim until

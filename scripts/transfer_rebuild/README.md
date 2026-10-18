@@ -58,6 +58,29 @@ Cold/warm trials must link a verified `transfer-cache-state-v1` artifact;
 manifest validation checks that the observed fixture and requested state match
 the trial and rejects a partial or unsupported state claim.
 
+`manifest.py` assembles every trial outcome and additional evidence artifact
+into one source-bound manifest. Give it the exact committed worktree root, a
+new manifest path outside that worktree, every trial JSON file, and each
+additional artifact with its schema kind:
+
+```sh
+python3 scripts/transfer_rebuild/manifest.py \
+  --repo /path/to/clean/TorrentNG \
+  --output /path/to/task-scratch/run-01/manifest.json \
+  --trial /path/to/task-scratch/run-01/trials/trial-01.json \
+  --artifact transfer-client-observation-v1=/path/to/task-scratch/run-01/artifacts/client.json
+```
+
+The evidence files must be regular files below the manifest directory and
+outside the measured checkout. The writer rejects dirty source worktrees,
+source-commit or worktree mismatches, duplicate trial IDs, symlinks, duplicate
+evidence paths, and output replacement. It hashes each input, validates the
+complete manifest and all referenced files, checks the inputs and source again,
+then publishes the mode-`0600` manifest atomically. Failed, invalid,
+incomplete, unmeasured, and successful trials are all retained. Manifest-writer
+regression sources are alongside the validator cases; all remain reserved for
+the bulk pass.
+
 ## Paired scorecard
 
 `scorecard.py` builds a descriptive comparison from a validated manifest. It

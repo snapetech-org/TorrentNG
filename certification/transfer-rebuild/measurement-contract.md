@@ -22,6 +22,12 @@ available. Mutable tags and filenames are descriptive only.
 A result is not comparable when source, binary, fixture, environment, client
 process, or settings identity is missing or differs from its declared pair.
 
+The canonical `manifest.py` writer accepts only a clean committed worktree and
+records `worktree_dirty: false`; commit the measured source before publishing
+the manifest. The schema keeps the dirty-state field explicit for externally
+produced records, but the field alone does not capture the contents of a dirty
+tree and therefore cannot make that tree reproducible.
+
 When `environment.cache_state` is `cold` or `warm`, the trial also records
 `cache_state_observation_sha256`, linking a `transfer-cache-state-v1` artifact
 from the manifest. The validator checks its digest, fixture identity, requested
@@ -77,6 +83,10 @@ Artifacts are referenced from a manifest by relative path and SHA-256. The
 manifest itself is immutable after the trial. Keep observer samples, client
 logs, transfer validation output, and failure diagnostics with the manifest;
 do not place trial outputs in the measured checkout.
+The manifest writer requires referenced files to be regular, non-symlink files
+below the manifest directory and outside the measured checkout. It preserves
+all trial outcomes, validates every linked digest and identity before
+publication, and refuses to replace an existing manifest.
 
 ## Clocks and useful bytes
 

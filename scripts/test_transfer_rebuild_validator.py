@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -12,6 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "transfer_rebuild"))
 from validate_artifact import validate  # noqa: E402
 from ceilings import calculate_report  # noqa: E402
+from manifest import ManifestError, create_manifest  # noqa: E402
 
 
 SHA = "a" * 64
@@ -740,6 +742,144 @@ class TransferRebuildValidatorTests(unittest.TestCase):
 
             self.assertTrue(any("normalized relative path" in error for error in errors))
             self.assertTrue(any("digest does not match" in error for error in errors))
+
+
+class TransferManifestWriterTests(unittest.TestCase):
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory(prefix="tng-transfer-manifest-writer-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.repo = self.root / "source"
+        self.repo.mkdir()
+        self._git("init", "-q", "-b", "main")
+        self._git("config", "user.name", "TorrentNG manifest test")
+        self._git("config", "user.email", "manifest-test@example.invalid")
+        (self.repo / "source.txt").write_text("committed source\n", encoding="utf-8")
+        self._git("add", "source.txt")
+        self._git("commit", "-q", "-m", "fixture source")
+        self.commit = self._git("rev-parse", "HEAD").stdout.strip()
+
+    def _git(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", "-C", str(self.repo), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def _evidence_bundle(
+        self, statuses: tuple[str, ...] = ("complete",)
+    ) -> tuple[Path, list[Path], list[tuple[str, Path]]]:
+        evidence = self.root / "evidence"
+        trials_dir = evidence / "trials"
+        artifacts_dir = evidence / "artifacts"
+        trials_dir.mkdir(parents=True)
+        artifacts_dir.mkdir()
+        trial_paths: list[Path] = []
+        artifact_specs: list[tuple[str, Path]] = []
+
+        for index, status in enumerate(statuses, start=1):
+            observation = valid_client_observation()
+            observation["runtime_identity"]["source_commit"] = self.commit  # type: ignore[index]
+            observation["runtime_identity"]["process_id"] = index  # type: ignore[index]
+            observation["runtime_identity"]["process_start_ticks"] = index  # type: ignore[index]
+            observation_path = artifacts_dir / f"client-{index}.json"
+            observation_bytes = json.dumps(observation, sort_keys=True).encode("utf-8")
+            observation_path.write_bytes(observation_bytes)
+            observation_sha = hashlib.sha256(observation_bytes).hexdigest()
+            artifact_specs.append(("transfer-client-observation-v1", observation_path))
+
+            trial = valid_trial()
+            trial["trial_id"] = f"trial-{status}-{index}"
+            trial["pair_id"] = f"pair-{status}-{index}"
+            trial["identity"]["source_commit"] = self.commit  # type: ignore[index]
+            trial["client_identity"]["process_id"] = index  # type: ignore[index]
+            trial["client_identity"]["process_start_ticks"] = index  # type: ignore[index]
+            trial["client_identity"]["observation_sha256"] = observation_sha  # type: ignore[index]
+            trial["outcome"]["status"] = status  # type: ignore[index]
+            if status != "complete":
+                trial["outcome"]["reason"] = "preserved regression fixture"  # type: ignore[index]
+                trial["outcome"]["exit_code"] = None  # type: ignore[index]
+                trial["integrity"]["status"] = "not_run"  # type: ignore[index]
+            trial_path = trials_dir / f"trial-{index}.json"
+            trial_path.write_text(json.dumps(trial, sort_keys=True), encoding="utf-8")
+            trial_paths.append(trial_path)
+
+        return evidence, trial_paths, artifact_specs
+
+    def test_manifest_retains_all_outcomes_and_binds_exact_inputs(self) -> None:
+        evidence, trials, artifacts = self._evidence_bundle(
+            ("complete", "incomplete", "invalid", "failed", "unmeasured")
+        )
+        output = evidence / "manifest.json"
+
+        manifest = create_manifest(output, trials, artifacts, repo=self.repo)
+
+        self.assertFalse(manifest["worktree_dirty"])
+        self.assertEqual(
+            {item["outcome"] for item in manifest["trial_files"]},
+            {"complete", "incomplete", "invalid", "failed", "unmeasured"},
+        )
+        self.assertEqual(validate("manifest", output, verify_referenced_files=True), [])
+        self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+
+    def test_manifest_rejects_dirty_source(self) -> None:
+        evidence = self.root / "evidence"
+        evidence.mkdir()
+        (self.repo / "source.txt").write_text("uncommitted source\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(ManifestError, "source worktree is dirty"):
+            create_manifest(
+                evidence / "manifest.json",
+                [evidence / "not-read.json"],
+                [],
+                repo=self.repo,
+            )
+
+    def test_manifest_rejects_evidence_inside_measured_checkout(self) -> None:
+        inside = self.repo / "inside-trial.json"
+        inside.write_text("not read because its location is invalid\n", encoding="utf-8")
+        self._git("add", "inside-trial.json")
+        self._git("commit", "-q", "-m", "fixture an in-tree evidence file")
+        self.commit = self._git("rev-parse", "HEAD").stdout.strip()
+
+        with self.assertRaisesRegex(ManifestError, "outside the measured source worktree"):
+            create_manifest(self.root / "manifest.json", [inside], [], repo=self.repo)
+
+    def test_manifest_rejects_duplicate_json_fields(self) -> None:
+        evidence = self.root / "evidence"
+        evidence.mkdir()
+        trial = valid_trial()
+        trial["identity"]["source_commit"] = self.commit  # type: ignore[index]
+        serialized = json.dumps(trial, sort_keys=True)
+        serialized = serialized.replace(
+            '"trial_id": "trial-1",',
+            '"trial_id": "trial-1", "trial_id": "shadow",',
+            1,
+        )
+        trial_path = evidence / "trial.json"
+        trial_path.write_text(serialized, encoding="utf-8")
+
+        with self.assertRaisesRegex(ManifestError, "duplicate JSON field: trial_id"):
+            create_manifest(evidence / "manifest.json", [trial_path], [], repo=self.repo)
+
+    def test_manifest_rejects_duplicate_trial_ids(self) -> None:
+        evidence, trials, artifacts = self._evidence_bundle(("complete", "failed"))
+        duplicate = json.loads(trials[1].read_text(encoding="utf-8"))
+        duplicate["trial_id"] = json.loads(trials[0].read_text(encoding="utf-8"))["trial_id"]
+        trials[1].write_text(json.dumps(duplicate), encoding="utf-8")
+
+        with self.assertRaisesRegex(ManifestError, "duplicate trial id"):
+            create_manifest(evidence / "manifest.json", trials, artifacts, repo=self.repo)
+
+    def test_manifest_refuses_overwrite(self) -> None:
+        evidence = self.root / "evidence"
+        evidence.mkdir()
+        output = evidence / "manifest.json"
+        output.write_text("preserve existing evidence\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(ManifestError, "refusing to overwrite"):
+            create_manifest(output, [evidence / "not-read.json"], [], repo=self.repo)
 
 
 if __name__ == "__main__":
