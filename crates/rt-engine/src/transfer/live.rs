@@ -3,12 +3,18 @@
 //! Non-hybrid v1 tasks use the plain ledger. Once validated hybrid metadata is
 //! attached, the same actor switches to `HybridLedger` before registering any
 //! peer or restoring partial state. Its current v1 wire path stays source
-//! compatible while the dual-plane handshake and scheduling work is pending.
+//! compatible; plane-aware operations expose canonical ownership to the v2
+//! path while the handshake and scheduling integration is pending.
 
 use std::sync::Arc;
 
-use super::coords::{BlockExtent, ConnectionId, HybridGeometry, PieceGeometry};
-use super::hybrid::HybridLedger;
+use bytes::Bytes;
+
+use super::coords::{BlockExtent, ConnectionId, HybridGeometry, PieceGeometry, Plane};
+use super::hybrid::{
+    HybridAction, HybridBlockData, HybridLedger, HybridLedgerError, HybridReceiveOutcome,
+    HybridWireBlock,
+};
 use super::ledger::{
     Action, CommitOutcome, Ledger, ReceiveOutcome, RejectOutcome, ReserveError, ReserveMode,
     MAX_CONNECTIONS,
@@ -20,7 +26,23 @@ enum LiveLedgerInner<G: PieceGeometry> {
     Hybrid(HybridLedger),
 }
 
-/// The single live request/content owner used by a v1 or hybrid-v1 actor.
+fn v1_actions(actions: Vec<Action>) -> Vec<HybridAction> {
+    actions
+        .into_iter()
+        .map(|action| match action {
+            Action::Cancel { conn, block } => HybridAction {
+                conn,
+                block: HybridWireBlock {
+                    plane: Plane::V1,
+                    extent: block,
+                },
+            },
+        })
+        .collect()
+}
+
+/// The single live request/content owner shared by plane-aware actor paths.
+/// Legacy methods preserve the existing v1 call surface during migration.
 pub(crate) struct LiveTransferLedger<G: PieceGeometry> {
     inner: LiveLedgerInner<G>,
     max_connections: usize,
@@ -80,11 +102,20 @@ impl<G: PieceGeometry> LiveTransferLedger<G> {
     }
 
     pub fn try_connect(&mut self, remote_reqq: usize) -> Option<ConnectionId> {
-        let conn = match &mut self.inner {
-            LiveLedgerInner::V1(ledger) => ledger.try_connect(remote_reqq),
-            LiveLedgerInner::Hybrid(ledger) => {
-                ledger.try_connect(super::coords::Plane::V1, remote_reqq)
-            }
+        self.try_connect_on_plane(Plane::V1, remote_reqq)
+    }
+
+    /// Register a connection on the wire plane selected by its handshake.
+    /// A plain v1 torrent cannot admit a v2-plane connection.
+    pub fn try_connect_on_plane(
+        &mut self,
+        plane: Plane,
+        remote_reqq: usize,
+    ) -> Option<ConnectionId> {
+        let conn = match (&mut self.inner, plane) {
+            (LiveLedgerInner::V1(ledger), Plane::V1) => ledger.try_connect(remote_reqq),
+            (LiveLedgerInner::V1(_), Plane::V2) => None,
+            (LiveLedgerInner::Hybrid(ledger), plane) => ledger.try_connect(plane, remote_reqq),
         };
         self.used |= conn.is_some();
         conn
@@ -97,6 +128,13 @@ impl<G: PieceGeometry> LiveTransferLedger<G> {
         }
     }
 
+    pub fn plane(&self, conn: ConnectionId) -> Option<Plane> {
+        match &self.inner {
+            LiveLedgerInner::V1(ledger) => ledger.is_live(conn).then_some(Plane::V1),
+            LiveLedgerInner::Hybrid(ledger) => ledger.plane(conn),
+        }
+    }
+
     /// Keep the shared connection owner in step with the peer's advertised
     /// request queue. Callers should clamp this to their own request-window
     /// ceiling so retained request history stays bounded by live policy.
@@ -104,6 +142,218 @@ impl<G: PieceGeometry> LiveTransferLedger<G> {
         match &mut self.inner {
             LiveLedgerInner::V1(ledger) => ledger.set_remote_reqq(conn, remote_reqq),
             LiveLedgerInner::Hybrid(ledger) => ledger.set_remote_reqq(conn, remote_reqq),
+        }
+    }
+
+    /// Reserve one block while keeping the complete canonical v1 piece on its
+    /// connection. For a v2 connection, `block` uses v2 wire coordinates and
+    /// the returned extent is the canonical v1 ledger coordinate.
+    pub fn reserve_piece_affine_on_plane(
+        &mut self,
+        conn: ConnectionId,
+        block: BlockExtent,
+    ) -> Result<BlockExtent, HybridLedgerError> {
+        self.used = true;
+        match &mut self.inner {
+            LiveLedgerInner::V1(ledger) => {
+                if !ledger.is_live(conn) {
+                    return Err(HybridLedgerError::UnknownConnection(conn));
+                }
+                ledger
+                    .reserve_piece_affine(conn, block)
+                    .map_err(HybridLedgerError::Reserve)?;
+                Ok(block)
+            }
+            LiveLedgerInner::Hybrid(ledger) => ledger.reserve_piece_affine(conn, block),
+        }
+    }
+
+    pub fn commit_on_plane(
+        &mut self,
+        conn: ConnectionId,
+        block: BlockExtent,
+        now: Nanos,
+    ) -> Result<(CommitOutcome, Vec<HybridAction>), HybridLedgerError> {
+        self.used = true;
+        match &mut self.inner {
+            LiveLedgerInner::V1(ledger) => {
+                if !ledger.is_live(conn) {
+                    return Err(HybridLedgerError::UnknownConnection(conn));
+                }
+                let (outcome, actions) = ledger.commit(conn, block, now);
+                Ok((outcome, v1_actions(actions)))
+            }
+            LiveLedgerInner::Hybrid(ledger) => ledger.commit(conn, block, now),
+        }
+    }
+
+    pub fn on_reject_on_plane(
+        &mut self,
+        conn: ConnectionId,
+        block: BlockExtent,
+    ) -> Result<RejectOutcome, HybridLedgerError> {
+        self.used = true;
+        match &mut self.inner {
+            LiveLedgerInner::V1(ledger) => {
+                if !ledger.is_live(conn) {
+                    return Err(HybridLedgerError::UnknownConnection(conn));
+                }
+                Ok(ledger.on_reject(conn, block))
+            }
+            LiveLedgerInner::Hybrid(ledger) => ledger.on_reject(conn, block),
+        }
+    }
+
+    pub fn on_block_piece_affine_on_plane(
+        &mut self,
+        conn: ConnectionId,
+        block: BlockExtent,
+        payload: Bytes,
+    ) -> Result<(HybridReceiveOutcome, Option<HybridBlockData>), HybridLedgerError> {
+        self.used = true;
+        match &mut self.inner {
+            LiveLedgerInner::V1(ledger) => {
+                if !ledger.is_live(conn) {
+                    return Err(HybridLedgerError::UnknownConnection(conn));
+                }
+                let expected = usize::try_from(block.length).unwrap_or(usize::MAX);
+                if payload.len() != expected {
+                    return Err(HybridLedgerError::InvalidPayloadLength {
+                        expected,
+                        actual: payload.len(),
+                    });
+                }
+                match ledger.on_block_piece_affine(conn, block) {
+                    ReceiveOutcome::Accepted {
+                        completed,
+                        late,
+                        actions,
+                    } => Ok((
+                        HybridReceiveOutcome::Accepted {
+                            completed,
+                            late,
+                            actions: v1_actions(actions),
+                        },
+                        Some(HybridBlockData {
+                            canonical_extent: block,
+                            payload,
+                        }),
+                    )),
+                    ReceiveOutcome::Duplicate => Ok((HybridReceiveOutcome::Duplicate, None)),
+                    ReceiveOutcome::IgnoredForPieceAffinity => {
+                        Ok((HybridReceiveOutcome::IgnoredForPieceAffinity, None))
+                    }
+                    ReceiveOutcome::Unsolicited => Ok((HybridReceiveOutcome::Unsolicited, None)),
+                    ReceiveOutcome::StaleConnection => {
+                        Ok((HybridReceiveOutcome::StaleConnection, None))
+                    }
+                    ReceiveOutcome::Invalid(error) => {
+                        Err(HybridLedgerError::InvalidGeometry(error))
+                    }
+                }
+            }
+            LiveLedgerInner::Hybrid(ledger) => ledger.on_block_piece_affine(conn, block, payload),
+        }
+    }
+
+    pub fn on_choke_on_plane(
+        &mut self,
+        conn: ConnectionId,
+        fast_negotiated: bool,
+    ) -> Result<Vec<HybridWireBlock>, HybridLedgerError> {
+        self.used = true;
+        match &mut self.inner {
+            LiveLedgerInner::V1(ledger) => {
+                if !ledger.is_live(conn) {
+                    return Err(HybridLedgerError::UnknownConnection(conn));
+                }
+                Ok(ledger
+                    .on_choke(conn, fast_negotiated)
+                    .into_iter()
+                    .map(|extent| HybridWireBlock {
+                        plane: Plane::V1,
+                        extent,
+                    })
+                    .collect())
+            }
+            LiveLedgerInner::Hybrid(ledger) => ledger.on_choke(conn, fast_negotiated),
+        }
+    }
+
+    pub fn disconnect_on_plane(
+        &mut self,
+        conn: ConnectionId,
+    ) -> Result<Vec<HybridWireBlock>, HybridLedgerError> {
+        self.used = true;
+        match &mut self.inner {
+            LiveLedgerInner::V1(ledger) => {
+                if !ledger.is_live(conn) {
+                    return Err(HybridLedgerError::UnknownConnection(conn));
+                }
+                Ok(ledger
+                    .disconnect(conn)
+                    .into_iter()
+                    .map(|extent| HybridWireBlock {
+                        plane: Plane::V1,
+                        extent,
+                    })
+                    .collect())
+            }
+            LiveLedgerInner::Hybrid(ledger) => ledger.disconnect(conn),
+        }
+    }
+
+    pub fn expire_on_plane(
+        &mut self,
+        now: Nanos,
+        timeout: Nanos,
+    ) -> Result<(Vec<(ConnectionId, HybridWireBlock)>, Vec<HybridAction>), HybridLedgerError> {
+        self.used = true;
+        match &mut self.inner {
+            LiveLedgerInner::V1(ledger) => {
+                let (expired, actions) = ledger.expire(now, timeout);
+                Ok((
+                    expired
+                        .into_iter()
+                        .map(|(conn, extent)| {
+                            (
+                                conn,
+                                HybridWireBlock {
+                                    plane: Plane::V1,
+                                    extent,
+                                },
+                            )
+                        })
+                        .collect(),
+                    v1_actions(actions),
+                ))
+            }
+            LiveLedgerInner::Hybrid(ledger) => ledger.expire(now, timeout),
+        }
+    }
+
+    pub fn piece_failed_with_actions_on_plane(
+        &mut self,
+        piece: u32,
+    ) -> Result<(Vec<ConnectionId>, Vec<HybridAction>), HybridLedgerError> {
+        self.used = true;
+        match &mut self.inner {
+            LiveLedgerInner::V1(ledger) => {
+                let (contributors, actions) = ledger.piece_failed_with_actions(piece);
+                Ok((contributors, v1_actions(actions)))
+            }
+            LiveLedgerInner::Hybrid(ledger) => ledger.piece_failed_with_actions(piece),
+        }
+    }
+
+    pub fn mark_have_on_plane(
+        &mut self,
+        piece: u32,
+    ) -> Result<Vec<HybridAction>, HybridLedgerError> {
+        self.used = true;
+        match &mut self.inner {
+            LiveLedgerInner::V1(ledger) => Ok(v1_actions(ledger.mark_have(piece))),
+            LiveLedgerInner::Hybrid(ledger) => ledger.mark_have(piece),
         }
     }
 
@@ -360,5 +610,63 @@ mod tests {
                 Err(ReserveError::ConnectionFull)
             );
         }
+    }
+
+    #[test]
+    fn live_hybrid_v2_plane_returns_data_in_canonical_v1_coordinates() {
+        let piece_length = u64::from(BLOCK_SIZE) * 2;
+        let path = SafeRelPath::from_name("payload.bin", false).unwrap();
+        let v1 = Arc::new(
+            PieceMap::new(
+                piece_length,
+                vec![FileSpan {
+                    file_index: 0,
+                    path: path.clone(),
+                    content_offset: 0,
+                    length: piece_length,
+                }],
+            )
+            .unwrap(),
+        );
+        let v2 = Arc::new(
+            V2PieceMap::new(
+                piece_length,
+                vec![V2FileSpan {
+                    file_index: 0,
+                    path,
+                    piece_offset: 0,
+                    length: piece_length,
+                    pad: false,
+                }],
+            )
+            .unwrap(),
+        );
+        let mut ledger = LiveTransferLedger::new_bounded(Arc::clone(&v1), 2);
+        assert!(ledger.attach_hybrid_geometry(Arc::new(HybridGeometry::new(v1, v2))));
+
+        let conn = ledger.try_connect_on_plane(Plane::V2, 2).unwrap();
+        let wire_block = BlockExtent::new(0, 0, BLOCK_SIZE);
+        assert_eq!(ledger.plane(conn), Some(Plane::V2));
+        assert_eq!(
+            ledger
+                .reserve_piece_affine_on_plane(conn, wire_block)
+                .unwrap(),
+            wire_block
+        );
+        assert_eq!(
+            ledger.commit_on_plane(conn, wire_block, 1).unwrap().0,
+            CommitOutcome::OnWire
+        );
+
+        let payload = Bytes::from(vec![0xA5; BLOCK_SIZE as usize]);
+        let (outcome, data) = ledger
+            .on_block_piece_affine_on_plane(conn, wire_block, payload.clone())
+            .unwrap();
+        assert!(matches!(outcome, HybridReceiveOutcome::Accepted { .. }));
+        let data = data.expect("accepted v2 response returns canonical data");
+        assert_eq!(data.canonical_extent, wire_block);
+        assert_eq!(data.payload, payload);
+        assert_eq!(ledger.piece_progress(0), Some((1, 2)));
+        ledger.check_invariants().unwrap();
     }
 }

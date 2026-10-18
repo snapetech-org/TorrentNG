@@ -3788,6 +3788,10 @@ a whole-torrent scan for each requested block.
   mismatched piece geometry.
 - Hybrid piece-affine reservation and response handling apply ownership
   checks to canonical v1 pieces across both wire planes.
+- The live facade admits v2-plane connections only after validated hybrid
+  geometry is attached. Its plane-aware reserve, commit, response, choke,
+  disconnect, expiry, verification-failure, and completion operations all
+  route through the same canonical owner and return wire-plane actions.
 - Peer request, ledger connection, piece state, source jobs, rate queues, and
   upload obligations stay within measured resource caps.
 - On the live v1, hybrid-v1, and pure-v2 paths, negotiated BEP 10 `reqq`
@@ -3826,6 +3830,10 @@ a whole-torrent scan for each requested block.
   `peer_reqq_updates_the_live_v1_and_hybrid_ledger_bounds` and
   `v2_remote_reqq_bounds_the_peer_window_and_shared_ledger` cover negotiated
   connection limits in the live v1, hybrid-v1, and pure-v2 paths.
+  `live_hybrid_v2_plane_returns_data_in_canonical_v1_coordinates` covers the
+  new live facade's v2 admission, reservation, wire commit, response, and
+  canonical data projection; production actor handshake/scheduling remain
+  open.
 - **Command or probe:** run transfer-core simulator and engine regression
   suites only during the owner-requested bulk pass.
 - **Executed on exact revision:** no. No build or test commands were run for
