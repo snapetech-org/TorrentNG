@@ -15,11 +15,12 @@
 //! * [`window`]      adaptive request windows and refill deadlines
 //! * [`sim`]         deterministic simulator and invariant oracle
 //!
-//! Integration into the live torrent actors is staged (NET-114). Pure-v2
-//! inbound upload requests now use [`obligations::InboundObligations`]; v1,
-//! hybrid, outbound ownership, and shared content completion remain on their
-//! reference paths until their actor adapters are migrated. Unused-code lints
-//! are allowed for the parts that are still only exercised by replay tests.
+//! Integration into the live torrent actors is staged (NET-114). v1 and
+//! pure-v2 inbound upload requests now use
+//! [`obligations::InboundObligations`]; hybrid, outbound ownership, and shared
+//! content completion remain on their reference paths until their actor
+//! adapters are migrated. Unused-code lints are allowed for the parts that
+//! are still only exercised by replay tests.
 #![allow(dead_code)]
 
 /// Injected monotonic time in nanoseconds. The core never reads a clock.

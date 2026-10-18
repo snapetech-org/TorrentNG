@@ -66,7 +66,8 @@ use crate::tracker_runtime::{
 };
 use crate::transfer::coords::{BlockExtent, PieceGeometry};
 use crate::transfer::obligations::{
-    InboundDecision, InboundObligations, Reject as InboundReject, Served as InboundServed,
+    InboundDecision, InboundObligations, Reject as InboundReject,
+    RejectReason as InboundRejectReason, Served as InboundServed,
 };
 use crate::{EnginePeerSnapshot, EngineTorrentLimits, EngineWebseedSnapshot, TorrentRuntimeStats};
 
@@ -3437,6 +3438,12 @@ async fn run_v2_peer_protocol(
                             return Ok(());
                         }
                     }
+                    start_v2_upload_reads(
+                        &mut upload_reads,
+                        &mut upload_obligations,
+                        &context,
+                        &state,
+                    );
                 }
             }
             changed = have_updates.changed() => {
@@ -3624,32 +3631,13 @@ async fn run_v2_peer_protocol(
                             begin,
                             length,
                         };
-                        if upload_obligations.queued_len()
-                            + upload_obligations.in_service_len()
-                            >= V2_MAX_UPLOAD_WORK
-                        {
-                            if remote_supports_fast {
-                                reject_v2_request(
-                                    &context,
-                                    &mut framed,
-                                    true,
-                                    piece,
-                                    begin,
-                                    length,
-                                )
-                                .await?;
-                            } else {
-                                anyhow::bail!("v2 peer exceeded the bounded upload queue");
-                            }
-                            continue;
-                        }
-                        let have_piece = v2_upload_can_serve(&context, &state)
-                            && context
-                                .local_have
-                                .read()
-                                .await
-                                .get(piece as usize);
-                        match upload_obligations.on_request(block, have_piece) {
+                        let have_piece = context
+                            .local_have
+                            .read()
+                            .await
+                            .get(piece as usize);
+                        let decision = upload_obligations.on_request(block, have_piece);
+                        match decision {
                             InboundDecision::Queue => start_v2_upload_reads(
                                 &mut upload_reads,
                                 &mut upload_obligations,
@@ -3666,6 +3654,9 @@ async fn run_v2_peer_protocol(
                                     request.length,
                                 )
                                 .await?;
+                            }
+                            InboundDecision::Drop(InboundRejectReason::QueueFull) => {
+                                anyhow::bail!("v2 peer exceeded the bounded upload queue");
                             }
                             InboundDecision::Drop(_) | InboundDecision::Duplicate => {}
                         }
@@ -3851,9 +3842,15 @@ async fn run_v2_peer_protocol(
                 };
                 let request = completion.request;
                 let block = BlockExtent::new(request.piece, request.begin, request.length);
+                let allowed_fast_while_choked = upload_obligations.is_choked()
+                    && upload_obligations.may_send(&block);
                 match completion.outcome {
                     V2UploadOutcome::Ready(upload_block)
-                        if v2_upload_can_serve(&context, &state) =>
+                        if v2_upload_can_serve_block(
+                            &context,
+                            &state,
+                            allowed_fast_while_choked,
+                        ) =>
                     {
                         let V2LeasedUploadBlock { data, _lease } = upload_block;
                         let bytes = data.len() as u64;
@@ -3920,7 +3917,13 @@ async fn run_v2_peer_protocol(
                         }
                     }
                     V2UploadOutcome::RateInterrupted => {
-                        if v2_upload_can_serve(&context, &state) {
+                        if upload_obligations.may_send(&block)
+                            && v2_upload_can_serve_block(
+                                &context,
+                                &state,
+                                allowed_fast_while_choked,
+                            )
+                        {
                             if !upload_obligations.requeue_front(block) {
                                 anyhow::bail!("v2 upload obligation could not be requeued");
                             }
@@ -4753,13 +4756,11 @@ fn start_v2_upload_reads(
     if context.peer_control.generation() != context.peer_generation {
         return;
     }
-    while upload_reads.len() < V2_MAX_PENDING_UPLOAD_READS
-        && obligations.queued_len() > 0
-        && v2_upload_can_serve(context, state)
-    {
+    while upload_reads.len() < V2_MAX_PENDING_UPLOAD_READS && obligations.queued_len() > 0 {
         let Some(block) = obligations.next_request() else {
             break;
         };
+        let allowed_fast_while_choked = obligations.is_allowed_fast(block.piece);
         let request = V2UploadRequest {
             piece: block.piece,
             begin: block.begin,
@@ -4769,7 +4770,9 @@ fn start_v2_upload_reads(
         let state = Arc::clone(state);
         upload_reads.push(
             async move {
-                let outcome = read_v2_upload_block(&context, &state, request).await;
+                let outcome =
+                    read_v2_upload_block(&context, &state, request, allowed_fast_while_choked)
+                        .await;
                 V2UploadCompletion { request, outcome }
             }
             .boxed(),
@@ -4781,6 +4784,7 @@ async fn read_v2_upload_block(
     context: &V2PeerContext,
     state: &Arc<Mutex<V2PeerState>>,
     request: V2UploadRequest,
+    allowed_fast_while_choked: bool,
 ) -> V2UploadOutcome {
     if context.peer_control.generation() != context.peer_generation {
         return V2UploadOutcome::RateInterrupted;
@@ -4797,7 +4801,7 @@ async fn read_v2_upload_block(
             Ok(region) => region,
             Err(_) => return V2UploadOutcome::Rejected,
         };
-    if !v2_upload_can_serve(context, state) {
+    if !v2_upload_can_serve_block(context, state, allowed_fast_while_choked) {
         return V2UploadOutcome::Rejected;
     }
     if !region.pad && !context.local_have.read().await.get(request.piece as usize) {
@@ -4834,7 +4838,7 @@ async fn read_v2_upload_block(
     // Capture before the final slot check: a choke that races between the
     // check and the wait changes this generation and wakes the waiter.
     let control_generation = context.upload_control.generation();
-    if !v2_upload_can_serve(context, state) {
+    if !v2_upload_can_serve_block(context, state, allowed_fast_while_choked) {
         return V2UploadOutcome::Rejected;
     }
     let upload_budget = context.network_budget.upload();
@@ -4848,13 +4852,23 @@ async fn read_v2_upload_block(
     if !admitted {
         return V2UploadOutcome::RateInterrupted;
     }
-    if !v2_upload_can_serve(context, state) {
+    if !v2_upload_can_serve_block(context, state, allowed_fast_while_choked) {
         return V2UploadOutcome::Rejected;
     }
     V2UploadOutcome::Ready(V2LeasedUploadBlock {
         data,
         _lease: lease,
     })
+}
+
+fn v2_upload_can_serve_block(
+    context: &V2PeerContext,
+    state: &Arc<Mutex<V2PeerState>>,
+    allowed_fast_while_choked: bool,
+) -> bool {
+    v2_upload_can_serve(context, state)
+        || (allowed_fast_while_choked
+            && state.lock().map(|peer| peer.upload_choked).unwrap_or(false))
 }
 
 async fn reject_v2_request(

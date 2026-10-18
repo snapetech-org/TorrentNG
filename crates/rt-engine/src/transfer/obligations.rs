@@ -8,8 +8,8 @@
 //! queue. This module is the pure state machine for the *inbound* half (what
 //! peers ask of us); the outbound half (what we asked) lives in the ledger.
 //!
-//! It is shared by v1, pure-v2 and hybrid peers: the wire obligation does not
-//! depend on the hash plane.
+//! The wire obligation does not depend on the hash plane; the live v1 and
+//! pure-v2 peer loops currently use this owner, while hybrid remains pending.
 
 use std::collections::{HashSet, VecDeque};
 
@@ -66,11 +66,11 @@ pub struct InboundObligations {
     queue: VecDeque<BlockExtent>,
     queued: HashSet<BlockExtent>,
     in_service: HashSet<BlockExtent>,
-    max_queue: usize,
+    max_outstanding: usize,
 }
 
 impl InboundObligations {
-    pub fn new(fast_negotiated: bool, max_queue: usize) -> Self {
+    pub fn new(fast_negotiated: bool, max_outstanding: usize) -> Self {
         Self {
             fast: fast_negotiated,
             choked: true,
@@ -78,7 +78,7 @@ impl InboundObligations {
             queue: VecDeque::new(),
             queued: HashSet::new(),
             in_service: HashSet::new(),
-            max_queue,
+            max_outstanding,
         }
     }
 
@@ -102,6 +102,10 @@ impl InboundObligations {
         self.allowed_fast.insert(piece);
     }
 
+    pub fn is_allowed_fast(&self, piece: u32) -> bool {
+        self.fast && self.allowed_fast.contains(&piece)
+    }
+
     fn refuse(&self, reason: RejectReason) -> InboundDecision {
         if self.fast {
             InboundDecision::Reject(reason)
@@ -118,13 +122,13 @@ impl InboundObligations {
         if block.length == 0 || block.length > BLOCK_SIZE {
             return self.refuse(RejectReason::Unavailable);
         }
-        if self.choked && !(self.fast && self.allowed_fast.contains(&block.piece)) {
+        if self.choked && !self.is_allowed_fast(block.piece) {
             return self.refuse(RejectReason::Choked);
         }
         if !have_piece {
             return self.refuse(RejectReason::PieceNotHeld);
         }
-        if self.queue.len() >= self.max_queue {
+        if self.queue.len() + self.in_service.len() >= self.max_outstanding {
             return self.refuse(RejectReason::QueueFull);
         }
         self.queue.push_back(block);
@@ -155,7 +159,7 @@ impl InboundObligations {
         let mut rejects = Vec::new();
         let mut kept = VecDeque::new();
         while let Some(block) = self.queue.pop_front() {
-            if self.fast && self.allowed_fast.contains(&block.piece) {
+            if self.is_allowed_fast(block.piece) {
                 kept.push_back(block);
                 continue;
             }
@@ -168,6 +172,12 @@ impl InboundObligations {
             }
         }
         self.queue = kept;
+        if !self.fast {
+            // Legacy Choke implicitly ends even reads that have started. The
+            // actor cancels those jobs; a late completion then finds no live
+            // obligation and cannot produce a response.
+            self.in_service.clear();
+        }
         rejects
     }
 
@@ -182,6 +192,10 @@ impl InboundObligations {
 
     /// Next request to serve, if any.
     pub fn next_request(&mut self) -> Option<BlockExtent> {
+        let next = self.queue.front().copied()?;
+        if self.choked && !self.is_allowed_fast(next.piece) {
+            return None;
+        }
         let block = self.queue.pop_front()?;
         self.queued.remove(&block);
         self.in_service.insert(block);
@@ -193,7 +207,7 @@ impl InboundObligations {
     /// obligation stays live and it keeps its original priority relative to
     /// requests accepted later.
     pub fn requeue_front(&mut self, block: BlockExtent) -> bool {
-        if !self.in_service.contains(&block) || self.queue.len() >= self.max_queue {
+        if !self.in_service.contains(&block) || self.queue.len() >= self.max_outstanding {
             return false;
         }
         self.in_service.remove(&block);
@@ -205,8 +219,7 @@ impl InboundObligations {
     /// Whether the data for an in-service request may still be sent: we must
     /// not send a Piece to a peer we have since choked (except allowed-fast).
     pub fn may_send(&self, block: &BlockExtent) -> bool {
-        self.in_service.contains(block)
-            && (!self.choked || (self.fast && self.allowed_fast.contains(&block.piece)))
+        self.in_service.contains(block) && (!self.choked || self.is_allowed_fast(block.piece))
     }
 
     /// Resolve an in-service request. A Fast peer gets a Reject for anything
@@ -243,12 +256,20 @@ impl InboundObligations {
         if self.queue.len() != self.queued.len() {
             return Err("queue and index disagree".into());
         }
+        if self.queue.iter().any(|block| !self.queued.contains(block))
+            || self.queued.iter().any(|block| !self.queue.contains(block))
+        {
+            return Err("queue contents and index disagree".into());
+        }
         if self
             .queue
             .iter()
             .any(|block| self.in_service.contains(block))
         {
             return Err("a request is both queued and in service".into());
+        }
+        if self.queue.len() + self.in_service.len() > self.max_outstanding {
+            return Err("outstanding request limit exceeded".into());
         }
         Ok(())
     }
@@ -337,6 +358,21 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_at_capacity_stays_a_duplicate_and_total_work_is_bounded() {
+        let mut ob = InboundObligations::new(true, 2);
+        ob.on_local_unchoke();
+        assert_eq!(ob.on_request(b(1), true), InboundDecision::Queue);
+        assert_eq!(ob.on_request(b(2), true), InboundDecision::Queue);
+        assert_eq!(ob.next_request(), Some(b(1)));
+        assert_eq!(ob.on_request(b(1), true), InboundDecision::Duplicate);
+        assert_eq!(
+            ob.on_request(b(3), true),
+            InboundDecision::Reject(RejectReason::QueueFull)
+        );
+        ob.check_invariants().unwrap();
+    }
+
+    #[test]
     fn choke_rejects_queued_requests_but_keeps_allowed_fast() {
         let mut ob = InboundObligations::new(true, 8);
         ob.allow_fast(7);
@@ -358,6 +394,8 @@ mod tests {
         assert_eq!(ob.on_request(b(7), true), InboundDecision::Duplicate);
         ob.allow_fast(8);
         assert_eq!(ob.on_request(b(8), true), InboundDecision::Queue);
+        assert_eq!(ob.next_request(), Some(b(7)));
+        assert!(ob.may_send(&b(7)));
         ob.check_invariants().unwrap();
     }
 
@@ -378,6 +416,20 @@ mod tests {
                 reason: RejectReason::ChokeTransition
             })
         );
+    }
+
+    #[test]
+    fn legacy_choke_ends_in_service_obligations_without_rejects() {
+        let mut ob = InboundObligations::new(false, 8);
+        ob.on_local_unchoke();
+        assert_eq!(ob.on_request(b(1), true), InboundDecision::Queue);
+        let block = ob.next_request().unwrap();
+        assert_eq!(ob.in_service_len(), 1);
+
+        assert!(ob.on_local_choke().is_empty());
+        assert_eq!(ob.in_service_len(), 0);
+        assert_eq!(ob.finish(block, Served::Failed), None);
+        ob.check_invariants().unwrap();
     }
 
     #[test]

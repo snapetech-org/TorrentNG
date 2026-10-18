@@ -1093,22 +1093,25 @@ remain on their reference paths until NET-114.
 ### Scope
 
 Honor negotiated BEP 6 behavior in the existing handlers while moving the
-complete obligation state machine into the live shared runtime. The pure
-`transfer::InboundObligations` module now owns the pure-v2 inbound upload
-queue/service lifecycle; v1, hybrid, and outbound request state remain on
+complete obligation state machine into the live shared runtime. The
+`transfer::InboundObligations` module now owns the v1 and pure-v2 inbound
+upload queue/service lifecycle; hybrid and outbound request state remain on
 their reference paths.
 
 ### Ownership and invariant
 
-- **Current owner:** pure-v2 inbound upload queue, in-service, Cancel, choke,
-  and completion transitions use `InboundObligations`; the v2 peer loop owns
-  storage futures and wire writes. v1 upload work and outbound request state
-  remain actor-local.
+- **Current owner:** v1 and pure-v2 inbound upload queue, in-service, Cancel,
+  choke, and completion transitions use `InboundObligations`; the peer loops
+  own storage futures and wire writes. Outbound request state remains
+  actor-local.
 - **Target owner:** `InboundObligations` and the shared ledger own response
   obligations across both protocol planes.
 - **Invariant preserved:** when Fast is negotiated, a request already
   accepted for processing remains owed a Piece or Reject response across
   Choke and Cancel; Reject is sent only when the peer negotiated Fast.
+- **Bound preserved:** the per-connection cap covers queued and in-service
+  requests together. Duplicate coordinates are recognized before capacity
+  refusal, so saturation cannot turn a duplicate into a second response.
 - **Must not:** clear a Fast request merely because Choke arrived, send a
   Reject to a legacy peer, or answer one request more than once.
 
@@ -1122,15 +1125,19 @@ their reference paths.
 - A remote Cancel removes a v1 upload request only while it is still queued
   for storage admission. Under Fast, that canceled queued request gets a
   Reject; an in-service read keeps its Piece/Reject obligation.
+- Both live upload adapters apply the shared total-work bound and suppress
+  duplicates before checking capacity. Legacy Choke ends in-service
+  obligations without sending Reject; Fast Choke rejects queued requests
+  except pieces explicitly in the local allowed-fast set.
 - Once a v1 block is accepted, the actor queues endgame Cancel for peers with
   duplicate requests. A peer loop sends it only if that request reached the
   wire and keeps the response lease until its terminal event.
 - Request cancellation and endgame loser handling reconcile exactly once with
   queued reads, in-flight work, Piece delivery, and Reject delivery.
 - Stale, duplicate, and unsolicited responses cannot mutate current content.
-- The pure-v2 inbound upload path uses the shared obligation owner. v1, hybrid,
-  and outbound request ownership must also move to the shared runtime before
-  this ticket closes; pure-module tests alone do not close it.
+- Both v1 and pure-v2 inbound upload paths use the shared obligation owner.
+  Hybrid and outbound request ownership must also move to the shared runtime
+  before this ticket closes; pure-module tests alone do not close it.
 
 ### Files and compatibility
 
@@ -1138,8 +1145,10 @@ their reference paths.
   `torrent_task.rs`, `torrent_task_v2.rs`, and NET-114 peer-runtime adapters.
 - **State or wire compatibility:** no wire-format change; negotiated Fast
   behavior follows the peer's handshake capabilities.
-- **Migration / rollback:** none; retain current actor-local state until the
-  shared runtime has parity and rollback coverage.
+- **Migration / rollback:** no persisted state changes. The inbound owner is
+  per connection and is cleared on disconnect; the v1/v2 adapters remain
+  independently reversible while outbound, hybrid, and shared-runtime parity
+  are unfinished.
 - **Feature flag or rollout boundary:** no new advertisement or capability
   until the applicable live path satisfies its obligations.
 
@@ -1154,8 +1163,10 @@ their reference paths.
   existing v1 `fast_peer_request_while_choked_is_rejected_not_dropped`.
 - Focused v1 regression sources now cover queued-versus-in-service Cancel,
   late Piece after outbound Cancel, and exact endgame duplicate matching.
-  Shared-ledger integration, v1 actor adoption, hybrid parity, and all bulk
-  validation remain open.
+  Shared-ledger outbound ownership, hybrid parity, public-client
+  interoperability, and all bulk validation remain open. Added shared-owner
+  sources cover duplicate requests at capacity, total queued-plus-in-service
+  bounds, allowed-fast dispatch while choked, and legacy in-service cleanup.
 - **Command or probe to run:** targeted v1/v2 Fast lifecycle and shared-ledger
   simulations during the requested bulk pass.
 - **Expected result:** no owed request is lost across Fast Choke/Cancel and

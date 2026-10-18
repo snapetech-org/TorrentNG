@@ -18,7 +18,7 @@ use super::obligations::{InboundDecision, InboundObligations, Reject, Served};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UploadLimits {
-    /// Queued requests per connection.
+    /// Maximum queued plus in-service request obligations per connection.
     pub max_queue_per_conn: usize,
     /// Reads in flight across all connections.
     pub max_in_flight_jobs: usize,

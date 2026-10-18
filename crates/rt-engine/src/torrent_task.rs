@@ -84,6 +84,10 @@ use crate::tracker_runtime::{
     STOPPED_TRACKER_ANNOUNCE_DEADLINE,
 };
 use crate::transfer::coords::{BlockExtent, PieceGeometry};
+use crate::transfer::obligations::{
+    InboundDecision, InboundObligations, Reject as InboundReject,
+    RejectReason as InboundRejectReason, Served as InboundServed,
+};
 use crate::{EnginePeerSnapshot, EngineTorrentLimits, EngineWebseedSnapshot, TorrentRuntimeStats};
 
 const LOCAL_UT_METADATA_ID: u8 = 1;
@@ -117,6 +121,7 @@ const MAX_PENDING_UPLOAD_READS: usize = 16;
 // Requests are only small coordinates; the response data remains bounded by
 // MAX_PENDING_UPLOAD_READS and the peer-buffer governor.
 const MAX_QUEUED_UPLOAD_REQUESTS: usize = 4_096;
+const MAX_UPLOAD_WORK: usize = MAX_PENDING_UPLOAD_READS + MAX_QUEUED_UPLOAD_REQUESTS;
 const PEER_EVENT_SEND_TIMEOUT: Duration = Duration::from_millis(500);
 // Terminal and seed-limit transitions must leave time for persistence and
 // peer teardown. Tracker stop delivery is best effort and cannot consume the
@@ -7713,11 +7718,10 @@ async fn run_peer_loop(
     // prevents it from processing choke/shutdown/input messages. The loop
     // owns the socket; detached read futures only return a leased block.
     let mut upload_reads = UploadReadTasks::default();
-    // A peer is allowed to pipeline more requests than the detached read
-    // budget. Queue only a small bounded tail and let completed reads refill
-    // the worker set; saturating this queue drops the newest request instead
-    // of killing an otherwise valid connection.
-    let mut pending_upload_requests = VecDeque::with_capacity(MAX_QUEUED_UPLOAD_REQUESTS);
+    // The shared obligation owner accounts for queued and in-service requests
+    // as one bounded per-connection state machine. Detached reads remain
+    // capped independently and are refilled as completions arrive.
+    let mut upload_obligations = InboundObligations::new(upload.fast_negotiated, MAX_UPLOAD_WORK);
     let mut upload_request_drops = 0u64;
     let mut download_generation = 0u64;
 
@@ -7786,18 +7790,15 @@ async fn run_peer_loop(
                         upload.upload_control.cancel();
                         upload_choked = true;
                         peer_io.send(Message::Choke).await?;
-                        if upload.fast_negotiated {
-                            // BEP 6: a choke no longer implicitly discards
-                            // requests; every queued one gets a Reject. Reads
-                            // already in flight finish (bounded by the read
-                            // cap and timeout) and are rejected from their
-                            // result below, because aborting would lose their
-                            // coordinates.
-                            while let Some(request) = pending_upload_requests.pop_front() {
-                                reject_upload_request(&mut peer_io, &upload, request).await?;
-                            }
-                        } else {
-                            pending_upload_requests.clear();
+                        for reject in upload_obligations.on_local_choke() {
+                            send_upload_obligation_reject(&mut peer_io, reject).await?;
+                        }
+                        start_upload_reads(
+                            &mut upload_reads,
+                            &mut upload_obligations,
+                            &upload,
+                        );
+                        if !upload.fast_negotiated {
                             // A local choke invalidates reads that were
                             // admitted under the previous upload state. Abort
                             // them now so a slow disk cannot retain peer
@@ -7808,18 +7809,18 @@ async fn run_peer_loop(
                     PeerCommand::Unchoke => {
                         upload.upload_control.cancel();
                         upload_choked = false;
+                        upload_obligations.on_local_unchoke();
                         peer_io.send(Message::Unchoke).await?;
                         start_upload_reads(
                             &mut upload_reads,
-                            &mut pending_upload_requests,
+                            &mut upload_obligations,
                             &upload,
-                            upload_choked,
                         );
                     }
                     PeerCommand::Shutdown => {
                         upload.upload_control.cancel();
                         upload.shutdown_control.cancel();
-                        pending_upload_requests.clear();
+                        upload_obligations.close();
                         break;
                     }
                 }
@@ -8146,18 +8147,19 @@ async fn run_peer_loop(
                         }
                     }
                     Message::Request { piece, begin, length } => {
+                        let block = BlockExtent::new(piece, begin, length);
                         let request = UploadRequest {
                             piece,
                             begin,
                             length,
                         };
-                        if upload_choked || !upload.have_pieces.get(piece as usize).unwrap_or(false) {
-                            reject_upload_request(&mut peer_io, &upload, request).await?;
-                            continue;
-                        }
-                        if pending_upload_requests.len() >= MAX_QUEUED_UPLOAD_REQUESTS
-                            && upload_reads.len() >= MAX_PENDING_UPLOAD_READS
-                        {
+                        let have_piece = upload.have_pieces.get(piece as usize).unwrap_or(false);
+                        let decision = upload_obligations.on_request(block, have_piece);
+                        if matches!(
+                            decision,
+                            InboundDecision::Reject(InboundRejectReason::QueueFull)
+                                | InboundDecision::Drop(InboundRejectReason::QueueFull)
+                        ) {
                             upload_request_drops = upload_request_drops.saturating_add(1);
                             if upload_request_drops == 1 || upload_request_drops.is_multiple_of(256)
                             {
@@ -8165,40 +8167,29 @@ async fn run_peer_loop(
                                     component = "peer",
                                     operation = "queue_upload_request",
                                     peer = %addr,
-                                    result = "dropped",
+                                    result = "refused",
                                     reason = "upload_queue_saturated",
                                     dropped = upload_request_drops,
-                                    "dropping excess upload requests without terminating peer"
+                                    "refusing excess upload requests without terminating peer"
                                 );
                             }
-                            reject_upload_request(&mut peer_io, &upload, request).await?;
-                            continue;
                         }
-                        pending_upload_requests.push_back(request);
-                        start_upload_reads(
-                            &mut upload_reads,
-                            &mut pending_upload_requests,
-                            &upload,
-                            upload_choked,
-                        );
+                        match decision {
+                            InboundDecision::Queue => start_upload_reads(
+                                &mut upload_reads,
+                                &mut upload_obligations,
+                                &upload,
+                            ),
+                            InboundDecision::Reject(_) => {
+                                reject_upload_request(&mut peer_io, &upload, request).await?;
+                            }
+                            InboundDecision::Drop(_) | InboundDecision::Duplicate => {}
+                        }
                     }
                     Message::Cancel { piece, begin, length } => {
-                        let request = UploadRequest {
-                            piece,
-                            begin,
-                            length,
-                        };
-                        if let Some(index) = pending_upload_requests
-                            .iter()
-                            .position(|pending| *pending == request)
-                        {
-                            let _ = pending_upload_requests.remove(index);
-                            // Work that has not entered a storage read can
-                            // be canceled. A Fast peer still receives its
-                            // terminal Reject; in-service reads remain
-                            // obligated and finish through the normal result
-                            // path.
-                            reject_upload_request(&mut peer_io, &upload, request).await?;
+                        let block = BlockExtent::new(piece, begin, length);
+                        if let Some(reject) = upload_obligations.on_cancel(block) {
+                            send_upload_obligation_reject(&mut peer_io, reject).await?;
                         }
                     }
                     Message::Choke => {
@@ -8364,6 +8355,11 @@ async fn run_peer_loop(
                 let (request, result, rate_interrupted) = match upload_result {
                     Ok(result) => result,
                     Err(error) => {
+                        if error.is_cancelled() && upload_choked && !upload.fast_negotiated {
+                            // Legacy Choke explicitly ended these in-service
+                            // obligations and aborted their reads.
+                            continue;
+                        }
                         warn!(
                             component = "peer",
                             operation = "read_upload_block",
@@ -8375,15 +8371,14 @@ async fn run_peer_loop(
                             ),
                             "upload block worker failed"
                         );
-                        start_upload_reads(
-                            &mut upload_reads,
-                            &mut pending_upload_requests,
-                            &upload,
-                            upload_choked,
-                        );
-                        continue;
+                        // The JoinError no longer carries the request
+                        // coordinate. End this connection so an accepted
+                        // obligation cannot remain stranded in the owner.
+                        upload_obligations.close();
+                        break;
                     }
                 };
+                let block_extent = BlockExtent::new(request.piece, request.begin, request.length);
                 match result {
                     Ok(_block) if rate_interrupted => {
                         // Rate admission runs with the bounded read task, so
@@ -8392,18 +8387,30 @@ async fn run_peer_loop(
                         // unchoked, retry valid demand after the control wake;
                         // otherwise terminate it according to Fast semantics.
                         if upload_choked {
-                            reject_upload_request(&mut peer_io, &upload, request).await?;
-                        } else {
-                            pending_upload_requests.push_front(request);
+                            if upload_obligations.may_send(&block_extent) {
+                                if !upload_obligations.requeue_front(block_extent) {
+                                    anyhow::bail!("v1 allowed-fast upload could not be requeued");
+                                }
+                            } else {
+                                finish_upload_obligation(
+                                    &mut peer_io,
+                                    &mut upload_obligations,
+                                    block_extent,
+                                    InboundServed::Discarded,
+                                )
+                                .await?;
+                            }
+                        } else if !upload_obligations.requeue_front(block_extent) {
+                            anyhow::bail!("v1 upload obligation could not be requeued");
                         }
                     }
-                    Ok(block) if !upload_choked => {
-                        let bytes = block.data.len() as u64;
+                    Ok(upload_block) if upload_obligations.may_send(&block_extent) => {
+                        let bytes = upload_block.data.len() as u64;
                         peer_io
                             .send(Message::Piece {
                                 piece: request.piece,
                                 begin: request.begin,
-                                data: block.data,
+                                data: upload_block.data,
                             })
                             .await?;
                         if !send_peer_event(
@@ -8418,13 +8425,26 @@ async fn run_peer_loop(
                         {
                             break;
                         }
+                        finish_upload_obligation(
+                            &mut peer_io,
+                            &mut upload_obligations,
+                            block_extent,
+                            InboundServed::Sent,
+                        )
+                        .await?;
                     }
                     Ok(_) => {
                         // A local choke or shutdown may have arrived while
                         // the read was in flight. Dropping the leased block
                         // is safer than sending data after the state change;
                         // a Fast peer is told the request will not be served.
-                        reject_upload_request(&mut peer_io, &upload, request).await?;
+                        finish_upload_obligation(
+                            &mut peer_io,
+                            &mut upload_obligations,
+                            block_extent,
+                            InboundServed::Discarded,
+                        )
+                        .await?;
                     }
                     Err(error) => {
                         warn!(
@@ -8438,14 +8458,19 @@ async fn run_peer_loop(
                             error = %error,
                             "failed to read upload block"
                         );
-                        reject_upload_request(&mut peer_io, &upload, request).await?;
+                        finish_upload_obligation(
+                            &mut peer_io,
+                            &mut upload_obligations,
+                            block_extent,
+                            InboundServed::Failed,
+                        )
+                        .await?;
                     }
                 }
                 start_upload_reads(
                     &mut upload_reads,
-                    &mut pending_upload_requests,
+                    &mut upload_obligations,
                     &upload,
-                    upload_choked,
                 );
             }
             _ = timeout_tick.tick() => {
@@ -8482,6 +8507,7 @@ async fn run_peer_loop(
     // event-delivery errors can leave that block through `?`, bypassing the
     // normal loop break. Dropping a JoinHandle detaches its task, so every
     // in-flight upload read must be explicitly aborted on every exit path.
+    upload_obligations.close();
     abort_upload_reads(&upload_reads);
 
     let outstanding = drain_outstanding(&mut outstanding);
@@ -8674,15 +8700,38 @@ async fn reject_upload_request(
     Ok(())
 }
 
+async fn send_upload_obligation_reject(
+    peer_io: &mut PeerIo,
+    reject: InboundReject,
+) -> anyhow::Result<()> {
+    let block = reject.block;
+    peer_io
+        .send(Message::Reject {
+            piece: block.piece,
+            begin: block.begin,
+            length: block.length,
+        })
+        .await?;
+    Ok(())
+}
+
+async fn finish_upload_obligation(
+    peer_io: &mut PeerIo,
+    obligations: &mut InboundObligations,
+    block: BlockExtent,
+    served: InboundServed,
+) -> anyhow::Result<()> {
+    if let Some(reject) = obligations.finish(block, served) {
+        send_upload_obligation_reject(peer_io, reject).await?;
+    }
+    Ok(())
+}
+
 fn start_upload_reads(
     upload_reads: &mut futures::stream::FuturesUnordered<tokio::task::JoinHandle<UploadReadResult>>,
-    pending_upload_requests: &mut VecDeque<UploadRequest>,
+    obligations: &mut InboundObligations,
     upload: &UploadContext,
-    upload_choked: bool,
 ) {
-    if upload_choked {
-        return;
-    }
     let read_context = UploadReadContext {
         save_root: upload.save_root.clone(),
         piece_map: upload.piece_map.clone(),
@@ -8693,16 +8742,14 @@ fn start_upload_reads(
         upload_control: upload.upload_control.clone(),
     };
     while upload_reads.len() < MAX_PENDING_UPLOAD_READS {
-        let Some(request) = pending_upload_requests.pop_front() else {
+        let Some(block) = obligations.next_request() else {
             break;
         };
-        if !upload
-            .have_pieces
-            .get(request.piece as usize)
-            .unwrap_or(false)
-        {
-            continue;
-        }
+        let request = UploadRequest {
+            piece: block.piece,
+            begin: block.begin,
+            length: block.length,
+        };
         let read_context_for_task = read_context.clone();
         upload_reads.push(tokio::spawn(async move {
             let result = match timeout(
