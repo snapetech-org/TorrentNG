@@ -278,8 +278,10 @@ the requested bulk pass.
 `measurement.py` provides a task-directory file barrier, a per-file interval
 union that separates unique accepted bytes from duplicate overlap, and a
 monotonic timeline for barrier, transfer, flush, validation, and shutdown.
-Callers must create and clean a fresh barrier directory for each trial. These
-helpers do not launch clients, establish integrity, or calculate a scorecard.
+Callers must create and clean a fresh barrier directory for each trial. The
+barrier creates readiness and release markers exclusively as regular files and
+rejects symlinks or non-file markers. These helpers do not launch clients,
+establish integrity, or calculate a scorecard.
 Their regression sources are in `scripts/test_transfer_rebuild_measurement.py`
 and belong in the bulk pass.
 

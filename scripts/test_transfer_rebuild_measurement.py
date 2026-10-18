@@ -35,9 +35,37 @@ class FileStartBarrierTests(unittest.TestCase):
                     )
                 )
 
-            self.assertTrue((Path(temporary) / "released").is_dir())
+            self.assertTrue((Path(temporary) / "released").is_file())
             self.assertEqual(len(results), 2)
             self.assertTrue(all(result.wait_ns >= 0 for result in results))
+
+    def test_symlinked_readiness_or_release_markers_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="transfer-barrier-") as temporary:
+            root = Path(temporary)
+            target = root / "target"
+            target.write_text("marker", encoding="utf-8")
+            readiness_link = root / "client-b.ready"
+            try:
+                readiness_link.symlink_to(target)
+            except (NotImplementedError, OSError) as error:
+                self.skipTest(f"symlinks are unavailable: {error}")
+
+            barrier = FileStartBarrier(root, ["client-a", "client-b"])
+            with self.assertRaisesRegex(ValueError, "not a regular file"):
+                barrier.wait("client-a", timeout_seconds=1.0)
+
+        with tempfile.TemporaryDirectory(prefix="transfer-barrier-") as temporary:
+            root = Path(temporary)
+            target = root / "target"
+            target.write_text("marker", encoding="utf-8")
+            try:
+                (root / "released").symlink_to(target)
+            except (NotImplementedError, OSError) as error:
+                self.skipTest(f"symlinks are unavailable: {error}")
+
+            barrier = FileStartBarrier(root, ["client-a"])
+            with self.assertRaisesRegex(ValueError, "not a regular file"):
+                barrier.wait("client-a", timeout_seconds=1.0)
 
     def test_unknown_duplicate_or_unsafe_participants_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory(prefix="transfer-barrier-") as temporary:

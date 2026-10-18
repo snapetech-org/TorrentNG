@@ -200,7 +200,9 @@ trial and manifest schemas.
 The shared harness primitives in `scripts/transfer_rebuild/measurement.py`
 implement a file-backed matched-start gate, per-file unique-range accounting,
 and distinct monotonic phase durations. The barrier directory is trial-owned
-scratch and must be fresh for every trial. The unique-range ledger is an
-accounting aid; only ranges accepted by the transfer verifier may be submitted
-to it. Client launch, settings readback, fixture integrity, artifact digest
-verification, and paired-trial analysis remain separate responsibilities.
+scratch and must be fresh for every trial. Readiness and release markers are
+created exclusively as regular files; symlink and non-file markers are
+rejected rather than followed. The unique-range ledger is an accounting aid;
+only ranges accepted by the transfer verifier may be submitted to it. Client
+launch, settings readback, fixture integrity, artifact digest verification,
+and paired-trial analysis remain separate responsibilities.

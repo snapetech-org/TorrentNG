@@ -6,6 +6,7 @@ import bisect
 import math
 import os
 import re
+import stat
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +14,21 @@ from typing import Callable
 
 
 _PARTICIPANT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+
+
+def _is_regular_marker(path: Path) -> bool:
+    """Return whether a barrier marker is a regular file without following links."""
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISREG(mode):
+        raise ValueError(f"barrier marker is not a regular file: {path.name}")
+    return True
+
+
+def _exclusive_marker_flags() -> int:
+    return os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
 
 
 @dataclass(frozen=True)
@@ -36,7 +52,11 @@ class FileStartBarrier:
     """
 
     def __init__(self, directory: Path, participants: list[str]) -> None:
-        if directory.is_symlink() or not directory.is_dir():
+        try:
+            directory_mode = directory.lstat().st_mode
+        except FileNotFoundError:
+            directory_mode = 0
+        if not stat.S_ISDIR(directory_mode):
             raise ValueError("barrier directory must be an existing, non-symlink directory")
         if not participants or len(set(participants)) != len(participants):
             raise ValueError("barrier participants must be nonempty and unique")
@@ -66,23 +86,27 @@ class FileStartBarrier:
             or poll_interval_seconds <= 0
         ):
             raise ValueError("barrier timeout and poll interval must be positive")
-        if self.release_path.exists():
+        if _is_regular_marker(self.release_path):
             raise ValueError("barrier release marker already exists; use a fresh trial directory")
 
         wait_started = clock_ns()
         ready_path = self.directory / f"{participant}.ready"
-        descriptor = os.open(ready_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        descriptor = os.open(ready_path, _exclusive_marker_flags(), 0o600)
         os.close(descriptor)
         deadline = clock() + timeout_seconds
         ready_paths = [self.directory / f"{name}.ready" for name in self.participants]
 
         while True:
-            if all(path.is_file() for path in ready_paths):
+            if all(_is_regular_marker(path) for path in ready_paths):
                 try:
-                    self.release_path.mkdir(mode=0o700)
+                    descriptor = os.open(
+                        self.release_path, _exclusive_marker_flags(), 0o600
+                    )
                 except FileExistsError:
-                    pass
-            if self.release_path.is_dir():
+                    _is_regular_marker(self.release_path)
+                else:
+                    os.close(descriptor)
+            if _is_regular_marker(self.release_path):
                 return BarrierResult(wait_started, clock_ns())
 
             remaining = deadline - clock()

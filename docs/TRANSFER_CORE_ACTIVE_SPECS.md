@@ -118,13 +118,15 @@ trial execution, and artifact assembly remain open.
 ### Acceptance
 
 - A fresh task-owned file barrier requires every declared participant and has
-  a bounded timeout.
+  a bounded timeout. Readiness and release markers are created exclusively as
+  regular files; symlink and non-file markers are rejected without following
+  them.
 - Range accounting is per file, merges overlapping ranges, excludes padding,
   and reports new and duplicate bytes.
 - Timeline markers use a monotonic clock, require all contract phases, and
   reject zero transfer duration and overlapping/out-of-order phases.
-- Regressions cover participant release, unique/duplicate ranges, padding, and
-  phase boundaries.
+- Regressions cover participant release, symlinked readiness/release markers,
+  unique/duplicate ranges, padding, and phase boundaries.
 
 ### Files and compatibility
 
@@ -143,7 +145,8 @@ trial execution, and artifact assembly remain open.
 - **Command or probe to run:** `python3 scripts/test_transfer_rebuild_measurement.py`
   during the requested bulk pass.
 - **Expected result:** a matched release, exact interval-union accounting, and
-  separate ordered phase durations.
+  separate ordered phase durations; marker symlinks cannot satisfy readiness
+  or release.
 - **Executed on exact revision:** no.
 - **Artifact or report path:** pending bulk pass.
 - **External evidence still required:** cross-process barrier characterization
