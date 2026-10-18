@@ -3313,27 +3313,32 @@ arrive, drain all currently ready completions, and preserve the portable
 
 Move request reservation, response arbitration, and terminal request cleanup
 from actor-local state into the shared transfer core in reversible protocol
-slices. The live ledger now owns v1/hybrid-v1 and pure-v2 outbound acquisition.
-Pure-v2 retains peer-local piece assembly and uses atomic affinity checks so
-one connection owns each active piece. A centralized 60-second ledger expiry
+slices. The live ledger owns v1/hybrid-v1 and pure-v2 peer acquisition, plus
+the serial v1 webseed fallback through a temporary source connection. Pure-v2
+retains peer-local piece assembly and uses atomic affinity checks so one
+connection owns each active piece. A centralized 60-second ledger expiry
 routes Cancel actions to peer tasks and drops matching actor requests. Hybrid
-dual-view arbitration, shared source scheduling, and shared
+dual-view arbitration, concurrent shared source scheduling, and shared
 rate/window/upload services remain open.
 
 ### Ownership and invariant
 
 - **Current owner:** the generation-aware ledger owns live v1/hybrid-v1 and
-  pure-v2 reservations, socket-write commits, received-block arbitration,
-  timeout expiry, and completion/failure cleanup.
+  pure-v2 peer reservations, socket-write commits, received-block arbitration,
+  timeout expiry, and completion/failure cleanup. Serial webseed requests use
+  a temporary, memory-accounted ledger connection and enter the same response
+  arbitration path.
   `PiecePicker` still ranks candidates and holds restored-partial projection
   state; v2 actor maps retain response leases and peer-local assemblies.
 - **Target owner:** each protocol adapter submits candidates to one shared
   content owner, while immutable payload, storage completion, and durability
   evidence retain their existing explicit owners.
-- **Invariant preserved:** a request is reserved before it can enter the peer
-  command queue, committed only after its wire write succeeds, and reconciled
-  against a response from the same connection generation. Duplicate or stale
-  blocks cannot enter storage; every lifecycle exit releases ownership.
+- **Invariant preserved:** peer requests are reserved before they enter a
+  peer command queue, committed after their wire write succeeds, and reconciled
+  against responses from the same connection generation. Webseed blocks are
+  reserved before fetch and committed after exact response validation.
+  Duplicate or stale blocks cannot enter storage; every lifecycle exit
+  releases ownership.
 - **Memory bound:** connection slots and per-piece ledger state are charged to
   `MemoryClass::PeerBuffer`; per-request response capacity remains charged by
   its existing lease. The picker stays independently charged to PieceIndex.
@@ -3346,6 +3351,11 @@ rate/window/upload services remain open.
   timeout, disconnect, and piece completion/failure. Pure-v2 uses it for
   reserve, wire commit, response, Reject, Choke, 60-second timeout expiry,
   disconnect, and piece completion/failure.
+- Serial v1 webseed requests reserve before fetch, commit after a validated
+  response, and release on fetch failure, cancellation, or response handling;
+  temporary connection and piece-state allocations are charged to
+  `MemoryClass::PeerBuffer`. One transient ledger slot is reserved beyond the
+  configured peer cap; peer admission itself is unchanged.
 - Hybrid v1/v2 views arbitrate the same payload without duplicate writes or
   mismatched piece geometry.
 - Peer request, ledger connection, piece state, source jobs, rate queues, and
@@ -3357,8 +3367,9 @@ rate/window/upload services remain open.
 ### Evidence
 
 - **Regression sources:** ledger failure/expiry cancellation, v1 actor
-  lifecycle, and pure-v2 reservation/response/action-routing/timeout sources
-  are present; hybrid dual-view cases remain open.
+  lifecycle, webseed ledger ownership, and pure-v2
+  reservation/response/action-routing/timeout sources are present; hybrid
+  dual-view cases remain open.
 - **Command or probe:** run transfer-core simulator and engine regression
   suites only during the owner-requested bulk pass.
 - **Executed on exact revision:** no. No build or test commands were run for

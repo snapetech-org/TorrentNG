@@ -19,7 +19,7 @@ impl TorrentTask {
         self.transfer_ledger.disconnect(handle.transfer_conn);
     }
 
-    fn ensure_transfer_piece_memory(
+    pub(super) fn ensure_transfer_piece_memory(
         ledger: &TransferLedger<Arc<PieceMap>>,
         leases: &mut HashMap<u32, MemoryLease>,
         resources: &ResourceGovernor,
@@ -80,6 +80,112 @@ impl TorrentTask {
             .elapsed()
             .as_nanos()
             .min(u128::from(u64::MAX)) as u64
+    }
+
+    fn ensure_webseed_transfer_connection(&mut self) -> Option<ConnectionId> {
+        if let Some(conn) = self.webseed_transfer_conn {
+            return Some(conn);
+        }
+        let bytes =
+            u64::try_from(TransferLedger::<Arc<PieceMap>>::estimated_connection_state_bytes())
+                .ok()?;
+        let memory_lease = self.resources.try_acquire(MemoryClass::PeerBuffer, bytes)?;
+        let conn = self.transfer_ledger.try_connect(1)?;
+        self.webseed_transfer_conn = Some(conn);
+        self._webseed_transfer_connection_memory_lease = Some(memory_lease);
+        Some(conn)
+    }
+
+    pub(super) fn reserve_webseed_block(&mut self, request: BlockRequest) -> Option<ConnectionId> {
+        let Some(conn) = self.ensure_webseed_transfer_connection() else {
+            self.picker
+                .cancel_request(request.piece as usize, request.begin);
+            return None;
+        };
+        if !Self::ensure_transfer_piece_memory(
+            &self.transfer_ledger,
+            &mut self.transfer_piece_memory_leases,
+            &self.resources,
+            request.piece,
+        ) {
+            self.picker
+                .cancel_request(request.piece as usize, request.begin);
+            self.close_webseed_transfer_connection();
+            return None;
+        }
+        let block = BlockExtent::new(request.piece, request.begin, request.length);
+        if let Err(error) = self
+            .transfer_ledger
+            .reserve(conn, block, &ReserveMode::Exclusive)
+        {
+            self.transfer_ledger.discard_empty_piece(request.piece);
+            if self.transfer_ledger.piece_progress(request.piece).is_none() {
+                self.transfer_piece_memory_leases.remove(&request.piece);
+            }
+            self.picker
+                .cancel_request(request.piece as usize, request.begin);
+            self.close_webseed_transfer_connection();
+            debug!(
+                component = "transfer",
+                operation = "reserve_webseed_block",
+                torrent = %self.info_hash_hex,
+                piece = request.piece,
+                begin = request.begin,
+                result = "deferred",
+                reason = ?error,
+                "shared transfer ledger refused a webseed block"
+            );
+            return None;
+        }
+        Some(conn)
+    }
+
+    pub(super) fn commit_webseed_block(
+        &mut self,
+        conn: ConnectionId,
+        request: BlockRequest,
+    ) -> bool {
+        let block = BlockExtent::new(request.piece, request.begin, request.length);
+        let now = self.transfer_now();
+        let (outcome, actions) = self.transfer_ledger.commit(conn, block, now);
+        self.apply_transfer_actions(actions);
+        outcome == CommitOutcome::OnWire
+    }
+
+    pub(super) fn release_webseed_block(&mut self, conn: ConnectionId, request: BlockRequest) {
+        let block = BlockExtent::new(request.piece, request.begin, request.length);
+        self.transfer_ledger.on_reject(conn, block);
+        self.picker
+            .cancel_request(request.piece as usize, request.begin);
+        self.transfer_ledger.discard_empty_piece(request.piece);
+        if self.transfer_ledger.piece_progress(request.piece).is_none() {
+            self.transfer_piece_memory_leases.remove(&request.piece);
+        }
+    }
+
+    pub(super) fn close_webseed_transfer_connection(&mut self) {
+        let Some(conn) = self.webseed_transfer_conn.take() else {
+            self._webseed_transfer_connection_memory_lease = None;
+            return;
+        };
+        for block in self.transfer_ledger.disconnect(conn) {
+            self.picker
+                .cancel_request(block.piece as usize, block.begin);
+            self.transfer_ledger.discard_empty_piece(block.piece);
+            if self.transfer_ledger.piece_progress(block.piece).is_none() {
+                self.transfer_piece_memory_leases.remove(&block.piece);
+            }
+        }
+        self._webseed_transfer_connection_memory_lease = None;
+    }
+
+    pub(super) async fn handle_webseed_block(&mut self, event: LeasedBlockEvent) {
+        if let Some(conn) = self.webseed_transfer_conn {
+            self.handle_block_with_owner(event, Some(conn), None).await;
+        } else {
+            self.handle_block(event).await;
+        }
+        self.close_webseed_transfer_connection();
     }
 
     pub(super) async fn handle_peer_event(&mut self, event: PeerEvent) {

@@ -602,6 +602,7 @@ impl TorrentTask {
             self.picker.cancel_request(req.piece as usize, req.begin);
             return None;
         }
+        let transfer_conn = self.reserve_webseed_block(req)?;
         let seed_count = self.meta.webseeds.len();
         for attempt in 0..seed_count {
             let idx = (self.webseed_next_index + attempt) % seed_count;
@@ -647,6 +648,11 @@ impl TorrentTask {
             let started = Instant::now();
             match self.fetch_webseed_block(&url, req).await {
                 Ok(data) => {
+                    if !self.commit_webseed_block(transfer_conn, req) {
+                        self.release_webseed_block(transfer_conn, req);
+                        self.close_webseed_transfer_connection();
+                        return None;
+                    }
                     let elapsed = started.elapsed().as_secs_f64().max(0.001);
                     let rate = (data.len() as f64 / elapsed).round() as i64;
                     // Charge the aggregate budget for bytes actually
@@ -722,7 +728,8 @@ impl TorrentTask {
             }
         }
 
-        self.picker.cancel_request(req.piece as usize, req.begin);
+        self.release_webseed_block(transfer_conn, req);
+        self.close_webseed_transfer_connection();
         None
     }
 

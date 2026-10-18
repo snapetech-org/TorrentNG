@@ -2353,10 +2353,15 @@ pub struct TorrentTask {
     peer_disconnect_rx: mpsc::Receiver<PeerEvent>,
     tracker_workers: TrackerWorkers,
     picker: PiecePicker,
-    /// Shared owner of live v1/hybrid requests and received blocks. The
-    /// picker still ranks candidates; this ledger arbitrates cross-peer
-    /// ownership and wire-response lifetimes.
+    /// Shared owner of live v1/hybrid peer requests, webseed blocks, and
+    /// received content. The picker still ranks candidates; this ledger
+    /// arbitrates cross-source ownership and response lifetimes.
     transfer_ledger: TransferLedger<Arc<PieceMap>>,
+    /// A transient ledger connection for the serial webseed path. It is
+    /// admitted only while there are no peer sessions and is released after
+    /// the response is handled or the webseed future is cancelled.
+    webseed_transfer_conn: Option<ConnectionId>,
+    _webseed_transfer_connection_memory_lease: Option<MemoryLease>,
     /// Logical ledger-state reservations are charged with peer request state,
     /// separately from the picker's candidate index and payload assemblies.
     transfer_piece_memory_leases: HashMap<u32, MemoryLease>,
@@ -2635,8 +2640,11 @@ impl TorrentTask {
         }
         let piece_map = build_piece_map(meta.piece_length, &meta.files)
             .expect("metainfo parser rejects invalid piece maps");
-        let transfer_ledger =
-            TransferLedger::new(Arc::clone(&piece_map)).with_max_connections(max_peers);
+        // The serial webseed fallback owns one transient ledger connection in
+        // addition to the configured peer slots. It never raises the live
+        // peer cap, because webseed work runs only while no peer is active.
+        let transfer_ledger = TransferLedger::new(Arc::clone(&piece_map))
+            .with_max_connections(max_peers.saturating_add(1));
         let storage = MountScheduler::new_for_path(
             StorageRootId::new(),
             &save_root,
@@ -2753,6 +2761,8 @@ impl TorrentTask {
             tracker_workers: TrackerWorkers::new(),
             picker,
             transfer_ledger,
+            webseed_transfer_conn: None,
+            _webseed_transfer_connection_memory_lease: None,
             transfer_piece_memory_leases: HashMap::new(),
             transfer_started_at: Instant::now(),
             choker: Choker::new(DEFAULT_MAX_UNCHOKED),
@@ -3422,7 +3432,7 @@ impl TorrentTask {
                     };
                     match outcome {
                         Ok(Some(block)) => {
-                            self.handle_block(block).await;
+                            self.handle_webseed_block(block).await;
                             reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
                         }
                         Ok(None) => {
@@ -3435,11 +3445,13 @@ impl TorrentTask {
                             // branch, so reset only the webseed-side request
                             // state before replaying the command through the
                             // normal actor path.
+                            self.close_webseed_transfer_connection();
                             self.picker.reset_outstanding_requests();
                             pending_command = Some(command);
                             reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
                         }
                         Err(None) => {
+                            self.close_webseed_transfer_connection();
                             warn!(
                                 component = "torrent",
                                 operation = "run",
@@ -12616,6 +12628,8 @@ mod tests {
         let resources = ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default());
         let observed_resources = resources.clone();
         let budget = GlobalNetworkBudget::unlimited();
+        // No peer slots are configured; the serial webseed still needs its
+        // one transient ledger slot to reserve and reconcile this block.
         let mut task = TorrentTask::new(
             meta,
             temp.path().to_path_buf(),
@@ -12626,7 +12640,7 @@ mod tests {
             resources,
             cmd_rx,
             temp.path().join("fastresume"),
-            8,
+            0,
             6881,
             10,
             10,
@@ -12649,11 +12663,38 @@ mod tests {
         task.download_tokens = 100;
         task.download_tokens_updated = Instant::now();
 
+        let abandoned_request = task
+            .picker
+            .pick_from_seed()
+            .expect("fixture should expose a webseed block");
+        let abandoned_conn = task
+            .reserve_webseed_block(abandoned_request)
+            .expect("webseed reservation should enter the transfer ledger");
+        assert_eq!(task.transfer_ledger.in_flight(), 1);
+        task.release_webseed_block(abandoned_conn, abandoned_request);
+        task.close_webseed_transfer_connection();
+        assert_eq!(task.transfer_ledger.in_flight(), 0);
+        assert_eq!(task.transfer_ledger.piece_progress(0), None);
+        assert!(!task.transfer_piece_memory_leases.contains_key(&0));
+
         let event = timeout(Duration::from_secs(5), task.download_next_webseed_block())
             .await
             .expect("webseed fetch should finish")
             .expect("webseed block should be delivered");
         assert_eq!(event.block.data.as_ref(), b"data");
+        let transfer_conn = task
+            .webseed_transfer_conn
+            .expect("webseed work should register a ledger connection");
+        let block = BlockExtent::new(0, 0, 4);
+        assert_eq!(task.transfer_ledger.outstanding(transfer_conn), 1);
+        assert!(matches!(
+            task.transfer_ledger.on_block(transfer_conn, block),
+            ReceiveOutcome::Accepted { .. }
+        ));
+        task.close_webseed_transfer_connection();
+        assert!(!task.transfer_ledger.is_live(transfer_conn));
+        assert_eq!(task.transfer_ledger.in_flight(), 0);
+        assert_eq!(task.transfer_ledger.piece_progress(0), Some((1, 1)));
         assert_eq!(
             observed_resources.snapshot().classes[MemoryClass::WebseedBody as usize].used_bytes,
             4,
