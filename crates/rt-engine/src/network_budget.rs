@@ -13,6 +13,38 @@ use tokio::time::Instant;
 
 const MAX_INITIAL_BURST_BYTES: u64 = 64 * 1024;
 
+/// Convert elapsed time into whole byte tokens without floating-point drift.
+pub(crate) fn refilled_bytes(elapsed: Duration, limit_bytes_per_sec: u64) -> u64 {
+    let refill = elapsed
+        .as_nanos()
+        .saturating_mul(u128::from(limit_bytes_per_sec))
+        / 1_000_000_000;
+    refill.min(u128::from(u64::MAX)) as u64
+}
+
+/// Return the first whole-nanosecond deadline at which `missing_bytes` can be
+/// refilled. Limits are normalized to a positive value before they reach the
+/// rate-limiter paths; the lower bound keeps this helper safe at boundaries.
+pub(crate) fn token_refill_delay(missing_bytes: u64, limit_bytes_per_sec: u64) -> Duration {
+    if missing_bytes == 0 {
+        return Duration::ZERO;
+    }
+    let rate = u128::from(limit_bytes_per_sec.max(1));
+    let wait_nanos = u128::from(missing_bytes)
+        .saturating_mul(1_000_000_000)
+        .saturating_add(rate.saturating_sub(1))
+        / rate;
+    duration_from_nanos(wait_nanos.max(1))
+}
+
+fn duration_from_nanos(nanos: u128) -> Duration {
+    let seconds = nanos / 1_000_000_000;
+    if seconds > u128::from(u64::MAX) {
+        return Duration::MAX;
+    }
+    Duration::new(seconds as u64, (nanos % 1_000_000_000) as u32)
+}
+
 /// Process-wide network admission and traffic budgets.
 ///
 /// The peer semaphore counts live peer/metadata connections. The rate
@@ -253,8 +285,7 @@ impl SharedRateLimiter {
         let now = Instant::now();
         let elapsed = now.saturating_duration_since(state.updated_at);
         state.updated_at = now;
-        let refill = (elapsed.as_nanos().saturating_mul(u128::from(limit)) / 1_000_000_000)
-            .min(u128::from(u64::MAX)) as u64;
+        let refill = refilled_bytes(elapsed, limit);
         let capacity = limit.max(MAX_INITIAL_BURST_BYTES);
         state.tokens = state.tokens.saturating_add(refill).min(capacity);
         Some(state.tokens)
@@ -275,8 +306,7 @@ impl SharedRateLimiter {
                 let now = Instant::now();
                 let elapsed = now.saturating_duration_since(state.updated_at);
                 state.updated_at = now;
-                let refill = (elapsed.as_nanos().saturating_mul(u128::from(limit)) / 1_000_000_000)
-                    .min(u128::from(u64::MAX)) as u64;
+                let refill = refilled_bytes(elapsed, limit);
                 state.tokens = state
                     .tokens
                     .saturating_add(refill)
@@ -297,20 +327,14 @@ impl SharedRateLimiter {
                     Duration::ZERO
                 } else {
                     let missing = requested.saturating_sub(state.tokens);
-                    let wait_nanos = (u128::from(missing)
-                        .saturating_mul(1_000_000_000)
-                        .saturating_add(u128::from(limit.saturating_sub(1)))
-                        / u128::from(limit))
-                    .max(1)
-                    .min(u128::from(u64::MAX)) as u64;
-                    Duration::from_nanos(wait_nanos)
+                    token_refill_delay(missing, limit)
                 }
             };
             if wait.is_zero() {
                 tokio::task::yield_now().await;
             } else {
                 tokio::select! {
-                    _ = tokio::time::sleep(wait.max(Duration::from_millis(1))) => {}
+                    _ = tokio::time::sleep(wait) => {}
                     _ = self.limit_changed.wait_for_change(limit_generation) => {
                         limit_generation = self.limit_changed.generation();
                     }
@@ -345,8 +369,7 @@ impl SharedRateLimiter {
                 let now = Instant::now();
                 let elapsed = now.saturating_duration_since(state.updated_at);
                 state.updated_at = now;
-                let refill = (elapsed.as_nanos().saturating_mul(u128::from(limit)) / 1_000_000_000)
-                    .min(u128::from(u64::MAX)) as u64;
+                let refill = refilled_bytes(elapsed, limit);
                 state.tokens = state
                     .tokens
                     .saturating_add(refill)
@@ -361,13 +384,7 @@ impl SharedRateLimiter {
                     Duration::ZERO
                 } else {
                     let missing = requested.saturating_sub(state.tokens);
-                    let wait_nanos = (u128::from(missing)
-                        .saturating_mul(1_000_000_000)
-                        .saturating_add(u128::from(limit.saturating_sub(1)))
-                        / u128::from(limit))
-                    .max(1)
-                    .min(u128::from(u64::MAX)) as u64;
-                    Duration::from_nanos(wait_nanos)
+                    token_refill_delay(missing, limit)
                 }
             };
 
@@ -381,7 +398,7 @@ impl SharedRateLimiter {
                 }
             } else {
                 tokio::select! {
-                    _ = tokio::time::sleep(wait.max(Duration::from_millis(1))) => {}
+                    _ = tokio::time::sleep(wait) => {}
                     _ = cancellation.wait_for_change(generation) => return false,
                     _ = self.limit_changed.wait_for_change(limit_generation) => {
                         limit_generation = self.limit_changed.generation();
@@ -395,6 +412,14 @@ impl SharedRateLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn token_refill_math_uses_exact_integer_nanosecond_deadlines() {
+        let limit = 2_000_000;
+        assert_eq!(token_refill_delay(1, limit), Duration::from_nanos(500));
+        assert_eq!(refilled_bytes(Duration::from_nanos(499), limit), 0);
+        assert_eq!(refilled_bytes(Duration::from_nanos(500), limit), 1);
+    }
 
     #[tokio::test]
     async fn unlimited_budget_does_not_wait() {

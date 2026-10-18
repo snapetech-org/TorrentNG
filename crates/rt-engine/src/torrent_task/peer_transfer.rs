@@ -1,6 +1,7 @@
 //! Peer protocol events, block scheduling, piece assembly, and transfer accounting.
 //! Torrent state and storage completion remain ordered by the task actor.
 
+use crate::network_budget::{refilled_bytes, token_refill_delay};
 use crate::transfer::window::rate_credit_blocks;
 
 use super::*;
@@ -583,8 +584,7 @@ impl TorrentTask {
         if let (Some(missing), Some(limit)) = (tokens_missing, self.download_limit_bytes_per_sec) {
             // Wake exactly when the missing bytes have refilled, so a rate
             // below one block per second still makes progress.
-            let wait = Duration::from_secs_f64(missing as f64 / limit as f64)
-                .max(Duration::from_millis(1));
+            let wait = token_refill_delay(missing, limit);
             let deadline = Instant::now() + wait;
             self.download_token_wake = Some(
                 self.download_token_wake
@@ -1433,7 +1433,7 @@ impl TorrentTask {
         };
         let elapsed = now.saturating_duration_since(self.download_tokens_updated);
         self.download_tokens_updated = now;
-        let refill = (elapsed.as_secs_f64() * limit as f64).floor() as u64;
+        let refill = refilled_bytes(elapsed, limit);
         self.download_tokens = self
             .download_tokens
             .saturating_add(refill)
