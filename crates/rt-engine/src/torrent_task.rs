@@ -14231,7 +14231,7 @@ mod tests {
         const REQUESTS: usize = MAX_PENDING_UPLOAD_READS + 1;
         const REQUEST_BYTES: u64 = 4;
         let payload = vec![0x5a; REQUESTS * REQUEST_BYTES as usize];
-        std::fs::write(temp.path().join("peer.bin"), payload).unwrap();
+        std::fs::write(temp.path().join("peer.bin"), &payload).unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let peer_addr = listener.local_addr().unwrap();
         let remote = TcpStream::connect(peer_addr).await.unwrap();
