@@ -188,9 +188,10 @@ impl HybridLedger {
     }
 
     pub fn disconnect_v1(&mut self, conn: ConnectionId) -> Vec<BlockExtent> {
-        if self.connection_planes.remove(&conn) != Some(Plane::V1) {
+        if self.plane(conn) != Some(Plane::V1) {
             return Vec::new();
         }
+        self.connection_planes.remove(&conn);
         self.ledger.disconnect(conn)
     }
 
@@ -809,6 +810,20 @@ mod tests {
         assert_ne!(old.generation, new.generation);
         assert_eq!(ledger.plane(old), None);
         assert_eq!(ledger.plane(new), Some(Plane::V2));
+        ledger.check_invariants().unwrap();
+    }
+
+    #[test]
+    fn v1_compat_disconnect_cannot_orphan_v2_ledger_connection() {
+        let mut ledger = HybridLedger::new(geometry());
+        let v2 = ledger.connect(Plane::V2, 8);
+        let block = BlockExtent::new(1, 0, 8 * 1024);
+        ledger.reserve(v2, block, &ReserveMode::Exclusive).unwrap();
+
+        assert!(ledger.disconnect_v1(v2).is_empty());
+        assert_eq!(ledger.plane(v2), Some(Plane::V2));
+        assert_eq!(ledger.outstanding(v2), 1);
+        assert_eq!(ledger.in_flight(), 1);
         ledger.check_invariants().unwrap();
     }
 

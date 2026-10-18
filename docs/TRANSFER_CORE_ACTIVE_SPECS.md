@@ -3802,7 +3802,8 @@ a whole-torrent scan for each requested block.
   shared hybrid ownership when v1 and v2 requests overlap one padded payload
   extent, one winning response canceling the other plane in its own
   coordinates, duplicate suppression after canonicalization, generation-safe
-  plane reuse, malformed response lengths preserving ownership, and
+  plane reuse, legacy v1 disconnect isolation from v2 connections, malformed
+  response lengths preserving ownership, and
   piece-affine reservation/response handling across the two planes,
   ledger failure/expiry cancellation, v1 actor lifecycle, webseed ledger
   ownership, and pure-v2
@@ -3814,7 +3815,8 @@ a whole-torrent scan for each requested block.
   `transfer/sim.rs` now carries 64 seeded traces for piece-affinity exclusion,
   endgame response arbitration, loser cancel projection, padding expansion,
   late responses, canonical assembly, and generation reuse. Live hybrid actor
-  cases remain open.
+  cases remain open. `v1_compat_disconnect_cannot_orphan_v2_ledger_connection`
+  protects a live v2 plane entry from the staged v1 cleanup adapter.
 - **Command or probe:** run transfer-core simulator and engine regression
   suites only during the owner-requested bulk pass.
 - **Executed on exact revision:** no. No build or test commands were run for
