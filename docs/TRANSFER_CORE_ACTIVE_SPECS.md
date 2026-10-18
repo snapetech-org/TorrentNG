@@ -336,7 +336,8 @@ open. Frame-pool charge attribution is present in read-dispatch traces.
   closure; at trace level they also record operation-scoped credit at
   submission and release without a global ID allocation on the untraced hot
   path. Regression sources cover frame-credit separation, rounded frame
-  charge, hash queue credit lifetime, trace lease identity/lifetime, and
+  charge, hash queue credit lifetime with before/after governor snapshots,
+  trace lease identity/lifetime, and
   coalesced credit diagnostics; deterministic before/after assertions across
   the complete storage-frame, queue, and hash pipeline remain open. Crash cuts
   and platform-specific fault qualification remain open.

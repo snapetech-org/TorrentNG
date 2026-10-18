@@ -5339,8 +5339,10 @@ mod tests {
     #[test]
     fn hash_job_owner_retains_queued_credit_until_drop() {
         let counters = Arc::new(StorageCounters::default());
+        let resources = ResourceGovernor::new(Default::default());
         let queued_bytes =
-            QueuedDiskBytes::reserve(counters.clone(), None, 4096, "hash-owner-test").unwrap();
+            QueuedDiskBytes::reserve(counters.clone(), Some(&resources), 4096, "hash-owner-test")
+                .unwrap();
         let owner =
             HashJobCreditOwner::new("sha1_piece", 4096, HashQueueCredit::Owned(queued_bytes));
         owner.trace_submission();
@@ -5353,10 +5355,15 @@ mod tests {
             counters.queued_disk_bytes.load(Ordering::Relaxed),
             queued_disk_charge(4096)
         );
+        assert_eq!(
+            resources.snapshot().total_used_bytes,
+            queued_disk_charge(4096)
+        );
 
         drop(owner);
 
         assert_eq!(counters.queued_disk_bytes.load(Ordering::Relaxed), 0);
+        assert_eq!(resources.snapshot().total_used_bytes, 0);
     }
 
     fn hdd_scheduler() -> MountScheduler {
