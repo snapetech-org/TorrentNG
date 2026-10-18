@@ -499,6 +499,8 @@ struct V2PeerContext {
     storage: MountScheduler,
     resources: ResourceGovernor,
     network_budget: GlobalNetworkBudget,
+    /// Global credit changes also change the advisory request-window budget.
+    download_limit_changes: RateLimitCancellation,
     peer_control: RateLimitCancellation,
     peer_generation: u64,
     transfer_conn: ConnectionId,
@@ -3346,6 +3348,7 @@ impl V2TorrentTask {
             storage: self.storage.clone(),
             resources: self.resources.clone(),
             network_budget: self.network_budget.clone(),
+            download_limit_changes: self.network_budget.download_limit_changes(),
             peer_control,
             peer_generation,
             transfer_conn,
@@ -4279,6 +4282,7 @@ async fn run_v2_peer_protocol(
     let mut keepalive = interval(V2_KEEPALIVE_INTERVAL);
     let mut memory_retry = interval(Duration::from_secs(1));
     let mut last_activity = Instant::now();
+    let mut download_limit_generation = context.download_limit_changes.generation();
 
     let protocol_result = async {
         loop {
@@ -4286,6 +4290,19 @@ async fn run_v2_peer_protocol(
             biased;
             _ = context.peer_control.wait_for_change(shutdown_generation) => {
                 return Ok(());
+            }
+            _ = context.download_limit_changes.wait_for_change(download_limit_generation) => {
+                download_limit_generation = context.download_limit_changes.generation();
+                fill_v2_requests(
+                    &context,
+                    &mut framed,
+                    &state,
+                    &mut outstanding,
+                    &mut assemblies,
+                    transfer_jobs.len(),
+                    &pending_block_completions,
+                    &pending_piece_completions,
+                ).await?;
             }
             command = receive_v2_peer_command(&context) => {
                 let Some(V2PeerCommand::Cancel(block)) = command else {
@@ -6931,6 +6948,7 @@ mod tests {
             .try_connect(V2_REQUEST_WINDOW)
             .unwrap();
         let (transfer_commands, transfer_command_rx) = mpsc::channel(V2_TRANSFER_COMMAND_CAPACITY);
+        let network_budget = GlobalNetworkBudget::new(8, Some(1), Some(1));
         let context = V2PeerContext {
             info_hash: [9; 20],
             peer: "127.0.0.1:6881".parse().unwrap(),
@@ -6940,7 +6958,8 @@ mod tests {
             save_root: temp.path().to_path_buf(),
             storage: storage.clone(),
             resources,
-            network_budget: GlobalNetworkBudget::new(8, Some(1), Some(1)),
+            network_budget: network_budget.clone(),
+            download_limit_changes: network_budget.download_limit_changes(),
             peer_control: RateLimitCancellation::default(),
             peer_generation: 0,
             transfer_conn,

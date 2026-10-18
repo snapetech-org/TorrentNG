@@ -1349,10 +1349,11 @@ cancellation/refund, and shared source scheduling.
   updates to the new capacity, and start empty when changing from unlimited to
   limited at runtime. Initial torrent construction initializes both buckets
   from the first persisted rates before peer loops start, retaining their
-  normal startup bursts. Per-torrent and process-wide download-limit changes
-  promptly recalculate active peer request windows. This preserves the
-  no-new-burst rule during the reversible migration, but does not provide the
-  `RateTree`'s hierarchical peer fairness.
+  normal startup bursts. Per-torrent download-limit changes promptly
+  recalculate v1/hybrid peer requests; process-wide changes promptly
+  recalculate active v1/hybrid and pure-v2 peer request windows. This
+  preserves the no-new-burst rule during the reversible migration, but does
+  not provide the `RateTree`'s hierarchical peer fairness.
 - **Target owner:** one process-shared tree owns global and per-torrent byte
   credit, peer fairness progress, unsettled grant/refund accounting, and the
   next-wakeup index.
@@ -1418,7 +1419,8 @@ cancellation/refund, and shared source scheduling.
   with zero tokens, and a fresh torrent starts with its configured initial
   bucket capacity; active download peers recalculate their request budget
   after per-torrent and process-wide limit changes; a generation-signal source
-  checks that global limit updates reach actor subscribers.
+  checks that global limit updates reach actor subscribers. Both v1/hybrid and
+  pure-v2 peer loops subscribe to the process-wide change signal.
 - **Command or probe to run:** pure scheduler regressions and the engine rate
   integration suites during the requested bulk pass.
 - **Expected result:** deterministic grants conserve each configured budget,
