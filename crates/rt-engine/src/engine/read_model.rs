@@ -91,7 +91,7 @@ impl Engine {
             self.runtime
                 .torrent_chans
                 .iter()
-                .map(|(info_hash, tx)| (info_hash.clone(), tx.clone()))
+                .map(|(info_hash, tx)| (info_hash.clone().into_info_hash(), tx.clone()))
                 .collect()
         } else {
             warn!(
@@ -168,8 +168,8 @@ impl Engine {
                 .torrent_chans
                 .keys()
                 .filter_map(|info_hash| {
-                    reg.get(info_hash)
-                        .map(|entry| (info_hash.clone(), entry.state))
+                    let info_hash = info_hash.clone().into_info_hash();
+                    reg.get(&info_hash).map(|entry| (info_hash, entry.state))
                 })
                 .collect::<HashMap<_, _>>();
             (registry_stats, states)
@@ -275,7 +275,7 @@ impl Engine {
             .runtime
             .torrent_chans
             .iter()
-            .map(|(info_hash, tx)| (info_hash.clone(), tx.clone()))
+            .map(|(info_hash, tx)| (info_hash.clone().into_info_hash(), tx.clone()))
             .collect::<Vec<_>>();
         let runtime_results = timeout(
             ENGINE_STATS_TASK_QUERY_DEADLINE,

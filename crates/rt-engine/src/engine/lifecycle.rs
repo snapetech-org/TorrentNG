@@ -945,15 +945,14 @@ impl Engine {
         task.attach_torrent_metadata_memory_lease(torrent_metadata_memory_lease);
         task.attach_crash_safety(Arc::clone(&self.services.crash_safety));
         let handle = spawn_supervised(self.runtime.task_exits.guard(&info_hash_hex), task.run());
-        let tier_key = info_hash_hex.clone();
         self.runtime
             .torrent_chans
-            .insert(info_hash_hex.clone(), cmd_tx.clone());
-        self.runtime.torrent_tasks.insert(info_hash_hex, handle);
+            .insert(&info_hash_hex, cmd_tx.clone());
+        self.runtime.torrent_tasks.insert(&info_hash_hex, handle);
         let now = Instant::now();
-        self.runtime.tier_last_active.insert(tier_key.clone(), now);
+        self.runtime.tier_last_active.insert(&info_hash_hex, now);
         self.runtime.tier_controller.apply_input(
-            tier_key,
+            info_hash_hex,
             TierInput {
                 state: initial_state,
                 connected_peers: 0,
@@ -1060,15 +1059,14 @@ impl Engine {
         .await;
         task.attach_crash_safety(Arc::clone(&self.services.crash_safety));
         let handle = spawn_supervised(self.runtime.task_exits.guard(&info_hash_hex), task.run());
-        let tier_key = info_hash_hex.clone();
         self.runtime
             .torrent_chans
-            .insert(info_hash_hex.clone(), cmd_tx.clone());
-        self.runtime.torrent_tasks.insert(info_hash_hex, handle);
+            .insert(&info_hash_hex, cmd_tx.clone());
+        self.runtime.torrent_tasks.insert(&info_hash_hex, handle);
         let now = Instant::now();
-        self.runtime.tier_last_active.insert(tier_key.clone(), now);
+        self.runtime.tier_last_active.insert(&info_hash_hex, now);
         self.runtime.tier_controller.apply_input(
-            tier_key,
+            info_hash_hex,
             TierInput {
                 state: initial_state,
                 connected_peers: 0,
@@ -1113,15 +1111,14 @@ impl Engine {
                 self.services.network_budget.clone(),
             ),
         );
-        let tier_key = info_hash_hex.clone();
         self.runtime
             .torrent_chans
-            .insert(info_hash_hex.clone(), cmd_tx.clone());
-        self.runtime.torrent_tasks.insert(info_hash_hex, handle);
+            .insert(&info_hash_hex, cmd_tx.clone());
+        self.runtime.torrent_tasks.insert(&info_hash_hex, handle);
         let now = Instant::now();
-        self.runtime.tier_last_active.insert(tier_key.clone(), now);
+        self.runtime.tier_last_active.insert(&info_hash_hex, now);
         self.runtime.tier_controller.apply_input(
-            tier_key,
+            info_hash_hex,
             TierInput {
                 state: initial_state,
                 connected_peers: 0,
@@ -1753,7 +1750,7 @@ impl Engine {
 
         let mut tasks = TorrentTaskShutdownGuard {
             tasks: std::mem::take(&mut self.runtime.torrent_tasks)
-                .into_iter()
+                .into_entries()
                 .collect(),
         };
         let join_budget = deadline
@@ -2061,7 +2058,7 @@ impl Engine {
             let connected = runtime.connected_peers as usize;
             let outstanding = runtime.outstanding_requests as usize;
             if connected > 0 || outstanding > 0 {
-                self.runtime.tier_last_active.insert(info_hash.clone(), now);
+                self.runtime.tier_last_active.insert(&info_hash, now);
             }
             let decision = self.runtime.tier_controller.apply_input(
                 info_hash.clone(),
@@ -2450,7 +2447,7 @@ impl Engine {
         }
 
         let now = Instant::now();
-        self.runtime.tier_last_active.insert(info_hash.clone(), now);
+        self.runtime.tier_last_active.insert(&info_hash, now);
         let state = self
             .registry
             .read()

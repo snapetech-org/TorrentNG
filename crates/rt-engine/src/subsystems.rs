@@ -12,7 +12,8 @@
 //! separately supervised actor or injected dependency—mechanical rather than
 //! another rewrite of the command protocol.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{hash_map, HashMap, HashSet};
+use std::ops::Index;
 use std::time::Instant;
 
 use tokio::sync::mpsc;
@@ -27,13 +28,13 @@ use crate::torrent_task::TorrentCmd;
 use rt_metrics::ResourceGovernor;
 
 pub(super) struct EngineRuntimeState {
-    pub(super) torrent_chans: HashMap<String, mpsc::Sender<TorrentCmd>>,
-    pub(super) torrent_tasks: HashMap<String, JoinHandle<()>>,
+    pub(super) torrent_chans: RuntimeTorrentMap<mpsc::Sender<TorrentCmd>>,
+    pub(super) torrent_tasks: RuntimeTorrentMap<JoinHandle<()>>,
     pub(super) tier_controller: TierController<String>,
-    pub(super) tier_last_active: HashMap<String, Instant>,
+    pub(super) tier_last_active: RuntimeTorrentMap<Instant>,
     pub(super) pending_torrent_adds: HashSet<String>,
     pub(super) pending_torrent_deletes: HashSet<String>,
-    pub(super) pending_torrent_promotions: HashMap<String, Vec<TorrentPromotionAction>>,
+    pub(super) pending_torrent_promotions: RuntimeTorrentMap<Vec<TorrentPromotionAction>>,
     /// Exit notifications from supervised torrent actors, so reaping does not
     /// have to scan every active task handle on each engine command.
     pub(super) task_exits: TaskExits,
@@ -41,21 +42,20 @@ pub(super) struct EngineRuntimeState {
 
 /// Queue of info hashes whose actor future has ended, including by panic.
 pub(super) struct TaskExits {
-    tx: mpsc::UnboundedSender<TaskExitId>,
-    rx: mpsc::UnboundedReceiver<TaskExitId>,
+    tx: mpsc::UnboundedSender<RuntimeTorrentKey>,
+    rx: mpsc::UnboundedReceiver<RuntimeTorrentKey>,
 }
 
-/// Completion identity kept inline while an actor runs and while its exit is
-/// queued. Runtime APIs still use hex strings, but task guards need not retain
-/// another heap-backed copy of a canonical v1 or v2 hash.
-#[derive(Debug, PartialEq, Eq)]
-pub(super) enum TaskExitId {
+/// Canonical runtime identity kept inline instead of as a heap-backed hex
+/// string. Noncanonical keys remain exact strings for placeholder/test paths.
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub(super) enum RuntimeTorrentKey {
     Compact { bytes: [u8; 32], byte_len: u8 },
     Text(String),
 }
 
-impl TaskExitId {
-    fn from_info_hash(info_hash: &str) -> Self {
+impl RuntimeTorrentKey {
+    pub(super) fn from_info_hash(info_hash: &str) -> Self {
         let byte_len = match info_hash.len() {
             40 => 20,
             64 => 32,
@@ -91,6 +91,116 @@ impl TaskExitId {
     }
 }
 
+/// Hash maps for engine-owned torrent state. Lookups keep accepting `&str`
+/// at the actor/API boundary, while canonical v1/v2 keys live inline as hash
+/// bytes and avoid one heap allocation per map entry.
+pub(super) struct RuntimeTorrentMap<V> {
+    entries: HashMap<RuntimeTorrentKey, V>,
+}
+
+impl<V> Default for RuntimeTorrentMap<V> {
+    fn default() -> Self {
+        Self {
+            entries: HashMap::new(),
+        }
+    }
+}
+
+impl<V> RuntimeTorrentMap<V> {
+    pub(super) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(super) fn insert<K: AsRef<str>>(&mut self, info_hash: K, value: V) -> Option<V> {
+        self.entries
+            .insert(RuntimeTorrentKey::from_info_hash(info_hash.as_ref()), value)
+    }
+
+    pub(super) fn get(&self, info_hash: &str) -> Option<&V> {
+        self.entries
+            .get(&RuntimeTorrentKey::from_info_hash(info_hash))
+    }
+
+    pub(super) fn get_mut(&mut self, info_hash: &str) -> Option<&mut V> {
+        self.entries
+            .get_mut(&RuntimeTorrentKey::from_info_hash(info_hash))
+    }
+
+    pub(super) fn contains_key(&self, info_hash: &str) -> bool {
+        self.entries
+            .contains_key(&RuntimeTorrentKey::from_info_hash(info_hash))
+    }
+
+    pub(super) fn remove(&mut self, info_hash: &str) -> Option<V> {
+        self.entries
+            .remove(&RuntimeTorrentKey::from_info_hash(info_hash))
+    }
+
+    pub(super) fn entry<K: AsRef<str>>(
+        &mut self,
+        info_hash: K,
+    ) -> hash_map::Entry<'_, RuntimeTorrentKey, V> {
+        self.entries
+            .entry(RuntimeTorrentKey::from_info_hash(info_hash.as_ref()))
+    }
+
+    pub(super) fn values(&self) -> hash_map::Values<'_, RuntimeTorrentKey, V> {
+        self.entries.values()
+    }
+
+    pub(super) fn into_values(self) -> hash_map::IntoValues<RuntimeTorrentKey, V> {
+        self.entries.into_values()
+    }
+
+    pub(super) fn iter(&self) -> hash_map::Iter<'_, RuntimeTorrentKey, V> {
+        self.entries.iter()
+    }
+
+    pub(super) fn keys(&self) -> hash_map::Keys<'_, RuntimeTorrentKey, V> {
+        self.entries.keys()
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    pub(super) fn into_entries(self) -> impl Iterator<Item = (String, V)> {
+        self.entries
+            .into_iter()
+            .map(|(key, value)| (key.into_info_hash(), value))
+    }
+}
+
+impl<K, V, const N: usize> From<[(K, V); N]> for RuntimeTorrentMap<V>
+where
+    K: AsRef<str>,
+{
+    fn from(entries: [(K, V); N]) -> Self {
+        let mut map = Self::new();
+        for (info_hash, value) in entries {
+            map.insert(info_hash, value);
+        }
+        map
+    }
+}
+
+impl<V> Index<&String> for RuntimeTorrentMap<V> {
+    type Output = V;
+
+    fn index(&self, info_hash: &String) -> &Self::Output {
+        self.get(info_hash)
+            .expect("runtime torrent map key must exist")
+    }
+}
+
 fn decode_hex_nibble(byte: u8) -> Option<u8> {
     match byte {
         b'0'..=b'9' => Some(byte - b'0'),
@@ -111,13 +221,13 @@ impl TaskExits {
     /// unwinding panic) queues the hash.
     pub(super) fn guard(&self, info_hash: &str) -> TaskExitGuard {
         TaskExitGuard {
-            info_hash: TaskExitId::from_info_hash(info_hash),
+            info_hash: RuntimeTorrentKey::from_info_hash(info_hash),
             tx: self.tx.clone(),
         }
     }
 
     /// Up to `limit` queued exits; O(exits), independent of active tasks.
-    pub(super) fn drain(&mut self, limit: usize) -> Vec<TaskExitId> {
+    pub(super) fn drain(&mut self, limit: usize) -> Vec<RuntimeTorrentKey> {
         let mut exits = Vec::new();
         while exits.len() < limit {
             match self.rx.try_recv() {
@@ -130,13 +240,14 @@ impl TaskExits {
 }
 
 pub(super) struct TaskExitGuard {
-    info_hash: TaskExitId,
-    tx: mpsc::UnboundedSender<TaskExitId>,
+    info_hash: RuntimeTorrentKey,
+    tx: mpsc::UnboundedSender<RuntimeTorrentKey>,
 }
 
 impl Drop for TaskExitGuard {
     fn drop(&mut self) {
-        let info_hash = std::mem::replace(&mut self.info_hash, TaskExitId::Text(String::new()));
+        let info_hash =
+            std::mem::replace(&mut self.info_hash, RuntimeTorrentKey::Text(String::new()));
         let _ = self.tx.send(info_hash);
     }
 }
@@ -155,13 +266,13 @@ where
 impl EngineRuntimeState {
     pub(super) fn new(tier_controller: TierController<String>) -> Self {
         Self {
-            torrent_chans: HashMap::new(),
-            torrent_tasks: HashMap::new(),
+            torrent_chans: RuntimeTorrentMap::new(),
+            torrent_tasks: RuntimeTorrentMap::new(),
             tier_controller,
-            tier_last_active: HashMap::new(),
+            tier_last_active: RuntimeTorrentMap::new(),
             pending_torrent_adds: HashSet::new(),
             pending_torrent_deletes: HashSet::new(),
-            pending_torrent_promotions: HashMap::new(),
+            pending_torrent_promotions: RuntimeTorrentMap::new(),
             task_exits: TaskExits::default(),
         }
     }
@@ -228,7 +339,7 @@ mod task_exit_tests {
         let mut reported = exits
             .drain(10)
             .into_iter()
-            .map(TaskExitId::into_info_hash)
+            .map(RuntimeTorrentKey::into_info_hash)
             .collect::<Vec<_>>();
         reported.sort();
         assert_eq!(reported, ["boom", "ok"]);
@@ -248,14 +359,37 @@ mod task_exit_tests {
     #[test]
     fn compact_exit_ids_roundtrip_v1_v2_and_keep_non_hash_test_keys() {
         for hash in ["01".repeat(20), "ab".repeat(32)] {
-            let id = TaskExitId::from_info_hash(&hash);
-            assert!(matches!(&id, TaskExitId::Compact { .. }));
+            let id = RuntimeTorrentKey::from_info_hash(&hash);
+            assert!(matches!(&id, RuntimeTorrentKey::Compact { .. }));
             assert_eq!(id.into_info_hash(), hash);
         }
 
         let text = "test-hash";
-        let id = TaskExitId::from_info_hash(text);
-        assert!(matches!(&id, TaskExitId::Text(_)));
+        let id = RuntimeTorrentKey::from_info_hash(text);
+        assert!(matches!(&id, RuntimeTorrentKey::Text(_)));
         assert_eq!(id.into_info_hash(), text);
+    }
+
+    #[test]
+    fn runtime_torrent_maps_keep_canonical_keys_inline_and_accept_hash_strings() {
+        let mut map = RuntimeTorrentMap::new();
+        for (hash, byte_len) in [("cd".repeat(20), 20), ("ab".repeat(32), 32)] {
+            map.insert(hash.as_str(), byte_len);
+            assert_eq!(map.get(&hash), Some(&byte_len));
+            assert!(matches!(
+                map.entries.keys().next(),
+                Some(RuntimeTorrentKey::Compact {
+                    byte_len: stored_len,
+                    ..
+                }) if usize::from(*stored_len) == byte_len
+            ));
+            assert_eq!(map.remove(&hash), Some(byte_len));
+        }
+        assert!(map.is_empty());
+
+        let placeholder = "not-a-canonical-hash";
+        map.insert(placeholder, 11);
+        assert_eq!(map.get(placeholder), Some(&11));
+        assert_eq!(map.get("NOT-A-CANONICAL-HASH"), None);
     }
 }

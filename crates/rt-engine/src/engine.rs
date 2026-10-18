@@ -1932,11 +1932,14 @@ async fn send_torrent_shutdowns_until_deadline(
 }
 
 fn finished_torrent_hashes_limited(
-    tasks: &HashMap<String, tokio::task::JoinHandle<()>>,
+    tasks: &subsystems::RuntimeTorrentMap<tokio::task::JoinHandle<()>>,
 ) -> Vec<String> {
     tasks
         .iter()
-        .filter_map(|(info_hash, task)| task.is_finished().then_some(info_hash.clone()))
+        .filter_map(|(info_hash, task)| {
+            task.is_finished()
+                .then(|| info_hash.clone().into_info_hash())
+        })
         .take(MAX_TORRENT_REAPS_PER_TICK)
         .collect()
 }
@@ -4176,7 +4179,7 @@ impl Engine {
                     .runtime
                     .torrent_chans
                     .iter()
-                    .map(|(info_hash, tx)| (info_hash.clone(), tx.clone()))
+                    .map(|(info_hash, tx)| (info_hash.clone().into_info_hash(), tx.clone()))
                     .collect::<Vec<_>>();
                 spawn_engine_query(
                     reply,
@@ -6542,10 +6545,7 @@ impl Engine {
             return TorrentPromotionBegin::Rejected;
         }
 
-        let should_start_worker = match self
-            .runtime
-            .pending_torrent_promotions
-            .entry(info_hash_hex.to_owned())
+        let should_start_worker = match self.runtime.pending_torrent_promotions.entry(info_hash_hex)
         {
             std::collections::hash_map::Entry::Vacant(entry) => {
                 entry.insert(vec![action]);
@@ -6931,9 +6931,7 @@ impl Engine {
                     );
                 } else {
                     let now = Instant::now();
-                    self.runtime
-                        .tier_last_active
-                        .insert(info_hash.to_owned(), now);
+                    self.runtime.tier_last_active.insert(info_hash, now);
                 }
             }
             TorrentPromotionAction::TrackerReannounce => {
@@ -6968,7 +6966,7 @@ impl Engine {
                 } else {
                     self.runtime
                         .tier_last_active
-                        .insert(info_hash.to_owned(), Instant::now());
+                        .insert(info_hash, Instant::now());
                     info!(
                         component = "tiering",
                         operation = "promote_tracker_due",
@@ -7087,7 +7085,7 @@ impl Engine {
 
     async fn fail_all_pending_torrent_promotions(&mut self) {
         let pending = std::mem::take(&mut self.runtime.pending_torrent_promotions);
-        for (info_hash, actions) in pending {
+        for (info_hash, actions) in pending.into_entries() {
             self.fail_torrent_promotion_actions(
                 &info_hash,
                 actions,
@@ -7334,6 +7332,7 @@ impl Engine {
                 .torrent_chans
                 .keys()
                 .cloned()
+                .map(subsystems::RuntimeTorrentKey::into_info_hash)
                 .collect::<Vec<_>>()
         };
         let db = self.db_executor();
@@ -12725,14 +12724,14 @@ mod tests {
             cmd_rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::from([(info_hash.clone(), task_tx)]),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::from([(info_hash.clone(), task_tx)]),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -12798,14 +12797,14 @@ mod tests {
             cmd_rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -12979,14 +12978,14 @@ mod tests {
             cmd_rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -13114,14 +13113,14 @@ mod tests {
             cmd_rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: Some(dht_tx),
@@ -13200,14 +13199,14 @@ mod tests {
             cmd_rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -13358,14 +13357,20 @@ mod tests {
             cmd_rx: engine_rx,
             cmd_tx: engine_tx.clone(),
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::from([(info_hash.clone(), torrent_tx)]),
-                torrent_tasks: HashMap::from([(info_hash.clone(), torrent_task)]),
+                torrent_chans: subsystems::RuntimeTorrentMap::from([(
+                    info_hash.clone(),
+                    torrent_tx,
+                )]),
+                torrent_tasks: subsystems::RuntimeTorrentMap::from([(
+                    info_hash.clone(),
+                    torrent_task,
+                )]),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -13519,14 +13524,14 @@ mod tests {
             cmd_rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -13675,14 +13680,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(8).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -13758,14 +13763,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::from([info_hash.clone()]),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -13839,14 +13844,17 @@ mod tests {
             cmd_rx: engine_rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::from([(info_hash.clone(), torrent_tx)]),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::from([(
+                    info_hash.clone(),
+                    torrent_tx,
+                )]),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::from([info_hash.clone()]),
-                pending_torrent_promotions: HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -13978,14 +13986,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::from([info_hash.clone()]),
-                pending_torrent_promotions: HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -14078,14 +14086,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -14578,14 +14586,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -14683,14 +14691,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -15131,14 +15139,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -15208,14 +15216,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -15303,14 +15311,14 @@ mod tests {
             cmd_rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -15365,14 +15373,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -15555,14 +15563,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -15786,14 +15794,14 @@ mod tests {
             cmd_rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -15873,14 +15881,14 @@ mod tests {
             cmd_rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -15947,14 +15955,14 @@ mod tests {
             cmd_rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -16097,14 +16105,14 @@ mod tests {
             cmd_rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: Some(dht_tx),
@@ -16249,14 +16257,17 @@ mod tests {
             cmd_rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::from([(info_hash.clone(), task_tx.clone())]),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::from([(
+                    info_hash.clone(),
+                    task_tx.clone(),
+                )]),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: Some(dht_tx.clone()),
@@ -16493,14 +16504,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -16541,14 +16552,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -16586,7 +16597,7 @@ mod tests {
         let (_tx, rx) = mpsc::channel(1);
         let (torrent_tx, mut torrent_rx) = mpsc::channel(4);
         let info_hash = "c".repeat(40);
-        let mut torrent_chans = HashMap::new();
+        let mut torrent_chans = subsystems::RuntimeTorrentMap::new();
         torrent_chans.insert(info_hash.clone(), torrent_tx);
         let mut engine = Engine {
             config: Arc::new(Config::default()),
@@ -16596,13 +16607,13 @@ mod tests {
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans,
-                torrent_tasks: HashMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -16735,14 +16746,14 @@ mod tests {
             cmd_rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -16796,14 +16807,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -16873,14 +16884,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -16964,7 +16975,7 @@ mod tests {
                 "/tmp".to_owned(),
             ))
             .unwrap();
-        let mut torrent_chans = HashMap::new();
+        let mut torrent_chans = subsystems::RuntimeTorrentMap::new();
         torrent_chans.insert(info_hash.clone(), torrent_tx);
         let mut engine = Engine {
             config: Arc::new(Config::default()),
@@ -16974,13 +16985,13 @@ mod tests {
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans,
-                torrent_tasks: HashMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -17016,14 +17027,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -17071,14 +17082,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -17114,14 +17125,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -17155,7 +17166,7 @@ mod tests {
         rt_db::migrate(&conn).unwrap();
         let (_tx, rx) = mpsc::channel(1);
         let (torrent_tx, mut torrent_rx) = mpsc::channel(4);
-        let mut torrent_chans = HashMap::new();
+        let mut torrent_chans = subsystems::RuntimeTorrentMap::new();
         torrent_chans.insert("a".repeat(40), torrent_tx);
         let mut engine = Engine {
             config: Arc::new(Config::default()),
@@ -17165,13 +17176,13 @@ mod tests {
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans,
-                torrent_tasks: HashMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -17212,7 +17223,7 @@ mod tests {
         let (_tx, rx) = mpsc::channel(1);
         let (torrent_tx, mut torrent_rx) = mpsc::channel(1);
         torrent_tx.try_send(TorrentCmd::Reannounce).unwrap();
-        let mut torrent_chans = HashMap::new();
+        let mut torrent_chans = subsystems::RuntimeTorrentMap::new();
         torrent_chans.insert("a".repeat(40), torrent_tx);
         let mut engine = Engine {
             config: Arc::new(Config::default()),
@@ -17222,13 +17233,13 @@ mod tests {
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans,
-                torrent_tasks: HashMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -17303,14 +17314,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -17398,14 +17409,17 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::from([(info_hash.clone(), reload_tx)]),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::from([(
+                    info_hash.clone(),
+                    reload_tx,
+                )]),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -17483,7 +17497,7 @@ mod tests {
                 other => panic!("unexpected torrent command: {other:?}"),
             }
         });
-        let mut torrent_chans = HashMap::new();
+        let mut torrent_chans = subsystems::RuntimeTorrentMap::new();
         torrent_chans.insert(info_hash.clone(), torrent_tx);
 
         let engine = Engine {
@@ -17494,13 +17508,13 @@ mod tests {
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans,
-                torrent_tasks: HashMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -17566,7 +17580,7 @@ mod tests {
                 other => panic!("unexpected torrent command: {other:?}"),
             }
         });
-        let mut torrent_chans = HashMap::new();
+        let mut torrent_chans = subsystems::RuntimeTorrentMap::new();
         torrent_chans.insert(info_hash.clone(), torrent_tx);
 
         let engine = Engine {
@@ -17577,13 +17591,13 @@ mod tests {
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans,
-                torrent_tasks: HashMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -17652,7 +17666,7 @@ mod tests {
                 });
             }
         });
-        let mut torrent_chans = HashMap::new();
+        let mut torrent_chans = subsystems::RuntimeTorrentMap::new();
         torrent_chans.insert("e".repeat(40), runtime_tx);
         tokio::task::yield_now().await;
 
@@ -17664,13 +17678,13 @@ mod tests {
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans,
-                torrent_tasks: HashMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -17726,7 +17740,7 @@ mod tests {
         registry.write().await.add(entry).unwrap();
         let (_tx, rx) = mpsc::channel(1);
         let (torrent_tx, mut torrent_rx) = mpsc::channel(1);
-        let mut torrent_chans = HashMap::new();
+        let mut torrent_chans = subsystems::RuntimeTorrentMap::new();
         torrent_chans.insert(info_hash.clone(), torrent_tx);
         let engine = Engine {
             config: Arc::new(Config::default()),
@@ -17736,13 +17750,13 @@ mod tests {
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans,
-                torrent_tasks: HashMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -17791,9 +17805,9 @@ mod tests {
         let (torrent_tx, mut torrent_rx) = mpsc::channel(1);
         let (seen_tx, seen_rx) = tokio::sync::oneshot::channel();
         let info_hash = "f".repeat(40);
-        let mut torrent_chans = HashMap::new();
+        let mut torrent_chans = subsystems::RuntimeTorrentMap::new();
         torrent_chans.insert(info_hash.clone(), torrent_tx);
-        let mut torrent_tasks = HashMap::new();
+        let mut torrent_tasks = subsystems::RuntimeTorrentMap::new();
         torrent_tasks.insert(
             info_hash,
             tokio::spawn(async move {
@@ -17812,10 +17826,10 @@ mod tests {
                 torrent_chans,
                 torrent_tasks,
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
             },
             services: subsystems::EngineSubsystems {
@@ -17846,9 +17860,9 @@ mod tests {
         torrent_tx.try_send(TorrentCmd::Reannounce).unwrap();
         let (seen_tx, seen_rx) = tokio::sync::oneshot::channel();
         let info_hash = "e".repeat(40);
-        let mut torrent_chans = HashMap::new();
+        let mut torrent_chans = subsystems::RuntimeTorrentMap::new();
         torrent_chans.insert(info_hash.clone(), torrent_tx);
-        let mut torrent_tasks = HashMap::new();
+        let mut torrent_tasks = subsystems::RuntimeTorrentMap::new();
         torrent_tasks.insert(
             info_hash,
             tokio::spawn(async move {
@@ -17873,10 +17887,10 @@ mod tests {
                 torrent_chans,
                 torrent_tasks,
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
             },
             services: subsystems::EngineSubsystems {
@@ -17929,10 +17943,10 @@ mod tests {
         });
         let first_hash = "1".repeat(40);
         let second_hash = "2".repeat(40);
-        let mut torrent_chans = HashMap::new();
+        let mut torrent_chans = subsystems::RuntimeTorrentMap::new();
         torrent_chans.insert(first_hash.clone(), first_tx);
         torrent_chans.insert(second_hash.clone(), second_tx);
-        let mut torrent_tasks = HashMap::new();
+        let mut torrent_tasks = subsystems::RuntimeTorrentMap::new();
         torrent_tasks.insert(first_hash.clone(), first_task);
         torrent_tasks.insert(second_hash.clone(), second_task);
         let mut engine = Engine {
@@ -17945,10 +17959,10 @@ mod tests {
                 torrent_chans,
                 torrent_tasks,
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
             },
             services: subsystems::EngineSubsystems {
@@ -18017,14 +18031,14 @@ mod tests {
             cmd_rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -18160,14 +18174,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -18336,14 +18350,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -18384,14 +18398,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -18719,14 +18733,17 @@ mod tests {
             cmd_rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::from([(info_hash.clone(), torrent_tx.clone())]),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::from([(
+                    info_hash.clone(),
+                    torrent_tx.clone(),
+                )]),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -18947,14 +18964,14 @@ mod tests {
             cmd_rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -19088,14 +19105,14 @@ mod tests {
             cmd_rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -19180,14 +19197,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -19228,14 +19245,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -19357,7 +19374,7 @@ mod tests {
         // failure instead of accidentally succeeding through an empty slot.
         let (torrent_tx, mut torrent_rx) = mpsc::channel(1);
         torrent_tx.try_send(TorrentCmd::Shutdown).unwrap();
-        let mut torrent_chans = HashMap::new();
+        let mut torrent_chans = subsystems::RuntimeTorrentMap::new();
         torrent_chans.insert(info_hash.clone(), torrent_tx);
         let (cmd_tx, cmd_rx) = mpsc::channel(1);
         let db = Arc::new(Mutex::new(conn));
@@ -19369,13 +19386,13 @@ mod tests {
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans,
-                torrent_tasks: HashMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -19494,14 +19511,17 @@ mod tests {
             cmd_rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::from([(info_hash.clone(), torrent_tx)]),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::from([(
+                    info_hash.clone(),
+                    torrent_tx,
+                )]),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -19617,14 +19637,14 @@ mod tests {
             cmd_rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -19726,14 +19746,14 @@ mod tests {
             cmd_rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -19881,14 +19901,14 @@ mod tests {
             cmd_rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::from([info_hash.clone()]),
-                pending_torrent_promotions: HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -19987,14 +20007,14 @@ mod tests {
             cmd_rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -20070,14 +20090,14 @@ mod tests {
             cmd_rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -20219,14 +20239,14 @@ mod tests {
             cmd_rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -20359,14 +20379,14 @@ mod tests {
             cmd_rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -20595,14 +20615,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -20737,14 +20757,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -20832,14 +20852,14 @@ mod tests {
             cmd_rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: Some(dht_tx),
@@ -20950,14 +20970,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -21038,14 +21058,14 @@ mod tests {
             cmd_rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -21186,14 +21206,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -21286,14 +21306,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -21364,7 +21384,7 @@ mod tests {
                 });
             }
         });
-        let mut torrent_chans = HashMap::new();
+        let mut torrent_chans = subsystems::RuntimeTorrentMap::new();
         torrent_chans.insert(info_hash.clone(), torrent_tx);
         let (dht_tx, mut dht_rx) = mpsc::channel(1);
         tokio::spawn(async move {
@@ -21389,13 +21409,13 @@ mod tests {
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
                 torrent_chans,
-                torrent_tasks: HashMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: Some(dht_tx),
@@ -21541,14 +21561,14 @@ mod tests {
             cmd_rx,
             cmd_tx,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -21685,14 +21705,14 @@ mod tests {
             cmd_rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: Some(dht_tx),
@@ -21777,9 +21797,9 @@ mod tests {
             panic!("injected torrent task failure");
         });
         tokio::task::yield_now().await;
-        let mut torrent_chans = HashMap::new();
+        let mut torrent_chans = subsystems::RuntimeTorrentMap::new();
         torrent_chans.insert(info_hash.clone(), torrent_tx);
-        let mut torrent_tasks = HashMap::new();
+        let mut torrent_tasks = subsystems::RuntimeTorrentMap::new();
         torrent_tasks.insert(info_hash.clone(), failed_task);
         let mut engine = Engine {
             config: Arc::new(Config::default()),
@@ -21791,10 +21811,10 @@ mod tests {
                 torrent_chans,
                 torrent_tasks,
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
             },
             services: subsystems::EngineSubsystems {
@@ -21856,7 +21876,7 @@ mod tests {
 
     #[tokio::test]
     async fn finished_torrent_reaping_is_bounded_per_pass() {
-        let mut tasks = HashMap::new();
+        let mut tasks = subsystems::RuntimeTorrentMap::new();
         for index in 0..=MAX_TORRENT_REAPS_PER_TICK {
             tasks.insert(format!("{index:040x}"), tokio::spawn(async {}));
         }
@@ -21887,14 +21907,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
@@ -21967,14 +21987,14 @@ mod tests {
             cmd_rx: rx,
             cmd_tx: mpsc::channel(1).0,
             runtime: subsystems::EngineRuntimeState {
-                torrent_chans: HashMap::new(),
-                torrent_tasks: HashMap::new(),
+                torrent_chans: subsystems::RuntimeTorrentMap::new(),
+                torrent_tasks: subsystems::RuntimeTorrentMap::new(),
                 task_exits: Default::default(),
                 tier_controller: TierController::new(TierPolicy::default()),
-                tier_last_active: HashMap::new(),
+                tier_last_active: subsystems::RuntimeTorrentMap::new(),
                 pending_torrent_adds: HashSet::new(),
                 pending_torrent_deletes: HashSet::new(),
-                pending_torrent_promotions: std::collections::HashMap::new(),
+                pending_torrent_promotions: subsystems::RuntimeTorrentMap::new(),
             },
             services: subsystems::EngineSubsystems {
                 dht_tx: None,
