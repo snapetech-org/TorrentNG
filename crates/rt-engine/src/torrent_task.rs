@@ -51,7 +51,7 @@ use rt_peer_wire::{
     handshake::{ExtensionFlags, Handshake},
     message::Message,
 };
-use rt_piece_map::{FileSpan, PieceMap};
+use rt_piece_map::{FileSpan, PieceMap, V2FileSpan, V2PieceMap};
 use rt_piece_picker::{Availability, BlockRequest, PieceAvailability, PiecePicker, MAX_BLOCK_SIZE};
 use rt_session::{SessionRegistry, TorrentEntry, TorrentState};
 use rt_storage::{
@@ -87,7 +87,7 @@ use crate::tracker_runtime::{
     TrackerScrapeResult, TrackerWorkerEvent, TrackerWorkers, MAX_TRACKER_ANNOUNCES_IN_FLIGHT,
     STOPPED_TRACKER_ANNOUNCE_DEADLINE,
 };
-use crate::transfer::coords::{BlockExtent, ConnectionId, PieceGeometry};
+use crate::transfer::coords::{BlockExtent, ConnectionId, HybridGeometry, PieceGeometry};
 use crate::transfer::ledger::{
     Action as TransferAction, CommitOutcome, Ledger as TransferLedger, ReceiveOutcome, ReserveMode,
 };
@@ -384,6 +384,14 @@ pub(crate) fn persistent_hybrid_metadata_memory_bytes(
         .saturating_add(std::mem::size_of::<HybridV2Meta>())
         .saturating_add(payload_file_count.saturating_mul(std::mem::size_of::<HybridV2File>()))
         .saturating_add(
+            v2.files
+                .len()
+                .saturating_mul(std::mem::size_of::<V2FileSpan>()),
+        )
+        .saturating_add(std::mem::size_of::<HybridGeometry>())
+        .saturating_add(std::mem::size_of::<V2PieceMap>())
+        .saturating_add(4 * std::mem::size_of::<usize>())
+        .saturating_add(
             v2.piece_layers
                 .capacity()
                 .saturating_mul(std::mem::size_of::<([u8; 32], Vec<[u8; 32]>)>()),
@@ -393,6 +401,16 @@ pub(crate) fn persistent_hybrid_metadata_memory_bytes(
             hashes
                 .capacity()
                 .saturating_mul(std::mem::size_of::<[u8; 32]>()),
+        );
+    }
+    // The hybrid geometry owns cloned, validated v2 paths.
+    for file in v2.files.iter().filter(|file| file.length > 0) {
+        total = total.saturating_add(
+            file.path
+                .components()
+                .iter()
+                .map(|component| std::mem::size_of::<String>().saturating_add(component.capacity()))
+                .sum::<usize>(),
         );
     }
     total
@@ -1990,6 +2008,7 @@ impl Drop for UploadReadTasks {
 struct HybridV2Meta {
     piece_length: u64,
     files: Vec<HybridV2File>,
+    geometry: Option<Arc<HybridGeometry>>,
     piece_layers: HashMap<[u8; 32], Vec<[u8; 32]>>,
     valid_layout: bool,
 }
@@ -1999,13 +2018,17 @@ struct HybridV2File {
     /// The v1 file index used by `PieceMap`; v1 padding entries can make this
     /// differ from the file's v2 index.
     file_index: u32,
+    v2_file_index: u32,
     length: u64,
-    piece_offset: u64,
     pieces_root: Option<[u8; 32]>,
 }
 
 impl HybridV2Meta {
-    fn from_validated_views(v1: &TorrentMetaV1, v2: TorrentMetaV2) -> Self {
+    fn from_validated_views(
+        v1: &TorrentMetaV1,
+        v1_piece_map: Arc<PieceMap>,
+        v2: TorrentMetaV2,
+    ) -> Self {
         let v1_payload_count = v1
             .files
             .iter()
@@ -2017,6 +2040,23 @@ impl HybridV2Meta {
             && v2.piece_length >= V2_BLOCK_SIZE as u64
             && v2.piece_length.is_power_of_two();
 
+        let v2_spans = v2
+            .files
+            .iter()
+            .map(|file| V2FileSpan {
+                file_index: file.index,
+                path: file.path.clone(),
+                piece_offset: file.piece_offset,
+                length: file.length,
+                pad: file.pad,
+            })
+            .collect();
+        let geometry = V2PieceMap::new(v2.piece_length, v2_spans)
+            .ok()
+            .map(Arc::new)
+            .map(|v2_piece_map| Arc::new(HybridGeometry::new(v1_piece_map, v2_piece_map)));
+        valid_layout &= geometry.is_some();
+
         for v2_file in v2.files.iter().filter(|file| !file.pad && file.length > 0) {
             let Some(v1_file) = v1_files.next() else {
                 valid_layout = false;
@@ -2027,18 +2067,20 @@ impl HybridV2Meta {
             }
             files.push(HybridV2File {
                 file_index: v1_file.index,
+                v2_file_index: v2_file.index,
                 length: v2_file.length,
-                piece_offset: v2_file.piece_offset,
                 pieces_root: v2_file.pieces_root,
             });
         }
         if v1_files.next().is_some() {
             valid_layout = false;
         }
+        files.sort_unstable_by_key(|file| file.v2_file_index);
 
         Self {
             piece_length: v2.piece_length,
             files,
+            geometry,
             piece_layers: v2.piece_layers,
             valid_layout,
         }
@@ -2048,19 +2090,15 @@ impl HybridV2Meta {
         if !self.valid_layout || self.piece_length == 0 {
             return None;
         }
-        let piece_start = u64::from(piece).checked_mul(self.piece_length)?;
+        let geometry = self.geometry.as_ref()?;
+        let region = geometry.v2().piece_to_file(piece).ok()?;
         let file_index = self
             .files
-            .partition_point(|file| file.piece_offset <= piece_start)
-            .checked_sub(1)?;
+            .binary_search_by_key(&region.file_index, |file| file.v2_file_index)
+            .ok()?;
         let file = self.files.get(file_index)?;
-        let file_end = file.piece_offset.checked_add(file.length)?;
-        if piece_start >= file_end {
-            return None;
-        }
-
-        let file_offset = piece_start.checked_sub(file.piece_offset)?;
-        let content_len = file.length.checked_sub(file_offset)?.min(self.piece_length);
+        let file_offset = region.file_offset;
+        let content_len = u64::from(region.length);
         let pieces_root = file.pieces_root?;
         let (expected_root, piece_leaf_count) = if file.length <= self.piece_length {
             (pieces_root, None)
@@ -2579,7 +2617,8 @@ impl TorrentTask {
     }
 
     pub(crate) fn attach_hybrid_v2_metadata(&mut self, meta: TorrentMetaV2) {
-        let projection = HybridV2Meta::from_validated_views(&self.meta, meta);
+        let projection =
+            HybridV2Meta::from_validated_views(&self.meta, Arc::clone(&self.piece_map), meta);
         if !projection.valid_layout {
             warn!(
                 component = "torrent",
@@ -9397,9 +9436,13 @@ mod tests {
             raw: Vec::new(),
         };
 
-        let projection = HybridV2Meta::from_validated_views(&v1, v2);
+        let v1_piece_map = build_piece_map(v1.piece_length, &v1.files).unwrap();
+        let projection = HybridV2Meta::from_validated_views(&v1, v1_piece_map, v2);
 
         assert!(projection.valid_layout);
+        let geometry = projection.geometry.as_ref().unwrap();
+        assert!(geometry.ranges_match(1, 1));
+        assert!(geometry.ranges_match(2, 2));
         assert_eq!(
             projection.piece_expectation(1),
             Some(HybridV2PieceExpectation {

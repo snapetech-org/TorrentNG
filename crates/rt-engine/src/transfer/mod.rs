@@ -24,7 +24,9 @@
 //! temporary source connection. V1/hybrid-v1 and pure-v2 use [`window`] for
 //! bounded per-peer request admission, while concurrent shared-source
 //! scheduling, hybrid dual-view arbitration, and shared content completion
-//! remain open. Unused-code lints are allowed for the parts that are still
+//! remain open. Hybrid v2 verification now resolves piece file ranges through
+//! [`coords::HybridGeometry`], but live request ownership still runs on v1
+//! coordinates. Unused-code lints are allowed for the parts that are still
 //! only exercised by replay tests.
 #![allow(dead_code)]
 

@@ -403,7 +403,7 @@ impl PieceGeometry for V2PieceMap {
 /// plane while verification must satisfy both; mixed-plane acquisition is a
 /// later capability gate, so nothing here assumes `v1` piece `n` and `v2`
 /// piece `n` are the same bytes.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct HybridGeometry {
     v1: Arc<PieceMap>,
     v2: Arc<V2PieceMap>,
