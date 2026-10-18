@@ -5,7 +5,7 @@
 /// for streaming) bypass rarest-first and are selected first.
 use crate::availability::Availability;
 use crate::flags::PieceFlags;
-use rand::Rng;
+use rand::RngExt;
 
 /// Maximum block size enforced by the picker (mirrors BEP 3).
 pub const MAX_BLOCK_SIZE: u32 = 16 * 1024;
@@ -101,7 +101,7 @@ impl PieceState {
         PieceState {
             piece_length,
             received_count: 0,
-            fresh_blocks: n_blocks(piece_length),
+            fresh_blocks: n_blocks,
             requested: vec![0; n_blocks],
             received: vec![0; n_blocks.div_ceil(u8::BITS as usize)],
             next_unrequested_hint: 0,

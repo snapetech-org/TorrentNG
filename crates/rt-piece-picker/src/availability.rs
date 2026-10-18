@@ -3,7 +3,7 @@
 /// Used by the rarest-first picker. Pieces are kept in compact, array-backed
 /// buckets by availability count so the picker can walk from the rarest
 /// nonzero bucket upward without one tree allocation per piece.
-use rand::Rng;
+use rand::{Rng, RngExt};
 
 use crate::flags::PieceFlags;
 use crate::picker::PieceAvailability;

@@ -6,10 +6,15 @@
 //! same relationships they receive from real metainfo.
 
 use rt_bencode::{encode, BValue};
-use rt_hash::{merkle_root, piece_layer_hash, BlockHash, InfoHashV2, V2_BLOCK_SIZE};
-use rt_metainfo::{parse_torrent, torrent_info_bytes, TorrentMeta};
-use rt_piece_map::{FileSpan, PieceMap, V2FileSpan, V2PieceMap};
+use rt_hash::{merkle_root, piece_layer_hash, BlockHash, V2_BLOCK_SIZE};
 use sha1::{Digest, Sha1};
+
+#[cfg(test)]
+use rt_hash::InfoHashV2;
+#[cfg(test)]
+use rt_metainfo::{parse_torrent, torrent_info_bytes, TorrentMeta};
+#[cfg(test)]
+use rt_piece_map::{FileSpan, PieceMap, V2FileSpan, V2PieceMap};
 
 /// Geometry shared by the fixture's v1 and v2 views.
 pub const TRANSFER_FIXTURE_PIECE_LENGTH: usize = 32 * 1024;
@@ -139,19 +144,21 @@ fn build_torrent_named(
         (b"private".as_slice(), BValue::Int(1)),
     ];
 
-    let mut v1_entries = None;
-    let mut v1_pieces = None;
-    if protocol.has_v1() {
+    let (v1_entries, v1_pieces) = if protocol.has_v1() {
         let (entries, stream) = build_v1_view(payload_files, protocol == TransferProtocol::Hybrid);
-        v1_entries = Some(entries);
-        v1_pieces = Some(sha1_piece_hashes(&stream));
+        let pieces = sha1_piece_hashes(&stream);
+        (Some(entries), Some(pieces))
+    } else {
+        (None, None)
+    };
+    if let (Some(entries), Some(pieces)) = (&v1_entries, &v1_pieces) {
         info_fields.push((
             b"files".as_slice(),
-            v1_entries_value(v1_entries.as_deref().expect("v1 entries were set")),
+            v1_entries_value(entries),
         ));
         info_fields.push((
             b"pieces".as_slice(),
-            BValue::Bytes(v1_pieces.as_deref().expect("v1 hashes were set")),
+            BValue::Bytes(pieces),
         ));
     }
 
@@ -417,6 +424,7 @@ mod tests {
                     assert_eq!(v2.logical_length(), 74_537);
                     assert_eq!(v2.piece_count(), 3);
                     assert_v2_hashes_match_payload(&fixture, &v2);
+                    let map = piece_map_from_v1(&v1.files, v1.piece_length);
                     let v2_map = piece_map_from_v2(&v2.files, v2.piece_length);
                     assert_eq!(v2_map.logical_length, map.total_length);
                     assert_eq!(v2_map.piece_count, 3);
@@ -431,7 +439,6 @@ mod tests {
                         .filter(|file| file.pad)
                         .map(|file| file.index)
                         .collect::<Vec<_>>();
-                    let map = piece_map_from_v1(&v1.files, v1.piece_length);
                     assert_eq!(map.total_length, v2.logical_length());
                     assert!(map
                         .piece_ranges_for_file_indices(&pad_indexes)
