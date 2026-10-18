@@ -130,6 +130,10 @@ impl HybridLedger {
     }
 
     pub fn try_connect(&mut self, plane: Plane, remote_reqq: usize) -> Option<ConnectionId> {
+        // Reserve the plane index before consuming a ledger slot. If map
+        // growth is denied, the caller can reject peer admission cleanly
+        // without leaving a connection that has no wire-plane identity.
+        self.connection_planes.try_reserve(1).ok()?;
         let conn = self.ledger.try_connect(remote_reqq)?;
         self.connection_planes.insert(conn, plane);
         Some(conn)
