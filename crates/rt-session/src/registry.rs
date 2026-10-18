@@ -930,7 +930,8 @@ impl SessionRegistry {
 
     /// Return compact changes after `revision`, or `None` when the requested
     /// cursor has fallen out of the bounded log and the consumer must
-    /// resnapshot.
+    /// resnapshot. This compatibility convenience clones the full retained
+    /// range; production streaming consumers should use `delta_since_page`.
     pub fn changes_since(&self, revision: u64) -> Option<Vec<RegistryChange>> {
         if revision >= self.revision {
             return Some(Vec::new());

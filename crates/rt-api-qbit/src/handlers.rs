@@ -3595,9 +3595,10 @@ pub async fn transfer_upload_limit(State(state): State<AppState>) -> impl IntoRe
 // ---------------------------------------------------------------------------
 
 fn qbit_registry_rid(revision: u64) -> i64 {
-    // qBittorrent clients use zero as "no previous response". Keep the
-    // empty registry distinguishable from that sentinel.
-    (revision.min(i64::MAX as u64) as i64).max(1)
+    // qBittorrent clients use zero as "no previous response". Encode the
+    // registry generation plus one so the empty registry and revision one
+    // remain distinct when clients round-trip this opaque cursor.
+    revision.saturating_add(1).min(i64::MAX as u64) as i64
 }
 
 pub async fn sync_torrent_peers(
@@ -7835,6 +7836,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sync_maindata_pages_large_journal_backlogs_by_rid() {
+        let state = AppState::new();
+        let hash = "c0".to_owned() + &"0".repeat(38);
+        state
+            .registry
+            .write()
+            .await
+            .add(TorrentEntry::new(
+                hash.clone(),
+                "initial".into(),
+                "/data".into(),
+            ))
+            .unwrap();
+        let app = build_qbit_router(state.clone());
+        let initial = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/qb/v2/sync/maindata")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(initial.into_body(), 16 * 1024)
+            .await
+            .unwrap();
+        let initial: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let mut rid = initial["rid"].as_i64().unwrap();
+        let starting_revision = state.registry.read().await.revision();
+
+        {
+            let mut registry = state.registry.write().await;
+            for index in 0..=rt_session::REGISTRY_DELTA_PAGE_MAX {
+                registry.get_mut(&hash).unwrap().name = format!("version-{index}");
+            }
+        }
+        let expected_revision = state.registry.read().await.revision();
+
+        for expected_page_revision in [
+            starting_revision + rt_session::REGISTRY_DELTA_PAGE_MAX as u64,
+            expected_revision,
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/api/qb/v2/sync/maindata?rid={rid}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = axum::body::to_bytes(response.into_body(), 16 * 1024)
+                .await
+                .unwrap();
+            let page: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(page["full_update"], false);
+            assert_eq!(page["torrents"].as_object().unwrap().len(), 1);
+            assert_eq!(page["torrents"][&hash]["name"], "version-1024");
+            rid = page["rid"].as_i64().unwrap();
+            assert_eq!(rid, qbit_registry_rid(expected_page_revision));
+        }
+    }
+
+    #[tokio::test]
     async fn torrents_properties_returns_registry_projection_without_engine() {
         let hash = "d".repeat(40);
         let state = make_state_with(&hash).await;
@@ -8053,6 +8121,57 @@ mod tests {
         assert_eq!(second["rid"].as_i64().unwrap(), rid);
         assert_eq!(second["full_update"], false);
         assert!(second["torrents"].as_object().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn sync_maindata_distinguishes_empty_and_first_registry_revisions() {
+        let state = AppState::new();
+        let app = build_qbit_router(state.clone());
+        let initial = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/qb/v2/sync/maindata")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(initial.into_body(), 4096)
+            .await
+            .unwrap();
+        let initial: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(initial["full_update"], true);
+        assert_eq!(initial["rid"], 1);
+
+        let hash = "e0".to_owned() + &"0".repeat(38);
+        state
+            .registry
+            .write()
+            .await
+            .add(TorrentEntry::new(
+                hash.clone(),
+                "first torrent".into(),
+                "/data".into(),
+            ))
+            .unwrap();
+        let next = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/qb/v2/sync/maindata?rid=1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(next.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(next.into_body(), 16 * 1024)
+            .await
+            .unwrap();
+        let next: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(next["full_update"], false);
+        assert_eq!(next["rid"], 2);
+        assert_eq!(next["torrents"][&hash]["name"], "first torrent");
     }
 
     #[test]

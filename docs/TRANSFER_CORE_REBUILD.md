@@ -262,7 +262,7 @@ reproduced).
 | F23 | P1 | v2 recheck does per-leaf small I/O | IO-012 | G4 | partly fixed (1 MiB chunks: one extent probe, read and hash job per 64 leaves; persistent sparse cursors and hybrid shared read stream remain IO-012/IO-007) |
 | F24 | P0/P1 | v2 proof serving rereads file; 64 MiB ceiling | IO-013 | G3 | partly fixed (64 MiB ceiling removed; leaves hashed in 256 KiB reads; layers proven against the metainfo root and kept in a 64 MiB LRU; persisted node store and subtree-only work remain IO-013) |
 | F25 | P1 | secure copy re-verifies leaves per ancestor | IO-014 | G4 | fixed for hashing (nested entries copy-only; top-level verifies the tree once; scheduling copies through the device service remains IO-014) |
-| F26 | P1 | one row change rebuilds a deep-cloned registry vector | SYS-005, SYS-006 | G5 | partly fixed (snapshot rows are shared `Arc<TorrentEntry>` and flattening clones pointers; bounded coalesced delta pages now cap journal copies, while cold/hot metadata split and compact identities remain SYS-005/SYS-004) |
+| F26 | P1 | one row change rebuilds a deep-cloned registry vector | SYS-005, SYS-006 | G5 | partly fixed (snapshot rows are shared `Arc<TorrentEntry>` and flattening clones pointers; bounded coalesced delta pages cap journal copies and API page projections are routed through them, while cold/hot metadata split and compact identities remain SYS-005/SYS-004) |
 | F27 | P1 | dormant estimates incomplete; quadratic timer cancel | SYS-004, SYS-008 | G5 | fixed (lazy-deletion timer; `TierController::estimated_owner_bytes` counts maps, timer wheels and every key copy; compact generational identities remain SYS-004) |
 | F28 | P1 | every engine command scans all task handles | SYS-007 | G5 | fixed (supervised exit queue on the command path; 1 s full scan kept as reconciliation) |
 | F29 | P0 | metrics scrape builds a shadow storage runtime | SYS-011, PERF-108 | G0 | fixed (scrape uses `StorageRuntime::initialized()`; owner-specific metrics still SYS-011) |
@@ -276,7 +276,7 @@ reproduced).
 ## 6. Work packages
 
 63 packages; ordering is topological. A *wave* is a dependency frontier, not a
-sprint. Current snapshot: **4 done, 41 wip, 18 todo**. Status values: `todo`,
+sprint. Current snapshot: **4 done, 42 wip, 17 todo**. Status values: `todo`,
 `wip`, `done`, `blocked`. Detailed per-ticket scope/acceptance is created from
 the template in SYS-001 when picked up.
 
@@ -308,7 +308,7 @@ the template in SYS-001 when picked up.
 | 4 | PERF-104 | P0 | Implement common timing barriers and useful-byte accounting | PERF-101, PERF-102, PERF-103 | wip | `measurement.py` provides a file-backed matched-start barrier, per-file unique/duplicate range accounting, and separate monotonic trial phases; paired harness and artifact assembly remain open; regression sources await bulk pass |
 | 4 | PERF-106 | P0 | Create deterministic independent swarm and network controls | PERF-101, PERF-105 | wip | pinned Linux egress shaper and readback artifact for task-owned veths in `tngt-*` namespaces; trial/manifest digest linkage and regression sources authored, bulk pass pending; independent swarm fixture, paired endpoint orchestration, and loss/jitter profiles remain open |
 | 4 | PERF-108 | P0 | Remove metrics-created shadow storage runtime and stabilize accounting | PERF-101, PERF-102, SYS-011 | wip | shadow storage runtime removed from `/metrics`; stable accounting not started |
-| 4 | SYS-006 | P1 | Route APIs through bounded delta, page and sort projections | SYS-005 | todo | |
+| 4 | SYS-006 | P1 | Route APIs through bounded delta, page and sort projections | SYS-005 | wip | native and qBittorrent list snapshots already use stable bounded pages and sort/filter projections; SSE and qBittorrent sync now emit capped delta pages, with a continuation RID that distinguishes empty revision zero from the first mutation; response-budget qualification and bulk regressions remain open |
 | 4 | SYS-010 | P1 | Bound discovery and control I/O and decouple scrape from announce | SYS-004, SYS-008 | wip | announce delivered before scrape; scrape capped process-wide; DNS/DHT/metadata budgets not started |
 | 5 | IO-006 | P0 | Build one device service over the portable reference backend | IO-005 | wip | bounded `DeviceQueue` is shared by physical ID; active dispatch uses one slot per portable worker or one bounded io_uring batch, and queued operations receive weighted class fairness across mounts; operation IDs travel with completion owners; cache hits/file-open preparation do not hold device slots; scheduler reads/writes/syncs, coalesced peer reads, preallocation, and extent probes are routed; `MountScheduler::run_device_operation` now exposes a reusable handoff that retains mount/device/byte ownership through completion; secure-copy adoption, deadline/choke-critical policy, grouped barriers, and full fault qualification remain open; regression sources authored, not run |
 | 5 | IO-007 | P0 | Create batched hash jobs and shared hybrid content views | IO-002, IO-003, IO-005 | wip | v1 streaming SHA-1 and v2 64-leaf batches already use the bounded hash pool shared by matching storage schedulers; v2 Merkle accumulator finalization now uses that pool too, retaining only bounded accumulator state on queue-full retry. Hybrid metadata still enters the v1 actor without a shared immutable dual-hash view; dual verification and common-view integration remain open. Regression source now asserts three leaf batches plus one root job; not run |
@@ -348,7 +348,7 @@ the template in SYS-001 when picked up.
 
 ### Status snapshot (2026-10-17)
 
-4 of 63 tickets `done`, 41 `wip`, 18 `todo`. `wip` means a bounded
+4 of 63 tickets `done`, 42 `wip`, 17 `todo`. `wip` means a bounded
 implementation or contract slice landed and the rest of its scope remains;
 applicable regression sources are recorded in Evidence and may be awaiting the
 owner-requested bulk pass. Documentation-only work does not claim runtime
@@ -409,6 +409,7 @@ test pass establishes correctness of the landed slices only.
 | 2026-10-17 | PERF-101 started: added the measurement contract plus strict `transfer-trial-v1` and `transfer-manifest-v1` JSON Schemas under `certification/transfer-rebuild/`. Validation and scorecard tooling remain open; no tests or checks were run. |
 | 2026-10-17 | PERF-102 started: added an independent Linux `/proc`/cgroup-v2 observer with raw CSV samples, separate RSS/PSS/cgroup memory domains, cumulative CPU and disk counters, and a JSON peak summary. No tests or checks were run. |
 | 2026-10-17 | SYS-005 partly: `SessionRegistry::delta_since_page` caps each journal read at 1,024 records, coalesces repeated updates by torrent, and returns an explicit continuation cursor. SSE and qBittorrent sync publish bounded pages; native/qBittorrent snapshot-cache refresh folds pages into changed-hash sets instead of cloning the full journal. Added registry regression sources; bulk validation remains deferred. |
+| 2026-10-17 | SYS-006 partly: SSE and qBittorrent sync now publish at most 1,000/1,024 journal changes per response and advance the client cursor through the emitted page. Corrected qBittorrent RID encoding so revision zero and revision one cannot alias; added route regression sources for backlog continuation and the first torrent after an empty snapshot. No tests or checks were run. |
 | 2026-10-17 | IO-001 started: documented evidence states, per-file sequence barriers, cancellation ownership rules, and deterministic fault cases. Added a test-only scripted backend for read/write/sync errors, held completions, and partial-write failures, with regressions for cancelled waiters, incomplete writes, and a failed barrier retry. Tests are authored but unrun; file-replacement and crash-cut coverage remains open. |
 | 2026-10-17 | NET-109 follow-up: randomized equal candidates from a webseed's zero-availability set, including priority ties; added seeded candidate coverage. Corrected the in-progress state memory comment. Tests remain deferred. |
 | 2026-10-17 | IO-002 started: v1 peer receive/upload and v2 receive/serve paths consume typed block extents for range validation; v2 assembly, read-back, and progress use the full typed piece extent. Existing multi-block regressions remain unrun; broader shared-ledger integration remains open. |

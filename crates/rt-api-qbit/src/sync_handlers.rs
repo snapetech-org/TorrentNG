@@ -43,17 +43,14 @@ pub async fn handle_sync_maindata(
         let registry = state.registry.read().await;
         (
             registry.revision(),
-            q.rid.filter(|rid| *rid > 0).map(|rid| rid as u64),
+            q.rid
+                .filter(|rid| *rid > 0)
+                .map(|rid| (rid as u64).saturating_sub(1)),
         )
     };
-    let unchanged_empty_registry = q
-        .rid
-        .is_some_and(|rid| rid > 0 && rid == qbit_registry_rid(current_revision))
-        && current_revision == 0;
     let empty_entries = Arc::new(ChunkedVec::from_vec(Vec::<rt_session::TorrentEntry>::new()));
     let (revision, full_update, entries, torrents_removed) = if requested_revision
         .is_some_and(|requested| requested == current_revision)
-        || unchanged_empty_registry
     {
         (current_revision, false, empty_entries, Vec::new())
     } else {
