@@ -253,6 +253,8 @@ The live v1/v2 actor integration to the shared ledger remains NET-114.
 ### Acceptance
 
 - Rarity and active-work indexes use dense arrays with swap-remove positions.
+- Peer bitfield add/remove walks set pieces and skips empty bytes while
+  preserving BitTorrent's MSB-first order and ignoring unused tail bits.
 - The picker exposes a constant-time fresh-work query so source schedulers can
   sleep while all wanted blocks are already requested.
 - Selection chooses uniformly among matching peers in the rarest matching
@@ -286,7 +288,8 @@ The live v1/v2 actor integration to the shared ledger remains NET-114.
 
 ### Evidence
 
-- **Regression source added or updated:** availability bucket movement,
+- **Regression source added or updated:** sparse bitfield MSB order and tail
+  handling, availability bucket movement,
   seeded random tie, sparse peer fallback and equal-rarity selection,
   candidate lifecycle, source-scheduler fresh-work transitions, request
   cancellation, and picker memory estimate cases; block cursor advancement,

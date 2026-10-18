@@ -32,6 +32,27 @@ const NO_POSITION: u32 = u32::MAX;
 const RANDOM_CANDIDATE_PROBES: usize = 32;
 const SPARSE_FALLBACK_BUCKET_MIN: usize = RANDOM_CANDIDATE_PROBES * 4;
 
+/// Visit only set bits in a BitTorrent MSB-first bitfield. Empty bytes are
+/// common for sparse peers, so skip their eight per-piece checks entirely.
+fn for_each_set_piece(bitfield: &[u8], piece_count: usize, mut visit: impl FnMut(usize)) {
+    for (byte_index, byte) in bitfield.iter().copied().enumerate() {
+        let first_piece = byte_index.saturating_mul(u8::BITS as usize);
+        if first_piece >= piece_count {
+            break;
+        }
+        let mut remaining = byte;
+        while remaining != 0 {
+            let bit_offset = remaining.leading_zeros() as usize;
+            let piece = first_piece.saturating_add(bit_offset);
+            if piece >= piece_count {
+                break;
+            }
+            visit(piece);
+            remaining &= !(0x80 >> bit_offset);
+        }
+    }
+}
+
 impl Availability {
     pub fn new(piece_count: usize) -> Self {
         Availability {
@@ -50,17 +71,7 @@ impl Availability {
 
     /// Record that a peer has all pieces in `bitfield` (one bit per piece, MSB first).
     pub fn add_bitfield(&mut self, bitfield: &[u8]) {
-        for (byte_idx, &byte) in bitfield.iter().enumerate() {
-            for bit in 0..8 {
-                let piece = byte_idx * 8 + bit;
-                if piece >= self.counts.len() {
-                    break;
-                }
-                if byte & (0x80 >> bit) != 0 {
-                    self.add_have(piece);
-                }
-            }
-        }
+        for_each_set_piece(bitfield, self.counts.len(), |piece| self.add_have(piece));
     }
 
     /// Record that a peer has a single piece (Have message).
@@ -113,17 +124,7 @@ impl Availability {
 
     /// A peer disconnected; remove its bitfield from availability.
     pub fn remove_bitfield(&mut self, bitfield: &[u8]) {
-        for (byte_idx, &byte) in bitfield.iter().enumerate() {
-            for bit in 0..8 {
-                let piece = byte_idx * 8 + bit;
-                if piece >= self.counts.len() {
-                    break;
-                }
-                if byte & (0x80 >> bit) != 0 {
-                    self.remove_have(piece);
-                }
-            }
-        }
+        for_each_set_piece(bitfield, self.counts.len(), |piece| self.remove_have(piece));
     }
 
     pub fn count(&self, piece: usize) -> u32 {
@@ -503,6 +504,22 @@ mod tests {
         assert_eq!(av.count(0), 1);
         assert_eq!(av.count(3), 1);
         assert_eq!(av.count(4), 0);
+    }
+
+    #[test]
+    fn sparse_bitfield_visits_msb_pieces_and_ignores_unused_tail_bits() {
+        let mut av = Availability::new(11);
+        let bitfield = [0b0000_0101, 0b0100_0001];
+
+        av.add_bitfield(&bitfield);
+        assert_eq!(av.count(5), 1);
+        assert_eq!(av.count(7), 1);
+        assert_eq!(av.count(9), 1);
+        assert_eq!(av.count(10), 0);
+        av.remove_bitfield(&bitfield);
+        for piece in 0..av.piece_count() {
+            assert_eq!(av.count(piece), 0);
+        }
     }
 
     #[test]

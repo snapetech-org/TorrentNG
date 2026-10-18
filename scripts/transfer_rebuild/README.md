@@ -483,7 +483,9 @@ git rev-parse HEAD > /path/to/task-scratch/perf-111-commit.txt
 
 The picker probe times 100k pick/cancel cycles at 1k, 12k, and 100k pieces
 after warming partial-piece state up to the 16,384-piece admission cap; its
-100k case uses a sparse peer bitfield over that admitted subset. The API
+100k case uses a sparse peer bitfield over that admitted subset. It also times
+availability bitfield add/remove with empty, one-in-64 sparse, and near-dense
+inputs, moving pieces between nonempty rarity buckets. The API
 snapshot probe reports the initial `AppState::torrent_snapshot`, 1,000
 unchanged cached reads, and three one-row incremental refreshes at 1k, 10k, and
 100k torrents. It uses a single-thread runtime and a process-local counting
