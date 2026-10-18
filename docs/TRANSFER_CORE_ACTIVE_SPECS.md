@@ -1090,10 +1090,11 @@ deferred.
   checks a pure-v2 piece remains unavailable and unwritten while its completion
   job is queued, then publishes after successful hash and write. Existing
   v2 multi-block and request-lease sources were adapted to drain the job;
-  `v2_peer_reads_control_messages_while_transfer_jobs_wait_for_rate_budget`
-  covers upload and download budget waits while the peer loop handles controls,
-  then cancels a blocked download-rate wait and confirms shutdown drains without
-  publishing the canceled piece. `v2_peer_shutdown_cancels_a_backpressured_socket_send`
+  `v2_peer_charges_download_bytes_once_and_keeps_control_responsive` covers an
+  upload rate wait, then makes the shared download tree go into debt after a
+  request is admitted and confirms the received piece still completes without
+  a second network-rate charge while the peer loop handles controls.
+  `v2_peer_shutdown_cancels_a_backpressured_socket_send`
   covers a peer writer blocked by a non-reading socket. These sources are
   authored but unrun; failure/reset cases, actor-level disconnect/quiesce, and
   broader lifecycle qualification remain open. The authored but unrun
@@ -1518,7 +1519,9 @@ cancellation/refund, and shared source scheduling.
   Choke, timeout, cancellation, and disconnect refund unused credit. Webseed
   reserves before HTTP ranges. Peer and torrent teardown remove scheduler
   identities and return unsettled grants without confusing reused connection
-  slots across torrents. Bulk qualification remains open.
+  slots across torrents. Pure-v2 settles a block's download grant at Piece
+  receipt; its subsequent storage job uses the storage scheduler without
+  charging the same network bytes again. Bulk qualification remains open.
 - **Target owner:** one process-shared upload tree and one process-shared
   download tree each own global and per-torrent byte credit, peer fairness
   progress, unsettled grant/refund accounting, and the next-wakeup index.
@@ -1559,6 +1562,9 @@ cancellation/refund, and shared source scheduling.
 - Live v1, pure-v2, and webseed traffic uses the same directional global and
   per-torrent service. Request admission remains bounded by memory and device
   capacity.
+- A received pure-v2 block consumes one download grant: the grant is reserved
+  before Request enqueue and settled on Piece receipt; later storage admission
+  does not charge the download tree again.
 
 ### Files and compatibility
 
@@ -1593,9 +1599,12 @@ cancellation/refund, and shared source scheduling.
   credit constrains peers together and is exposed as request-window advisory.
   v1 request grants settle on matching payloads and refund on terminal request
   paths; pure-v2 reserves before request enqueue and settles on Piece receipt,
-  while terminal outcomes refund (`v2_reject_refunds_reserved_download_rate_credit`);
-  webseed reserves before issuing HTTP ranges. These sources are authored but
-  unrun. Both v1/hybrid and pure-v2 peer loops subscribe to process-wide and
+  while terminal outcomes refund (`v2_reject_refunds_reserved_download_rate_credit`).
+  Pure-v2 piece storage uses no second download grant; the source regression
+  `v2_peer_charges_download_bytes_once_and_keeps_control_responsive` checks
+  that storage progresses while the shared download tree is in debt. Webseed
+  reserves before issuing HTTP ranges. These sources are authored but unrun.
+  Both v1/hybrid and pure-v2 peer loops subscribe to process-wide and
   per-torrent change signals.
 - **Command or probe to run:** pure scheduler regressions and the engine rate
   integration suites during the requested bulk pass.
@@ -3957,30 +3966,34 @@ a whole-torrent scan for each requested block.
 ### Scope
 
 Schedule peer and webseed work through one bounded ownership and rate-control
-path, then publish transfer progress in bounded batches. The current v1
-webseed implementation dispatches one bounded request at a time, including
-while peers are active, when the picker has fresh requestable work. Its HTTP
-fetch and global-rate wait run in an owned task, so peer events and lifecycle
-commands continue while that request is pending; peer and webseed responses
-compete through the same ledger. The scheduler sleeps when the picker has no
-fresh work and wakes when ownership or piece policy changes. Canceling the job
-drops its connection and wakes the source deadline.
-It maps multi-file blocks to bounded per-file HTTP ranges and synthesizes BEP
-47 padding locally; each block reuses one DNS-validated, address-pinned HTTP
-client across its file ranges;
-pure-v2 exposes configured webseed URLs in its source snapshot, but still has
-no webseed execution. v1 already batches progress at its
-five-second dirty-stat flush, and pure-v2 now batches upload/download
-statistics at the existing five-second runtime flush. Completion and
-lifecycle boundaries flush immediately.
+path, then publish transfer progress in bounded batches. The v1 and pure-v2
+actors each dispatch one bounded webseed request at a time, including while
+peers are active, when fresh work is available. Both reserve through their
+shared transfer ledger and global/torrent download budgets before HTTP; an
+owned fetch task keeps actor commands and peer events responsive. The current
+adapters still select independently, but both sources compete for piece
+ownership in the same ledger. v1 maps multi-file blocks to bounded per-file
+HTTP ranges and synthesizes BEP 47 padding locally. Pure-v2 maps its file paths
+to BEP 19 URLs and sends returned blocks through its normal assembly, readback,
+and Merkle verification path. Requests use the DNS-validated, address-pinned
+HTTP client and require an exact partial-content range response. Cancellation
+and the 60-second ledger timeout revoke the matching fetch and release its
+request ownership; timeout processing wakes source selection when a peer's
+expired reservation makes a piece available. Candidate traversal skips full
+local-have bitmap words and advances fairly when a selected file cannot use a
+webseed.
+
+v1 progress already batches at its five-second dirty-stat flush, and pure-v2
+batches upload/download statistics at its existing five-second runtime flush.
+Completion and lifecycle boundaries flush immediately.
 
 ### Ownership and invariant
 
-- **Current owner:** peer tasks and one bounded v1 webseed request own source
-  work; the in-flight fetch is owned by a cancellable task while the
-  torrent actor remains available for peer and lifecycle events. The pure-v2
-  actor receives verified-piece transfer totals and persists them through
-  `DbWorker`.
+- **Current owner:** each torrent actor owns its peer connections, one
+  synthetic webseed ledger connection, the in-flight fetch, and piece
+  verification. Fetches run in cancellable tasks while the actor remains
+  available for peer and lifecycle events. Pure-v2 publishes only verified
+  piece totals and persists them through `DbWorker`.
 - **Target owner:** the shared scheduler owns source admission, request
   ownership, cancellation, rate credit, and bounded retry across peers and
   webseeds. Torrent actors retain verification, storage publication, and
@@ -4005,25 +4018,28 @@ lifecycle boundaries flush immediately.
 - A failed progress transaction restores the prior registry projection and
   retains each pending source total for exactly-once retry.
 - Regression sources cover concurrent peer/webseed ownership, rate waits,
-  cancellation, actor responsiveness during a held HTTP body, per-file
-  webseed mapping and padding synthesis, progress coalescing, retry, and
-  lifecycle flushes.
+  cancellation including request expiry, actor responsiveness during a held
+  HTTP body, v1 per-file mapping and padding synthesis, pure-v2 URL mapping,
+  progress coalescing, retry, and lifecycle flushes.
 - Matched live-source workloads show no missing or duplicate payload and
   bounded progress-publication latency.
 
 ### Current slice evidence
 
 - **Regression source added or updated:** pure-v2 progress batching and
-  database-failure retry in `torrent_task_v2.rs`; the v1 actor now owns one
-  bounded cancellable webseed fetch outside its event loop, including with an
-  active peer. A regression source holds the HTTP body while querying and
-  pausing the actor, then releases the body and confirms no payload reaches
-  storage. Multi-file URL/range mapping, BEP 47 padding, and excessive
-  file-fanout bounds remain covered in `torrent_task.rs`. Pure-v2 source
-  snapshots now expose configured webseed URLs; execution coverage remains
-  open.
+  database-failure retry remain in `torrent_task_v2.rs`. The v1 actor owns one
+  bounded cancellable webseed fetch alongside peers; its held-body source
+  queries and pauses the actor, then confirms a late response does not reach
+  storage. v1 range mapping, padding, and file-fanout bounds remain covered in
+  `torrent_task.rs`. Pure-v2 now executes one webseed request through its
+  ledger, shared download budget, bounded body lease, and verified-piece
+  pipeline; source tests cover single/multi-file URL mapping, live status
+  snapshots, and timeout cancellation with ledger cleanup. Candidate traversal
+  uses bitmap-word skips and round-robin cursor advancement; peer-request
+  expiry wakes the scheduler. Hash-mismatch source attribution remains open.
 - **Command or probe:** run with the requested bulk engine suite; do not run
   this source independently before that pass.
 - **Executed on exact revision:** no.
-- **Remaining:** shared source scheduling, pure-v2 webseed execution,
-  live-source workloads, and the bulk pass.
+- **Remaining:** a shared peer/webseed source scheduler, held-response and
+  storage-failure coverage for the pure-v2 HTTP path, live-source workloads,
+  and the bulk pass.

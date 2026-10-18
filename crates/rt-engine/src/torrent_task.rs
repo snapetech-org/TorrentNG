@@ -1177,7 +1177,7 @@ pub(crate) fn tracker_peer_cache_cap(max_peers: usize) -> usize {
         .clamp(TRACKER_PEER_CACHE_MIN, MAX_TRACKER_PEERS)
 }
 
-fn reserve_webseed_body_bytes(
+pub(crate) fn reserve_webseed_body_bytes(
     resources: &ResourceGovernor,
     bytes: u32,
 ) -> anyhow::Result<MemoryLease> {
@@ -7046,7 +7046,10 @@ fn webseed_file_url(meta: &TorrentMetaV1, file: &TorrentFileV1, webseed: &str) -
     Some(url)
 }
 
-fn webseed_file_byte_range(file_offset: u64, length: usize) -> anyhow::Result<(u64, u64)> {
+pub(crate) fn webseed_file_byte_range(
+    file_offset: u64,
+    length: usize,
+) -> anyhow::Result<(u64, u64)> {
     if length == 0 || length > MAX_BLOCK_SIZE as usize {
         anyhow::bail!("webseed file range length {length} is invalid");
     }
@@ -7056,7 +7059,7 @@ fn webseed_file_byte_range(file_offset: u64, length: usize) -> anyhow::Result<(u
     Ok((file_offset, end))
 }
 
-fn validate_webseed_range_response(
+pub(crate) fn validate_webseed_range_response(
     status: StatusCode,
     headers: &reqwest::header::HeaderMap,
     expected_start: u64,

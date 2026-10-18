@@ -18,6 +18,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use bytes::Bytes;
 use futures::future::BoxFuture;
 use futures::{FutureExt, StreamExt};
+use reqwest::header::RANGE;
 use rt_hash::{hash_pair, merkle_layers, BlockHash, V2_BLOCK_SIZE};
 #[cfg(test)]
 use rt_hash::{merkle_root, piece_layer_hash};
@@ -48,21 +49,23 @@ use tokio::sync::{mpsc, watch, OwnedSemaphorePermit, RwLock};
 use tokio::time::{interval, sleep, timeout};
 use tokio_util::codec::Framed;
 use tracing::{debug, warn};
+use url::Url;
 
 use crate::crash_safety::CrashSafetyRuntime;
 use crate::db_worker::DbExecutor;
-use crate::egress_policy::OutboundEgressPolicy;
+use crate::egress_policy::{OutboundEgressPolicy, OutboundTargetKind};
 use crate::network_budget::{
     GlobalNetworkBudget, RateAdmissionAttempt, RateAdmissionGrant, RateLimitCancellation,
 };
 use crate::torrent_task::{
     outgoing_transport_policy_configured, outgoing_transport_policy_for_peer,
-    prepare_tracker_peer_cache, private_peer_source_allowed, restore_tracker_state_from_rows,
-    tracker_peer_cache_cap, tracker_tiers_from_urls, OutgoingTransportPolicy, PeerIo, PeerSource,
-    TorrentCmd, UtpPeerIo,
+    prepare_tracker_peer_cache, private_peer_source_allowed, reserve_webseed_body_bytes,
+    restore_tracker_state_from_rows, tracker_peer_cache_cap, tracker_tiers_from_urls,
+    validate_webseed_range_response, webseed_file_byte_range, OutgoingTransportPolicy, PeerIo,
+    PeerSource, TorrentCmd, UtpPeerIo,
 };
 use crate::tracker_runtime::{
-    announce_tracker, first_tracker_key, next_tracker_key, protocol_numwant,
+    announce_tracker, bounded_response_body, first_tracker_key, next_tracker_key, protocol_numwant,
     tracker_keys_for_announce, tracker_keys_for_stopped_announce, url_log_target,
     TrackerAnnounceContext, TrackerAnnounceResult, TrackerAnnounceSpec, TrackerKey, TrackerWorkers,
     MAX_TRACKER_ANNOUNCES_IN_FLIGHT, STOPPED_TRACKER_ANNOUNCE_DEADLINE,
@@ -71,7 +74,7 @@ use crate::transfer::coords::{
     BlockExtent, ConnectionId, PieceGeometry, TorrentKey, TransferPeerId,
 };
 use crate::transfer::ledger::{
-    Action as TransferAction, CommitOutcome, Ledger as TransferLedger, ReceiveOutcome,
+    Action as TransferAction, CommitOutcome, Ledger as TransferLedger, ReceiveOutcome, ReserveMode,
 };
 use crate::transfer::obligations::{
     InboundDecision, InboundObligations, Reject as InboundReject,
@@ -88,6 +91,8 @@ const V2_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(60);
 const V2_CHOKE_INTERVAL: Duration = Duration::from_secs(10);
 const V2_REQUEST_TIMEOUT_TICK: Duration = Duration::from_secs(5);
 const V2_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+const V2_WEBSEED_IDLE_RETRY: Duration = Duration::from_secs(60);
+const V2_WEBSEED_ADMISSION_RETRY: Duration = Duration::from_secs(1);
 const V2_REQUEST_WINDOW: usize = 32;
 const V2_INITIAL_REQUEST_WINDOW: usize = 8;
 const V2_MIN_REQUEST_WINDOW: usize = 4;
@@ -387,6 +392,35 @@ impl V2Bitmap {
         }
     }
 
+    fn next_unset_from(&self, start: usize) -> Option<usize> {
+        if start >= self.len {
+            return None;
+        }
+        let mut word_index = start / 64;
+        let mut word = !self.words.get(word_index).copied()?
+            & (u64::MAX << (start % 64))
+            & Self::valid_word_mask(self.len, word_index);
+        loop {
+            if word != 0 {
+                let index = word_index
+                    .saturating_mul(64)
+                    .saturating_add(word.trailing_zeros() as usize);
+                return (index < self.len).then_some(index);
+            }
+            word_index = word_index.checked_add(1)?;
+            word =
+                !self.words.get(word_index).copied()? & Self::valid_word_mask(self.len, word_index);
+        }
+    }
+
+    fn valid_word_mask(len: usize, word_index: usize) -> u64 {
+        if word_index + 1 == len.div_ceil(64) && !len.is_multiple_of(64) {
+            (1_u64 << (len % 64)) - 1
+        } else {
+            u64::MAX
+        }
+    }
+
     fn to_bitfield(&self) -> Vec<u8> {
         let mut bits = vec![0_u8; self.len.div_ceil(8)];
         for index in 0..self.len {
@@ -549,6 +583,105 @@ struct V2PeerContext {
     assembly_cap_bytes: usize,
     events: mpsc::Sender<V2PeerEvent>,
     proof_cache: Arc<V2ProofCache>,
+}
+
+#[derive(Clone, Default)]
+struct V2WebseedSeedState {
+    failures: u8,
+    next_attempt: Option<Instant>,
+    download_rate: i64,
+}
+
+struct V2WebseedFetchedBlock {
+    data: Bytes,
+    rate_grant: RateAdmissionGrant,
+    elapsed: Duration,
+}
+
+struct V2WebseedFetchInFlight {
+    request: BlockExtent,
+    seed_index: usize,
+    task: tokio::task::JoinHandle<anyhow::Result<V2WebseedFetchedBlock>>,
+}
+
+/// One bounded pure-v2 webseed source using the same ledger and piece
+/// verification pipeline as peer responses.
+struct V2WebseedRuntime {
+    context: V2PeerContext,
+    state: Arc<Mutex<V2PeerState>>,
+    _connection_memory_lease: MemoryLease,
+    outstanding: HashMap<(u32, u32), V2OutstandingRequest>,
+    assemblies: HashMap<u32, V2PieceAssembly>,
+    pending_block_completions: HashMap<(u32, u32), V2PendingCompletion>,
+    pending_piece_completions: HashMap<u32, V2PendingCompletion>,
+    transfer_jobs: futures::stream::FuturesUnordered<V2TransferTask>,
+    fetch: Option<V2WebseedFetchInFlight>,
+    seed_states: Vec<V2WebseedSeedState>,
+    next_seed_index: usize,
+    next_piece_cursor: u32,
+    admission_retry_at: Option<Instant>,
+}
+
+impl V2WebseedRuntime {
+    fn new(
+        context: V2PeerContext,
+        seed_count: usize,
+        connection_memory_lease: MemoryLease,
+    ) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(V2PeerState::new(
+                context.piece_map.piece_count as usize,
+            ))),
+            context,
+            _connection_memory_lease: connection_memory_lease,
+            outstanding: HashMap::new(),
+            assemblies: HashMap::new(),
+            pending_block_completions: HashMap::new(),
+            pending_piece_completions: HashMap::new(),
+            transfer_jobs: futures::stream::FuturesUnordered::new(),
+            fetch: None,
+            seed_states: vec![V2WebseedSeedState::default(); seed_count],
+            next_seed_index: 0,
+            next_piece_cursor: 0,
+            admission_retry_at: None,
+        }
+    }
+}
+
+impl Drop for V2WebseedRuntime {
+    fn drop(&mut self) {
+        self.context.peer_control.cancel();
+        if let Some(fetch) = self.fetch.take() {
+            fetch.task.abort();
+            drop(fetch);
+        }
+        let mut pieces = Vec::with_capacity(
+            self.assemblies
+                .len()
+                .saturating_add(self.pending_block_completions.len())
+                .saturating_add(self.pending_piece_completions.len())
+                .saturating_add(self.outstanding.len()),
+        );
+        pieces.extend(self.assemblies.keys().copied());
+        pieces.extend(
+            self.pending_block_completions
+                .keys()
+                .map(|(piece, _)| *piece),
+        );
+        pieces.extend(self.pending_piece_completions.keys().copied());
+        pieces.extend(self.outstanding.keys().map(|(piece, _)| *piece));
+        pieces.sort_unstable();
+        pieces.dedup();
+        for piece in pieces {
+            fail_v2_transfer_piece(&self.context, piece);
+        }
+        self.context
+            .network_budget
+            .remove_transfer_peer(self.context.rate_peer);
+        if let Ok(mut ledger) = self.context.transfer_ledger.lock() {
+            let _ = ledger.disconnect(self.context.transfer_conn);
+        }
+    }
 }
 
 /// Merkle layers of a file, proven against its metainfo `pieces root`.
@@ -1156,6 +1289,15 @@ fn release_v2_transfer_piece_memory(context: &V2PeerContext, piece: u32) {
     }
 }
 
+fn release_v2_transfer_piece_memory_if_idle(context: &V2PeerContext, piece: u32) {
+    let idle = context.transfer_ledger.lock().is_ok_and(|mut ledger| {
+        ledger.piece_progress(piece).is_none() || ledger.discard_empty_piece(piece)
+    });
+    if idle {
+        release_v2_transfer_piece_memory(context, piece);
+    }
+}
+
 fn fail_v2_transfer_piece(context: &V2PeerContext, piece: u32) {
     let Ok(mut ledger) = context.transfer_ledger.lock() else {
         return;
@@ -1267,17 +1409,6 @@ struct V2PendingCompletion {
 
 enum V2TransferCompletion {
     BlockStored(V2BlockCompletion),
-    BlockAdmissionCancelled {
-        piece: u32,
-        generation: u64,
-        begin: u32,
-    },
-    BlockAdmissionFailed {
-        piece: u32,
-        generation: u64,
-        begin: u32,
-        error: String,
-    },
     PieceVerified(V2PieceCompletion),
 }
 
@@ -1501,6 +1632,7 @@ pub struct V2TorrentTask {
     have_updates: watch::Sender<()>,
     upload_unchoked: watch::Sender<Arc<HashSet<PeerId>>>,
     peers: HashMap<SocketAddr, V2PeerHandle>,
+    webseed: Option<V2WebseedRuntime>,
     choker: Choker,
     paused: bool,
     initial_state: TorrentState,
@@ -1682,7 +1814,8 @@ impl V2TorrentTask {
                 .expect("metainfo parser rejects invalid v2 piece maps"),
         );
         let transfer_ledger = Arc::new(Mutex::new(
-            TransferLedger::new(Arc::clone(&piece_map)).with_max_connections(max_peers),
+            TransferLedger::new(Arc::clone(&piece_map))
+                .with_max_connections(max_peers.saturating_add(1)),
         ));
         let transfer_piece_memory_leases = Arc::new(Mutex::new(HashMap::new()));
         let transfer_started_at = Instant::now();
@@ -1728,6 +1861,7 @@ impl V2TorrentTask {
             have_updates,
             upload_unchoked,
             peers: HashMap::new(),
+            webseed: None,
             choker: Choker::new(DEFAULT_MAX_UNCHOKED),
             paused: paused || rate_limit_restore_failed,
             initial_state,
@@ -2161,12 +2295,14 @@ impl V2TorrentTask {
         let mut tracker_tick = interval(Duration::from_secs(5));
         let mut choke_tick = interval(V2_CHOKE_INTERVAL);
         let mut request_timeout_tick = interval(V2_REQUEST_TIMEOUT_TICK);
+        let mut webseed_sleep = Box::pin(tokio::time::sleep(Duration::ZERO));
         loop {
             tokio::select! {
                 command = self.cmd_rx.recv() => {
                     let Some(command) = command else {
                         self.tracker_workers.cancel();
                         self.announce_stopped_with_control_deadline().await;
+                        self.shutdown_webseed().await;
                         self.shutdown_peers().await;
                         let _ = self.persist_runtime(None).await;
                         break;
@@ -2174,9 +2310,11 @@ impl V2TorrentTask {
                     if self.handle_command(command).await {
                         break;
                     }
+                    webseed_sleep.as_mut().reset(tokio::time::Instant::now());
                 }
                 Some(event) = self.events_rx.recv() => {
                     self.handle_peer_event(event).await;
+                    webseed_sleep.as_mut().reset(tokio::time::Instant::now());
                 }
                 _ = choke_tick.tick() => {
                     if !self.paused {
@@ -2185,6 +2323,7 @@ impl V2TorrentTask {
                 }
                 _ = request_timeout_tick.tick() => {
                     self.expire_v2_transfer_requests();
+                    webseed_sleep.as_mut().reset(tokio::time::Instant::now());
                 }
                 Some(result) = self.tracker_workers.recv() => {
                     self.handle_tracker_result(result).await;
@@ -2207,9 +2346,689 @@ impl V2TorrentTask {
                         self.start_due_tracker_announces().await;
                     }
                 }
+                result = async {
+                    let fetch = self
+                        .webseed
+                        .as_mut()
+                        .and_then(|webseed| webseed.fetch.as_mut())
+                        .expect("guarded v2 webseed fetch");
+                    (&mut fetch.task).await
+                }, if self.webseed.as_ref().is_some_and(|webseed| webseed.fetch.is_some()) => {
+                    self.finish_v2_webseed_fetch(result).await;
+                    webseed_sleep.as_mut().reset(tokio::time::Instant::now());
+                }
+                completion = async {
+                    self.webseed
+                        .as_mut()
+                        .expect("guarded v2 webseed transfer jobs")
+                        .transfer_jobs
+                        .next()
+                        .await
+                }, if self.webseed.as_ref().is_some_and(|webseed| !webseed.transfer_jobs.is_empty()) => {
+                    if let Some(completion) = completion {
+                        self.handle_v2_webseed_transfer_completion(completion).await;
+                        webseed_sleep.as_mut().reset(tokio::time::Instant::now());
+                    }
+                }
+                _ = &mut webseed_sleep, if !self.paused && !self.meta.webseeds.is_empty() && self.webseed.as_ref().is_none_or(|webseed| webseed.fetch.is_none()) => {
+                    if self.start_v2_webseed_block().await {
+                        webseed_sleep.as_mut().reset(
+                            tokio::time::Instant::now() + V2_WEBSEED_IDLE_RETRY
+                        );
+                    } else {
+                        webseed_sleep.as_mut().reset(
+                            tokio::time::Instant::now() + self.v2_webseed_wake_delay()
+                        );
+                    }
+                }
             }
         }
         self.reject_pending_commands();
+    }
+
+    fn v2_webseed_wake_delay(&self) -> Duration {
+        let Some(webseed) = self.webseed.as_ref() else {
+            return V2_WEBSEED_IDLE_RETRY;
+        };
+        let now = Instant::now();
+        if let Some(retry_at) = webseed
+            .admission_retry_at
+            .filter(|deadline| *deadline > now)
+        {
+            return retry_at.saturating_duration_since(now);
+        }
+        let eligible = webseed.seed_states.iter().any(|seed| {
+            seed.failures != u8::MAX && seed.next_attempt.is_none_or(|deadline| deadline <= now)
+        });
+        if eligible {
+            return V2_WEBSEED_IDLE_RETRY;
+        }
+        webseed
+            .seed_states
+            .iter()
+            .filter_map(|seed| seed.next_attempt)
+            .map(|deadline| deadline.saturating_duration_since(now))
+            .min()
+            .unwrap_or(V2_WEBSEED_IDLE_RETRY)
+    }
+
+    fn ensure_v2_webseed_runtime(&mut self) -> bool {
+        if self.webseed.is_some() {
+            return true;
+        }
+        if self.meta.webseeds.is_empty() {
+            return false;
+        }
+        let state_bytes = V2Bitmap::memory_bytes_for_len(self.piece_map.piece_count as usize)
+            .saturating_add(std::mem::size_of::<V2PeerState>())
+            .saturating_add(TransferLedger::<Arc<V2PieceMap>>::estimated_connection_state_bytes())
+            .saturating_add(
+                V2_TRANSFER_COMMAND_CAPACITY.saturating_mul(std::mem::size_of::<V2PeerCommand>()),
+            )
+            .saturating_add(
+                self.meta
+                    .webseeds
+                    .len()
+                    .saturating_mul(std::mem::size_of::<V2WebseedSeedState>()),
+            );
+        let Ok(state_bytes) = u64::try_from(state_bytes) else {
+            return false;
+        };
+        let Some(memory_lease) = self
+            .resources
+            .try_acquire(MemoryClass::PeerBuffer, state_bytes)
+        else {
+            return false;
+        };
+        let connection = self
+            .transfer_ledger
+            .lock()
+            .ok()
+            .and_then(|mut ledger| ledger.try_connect(V2_REQUEST_WINDOW));
+        let Some(connection) = connection else {
+            drop(memory_lease);
+            return false;
+        };
+        let context = self.peer_context_with_connection(
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+            PeerId::new(),
+            connection,
+        );
+        self.webseed = Some(V2WebseedRuntime::new(
+            context,
+            self.meta.webseeds.len(),
+            memory_lease,
+        ));
+        true
+    }
+
+    fn webseed_snapshots(&self) -> Vec<EngineWebseedSnapshot> {
+        self.meta
+            .webseeds
+            .iter()
+            .enumerate()
+            .map(|(index, url)| {
+                let seed_state = self
+                    .webseed
+                    .as_ref()
+                    .and_then(|webseed| webseed.seed_states.get(index));
+                EngineWebseedSnapshot {
+                    url: url.clone(),
+                    is_downloading: self
+                        .webseed
+                        .as_ref()
+                        .and_then(|webseed| webseed.fetch.as_ref())
+                        .is_some_and(|fetch| fetch.seed_index == index),
+                    download_rate: seed_state.map_or(0, |state| state.download_rate),
+                    failures: seed_state.map_or(0, |state| state.failures),
+                }
+            })
+            .collect()
+    }
+
+    async fn start_v2_webseed_block(&mut self) -> bool {
+        if self.paused
+            || self.meta.webseeds.is_empty()
+            || self
+                .completion_held
+                .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return false;
+        }
+        if !self.ensure_v2_webseed_runtime() {
+            return false;
+        }
+        let local_have = self.local_have.read().await.clone();
+        if local_have.count_ones() == self.piece_map.piece_count as usize {
+            return false;
+        }
+        let Some(webseed) = self.webseed.as_ref() else {
+            return false;
+        };
+        if webseed.fetch.is_some()
+            || webseed.transfer_jobs.len() >= V2_MAX_PENDING_TRANSFER_JOBS
+            || webseed.pending_piece_completions.len() >= V2_MAX_PENDING_PIECE_JOBS
+            || webseed
+                .admission_retry_at
+                .is_some_and(|deadline| Instant::now() < deadline)
+        {
+            return false;
+        }
+
+        let context = webseed.context.clone();
+        let mut active_pieces = webseed.assemblies.keys().copied().collect::<Vec<_>>();
+        active_pieces.sort_unstable();
+        let mut selected = None;
+        {
+            let Ok(ledger) = context.transfer_ledger.lock() else {
+                return false;
+            };
+            for piece in active_pieces {
+                if webseed
+                    .assemblies
+                    .get(&piece)
+                    .is_some_and(|assembly| assembly.discard_when_idle)
+                    || webseed.pending_piece_completions.contains_key(&piece)
+                    || local_have.get(piece as usize)
+                    || !context.piece_is_wanted(piece)
+                    || ledger.piece_has_foreign_activity(context.transfer_conn, piece)
+                {
+                    continue;
+                }
+                if let Some(block) =
+                    ledger.next_block(context.transfer_conn, piece, &ReserveMode::Exclusive)
+                {
+                    selected = Some(block);
+                    break;
+                }
+            }
+            if selected.is_none()
+                && webseed.assemblies.len() + webseed.pending_piece_completions.len()
+                    < V2_MAX_TRACKED_PIECES_PER_PEER
+            {
+                let piece_count = self.piece_map.piece_count as usize;
+                if piece_count > 0 {
+                    let first = webseed.next_piece_cursor as usize % piece_count;
+                    // The local-have bitmap is the v2 source candidate index:
+                    // skip completed words instead of scanning every piece.
+                    for (start, end) in [(first, piece_count), (0, first)] {
+                        let mut piece_index = local_have.next_unset_from(start);
+                        while let Some(index) = piece_index.filter(|index| *index < end) {
+                            piece_index = local_have.next_unset_from(index.saturating_add(1));
+                            let Ok(piece) = u32::try_from(index) else {
+                                continue;
+                            };
+                            if webseed.assemblies.contains_key(&piece)
+                                || webseed.pending_piece_completions.contains_key(&piece)
+                                || webseed
+                                    .pending_block_completions
+                                    .keys()
+                                    .any(|(active_piece, _)| *active_piece == piece)
+                                || !context.piece_is_wanted(piece)
+                                || ledger.piece_has_foreign_activity(context.transfer_conn, piece)
+                            {
+                                continue;
+                            }
+                            if let Some(block) = ledger.next_block(
+                                context.transfer_conn,
+                                piece,
+                                &ReserveMode::Exclusive,
+                            ) {
+                                selected = Some(block);
+                                break;
+                            }
+                        }
+                        if selected.is_some() {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        let Some(block) = selected else {
+            return false;
+        };
+        if self.piece_map.piece_count > 0 {
+            if let Some(webseed) = self.webseed.as_mut() {
+                webseed.next_piece_cursor =
+                    ((block.piece as usize + 1) % self.piece_map.piece_count) as u32;
+            }
+        }
+        let Ok(region) = context.piece_map.piece_to_file(block.piece) else {
+            return false;
+        };
+        if region.pad {
+            return false;
+        }
+        let Some(file) = context
+            .meta
+            .files
+            .iter()
+            .find(|file| file.index == region.file_index)
+        else {
+            return false;
+        };
+        let Some((seed_index, url)) = self.select_v2_webseed(file) else {
+            return false;
+        };
+        // Reserve the bounded response body before network I/O; the
+        // outstanding request keeps it charged until actor assembly accepts it.
+        let Ok(memory_lease) = reserve_webseed_body_bytes(&context.resources, block.length) else {
+            if let Some(webseed) = self.webseed.as_mut() {
+                webseed.admission_retry_at = Some(Instant::now() + V2_WEBSEED_ADMISSION_RETRY);
+            }
+            return false;
+        };
+        let maps_ready = self
+            .webseed
+            .as_mut()
+            .is_some_and(|webseed| webseed.outstanding.try_reserve(1).is_ok());
+        if !maps_ready {
+            drop(memory_lease);
+            if let Some(webseed) = self.webseed.as_mut() {
+                webseed.admission_retry_at = Some(Instant::now() + V2_WEBSEED_ADMISSION_RETRY);
+            }
+            return false;
+        }
+        if !ensure_v2_transfer_piece_memory(&context, block.piece) {
+            drop(memory_lease);
+            if let Some(webseed) = self.webseed.as_mut() {
+                webseed.admission_retry_at = Some(Instant::now() + V2_WEBSEED_ADMISSION_RETRY);
+            }
+            return false;
+        }
+        let rate_grant = match context
+            .network_budget
+            .try_acquire_download(context.rate_peer, u64::from(block.length))
+        {
+            Ok(RateAdmissionAttempt::Granted(grant)) => grant,
+            Ok(RateAdmissionAttempt::Wait(delay)) => {
+                if let Some(webseed) = self.webseed.as_mut() {
+                    webseed.admission_retry_at = Some(Instant::now() + delay);
+                }
+                drop(memory_lease);
+                release_v2_transfer_piece_memory_if_idle(&context, block.piece);
+                return false;
+            }
+            Err(error) => {
+                debug!(
+                    component = "webseed",
+                    operation = "rate_admission",
+                    torrent = %self.info_hash_hex,
+                    result = "deferred",
+                    error = %error,
+                    "pure-v2 webseed request could not reserve download credit"
+                );
+                drop(memory_lease);
+                release_v2_transfer_piece_memory_if_idle(&context, block.piece);
+                return false;
+            }
+        };
+        let reserve = context
+            .transfer_ledger
+            .lock()
+            .map_err(|_| anyhow::anyhow!("v2 transfer ledger lock poisoned"))
+            .and_then(|mut ledger| {
+                ledger
+                    .reserve_piece_affine(context.transfer_conn, block)
+                    .map_err(|error| anyhow::anyhow!("{error:?}"))
+            });
+        if reserve.is_err() {
+            drop(rate_grant);
+            drop(memory_lease);
+            release_v2_transfer_piece_memory_if_idle(&context, block.piece);
+            return false;
+        }
+        let sent_at = v2_transfer_now(&context);
+        let commit = context
+            .transfer_ledger
+            .lock()
+            .map(|mut ledger| ledger.commit(context.transfer_conn, block, sent_at).0);
+        if !matches!(commit, Ok(CommitOutcome::OnWire)) {
+            if let Ok(mut ledger) = context.transfer_ledger.lock() {
+                let _ = ledger.on_reject(context.transfer_conn, block);
+            }
+            drop(rate_grant);
+            drop(memory_lease);
+            release_v2_transfer_piece_memory_if_idle(&context, block.piece);
+            return false;
+        }
+        let coordinate = (block.piece, block.begin);
+        let file_offset = match region.file_offset.checked_add(u64::from(block.begin)) {
+            Some(offset) => offset,
+            None => {
+                if let Ok(mut ledger) = context.transfer_ledger.lock() {
+                    let _ = ledger.on_reject(context.transfer_conn, block);
+                }
+                drop(rate_grant);
+                drop(memory_lease);
+                release_v2_transfer_piece_memory_if_idle(&context, block.piece);
+                return false;
+            }
+        };
+        let egress_policy = self.egress_policy;
+        let http_timeout = self.http_timeout;
+        let request = block;
+        let fetch_url = url.clone();
+        let task = tokio::spawn(async move {
+            fetch_v2_webseed_block(
+                request,
+                fetch_url,
+                file_offset,
+                egress_policy,
+                http_timeout,
+                rate_grant,
+            )
+            .await
+        });
+        let webseed = self.webseed.as_mut().expect("webseed runtime was created");
+        webseed.outstanding.insert(
+            coordinate,
+            V2OutstandingRequest {
+                length: block.length,
+                sent_at,
+                _memory_lease: Some(memory_lease),
+                rate_grant: None,
+            },
+        );
+        webseed.admission_retry_at = None;
+        webseed.fetch = Some(V2WebseedFetchInFlight {
+            request: block,
+            seed_index,
+            task,
+        });
+        if let Ok(mut state) = webseed.state.lock() {
+            state.outstanding = webseed.outstanding.len();
+        }
+        true
+    }
+
+    fn select_v2_webseed(&mut self, file: &TorrentFileV2) -> Option<(usize, Url)> {
+        let seed_count = self.meta.webseeds.len();
+        let webseed = self.webseed.as_mut()?;
+        let now = Instant::now();
+        for attempt in 0..seed_count {
+            let index = (webseed.next_seed_index + attempt) % seed_count;
+            let state = webseed.seed_states.get_mut(index)?;
+            if state.failures == u8::MAX
+                || state.next_attempt.is_some_and(|deadline| deadline > now)
+            {
+                continue;
+            }
+            let Some(url) = v2_webseed_file_url(&self.meta, file, &self.meta.webseeds[index])
+            else {
+                state.failures = u8::MAX;
+                state.download_rate = 0;
+                continue;
+            };
+            webseed.next_seed_index = (index + 1) % seed_count;
+            return Some((index, url));
+        }
+        None
+    }
+
+    async fn finish_v2_webseed_fetch(
+        &mut self,
+        result: Result<anyhow::Result<V2WebseedFetchedBlock>, tokio::task::JoinError>,
+    ) {
+        let Some(mut webseed) = self.webseed.take() else {
+            return;
+        };
+        let Some(fetch) = webseed.fetch.take() else {
+            self.webseed = Some(webseed);
+            return;
+        };
+        let block = fetch.request;
+        let coordinate = (block.piece, block.begin);
+        match result {
+            Ok(Ok(fetched)) => {
+                let bytes = fetched.data.len() as u64;
+                if let Some(seed) = webseed.seed_states.get_mut(fetch.seed_index) {
+                    seed.failures = 0;
+                    seed.next_attempt = None;
+                    let seconds = fetched.elapsed.as_secs_f64().max(0.001);
+                    seed.download_rate =
+                        (bytes as f64 / seconds).round().clamp(0.0, i64::MAX as f64) as i64;
+                }
+                let Some(request) = webseed.outstanding.get_mut(&coordinate) else {
+                    self.release_v2_webseed_request(&mut webseed, block);
+                    drop(fetched);
+                    self.webseed = Some(webseed);
+                    return;
+                };
+                request.rate_grant = Some(fetched.rate_grant);
+                let result = handle_v2_piece(
+                    &webseed.context,
+                    &webseed.state,
+                    &mut webseed.outstanding,
+                    &mut webseed.assemblies,
+                    &mut webseed.transfer_jobs,
+                    &mut webseed.pending_block_completions,
+                    block.piece,
+                    block.begin,
+                    fetched.data,
+                )
+                .await;
+                if let Err(error) = result {
+                    debug!(
+                        component = "webseed",
+                        operation = "receive_v2_block",
+                        torrent = %self.info_hash_hex,
+                        piece = block.piece,
+                        begin = block.begin,
+                        result = "error",
+                        error = %error,
+                        "pure-v2 webseed block could not enter the verification pipeline"
+                    );
+                    webseed.outstanding.remove(&coordinate);
+                    self.record_v2_webseed_failure(&mut webseed, fetch.seed_index);
+                    self.discard_v2_webseed_piece(&mut webseed, block.piece)
+                        .await;
+                }
+                start_ready_v2_piece_jobs(
+                    &webseed.context,
+                    &mut webseed.assemblies,
+                    &mut webseed.pending_piece_completions,
+                    &mut webseed.transfer_jobs,
+                );
+                if let Ok(mut state) = webseed.state.lock() {
+                    state.outstanding = webseed.outstanding.len();
+                    update_v2_assembly_stats(
+                        &mut state,
+                        &webseed.assemblies,
+                        &webseed.pending_block_completions,
+                        &webseed.pending_piece_completions,
+                    );
+                }
+            }
+            Ok(Err(error)) => {
+                self.release_v2_webseed_request(&mut webseed, block);
+                self.record_v2_webseed_failure(&mut webseed, fetch.seed_index);
+                debug!(
+                    component = "webseed",
+                    operation = "fetch_v2_block",
+                    torrent = %self.info_hash_hex,
+                    webseed = %url_log_target(&self.meta.webseeds[fetch.seed_index]),
+                    piece = block.piece,
+                    begin = block.begin,
+                    result = "error",
+                    error = %error,
+                    "pure-v2 webseed request failed"
+                );
+            }
+            Err(error) => {
+                self.release_v2_webseed_request(&mut webseed, block);
+                self.record_v2_webseed_failure(&mut webseed, fetch.seed_index);
+                debug!(
+                    component = "webseed",
+                    operation = "fetch_v2_block",
+                    torrent = %self.info_hash_hex,
+                    webseed = %url_log_target(&self.meta.webseeds[fetch.seed_index]),
+                    piece = block.piece,
+                    begin = block.begin,
+                    result = "join_error",
+                    error = %crate::task_join_error_summary("pure-v2 webseed request", &error),
+                    "pure-v2 webseed request task ended unexpectedly"
+                );
+            }
+        }
+        self.webseed = Some(webseed);
+    }
+
+    fn release_v2_webseed_request(&self, webseed: &mut V2WebseedRuntime, block: BlockExtent) {
+        webseed.outstanding.remove(&(block.piece, block.begin));
+        if let Ok(mut ledger) = webseed.context.transfer_ledger.lock() {
+            let _ = ledger.on_reject(webseed.context.transfer_conn, block);
+            let _ = ledger.discard_empty_piece(block.piece);
+        }
+        release_v2_transfer_piece_memory_if_idle(&webseed.context, block.piece);
+        if let Ok(mut state) = webseed.state.lock() {
+            state.outstanding = webseed.outstanding.len();
+        }
+    }
+
+    fn record_v2_webseed_failure(&self, webseed: &mut V2WebseedRuntime, seed_index: usize) {
+        if let Some(seed) = webseed.seed_states.get_mut(seed_index) {
+            seed.failures = seed.failures.saturating_add(1).min(u8::MAX - 1);
+            seed.download_rate = 0;
+            let shift = seed.failures.saturating_sub(1).min(5) as u32;
+            seed.next_attempt = Some(Instant::now() + Duration::from_secs(1_u64 << shift));
+        }
+    }
+
+    async fn handle_v2_webseed_transfer_completion(&mut self, completion: V2TransferCompletion) {
+        let Some(mut webseed) = self.webseed.take() else {
+            return;
+        };
+        self.apply_v2_webseed_transfer_completion(&mut webseed, completion)
+            .await;
+        self.webseed = Some(webseed);
+    }
+
+    async fn discard_v2_webseed_piece(&self, webseed: &mut V2WebseedRuntime, piece: u32) {
+        let remove_assembly = if let Some(assembly) = webseed.assemblies.get_mut(&piece) {
+            assembly.failed = true;
+            assembly.discard_when_idle = true;
+            assembly.pending_blocks == 0
+        } else {
+            false
+        };
+        if remove_assembly {
+            webseed.assemblies.remove(&piece);
+        }
+        if webseed
+            .pending_block_completions
+            .keys()
+            .any(|(active_piece, _)| *active_piece == piece)
+        {
+            return;
+        }
+        fail_v2_discarded_piece_if_idle(
+            &webseed.context,
+            piece,
+            &webseed.assemblies,
+            &webseed.pending_piece_completions,
+        )
+        .await;
+    }
+
+    async fn apply_v2_webseed_transfer_completion(
+        &mut self,
+        webseed: &mut V2WebseedRuntime,
+        completion: V2TransferCompletion,
+    ) {
+        match completion {
+            V2TransferCompletion::BlockStored(completion) => {
+                let piece = completion.piece;
+                if let Err(error) = apply_v2_block_completion(
+                    completion,
+                    &mut webseed.assemblies,
+                    &mut webseed.pending_block_completions,
+                ) {
+                    debug!(
+                        component = "webseed",
+                        operation = "store_v2_block",
+                        torrent = %self.info_hash_hex,
+                        result = "error",
+                        error = %error,
+                        "pure-v2 webseed block write failed"
+                    );
+                }
+                fail_v2_discarded_piece_if_idle(
+                    &webseed.context,
+                    piece,
+                    &webseed.assemblies,
+                    &webseed.pending_piece_completions,
+                )
+                .await;
+            }
+            V2TransferCompletion::PieceVerified(completion) => {
+                apply_v2_piece_completion(
+                    &webseed.context,
+                    &webseed.state,
+                    &mut webseed.pending_piece_completions,
+                    completion,
+                )
+                .await;
+            }
+        }
+        start_ready_v2_piece_jobs(
+            &webseed.context,
+            &mut webseed.assemblies,
+            &mut webseed.pending_piece_completions,
+            &mut webseed.transfer_jobs,
+        );
+        if let Ok(mut state) = webseed.state.lock() {
+            state.outstanding = webseed.outstanding.len();
+            update_v2_assembly_stats(
+                &mut state,
+                &webseed.assemblies,
+                &webseed.pending_block_completions,
+                &webseed.pending_piece_completions,
+            );
+        }
+    }
+
+    async fn shutdown_webseed(&mut self) {
+        let Some(mut webseed) = self.webseed.take() else {
+            return;
+        };
+        webseed.context.peer_control.cancel();
+        if let Some(fetch) = webseed.fetch.take() {
+            fetch.task.abort();
+            let _ = fetch.task.await;
+        }
+        while let Some(completion) = webseed.transfer_jobs.next().await {
+            self.apply_v2_webseed_transfer_completion(&mut webseed, completion)
+                .await;
+        }
+        let mut pieces = Vec::with_capacity(
+            webseed
+                .assemblies
+                .len()
+                .saturating_add(webseed.pending_block_completions.len())
+                .saturating_add(webseed.pending_piece_completions.len())
+                .saturating_add(webseed.outstanding.len()),
+        );
+        pieces.extend(webseed.assemblies.keys().copied());
+        pieces.extend(
+            webseed
+                .pending_block_completions
+                .keys()
+                .map(|(piece, _)| *piece),
+        );
+        pieces.extend(webseed.pending_piece_completions.keys().copied());
+        pieces.extend(webseed.outstanding.keys().map(|(piece, _)| *piece));
+        pieces.sort_unstable();
+        pieces.dedup();
+        for piece in pieces {
+            fail_v2_transfer_piece(&webseed.context, piece);
+        }
+        webseed.outstanding.clear();
+        webseed.assemblies.clear();
+        webseed.pending_block_completions.clear();
+        webseed.pending_piece_completions.clear();
+        drop(webseed);
     }
 
     async fn handle_command(&mut self, command: TorrentCmd) -> bool {
@@ -2217,6 +3036,7 @@ impl V2TorrentTask {
             TorrentCmd::Shutdown => {
                 self.tracker_workers.cancel();
                 self.announce_stopped_with_control_deadline().await;
+                self.shutdown_webseed().await;
                 self.shutdown_peers().await;
                 let _ = self.persist_runtime(None).await;
                 true
@@ -2225,6 +3045,7 @@ impl V2TorrentTask {
                 let was_paused = self.paused;
                 self.paused = true;
                 self.tracker_workers.cancel();
+                self.shutdown_webseed().await;
                 self.shutdown_peers().await;
                 let result = self.persist_runtime(Some(TorrentState::Paused)).await;
                 if result.is_err() {
@@ -2252,6 +3073,7 @@ impl V2TorrentTask {
                 let was_paused = self.paused;
                 self.paused = true;
                 self.tracker_workers.cancel();
+                self.shutdown_webseed().await;
                 self.shutdown_peers().await;
                 let result = self
                     .persist_runtime(Some(TorrentState::Paused))
@@ -2272,6 +3094,7 @@ impl V2TorrentTask {
                 resume_paused,
                 reply,
             } => {
+                self.shutdown_webseed().await;
                 if let Some(new_root) = new_save_root {
                     self.save_root = new_root.clone();
                     self.storage = MountScheduler::new_for_path(
@@ -2298,6 +3121,7 @@ impl V2TorrentTask {
                 false
             }
             TorrentCmd::Recheck { .. } => {
+                self.shutdown_webseed().await;
                 self.recheck_and_set_state().await;
                 false
             }
@@ -2388,19 +3212,7 @@ impl V2TorrentTask {
                 false
             }
             TorrentCmd::GetWebseeds { reply } => {
-                let _ = reply.send(
-                    self.meta
-                        .webseeds
-                        .iter()
-                        .cloned()
-                        .map(|url| EngineWebseedSnapshot {
-                            url,
-                            is_downloading: false,
-                            download_rate: 0,
-                            failures: 0,
-                        })
-                        .collect(),
-                );
+                let _ = reply.send(self.webseed_snapshots());
                 false
             }
             TorrentCmd::GetRuntimeStats { reply } => {
@@ -2408,6 +3220,7 @@ impl V2TorrentTask {
                 false
             }
             TorrentCmd::ReloadFilePolicy { reply } => {
+                self.shutdown_webseed().await;
                 let result = self.apply_file_policy_from_db().await;
                 if result.is_ok() {
                     self.recheck_and_set_state().await;
@@ -2637,7 +3450,7 @@ impl V2TorrentTask {
             self.piece_map = piece_map;
             self.transfer_ledger = Arc::new(Mutex::new(
                 TransferLedger::new(Arc::clone(&self.piece_map))
-                    .with_max_connections(self.max_peers),
+                    .with_max_connections(self.max_peers.saturating_add(1)),
             ));
             self.transfer_piece_memory_leases = Arc::new(Mutex::new(HashMap::new()));
             let have = self.local_have.read().await.clone();
@@ -3368,6 +4181,20 @@ impl V2TorrentTask {
         let mut failed = 0u64;
         for action in actions {
             let TransferAction::Cancel { conn, block } = action;
+            if let Some(webseed) = self
+                .webseed
+                .as_ref()
+                .filter(|webseed| webseed.context.transfer_conn == conn)
+            {
+                if let Some(fetch) = webseed
+                    .fetch
+                    .as_ref()
+                    .filter(|fetch| fetch.request == block)
+                {
+                    fetch.task.abort();
+                }
+                continue;
+            }
             let Some(peer) = self.peers.values().find(|peer| peer.transfer_conn == conn) else {
                 continue;
             };
@@ -4969,37 +5796,6 @@ async fn run_v2_peer_protocol(
                         )
                         .await;
                     }
-                    V2TransferCompletion::BlockAdmissionCancelled {
-                        piece,
-                        generation,
-                        begin,
-                    } => {
-                        apply_v2_block_admission_cancelled(
-                            piece,
-                            generation,
-                            begin,
-                            &mut assemblies,
-                            &mut pending_block_completions,
-                        );
-                        if context.peer_control.generation() != shutdown_generation {
-                            return Ok(());
-                        }
-                    }
-                    V2TransferCompletion::BlockAdmissionFailed {
-                        piece,
-                        generation,
-                        begin,
-                        error,
-                    } => {
-                        apply_v2_block_admission_cancelled(
-                            piece,
-                            generation,
-                            begin,
-                            &mut assemblies,
-                            &mut pending_block_completions,
-                        );
-                        return Err(anyhow::anyhow!(error));
-                    }
                     V2TransferCompletion::PieceVerified(completion) => {
                         apply_v2_piece_completion(
                             &context,
@@ -5929,42 +6725,6 @@ fn discard_v2_empty_assembly_if_idle(
     }
 }
 
-fn apply_v2_block_admission_cancelled(
-    piece: u32,
-    generation: u64,
-    begin: u32,
-    assemblies: &mut HashMap<u32, V2PieceAssembly>,
-    pending_block_completions: &mut HashMap<(u32, u32), V2PendingCompletion>,
-) {
-    let coordinate = (piece, begin);
-    if pending_block_completions
-        .get(&coordinate)
-        .map(|pending| pending.generation)
-        != Some(generation)
-        || assemblies.get(&piece).map(|assembly| assembly.generation) != Some(generation)
-    {
-        if pending_block_completions
-            .get(&coordinate)
-            .is_some_and(|pending| pending.generation == generation)
-        {
-            pending_block_completions.remove(&coordinate);
-        }
-        return;
-    }
-    pending_block_completions.remove(&coordinate);
-    if let Some(assembly) = assemblies.get_mut(&piece) {
-        assembly.pending_blocks = assembly.pending_blocks.saturating_sub(1);
-        assembly.failed = true;
-        assembly.discard_when_idle = true;
-    }
-    if assemblies
-        .get(&piece)
-        .is_some_and(|assembly| assembly.pending_blocks == 0 && assembly.failed)
-    {
-        assemblies.remove(&piece);
-    }
-}
-
 fn start_ready_v2_piece_jobs(
     context: &V2PeerContext,
     assemblies: &mut HashMap<u32, V2PieceAssembly>,
@@ -6108,36 +6868,6 @@ async fn drain_v2_transfer_jobs(
                     .await;
                 }
             }
-            V2TransferCompletion::BlockAdmissionCancelled {
-                piece,
-                generation,
-                begin,
-            } => {
-                apply_v2_block_admission_cancelled(
-                    piece,
-                    generation,
-                    begin,
-                    assemblies,
-                    pending_block_completions,
-                );
-            }
-            V2TransferCompletion::BlockAdmissionFailed {
-                piece,
-                generation,
-                begin,
-                error,
-            } => {
-                apply_v2_block_admission_cancelled(
-                    piece,
-                    generation,
-                    begin,
-                    assemblies,
-                    pending_block_completions,
-                );
-                if first_error.is_none() {
-                    first_error = Some(anyhow::anyhow!(error));
-                }
-            }
             V2TransferCompletion::PieceVerified(completion) => {
                 apply_v2_piece_completion(context, state, pending_piece_completions, completion)
                     .await;
@@ -6160,6 +6890,102 @@ async fn drain_v2_upload_reads(
     upload_reads: &mut futures::stream::FuturesUnordered<V2UploadReadTask>,
 ) {
     while upload_reads.next().await.is_some() {}
+}
+
+fn v2_webseed_file_url(meta: &TorrentMetaV2, file: &TorrentFileV2, webseed: &str) -> Option<Url> {
+    let mut url = Url::parse(webseed).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let components = file.path.components();
+    if components.is_empty() {
+        return None;
+    }
+    if meta.files.len() == 1 && !file.pad {
+        let base_has_trailing_slash = url.path().ends_with('/');
+        let base_has_torrent_root = url
+            .path_segments()
+            .and_then(|mut segments| segments.next_back())
+            .is_some_and(|last| last == meta.name);
+        if base_has_trailing_slash {
+            let mut segments = url.path_segments_mut().ok()?;
+            for component in components {
+                segments.push(component);
+            }
+        } else if components.len() > 1
+            && components.first() == Some(&meta.name)
+            && base_has_torrent_root
+        {
+            let mut segments = url.path_segments_mut().ok()?;
+            for component in &components[1..] {
+                segments.push(component);
+            }
+        }
+        return Some(url);
+    }
+
+    let base_has_trailing_slash = url.path().ends_with('/');
+    let root_is_explicit = url
+        .path_segments()
+        .and_then(|mut segments| segments.next_back())
+        .is_some_and(|last| last == meta.name);
+    let mut segments = url.path_segments_mut().ok()?;
+    if base_has_trailing_slash || !root_is_explicit {
+        segments.push(&meta.name);
+    }
+    for component in components {
+        segments.push(component);
+    }
+    drop(segments);
+    Some(url)
+}
+
+async fn fetch_v2_webseed_block(
+    request: BlockExtent,
+    url: Url,
+    file_offset: u64,
+    egress_policy: OutboundEgressPolicy,
+    http_timeout: Duration,
+    rate_grant: RateAdmissionGrant,
+) -> anyhow::Result<V2WebseedFetchedBlock> {
+    let started = Instant::now();
+    let (range_start, range_end) = webseed_file_byte_range(file_offset, request.length as usize)?;
+    let client = egress_policy
+        .http_client(
+            OutboundTargetKind::Webseed,
+            &url,
+            http_timeout,
+            &crate::peer_id::user_agent(),
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!(error))?;
+    let response = client
+        .get(url)
+        .header(RANGE, format!("bytes={range_start}-{range_end}"))
+        .send()
+        .await
+        .map_err(|error| anyhow::anyhow!(error.without_url()))?;
+    validate_webseed_range_response(
+        response.status(),
+        response.headers(),
+        range_start,
+        range_end,
+    )?;
+    let body = bounded_response_body(response, request.length as usize)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    if body.len() != request.length as usize {
+        anyhow::bail!(
+            "pure-v2 webseed returned {} bytes for a {}-byte block",
+            body.len(),
+            request.length
+        );
+    }
+    Ok(V2WebseedFetchedBlock {
+        data: Bytes::from(body),
+        rate_grant,
+        elapsed: started.elapsed(),
+    })
 }
 
 async fn complete_v2_piece_job(
@@ -6409,37 +7235,10 @@ async fn handle_v2_piece(
             request_memory_lease,
         ))
     };
-    let peer_generation = context.peer_generation;
     let job_context = context.clone();
+    // The request grant was settled at Piece receipt above. Storage has its
+    // own bounded scheduler and must not charge these network bytes again.
     transfer_jobs.push(Box::pin(async move {
-        let download_grant = match job_context
-            .network_budget
-            .acquire_download(
-                job_context.rate_peer,
-                u64::from(expected),
-                &job_context.peer_control,
-                peer_generation,
-            )
-            .await
-        {
-            Ok(Some(grant)) => grant,
-            Ok(None) => {
-                return V2TransferCompletion::BlockAdmissionCancelled {
-                    piece,
-                    generation,
-                    begin,
-                };
-            }
-            Err(error) => {
-                return V2TransferCompletion::BlockAdmissionFailed {
-                    piece,
-                    generation,
-                    begin,
-                    error: error.to_string(),
-                };
-            }
-        };
-        download_grant.settle(u64::from(expected));
         let result = if let Some((data, path, offset, _memory_lease)) = block_write {
             let result = scheduled_write(
                 &job_context.storage,
@@ -7302,6 +8101,162 @@ mod tests {
     }
 
     #[test]
+    fn v2_webseed_urls_follow_single_and_multi_file_layouts() {
+        let single_file = TorrentFileV2 {
+            index: 0,
+            length: 12,
+            path: rt_path::SafeRelPath::from_name("payload.bin", false).unwrap(),
+            offset: 0,
+            piece_offset: 0,
+            pieces_root: None,
+            pad: false,
+        };
+        let single_meta = TorrentMetaV2 {
+            info_hash_v2: [0; 32],
+            announce: None,
+            announce_list: Vec::new(),
+            webseeds: Vec::new(),
+            comment: None,
+            created_by: None,
+            creation_date: None,
+            name: "payload.bin".to_owned(),
+            piece_length: 16 * 1024,
+            files: vec![single_file.clone()],
+            piece_layers: HashMap::new(),
+            private: false,
+            raw: Vec::new(),
+        };
+        assert_eq!(
+            v2_webseed_file_url(
+                &single_meta,
+                &single_file,
+                "https://mirror.example/payload.bin"
+            )
+            .unwrap()
+            .as_str(),
+            "https://mirror.example/payload.bin"
+        );
+        assert_eq!(
+            v2_webseed_file_url(&single_meta, &single_file, "https://mirror.example/files/")
+                .unwrap()
+                .as_str(),
+            "https://mirror.example/files/payload.bin"
+        );
+        assert!(
+            v2_webseed_file_url(&single_meta, &single_file, "ftp://mirror.example/file").is_none()
+        );
+
+        let file = TorrentFileV2 {
+            index: 0,
+            length: 12,
+            path: rt_path::SafeRelPath::from_components(&["docs", "readme.txt"], false).unwrap(),
+            offset: 0,
+            piece_offset: 0,
+            pieces_root: None,
+            pad: false,
+        };
+        let second_file = TorrentFileV2 {
+            index: 1,
+            length: 8,
+            path: rt_path::SafeRelPath::from_components(&["images", "cover.png"], false).unwrap(),
+            offset: 12,
+            piece_offset: 16 * 1024,
+            pieces_root: None,
+            pad: false,
+        };
+        let multi_meta = TorrentMetaV2 {
+            info_hash_v2: [0; 32],
+            announce: None,
+            announce_list: Vec::new(),
+            webseeds: Vec::new(),
+            comment: None,
+            created_by: None,
+            creation_date: None,
+            name: "bundle".to_owned(),
+            piece_length: 16 * 1024,
+            files: vec![file.clone(), second_file],
+            piece_layers: HashMap::new(),
+            private: false,
+            raw: Vec::new(),
+        };
+        for base in [
+            "https://mirror.example/files/",
+            "https://mirror.example/files/bundle",
+        ] {
+            assert_eq!(
+                v2_webseed_file_url(&multi_meta, &file, base)
+                    .unwrap()
+                    .as_str(),
+                "https://mirror.example/files/bundle/docs/readme.txt"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn v2_webseed_request_timeout_aborts_fetch_and_releases_ledger_owner() {
+        let content = vec![0x31; rt_peer_wire::message::MAX_BLOCK_SIZE as usize];
+        let raw = v2_raw_with_content(&content);
+        let (mut task, _fixture) =
+            v2_task_not_started(quiet_v2_runtime(), &raw, content.len() as u64).await;
+        Arc::make_mut(&mut task.meta)
+            .webseeds
+            .push("https://seed.example/payload.bin".to_owned());
+        assert!(task.ensure_v2_webseed_runtime());
+
+        let context = task.webseed.as_ref().unwrap().context.clone();
+        let block = BlockExtent::new(0, 0, rt_peer_wire::message::MAX_BLOCK_SIZE);
+        {
+            let mut ledger = context.transfer_ledger.lock().unwrap();
+            ledger
+                .reserve_piece_affine(context.transfer_conn, block)
+                .unwrap();
+            assert_eq!(
+                ledger.commit(context.transfer_conn, block, 0).0,
+                CommitOutcome::OnWire
+            );
+        }
+        let fetch_task = tokio::spawn(async {
+            std::future::pending::<anyhow::Result<V2WebseedFetchedBlock>>().await
+        });
+        let webseed = task.webseed.as_mut().unwrap();
+        webseed.outstanding.insert(
+            (block.piece, block.begin),
+            V2OutstandingRequest {
+                length: block.length,
+                sent_at: 0,
+                _memory_lease: None,
+                rate_grant: None,
+            },
+        );
+        webseed.fetch = Some(V2WebseedFetchInFlight {
+            request: block,
+            seed_index: 0,
+            task: fetch_task,
+        });
+        let snapshot = task.webseed_snapshots().pop().unwrap();
+        assert_eq!(snapshot.url, "https://seed.example/payload.bin");
+        assert!(snapshot.is_downloading);
+
+        let timeout_nanos = V2_REQUEST_TIMEOUT.as_nanos().min(u128::from(u64::MAX)) as u64;
+        task.expire_v2_transfer_requests_at(timeout_nanos, V2_REQUEST_TIMEOUT);
+        let result = {
+            let fetch = task.webseed.as_mut().unwrap().fetch.as_mut().unwrap();
+            (&mut fetch.task).await
+        };
+        task.finish_v2_webseed_fetch(result).await;
+
+        let webseed = task.webseed.as_ref().unwrap();
+        assert!(webseed.fetch.is_none());
+        assert!(webseed.outstanding.is_empty());
+        let snapshot = task.webseed_snapshots().pop().unwrap();
+        assert!(!snapshot.is_downloading);
+        assert_eq!(snapshot.failures, 1);
+        let ledger = task.transfer_ledger.lock().unwrap();
+        assert_eq!(ledger.in_flight(), 0);
+        assert_eq!(ledger.piece_progress(block.piece), None);
+    }
+
+    #[test]
     fn bitmap_set_iteration_skips_empty_words_and_stops_at_piece_count() {
         let mut bitmap = V2Bitmap::new(130);
         bitmap.set(1, true);
@@ -7312,6 +8267,20 @@ mod tests {
         assert_eq!(bitmap.next_set_from(2), Some(65));
         assert_eq!(bitmap.next_set_from(66), Some(129));
         assert_eq!(bitmap.next_set_from(130), None);
+    }
+
+    #[test]
+    fn bitmap_missing_iteration_skips_full_words_and_masks_tail_bits() {
+        let mut bitmap = V2Bitmap::new(130);
+        bitmap.fill(true);
+        bitmap.set(0, false);
+        bitmap.set(64, false);
+        bitmap.set(129, false);
+
+        assert_eq!(bitmap.next_unset_from(0), Some(0));
+        assert_eq!(bitmap.next_unset_from(1), Some(64));
+        assert_eq!(bitmap.next_unset_from(65), Some(129));
+        assert_eq!(bitmap.next_unset_from(130), None);
     }
 
     #[tokio::test]
@@ -7432,16 +8401,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn v2_peer_reads_control_messages_while_transfer_jobs_wait_for_rate_budget() {
+    async fn v2_peer_charges_download_bytes_once_and_keeps_control_responsive() {
         use tokio::net::TcpListener;
 
         let temp = tempfile::tempdir().unwrap();
         let file_name = rt_path::SafeRelPath::from_name("payload.bin", false).unwrap();
-        std::fs::write(
-            file_name.resolve(temp.path()),
-            vec![7u8; rt_peer_wire::message::MAX_BLOCK_SIZE as usize],
-        )
-        .unwrap();
+        let payload_path = file_name.resolve(temp.path());
+        let payload = vec![7u8; rt_peer_wire::message::MAX_BLOCK_SIZE as usize];
+        std::fs::write(&payload_path, payload.clone()).unwrap();
         let piece_map = Arc::new(
             V2PieceMap::new(
                 u64::from(rt_peer_wire::message::MAX_BLOCK_SIZE),
@@ -7471,7 +8438,7 @@ mod tests {
                 path: file_name,
                 offset: 0,
                 piece_offset: 0,
-                pieces_root: None,
+                pieces_root: Some(rt_hash::BlockHash::of(&payload).0),
                 pad: false,
             }],
             piece_layers: HashMap::new(),
@@ -7550,25 +8517,12 @@ mod tests {
             .unwrap()
             .unwrap();
         rate_grant.settle(64 * 1024);
-        let download_grant = network_budget
-            .acquire_download(
-                rate_peer,
-                64 * 1024,
-                &rate_control,
-                rate_control.generation(),
-            )
-            .await
-            .unwrap()
-            .unwrap();
-        download_grant.settle(64 * 1024);
-
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let peer_addr = listener.local_addr().unwrap();
         let remote = TcpStream::connect(peer_addr).await.unwrap();
         let (server, _) = listener.accept().await.unwrap();
         let state = Arc::new(Mutex::new(V2PeerState::new(1)));
         state.lock().unwrap().upload_choked = false;
-        let state_for_test = Arc::clone(&state);
         let peer = tokio::spawn(run_v2_peer_protocol(
             context,
             peer_addr,
@@ -7635,32 +8589,55 @@ mod tests {
         })
         .await
         .expect("v2 download request was not issued");
+        // Simulate unrelated payload consuming the shared download allowance
+        // after this request has already reserved its one block grant.
+        let other_download = network_budget
+            .acquire_download(
+                rate_peer,
+                64 * 1024,
+                &rate_control,
+                rate_control.generation(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        other_download.settle(64 * 1024);
         remote
             .send(Message::Piece {
                 piece: 0,
                 begin: 0,
-                data: Bytes::from(vec![7u8; rt_peer_wire::message::MAX_BLOCK_SIZE as usize]),
+                data: Bytes::from(payload.clone()),
             })
             .await
             .unwrap();
         remote.send(Message::NotInterested).await.unwrap();
-        assert!(matches!(
-            timeout(Duration::from_secs(1), event_rx.recv())
-                .await
-                .expect("v2 peer loop stalled behind download rate admission"),
-            Some(V2PeerEvent::InterestChanged)
-        ));
-        assert!(!context_for_test.local_have.read().await.get(0));
-        assert_eq!(state_for_test.lock().unwrap().downloaded, 0);
+        let mut saw_interest = false;
+        let mut saw_download = false;
+        timeout(Duration::from_secs(2), async {
+            while !saw_interest || !saw_download {
+                match event_rx.recv().await {
+                    Some(V2PeerEvent::InterestChanged) => saw_interest = true,
+                    Some(V2PeerEvent::Downloaded { bytes, .. })
+                        if bytes == rt_peer_wire::message::MAX_BLOCK_SIZE as u64 =>
+                    {
+                        saw_download = true;
+                    }
+                    Some(_) => {}
+                    None => panic!("v2 peer event channel closed before work completed"),
+                }
+            }
+        })
+        .await
+        .expect("piece storage waited for a second download-rate grant or peer control stalled");
+        assert!(context_for_test.local_have.read().await.get(0));
+        assert_eq!(std::fs::read(payload_path).unwrap(), payload);
 
         context_for_test.peer_control.cancel();
         assert!(timeout(Duration::from_secs(1), peer)
             .await
-            .expect("v2 shutdown did not cancel a pending download-rate wait")
+            .expect("v2 peer shutdown did not drain admitted work")
             .unwrap()
             .is_ok());
-        assert!(!context_for_test.local_have.read().await.get(0));
-        assert_eq!(state_for_test.lock().unwrap().downloaded, 0);
         assert!(event_rx.try_recv().is_err());
         drop(remote);
     }
