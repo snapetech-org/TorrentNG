@@ -6803,6 +6803,9 @@ fn webseed_block_ranges(
     if meta.piece_length == 0 || request.length == 0 || request.length > MAX_BLOCK_SIZE {
         return None;
     }
+    if u64::from(request.begin).checked_add(u64::from(request.length))? > meta.piece_length {
+        return None;
+    }
     let block_start = u64::from(request.piece)
         .checked_mul(meta.piece_length)?
         .checked_add(u64::from(request.begin))?;
@@ -11599,6 +11602,18 @@ mod tests {
             ),
             (0, 4, 2, false)
         );
+
+        let mut piece_boundary_meta = meta.clone();
+        piece_boundary_meta.piece_length = 6;
+        assert!(webseed_block_ranges(
+            &piece_boundary_meta,
+            BlockRequest {
+                piece: 0,
+                begin: 1,
+                length: 6,
+            }
+        )
+        .is_none());
     }
 
     #[test]
@@ -11641,6 +11656,18 @@ mod tests {
                 piece: 0,
                 begin: 0,
                 length: (MAX_WEBSEED_RANGES_PER_BLOCK + 1) as u32,
+            }
+        )
+        .is_none());
+
+        let mut overflow_meta = meta;
+        overflow_meta.piece_length = u64::MAX;
+        assert!(webseed_block_ranges(
+            &overflow_meta,
+            BlockRequest {
+                piece: 2,
+                begin: 0,
+                length: 1,
             }
         )
         .is_none());
