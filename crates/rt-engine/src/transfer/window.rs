@@ -120,7 +120,9 @@ impl WindowController {
         self.remote_reqq = reqq.map(|limit| limit.max(1));
     }
 
-    /// Useful payload delivered (verified-valid block bytes, not duplicates).
+    /// Requested block bytes accepted by the ownership ledger, excluding
+    /// duplicates and unsolicited responses. Piece integrity is verified
+    /// separately after assembly.
     pub fn on_delivery(&mut self, bytes: u64, now: Nanos) {
         let start = *self.sample_start.get_or_insert(now);
         self.sample_bytes = self.sample_bytes.saturating_add(bytes);

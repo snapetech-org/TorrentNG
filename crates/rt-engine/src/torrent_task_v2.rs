@@ -72,6 +72,7 @@ use crate::transfer::obligations::{
     InboundDecision, InboundObligations, Reject as InboundReject,
     RejectReason as InboundRejectReason, Served as InboundServed,
 };
+use crate::transfer::window::{WindowConfig, WindowController, WindowInputs};
 use crate::{EnginePeerSnapshot, EngineTorrentLimits, EngineWebseedSnapshot, TorrentRuntimeStats};
 
 const V2_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -82,6 +83,8 @@ const V2_CHOKE_INTERVAL: Duration = Duration::from_secs(10);
 const V2_REQUEST_TIMEOUT_TICK: Duration = Duration::from_secs(5);
 const V2_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const V2_REQUEST_WINDOW: usize = 32;
+const V2_INITIAL_REQUEST_WINDOW: usize = 8;
+const V2_MIN_REQUEST_WINDOW: usize = 4;
 const V2_TRANSFER_COMMAND_CAPACITY: usize = V2_REQUEST_WINDOW * 2;
 const V2_MAX_PENDING_UPLOAD_READS: usize = 16;
 const V2_MAX_QUEUED_UPLOAD_REQUESTS: usize = 128;
@@ -376,6 +379,7 @@ struct V2PeerState {
     upload_window: u64,
     rate_window_started: Instant,
     outstanding: usize,
+    request_window: WindowController,
     assembly_buffers: u64,
     assembly_bytes: u64,
 }
@@ -395,6 +399,12 @@ impl V2PeerState {
             upload_window: 0,
             rate_window_started: Instant::now(),
             outstanding: 0,
+            request_window: WindowController::new(WindowConfig {
+                initial: V2_INITIAL_REQUEST_WINDOW,
+                min: V2_MIN_REQUEST_WINDOW,
+                max: V2_REQUEST_WINDOW,
+                ..WindowConfig::default()
+            }),
             assembly_buffers: 0,
             assembly_bytes: 0,
         }
@@ -684,6 +694,7 @@ struct V2PieceAssembly {
 #[derive(Debug)]
 struct V2OutstandingRequest {
     length: u32,
+    sent_at: u64,
     /// Response capacity is reserved before the request reaches the wire and
     /// follows its coordinate until Piece, Reject, Choke, or disconnect.
     _memory_lease: Option<MemoryLease>,
@@ -3704,7 +3715,9 @@ async fn run_v2_peer_protocol(
             &mut framed,
             Message::Extended {
                 ext_id: EXT_HANDSHAKE_ID,
-                payload: ExtensionHandshake::new(None).encode(),
+                payload: ExtensionHandshake::new(None)
+                    .with_reqq(V2_MAX_UPLOAD_WORK)
+                    .encode(),
             },
         )
         .await?
@@ -4163,7 +4176,22 @@ async fn run_v2_peer_protocol(
                     }
                     Message::Hashes { .. } | Message::HashReject { .. } => {}
                     Message::Extended { ext_id: EXT_HANDSHAKE_ID, payload } => {
-                        let _ = ExtensionHandshake::parse(&payload);
+                        if let Ok(handshake) = ExtensionHandshake::parse(&payload) {
+                            if let Ok(mut peer) = state.lock() {
+                                peer.request_window.set_remote_reqq(handshake.reqq);
+                            }
+                            fill_v2_requests(
+                                &context,
+                                &mut framed,
+                                &state,
+                                &mut outstanding,
+                                &mut assemblies,
+                                transfer_jobs.len(),
+                                &pending_block_completions,
+                                &pending_piece_completions,
+                            )
+                            .await?;
+                        }
                     }
                     Message::Extended { .. } | Message::KeepAlive => {}
                 }
@@ -4573,24 +4601,57 @@ async fn fill_v2_requests(
         .map(|peer| Arc::clone(&peer.remote_have))
         .map_err(|_| anyhow::anyhow!("v2 peer state lock poisoned"))?;
     let local_have = context.local_have.read().await.clone();
-    while outstanding.len() < V2_REQUEST_WINDOW {
+    let ready_completions = pending_piece_completions.len()
+        + assemblies
+            .values()
+            .filter(|assembly| assembly.is_ready())
+            .count();
+    let pipeline_inflight = outstanding
+        .len()
+        .saturating_add(active_transfer_jobs)
+        .saturating_add(ready_completions.saturating_sub(pending_piece_completions.len()));
+    let peer_buffer = context.resources.snapshot().classes[MemoryClass::PeerBuffer as usize];
+    let buffer_blocks = usize::try_from(
+        peer_buffer.cap_bytes.saturating_sub(peer_buffer.used_bytes)
+            / u64::from(rt_peer_wire::message::MAX_BLOCK_SIZE),
+    )
+    .unwrap_or(usize::MAX);
+    let (device_queue_capacity, device_queue_available) = context.storage.device_queue_load();
+    let device_backlog = if device_queue_capacity == 0 {
+        f64::NAN
+    } else {
+        device_queue_capacity.saturating_sub(device_queue_available) as f64
+            / device_queue_capacity as f64
+    };
+    let request_window = state
+        .lock()
+        .map(|peer| {
+            peer.request_window.window(&WindowInputs {
+                useful_missing: usize::MAX,
+                outstanding: pipeline_inflight,
+                // The download limiter charges payload as it is accepted for
+                // storage. It does not currently expose reservable credits at
+                // request time; NET-107 will supply that scheduler input.
+                credit_blocks: usize::MAX,
+                buffer_blocks,
+                device_backlog,
+            })
+        })
+        .unwrap_or(0);
+    while outstanding.len() < request_window {
         let foreign_activity = context
             .transfer_ledger
             .lock()
             .map_err(|_| anyhow::anyhow!("v2 transfer ledger lock poisoned"))?
             .foreign_activity_pieces(context.transfer_conn);
         let mut selected = None;
-        let ready_completions = pending_piece_completions.len()
-            + assemblies
-                .values()
-                .filter(|assembly| assembly.is_ready())
-                .count();
         let tracked_pieces = assemblies.len() + pending_piece_completions.len();
-        if outstanding
-            .len()
-            .saturating_add(active_transfer_jobs)
-            .saturating_add(ready_completions.saturating_sub(pending_piece_completions.len()))
-            >= V2_REQUEST_WINDOW
+        if outstanding.len() >= request_window
+            || outstanding
+                .len()
+                .saturating_add(active_transfer_jobs)
+                .saturating_add(ready_completions.saturating_sub(pending_piece_completions.len()))
+                >= request_window
         {
             break;
         }
@@ -4726,11 +4787,12 @@ async fn fill_v2_requests(
             drop(memory_lease);
             return Ok(());
         }
+        let sent_at = v2_transfer_now(context);
         let (commit, actions) = context
             .transfer_ledger
             .lock()
             .map_err(|_| anyhow::anyhow!("v2 transfer ledger lock poisoned"))?
-            .commit(context.transfer_conn, block, v2_transfer_now(context));
+            .commit(context.transfer_conn, block, sent_at);
         if commit == CommitOutcome::StaleConnection {
             drop(memory_lease);
             context.peer_control.cancel();
@@ -4785,6 +4847,7 @@ async fn fill_v2_requests(
             (piece, begin),
             V2OutstandingRequest {
                 length,
+                sent_at,
                 _memory_lease: Some(memory_lease),
             },
         );
@@ -5256,6 +5319,7 @@ async fn handle_v2_piece(
         return Ok(());
     };
     let expected = request.length;
+    let sent_at = request.sent_at;
     let request_memory_lease = request._memory_lease;
     if expected != data.len() as u32 {
         anyhow::bail!("v2 piece response length does not match request");
@@ -5275,8 +5339,8 @@ async fn handle_v2_piece(
             .map_err(|_| anyhow::anyhow!("v2 transfer ledger lock poisoned"))?;
         ledger.on_block_piece_affine(context.transfer_conn, block_extent)
     };
-    let actions = match receive {
-        ReceiveOutcome::Accepted { actions, .. } => actions,
+    let (actions, accepted_at) = match receive {
+        ReceiveOutcome::Accepted { actions, .. } => (actions, v2_transfer_now(context)),
         ReceiveOutcome::Duplicate => return Ok(()),
         ReceiveOutcome::IgnoredForPieceAffinity => {
             discard_v2_empty_assembly_if_idle(
@@ -5292,6 +5356,12 @@ async fn handle_v2_piece(
         | ReceiveOutcome::Unsolicited
         | ReceiveOutcome::Invalid(_) => anyhow::bail!("unsolicited v2 piece block"),
     };
+    if let Ok(mut peer) = state.lock() {
+        peer.request_window
+            .on_response_delay(accepted_at.saturating_sub(sent_at));
+        peer.request_window
+            .on_delivery(u64::from(expected), accepted_at);
+    }
     if !actions.is_empty() {
         context
             .events
@@ -6578,6 +6648,7 @@ mod tests {
             (3, 0),
             V2OutstandingRequest {
                 length: 4,
+                sent_at: 0,
                 _memory_lease: Some(resources.try_acquire(MemoryClass::PeerBuffer, 4).unwrap()),
             },
         )]);
@@ -6620,6 +6691,7 @@ mod tests {
             (3, 16_384),
             V2OutstandingRequest {
                 length: 8_192,
+                sent_at: 0,
                 _memory_lease: Some(
                     resources
                         .try_acquire(MemoryClass::PeerBuffer, 8_192)
@@ -7680,6 +7752,7 @@ mod tests {
                     (piece as u32, begin),
                     V2OutstandingRequest {
                         length: data.len() as u32,
+                        sent_at: 0,
                         _memory_lease: None,
                     },
                 );
@@ -7794,6 +7867,7 @@ mod tests {
                 (0, begin),
                 V2OutstandingRequest {
                     length: data.len() as u32,
+                    sent_at: 0,
                     _memory_lease: None,
                 },
             );

@@ -26,6 +26,8 @@ fn decode_extension_bencode(payload: &[u8]) -> Result<BValue<'_>, WireError> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtensionHandshake {
     pub metadata_size: Option<u32>,
+    /// Maximum number of outstanding requests advertised by the peer.
+    pub reqq: Option<usize>,
     pub extensions: HashMap<String, u8>,
 }
 
@@ -33,8 +35,14 @@ impl ExtensionHandshake {
     pub fn new(metadata_size: Option<u32>) -> Self {
         Self {
             metadata_size,
+            reqq: None,
             extensions: HashMap::new(),
         }
+    }
+
+    pub fn with_reqq(mut self, reqq: usize) -> Self {
+        self.reqq = Some(reqq.clamp(1, 1_024));
+        self
     }
 
     pub fn with_ut_metadata(mut self, id: u8) -> Self {
@@ -67,6 +75,9 @@ impl ExtensionHandshake {
         if let Some(size) = self.metadata_size {
             pairs.push((b"metadata_size".as_slice(), BValue::Int(i64::from(size))));
         }
+        if let Some(reqq) = self.reqq {
+            pairs.push((b"reqq".as_slice(), BValue::Int(reqq.clamp(1, 1_024) as i64)));
+        }
         pairs.sort_by_key(|(name, _)| *name);
         encode(&BValue::Dict(pairs))
     }
@@ -81,6 +92,10 @@ impl ExtensionHandshake {
         let metadata_size = dict_int(&dict, b"metadata_size")
             .map(|value| u32::try_from(value).map_err(|_| invalid("metadata_size out of range")))
             .transpose()?;
+        let reqq = dict_int(&dict, b"reqq")
+            .and_then(|value| usize::try_from(value).ok())
+            .filter(|value| *value > 0)
+            .map(|value| value.min(1_024));
 
         let mut extensions = HashMap::new();
         if let Some(BValue::Dict(pairs)) = dict.iter().find(|(k, _)| *k == b"m").map(|(_, v)| v) {
@@ -100,6 +115,7 @@ impl ExtensionHandshake {
 
         Ok(Self {
             metadata_size,
+            reqq,
             extensions,
         })
     }
@@ -303,11 +319,14 @@ mod tests {
 
     #[test]
     fn extension_handshake_roundtrip() {
-        let handshake = ExtensionHandshake::new(Some(1234)).with_ut_metadata(3);
+        let handshake = ExtensionHandshake::new(Some(1234))
+            .with_ut_metadata(3)
+            .with_reqq(17);
         let parsed = ExtensionHandshake::parse(&handshake.encode()).unwrap();
 
         assert_eq!(parsed.metadata_size, Some(1234));
         assert_eq!(parsed.ut_metadata_id(), Some(3));
+        assert_eq!(parsed.reqq, Some(17));
     }
 
     #[test]

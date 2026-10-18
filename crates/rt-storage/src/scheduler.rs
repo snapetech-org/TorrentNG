@@ -2326,6 +2326,13 @@ impl MountScheduler {
         self.io_pool.queued()
     }
 
+    /// Current shared device-queue occupancy as `(capacity, available)`.
+    /// This avoids collecting the full storage statistics snapshot when a
+    /// transfer scheduler only needs a cheap congestion signal.
+    pub fn device_queue_load(&self) -> (usize, usize) {
+        (self.device_queue_capacity, self.device_queue.available())
+    }
+
     pub fn stats(&self) -> StorageIoStats {
         let dirty_files = lock_recover(&self.dirty_paths).len();
         let peer_read_cache_entries = lock_reset_derived_cache(&self.peer_read_cache).entry_count();

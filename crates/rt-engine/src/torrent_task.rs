@@ -1706,6 +1706,7 @@ enum PeerEvent {
         ut_metadata_id: Option<u8>,
         ut_pex_id: Option<u8>,
         metadata_size: Option<u32>,
+        reqq: Option<usize>,
     },
     PeerExchange {
         peer: SocketAddr,
@@ -1770,6 +1771,7 @@ struct PeerHandle {
     ut_metadata_id: Option<u8>,
     ut_pex_id: Option<u8>,
     metadata_size: Option<u32>,
+    remote_reqq: Option<usize>,
     _peer_permit: OwnedSemaphorePermit,
     /// Dense per-peer availability maps are sized by the torrent's piece
     /// count. Keep their backing allocation under the process-wide peer
@@ -8301,6 +8303,7 @@ async fn run_peer_loop(
                                         ut_metadata_id: handshake.ut_metadata_id(),
                                         ut_pex_id: handshake.ut_pex_id(),
                                         metadata_size: handshake.metadata_size,
+                                        reqq: handshake.reqq,
                                     },
                                 )
                                 .await
@@ -8621,7 +8624,7 @@ fn extension_handshake_for_torrent(
     pex_enabled: bool,
 ) -> ExtensionHandshake {
     let metadata_size = metadata.and_then(|bytes| u32::try_from(bytes.len()).ok());
-    let mut handshake = ExtensionHandshake::new(metadata_size);
+    let mut handshake = ExtensionHandshake::new(metadata_size).with_reqq(MAX_UPLOAD_WORK);
     if metadata_size.is_some() {
         handshake = handshake.with_ut_metadata(LOCAL_UT_METADATA_ID);
     }
@@ -15568,6 +15571,7 @@ mod tests {
                 ut_metadata_id: None,
                 ut_pex_id: None,
                 metadata_size: None,
+                remote_reqq: None,
                 _peer_permit: peer_permit,
                 _bitmap_memory_lease: bitmap_memory_lease,
                 pending_have,

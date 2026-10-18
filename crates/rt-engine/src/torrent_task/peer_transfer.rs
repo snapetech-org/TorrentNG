@@ -310,13 +310,16 @@ impl TorrentTask {
                 ut_metadata_id,
                 ut_pex_id,
                 metadata_size,
+                reqq,
                 ..
             } => {
                 if let Some(handle) = self.active_peers.get_mut(&peer) {
                     handle.ut_metadata_id = ut_metadata_id;
                     handle.ut_pex_id = ut_pex_id;
                     handle.metadata_size = metadata_size;
+                    handle.remote_reqq = reqq;
                 }
+                self.refill_peer_requests(peer).await;
             }
             PeerEvent::PeerExchange {
                 peer,
@@ -440,6 +443,7 @@ impl TorrentTask {
         let transfer_conn = handle.transfer_conn;
         let download_rate = handle.download_rate;
         let download_rate_started = handle.download_rate_window_started;
+        let remote_reqq = handle.remote_reqq;
 
         let memory_pipeline = memory_aware_request_pipeline(
             self.piece_assembly_bytes,
@@ -449,7 +453,8 @@ impl TorrentTask {
             memory_pipeline,
             peer_rate(download_rate, download_rate_started) as f64,
             other_peers_outstanding,
-        );
+        )
+        .min(remote_reqq.unwrap_or(usize::MAX));
 
         let mut queue_full = 0u64;
         let mut memory_retry = false;
