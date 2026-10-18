@@ -84,7 +84,7 @@ peer sockets and restarts DHT on its corresponding port; an explicit
 | `durability_mode` | `checkpoint` | Payload durability mode: `fast`, `checkpoint`, or `strict` |
 | `peer_read_readahead_bytes` | `524288` | Peer-read readahead size used before returning the exact requested slice |
 | `peer_read_readahead_sequential_only` | `true` | Expand readahead only when a read continues the previous read of the same file; isolated block reads stay exact. `false` expands every miss |
-| `peer_read_cache_entries` | `64` | Bounded per-scheduler peer-read readahead cache entries; set to `0` to disable cached readahead reuse |
+| `peer_read_cache_entries` | `64` | Maximum cached forward ranges per scheduler across all files; a file can retain several useful disjoint ranges, with least-recently-used range eviction. Set to `0` to disable cached readahead reuse |
 | `peer_read_elevator_budget_ms` | `25` | HDD/network peer-read elevator batching window; ignored when `device_elevator_enabled = false` |
 
 ### `[crash_safety]`

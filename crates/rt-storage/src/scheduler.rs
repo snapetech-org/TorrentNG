@@ -171,6 +171,7 @@ pub struct StorageIoConfig {
     /// Expand readahead only for reads that continue the previous read of the
     /// same file. Off restores unconditional expansion on every miss.
     pub peer_read_readahead_sequential_only: bool,
+    /// Maximum cached forward ranges across this scheduler's peer-read cache.
     pub peer_read_cache_entries: usize,
     pub peer_read_elevator_budget_ms: u64,
 }
@@ -292,6 +293,7 @@ pub struct StorageIoStats {
     pub preallocation_failures: u64,
     pub preallocation_fallbacks: u64,
     pub preallocation_shrink_refused: u64,
+    /// Number of forward ranges currently retained across all files.
     pub peer_read_cache_entries: usize,
     pub peer_read_cache_hits: u64,
     pub peer_read_cache_misses: u64,
@@ -903,7 +905,7 @@ pub struct MountScheduler {
     /// across paths while ordinary writes remain concurrent with each other.
     write_admission_gate: Arc<AsyncRwLock<()>>,
     write_sequence: Arc<AtomicU64>,
-    peer_read_cache: Arc<Mutex<HashMap<PathBuf, PeerReadCacheEntry>>>,
+    peer_read_cache: Arc<Mutex<PeerReadCache>>,
     peer_read_cache_epoch: Arc<AtomicU64>,
     /// Where each recently read file's next sequential read would start, so
     /// readahead only expands streams that actually continue.
@@ -1005,6 +1007,117 @@ struct PeerReadCacheEntry {
     data: bytes::Bytes,
     last_used: Instant,
     _lease: Option<MemoryLease>,
+}
+
+/// Bounded multi-range cache for peer upload reads. A single hot file may
+/// retain several independently useful forward ranges without evicting its
+/// previous range on every seek.
+#[derive(Debug, Default)]
+struct PeerReadCache {
+    files: HashMap<PathBuf, Vec<PeerReadCacheEntry>>,
+    entries: usize,
+}
+
+impl PeerReadCache {
+    fn entry_count(&self) -> usize {
+        self.entries
+    }
+
+    fn is_empty(&self) -> bool {
+        self.entries == 0
+    }
+
+    fn contains_file(&self, path: &Path) -> bool {
+        self.files.contains_key(path)
+    }
+
+    fn remove_file(&mut self, path: &Path) -> usize {
+        let removed = self.files.remove(path).map_or(0, |entries| entries.len());
+        self.entries = self.entries.saturating_sub(removed);
+        removed
+    }
+
+    fn hit(
+        &mut self,
+        path: &Path,
+        identity: FileIdentity,
+        offset: u64,
+        len: usize,
+    ) -> Option<bytes::Bytes> {
+        if self
+            .files
+            .get(path)
+            .is_some_and(|entries| entries.iter().any(|entry| entry.identity != identity))
+        {
+            self.remove_file(path);
+            return None;
+        }
+        let entries = self.files.get_mut(path)?;
+        let (index, relative) = entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| {
+                let relative = usize::try_from(offset.checked_sub(entry.offset)?).ok()?;
+                let end = relative.checked_add(len)?;
+                (end <= entry.data.len()).then_some((index, relative, entry.data.len()))
+            })
+            .min_by_key(|(_, _, range_bytes)| *range_bytes)
+            .map(|(index, relative, _)| (index, relative))?;
+        let entry = &mut entries[index];
+        entry.last_used = Instant::now();
+        Some(entry.data.slice(relative..relative + len))
+    }
+
+    /// Insert one useful range, evicting the globally least-recently-used
+    /// range only when the configured total entry cap is full.
+    fn insert(&mut self, path: PathBuf, entry: PeerReadCacheEntry, max_entries: usize) -> bool {
+        if max_entries == 0 {
+            return false;
+        }
+        if let Some(entries) = self.files.get_mut(&path) {
+            if let Some(existing) = entries
+                .iter_mut()
+                .find(|value| value.offset == entry.offset)
+            {
+                *existing = entry;
+                return false;
+            }
+        }
+
+        let evicted = if self.entries >= max_entries {
+            let oldest = self
+                .files
+                .iter()
+                .flat_map(|(path, entries)| {
+                    entries
+                        .iter()
+                        .enumerate()
+                        .map(move |(index, entry)| (path, index, entry.last_used))
+                })
+                .min_by_key(|(_, _, last_used)| *last_used)
+                .map(|(path, index, _)| (path.clone(), index));
+            if let Some((oldest_path, index)) = oldest {
+                let remove_path = if let Some(entries) = self.files.get_mut(&oldest_path) {
+                    entries.remove(index);
+                    self.entries = self.entries.saturating_sub(1);
+                    entries.is_empty()
+                } else {
+                    false
+                };
+                if remove_path {
+                    self.files.remove(&oldest_path);
+                }
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        self.files.entry(path).or_default().push(entry);
+        self.entries = self.entries.saturating_add(1);
+        evicted
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1217,7 +1330,7 @@ async fn await_backend_io<T>(
 /// the cache after the writer's initial invalidation.
 fn backend_write_completion_with_cache_invalidation<G: Send + 'static, O: Send + 'static>(
     rx: oneshot::Receiver<io::Result<()>>,
-    cache: Arc<Mutex<HashMap<PathBuf, PeerReadCacheEntry>>>,
+    cache: Arc<Mutex<PeerReadCache>>,
     epoch: Arc<AtomicU64>,
     key: PathBuf,
     fence_guard: G,
@@ -2181,7 +2294,7 @@ impl MountScheduler {
             file_sync_fences: Arc::new(FileSyncFenceRegistry::default()),
             write_admission_gate: Arc::new(AsyncRwLock::new(())),
             write_sequence: Arc::new(AtomicU64::new(0)),
-            peer_read_cache: Arc::new(Mutex::new(HashMap::new())),
+            peer_read_cache: Arc::new(Mutex::new(PeerReadCache::default())),
             peer_read_cache_epoch: Arc::new(AtomicU64::new(0)),
             peer_read_streams: Arc::new(Mutex::new(PeerReadStreams::default())),
             peer_read_elevator,
@@ -2215,7 +2328,7 @@ impl MountScheduler {
 
     pub fn stats(&self) -> StorageIoStats {
         let dirty_files = lock_recover(&self.dirty_paths).len();
-        let peer_read_cache_entries = lock_reset_derived_cache(&self.peer_read_cache).len();
+        let peer_read_cache_entries = lock_reset_derived_cache(&self.peer_read_cache).entry_count();
         let peer_read_elevator_queued = lock_recover(&self.peer_read_elevator)
             .as_ref()
             .map(PeerReadElevator::queued_len)
@@ -2910,19 +3023,7 @@ impl MountScheduler {
             // publish the stale backend bytes into the cache.
             return;
         }
-        if !cache.contains_key(&key) && cache.len() >= max_entries {
-            if let Some(evict) = cache
-                .iter()
-                .min_by_key(|(_, entry)| entry.last_used)
-                .map(|(key, _)| key.clone())
-            {
-                cache.remove(&evict);
-                self.counters
-                    .peer_read_cache_evictions
-                    .fetch_add(1, Ordering::Relaxed);
-            }
-        }
-        cache.insert(
+        if cache.insert(
             key,
             PeerReadCacheEntry {
                 identity,
@@ -2931,7 +3032,12 @@ impl MountScheduler {
                 last_used: Instant::now(),
                 _lease: lease,
             },
-        );
+            max_entries,
+        ) {
+            self.counters
+                .peer_read_cache_evictions
+                .fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     pub async fn write_at(
@@ -4123,39 +4229,19 @@ fn record_sync_completion(counters: &StorageCounters, started: Instant) {
 }
 
 fn peer_read_cache_hit(
-    cache: &Mutex<HashMap<PathBuf, PeerReadCacheEntry>>,
+    cache: &Mutex<PeerReadCache>,
     key: &Path,
     file: &File,
     offset: u64,
     len: usize,
 ) -> Option<bytes::Bytes> {
     let identity = file_identity(file).ok()?;
-    let mut cache = lock_reset_derived_cache(cache);
-    if cache
-        .get(key)
-        .is_some_and(|entry| entry.identity != identity)
-    {
-        cache.remove(key);
-        return None;
-    }
-    let entry = cache.get_mut(key)?;
-    let relative = offset.checked_sub(entry.offset)? as usize;
-    let end = relative.checked_add(len)?;
-    if end <= entry.data.len() {
-        entry.last_used = Instant::now();
-        Some(entry.data.slice(relative..end))
-    } else {
-        None
-    }
+    lock_reset_derived_cache(cache).hit(key, identity, offset, len)
 }
 
-fn peer_read_cache_invalidate(
-    cache: &Mutex<HashMap<PathBuf, PeerReadCacheEntry>>,
-    epoch: &AtomicU64,
-    key: &Path,
-) {
+fn peer_read_cache_invalidate(cache: &Mutex<PeerReadCache>, epoch: &AtomicU64, key: &Path) {
     epoch.fetch_add(1, Ordering::AcqRel);
-    lock_reset_derived_cache(cache).remove(key);
+    lock_reset_derived_cache(cache).remove_file(key);
 }
 
 fn advise_for_read_class(
@@ -6265,7 +6351,8 @@ mod tests {
         let path = dir.path().join("poisoned-peer-cache.bin");
         std::fs::write(&path, b"fresh").unwrap();
         let file = File::open(&path).unwrap();
-        let cache = Arc::new(Mutex::new(HashMap::from([(
+        let cache = Arc::new(Mutex::new(PeerReadCache::default()));
+        cache.lock().unwrap().insert(
             path.clone(),
             PeerReadCacheEntry {
                 identity: file_identity(&file).unwrap(),
@@ -6274,7 +6361,8 @@ mod tests {
                 last_used: Instant::now(),
                 _lease: None,
             },
-        )])));
+            1,
+        );
 
         let poisoner = Arc::clone(&cache);
         assert!(std::thread::spawn(move || {
@@ -6404,6 +6492,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn peer_read_readahead_cache_retains_disjoint_ranges_for_one_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("multi-range-readahead.bin");
+        std::fs::write(&path, b"abcdefghijklmnopqrstuvwxyz").unwrap();
+        let scheduler = MountScheduler::new(
+            StorageRootId::new(),
+            &SchedulerConfig {
+                profile: StorageProfile::Hdd,
+                storage_io: StorageIoConfig {
+                    peer_read_readahead_bytes: 8,
+                    peer_read_readahead_sequential_only: false,
+                    peer_read_cache_entries: 2,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let first = scheduled_read(&scheduler, IoClass::PeerRead, &path, 0, 4)
+            .await
+            .unwrap();
+        let disjoint = scheduled_read(&scheduler, IoClass::PeerRead, &path, 12, 4)
+            .await
+            .unwrap();
+        let reused = scheduled_read(&scheduler, IoClass::PeerRead, &path, 4, 4)
+            .await
+            .unwrap();
+
+        assert_eq!(&first[..], b"abcd");
+        assert_eq!(&disjoint[..], b"mnop");
+        assert_eq!(&reused[..], b"efgh");
+        let stats = scheduler.stats();
+        assert_eq!(stats.peer_read_cache_entries, 2);
+        assert_eq!(stats.peer_read_cache_misses, 2);
+        assert_eq!(stats.peer_read_cache_hits, 1);
+        assert_eq!(
+            stats.backend_read_ops_by_class[class_index(IoClass::PeerRead)],
+            2
+        );
+    }
+
+    #[tokio::test]
     async fn peer_read_readahead_is_admitted_for_actual_backend_buffer() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("readahead-cap.bin");
@@ -6498,7 +6628,8 @@ mod tests {
         std::fs::write(&path, b"payload").unwrap();
         let file = File::open(&path).unwrap();
         let key = path.clone();
-        let cache = Arc::new(Mutex::new(HashMap::from([(
+        let cache = Arc::new(Mutex::new(PeerReadCache::default()));
+        cache.lock().unwrap().insert(
             key.clone(),
             PeerReadCacheEntry {
                 identity: file_identity(&file).unwrap(),
@@ -6507,7 +6638,8 @@ mod tests {
                 last_used: Instant::now(),
                 _lease: None,
             },
-        )])));
+            1,
+        );
         let epoch = Arc::new(AtomicU64::new(0));
         let owner_dropped = Arc::new(AtomicBool::new(false));
         let (backend_tx, backend_rx) = oneshot::channel();
@@ -6534,7 +6666,7 @@ mod tests {
         })
         .await
         .expect("backend completion watcher did not invalidate the cache");
-        assert!(!cache.lock().unwrap().contains_key(&key));
+        assert!(!cache.lock().unwrap().contains_file(&key));
     }
 
     #[tokio::test]

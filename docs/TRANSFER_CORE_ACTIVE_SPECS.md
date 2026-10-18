@@ -1555,14 +1555,15 @@ gradual; a miss holds the current recommendation rather than expanding
 speculative I/O. Recommendations remain bounded by the configured maximum, and
 a discontinuity resets to the requested range. Stream history is bounded with
 single-entry least-recently-used eviction, so admitting a new file does not
-clear every warm stream. The stored cache is still the existing bounded
-forward-read cache; a full useful-range policy and live-engine qualification
-remain open.
+clear every warm stream. The cache also retains multiple independently useful
+forward ranges per file up to the configured total entry cap, evicting the
+least-recently reused range. Live-engine qualification remains open.
 
 ### Ownership and invariant
 
-- **Current owner:** `MountScheduler` owns stream history, cache entries, and
-  per-read admission; the portable backend owns the submitted read.
+- **Current owner:** `MountScheduler` owns bounded stream history, per-file
+  range entries, and per-read admission; the portable backend owns the
+  submitted read.
 - **Target owner:** IO-006 device service owns speculative capacity and IO-008
   actor progress consumes completed reads without waiting on unrelated work.
 - **Invariant preserved:** readahead never exceeds the configured cap or file
@@ -1579,6 +1580,10 @@ remain open.
   histories remain bounded.
 - Cache hits may grow the recommendation gradually; misses do not expand the
   speculative range.
+- A file may retain multiple disjoint useful ranges; total range entries stay
+  within the configured cap and least-recently-used ranges are evicted first.
+- Replacing a path or completing a write invalidates every cached range for
+  that path.
 - Added buffer bytes are charged before allocation/submission and released only
   after completion.
 - Toggle-off preserves the existing unconditional configured range behavior.
@@ -1601,7 +1606,9 @@ remain open.
 - **Regression source added or updated:** `readahead_expands_only_continuing_streams`
   covers bounded per-file growth and discontinuity reset;
   `readahead_stops_growing_when_prefetch_is_not_reused` covers hit/miss
-  feedback; scheduler cache regressions remain in the bulk pass.
+  feedback; `peer_read_readahead_cache_retains_disjoint_ranges_for_one_file`
+  covers multi-range reuse; scheduler cache regressions remain in the bulk
+  pass.
 - **Command or probe to run:** storage scheduler tests during the requested
   bulk pass, then matched fixture runs for reuse and read amplification.
 - **Expected result:** exact reads for isolated requests, bounded growth for
