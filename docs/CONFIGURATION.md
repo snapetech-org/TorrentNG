@@ -14,6 +14,17 @@ client adapter, service cache, WebUI serving, and compatibility-facade
 identity. The `sidecar/` source path and existing `TNG_*` keys remain stable
 implementation/configuration contracts.
 
+TorrentNG Desktop has a third, client-side file at
+`~/.config/torrentng-desktop/config.toml` on Linux (see the platform paths in
+[DESKTOP.md](DESKTOP.md#first-run)). Its Local/Remote setting chooses whether
+Desktop launches `torrentngd` on this computer or stores a connection URL and
+API token for a remote `torrentngd`. It does not configure the compatible-client
+`torrentng` service and cannot connect to a WebUI Bridge. In Local mode,
+`torrentngd` owns transfers, its app-data directory, and the finished-download
+folder. In Remote mode, the server process owns those files and settings.
+WebUI Bridge deployments keep their selected client and storage configuration
+in the compatible-client service configuration described below.
+
 ## TorrentNG client (`torrentngd`)
 
 `torrentngd` loads TOML config from the first existing path in this order:

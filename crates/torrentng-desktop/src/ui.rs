@@ -38,30 +38,16 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             Conn::Connecting => notice(ui, &p, "Connecting…", None, true),
             Conn::Offline(m) => notice(ui, &p, "Server unreachable — retrying", Some(&m), true),
             Conn::AuthFailed => {
-                if notice_button(
-                    ui,
-                    &p,
-                    "Authentication failed",
-                    "The API token was rejected.",
-                    "Open connection settings",
-                ) {
-                    open_settings(app);
-                }
+                connection_failure(app, ui, &p, "The TorrentNG server rejected the API token.");
             }
             Conn::Failed(m) => {
-                if notice_button(
-                    ui,
-                    &p,
-                    "Not connected",
-                    &m,
-                    if app.is_local() {
-                        "Start engine"
+                let safe_message =
+                    if app.cfg.mode == BackendMode::Remote && !app.cfg.remote.token.is_empty() {
+                        m.replace(&app.cfg.remote.token, "••••••")
                     } else {
-                        "Retry"
-                    },
-                ) {
-                    app.connect(ui.ctx());
-                }
+                        m
+                    };
+                connection_failure(app, ui, &p, &safe_message);
             }
             Conn::Setup => {}
         });
@@ -719,7 +705,7 @@ fn status_bar(app: &mut App, ctx: &egui::Context, p: &Palette) {
                         if app.is_local() {
                             "Local engine"
                         } else {
-                            "Connected"
+                            "TorrentNG server authenticated"
                         }
                         .to_owned(),
                     ),
@@ -779,19 +765,6 @@ fn notice(ui: &mut egui::Ui, p: &Palette, title: &str, detail: Option<&str>, spi
             }
         });
     });
-}
-
-fn notice_button(ui: &mut egui::Ui, p: &Palette, title: &str, detail: &str, button: &str) -> bool {
-    let mut pressed = false;
-    ui.vertical_centered(|ui| {
-        ui.add_space(ui.available_height() * 0.3);
-        ui.label(RichText::new(title).heading().color(p.text));
-        ui.add_space(4.0);
-        ui.add(egui::Label::new(RichText::new(detail).color(p.faint)).wrap());
-        ui.add_space(10.0);
-        pressed = ui.button(button).clicked();
-    });
-    pressed
 }
 
 // ---- dialogs ------------------------------------------------------------
@@ -919,7 +892,7 @@ fn settings_dialog(app: &mut App, ctx: &egui::Context) {
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .default_width(480.0)
         .show(ctx, |ui| {
-            connection_form(ui, &mut draft.cfg);
+            connection_form(ui, &mut draft.cfg, true);
             ui.separator();
             ui.horizontal(|ui| {
                 ui.label("Theme");
@@ -961,7 +934,7 @@ fn settings_dialog(app: &mut App, ctx: &egui::Context) {
 }
 
 /// Connection fields shared by first-run setup and Settings.
-fn connection_form(ui: &mut egui::Ui, cfg: &mut crate::config::Config) {
+fn connection_form(ui: &mut egui::Ui, cfg: &mut crate::config::Config, advanced: bool) {
     ui.label(RichText::new("Backend").strong());
     ui.radio_value(
         &mut cfg.mode,
@@ -976,6 +949,19 @@ fn connection_form(ui: &mut egui::Ui, cfg: &mut crate::config::Config) {
     ui.add_space(6.0);
     match cfg.mode {
         BackendMode::Local => {
+            if !advanced {
+                ui.label(
+                    RichText::new(format!(
+                        "Finished downloads stay on this computer. The local engine will save them to {}.",
+                        if cfg.local.download_dir.trim().is_empty() {
+                            crate::config::default_download_dir().display().to_string()
+                        } else {
+                            cfg.local.download_dir.trim().to_owned()
+                        }
+                    ))
+                    .color(ui.visuals().weak_text_color()),
+                );
+            }
             egui::Grid::new("local")
                 .num_columns(2)
                 .spacing([12.0, 6.0])
@@ -983,30 +969,44 @@ fn connection_form(ui: &mut egui::Ui, cfg: &mut crate::config::Config) {
                     ui.label("Download folder");
                     ui.add(
                         egui::TextEdit::singleline(&mut cfg.local.download_dir)
-                            .hint_text("~/Downloads/TorrentNG")
+                            .hint_text(crate::config::default_download_dir().display().to_string())
                             .desired_width(280.0),
                     );
                     ui.end_row();
-                    ui.label("Peer port");
-                    ui.add(egui::DragValue::new(&mut cfg.local.listen_port).range(1..=65535));
-                    ui.end_row();
-                    ui.label("Engine memory cap (MB)");
-                    ui.add(egui::DragValue::new(&mut cfg.local.memory_cap_mb).range(64..=16384));
-                    ui.end_row();
-                    ui.label("Engine binary");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut cfg.local.binary)
-                            .hint_text("auto-detect")
-                            .desired_width(280.0),
-                    );
-                    ui.end_row();
+                    if advanced {
+                        ui.label("Peer port");
+                        ui.add(egui::DragValue::new(&mut cfg.local.listen_port).range(1..=65535));
+                        ui.end_row();
+                        ui.label("Engine memory cap (MB)");
+                        ui.add(
+                            egui::DragValue::new(&mut cfg.local.memory_cap_mb).range(64..=16384),
+                        );
+                        ui.end_row();
+                        ui.label("Engine binary");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut cfg.local.binary)
+                                .hint_text("auto-detect")
+                                .desired_width(280.0),
+                        );
+                        ui.end_row();
+                    }
                 });
-            ui.checkbox(
-                &mut cfg.local.autostart,
-                "Start the engine when the app opens",
-            );
+            if advanced {
+                ui.checkbox(
+                    &mut cfg.local.autostart,
+                    "Start the engine when the app opens",
+                );
+            } else {
+                ui.label(RichText::new("Port, memory, engine detection, and autostart use their defaults. You can change them later in Settings.").small());
+            }
         }
         BackendMode::Remote => {
+            if !advanced {
+                ui.label(
+                    RichText::new("The remote TorrentNG server owns its transfers, storage, and files. Use its reachable HTTPS address and API token.")
+                        .color(ui.visuals().weak_text_color()),
+                );
+            }
             egui::Grid::new("remote")
                 .num_columns(2)
                 .spacing([12.0, 6.0])
@@ -1014,7 +1014,7 @@ fn connection_form(ui: &mut egui::Ui, cfg: &mut crate::config::Config) {
                     ui.label("Server URL");
                     ui.add(
                         egui::TextEdit::singleline(&mut cfg.remote.url)
-                            .hint_text("http://nas:8080")
+                            .hint_text("https://nas:8080")
                             .desired_width(280.0),
                     );
                     ui.end_row();
@@ -1045,11 +1045,11 @@ fn setup_card(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
                         .heading()
                         .color(p.text),
                 );
-                ui.label(RichText::new("Choose where your torrents will run.").color(p.faint));
+                ui.label(RichText::new("Choose whether this app runs its bundled engine or connects to a TorrentNG server.").color(p.faint));
                 ui.add_space(12.0);
                 ui.with_layout(Layout::top_down(Align::LEFT), |ui| {
                     let mut cfg = app.cfg.clone();
-                    connection_form(ui, &mut cfg);
+                    connection_form(ui, &mut cfg, false);
                     app.cfg = cfg;
                     ui.add_space(12.0);
                     if ui
@@ -1065,6 +1065,44 @@ fn setup_card(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
                     }
                 });
             });
+    });
+}
+
+fn connection_failure(app: &mut App, ui: &mut egui::Ui, p: &Palette, detail: &str) {
+    let (title, settings_label) = if app.is_local() {
+        (
+            "Local TorrentNG engine did not start",
+            "Open local engine settings",
+        )
+    } else {
+        (
+            "Could not connect to TorrentNG server",
+            "Open server connection settings",
+        )
+    };
+    ui.centered_and_justified(|ui| {
+        ui.vertical_centered(|ui| {
+            ui.add_space(ui.available_height() * 0.28);
+            ui.label(RichText::new(title).heading().color(p.text));
+            ui.add_space(6.0);
+            ui.label(RichText::new(detail).color(p.faint));
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if ui.button(settings_label).clicked() {
+                    open_settings(app);
+                }
+                if ui
+                    .button(if app.is_local() {
+                        "Start engine again"
+                    } else {
+                        "Retry connection"
+                    })
+                    .clicked()
+                {
+                    app.connect(ui.ctx());
+                }
+            });
+        });
     });
 }
 
