@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::hash::Hash;
+use std::marker::PhantomData;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rt_session::TorrentState;
@@ -242,25 +244,55 @@ pub enum TierEvent {
     IdleElapsed,
 }
 
+const ARC_STR_HEADER_BYTES: usize = 2 * std::mem::size_of::<usize>();
+
+fn estimated_hash_map_bytes<K, V>(map: &HashMap<K, V>) -> usize {
+    map.capacity()
+        .saturating_mul(std::mem::size_of::<(K, V)>().saturating_add(1))
+        .saturating_add(std::mem::size_of::<usize>())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct TorrentKeyId {
+    slot: u32,
+    generation: u32,
+}
+
+#[derive(Debug, Clone)]
+struct TorrentKeySlot {
+    generation: u32,
+    key: Option<Arc<str>>,
+}
+
 #[derive(Debug, Clone)]
 pub struct TierController<K> {
     policy: TierPolicy,
-    tiers: HashMap<K, TorrentActivityTier>,
+    /// The interner key and slot share this identity allocation. Tier maps and
+    /// timer queues use the compact ID; the public dormant snapshot retains
+    /// its compatibility-owned hash string.
+    key_ids: HashMap<Arc<str>, TorrentKeyId>,
+    key_slots: Vec<TorrentKeySlot>,
+    free_key_slots: Vec<u32>,
+    tiers: HashMap<TorrentKeyId, TorrentActivityTier>,
     tier_counts: [usize; 3],
-    dormant_snapshots: HashMap<K, DormantTorrentSnapshot>,
+    dormant_snapshots: HashMap<TorrentKeyId, DormantTorrentSnapshot>,
     dormant_heap_bytes: usize,
-    idle_checks: ActivityTimerWheel<K>,
-    tracker_checks: ActivityTimerWheel<K>,
+    idle_checks: ActivityTimerWheel<TorrentKeyId>,
+    tracker_checks: ActivityTimerWheel<TorrentKeyId>,
     idle_stagger_sequence: u64,
+    _key_type: PhantomData<fn() -> K>,
 }
 
 impl<K> TierController<K>
 where
-    K: Clone + Eq + Hash,
+    K: Clone + Eq + Hash + AsRef<str> + From<String>,
 {
     pub fn new(policy: TierPolicy) -> Self {
         Self {
             policy,
+            key_ids: HashMap::new(),
+            key_slots: Vec::new(),
+            free_key_slots: Vec::new(),
             tiers: HashMap::new(),
             tier_counts: [0; 3],
             dormant_snapshots: HashMap::new(),
@@ -268,11 +300,13 @@ where
             idle_checks: ActivityTimerWheel::default(),
             tracker_checks: ActivityTimerWheel::default(),
             idle_stagger_sequence: 0,
+            _key_type: PhantomData,
         }
     }
 
     pub fn tier(&self, key: &K) -> Option<TorrentActivityTier> {
-        self.tiers.get(key).copied()
+        self.find_key_id(key.as_ref())
+            .and_then(|id| self.tiers.get(&id).copied())
     }
 
     pub fn tracked_len(&self) -> usize {
@@ -285,39 +319,133 @@ where
         self.tier_counts
     }
 
-    /// Estimated bytes owned by this controller for every tracked torrent,
-    /// not just the dormant snapshot's own heap string: the tier map, the
-    /// dormant-snapshot map, the two timer wheels (each stores the key in a
-    /// queue and again in a reverse index) and `heap_of_key` for every
-    /// stored copy of the key. Hash maps are charged at their load-factor
-    /// worst case (one slot of overhead per live slot plus a control byte).
-    pub fn estimated_owner_bytes(&self, heap_of_key: impl Fn(&K) -> usize) -> usize {
-        let slot = |entry: usize| entry.saturating_add(entry / 7).saturating_add(1);
-        let key_size = std::mem::size_of::<K>();
-        let mut total = 0usize;
-        for key in self.tiers.keys() {
+    /// Estimated bytes owned by this controller, including the shared key
+    /// strings, compact identity table, maps, vectors and both timer wheels.
+    /// Hash maps use retained entry capacity plus a control byte per slot.
+    pub fn estimated_owner_bytes(&self) -> usize {
+        let mut total = std::mem::size_of::<Self>()
+            .saturating_add(
+                self.key_slots
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<TorrentKeySlot>()),
+            )
+            .saturating_add(
+                self.free_key_slots
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<u32>()),
+            )
+            .saturating_add(estimated_hash_map_bytes(&self.key_ids))
+            .saturating_add(estimated_hash_map_bytes(&self.tiers))
+            .saturating_add(estimated_hash_map_bytes(&self.dormant_snapshots));
+        for key in self.key_ids.keys() {
             total = total
-                .saturating_add(slot(key_size + std::mem::size_of::<TorrentActivityTier>()))
-                .saturating_add(heap_of_key(key));
+                .saturating_add(ARC_STR_HEADER_BYTES)
+                .saturating_add(key.len());
         }
-        for (key, snapshot) in &self.dormant_snapshots {
-            total = total
-                .saturating_add(slot(
-                    key_size + std::mem::size_of::<DormantTorrentSnapshot>(),
-                ))
-                .saturating_add(heap_of_key(key))
-                .saturating_add(snapshot.estimate_heap_bytes());
+        for snapshot in self.dormant_snapshots.values() {
+            total = total.saturating_add(snapshot.estimate_heap_bytes());
         }
-        // A scheduled key lives in its deadline queue and in the reverse
-        // index (with its deadline), so it is charged twice per wheel entry.
-        let wheel_entry = key_size.saturating_mul(2) + std::mem::size_of::<Instant>();
-        total = total.saturating_add(
-            self.idle_checks
-                .len()
-                .saturating_add(self.tracker_checks.len())
-                .saturating_mul(slot(wheel_entry)),
-        );
+        total = total
+            .saturating_add(self.idle_checks.estimated_collection_bytes())
+            .saturating_add(self.tracker_checks.estimated_collection_bytes());
         total
+    }
+
+    fn find_key_id(&self, key: &str) -> Option<TorrentKeyId> {
+        self.key_ids.get(key).copied()
+    }
+
+    fn intern_key(&mut self, key: &str) -> TorrentKeyId {
+        if let Some(id) = self.find_key_id(key) {
+            return id;
+        }
+
+        let (slot_index, generation) = if let Some(slot) = self.free_key_slots.pop() {
+            let generation = self.key_slots[slot as usize].generation;
+            (slot, generation)
+        } else {
+            let slot = u32::try_from(self.key_slots.len())
+                .expect("tier controller identity slots exceed u32 capacity");
+            self.key_slots.push(TorrentKeySlot {
+                generation: 0,
+                key: None,
+            });
+            (slot, 0)
+        };
+        let id = TorrentKeyId {
+            slot: slot_index,
+            generation,
+        };
+        let key: Arc<str> = Arc::from(key);
+        self.key_slots[slot_index as usize].key = Some(Arc::clone(&key));
+        self.key_ids.insert(key, id);
+        id
+    }
+
+    fn key_for_id(&self, id: TorrentKeyId) -> Option<&Arc<str>> {
+        let slot = self.key_slots.get(id.slot as usize)?;
+        (slot.generation == id.generation)
+            .then_some(slot.key.as_ref())
+            .flatten()
+    }
+
+    fn keys_for_ids(&self, ids: Vec<TorrentKeyId>) -> Vec<K> {
+        ids.into_iter()
+            .filter_map(|id| {
+                self.key_for_id(id)
+                    .map(|key| K::from(key.to_string()))
+            })
+            .collect()
+    }
+
+    fn retire_key(&mut self, key: &str, id: TorrentKeyId) {
+        self.key_ids.remove(key);
+        let Some(slot) = self.key_slots.get_mut(id.slot as usize) else {
+            return;
+        };
+        if slot.generation != id.generation {
+            return;
+        }
+        slot.key = None;
+        if let Some(next_generation) = slot.generation.checked_add(1) {
+            slot.generation = next_generation;
+            self.free_key_slots.push(id.slot);
+        }
+    }
+
+    fn clear_dormant_snapshot_id(
+        &mut self,
+        id: TorrentKeyId,
+    ) -> Option<DormantTorrentSnapshot> {
+        let snapshot = self.dormant_snapshots.remove(&id)?;
+        self.dormant_heap_bytes = self
+            .dormant_heap_bytes
+            .saturating_sub(snapshot.estimate_heap_bytes());
+        Some(snapshot)
+    }
+
+    fn is_dormant_id(&self, id: TorrentKeyId) -> bool {
+        self.tiers.get(&id) == Some(&TorrentActivityTier::Dormant)
+    }
+
+    fn resolve_due_keys(&self, ids: Vec<TorrentKeyId>) -> Vec<K> {
+        self.keys_for_ids(ids)
+    }
+
+    fn take_due_idle_checks(&mut self, now: Instant, limit: usize) -> Vec<K> {
+        self.resolve_due_keys(self.idle_checks.pop_due_limited(now, limit))
+    }
+
+    fn take_due_tracker_checks(&mut self, now: Instant, limit: usize) -> Vec<K> {
+        self.resolve_due_keys(self.tracker_checks.pop_due_limited(now, limit))
+    }
+
+    fn record_tier(&mut self, id: TorrentKeyId, tier: TorrentActivityTier) {
+        if let Some(previous) = self.tiers.insert(id, tier) {
+            self.tier_counts[tier_index(previous)] =
+                self.tier_counts[tier_index(previous)].saturating_sub(1);
+        }
+        self.tier_counts[tier_index(tier)] = self.tier_counts[tier_index(tier)].saturating_add(1);
     }
 
     /// Number of bytes retained by compact dormant projections. This is
@@ -328,28 +456,29 @@ where
     }
 
     pub fn dormant_snapshot(&self, key: &K) -> Option<&DormantTorrentSnapshot> {
-        self.dormant_snapshots.get(key)
+        let id = self.find_key_id(key.as_ref())?;
+        self.dormant_snapshots.get(&id)
     }
 
     /// Retain only the small runtime inputs needed to classify or wake a
     /// dormant torrent. Durable metadata remains in SQLite and is loaded on
     /// promotion. A non-dormant tier never retains a dormant projection.
     pub fn set_dormant_snapshot(&mut self, key: K, snapshot: DormantTorrentSnapshot) {
-        self.clear_dormant_snapshot(&key);
-        if self.tier(&key) == Some(TorrentActivityTier::Dormant) {
+        let Some(id) = self.find_key_id(key.as_ref()) else {
+            return;
+        };
+        self.clear_dormant_snapshot_id(id);
+        if self.is_dormant_id(id) {
             self.dormant_heap_bytes = self
                 .dormant_heap_bytes
                 .saturating_add(snapshot.estimate_heap_bytes());
-            self.dormant_snapshots.insert(key, snapshot);
+            self.dormant_snapshots.insert(id, snapshot);
         }
     }
 
     pub fn clear_dormant_snapshot(&mut self, key: &K) -> Option<DormantTorrentSnapshot> {
-        let snapshot = self.dormant_snapshots.remove(key)?;
-        self.dormant_heap_bytes = self
-            .dormant_heap_bytes
-            .saturating_sub(snapshot.estimate_heap_bytes());
-        Some(snapshot)
+        let id = self.find_key_id(key.as_ref())?;
+        self.clear_dormant_snapshot_id(id)
     }
 
     pub fn next_idle_deadline(&self) -> Option<Instant> {
@@ -357,14 +486,16 @@ where
     }
 
     pub fn remove(&mut self, key: &K) -> Option<TorrentActivityTier> {
-        self.idle_checks.cancel(key);
-        self.tracker_checks.cancel(key);
-        self.clear_dormant_snapshot(key);
-        let tier = self.tiers.remove(key);
+        let id = self.find_key_id(key.as_ref())?;
+        self.idle_checks.cancel(&id);
+        self.tracker_checks.cancel(&id);
+        self.clear_dormant_snapshot_id(id);
+        let tier = self.tiers.remove(&id);
         if let Some(tier) = tier {
             self.tier_counts[tier_index(tier)] =
                 self.tier_counts[tier_index(tier)].saturating_sub(1);
         }
+        self.retire_key(key.as_ref(), id);
         tier
     }
 
@@ -372,11 +503,13 @@ where
     /// deadlines use a separate wheel from activity demotion deadlines so an
     /// idle seed can remain taskless without losing its next announce.
     pub fn schedule_tracker_check(&mut self, key: K, deadline: Instant) {
-        self.tracker_checks.schedule(key, deadline);
+        let id = self.intern_key(key.as_ref());
+        self.tracker_checks.schedule(id, deadline);
     }
 
     pub fn cancel_tracker_check(&mut self, key: &K) -> bool {
-        self.tracker_checks.cancel(key)
+        self.find_key_id(key.as_ref())
+            .is_some_and(|id| self.tracker_checks.cancel(&id))
     }
 
     pub fn next_tracker_deadline(&self) -> Option<Instant> {
@@ -384,11 +517,11 @@ where
     }
 
     pub fn pop_due_tracker_checks(&mut self, now: Instant) -> Vec<K> {
-        self.tracker_checks.pop_due(now)
+        self.take_due_tracker_checks(now, usize::MAX)
     }
 
     pub fn pop_due_tracker_checks_limited(&mut self, now: Instant, limit: usize) -> Vec<K> {
-        self.tracker_checks.pop_due_limited(now, limit)
+        self.take_due_tracker_checks(now, limit)
     }
 
     pub fn apply_input(&mut self, key: K, input: TierInput) -> TierDecision {
@@ -417,35 +550,32 @@ where
     }
 
     pub fn pop_due_idle_checks(&mut self, now: Instant) -> Vec<K> {
-        self.idle_checks.pop_due(now)
+        self.take_due_idle_checks(now, usize::MAX)
     }
 
     pub fn pop_due_idle_checks_limited(&mut self, now: Instant, limit: usize) -> Vec<K> {
-        self.idle_checks.pop_due_limited(now, limit)
+        self.take_due_idle_checks(now, limit)
     }
 
     /// Put a due activity check back on the wheel when the engine deliberately
     /// limits one reconciliation pass. This keeps a burst of simultaneous
     /// deadlines from turning the actor into an unbounded serial query loop.
     pub fn reschedule_idle_check(&mut self, key: K, deadline: Instant) {
-        self.idle_checks.schedule(key, deadline);
+        let id = self.intern_key(key.as_ref());
+        self.idle_checks.schedule(id, deadline);
     }
 
     fn record_decision(&mut self, key: K, now: Instant, decision: TierDecision) {
-        if let Some(previous) = self.tiers.insert(key.clone(), decision.tier) {
-            self.tier_counts[tier_index(previous)] =
-                self.tier_counts[tier_index(previous)].saturating_sub(1);
-        }
-        self.tier_counts[tier_index(decision.tier)] =
-            self.tier_counts[tier_index(decision.tier)].saturating_add(1);
+        let id = self.intern_key(key.as_ref());
+        self.record_tier(id, decision.tier);
         if decision.tier != TorrentActivityTier::Dormant {
-            self.clear_dormant_snapshot(&key);
+            self.clear_dormant_snapshot_id(id);
         }
         if let Some(delay) = decision.next_idle_check {
             let staggered_delay = self.stagger_idle_delay(delay);
-            self.idle_checks.schedule(key, now + staggered_delay);
+            self.idle_checks.schedule(id, now + staggered_delay);
         } else {
-            self.idle_checks.cancel(&key);
+            self.idle_checks.cancel(&id);
         }
     }
 
@@ -585,6 +715,30 @@ where
 
     pub fn is_empty(&self) -> bool {
         self.scheduled.is_empty()
+    }
+
+    /// Approximate collection memory using retained queue and map capacities,
+    /// including lazy-cancel entries that have not reached their deadline.
+    fn estimated_collection_bytes(&self) -> usize {
+        let queued_keys = self
+            .deadlines
+            .values()
+            .map(|keys| keys.capacity().saturating_mul(std::mem::size_of::<K>()))
+            .fold(0usize, usize::saturating_add);
+        let deadline_nodes = self.deadlines.len().saturating_mul(
+            std::mem::size_of::<Instant>()
+                .saturating_add(std::mem::size_of::<VecDeque<K>>())
+                .saturating_add(3 * std::mem::size_of::<usize>()),
+        );
+        let scheduled_slots = self
+            .scheduled
+            .capacity()
+            .saturating_mul(std::mem::size_of::<(K, Instant)>().saturating_add(1))
+            .saturating_add(std::mem::size_of::<usize>());
+        queued_keys
+            .saturating_add(deadline_nodes)
+            .saturating_add(scheduled_slots)
+            .saturating_add(std::mem::size_of::<usize>())
     }
 
     pub fn schedule(&mut self, key: K, deadline: Instant) {
@@ -1032,7 +1186,10 @@ mod tests {
         let expected = snapshot.estimate_heap_bytes();
         controller.set_dormant_snapshot(key.clone(), snapshot);
         assert_eq!(controller.dormant_heap_bytes(), expected);
-        assert!(controller.dormant_snapshot(&key).is_some());
+        let snapshot = controller.dormant_snapshot(&key).unwrap();
+        let id = controller.find_key_id(&key).unwrap();
+        assert_eq!(controller.key_for_id(id).unwrap().as_ref(), key.as_str());
+        assert_eq!(snapshot.info_hash, key);
 
         controller.apply_event(
             key.clone(),
@@ -1182,13 +1339,64 @@ mod tests {
                 key.clone(),
                 DormantTorrentSnapshot::new(key, TorrentState::Stopped, None, Some(now)),
             );
+            controller.reschedule_idle_check(
+                format!("{index:040x}"),
+                now + Duration::from_secs(60),
+            );
+            controller.schedule_tracker_check(
+                format!("{index:040x}"),
+                now + Duration::from_secs(120),
+            );
         }
-        let owner = controller.estimated_owner_bytes(String::capacity);
+        let owner = controller.estimated_owner_bytes();
         // The old estimate counted only the snapshot's string capacity.
         assert!(
             owner > controller.dormant_heap_bytes() * 3,
             "owner estimate {owner} should far exceed the string-only {}",
             controller.dormant_heap_bytes()
+        );
+    }
+
+    #[test]
+    fn reused_tier_identity_has_new_generation_and_skips_stale_timer() {
+        let now = Instant::now();
+        let deadline = now + Duration::from_secs(10);
+        let old_key = "old-torrent".to_owned();
+        let mut controller = TierController::<String>::new(TierPolicy::default());
+        controller.apply_input(old_key.clone(), input(TorrentState::Stopped, now));
+        let old_id = controller.find_key_id(&old_key).unwrap();
+        assert_eq!(std::mem::size_of::<TorrentKeyId>(), 8);
+
+        for index in 0..EAGER_CANCEL_QUEUE_LEN {
+            let key = format!("queued-{index}");
+            let id = controller.intern_key(&key);
+            controller.idle_checks.schedule(id, deadline);
+        }
+        controller.idle_checks.schedule(old_id, deadline);
+        assert_eq!(
+            controller.idle_checks.deadlines[&deadline].len(),
+            EAGER_CANCEL_QUEUE_LEN + 1
+        );
+
+        assert_eq!(
+            controller.remove(&old_key),
+            Some(TorrentActivityTier::Dormant)
+        );
+        let new_id = controller.intern_key("new-torrent");
+        assert_eq!(new_id.slot, old_id.slot);
+        assert_ne!(new_id.generation, old_id.generation);
+        controller
+            .idle_checks
+            .schedule(new_id, deadline + Duration::from_secs(1));
+
+        let due_at_old_deadline = controller.pop_due_idle_checks(deadline);
+        assert_eq!(due_at_old_deadline.len(), EAGER_CANCEL_QUEUE_LEN);
+        assert!(!due_at_old_deadline
+            .iter()
+            .any(|key| key.as_str() == "new-torrent"));
+        assert_eq!(
+            controller.pop_due_idle_checks(deadline + Duration::from_secs(1)),
+            vec!["new-torrent".to_owned()]
         );
     }
 }

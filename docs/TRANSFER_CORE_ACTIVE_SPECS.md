@@ -1708,6 +1708,76 @@ implemented and qualified.
   surface review for locked versions, Linux io_uring and namespace
   qualification for urtorrent, and local process/container qualification.
 
+## SYS-004 — Compact generation-checked tier identities
+
+- **Priority / wave:** P0 / 2
+- **Prerequisites:** SYS-001
+- **Owning component:** `rt-engine::TierController` and engine runtime maps.
+- **Finding or capability:** F14/F27; compact metadata identities and honest
+  whole-owner memory accounting.
+- **Status:** `wip`
+
+### Scope
+
+Replace repeated string keys inside high-cardinality runtime owners with
+owner-local slot/generation IDs while retaining the canonical info hash at
+string-facing boundaries. The first slice covers `TierController`: its tier
+maps and timer wheels use an 8-byte ID, while one interned `Arc<str>` identity
+supports lookups. Further `EngineRuntimeState` maps and supervised completion
+events remain open. No database, API, or wire representation changes.
+
+### Ownership and invariant
+
+- **Current owner:** `TierController` stores full keys in its tier maps,
+  dormant projections, timer queues, and timer reverse index.
+- **Target owner:** an owner-local key interner retains the canonical hash;
+  tier maps and timers carry only `(slot, generation)`.
+- **Invariant preserved:** removing an identity invalidates its slot before
+  reuse; stale timer entries cannot resolve to a newer identity that reused
+  the same slot. Tier counts and dormant snapshot behavior remain unchanged.
+- **Must not:** persist the runtime ID, change hash canonicalization, or let a
+  stale timer act on a newly added torrent.
+
+### Acceptance
+
+- Tier and timer indexes use an 8-byte slot/generation ID; the key index and
+  slot share one interned string allocation.
+- Slot reuse increments generation. A generation that would overflow retires
+  that slot instead of wrapping and aliasing an old ID.
+- Lazy stale timer entries are skipped after removal and do not target an ID
+  that reuses the old slot.
+- Whole-owner estimates include retained map capacities, slot/free-list
+  capacities, timer queue capacities and stale entries, interned string bytes,
+  and separately owned dormant snapshot strings.
+- Regression sources cover generation-safe slot reuse, dormant projection
+  accounting, and whole-owner memory accounting.
+- Remaining engine runtime maps and completion-event IDs are tracked as the
+  next SYS-004 slice; this tier-only implementation does not close the ticket.
+
+### Files and compatibility
+
+- **Expected code paths:** `crates/rt-engine/src/tier.rs`,
+  `subsystems.rs`, engine lifecycle maps, and the rebuild ledger.
+- **State or wire compatibility:** no persistence, API, or protocol format
+  changes; public dormant snapshot hash remains a string.
+- **Migration / rollback:** none.
+- **Feature flag or rollout boundary:** no flag; qualify with the bulk pass.
+
+### Evidence
+
+- **Regression source added or updated:**
+  `reused_tier_identity_has_new_generation_and_skips_stale_timer`,
+  `dormant_snapshot_is_accounted_and_cleared_on_promotion`, and
+  `owner_bytes_cover_maps_and_timers_not_just_the_hash_string`.
+- **Command or probe to run:** `cargo test -p rt-engine tier::tests` during
+  the requested bulk pass.
+- **Expected result:** stale timer IDs never resolve after slot reuse and the
+  owner estimate includes retained tier, snapshot, interner, and timer storage.
+- **Executed on exact revision:** no.
+- **Artifact or report path:** pending bulk pass.
+- **External evidence still required:** PERF-109/SYS-014 catalog and mixed-load
+  qualification.
+
 ## SYS-009 — Production database worker actor coverage
 
 - **Priority / wave:** P0 / 2
