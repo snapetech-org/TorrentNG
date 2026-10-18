@@ -7124,6 +7124,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pre_submission_open_failures_release_storage_admission() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing-parent").join("payload.bin");
+        let (scheduler, backend) = scheduler_with_scripted_backend();
+        let queue_capacity = scheduler.queue_sem.available_permits();
+
+        let read = scheduler.read_at(IoClass::Recheck, &path, 0, 1).await;
+        assert!(read.is_err());
+        assert_eq!(scheduler.queue_sem.available_permits(), queue_capacity);
+        assert_storage_admission_released(&scheduler);
+
+        let write = scheduler
+            .write_at(
+                IoClass::PeerWrite,
+                &path,
+                0,
+                bytes::Bytes::from_static(b"x"),
+                false,
+            )
+            .await;
+        assert!(write.is_err());
+        assert_eq!(scheduler.queue_sem.available_permits(), queue_capacity);
+        assert_eq!(scheduler.stats().dirty_files, 0);
+        assert_storage_admission_released(&scheduler);
+        assert_eq!(backend.pending_releases(), 0);
+    }
+
+    #[tokio::test]
     async fn injected_write_failure_is_returned_and_remains_dirty_until_barrier() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("write-failure.bin");
@@ -7194,7 +7222,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("late-write.bin");
         let (scheduler, backend) = scheduler_with_scripted_backend();
-        backend.inject(Operation::Write, Effect::HoldCompletion);
+        backend.inject(
+            Operation::Write,
+            Effect::HoldCompletionThenFail(io::ErrorKind::Other),
+        );
 
         let write_scheduler = scheduler.clone();
         let write_path = path.clone();
@@ -7235,6 +7266,57 @@ mod tests {
         scheduler.sync_all_open_files().await.unwrap();
         assert_eq!(scheduler.stats().dirty_files, 0);
         assert_eq!(std::fs::read(path).unwrap(), b"verified-payload");
+    }
+
+    #[tokio::test]
+    async fn cancelled_submitted_read_retains_admission_until_failure_completion() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("read-failure-held.bin");
+        std::fs::write(&path, b"payload").unwrap();
+        let (scheduler, backend) = scheduler_with_scripted_backend();
+        backend.inject(
+            Operation::Read,
+            Effect::HoldCompletionThenFail(io::ErrorKind::Other),
+        );
+
+        let read_scheduler = scheduler.clone();
+        let read_path = path.clone();
+        let queue_capacity = scheduler.queue_sem.available_permits();
+        let read = tokio::spawn(async move {
+            read_scheduler
+                .read_at(IoClass::Recheck, &read_path, 0, 7)
+                .await
+        });
+
+        backend.wait_until_completion_is_held().await;
+        assert_eq!(backend.pending_releases(), 1);
+        assert_eq!(scheduler.queue_sem.available_permits(), queue_capacity - 1);
+        assert_eq!(
+            scheduler.stats().queued_disk_bytes,
+            QUEUED_DISK_JOB_OVERHEAD_BYTES
+        );
+        read.abort();
+        let _ = read.await;
+
+        assert_eq!(scheduler.queue_sem.available_permits(), queue_capacity - 1);
+        assert_eq!(
+            scheduler.stats().queued_disk_bytes,
+            QUEUED_DISK_JOB_OVERHEAD_BYTES
+        );
+        assert_eq!(scheduler.stats().dirty_files, 0);
+        assert!(backend.release_next());
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while scheduler.queue_sem.available_permits() != queue_capacity
+                || scheduler.stats().queued_disk_bytes != 0
+                || scheduler.stats().device_queue_available
+                    != scheduler.stats().device_queue_capacity
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("failed read completion should release all storage admission");
+        assert_storage_admission_released(&scheduler);
     }
 
     #[tokio::test]

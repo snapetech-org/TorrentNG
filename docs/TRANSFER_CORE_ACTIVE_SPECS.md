@@ -268,6 +268,7 @@ generation fences remain later IO tickets.
 
 - **Regression source added or updated:**
   `injected_read_failure_is_returned_without_marking_payload_dirty`,
+  `pre_submission_open_failures_release_storage_admission`,
   `injected_write_failure_is_returned_and_remains_dirty_until_barrier`,
   `cancelled_waiter_keeps_submitted_write_dirty_until_barrier`,
   `partial_write_then_error_is_not_reported_as_success`,
@@ -576,11 +577,13 @@ and the full injected-fault matrix remain open.
   `cancelled_strict_write_retains_admission_until_sync_completion`,
   `cancelled_checkpoint_barrier_retains_admission_until_sync_completion`,
   `strict_write_sync_failure_releases_admission_and_preserves_dirty_evidence`,
+  `cancelled_submitted_read_retains_admission_until_failure_completion`,
   plus helper-level completion-owner lifetime cases for canceled read/write
   waiters and admission-release assertions for open and injected I/O failures.
-  The strict-write cancellation case also injects a sync error after the
-  submitted sync completes, proving canceled callers retain admission until
-  completion while the failed result leaves dirty evidence for retry.
+  Canceled submitted read and write cases now receive delayed backend errors;
+  the strict-write cancellation case does the same for sync after the submitted
+  sync completes. These prove canceled callers retain admission until
+  completion while failed results leave dirty evidence for retry where needed.
 - **Command or probe to run:** `cargo test -p rt-storage` and the scripted
   backend cancellation matrix during the requested bulk pass.
 - **Expected result:** accepted work holds its queue/device/byte owner until

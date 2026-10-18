@@ -103,7 +103,7 @@ impl ScriptedDiskBackend {
         &self,
         inner: oneshot::Receiver<io::Result<T>>,
         reply: oneshot::Sender<io::Result<T>>,
-        forced_error: Option<io::ErrorKind>,
+        forced_error: Option<(io::ErrorKind, &'static str)>,
     ) {
         let (release, wait) = mpsc::channel();
         self.control
@@ -124,12 +124,8 @@ impl ScriptedDiskBackend {
                 control.ready_count.fetch_add(1, Ordering::Release);
                 control.ready.notify_one();
                 let _ = wait.recv();
-                let result = forced_error.map_or(result, |kind| {
-                    Err(io::Error::new(
-                        kind,
-                        "injected storage fault after partial write",
-                    ))
-                });
+                let result = forced_error
+                    .map_or(result, |(kind, message)| Err(io::Error::new(kind, message)));
                 let _ = reply.send(result);
             })
             .expect("test completion worker should start");
@@ -217,7 +213,11 @@ impl DiskBackend for ScriptedDiskBackend {
             Some(Effect::HoldCompletionThenFail(kind)) => {
                 let inner = self.delegate.pread(file, frame, offset);
                 let (reply, receiver) = oneshot::channel();
-                self.hold(inner, reply, Some(kind));
+                self.hold(
+                    inner,
+                    reply,
+                    Some((kind, "injected storage fault after backend completion")),
+                );
                 receiver
             }
             Some(Effect::WritePrefixThenFail { .. }) => self.fail(io::ErrorKind::InvalidInput),
@@ -242,14 +242,22 @@ impl DiskBackend for ScriptedDiskBackend {
             Some(Effect::HoldCompletionThenFail(kind)) => {
                 let inner = self.delegate.pwrite(file, data, offset);
                 let (reply, receiver) = oneshot::channel();
-                self.hold(inner, reply, Some(kind));
+                self.hold(
+                    inner,
+                    reply,
+                    Some((kind, "injected storage fault after backend completion")),
+                );
                 receiver
             }
             Some(Effect::WritePrefixThenFail { prefix_bytes, kind }) => {
                 let prefix_len = prefix_bytes.min(data.len());
                 let inner = self.delegate.pwrite(file, data.slice(..prefix_len), offset);
                 let (reply, receiver) = oneshot::channel();
-                self.hold(inner, reply, Some(kind));
+                self.hold(
+                    inner,
+                    reply,
+                    Some((kind, "injected storage fault after partial write")),
+                );
                 receiver
             }
             None => self.delegate.pwrite(file, data, offset),
@@ -268,7 +276,11 @@ impl DiskBackend for ScriptedDiskBackend {
             Some(Effect::HoldCompletionThenFail(kind)) => {
                 let inner = self.delegate.fdatasync(file);
                 let (reply, receiver) = oneshot::channel();
-                self.hold(inner, reply, Some(kind));
+                self.hold(
+                    inner,
+                    reply,
+                    Some((kind, "injected storage fault after backend completion")),
+                );
                 receiver
             }
             Some(Effect::WritePrefixThenFail { .. }) => self.fail(io::ErrorKind::InvalidInput),
@@ -286,7 +298,7 @@ mod tests {
         let backend = ScriptedDiskBackend::new(1, 1);
         let (inner_tx, inner) = oneshot::channel();
         let (reply, receiver) = oneshot::channel();
-        backend.hold(inner, reply, None::<io::ErrorKind>);
+        backend.hold(inner, reply, None);
         inner_tx.send(Ok(())).unwrap();
         backend.wait_until_completion_is_held().await;
 
