@@ -439,7 +439,8 @@ pub struct TrackerConfig {
     pub allow_https_webseeds: bool,
     /// Permit outbound tracker, webseed, DHT, and peer traffic to loopback IPs.
     pub allow_loopback_egress: bool,
-    /// Permit outbound tracker, webseed, DHT, and peer traffic to private IPs.
+    /// Permit outbound tracker, webseed, DHT, and peer traffic to private IPs
+    /// and RFC 2544's reserved `198.18.0.0/15` benchmarking network.
     pub allow_private_egress: bool,
     /// Permit outbound tracker, webseed, DHT, and peer traffic to link-local IPs.
     pub allow_link_local_egress: bool,
