@@ -1214,6 +1214,7 @@ def _run_trial(
         target_role = helper_role
     candidate_profile = profiles[candidate_id]
     helper_profile = profiles[helper_id]
+    trial_suffix = f"{planned['trial_id']}:{mode}"
     trial_key = _scheduled_trial_key(planned["trial_id"], mode)
     run_dir = scratch_root / "runs" / trial_key
     _mkdir_private(run_dir)
