@@ -6,20 +6,22 @@
   "additionalProperties": false,
   "required": [
     "schema_version", "topology_sha256", "gateway", "target_address",
-    "seed_address", "seed_port", "seed_peer_id_sha256", "seed_ready",
-    "seedless_target_mode", "info_hashes_sha256", "announce_counts",
-    "request_count", "artifact_sha256"
+    "target_port", "target_peer_id_sha256", "target_ready", "seed_address",
+    "seed_port", "seed_peer_id_sha256", "seed_ready", "info_hashes_sha256",
+    "announce_counts", "request_count", "artifact_sha256"
   ],
   "properties": {
     "schema_version": { "const": "transfer-task-tracker-v1" },
     "topology_sha256": { "$ref": "#/$defs/sha256" },
     "gateway": { "type": "string", "format": "ipv4" },
     "target_address": { "type": "string", "format": "ipv4" },
+    "target_port": { "anyOf": [{ "$ref": "#/$defs/port" }, { "type": "null" }] },
+    "target_peer_id_sha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
+    "target_ready": { "type": "boolean" },
     "seed_address": { "type": "string", "format": "ipv4" },
     "seed_port": { "anyOf": [{ "$ref": "#/$defs/port" }, { "type": "null" }] },
     "seed_peer_id_sha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
     "seed_ready": { "type": "boolean" },
-    "seedless_target_mode": { "type": "boolean" },
     "info_hashes_sha256": {
       "type": "array", "minItems": 1, "uniqueItems": true,
       "items": { "$ref": "#/$defs/sha256" }

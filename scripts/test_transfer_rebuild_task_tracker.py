@@ -41,8 +41,19 @@ class TaskTrackerTests(unittest.TestCase):
         expected_peer = bytes((198, 18, 4, 2)) + (51413).to_bytes(2, "big")
         self.assertIn(b"5:peers" + str(len(expected_peer)).encode() + b":" + expected_peer, response)
         self.assertEqual(self.tracker.snapshot()["announce_counts"]["started"], 1)
+        self.assertTrue(self.tracker.snapshot()["target_ready"])
 
-    def test_seed_does_not_receive_itself_as_a_peer(self) -> None:
+    def test_seed_announce_does_not_return_a_peer(self) -> None:
+        target_peer_id = b"-CMP100-" + b"t" * 12
+        target_query = (
+            "info_hash=" + urllib.parse.quote_from_bytes(self.hash_v2, safe="")
+            + "&peer_id=" + urllib.parse.quote_from_bytes(target_peer_id, safe="")
+            + "&port=45678&event=started&compact=1"
+        )
+        target_response = self.tracker.response("198.18.4.3", target_query)
+        expected_seed = bytes((198, 18, 4, 2)) + (51413).to_bytes(2, "big")
+        self.assertIn(b"5:peers" + str(len(expected_seed)).encode() + b":" + expected_seed, target_response)
+
         query = (
             "info_hash=" + urllib.parse.quote_from_bytes(self.hash_v2, safe="")
             + "&peer_id=" + urllib.parse.quote_from_bytes(self.seed_peer_id, safe="")
@@ -50,6 +61,8 @@ class TaskTrackerTests(unittest.TestCase):
         )
         response = self.tracker.response("198.18.4.2", query)
         self.assertIn(b"5:peers0:", response)
+        with self.assertRaisesRegex(TaskTrackerError, "target peer port changed"):
+            self.tracker.response("198.18.4.3", target_query.replace("port=45678", "port=45679"))
 
     def test_rejects_foreign_hash_source_and_spoofed_seed(self) -> None:
         base = (
@@ -167,13 +180,15 @@ class TaskTrackerTests(unittest.TestCase):
         expected_peer = bytes((198, 18, 4, 2)) + (51413).to_bytes(2, "big")
         self.assertIn(b"5:peers" + str(len(expected_peer)).encode() + b":" + expected_peer, target_response)
         self.assertTrue(tracker.snapshot()["seed_ready"])
+        self.assertTrue(tracker.snapshot()["target_ready"])
         self.assertEqual(tracker.snapshot()["seed_port"], 51413)
+        self.assertEqual(tracker.snapshot()["target_port"], 45678)
 
         changed_port = seed_query.replace("port=51413", "port=51414")
         with self.assertRaisesRegex(TaskTrackerError, "port changed"):
             tracker.response("198.18.4.2", changed_port)
 
-    def test_target_announce_fails_after_bounded_seed_readiness_wait(self) -> None:
+    def test_target_announce_fails_after_bounded_wait_when_seed_is_missing(self) -> None:
         tracker = TaskTracker(
             gateway="198.18.4.1",
             target_address="198.18.4.3",
@@ -189,10 +204,12 @@ class TaskTrackerTests(unittest.TestCase):
             + "&peer_id=" + urllib.parse.quote_from_bytes(b"-CMP100-" + b"t" * 12, safe="")
             + "&port=45678&event=started&compact=1"
         )
-        with self.assertRaisesRegex(TaskTrackerError, "readiness deadline"):
+        with self.assertRaisesRegex(TaskTrackerError, "seed did not announce before the readiness deadline"):
             tracker.response("198.18.4.3", query)
+        self.assertFalse(tracker.snapshot()["seed_ready"])
+        self.assertTrue(tracker.snapshot()["target_ready"])
 
-    def test_seedless_target_mode_returns_an_empty_peer_set_for_direct_peer_runner(self) -> None:
+    def test_seed_announce_returns_without_waiting_for_target(self) -> None:
         tracker = TaskTracker(
             gateway="198.18.4.1",
             target_address="198.18.4.3",
@@ -201,17 +218,17 @@ class TaskTrackerTests(unittest.TestCase):
             seed_peer_id=None,
             info_hashes={self.hash_v1},
             topology_sha256="a" * 64,
-            allow_seedless_target=True,
+            seed_ready_timeout_seconds=0.01,
         )
         query = (
             "info_hash=" + urllib.parse.quote_from_bytes(self.hash_v1, safe="")
-            + "&peer_id=" + urllib.parse.quote_from_bytes(b"-CMP100-" + b"t" * 12, safe="")
-            + "&port=45678&event=started&compact=1"
+            + "&peer_id=" + urllib.parse.quote_from_bytes(self.seed_peer_id, safe="")
+            + "&port=51413&event=started&compact=1"
         )
-        response = tracker.response("198.18.4.3", query)
+        response = tracker.response("198.18.4.2", query)
         self.assertIn(b"5:peers0:", response)
-        self.assertFalse(tracker.snapshot()["seed_ready"])
-        self.assertTrue(tracker.snapshot()["seedless_target_mode"])
+        self.assertTrue(tracker.snapshot()["seed_ready"])
+        self.assertFalse(tracker.snapshot()["target_ready"])
 
     def test_bencode_is_canonical_and_rejects_boolean_counters(self) -> None:
         self.assertEqual(_bencode({b"z": 1, b"a": b"x"}), b"d1:a1:x1:zi1ee")

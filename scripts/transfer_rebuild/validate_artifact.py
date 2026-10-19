@@ -789,9 +789,15 @@ def _task_tracker_errors(observation: dict[str, Any]) -> list[str]:
     counts = observation["announce_counts"]
     if sum(counts.values()) != observation["request_count"]:
         errors.append("request_count does not equal the announce counters")
-    ready = observation["seed_port"] is not None and observation["seed_peer_id_sha256"] is not None
-    if observation["seed_ready"] is not ready:
+    seed_ready = observation["seed_port"] is not None and observation["seed_peer_id_sha256"] is not None
+    if observation["seed_ready"] is not seed_ready:
         errors.append("seed_ready differs from the observed seed peer identity")
+    target_ready = (
+        observation["target_port"] is not None
+        and observation["target_peer_id_sha256"] is not None
+    )
+    if observation["target_ready"] is not target_ready:
+        errors.append("target_ready differs from the observed target peer identity")
     try:
         gateway = ipaddress.ip_address(observation["gateway"])
         target = ipaddress.ip_address(observation["target_address"])
@@ -2045,12 +2051,13 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
                         )
                     elif (
                         not tracker["seed_ready"]
+                        or not tracker["target_ready"]
                         or tracker["announce_counts"]["started"] < 2
                         or tracker["request_count"] < 2
                     ):
                         errors.append(
                             f"{location}.environment.network.task_topology_sha256: "
-                            "complete paired trial lacks both tracker peers and a ready seed"
+                            "complete paired trial lacks both announced peers and a ready seed"
                         )
                     if retarget is None:
                         errors.append(

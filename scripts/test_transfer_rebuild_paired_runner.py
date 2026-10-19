@@ -117,7 +117,7 @@ class PairedRunnerTests(unittest.TestCase):
             "expected_settings": {
                 "settings": {
                     "session": {"listen_v4": "127.0.0.1", "dht": False},
-                    "control": {"manual_peer": "127.0.0.1:1234"},
+                    "control": {"pinned_peer": "127.0.0.1:1234"},
                     "runner_inputs": {"mode": "download", "hash_threads": 2},
                 }
             }
@@ -127,19 +127,24 @@ class PairedRunnerTests(unittest.TestCase):
             profile,
             "198.18.1.3",
             "198.18.1.2:44444",
+            "http://198.18.1.2:45555/announce",
             "seed",
         )
 
         settings = trial["expected_settings"]["settings"]
         self.assertEqual(settings["session"]["listen_v4"], "198.18.1.3")
-        self.assertEqual(settings["control"]["manual_peer"], "198.18.1.2:44444")
+        self.assertEqual(settings["control"]["pinned_peer"], "198.18.1.2:44444")
+        self.assertEqual(settings["control"]["tracker_url"], "http://198.18.1.2:45555/announce")
+        self.assertEqual(settings["control"]["trackers_after_isolation"], 1)
         self.assertEqual(settings["runner_inputs"]["mode"], "seed")
         self.assertEqual(profile["expected_settings"]["settings"]["session"]["listen_v4"], "127.0.0.1")
         self.assertEqual(profile["expected_settings"]["settings"]["runner_inputs"]["mode"], "download")
 
     def test_urtorrent_trial_profile_rejects_unknown_mode(self) -> None:
         with self.assertRaisesRegex(PairedRunnerError, "mode"):
-            _urtorrent_profile_for_trial({}, "127.0.0.1", "127.0.0.1:1", "upload")
+            _urtorrent_profile_for_trial(
+                {}, "127.0.0.1", "127.0.0.1:1", "http://127.0.0.1:2/announce", "upload"
+            )
 
     def test_runner_input_json_rejects_overflow_numbers(self) -> None:
         with tempfile.TemporaryDirectory(prefix="tng-paired-json-") as directory:

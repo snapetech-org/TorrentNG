@@ -321,8 +321,6 @@ def _start_task_tracker_worker(
         command.extend(("--info-hash", info_hash.hex()))
     for port in sorted(reserved_ports):
         command.extend(("--reserved-port", str(port)))
-    if tracker.allow_seedless_target:
-        command.append("--allow-seedless-target")
     log_descriptor = os.open(
         log_path,
         os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
@@ -585,7 +583,7 @@ def _profile_port(profile: dict[str, Any], client_id: str) -> int:
 
 
 def _urtorrent_profile_for_trial(
-    profile: dict[str, Any], listen_v4: str, peer_address: str, mode: str
+    profile: dict[str, Any], listen_v4: str, peer_address: str, tracker_url: str, mode: str
 ) -> dict[str, Any]:
     """Bind address- and mode-dependent settings to this isolated trial."""
     if mode not in {"download", "seed"}:
@@ -601,7 +599,9 @@ def _urtorrent_profile_for_trial(
     if not all(isinstance(value, dict) for value in (session, control, runner_inputs)):
         raise PairedRunnerError("urtorrent pin omits a trial-bound settings section")
     session["listen_v4"] = listen_v4
-    control["manual_peer"] = peer_address
+    control["pinned_peer"] = peer_address
+    control["tracker_url"] = tracker_url
+    control["trackers_after_isolation"] = 1
     runner_inputs["mode"] = mode
     return result
 
@@ -957,6 +957,7 @@ def _start_urtorrent(
         "--stop-file", str(barrier_dir / "stop-runner"),
         "--listen-v4", str(task["address"]),
         "--peer", peer_address,
+        "--tracker-url", endpoint.paths.tracker_url,
         "--max-connections", str(session.get("max_connections", 500)),
         "--max-peers", str(session.get("max_peers_per_torrent", 50)),
         "--unchoke-slots", str(session.get("unchoke_slots", 8)),
@@ -967,7 +968,7 @@ def _start_urtorrent(
         "--seed-seconds", str(timeout_seconds),
     ]
     endpoint.direct_profile = _urtorrent_profile_for_trial(
-        profile, str(task["address"]), peer_address, mode
+        profile, str(task["address"]), peer_address, endpoint.paths.tracker_url, mode
     )
     endpoint.direct_profile["pid_file"] = str(endpoint.paths.state / "urtorrent.pid")
     endpoint.direct_profile["settings_file"] = str(endpoint.paths.state / "settings.json")
@@ -1537,7 +1538,6 @@ def _run_trial(
             seed_peer_id=None,
             info_hashes=info_hash_bytes,
             topology_sha256=str(topology_record["artifact_sha256"]),
-            allow_seedless_target=seed_endpoint.client_id == "urtorrent",
         )
         tracker_process, tracker_url = _start_task_tracker_worker(
             tracker,

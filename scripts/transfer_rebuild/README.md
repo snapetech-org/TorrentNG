@@ -377,8 +377,10 @@ as a command-line input rather than an effective readback.
 The runner is Linux-only and refuses to start outside a named task-owned
 `tngt-*` network namespace. It requires private v1 metainfo and rejects v2 or
 hybrid fixtures. It binds only to an explicit task-local IPv4 interface,
-disables IPv6, DHT, PEX, and LSD, removes tracker and web-seed endpoints before
-release, and dials one explicit task-local IPv4 peer. Task-network addresses
+disables IPv6, DHT, PEX, and LSD, retains exactly the task-local tracker, and
+removes web-seed endpoints before release. The tracker returns the pinned seed
+only to the target; the seed gets an empty peer list so only the target dials.
+Task-network addresses
 come from the reserved `198.18.0.0/15` pool; private, link-local, and loopback
 addresses are also accepted for isolated probes. The adapter independently
 verifies the listener and peer addresses in the process-bound snapshot. It
@@ -398,9 +400,10 @@ CARGO_TARGET_DIR=/path/to/task-scratch/urtorrent-target \
 The caller prepares an existing empty download directory or verified seed
 directory, creates the `tngt-*` namespace, and starts the runner with
 `--namespace`, `--torrent`, `--save-path`, `--pid-file`, `--settings-file`,
-`--start-gate`, `--mode download|seed`, required `--listen-v4 IP`, and required
-`--peer IPv4:PORT`. Both addresses must belong to the isolated task network or
-use a private, link-local, or loopback range.
+`--start-gate`, `--mode download|seed`, required `--listen-v4 IP`, required
+`--peer IPv4:PORT`, and required `--tracker-url http://IP:PORT/announce`.
+The tracker host must match the pinned peer IP. Both addresses must belong to
+the isolated task network or use a private, link-local, or loopback range.
 The runner also checks that the process is in the named namespace. Download
 mode requires an empty directory; seed mode checks that the existing payload
 is complete before waiting at the barrier. The runner never deletes files. Its
@@ -841,12 +844,14 @@ with different purposes. `client_control.py` can receive an ephemeral
 listener, PID, namespace inode, veth ifindex, address, and connected route
 before each mutation.
 
-`task_tracker.py` serves HTTP announces only on the bridge gateway. It accepts
-only the target and seed source addresses and pinned v1/v2 info hashes. The
-first seed announce binds its peer ID and listening port; target announces
-receive that seed only after the binding is complete. Later seed announces
-must retain the same identity. Its snapshot contains counts and a hash of the
-seed peer ID, not the peer ID itself. Topology and tracker are control-plane
+`task_tracker.py` serves HTTP announces only on a recorded task endpoint. It
+accepts only the target and seed source addresses and pinned v1/v2 info hashes.
+It learns each endpoint's peer ID and listening port from its announce, waits
+for the seed identity before returning that peer to the target, and gives the
+seed an empty peer list so a transfer has one dialer. Later announces must
+retain the same identity. Its snapshot
+contains counts and hashes of both peer IDs, not the peer IDs themselves.
+Topology and tracker are control-plane
 helpers; they are not part of the measured client's resource totals. Malformed
 percent escapes, unescaped non-ASCII bytes, and unescaped control bytes are
 rejected before the tracker interprets binary hashes and peer IDs. The paired

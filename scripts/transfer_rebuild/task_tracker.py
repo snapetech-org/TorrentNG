@@ -83,7 +83,7 @@ def _query_bytes(raw_query: str) -> dict[bytes, bytes]:
 
 
 class TaskTracker:
-    """A stateless peer directory that returns only the pinned seed endpoint."""
+    """A task-local peer directory that offers the pinned seed to the target."""
 
     def __init__(
         self,
@@ -96,7 +96,6 @@ class TaskTracker:
         info_hashes: set[bytes],
         topology_sha256: str,
         seed_ready_timeout_seconds: float = 10.0,
-        allow_seedless_target: bool = False,
     ) -> None:
         self.gateway = self._ipv4(gateway, "gateway")
         self.target_address = self._ipv4(target_address, "target address")
@@ -137,12 +136,11 @@ class TaskTracker:
             or not 0 < seed_ready_timeout_seconds <= 30
         ):
             raise TaskTrackerError("seed readiness wait must be finite and within (0, 30] seconds")
-        if not isinstance(allow_seedless_target, bool):
-            raise TaskTrackerError("allow_seedless_target must be a boolean")
         self.seed_port = seed_port
         self.seed_peer_id = seed_peer_id
+        self.target_port: int | None = None
+        self.target_peer_id: bytes | None = None
         self.seed_ready_timeout_seconds = float(seed_ready_timeout_seconds)
-        self.allow_seedless_target = allow_seedless_target
         self.info_hashes = frozenset(info_hashes)
         self._hashes_pinned = bool(info_hashes)
         self.topology_sha256 = topology_sha256
@@ -154,6 +152,11 @@ class TaskTracker:
     def seed_ready(self) -> bool:
         with self._lock:
             return self.seed_port is not None and self.seed_peer_id is not None
+
+    @property
+    def target_ready(self) -> bool:
+        with self._lock:
+            return self.target_port is not None and self.target_peer_id is not None
 
     def pin_info_hashes(self, info_hashes: set[bytes]) -> None:
         """Arm a pre-bound tracker once fixture metainfo has supplied its hashes."""
@@ -214,6 +217,8 @@ class TaskTracker:
         is_seed = source == self.seed_address
         with self._lock:
             if is_seed:
+                if peer_id == self.target_peer_id:
+                    raise TaskTrackerError("target peer ID appeared in the seed namespace")
                 if self.seed_peer_id is None:
                     self.seed_peer_id = peer_id
                 elif peer_id != self.seed_peer_id:
@@ -222,34 +227,51 @@ class TaskTracker:
                     self.seed_port = peer_port
                 elif peer_port != self.seed_port:
                     raise TaskTrackerError("seed peer port changed during the task")
-                self._lock.notify_all()
             else:
-                if not self.allow_seedless_target:
-                    ready_deadline = time.monotonic() + self.seed_ready_timeout_seconds
-                    while self.seed_port is None or self.seed_peer_id is None:
-                        remaining = ready_deadline - time.monotonic()
-                        if remaining <= 0:
-                            raise TaskTrackerError(
-                                "seed did not announce before the readiness deadline"
-                            )
-                        self._lock.wait(remaining)
-                if self.seed_peer_id is not None and peer_id == self.seed_peer_id:
+                if peer_id == self.seed_peer_id:
                     raise TaskTrackerError("seed peer ID appeared in the target namespace")
-            seed_address = self.seed_address
-            seed_port = self.seed_port
-            seed_peer_id = self.seed_peer_id
+                if self.target_peer_id is None:
+                    self.target_peer_id = peer_id
+                elif peer_id != self.target_peer_id:
+                    raise TaskTrackerError("unexpected peer announced from the target namespace")
+                if self.target_port is None:
+                    self.target_port = peer_port
+                elif peer_port != self.target_port:
+                    raise TaskTrackerError("target peer port changed during the task")
+
+            self._lock.notify_all()
+            if is_seed:
+                # The target initiates the transfer connection. Returning it
+                # to the seed too would create competing reciprocal dials.
+                peer_address = None
+                peer_port = None
+                peer_id = None
+            else:
+                ready_deadline = time.monotonic() + self.seed_ready_timeout_seconds
+                while self.seed_port is None or self.seed_peer_id is None:
+                    remaining = ready_deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TaskTrackerError(
+                            "seed did not announce before the readiness deadline"
+                        )
+                    self._lock.wait(remaining)
+                peer_address = self.seed_address
+                peer_port = self.seed_port
+                peer_id = self.seed_peer_id
             self._request_count += 1
             self._announces[event.decode("ascii") if event else "other"] += 1
 
-        peer = [] if is_seed or seed_port is None or seed_peer_id is None else [
-            (seed_address, seed_port, seed_peer_id)
-        ]
-        if compact == b"1":
-            peers: Any = b"".join(address.packed + port.to_bytes(2, "big") for address, port, _ in peer)
+        if peer_address is None:
+            peers: Any = b"" if compact == b"1" else []
+        elif compact == b"1":
+            peers: Any = peer_address.packed + peer_port.to_bytes(2, "big")
         else:
             peers = [
-                {b"peer id": peer_id_value, b"ip": str(address).encode("ascii"), b"port": port}
-                for address, port, peer_id_value in peer
+                {
+                    b"peer id": peer_id,
+                    b"ip": str(peer_address).encode("ascii"),
+                    b"port": peer_port,
+                }
             ]
         return _bencode({
             b"complete": 1,
@@ -267,6 +289,13 @@ class TaskTracker:
                 "topology_sha256": self.topology_sha256,
                 "gateway": str(self.gateway),
                 "target_address": str(self.target_address),
+                "target_port": self.target_port,
+                "target_peer_id_sha256": (
+                    hashlib.sha256(self.target_peer_id).hexdigest()
+                    if self.target_peer_id is not None
+                    else None
+                ),
+                "target_ready": self.target_port is not None and self.target_peer_id is not None,
                 "seed_address": str(self.seed_address),
                 "seed_port": self.seed_port,
                 "seed_peer_id_sha256": (
@@ -275,7 +304,6 @@ class TaskTracker:
                     else None
                 ),
                 "seed_ready": self.seed_port is not None and self.seed_peer_id is not None,
-                "seedless_target_mode": self.allow_seedless_target,
                 "info_hashes_sha256": sorted(
                     hashlib.sha256(info_hash).hexdigest() for info_hash in self.info_hashes
                 ),
@@ -377,7 +405,6 @@ def _serve_worker(args: argparse.Namespace) -> int:
             seed_peer_id=None,
             info_hashes=hashes,
             topology_sha256=args.topology_sha256,
-            allow_seedless_target=args.allow_seedless_target,
         )
         reserved = set(args.reserved_port)
         for _attempt in range(128):
@@ -430,7 +457,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reserved-port", type=int, action="append", default=[])
     parser.add_argument("--topology-sha256")
     parser.add_argument("--info-hash", action="append", default=[])
-    parser.add_argument("--allow-seedless-target", action="store_true")
     parser.add_argument("--ready-path", type=Path)
     parser.add_argument("--snapshot-path", type=Path)
     args = parser.parse_args(argv)

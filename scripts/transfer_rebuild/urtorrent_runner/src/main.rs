@@ -36,6 +36,7 @@ struct Args {
     stop_file: PathBuf,
     listen_v4: Ipv4Addr,
     peer: SocketAddr,
+    tracker_url: String,
     max_connections: usize,
     max_peers: usize,
     unchoke_slots: usize,
@@ -50,7 +51,8 @@ fn usage() -> &'static str {
     "urtorrent-runner --mode download|seed --namespace tngt-NAME|tngs-NAME --torrent FILE \
      --save-path DIR --pid-file FILE --settings-file FILE --start-gate FILE --ready-file FILE \
      --stop-file FILE \
-     --listen-v4 IP --peer IPv4:PORT [--max-connections N] [--max-peers N] \
+     --listen-v4 IP --peer IPv4:PORT --tracker-url http://IP:PORT/announce \
+     [--max-connections N] [--max-peers N] \
      [--unchoke-slots N] [--hash-threads N] [--upload-limit BPS] \
      [--download-limit BPS] [--timeout-seconds N] [--seed-seconds N]\n\
      urtorrent-runner preflight --torrent FILE --save-path EMPTY_DIR"
@@ -106,6 +108,27 @@ fn is_help_flag(value: &str) -> bool {
     matches!(value, "--help" | "-h")
 }
 
+fn tracker_url_matches_peer(value: &str, peer: SocketAddr) -> bool {
+    let Some(authority_and_path) = value.strip_prefix("http://") else {
+        return false;
+    };
+    let Some((authority, path)) = authority_and_path.split_once('/') else {
+        return false;
+    };
+    if path != "announce" {
+        return false;
+    }
+    let Ok(tracker) = authority.parse::<SocketAddr>() else {
+        return false;
+    };
+    match (tracker, peer) {
+        (SocketAddr::V4(tracker), SocketAddr::V4(peer)) => {
+            *tracker.ip() == *peer.ip() && tracker.port() != 0
+        }
+        _ => false,
+    }
+}
+
 fn parse_trial_args(values: impl IntoIterator<Item = String>) -> anyhow::Result<Args> {
     let mut values = values.into_iter();
     let mut seen = HashSet::new();
@@ -120,6 +143,7 @@ fn parse_trial_args(values: impl IntoIterator<Item = String>) -> anyhow::Result<
     let mut stop_file = None;
     let mut listen_v4 = None;
     let mut peer = None;
+    let mut tracker_url = None;
     let mut max_connections = 500usize;
     let mut max_peers = 50usize;
     let mut unchoke_slots = 8usize;
@@ -158,6 +182,7 @@ fn parse_trial_args(values: impl IntoIterator<Item = String>) -> anyhow::Result<
             "--stop-file" => stop_file = Some(PathBuf::from(value)),
             "--listen-v4" => listen_v4 = Some(parse_value("IPv4 listen address", &value)?),
             "--peer" => peer = Some(parse_value("peer address", &value)?),
+            "--tracker-url" => tracker_url = Some(value),
             "--max-connections" => max_connections = parse_value(&name, &value)?,
             "--max-peers" => max_peers = parse_value(&name, &value)?,
             "--unchoke-slots" => unchoke_slots = parse_value(&name, &value)?,
@@ -184,8 +209,9 @@ fn parse_trial_args(values: impl IntoIterator<Item = String>) -> anyhow::Result<
         listen_v4: listen_v4
             .ok_or_else(|| anyhow::anyhow!("--listen-v4 must bind a private task interface"))?,
         peer: peer.ok_or_else(|| {
-            anyhow::anyhow!("--peer is required; this comparator uses a pinned local peer only")
+            anyhow::anyhow!("--peer is required; this comparator pins one local tracker peer")
         })?,
+        tracker_url: tracker_url.ok_or_else(|| anyhow::anyhow!("--tracker-url is required"))?,
         max_connections,
         max_peers,
         unchoke_slots,
@@ -197,6 +223,11 @@ fn parse_trial_args(values: impl IntoIterator<Item = String>) -> anyhow::Result<
     };
     if args.peer.port() == 0 {
         bail!("--peer must use a nonzero port");
+    }
+    if !tracker_url_matches_peer(&args.tracker_url, args.peer) {
+        bail!(
+            "--tracker-url must be the task-local HTTP announce endpoint on the pinned peer address"
+        );
     }
     match args.peer {
         SocketAddr::V4(peer) if is_task_local_ip(*peer.ip()) => {}
@@ -460,11 +491,9 @@ async fn run_trial() -> anyhow::Result<()> {
         if args.mode == Mode::Seed && !initial.complete {
             bail!("seed mode requires a fully verified payload before the start barrier");
         }
-        for tracker in session.trackers(id).await.context("cannot inspect fixture trackers")? {
-            session
-                .remove_tracker(id, tracker.url)
-                .await
-                .context("cannot remove tracker from isolated benchmark fixture")?;
+        let trackers = session.trackers(id).await.context("cannot inspect fixture trackers")?;
+        if trackers.len() != 1 || trackers[0].url != args.tracker_url {
+            bail!("benchmark fixture must retain exactly the pinned task-local tracker");
         }
         for web_seed in initial.web_seed_urls {
             session
@@ -476,8 +505,8 @@ async fn run_trial() -> anyhow::Result<()> {
         if observed.state != TorrentState::Paused {
             bail!("fixture must remain paused until the common start barrier is released");
         }
-        if observed.trackers_count != 0 || observed.web_seeds != 0 {
-            bail!("benchmark fixture still has a tracker or web seed after isolation");
+        if observed.trackers_count != 1 || observed.web_seeds != 0 {
+            bail!("benchmark fixture must retain one tracker and no web seeds after isolation");
         }
         let settings = json!({
             "session": session_settings(&session.settings().await.context("cannot read effective session settings")?),
@@ -494,9 +523,10 @@ async fn run_trial() -> anyhow::Result<()> {
                 "dht_bootstrap_nodes": [],
                 "peer_exchange": false,
                 "local_service_discovery": false,
+                "tracker_url": args.tracker_url,
                 "trackers_after_isolation": observed.trackers_count,
                 "web_seeds_after_isolation": observed.web_seeds,
-                "manual_peer": args.peer.to_string(),
+                "pinned_peer": args.peer.to_string(),
                 "start_barrier": true,
             },
             "runner_inputs": {
@@ -514,11 +544,6 @@ async fn run_trial() -> anyhow::Result<()> {
         wait_for_gate(&args.start_gate, ready_deadline).await?;
         let barrier_released_at = Instant::now();
         session.resume(id).await.context("urtorrent could not resume after the start barrier")?;
-        session
-            .add_peer(id, args.peer)
-            .await
-            .context("urtorrent could not add the local fixture peer")?;
-
         let deadline = barrier_released_at + Duration::from_secs(args.timeout_seconds);
         let mut first_complete_at = None;
         let final_status = loop {
@@ -820,6 +845,8 @@ mod tests {
             "10.0.0.2",
             "--peer",
             "10.0.0.3:5000",
+            "--tracker-url",
+            "http://10.0.0.3:6000/announce",
         ]
         .into_iter()
         .map(str::to_owned)
@@ -841,6 +868,7 @@ mod tests {
         assert_eq!(parsed.namespace, "tngt-unit");
         assert_eq!(parsed.listen_v4, Ipv4Addr::new(10, 0, 0, 2));
         assert_eq!(parsed.peer.to_string(), "10.0.0.3:5000");
+        assert_eq!(parsed.tracker_url, "http://10.0.0.3:6000/announce");
 
         let mut seed_namespace = valid_trial_args();
         replace_value(&mut seed_namespace, "--namespace", "tngs-unit");
@@ -872,6 +900,20 @@ mod tests {
         let mut public_peer = valid_trial_args();
         replace_value(&mut public_peer, "--peer", "8.8.8.8:5000");
         assert!(parse_trial_args(public_peer).is_err());
+
+        for tracker_url in [
+            "https://10.0.0.3:6000/announce",
+            "http://10.0.0.4:6000/announce",
+            "http://10.0.0.3:6000/announce?token=x",
+            "http://user@10.0.0.3:6000/announce",
+        ] {
+            let mut invalid_tracker = valid_trial_args();
+            replace_value(&mut invalid_tracker, "--tracker-url", tracker_url);
+            assert!(
+                parse_trial_args(invalid_tracker).is_err(),
+                "accepted {tracker_url}"
+            );
+        }
 
         let mut invalid_namespace = valid_trial_args();
         replace_value(&mut invalid_namespace, "--namespace", "systemd-resolved");

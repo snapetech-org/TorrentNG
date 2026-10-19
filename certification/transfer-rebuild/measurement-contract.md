@@ -85,8 +85,11 @@ snapshot of effective session and torrent settings bound to its live PID and
 process start time; the adapter verifies that identity before accepting the
 readback. Hash-pool threads are recorded as a command-line input because the
 public settings API does not expose that value. The runner requires a private
-fixture, binds to one explicit task-local IPv4 interface, removes its trackers
-and web seeds, and dials one explicit task-local IPv4 peer. The paired topology
+fixture, binds to one explicit task-local IPv4 interface, retains exactly the
+task-local tracker, removes web seeds, and gets its one pinned task-local IPv4
+peer from that tracker. The tracker offers the seed only to the target so
+there is one connection initiator. The runner verifies that the tracker URL
+host matches the pinned peer IP. The paired topology
 allocates task addresses from reserved `198.18.0.0/15`; isolated probes may
 also use private, link-local, or loopback addresses. The adapter independently
 checks both addresses in the process-bound snapshot. The runner refuses to
@@ -109,8 +112,10 @@ and is outside the candidate's process tree. Candidate-side network counters
 still include tracker announces and protocol control traffic; useful goodput
 comes from verified payload bytes. Tracker announces are accepted only from
 the two recorded endpoint addresses and only for the fixture's info hashes.
-The tracker pins the seed's peer ID and listening port from its first announce
-before offering it to the measured client. A trial's `task_topology_sha256` is
+The tracker learns the seed and target peer IDs and listening ports from their
+announces, then returns the seed only to the target. Seed announces return an
+empty peer list, keeping one connection initiator. Its snapshot stores hashes
+of both peer IDs. A trial's `task_topology_sha256` is
 the manifest-file digest for the topology record; the topology's internal
 `artifact_sha256` is a separate self-digest used to guard task-local API access.
 Interface byte counters are attributable to one candidate only while the

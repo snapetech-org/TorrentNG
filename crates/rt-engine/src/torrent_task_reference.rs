@@ -6521,7 +6521,16 @@ pub(crate) fn private_peer_source_allowed(
 
 pub(crate) fn private_peer_port_fallback_allowed(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(ip) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
+        IpAddr::V4(ip) => {
+            let octets = ip.octets();
+            ip.is_loopback()
+                || ip.is_private()
+                || ip.is_link_local()
+                // PERF-110 uses RFC 2544's reserved benchmarking block for
+                // isolated peers. It is non-routable like RFC 1918 for the
+                // same-IP source-port fallback used by private torrents.
+                || (octets[0] == 198 && matches!(octets[1], 18 | 19))
+        }
         IpAddr::V6(ip) => {
             ip.is_loopback() || is_ipv6_unique_local(ip) || is_ipv6_unicast_link_local(ip)
         }

@@ -1253,6 +1253,42 @@ def _is_task_local_ipv4_peer(value: Any) -> bool:
     return 1 <= port <= 65535 and _is_task_local_ipv4(address)
 
 
+def _is_task_local_ipv4_tracker_url(value: Any, peer_value: Any) -> bool:
+    if not isinstance(value, str) or not isinstance(peer_value, str):
+        return False
+    try:
+        parsed = urllib.parse.urlsplit(value)
+    except ValueError:
+        return False
+    if (
+        parsed.scheme != "http"
+        or parsed.path != "/announce"
+        or parsed.query
+        or parsed.fragment
+        or parsed.username is not None
+        or parsed.password is not None
+        or not parsed.hostname
+    ):
+        return False
+    try:
+        tracker_ip = ipaddress.ip_address(parsed.hostname)
+        tracker_port = parsed.port
+        peer_ip = ipaddress.ip_address(peer_value.rpartition(":")[0])
+        peer_port = int(peer_value.rpartition(":")[2])
+    except (ValueError, TypeError):
+        return False
+    return (
+        isinstance(tracker_ip, ipaddress.IPv4Address)
+        and isinstance(peer_ip, ipaddress.IPv4Address)
+        and _is_task_local_ipv4(str(tracker_ip))
+        and tracker_ip == peer_ip
+        and isinstance(tracker_port, int)
+        and 1 <= tracker_port <= 65535
+        and 1 <= peer_port <= 65535
+        and parsed.netloc == f"{tracker_ip}:{tracker_port}"
+    )
+
+
 def _urtorrent_settings_file(
     profile: dict[str, Any], runtime_identity: dict[str, Any]
 ) -> tuple[str, dict[str, Any]]:
@@ -1313,20 +1349,26 @@ def _urtorrent_settings_file(
         raise AdapterError("urtorrent listener is not bound to its task-local IPv4 interface")
     if torrent.get("private") is not True:
         raise AdapterError("urtorrent benchmark metainfo is not private")
+    tracker_url = control.get("tracker_url")
+    expected_tracker_count = 1 if tracker_url is not None else 0
     endpoint_counts = (
-        control.get("trackers_after_isolation"),
-        control.get("web_seeds_after_isolation"),
+        (control.get("trackers_after_isolation"), expected_tracker_count),
+        (control.get("web_seeds_after_isolation"), 0),
     )
     if (
         control.get("dht_bootstrap_nodes") != []
         or control.get("peer_exchange") is not False
         or control.get("local_service_discovery") is not False
         or any(
-            isinstance(count, bool) or not isinstance(count, int) or count != 0
-            for count in endpoint_counts
+            isinstance(count, bool) or not isinstance(count, int) or count != expected
+            for count, expected in endpoint_counts
         )
         or control.get("start_barrier") is not True
-        or not _is_task_local_ipv4_peer(control.get("manual_peer"))
+        or not _is_task_local_ipv4_peer(control.get("pinned_peer"))
+        or (
+            tracker_url is not None
+            and not _is_task_local_ipv4_tracker_url(tracker_url, control.get("pinned_peer"))
+        )
     ):
         raise AdapterError("urtorrent fixture endpoints or start barrier are not isolated")
     if (
@@ -1721,11 +1763,11 @@ def _validate_profile(client_id: str, profile: dict[str, Any]) -> None:
                 "local_service_discovery": False,
                 "trackers_after_isolation": 0,
                 "web_seeds_after_isolation": 0,
-                "manual_peer": expected["control"].get("manual_peer"),
+                "pinned_peer": expected["control"].get("pinned_peer"),
                 "start_barrier": True,
             },
         }
-        if not _is_task_local_ipv4_peer(expected["control"].get("manual_peer")):
+        if not _is_task_local_ipv4_peer(expected["control"].get("pinned_peer")):
             raise AdapterError("urtorrent expected_settings must pin one task-local IPv4 peer")
         for section, values in isolation_pins.items():
             if any(expected[section].get(key, object()) != value for key, value in values.items()):

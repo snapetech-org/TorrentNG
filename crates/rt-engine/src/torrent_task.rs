@@ -7117,7 +7117,16 @@ pub(crate) fn private_peer_source_allowed(
 
 pub(crate) fn private_peer_port_fallback_allowed(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(ip) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
+        IpAddr::V4(ip) => {
+            let octets = ip.octets();
+            ip.is_loopback()
+                || ip.is_private()
+                || ip.is_link_local()
+                // PERF-110 uses RFC 2544's reserved benchmarking block for
+                // isolated peers. It is non-routable like RFC 1918 for the
+                // same-IP source-port fallback used by private torrents.
+                || (octets[0] == 198 && matches!(octets[1], 18 | 19))
+        }
         IpAddr::V6(ip) => {
             ip.is_loopback() || is_ipv6_unique_local(ip) || is_ipv6_unicast_link_local(ip)
         }
@@ -14884,6 +14893,10 @@ mod tests {
         let other: SocketAddr = "127.0.0.2:6881".parse().unwrap();
         let public_peer: SocketAddr = "198.51.100.10:6881".parse().unwrap();
         let public_same_host_ephemeral: SocketAddr = "198.51.100.10:49152".parse().unwrap();
+        let benchmark_peer: SocketAddr = "198.18.4.2:51413".parse().unwrap();
+        let benchmark_same_host_ephemeral: SocketAddr = "198.18.4.2:49152".parse().unwrap();
+        let benchmark_other_host: SocketAddr = "198.18.4.3:49152".parse().unwrap();
+        let outside_benchmark_range: SocketAddr = "198.20.4.2:49152".parse().unwrap();
         let mut allowed = HashSet::new();
 
         assert!(!private_peer_source_allowed(true, &allowed, peer));
@@ -14902,6 +14915,23 @@ mod tests {
             true,
             &allowed,
             public_same_host_ephemeral
+        ));
+
+        allowed.insert(benchmark_peer);
+        assert!(private_peer_source_allowed(
+            true,
+            &allowed,
+            benchmark_same_host_ephemeral
+        ));
+        assert!(!private_peer_source_allowed(
+            true,
+            &allowed,
+            benchmark_other_host
+        ));
+        assert!(!private_peer_source_allowed(
+            true,
+            &allowed,
+            outside_benchmark_range
         ));
     }
 

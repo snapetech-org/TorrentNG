@@ -66,7 +66,7 @@ class TransferClientAdapterTests(unittest.TestCase):
                 "local_service_discovery": False,
                 "trackers_after_isolation": 0,
                 "web_seeds_after_isolation": 0,
-                "manual_peer": "127.0.0.1:1234",
+                "pinned_peer": "127.0.0.1:1234",
                 "start_barrier": True,
             },
             "runner_inputs": {
@@ -386,7 +386,7 @@ class TransferClientAdapterTests(unittest.TestCase):
                                 "local_service_discovery": False,
                                 "trackers_after_isolation": 0,
                                 "web_seeds_after_isolation": 0,
-                                "manual_peer": "10.77.0.2:45679",
+                                "pinned_peer": "10.77.0.2:45679",
                                 "start_barrier": True,
                             },
                         }
@@ -412,12 +412,12 @@ class TransferClientAdapterTests(unittest.TestCase):
                 load_pins(path)
 
             expected["session"]["listen_v4"] = "10.77.0.1"
-            expected["control"]["manual_peer"] = "8.8.8.8:45679"
+            expected["control"]["pinned_peer"] = "8.8.8.8:45679"
             path.write_text(json.dumps(profile), encoding="utf-8")
             with self.assertRaises(AdapterError):
                 load_pins(path)
 
-            expected["control"]["manual_peer"] = "10.77.0.2:45679"
+            expected["control"]["pinned_peer"] = "10.77.0.2:45679"
             profile["clients"]["urtorrent"]["runtime"] = "container"
             profile["clients"]["urtorrent"]["container"] = "urtorrent"
             profile["clients"]["urtorrent"]["image_ref"] = "example.test/urtorrent@sha256:" + "b" * 64
@@ -444,7 +444,7 @@ class TransferClientAdapterTests(unittest.TestCase):
         self.assertEqual(settings, self.urtorrent_isolated_settings())
         self.assertEqual(identity_check.call_count, 2)
 
-        snapshot["settings"]["control"]["trackers_after_isolation"] = 1
+        snapshot["settings"]["control"]["trackers_after_isolation"] = 2
         with (
             patch("adapters._assert_native_process_identity"),
             patch("adapters._read_regular_file_nofollow", return_value=json.dumps(snapshot).encode()),
@@ -468,6 +468,43 @@ class TransferClientAdapterTests(unittest.TestCase):
         ):
             with self.assertRaises(AdapterError):
                 _urtorrent_settings_file(profile, {"process_id": 1, "process_start_ticks": 789})
+
+    def test_urtorrent_trial_readback_accepts_only_its_pinned_local_tracker(self) -> None:
+        identity = {"process_id": 456, "process_start_ticks": 789}
+        settings = self.urtorrent_isolated_settings()
+        control = settings["control"]
+        control["pinned_peer"] = "198.18.4.2:5000"
+        control["tracker_url"] = "http://198.18.4.2:6000/announce"
+        control["trackers_after_isolation"] = 1
+        snapshot = {
+            "format": "transfer-urtorrent-settings-v1",
+            "version": "0.14.3",
+            "process_id": 456,
+            "process_start_ticks": 789,
+            "settings": settings,
+        }
+        profile = {"settings_file": "/task/run/settings.json"}
+        with (
+            patch("adapters._assert_native_process_identity"),
+            patch("adapters._read_regular_file_nofollow", return_value=json.dumps(snapshot).encode()),
+        ):
+            _urtorrent_settings_file(profile, identity)
+
+        for tracker_url in (
+            "https://198.18.4.2:6000/announce",
+            "http://198.18.4.3:6000/announce",
+            "http://user@198.18.4.2:6000/announce",
+            "http://198.18.4.2:6000/announce?token=x",
+            "http://198.18.4.2:6000/other",
+            "http://[broken/announce",
+        ):
+            snapshot["settings"]["control"]["tracker_url"] = tracker_url
+            with (
+                patch("adapters._assert_native_process_identity"),
+                patch("adapters._read_regular_file_nofollow", return_value=json.dumps(snapshot).encode()),
+            ):
+                with self.assertRaises(AdapterError):
+                    _urtorrent_settings_file(profile, identity)
 
     def test_urtorrent_probe_compares_the_nested_settings_pin(self) -> None:
         settings = self.urtorrent_isolated_settings()
@@ -496,7 +533,7 @@ class TransferClientAdapterTests(unittest.TestCase):
             "settings": self.urtorrent_isolated_settings(),
         }
         snapshot["settings"]["session"]["listen_v4"] = "198.18.1.3"
-        snapshot["settings"]["control"]["manual_peer"] = "198.19.254.2:1234"
+        snapshot["settings"]["control"]["pinned_peer"] = "198.19.254.2:1234"
         with (
             patch("adapters._assert_native_process_identity"),
             patch("adapters._read_regular_file_nofollow", return_value=json.dumps(snapshot).encode()),
@@ -506,8 +543,8 @@ class TransferClientAdapterTests(unittest.TestCase):
         snapshot["settings"] = self.urtorrent_isolated_settings()
         for section, key, value in (
             ("session", "listen_v4", "8.8.8.8"),
-            ("control", "manual_peer", "8.8.8.8:1234"),
-            ("control", "manual_peer", "[::1]:1234"),
+            ("control", "pinned_peer", "8.8.8.8:1234"),
+            ("control", "pinned_peer", "[::1]:1234"),
         ):
             snapshot["settings"][section][key] = value
             with (
