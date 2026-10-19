@@ -7,8 +7,8 @@ use tokio::sync::Mutex;
 
 use super::{
     download_remote_torrent, ensure_backend_collection_bound, is_magnet_url, parse_backend_url,
-    response_json_bounded, BackendCapabilities, BackendStatus, BackendType, TorrentBackend,
-    MAX_BACKEND_JSON_BYTES,
+    response_json_bounded, BackendCapabilities, BackendStatus, BackendType, RemoveOutcome,
+    TorrentBackend, MAX_BACKEND_JSON_BYTES,
 };
 use crate::{
     config::TransmissionConfig,
@@ -207,13 +207,13 @@ impl TorrentBackend for TransmissionBackend {
         self.add_torrent(&data, save_path, category, start).await
     }
 
-    async fn remove(&self, hash: &str, delete_data: bool) -> Result<()> {
+    async fn remove(&self, hash: &str, delete_data: bool) -> Result<RemoveOutcome> {
         self.rpc(
             "torrent-remove",
             json!({ "ids": [hash], "delete-local-data": delete_data }),
         )
         .await?;
-        Ok(())
+        Ok(RemoveOutcome::Removed)
     }
 
     async fn start(&self, hash: &str) -> Result<()> {

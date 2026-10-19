@@ -8,7 +8,7 @@ use super::{
     download_remote_torrent, ensure_backend_collection_bound, is_magnet_url, map_qbit_piece_state,
     parse_backend_url, parse_qbit_peer_response, response_bytes_bounded, response_json_bounded,
     validate_qbit_mutation_body, BackendCapabilities, BackendPeer, BackendPieceState,
-    BackendStatus, BackendTransferLimits, BackendType, QueueMove, TorrentBackend,
+    BackendStatus, BackendTransferLimits, BackendType, QueueMove, RemoveOutcome, TorrentBackend,
     MAX_BACKEND_JSON_BYTES,
 };
 use crate::{
@@ -413,7 +413,7 @@ impl TorrentBackend for QbittorrentBackend {
         self.add_torrent(&data, save_path, category, start).await
     }
 
-    async fn remove(&self, hash: &str, delete_data: bool) -> Result<()> {
+    async fn remove(&self, hash: &str, delete_data: bool) -> Result<RemoveOutcome> {
         self.post_form(
             "api/v2/torrents/delete",
             &[
@@ -421,7 +421,8 @@ impl TorrentBackend for QbittorrentBackend {
                 ("deleteFiles", if delete_data { "true" } else { "false" }),
             ],
         )
-        .await
+        .await?;
+        Ok(RemoveOutcome::Removed)
     }
 
     async fn start(&self, hash: &str) -> Result<()> {

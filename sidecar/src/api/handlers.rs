@@ -1,6 +1,6 @@
 use axum::{
     extract::{Multipart, Path, Query, State},
-    http::StatusCode,
+    http::{HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -34,7 +34,7 @@ use tokio::{
 
 use super::server::AppState;
 use super::ws::Event;
-use crate::backend::{post_remote_json, ratio_milli, BackendHealth, BackendStatus};
+use crate::backend::{post_remote_json, ratio_milli, BackendHealth, BackendStatus, RemoveOutcome};
 use crate::cache::workflows::{validate_rss_rule, validate_workflow_rule, MAX_WORKFLOW_RULES};
 use crate::cache::{
     bounded_page_limit, is_automation_state_capacity_error, is_category_tag_capacity_error,
@@ -3413,7 +3413,7 @@ pub async fn delete_torrent(
         Err(status) => return status.into_response(),
     };
     match s.backend.remove(&hash, delete_files).await {
-        Ok(_) => {
+        Ok(outcome) => {
             let cache_hash = hash.clone();
             if let Err(e) =
                 s.db.run_blocking("delete_torrent", move |db| db.delete(&cache_hash))
@@ -3435,7 +3435,13 @@ pub async fn delete_torrent(
             }
             emit(&s, Event::TorrentRemoved { hash }).await;
             emit(&s, Event::TrackerHealthUpdated).await;
-            StatusCode::NO_CONTENT.into_response()
+            let mut response = StatusCode::NO_CONTENT.into_response();
+            if delete_files && outcome == RemoveOutcome::AlreadyAbsent {
+                response
+                    .headers_mut()
+                    .insert("x-tng-payload-deleted", HeaderValue::from_static("false"));
+            }
+            response
         }
         Err(e) => {
             tracing::error!(

@@ -6,8 +6,8 @@ use serde_json::{json, Value};
 
 use super::{
     checked_backend_file_index, ensure_backend_collection_bound, parse_backend_url,
-    response_json_bounded, BackendCapabilities, BackendStatus, BackendType, TorrentBackend,
-    MAX_BACKEND_JSON_BYTES,
+    response_json_bounded, BackendCapabilities, BackendStatus, BackendType, RemoveOutcome,
+    TorrentBackend, MAX_BACKEND_JSON_BYTES,
 };
 use crate::{
     config::DelugeConfig,
@@ -211,12 +211,12 @@ impl TorrentBackend for DelugeBackend {
         Ok(())
     }
 
-    async fn remove(&self, hash: &str, delete_data: bool) -> Result<()> {
+    async fn remove(&self, hash: &str, delete_data: bool) -> Result<RemoveOutcome> {
         let result = self
             .rpc("core.remove_torrent", json!([hash, delete_data]))
             .await?;
         require_true(result, "core.remove_torrent")?;
-        Ok(())
+        Ok(RemoveOutcome::Removed)
     }
 
     async fn start(&self, hash: &str) -> Result<()> {

@@ -2,6 +2,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use std::path::{Component, Path};
 
 use super::client::{Client, XmlValue};
+use crate::backend::RemoveOutcome;
 
 /// Fields queried per torrent via d.multicall2 / d.multicall.range.
 const TORRENT_FIELDS: &[&str] = &[
@@ -37,6 +38,11 @@ const RTORRENT_MULTICALL_RANGE_PATCH: &str = "rtorrent-0.16.11-multicall-range";
 const LEGACY_RTORRENT_NONZERO_RATE_PATCH: &str = "rtorrent-0.16.11-multicall-nonzero-rate";
 const LEGACY_RTORRENT_LIVE_SUMMARY_PATCH: &str = "rtorrent-0.16.11-tng-live-summary";
 const RTORRENT_DEFAULT_SAVE_PATH: &str = "/downloads/temp";
+const RTORRENT_INFO_HASH_NOT_FOUND: &str = "invalid parameters: info-hash not found";
+
+fn is_missing_rtorrent_torrent(error: &anyhow::Error) -> bool {
+    format!("{error:#}").contains(RTORRENT_INFO_HASH_NOT_FOUND)
+}
 
 fn ensure_paged_torrent_capacity(current: usize, additional: usize) -> Result<()> {
     if current.saturating_add(additional) > MAX_LEGACY_FULL_LIST_ENTRIES {
@@ -395,13 +401,41 @@ impl Client {
             .collect())
     }
 
-    pub async fn remove(&self, hash: &str, delete_data: bool) -> Result<()> {
+    pub async fn remove(&self, hash: &str, delete_data: bool) -> Result<RemoveOutcome> {
         if delete_data {
-            self.call("d.custom5.set", &[hash.into(), "1".into()])
-                .await?;
+            if let Err(error) = self.call("d.custom5.set", &[hash.into(), "1".into()]).await {
+                if is_missing_rtorrent_torrent(&error) {
+                    // rTorrent has already dropped this torrent, so there is
+                    // no backend record from which its payload can be removed.
+                    // Still let TorrentNG clear the stale sidecar projection.
+                    tracing::warn!(
+                        component = "rtorrent",
+                        operation = "remove_torrent",
+                        delete_data,
+                        result = "already_absent",
+                        "rTorrent no longer has this torrent; payload removal was unavailable"
+                    );
+                    return Ok(RemoveOutcome::AlreadyAbsent);
+                }
+                return Err(error);
+            }
         }
-        self.call("d.erase", &[hash.into()]).await?;
-        Ok(())
+        match self.call("d.erase", &[hash.into()]).await {
+            Ok(_) => Ok(RemoveOutcome::Removed),
+            Err(error) if is_missing_rtorrent_torrent(&error) => {
+                // The API projection can outlive its rTorrent entry. Make
+                // removal idempotent so the handler can delete that stale row.
+                tracing::info!(
+                    component = "rtorrent",
+                    operation = "remove_torrent",
+                    delete_data,
+                    result = "already_absent",
+                    "rTorrent no longer has this torrent; treating removal as complete"
+                );
+                Ok(RemoveOutcome::AlreadyAbsent)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub async fn recheck(&self, hash: &str) -> Result<()> {
@@ -1058,5 +1092,127 @@ mod tests {
 
     fn int_arg(args: &[XmlValue], index: usize) -> i64 {
         args.get(index).and_then(XmlValue::as_i64).unwrap()
+    }
+}
+
+#[cfg(all(test, unix))]
+mod remove_tests {
+    use super::Client;
+    use crate::backend::RemoveOutcome;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::UnixListener;
+
+    const HASH: &str = "00112233445566778899aabbccddeeff00112233";
+
+    async fn fake_scgi_client(
+        response_body: &'static str,
+    ) -> (Client, tempfile::TempDir, tokio::task::JoinHandle<String>) {
+        let directory = tempfile::Builder::new()
+            .prefix("tng-remove-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let socket_path = directory.path().join("rpc.sock");
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        let socket_path = socket_path.to_str().unwrap().to_owned();
+        let client = Client::new_unix(&socket_path, 5);
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+
+            let mut length_prefix = Vec::new();
+            loop {
+                let mut byte = [0_u8; 1];
+                stream.read_exact(&mut byte).await.unwrap();
+                if byte[0] == b':' {
+                    break;
+                }
+                length_prefix.push(byte[0]);
+            }
+            let header_len = std::str::from_utf8(&length_prefix)
+                .unwrap()
+                .parse::<usize>()
+                .unwrap();
+            let mut headers = vec![0_u8; header_len];
+            stream.read_exact(&mut headers).await.unwrap();
+            let mut comma = [0_u8; 1];
+            stream.read_exact(&mut comma).await.unwrap();
+            assert_eq!(comma[0], b',');
+
+            let headers = String::from_utf8(headers).unwrap();
+            let content_len = headers
+                .split('\0')
+                .collect::<Vec<_>>()
+                .windows(2)
+                .find_map(|pair| {
+                    (pair[0] == "CONTENT_LENGTH").then(|| pair[1].parse::<usize>().unwrap())
+                })
+                .unwrap();
+            let mut request_body = vec![0_u8; content_len];
+            stream.read_exact(&mut request_body).await.unwrap();
+            let request: serde_json::Value = serde_json::from_slice(&request_body).unwrap();
+            let method = request["method"].as_str().unwrap().to_owned();
+
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+            method
+        });
+
+        (client, directory, server)
+    }
+
+    #[tokio::test]
+    async fn remove_succeeds_when_rtorrent_already_dropped_the_torrent() {
+        let (client, _directory, server) = fake_scgi_client(
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-500,"message":"invalid parameters: info-hash not found"}}"#,
+        )
+        .await;
+
+        let outcome = client.remove(HASH, false).await.unwrap();
+
+        assert_eq!(outcome, RemoveOutcome::AlreadyAbsent);
+        assert_eq!(server.await.unwrap(), "d.erase");
+    }
+
+    #[tokio::test]
+    async fn remove_reports_when_rtorrent_accepted_the_removal() {
+        let (client, _directory, server) =
+            fake_scgi_client(r#"{"jsonrpc":"2.0","id":1,"result":0}"#).await;
+
+        let outcome = client.remove(HASH, false).await.unwrap();
+
+        assert_eq!(outcome, RemoveOutcome::Removed);
+        assert_eq!(server.await.unwrap(), "d.erase");
+    }
+
+    #[tokio::test]
+    async fn remove_with_payload_deletion_is_idempotent_if_torrent_is_absent() {
+        let (client, _directory, server) = fake_scgi_client(
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-500,"message":"invalid parameters: info-hash not found"}}"#,
+        )
+        .await;
+
+        let outcome = client.remove(HASH, true).await.unwrap();
+
+        assert_eq!(outcome, RemoveOutcome::AlreadyAbsent);
+        assert_eq!(server.await.unwrap(), "d.custom5.set");
+    }
+
+    #[tokio::test]
+    async fn remove_still_reports_unrelated_rtorrent_errors() {
+        let (client, _directory, server) = fake_scgi_client(
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-500,"message":"invalid parameters: invalid target"}}"#,
+        )
+        .await;
+
+        let error = client.remove(HASH, false).await.unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("invalid parameters: invalid target"));
+        assert_eq!(server.await.unwrap(), "d.erase");
     }
 }

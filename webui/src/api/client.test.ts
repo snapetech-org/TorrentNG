@@ -86,3 +86,20 @@ describe('authentication API', () => {
     expect(Number.isFinite(torrent.ratio)).toBe(true)
   })
 })
+
+describe('torrent removal API', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('reports when a stale torrent was removed but its payload was unavailable', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, {
+      status: 204,
+      headers: { 'X-TNG-Payload-Deleted': 'false' },
+    })))
+
+    await expect(api.torrents.remove('a'.repeat(40), true)).resolves.toEqual({
+      payloadDeleted: false,
+    })
+  })
+})

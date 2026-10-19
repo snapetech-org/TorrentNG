@@ -9,7 +9,7 @@ use super::{
     ensure_backend_collection_bound, map_qbit_piece_state, parse_backend_url,
     parse_qbit_peer_response, response_bytes_bounded, response_json_bounded,
     validate_qbit_mutation_body, BackendCapabilities, BackendPeer, BackendPieceState,
-    BackendStatus, BackendTransferLimits, BackendType, QueueMove, TorrentBackend,
+    BackendStatus, BackendTransferLimits, BackendType, QueueMove, RemoveOutcome, TorrentBackend,
     MAX_BACKEND_JSON_BYTES,
 };
 use crate::{
@@ -378,7 +378,7 @@ impl TorrentBackend for TorrentngBackend {
         .await
     }
 
-    async fn remove(&self, hash: &str, delete_data: bool) -> Result<()> {
+    async fn remove(&self, hash: &str, delete_data: bool) -> Result<RemoveOutcome> {
         let path = if delete_data {
             format!("{}?delete_files=true", Self::torrent_path(hash, ""))
         } else {
@@ -391,7 +391,7 @@ impl TorrentBackend for TorrentngBackend {
             .map_err(reqwest::Error::without_url)
             .with_context(|| format!("TorrentNG DELETE torrent {hash}"))?;
         super::require_success_status(response, &format!("TorrentNG DELETE torrent {hash}"))?;
-        Ok(())
+        Ok(RemoveOutcome::Removed)
     }
 
     async fn start(&self, hash: &str) -> Result<()> {
@@ -1196,7 +1196,7 @@ mod tests {
                 ..TorrentngConfig::default()
             };
             let backend = TorrentngBackend::new(&config)?;
-            backend.remove("deadbeef", false).await
+            backend.remove("deadbeef", false).await.map(|_| ())
         })
         .await;
     }

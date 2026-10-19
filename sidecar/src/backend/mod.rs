@@ -863,6 +863,14 @@ pub struct BackendTransferLimits {
     pub speed_limits_mode: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoveOutcome {
+    /// The backend accepted the removal request.
+    Removed,
+    /// The backend no longer had the torrent, so only cached state could be removed.
+    AlreadyAbsent,
+}
+
 #[async_trait]
 pub trait TorrentBackend: Send + Sync {
     fn backend_type(&self) -> BackendType;
@@ -898,7 +906,7 @@ pub trait TorrentBackend: Send + Sync {
         let data = download_remote_torrent(url).await?;
         self.add_torrent(&data, save_path, category, start).await
     }
-    async fn remove(&self, hash: &str, delete_data: bool) -> Result<()>;
+    async fn remove(&self, hash: &str, delete_data: bool) -> Result<RemoveOutcome>;
     async fn start(&self, hash: &str) -> Result<()>;
     async fn stop(&self, hash: &str) -> Result<()>;
     async fn recheck(&self, hash: &str) -> Result<()>;

@@ -335,6 +335,17 @@ async function del(path: string, body?: object): Promise<void> {
   if (!res.ok) throw new Error(`API ${res.status}: ${path}`)
 }
 
+async function removeTorrent(path: string): Promise<{ payloadDeleted: boolean }> {
+  const res = await fetch(BASE + path, {
+    method: 'DELETE',
+    headers: { 'X-TNG-CSRF': '1' },
+    credentials: 'same-origin',
+  })
+  if (res.status === 401) throw new AuthError()
+  if (!res.ok) throw new Error(`API ${res.status}: ${path}`)
+  return { payloadDeleted: res.headers.get('x-tng-payload-deleted') !== 'false' }
+}
+
 async function delJson<T>(path: string, body?: object): Promise<T> {
   const res = await fetch(BASE + path, {
     method: 'DELETE',
@@ -970,7 +981,7 @@ export const api = {
     recheck:    (hash: string) => post(`/torrents/${hash}/recheck`),
     reannounce: (hash: string) => post(`/torrents/${hash}/reannounce`),
     remove: (hash: string, deleteFiles = false) =>
-      del(`/torrents/${hash}?delete_files=${deleteFiles}`),
+      removeTorrent(`/torrents/${hash}?delete_files=${deleteFiles}`),
 
     update: (hash: string, body: { save_path?: string }) =>
       put(`/torrents/${hash}`, body),

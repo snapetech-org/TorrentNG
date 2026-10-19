@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use super::{BackendCapabilities, BackendStatus, BackendType, TorrentBackend};
+use super::{BackendCapabilities, BackendStatus, BackendType, RemoveOutcome, TorrentBackend};
 use crate::rtorrent::{
     files::RawFile,
     torrents::{LiveSummary, RawTorrent},
@@ -107,7 +107,7 @@ impl TorrentBackend for RtorrentBackend {
         Ok(crate::torrent_meta::session_torrent_blob(hash)?)
     }
 
-    async fn remove(&self, hash: &str, delete_data: bool) -> Result<()> {
+    async fn remove(&self, hash: &str, delete_data: bool) -> Result<RemoveOutcome> {
         self.client.remove(hash, delete_data).await
     }
 

@@ -779,7 +779,7 @@ export function App() {
   async function deleteTorrent(torrent: TorrentSummary, deleteFiles: boolean) {
     setActionNotice(null)
     try {
-      await api.torrents.remove(torrent.hash, deleteFiles)
+      const removal = await api.torrents.remove(torrent.hash, deleteFiles)
       setPendingDelete(null)
       setSelected(prev => {
         const next = new Set(prev)
@@ -794,7 +794,12 @@ export function App() {
       if (selectionAnchor === torrent.hash) setSelectionAnchor(null)
       if (detailHash === torrent.hash) setDetailHash(null)
       qc.invalidateQueries({ queryKey: ['torrents'], exact: false })
-      setActionNotice({ message: { source: deleteFiles ? 'Torrent and files deleted' : 'Torrent removed' }, tone: 'ok' })
+      setActionNotice({
+        message: {
+          source: deleteFiles && removal.payloadDeleted ? 'Torrent and files deleted' : 'Torrent removed',
+        },
+        tone: 'ok',
+      })
     } catch {
       setActionNotice({ message: { source: 'Failed to delete torrent' }, tone: 'error' })
     }

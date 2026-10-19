@@ -35,7 +35,8 @@ fn test_webui_password() -> &'static str {
 use torrentng::{
     api::{handlers::MAX_BULK_TORRENTS, server::AppState, ws::Event},
     backend::{
-        BackendCapabilities, BackendStatus, BackendTransferLimits, BackendType, TorrentBackend,
+        BackendCapabilities, BackendStatus, BackendTransferLimits, BackendType, RemoveOutcome,
+        TorrentBackend,
     },
     cache::{AppEventRow, Db, RatioGroup, TorrentRow, WorkflowRule},
     config::Config,
@@ -226,6 +227,7 @@ struct SuccessfulBackend {
     tracker_mutations: Option<Arc<AtomicUsize>>,
     peer_mutations: Option<Arc<AtomicUsize>>,
     rule_mutations: Option<Arc<AtomicUsize>>,
+    remove_outcome: Option<RemoveOutcome>,
 }
 
 #[async_trait::async_trait]
@@ -300,8 +302,8 @@ impl TorrentBackend for SuccessfulBackend {
         Ok(())
     }
 
-    async fn remove(&self, _hash: &str, _delete_data: bool) -> anyhow::Result<()> {
-        Ok(())
+    async fn remove(&self, _hash: &str, _delete_data: bool) -> anyhow::Result<RemoveOutcome> {
+        Ok(self.remove_outcome.unwrap_or(RemoveOutcome::Removed))
     }
 
     async fn start(&self, _hash: &str) -> anyhow::Result<()> {
@@ -450,6 +452,7 @@ fn successful_backend() -> Arc<dyn TorrentBackend> {
         tracker_mutations: None,
         peer_mutations: None,
         rule_mutations: None,
+        remove_outcome: None,
     })
 }
 
@@ -460,6 +463,7 @@ fn successful_backend_with_tag_counter(counter: Arc<AtomicUsize>) -> Arc<dyn Tor
         tracker_mutations: None,
         peer_mutations: None,
         rule_mutations: None,
+        remove_outcome: None,
     })
 }
 
@@ -470,6 +474,7 @@ fn successful_backend_with_rule_counter(counter: Arc<AtomicUsize>) -> Arc<dyn To
         tracker_mutations: None,
         peer_mutations: None,
         rule_mutations: Some(counter),
+        remove_outcome: None,
     })
 }
 
@@ -480,6 +485,7 @@ fn successful_backend_with_add_counter(counter: Arc<AtomicUsize>) -> Arc<dyn Tor
         tracker_mutations: None,
         peer_mutations: None,
         rule_mutations: None,
+        remove_outcome: None,
     })
 }
 
@@ -2007,6 +2013,7 @@ async fn qb_nested_mutation_fanout_is_rejected_before_backend_calls() {
         tracker_mutations: Some(tracker_mutations.clone()),
         peer_mutations: Some(peer_mutations.clone()),
         rule_mutations: None,
+        remove_outcome: None,
     });
     let (addr, client, db) = spawn_server_with_backend(Config::test_default(), backend).await;
     let hashes = (0..11)
@@ -2254,6 +2261,47 @@ async fn native_delete_rejects_malformed_delete_files() {
         .await
         .unwrap();
     assert_eq!(res.status(), 400);
+}
+
+#[tokio::test]
+async fn native_delete_clears_stale_torrent_and_reports_unavailable_payload() {
+    let hash = "f".repeat(40);
+    let backend = Arc::new(SuccessfulBackend {
+        add_mutations: None,
+        tag_mutations: None,
+        tracker_mutations: None,
+        peer_mutations: None,
+        rule_mutations: None,
+        remove_outcome: Some(RemoveOutcome::AlreadyAbsent),
+    });
+    let (addr, client, db) = spawn_server_with_backend(Config::test_default(), backend).await;
+    seed_torrent(&db, &hash, "Stale torrent");
+
+    let response = client
+        .delete(url(
+            addr,
+            &format!("/api/v1/torrents/{hash}?delete_files=true"),
+        ))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        response
+            .headers()
+            .get("x-tng-payload-deleted")
+            .and_then(|value| value.to_str().ok()),
+        Some("false")
+    );
+
+    let remaining = client
+        .get(url(addr, "/api/v1/torrents?limit=1"))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = remaining.json().await.unwrap();
+    assert_eq!(body["total"], 0);
 }
 
 // --- Single torrent not found ---
@@ -4263,6 +4311,7 @@ async fn qb_sync_maindata_incremental_includes_removed_torrents() {
             tracker_mutations: None,
             peer_mutations: None,
             rule_mutations: None,
+            remove_outcome: None,
         }),
     )
     .await;
