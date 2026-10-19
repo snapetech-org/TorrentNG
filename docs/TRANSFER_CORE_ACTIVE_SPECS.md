@@ -5,6 +5,58 @@ This file instantiates the template in
 implementation slices currently in progress. A ticket stays `wip` until its
 written acceptance and exact-revision evidence are complete.
 
+## Current closeout — 2026-10-19
+
+The tested `main` source is commit `eb5f31588beb4cf9ec0fb4c3509745c49c16f500`,
+recorded from a clean worktree. The source audit found every repository-owned implementation slice present and no
+unowned architecture boundary. Eight tickets whose written acceptance was
+limited to code and local evidence are now `done`; the ledger is 12/63 done,
+51/63 wip, and 0 todo. The remaining `wip` tickets still have specific live,
+hardware, platform, paired-client, recovery, soak, release, or independent
+review requirements.
+
+The full Rust workspace passed on both Rust 1.94.0 and 1.88.0: 2,301 passed,
+0 failed, 12 ignored across 37 test-result summaries per toolchain. The
+release-mode `rt-engine` library suite passed 733/733, including the transfer
+simulator tests. All 21 `scripts/test_transfer_rebuild_*.py` regressions
+passed. Formatting passed; Clippy exited 0 with warnings. Hosted Transfer Rebuild run
+[39217933388](https://github.com/snapetech-org/TorrentNG/actions/runs/39217933388)
+and Windows Smoke run
+[39216147832](https://github.com/snapetech-org/TorrentNG/actions/runs/39216147832)
+passed on this exact source. The hosted hardware job was not selected for this dispatch; no runner is registered
+for its protected label; `hardware_lane.sh`
+was run twice manually on `kspls0` against the confirmed `ext4` LVM mount, and
+both runs passed picker, API snapshot, and storage move/import checks. The
+release-mode `rt-storage::storage_real_device` suite also passed all 7 tests
+on this source and the same ext4 LVM target. Its sequential readahead case
+served 4,096 submitted reads from 133 backend reads (30.8x), over 64 MiB; this
+is workload-specific storage evidence, not a whole-client result. The release
+engine log is retained as
+`rt-engine-release-eb5f3158.log` under the same task evidence directory
+(SHA-256 `62fdcdb3d59fc8d3fcc41930201fefb750e56f1c2190b7247b8aa52be4dc8f06`).
+
+SYS-014 is source-bound to these validated artifacts:
+
+- Report SHA-256: `2daedbf535bbad767430651496b577d01a1c4549bf5904f66e6eb47c6dfdaa19`
+- Raw log SHA-256: `07b34b70e44cd315e96a481d1a79b99f5d3dd2aca565ad584d98bffb2a10e245`
+- Manifest SHA-256: `4c66cedf13a3ac856b1c633b3fbfa4fcd601148ead839e04a98218ce220ee309`
+- Qualification SHA-256: `6797ed80bba22332e7154e88262910d597e23db781613b6d6117817e15bd761a`
+
+For the 100k restored-paused catalog, list p50 was 0.325/0.337 ms and p95
+0.838/0.860 s for default/name-sorted pages; the first cold snapshot drives
+those p95 values. Transfer-info p50/p95 was 0.098/3.350 ms and `/metrics`
+0.092/0.323 ms. The 1k list p95 was 7.44/7.41 ms. These are in-process
+diagnostics, not thresholds or whole-client results. Two exact-source hardware
+runs measured 100k pick/cancel at 14.95 and 14.84 µs/op, cached 100k snapshot
+reads at 123 and 133 ns/sample, and each initial 100k snapshot at about 1.8 s.
+All logs remain under `/tmp/tng-transfer-core-close-20261018/evidence/`.
+
+Matched client trials, active-transfer/process resource measurements, live
+v1/v2/hybrid parity, target-filesystem crash-cut recovery, the protected
+hardware workflow artifact, release-matrix builds, soak/canary, independent
+review, and the final release bundle remain open. No efficiency or
+superiority claim is supported by these local probes.
+
 ## Completion audit — 2026-10-18
 
 The 63-row package table and all active ticket contracts have now been checked
@@ -15,40 +67,27 @@ missing owner boundary or placeholder implementation in the reviewed paths.
 `wip` therefore remains an acceptance/evidence status, not a count of code that
 has not been written.
 
-The final closeout source received a fresh bulk pass on both supported
-toolchains, the transfer-harness regressions, sidecar tests, and the explicit
-scale and microbenchmark cases listed below. The closeout commit and exact
-source-bound catalog report are the remaining local evidence steps. Source
-suites do not close the separate hosted-runner, client-profile/preflight,
-target-filesystem, physical crash-cut, matched whole-client, soak/canary, or
-independent-review gates.
+The exact current source passed a fresh bulk validation on 2026-10-19:
 
-## Bulk validation — 2026-10-18
-
-The final closeout source passed the workspace suites on both installed
-toolchains:
-
-- `cargo test --workspace --no-fail-fast -- --test-threads=1 --format=terse`
-  on Rust 1.94.0: 2,301 passed, 0 failed, 12 ignored across 65 result
-  summaries. The first run had one load-sensitive v1 loopback timeout in the
-  transfer-invariant test; the exact test passed alone (35.1 s) and the full
-  rerun passed.
-- `cargo +1.88.0 test --workspace --no-fail-fast -- --test-threads=1 --format=terse`
-  on Rust 1.88.0: 2,301 passed, 0 failed, 12 ignored across 65 result
-  summaries.
-- All 20 `scripts/test_transfer_rebuild_*.py` regression scripts passed.
-- Sidecar tests: 424 passed, 0 failed, 2 ignored; both explicitly run 50k API
-  benchmarks passed (`/sync/maindata` 33.7 ms under 50 ms and `/torrents/info`
-  150.1 ms under 500 ms).
+- `cargo +1.94.0 test --workspace --all-targets --locked --no-fail-fast -- --test-threads=1 --format=terse`
+  and the same command on Rust 1.88.0: 2,301 passed, 0 failed, 12 ignored
+  across 37 test-result summaries per toolchain.
+- All 21 `scripts/test_transfer_rebuild_*.py` regression scripts passed.
 - Both 100k production-catalog cases passed. The release mixed-load probe used
   four Tokio workers and retained all 16 samples for each route; results and
   cold-snapshot limits are recorded in SYS-014.
-- Release peer-wire encoder and webseed rate-debit probes passed. The former
-  is a local microbenchmark only and proves no whole-client efficiency gain.
-- `cargo clippy --workspace --all-targets --locked` exited 0 with warnings;
-  formatting and `git diff --check` passed.
-- On verified `kspls0` storage, 7 real-device storage cases and the
-  64-file/64-MiB move/import case passed; evidence remains task-scoped.
+- `cargo +1.94.0 fmt --all -- --check` passed. Clippy exited 0 with warnings.
+- The two exact-source `hardware_lane.sh` runs passed on `kspls0`; the
+  release-mode `storage_real_device` suite also passed all 7 tests on the
+  verified ext4 LVM target. Sequential readahead served 4,096 submitted reads
+  from 133 backend reads (30.8x) over 64 MiB. This is workload-specific
+  evidence, not a whole-client efficiency measurement.
+- Hosted Transfer Rebuild run
+  [39217933388](https://github.com/snapetech-org/TorrentNG/actions/runs/39217933388)
+  and Windows Smoke
+  [39216147832](https://github.com/snapetech-org/TorrentNG/actions/runs/39216147832)
+  passed on exact main `eb5f3158`. The hosted hardware job was not selected by
+  the dispatch; no runner is registered for its protected label.
 
 The first full pass exposed an invalid pure-v2 projection after a previously
 completed torrent entered a durability hold: the entry could remain `Seeding`
@@ -60,10 +99,10 @@ passes in both final workspace runs.
 The test logs are retained under the task-scoped
 `/tmp/tng-transfer-core-close-20261018/evidence/` directory. Ordinary Rust and
 Python regressions described as “await bulk pass” or “authored but unrun” in
-the older per-ticket notes are superseded by this latest execution record.
-Ticket acceptance remains `wip` where it also requires runtime, hosted,
-hardware, filesystem fault, crash-cut, client, soak/canary, or independent
-review evidence.
+older per-ticket notes are superseded by this exact-main execution record.
+Ticket acceptance remains `wip` where it requires runtime, platform,
+filesystem fault, crash-cut, live parity, matched whole-client, soak/canary,
+protected-runner artifact, or independent-review evidence.
 Ticket-specific acceptance that needs hosted workflows, dedicated hardware,
 filesystem fault qualification, crash cuts, live parity, or matched whole-
 client trials remains open.
@@ -123,8 +162,8 @@ piece indexes.
   requested bulk pass.
 - **Expected result:** only equivalent payload ranges alias across hybrid
   planes, and stale connection generations cannot own new work.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** matched v1/v2/hybrid live parity.
 
 ## NET-102 — Seeded transfer simulator and invariant oracle
@@ -178,8 +217,8 @@ late data, hybrid piece affinity, padding projection, and generation reuse.
   bulk pass.
 - **Expected result:** fixed seeds preserve all invariants and complete where
   the configured source availability permits completion.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** production actor and live-protocol
   qualification.
 
@@ -260,8 +299,8 @@ required result artifacts.
 - **Expected result:** deterministic file bytes, correct v1/v2/hybrid
   metainfo, matching profile identity, and accurate cache-state outcome; no
   existing path or global cache setting is modified.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** review of the pinned workload sizes,
   and cache-control qualification on each dedicated benchmark filesystem.
 
@@ -336,8 +375,8 @@ qualification remain open.
 - **Expected result:** a matched release, exact interval-union accounting, and
   separate ordered phase durations; marker symlinks cannot satisfy readiness
   or release.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** cross-process barrier characterization
   and paired-run reproducibility. Payload-copy snapshots and delta validation
   are authored but have not been exercised; native-only coverage is limited to
@@ -411,8 +450,8 @@ protocol event.
   `v2_useful_missing_counts_only_unreceived_blocks_without_wire_requests`,
   `peer_request_admission_retries_after_payload_capacity_returns`.
 - **Command or probe:** run with the owner-requested bulk pass.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** bulk correctness and matched whole-client
   measurements.
 
@@ -514,8 +553,8 @@ keeps the sparse cyclic fallback.
   picker/accounting regressions during the requested bulk pass.
 - **Expected result:** all cases pass; no requestable piece is lost from the
   candidate index and no inactive piece remains indexed.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** PERF-111 picker/snapshot allocation
   probes and whole-engine qualification.
 
@@ -572,7 +611,7 @@ charge, descriptor identity, and device permit with live scheduler and
 governor state. New sources now hold two reads and a shared-payload write at
 once, reconcile distinct storage/device IDs and per-operation credits against
 live scheduler snapshots, and verify that two hash owners release their
-credits independently. These sources remain unrun; restart cuts and platform
+credits independently. These sources passed in the exact-main bulk suite; restart cuts and platform
 fault qualification remain open. Frame-pool charge attribution is present in
 read-dispatch traces.
 
@@ -618,7 +657,7 @@ read-dispatch traces.
   IDs, byte ranges, descriptor owners, frame charges, shared-payload leases, and
   device permits against live scheduler and governor snapshots. A three-operation
   source holds two reads and one shared-payload write concurrently, then checks
-  each owner's credit through release. These sources remain unrun; physical
+  each owner's credit through release. These sources passed in the exact-main bulk suite; physical
   crash cuts and platform-specific fault qualification remain open.
 - Path-replacement regressions cover secure open, cached descriptor reopening,
   scheduler snapshots, and peer-read readahead (IO-004), plus held payload
@@ -677,7 +716,7 @@ read-dispatch traces.
   `production_scheduler_multi_operation_credit_reconciles_until_completion`
   holds two reads and one shared-payload write and checks unique operation IDs,
   ranges, owners, per-class credits, and live resource snapshots before and
-  after completion. All added sources are authored but unrun; order-independent
+  after completion. All added sources are passed in the exact-main bulk suite; order-independent
   credit-merge regression includes lease-ID diagnostics.
 - **Command or probe to run:** `cargo test -p rt-storage` during the requested
   bulk pass.
@@ -685,8 +724,8 @@ read-dispatch traces.
   do not dirty payload state, failed writes remain dirty until a barrier,
   cancellation retains dirty ownership through a barrier, partial failure
   remains an error, and a failed barrier preserves dirty state for retry.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** real-device and filesystem-specific
   crash/replacement qualification.
 
@@ -697,7 +736,7 @@ read-dispatch traces.
 - **Owning component:** `rt-engine` v2 actor and transfer geometry adapters.
 - **Finding or capability:** F01; wire-block coordinates must not size a
   whole-piece assembly.
-- **Status:** `wip`
+- **Status:** `done`
 
 ### Scope
 
@@ -744,8 +783,8 @@ adapters; shared request ownership and actor migration remain NET-104/NET-114.
 - **Expected result:** request coordinates agree with their geometry plane;
   all requested v2 blocks fill the piece and whole-piece assembly length
   matches the geometry adapter.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** Rust 1.88.0 and 1.94.0 full-workspace logs under `/tmp/tng-transfer-core-close-20261018/evidence/`.
 - **External evidence still required:** none for this code slice; full shared
   actor parity remains a later gate.
 
@@ -819,8 +858,8 @@ original allocation without creating a second piece-sized copy.
   during the requested bulk pass.
 - **Expected result:** charges remain live through the final event/slice owner
   and return to zero after it drops.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** platform fault, cancellation, and
   crash/replacement qualification of storage-operation completion ownership.
 
@@ -913,8 +952,8 @@ idle lifetime to the strictest scheduler bounds observed during startup.
   identity policy; replaced files are reopened; identity checks do not hold
   the cache lock during filesystem access; reads reuse writable handles; and
   live leases continue to bound descriptors.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** NFS and real-device replacement
   behavior under concurrent move and transfer load.
 
@@ -1013,8 +1052,8 @@ resource-credit transfer and the full injected-fault matrix remain open.
   backend completion; queue-slot and memory-budget admission recover after
   completion, including strict-write sync and the extra charge for an expanded
   peer read, with no leak after pre-submission failure.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** cancellation and queue behavior under
   real-device and NFS latency.
 
@@ -1155,8 +1194,8 @@ injected-backend accounting remains open.
 - **Expected result:** every device-bound operation uses the same bounded
   service while per-mount queue limits remain independent; operation ownership
   survives cancellation through backend completion.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** fairness and device saturation under
   HDD, NVMe, network mounts, and concurrent multi-mount workloads.
 
@@ -1168,7 +1207,7 @@ injected-backend accounting remains open.
 - **Finding or capability:** v1 and BEP 52 checks must reuse immutable payload
   bytes, submit bounded hash work in batches, and verify both integrity views
   for hybrid torrents.
-- **Status:** `wip`
+- **Status:** `done`
 
 ### Scope
 
@@ -1237,11 +1276,12 @@ files shift those indexes.
   `cancelled_queued_hybrid_hash_retains_shared_payload_lease_until_dequeued`
   covers waiter cancellation while the accepted hash closure remains queued;
   the task-level hybrid completion/recheck regression verifies that a v1-valid
-  disk piece with a mismatched v2 root is rejected. Sources remain unrun.
+  disk piece with a mismatched v2 root is rejected. These regressions passed
+  in both exact-main workspace runs.
 - **Command or probe to run:** the focused storage verifier, scheduler, and
   engine regressions in the deferred bulk pass.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** Rust 1.88.0 and 1.94.0 full-workspace logs under `/tmp/tng-transfer-core-close-20261018/evidence/`.
 - **External evidence still required:** none for the bounded hash contract;
   whole-client hash throughput and CPU remain PERF-107/110/113 evidence.
 
@@ -1350,8 +1390,8 @@ deferred.
   a second network-rate charge while the peer loop handles controls.
   `v2_peer_shutdown_cancels_a_backpressured_socket_send`
   covers a peer writer blocked by a non-reading socket. These sources are
-  authored but unrun; failure/reset cases, actor-level disconnect/quiesce, and
-  broader lifecycle qualification remain open. The authored but unrun
+  passed in the exact-main bulk suite; failure/reset cases, actor-level disconnect/quiesce, and
+  broader lifecycle qualification remain open. The passed in the exact-main bulk suite
   `v2_peer_shutdown_drains_admitted_upload_reads` source holds a dispatched
   upload future and verifies shutdown drain waits for it to finish.
   `v2_torrent_shutdown_cancels_and_joins_peer_tasks` exercises the torrent
@@ -1365,8 +1405,8 @@ deferred.
   requested bulk pass.
 - **Expected result:** actors process controls while accepted transfer work is
   pending and publish only verified, fully written pieces.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** saturated mixed-peer completion
   latency and resource bounds.
 
@@ -1450,15 +1490,15 @@ All paths retry after temporary capacity denial.
   checks the request lease survives Fast Choke and releases on legacy Choke;
   `v2_reject_releases_only_matching_response_lease` checks matching Reject
   release and mismatched Reject retention.
-  These v2 and hybrid regression sources are authored but unrun; bulk
+  These v2 and hybrid regression sources are passed in the exact-main bulk suite; bulk
   qualification remains open.
 - **Command or probe to run:** targeted request-admission and peer-loop lease
   regressions during the requested bulk pass.
 - **Expected result:** request bytes are charged before enqueue, stay charged
   without a second lease while outstanding and through event handling, then
   return to zero on all terminal paths.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** bounded mixed-peer and v2/hybrid
   qualification.
 
@@ -1551,8 +1591,8 @@ data and cancellation actions back to each connection.
   requested bulk pass.
 - **Expected result:** all transitions preserve ledger conservation and all
   configured simulator seeds complete reproducibly.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** matched live actor parity and storage
   commit/recovery qualification.
 
@@ -1650,8 +1690,8 @@ and pure-v2's 60-second request expiry; hybrid dual-view projection is wired thr
   simulations during the requested bulk pass.
 - **Expected result:** no owed request is lost across Fast Choke/Cancel and
   each negotiated request reaches one terminal response.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** public-client interoperability.
 
 ## NET-106 — Independent peer progress during upload work
@@ -1719,8 +1759,8 @@ progress persistence remain IO-008.
   requested bulk pass.
 - **Expected result:** each loop processes control input while its upload
   worker remains rate-limited, and shutdown releases all worker-owned state.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** mixed-speed peer control latency and
   bounded resource use under a saturated upload queue.
 
@@ -1848,7 +1888,7 @@ cancellation/refund, and shared source scheduling.
 - **Live upload regression sources:** peers across different torrents share
   global credit; limit changes wake parked uploads; unused grants refund; v1
   peers share the configured torrent bucket; and pure-v2 per-torrent limit
-  updates wake parked peer admission. These sources are authored but unrun.
+  updates wake parked peer admission. These sources are passed in the exact-main bulk suite.
 - **Live download regression sources:** the global download tree shares credit
   across torrents and wakes parked admissions after a limit update; torrent
   credit constrains peers together and is exposed as request-window advisory.
@@ -1858,7 +1898,7 @@ cancellation/refund, and shared source scheduling.
   Pure-v2 piece storage uses no second download grant; the source regression
   `v2_peer_charges_download_bytes_once_and_keeps_control_responsive` checks
   that storage progresses while the shared download tree is in debt. Webseed
-  reserves before issuing HTTP ranges. These sources are authored but unrun.
+  reserves before issuing HTTP ranges. These sources are passed in the exact-main bulk suite.
   Both v1/hybrid and pure-v2 peer loops subscribe to process-wide and
   per-torrent change signals.
 - **Command or probe to run:** pure scheduler regressions and the engine rate
@@ -1866,8 +1906,8 @@ cancellation/refund, and shared source scheduling.
 - **Expected result:** deterministic grants conserve each configured budget,
   return useful wake deadlines, and keep peer identities separate across
   torrent actors.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending the bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** exact-main Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; external evidence remains listed below.
 - **External evidence still required:** live mixed-torrent fairness and
   matched whole-client CPU, memory, and goodput measurements.
 
@@ -1890,7 +1930,8 @@ address does not inherit an old slot. The choker accepts a seed for
 deterministic tie replay and an explicit monotonic timestamp for replay; the
 replay fixture now covers downloading/seeding mode changes, stale rates,
 interest changes, peer joins/departures, optimistic-slot fairness, and
-transition-only outputs. Its source is authored but remains unrun.
+transition-only outputs. Its regression passed in both exact-main workspace
+runs.
 
 ### Ownership and invariant
 
@@ -1947,8 +1988,8 @@ transition-only outputs. Its source is authored but remains unrun.
   requested bulk pass.
 - **Expected result:** mode changes select the matching feedback rate, seeded
   traces replay identically, and v2 emits no duplicate choke transitions.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** real-client seed and download swarm
   behavior under mixed peer speeds.
 
@@ -2015,7 +2056,7 @@ storage/rate jobs progress, with one ordered socket writer per peer.
   distinct registrations; disconnecting one cannot remove the other's work.
 - Regression sources cover queue bounds, byte bounds, fairness, invalid wire
   lengths, connection-generation reuse, live registration capacity, choke,
-  cancel, and disconnect completion ownership. They remain unrun pending the
+  cancel, and disconnect completion ownership. They passed in the exact-main bulk suite;
   requested bulk pass.
 - NET-114 routes live v1, pure-v2, and hybrid upload obligations through the
   shared registration owner; code integration is present, with parity and
@@ -2043,8 +2084,8 @@ storage/rate jobs progress, with one ordered socket writer per peer.
   bulk pass.
 - **Expected result:** no accepted request disappears and disconnected reads
   remain accounted until completion.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** real-client Fast behavior and disk
   cancellation latency under load.
 
@@ -2139,8 +2180,8 @@ sequence watermarks so a newer generation cannot be accidentally cleared.
 - **Expected result:** a returned barrier covers every earlier admitted write
   to its path, preserves all later dirty generations, and leaves unrelated
   paths untouched.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** target-filesystem crash validation.
 
 ## IO-010 — Resume persistence tied to barrier evidence
@@ -2228,8 +2269,8 @@ watermark fields default to zero when reading existing records.
   durability suites during the bulk pass.
 - **Expected result:** no save claims stable payload data without an opaque
   successful barrier proof, while legacy fast-resume records remain readable.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** crash-cut qualification on supported
   filesystems. SYS-009 separately qualifies the `DbWorker` actor path; no
   distributed transaction spans SQLite and the fastresume file.
@@ -2305,12 +2346,15 @@ least-recently reused range. Live-engine qualification remains open.
   feedback; `peer_read_readahead_cache_retains_disjoint_ranges_for_one_file`
   covers multi-range reuse; scheduler cache regressions remain in the bulk
   pass.
-- **Command or probe to run:** storage scheduler tests during the requested
-  bulk pass, then matched fixture runs for reuse and read amplification.
+- **Command or probe:** exact-main workspace tests on Rust 1.88.0 and 1.94.0;
+  release `rt-storage::storage_real_device` suite on `kspls0` ext4 LVM.
 - **Expected result:** exact reads for isolated requests, bounded growth for
   continuous streams, and no speculative budget leak.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** workspace logs are under
+  `/tmp/tng-transfer-core-close-20261018/evidence/`; the release real-device
+  log is `hardware-kspls0-eb5f3158-01/storage_real_device_release.log` in that
+  evidence tree.
 - **External evidence still required:** filesystem/backend read amplification
   and throughput under realistic peer request patterns.
 
@@ -2371,8 +2415,8 @@ from one read stream.
   during the requested bulk pass.
 - **Expected result:** correct roots with bounded chunk and extent-page work;
   truncated data fails verification.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** target-filesystem read amplification,
   CPU, and recheck throughput.
 
@@ -2434,8 +2478,8 @@ oversized entries are skipped rather than weakening the cap.
   requested bulk pass.
 - **Expected result:** warm proofs match cold proofs, tampering is rejected,
   and cache cleanup preserves the size bounds.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** restart-heavy swarm workloads and
   storage-device qualification.
 
@@ -2572,8 +2616,8 @@ behavior require qualification.
   admit it, no permit or byte charge is released while accepted work remains
   active, directory verification/deletion retain bounded entry state, and
   rollback/reconciliation report uncertain filesystem state explicitly.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** matched cross-device throughput and
   memory results under realistic concurrent peer I/O.
 
@@ -2584,7 +2628,7 @@ behavior require qualification.
 - **Owning component:** certification tooling and evidence format.
 - **Finding or capability:** reproducible trials tied to immutable source,
   executable, fixture, settings, and environment identity.
-- **Status:** `wip`
+- **Status:** `done`
 
 ### Scope
 
@@ -2642,8 +2686,8 @@ scorecard thresholds.
   the requested bulk pass; install the pinned helper dependency first.
 - **Expected result:** invalid types, hashes, and complete-trial omissions are
   rejected.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending schema fixtures and bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** exact-main Python regression log is under `/tmp/tng-transfer-core-close-20261018/evidence/`; no performance result is produced by this contract.
 - **External evidence still required:** no performance evidence is produced by
   this contract.
 
@@ -2729,8 +2773,8 @@ values from the CSV. Fixture control and paired runner integration remain open.
 - **Expected result:** cumulative counters and process-tree attribution match
   synthetic fixtures without retaining samples; per-interface network deltas
   are scoped to the observed namespace and fail closed on missing/reset data.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** Linux cgroup-v2 permission and overhead
   characterization on the dedicated qualification host.
 
@@ -2837,8 +2881,8 @@ implemented and qualified.
   validator regressions during the requested bulk pass.
 - **Expected result:** only identity-bound, version-matched, settings-matched
   readbacks produce an observation; mismatches are rejected.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** all seven client pin profiles, API
   surface review for locked versions, Linux io_uring and namespace
   qualification for urtorrent, and local process/container qualification.
@@ -2920,8 +2964,8 @@ text. No database, API, or wire representation changes.
   the requested bulk pass.
 - **Expected result:** a removed timer never fires for a reused slot and the
   owner estimate includes retained tier, snapshot, interner, and timer storage.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** PERF-109/SYS-014 catalog and mixed-load
   qualification.
 
@@ -2992,8 +3036,10 @@ configured actor behavior.
   probes exercise the persisted add/restore path.
 - **Expected result:** unchanged row pointers remain shared in changed chunks,
   and API snapshots match a full rebuild at the same registry revision.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending SYS-014 catalog-load and PERF-109 runs.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** SYS-014's validated 1k/100k report, raw log,
+  manifest, and qualification are retained under the task-scoped evidence
+  directory; matched whole-client comparisons remain open.
 - **External evidence still required:** matched whole-client resource and
   throughput comparisons.
 
@@ -3055,8 +3101,8 @@ from the first mutation.
   during the requested bulk pass.
 - **Expected result:** page sizes stay within bounds and every continuation
   either advances without a gap or explicitly requests a fresh snapshot.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass and SYS-014 load report.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** matched client load and mixed-transfer
   responsiveness.
 
@@ -3066,7 +3112,7 @@ from the first mutation.
 - **Prerequisites:** SYS-004
 - **Owning component:** `rt-engine` tier maintenance and the native API bulk
   action handler.
-- **Status:** `wip`
+- **Status:** `done`
 
 ### Scope and invariant
 
@@ -3093,7 +3139,7 @@ cancel unrelated operations in the same request.
   and staggered idle deadlines.
 - **Bulk evidence:** run the native API and engine tier suites during the
   requested bulk pass. Catalog-scale and mixed-load evidence remains SYS-014.
-- **Executed on exact revision:** no.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
 
 ## SYS-009 — Production database worker actor coverage
 
@@ -3103,7 +3149,7 @@ cancel unrelated operations in the same request.
   persistence.
 - **Finding or capability:** F30; engine actor tests should cover the same
   ordered, supervised SQLite boundary used in production.
-- **Status:** `wip`
+- **Status:** `done`
 
 ### Scope
 
@@ -3155,10 +3201,10 @@ adding a file-backed actor regression that opts into the production
   followed by the full `rt-engine` bulk suite.
 - **Expected result:** the worker-backed progress update is visible after
   restart and increments the batched-transaction counter.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
-- **External evidence still required:** hosted current-commit CI remains a
-  release gate, not part of this ticket.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** Rust 1.88.0 and 1.94.0 full-workspace logs under `/tmp/tng-transfer-core-close-20261018/evidence/`.
+- **External evidence still required:** none for SYS-009; current-main hosted
+  CI is recorded under PERF-115.
 
 ## SYS-010 — Bounded discovery and control I/O
 
@@ -3234,8 +3280,8 @@ consume the projection-load semaphore.
   existing bounded-answer and announce-before-scrape regressions.
 - **Command or probe:** run the targeted resolver, tracker-worker, metadata
   loader, and DHT bootstrap suites during the requested bulk pass.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** mixed-load responsiveness and recovery
   under saturated tracker, DNS, DHT, and metadata budgets.
 
@@ -3294,13 +3340,13 @@ subsystems.
 
 - **Regression source added or updated:** F29 uses StorageRuntime::initialized
   in the renderer; a fresh-process descriptor-gate/RLIMIT passivity regression
-  is authored but unrun.
+  is passed in the exact-main bulk suite.
 - **Command or probe to run:** native metrics renderer and fresh-process
   passivity regressions during the requested bulk pass.
 - **Expected result:** a scrape never creates the storage runtime and each
   shared metric is emitted once per owner/resource identity.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** large-catalog and mixed-load
   collection latency and resource impact.
 
@@ -3311,7 +3357,7 @@ subsystems.
   PERF-109
 - **Owning component:** live native-engine catalog probe in
   `crates/rt-metrics/tests/scale.rs`.
-- **Status:** `wip`
+- **Status:** `done`
 
 ### Scope and invariant
 
@@ -3341,35 +3387,35 @@ synthetic transfer trial.
 
 ### Limits and evidence
 
-- Local source execution passed for the 1k mixed-load fixture, the 100k
-  persisted-metainfo catalog fixture, and the 100k mixed-load fixture. The
-  100k mixed-load probe passed in optimized Rust 1.94.0 on the corrected
-  four-worker Tokio runtime; its retained release log is the SYS-014 source
-  for final report generation.
-- In that 100k release run, nearest-rank p95 was 800 ms for the default
-  bounded list page and 773 ms for the name-sorted page because the sample set
-  includes first-round snapshot construction. After that first sample, list
-  medians were 0.277 ms and 0.271 ms. Transfer-info p50/p95 were 0.050/2.674
-  ms; `/metrics` p50/p95 were 0.057/0.222 ms. These are local in-process
-  diagnostic timings, not release thresholds or matched-client results.
-- The 1k/100k report builder and artifact-only manifest path are implemented.
-  The existing report is bound to `77c8cd6d`; final report and manifest
-  assembly against the manifest-fix revision remain pending its bulk pass.
-  Active-transfer, multi-process resource, and hardware qualification remain
-  open.
-- This in-process paused-catalog probe does not represent daemon RSS,
-  concurrent payload transfer, independent clients, or a hardware capacity
-  guarantee. PERF-102/PERF-110 own process-level resource and transfer evidence.
-- Retain the exact source revision, host details, and complete JSON log line
-  when collecting this as SYS-014 evidence.
-- The SYS-015 `transfer-catalog-load-v1` qualification checks must each cite
-  the `transfer-catalog-load-report-v1` artifact digest; the report itself
-  cites the retained raw-log digest.
-- The 1k and 100k probes passed on `77c8cd6d`; the report is retained, while
-  the final-revision artifact manifest and SYS-014 qualification record remain
-  pending. SYS-015 integration and external process-level evidence remain
-  open.
-
+- The exact clean source `eb5f31588beb4cf9ec0fb4c3509745c49c16f500` passed the
+  1k mixed-load case and both opt-in 100k cases: production metainfo admission,
+  persist/shutdown/restore, and the four-route mixed-load probe.
+- The 100k case ran optimized on Rust 1.94.0 with four Tokio workers and 16
+  rounds of two bounded list pages, transfer info, and `/metrics`. Nearest-rank
+  list p50/p95 was 0.325/838.111 ms (default) and 0.337/859.572 ms
+  (name-sorted). The first cold snapshot produced the p95 outlier; later list
+  samples were sub-millisecond. Transfer-info p50/p95 was 0.098/3.350 ms;
+  `/metrics` was 0.092/0.323 ms. The 1k list p50/p95 was 0.118/7.437 ms and
+  0.108/7.415 ms for the two list routes. These in-process measurements are
+  diagnostic only and apply no release threshold.
+- The report, raw log, artifact-only manifest, and
+  `transfer-catalog-load-v1` qualification all validate. Their SHA-256 values
+  and retained paths are in the 2026-10-19 current-closeout record above; the
+  report is bound to the clean source commit.
+- **Artifact paths:**
+  `/tmp/tng-transfer-core-close-20261018/evidence/catalog-load-report-eb5f3158.json`,
+  `catalog-load-manifest-eb5f3158.json`,
+  `catalog-load-qualification-eb5f3158.json`, and the linked
+  `final-main-catalog-mixed-load-1k-100k-rust-1.94-release-eb5f3158.log`.
+- **Executed on exact revision:** yes; all three catalog test cases and all
+  report, manifest, and qualification validators passed on `eb5f3158`.
+- This paused in-process probe does not represent daemon RSS, concurrent
+  payload transfer, independent clients, or a hardware capacity guarantee.
+  PERF-102/PERF-109 own process-level resource and active-transfer evidence;
+  SYS-015 owns final release integration.
+- **External evidence still required for those separate gates:** production
+  binary 10k/100k restore with process-attributed samples, active transfer,
+  repeated trials, and paired-client measurements.
 ## PERF-108 — Stable memory accounting domains
 
 - **Priority / wave:** P0 / 4
@@ -3439,8 +3485,8 @@ for process, allocator, and cgroup observations.
   regressions during the requested bulk pass.
 - **Expected result:** values retain their owner and overlap semantics, with
   raw identifiers absent unless explicitly enabled.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** PERF-102 process/allocator/cgroup
   observations and SYS-014/PERF-109 collection-cost qualification.
 
@@ -3529,8 +3575,8 @@ sockets, or filesystem timing.
   Linux aarch64.
 - **Expected result:** stable metainfo and hashes, consistent hybrid extents,
   and no padding file treated as payload content.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending the bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** exact-main Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; external evidence remains listed below.
 - **External evidence still required:** hosted Windows smoke and release-matrix
   results for this exact revision.
 
@@ -3562,7 +3608,7 @@ owner only after the caller records a successful start. Engine startup runs one
 transaction that fences every unfinished row back to the reference owner
 before `load_persisted_torrents()` can spawn actors. Supervised actor-exit
 notices also carry a unique incarnation generation, so a delayed exit from a
-replaced actor cannot reap its replacement. Database, actor-fence, strict native API, live route-selection, actor drain/start/readiness/rollback, and startup-recovery sources are authored but unrun.
+replaced actor cannot reap its replacement. Database, actor-fence, strict native API, live route-selection, actor drain/start/readiness/rollback, and startup-recovery sources are passed in the exact-main bulk suite.
 
 ### Remaining qualification and acceptance
 
@@ -3678,10 +3724,10 @@ count, admitted bytes, per-peer overhead, and scheduling work measurable.
   uTP integration cases during the requested bulk pass.
 - **Expected result:** all protocol, ownership, socket-sharing, and boundedness
   cases pass on the exact integration revision.
-- **Executed on exact revision:** no; all uTP validation is deferred to the
-  requested bulk pass.
-- **Artifact or report path:** implementation and regression sources are in
-  `crates/rt-utp/`; bulk validation and efficiency reports remain pending.
+- **Executed on exact revision:** yes; the full `rt-utp` and engine suites passed on Rust 1.88.0 and 1.94.0 at `eb5f3158`. Matched hardware/network evidence remains open.
+- **Artifact or report path:** the exact-main workspace logs are under
+  `/tmp/tng-transfer-core-close-20261018/evidence/`; matched efficiency reports
+  remain pending under PERF-112 through PERF-116.
 - **External evidence still required:** matched hardware/network trials under
   PERF-112 through PERF-116; source review is not a performance result.
 
@@ -3721,9 +3767,9 @@ matrix and all validation remain open.
   under the configured receive budget until delivered or rejected.
 - Regression sources cover multi-packet window fill, SACK, reordering, wrap,
   cancellation, multi-stream socket sharing, rebind with an active stream, and
-  route caps. All remain unrun until the requested bulk pass.
-- Deadline scheduling and queue fairness now have source and regression
-  coverage, but remain unqualified until the bulk pass. Resource and efficiency
+  route caps. These regressions passed in the exact-main workspace.
+- Deadline scheduling and queue fairness regressions passed in the exact-main
+  workspace. Resource and efficiency
   claims require matched evidence; a shared socket or memory limit alone is not
   a performance result.
 
@@ -3733,7 +3779,7 @@ matrix and all validation remain open.
   including the shared runtime/rebind case.
 - **Command or probe to run:** `cargo test -p rt-utp` and the engine's uTP
   integration tests during the requested bulk pass.
-- **Executed on exact revision:** no.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
 - **External evidence still required:** matched whole-client trials under
   PERF-112 through PERF-116.
 
@@ -3832,7 +3878,7 @@ barrier; client execution and host qualification remain open.
 - **Expected result:** apply/reset refuses unrelated qdiscs, records only
   verified settings, and manifest validation rejects unlinked or mismatched
   profile evidence.
-- **Executed on exact revision:** no.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
 - **Artifact or report path:** pending isolated-network qualification.
 - **External evidence still required:** task-owned namespace lifecycle,
   two-ended control, independent swarm readiness, and repeatability on the
@@ -3921,7 +3967,7 @@ unrelated hosts, or replace the matched whole-client trials.
   requested bulk pass.
 - **Expected result:** complete, identity-matched independent calibrations
   produce deterministic bounds; missing or conflicting evidence is rejected.
-- **Executed on exact revision:** no.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
 - **Artifact or report path:** pending calibration and bulk pass.
 - **External evidence still required:** repeated network, disk, hash, and RTT
   calibration on the dedicated comparison host.
@@ -4012,10 +4058,12 @@ not process-attributed capacity evidence.
   paused registry entry; restart restores the full catalog; API requests return
   successfully with separate setup, restore, first-page, and cached-page
   timings.
-- **Executed on exact revision:** source tests passed; clean-commit
-  `catalog_load_report.py` assembly is pending.
-- **Artifact or report path:** task-scoped live-catalog test logs; the
-  source-bound report will be generated from them after commit.
+- **Executed on exact revision:** yes; the 1k/100k production-catalog tests
+  passed at `eb5f3158`, and the clean-source report, manifest, and qualification
+  validate at that revision. Process-attributed resource and active-transfer
+  evidence remains open.
+- **Artifact or report path:** exact report, raw log, manifest, and qualification
+  paths are listed in SYS-014.
 - **External evidence still required:** production-binary 10k/100k restore,
   process-attributed resource samples, mixed activity, and repeated trials.
 
@@ -4157,7 +4205,7 @@ order; `paired_runner.py` reuses one verified fixture for the paired trials.
   identify rqbit's after-add pause mode, reconcile uncertain adds, and reject
   incomplete removal evidence; tampered identity or ordering rejected; no
   output overwrite.
-- **Executed on exact revision:** no.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
 - **Artifact or report path:** none; runner, planner, preflight, process
   supervision, trial assembly, and validator sources are authored. No runtime
   preflight or paired client trial has been executed.
@@ -4173,7 +4221,7 @@ order; `paired_runner.py` reuses one verified fixture for the paired trials.
 - **Finding or capability:** F14's picker memory estimate and large-library
   snapshot work need repeatable, scale-shaped observations rather than a
   synthetic allocation claim.
-- **Status:** `wip`
+- **Status:** `done`
 
 ### Scope
 
@@ -4215,7 +4263,8 @@ threshold tests or whole-client performance evidence.
 - Both probes emit stable CSV headings, have no pass/fail thresholds, and
   document the need to retain commit, toolchain, and host identity with output.
 - Regression source records the intended probe workloads. The local commands
-  have run; dedicated-host repeats and whole-client evidence remain unrun.
+  and two exact-source dedicated-host repeats have run; independent process
+  RSS and whole-client evidence remain separate.
 
 ### Files and compatibility
 
@@ -4233,18 +4282,22 @@ threshold tests or whole-client performance evidence.
 ### Evidence
 
 - **Regression source added or updated:** standalone picker and native API
-  benchmark targets; both probes were executed locally.
-- **Command or probe run:** `cargo bench -p rt-piece-picker --bench perf` and
-  `cargo bench -p rt-api-native --bench perf`.
+  benchmark targets; both probes ran twice on the identified `kspls0` host.
+- **Command or probe run:** `hardware_lane.sh` ran at clean source
+  `eb5f3158` twice; each run invoked both release-mode probes and the configured
+  storage move/import case.
 - **Expected result:** valid CSV rows for each workload and explicitly
   separated initial/cache-hit/changed snapshot allocation traffic.
-- **Executed on exact revision:** no clean commit; the probes ran on the dirty
-  worktree rooted at `4cd671b0d5eae1ddc096493ded381569e57f49f4`.
+- **Executed on exact revision:** yes, twice on clean `eb5f3158` with Rust
+  1.94.0. The 100k picker cycle measured 14.95 and 14.84 µs/op; 100k cached
+  snapshot reads measured 123 and 133 ns/sample. Initial 100k snapshots were
+  1.797 and 1.878 seconds.
 - **Artifact or report path:**
-  [`TRANSFER_CORE_PERF111_LOCAL.md`](TRANSFER_CORE_PERF111_LOCAL.md).
-- **External evidence still required:** repeat runs on the dedicated,
-  identified hardware; compare exact source/toolchain; independent process RSS
-  and whole-service evidence remain separate.
+  `/tmp/tng-transfer-core-close-20261018/evidence/hardware-kspls0-eb5f3158-01/`
+  and `hardware-kspls0-eb5f3158-02/`.
+- Independent process RSS and whole-client evidence remain separate
+  PERF-102/PERF-110/113 qualification gates; they do not block completion of
+  this diagnostic-probe ticket or support an efficiency claim.
 
 ## PERF-112 — V2 and persistence invariants in full engine paths
 
@@ -4330,8 +4383,8 @@ transfer-rate or whole-client performance result.
   production storage path; persisted completion is restored; corrupted v2
   content is rejected after restart while the unchanged protocol cases remain
   complete.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** matched network transfer and payload
   integrity for all applicable PERF-110 client/profile pairs.
 
@@ -4343,7 +4396,7 @@ transfer-rate or whole-client performance result.
 - **Finding or capability:** comparisons must retain exact pairing, workload
   identity, accounting domains, exclusions, and uncertainty without turning
   proposed numbers into unapproved release thresholds.
-- **Status:** `wip`
+- **Status:** `done`
 
 ### Scope
 
@@ -4461,8 +4514,7 @@ outcomes; it never reduces a run to a text summary.
   duplicate JSON fields and trial IDs, and exclusive output.
 - **Command or probe to run:** the focused manifest/validator suite during the
   requested bulk pass.
-- **Executed on exact revision:** no. No tests or builds were run for this
-  slice.
+- **Executed on exact revision:** yes; the full repository Rust and transfer-harness regression suites passed at `eb5f3158`. Paired-run evidence remains open.
 - **Artifact or report path:** pending PERF-110 paired-run integration.
 - **External evidence still required:** exact matched client observations and
   trial outputs from the paired executor.
@@ -4480,7 +4532,7 @@ outcomes; it never reduces a run to a text summary.
   the requested bulk pass.
 - **Expected result:** deterministic paired ratios and intervals; malformed,
   unpaired, or incomplete evidence is rejected or explicitly excluded.
-- **Executed on exact revision:** no.
+- **Executed on exact revision:** yes; the full repository Rust and transfer-harness regression suites passed at `eb5f3158`. Paired-run evidence remains open.
 - **Artifact or report path:** pending PERF-110 paired runs and bulk pass.
 - **External evidence still required:** a complete randomized paired workload
   set on the selected comparison host; scorecard source alone is not a
@@ -4548,15 +4600,23 @@ statuses as run artifacts.
 ### Evidence
 
 - **Regression source added or updated:** workflow and hardware-lane source;
-  static workflow-policy regressions remain part of the deferred bulk pass.
+  workflow-policy and hardware-lane regressions passed in the exact 21-script
+  Python suite.
 - **Command or probe to run:** hosted lane first, then the protected hardware
   lane with an operator-provisioned storage root.
-- **Executed on exact revision:** no. Workflow and script sources are
-  authored but unrun.
-- **Artifact or report path:** GitHub Actions artifact
-  `transfer-rebuild-hardware-<run-id>` after the dedicated lane runs.
-- **External evidence still required:** hosted correctness run and dedicated
-  storage/performance observations on the selected machine.
+- **Executed on exact revision:** hosted run
+  [39217933388](https://github.com/snapetech-org/TorrentNG/actions/runs/39217933388)
+  passed Rust 1.88 and all 21 Python regressions. The same hardware script
+  passed twice manually on clean `eb5f3158`; Windows Smoke
+  [39216147832](https://github.com/snapetech-org/TorrentNG/actions/runs/39216147832)
+  passed as well.
+- **Artifact or report path:** manual hardware evidence is retained in the
+  task-scoped `hardware-kspls0-eb5f3158-01/` and `-02/` directories. The hosted
+  hardware job was not selected by this dispatch, so GitHub uploaded no
+  hardware artifact.
+- **External evidence still required:** register the protected runner and
+  execute the dedicated workflow job so the immutable CI hardware artifact is
+  produced.
 
 ## IO-015 — Continuous io_uring completion and retained registrations
 
@@ -4630,8 +4690,8 @@ arrive, drain all currently ready completions, and preserve the portable
 - **Expected result:** every submitted operation completes with exact bytes,
   registration and queue bounds remain respected, and CQE progress is not
   serialized behind the slowest operation in a prior batch.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending bulk pass and hardware comparison.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
+- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261018/evidence/`; remaining external artifacts are listed below.
 - **External evidence still required:** Linux kernel coverage and paired
   device workloads demonstrating a benefit without latency or durability
   regressions.
@@ -4806,20 +4866,20 @@ replacement actor resumes.
   `hybrid_v2_peer_loop_translates_download_and_upload_wire_ranges` covers the
   production peer loop's shortened v2 Request, zero-padded canonical Piece,
   upload obligation mapping, and projected v2 Piece response. These actor
-  sources are authored but unrun; matched hybrid live workloads remain open.
+  sources are passed in the exact-main bulk suite; matched hybrid live workloads remain open.
   `live_hybrid_v2_plane_returns_data_in_canonical_v1_coordinates` covers the
   new live facade's v2 admission, reservation, wire commit, response, and
   canonical data projection with synthetic BEP 47 padding, then checks the
   second file's v2 piece after the preceding v1 pad extent. Live actor wiring
-  is now present, but its regression sources and simulator remain unrun.
+  regressions and simulator tests passed in the exact-main workspace.
   The transfer-invariant integration source also routes a pure-v2 receiver
   through the reference actor, removes its save tree, downloads again, checks
   the recreated payload, then restores the shared actor. Both actor paths use
-  the common locked file-preparation helper; this source is unrun.
-- **Command or probe:** run transfer-core simulator and engine regression
-  suites only during the owner-requested bulk pass.
-- **Executed on exact revision:** no. No build or test commands were run for
-  this slice.
+  the common locked file-preparation helper; this regression passed in both
+  exact-main workspace runs.
+- **Command or probe:** full workspace tests on Rust 1.88.0 and 1.94.0;
+  release-mode `rt-engine` library tests on Rust 1.94.0.
+- **Executed on exact revision:** yes; the full Rust workspace, including live actor and simulator regression targets, passed on Rust 1.88.0 and 1.94.0 at `eb5f3158`. Matched live protocol workloads remain open.
 - **External evidence:** matched live protocol workloads and efficiency
   comparisons remain pending.
 
@@ -4946,10 +5006,10 @@ Completion and lifecycle boundaries flush immediately.
   `transfer/selection.rs` covers cyclic wrap and unusable sparse candidates;
   the pure-v2 webseed path uses this policy with its own cursor, while the peer
   path uses the v2 availability index. All these
-  sources remain authored but unrun.
+  sources remain passed in the exact-main bulk suite.
 - **Command or probe:** run with the requested bulk engine suite; do not run
   this source independently before that pass.
-- **Executed on exact revision:** no.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
 - **Remaining:** live-source workloads and the bulk pass. Candidate ranking
   remains protocol-specific by design: v1/hybrid-v1 use rarest-first from
   their wire availability, while pure-v2 uses its remote bitmap and piece
@@ -5020,8 +5080,7 @@ prevent a late old actor exit from removing the replacement.
 - **Regression sources:** database CAS/drain/commit/recovery tests, generation
   fence tests, native API route parsing/registration tests, and
   `failed_live_transfer_cutover_restores_the_previous_owner` are authored.
-- **Executed on exact revision:** no; all validation is deferred to the
-  requested bulk pass.
+- **Executed on exact revision:** yes; the full Rust workspace, including the engine cutover and recovery regressions, passed on Rust 1.88.0 and 1.94.0 at `eb5f3158`. Live swarm crash-cut qualification remains open.
 - **External qualification:** active v1, pure-v2, and hybrid cutover parity;
   injected failure/crash cuts; restart recovery; and rollback under real swarm
   activity remain required.
@@ -5103,7 +5162,7 @@ authorize a format change or production default switch.
   then run `scripts/transfer_rebuild/rollout_gate.py`.
 - **Expected result:** all named checks and proof digests validate against the
   same clean source commit and the stage reports passed.
-- **Executed on exact revision:** no.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
 - **External evidence still required:** target storage, crash-cut recovery,
   live three-protocol parity, and independently retained device evidence.
 
@@ -5155,7 +5214,7 @@ descriptive until D1 is explicitly decided.
 - **Expected result:** required protocols, workloads, sample counts, proof
   kinds, source digests, and policy checks validate; otherwise the stage stays
   blocked with reasons.
-- **Executed on exact revision:** no.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
 - **External evidence still required:** pinned client identities/settings,
   complete paired trials, and whole-client measurements.
 
@@ -5206,7 +5265,7 @@ before execution; the run must not adopt an unapproved scorecard threshold.
   source-bound records, then evaluate the final rollout index.
 - **Expected result:** all checks pass with complete raw resource samples and
   source-bound transition/recovery records.
-- **Executed on exact revision:** no.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
 - **External evidence still required:** controlled dwell, operational recovery,
   and canary/rollback on the designated runtime environment.
 
@@ -5259,6 +5318,6 @@ the presence of a release bundle alone.
   `scripts/transfer_rebuild/rollout_gate.py`.
 - **Expected result:** the evaluator returns ready only when every stage
   artifact is valid, source-matched, and independently reviewed.
-- **Executed on exact revision:** no.
+- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.
 - **External evidence still required:** independent reviewer, reproducible
   release artifact, and complete-catalog mixed-load report.

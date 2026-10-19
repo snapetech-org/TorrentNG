@@ -1,4 +1,4 @@
-# PERF-111 local diagnostic run
+# PERF-111 initial local diagnostic run (historical)
 
 Date: 2026-10-18
 Source checkout: `codex/transfer-perf-runner-20261018`, HEAD
@@ -7,10 +7,13 @@ Host: `kspld0`, Linux 7.1.7 x86_64.
 Toolchain: `rustc 1.94.0`.
 
 These are single-host diagnostic samples from the optimized Cargo bench
-profile, rerun after the v2 completion-projection guard was added. They
-establish that the probes execute and preserve their raw output; they are not a
-before/after comparison, a dedicated-host qualification, or an efficiency
-claim. No timing thresholds were applied.
+profile, rerun after the v2 completion-projection guard was added. The source
+was the dirty rebuild worktree identified above, so these numbers are
+historical and are superseded for ticket acceptance by two clean exact-main
+`eb5f3158` runs on `kspls0`, recorded in
+[`TRANSFER_CORE_ACTIVE_SPECS.md`](TRANSFER_CORE_ACTIVE_SPECS.md). Neither set
+is a before/after comparison or whole-client efficiency claim. No timing
+thresholds were applied.
 
 Commands:
 
@@ -67,7 +70,7 @@ snapshot_one_row_changed,100000,1,386213,386213,167,189021
 
 ## Qualification still needed
 
-PERF-111 remains `wip`. Repeatable measurements on the dedicated lane, retained
-trial artifacts bound to a clean source revision, and matched whole-client
-resource and goodput observations are still required before making efficiency
-or client-comparison claims.
+PERF-111 probe acceptance is complete on the exact source, with two retained
+dedicated-host runs documented in the active ticket spec. Matched whole-client
+resource and goodput observations remain separate qualification gates before
+any efficiency or client-comparison claim.
