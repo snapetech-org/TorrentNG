@@ -305,6 +305,7 @@ impl V2Bitmap {
         }
     }
 
+    #[cfg(test)]
     fn copy_from_bitfield(&mut self, bits: &[u8]) -> Result<(), String> {
         self.copy_from_bitfield_with_updates(bits, |_, _| {})
     }
@@ -5616,7 +5617,7 @@ async fn run_v2_peer_protocol(
 ) -> anyhow::Result<()> {
     let _upload_control_guard = V2UploadControlGuard(context.upload_control.clone());
     let upload_service = context.network_budget.upload_service();
-    let mut upload_obligations = upload_service
+    let upload_obligations = upload_service
         .register(context.rate_peer, remote_supports_fast, V2_MAX_UPLOAD_WORK)
         .map_err(|error| anyhow::anyhow!("registering shared upload service: {error:?}"))?;
     let shutdown_generation = context.peer_generation;
@@ -5792,7 +5793,7 @@ async fn run_v2_peer_protocol(
                     upload_obligations.on_local_unchoke();
                     start_v2_upload_reads(
                         &mut upload_reads,
-                        &mut upload_obligations,
+                        &upload_obligations,
                         &context,
                         &state,
                     );
@@ -5804,7 +5805,7 @@ async fn run_v2_peer_protocol(
                     }
                     start_v2_upload_reads(
                         &mut upload_reads,
-                        &mut upload_obligations,
+                        &upload_obligations,
                         &context,
                         &state,
                     );
@@ -6021,7 +6022,7 @@ async fn run_v2_peer_protocol(
                         match decision {
                             InboundDecision::Queue => start_v2_upload_reads(
                                 &mut upload_reads,
-                                &mut upload_obligations,
+                                &upload_obligations,
                                 &context,
                                 &state,
                             ),
@@ -6283,7 +6284,7 @@ async fn run_v2_peer_protocol(
                         if !finish_v2_upload_obligation(
                             &context,
                             &mut framed,
-                            &mut upload_obligations,
+                            &upload_obligations,
                             block,
                             InboundServed::Sent,
                         )
@@ -6307,7 +6308,7 @@ async fn run_v2_peer_protocol(
                         if !finish_v2_upload_obligation(
                             &context,
                             &mut framed,
-                            &mut upload_obligations,
+                            &upload_obligations,
                             block,
                             InboundServed::Discarded,
                         )
@@ -6320,7 +6321,7 @@ async fn run_v2_peer_protocol(
                         if !finish_v2_upload_obligation(
                             &context,
                             &mut framed,
-                            &mut upload_obligations,
+                            &upload_obligations,
                             block,
                             InboundServed::Failed,
                         )
@@ -6340,18 +6341,16 @@ async fn run_v2_peer_protocol(
                             if !upload_obligations.requeue_front(block) {
                                 anyhow::bail!("v2 upload obligation could not be requeued");
                             }
-                        } else {
-                            if !finish_v2_upload_obligation(
-                                &context,
-                                &mut framed,
-                                &mut upload_obligations,
-                                block,
-                                InboundServed::Discarded,
-                            )
-                            .await?
-                            {
-                                return Ok(());
-                            }
+                        } else if !finish_v2_upload_obligation(
+                            &context,
+                            &mut framed,
+                            &upload_obligations,
+                            block,
+                            InboundServed::Discarded,
+                        )
+                        .await?
+                        {
+                            return Ok(());
                         }
                     }
                     V2UploadOutcome::Failed(error) => {
@@ -6369,7 +6368,7 @@ async fn run_v2_peer_protocol(
                         if !finish_v2_upload_obligation(
                             &context,
                             &mut framed,
-                            &mut upload_obligations,
+                            &upload_obligations,
                             block,
                             InboundServed::Failed,
                         )
@@ -6381,7 +6380,7 @@ async fn run_v2_peer_protocol(
                 }
                 start_v2_upload_reads(
                     &mut upload_reads,
-                    &mut upload_obligations,
+                    &upload_obligations,
                     &context,
                     &state,
                 );
@@ -11669,7 +11668,7 @@ mod tests {
         peer.choked = false;
         let state = Arc::new(Mutex::new(peer));
         update_v2_peer_bitmap(&context, &state, |bitmap, changed| {
-            bitmap.fill_with_updates(true, |piece, have| changed(piece, have));
+            bitmap.fill_with_updates(true, changed);
             Ok(())
         })
         .unwrap();
@@ -11723,7 +11722,7 @@ mod tests {
         peer.choked = false;
         let state = Arc::new(Mutex::new(peer));
         update_v2_peer_bitmap(&context, &state, |bitmap, changed| {
-            bitmap.fill_with_updates(true, |piece, have| changed(piece, have));
+            bitmap.fill_with_updates(true, changed);
             Ok(())
         })
         .unwrap();

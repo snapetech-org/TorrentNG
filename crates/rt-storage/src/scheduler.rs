@@ -2469,7 +2469,7 @@ fn pop_urgent_device_waiter(
                     position,
                 );
                 let is_better = selected.as_ref().is_none_or(|current| {
-                    candidate.0 > current.0
+                    (candidate.0 && !current.0)
                         || (candidate.0 == current.0
                             && (candidate.1, candidate.2) < (current.1, current.2))
                 });

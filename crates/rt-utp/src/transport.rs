@@ -82,6 +82,18 @@ pub struct UtpEndpoint {
     memory: Arc<UtpMemoryBudget>,
 }
 
+struct EndpointReceiveContext {
+    socket: Arc<UdpSocket>,
+    config: UtpTransportConfig,
+    streams: Arc<StdMutex<HashMap<UtpRouteKey, UtpRoute>>>,
+    accepted_tx: mpsc::Sender<Result<UtpStream, UtpError>>,
+    accept_new_connections: Arc<AtomicBool>,
+    deadlines: UtpDeadlineScheduler,
+    memory: Arc<UtpMemoryBudget>,
+    _receive_memory: UtpMemoryReservation,
+    stop: watch::Receiver<bool>,
+}
+
 /// Engine-owned uTP socket pool.
 ///
 /// A runtime keeps one UDP endpoint per address family and multiplexes all
@@ -546,17 +558,17 @@ impl UtpEndpoint {
         let (stop, stop_rx) = watch::channel(false);
         let deadlines = UtpDeadlineScheduler::new(stop_rx.clone(), MAX_UTP_ENDPOINT_CONNECTIONS);
         let accept_new_connections = Arc::new(AtomicBool::new(true));
-        let recv_task = tokio::spawn(run_endpoint_recv(
-            socket.clone(),
+        let recv_task = tokio::spawn(run_endpoint_recv(EndpointReceiveContext {
+            socket: socket.clone(),
             config,
-            streams.clone(),
+            streams: streams.clone(),
             accepted_tx,
-            Arc::clone(&accept_new_connections),
-            deadlines.clone(),
-            Arc::clone(&memory),
-            receive_memory,
-            stop_rx,
-        ));
+            accept_new_connections: Arc::clone(&accept_new_connections),
+            deadlines: deadlines.clone(),
+            memory: Arc::clone(&memory),
+            _receive_memory: receive_memory,
+            stop: stop_rx,
+        }));
         Ok(Self {
             socket,
             config,
@@ -925,17 +937,18 @@ impl Drop for UtpEndpoint {
     }
 }
 
-async fn run_endpoint_recv(
-    socket: Arc<UdpSocket>,
-    config: UtpTransportConfig,
-    streams: Arc<StdMutex<HashMap<UtpRouteKey, UtpRoute>>>,
-    accepted_tx: mpsc::Sender<Result<UtpStream, UtpError>>,
-    accept_new_connections: Arc<AtomicBool>,
-    deadlines: UtpDeadlineScheduler,
-    memory: Arc<UtpMemoryBudget>,
-    _receive_memory: UtpMemoryReservation,
-    mut stop: watch::Receiver<bool>,
-) {
+async fn run_endpoint_recv(context: EndpointReceiveContext) {
+    let EndpointReceiveContext {
+        socket,
+        config,
+        streams,
+        accepted_tx,
+        accept_new_connections,
+        deadlines,
+        memory,
+        _receive_memory,
+        mut stop,
+    } = context;
     let mut buf = vec![0u8; config.max_datagram_len.saturating_add(1)];
     loop {
         let recv_result = tokio::select! {

@@ -8353,7 +8353,7 @@ async fn run_peer_loop(
 ) -> PeerLoopExit {
     let mut outstanding = Vec::<OutstandingRequest>::new();
     let upload_service = upload.upload_rate.network_budget.upload_service();
-    let mut upload_obligations = match upload_service.register(
+    let upload_obligations = match upload_service.register(
         upload.upload_rate.peer,
         upload.fast_negotiated,
         MAX_UPLOAD_WORK,
@@ -8537,7 +8537,7 @@ async fn run_peer_loop(
                         for reject in upload_obligations.on_local_choke() {
                             send_upload_obligation_reject(&mut peer_io, &upload, reject).await?;
                         }
-                        start_upload_reads(&mut upload_reads, &mut upload_obligations, &upload)?;
+                        start_upload_reads(&mut upload_reads, &upload_obligations, &upload)?;
                         if !upload.fast_negotiated {
                             // A local choke invalidates reads that were
                             // admitted under the previous upload state. Abort
@@ -8551,7 +8551,7 @@ async fn run_peer_loop(
                         upload_choked = false;
                         upload_obligations.on_local_unchoke();
                         peer_io.send(Message::Unchoke).await?;
-                        start_upload_reads(&mut upload_reads, &mut upload_obligations, &upload)?;
+                        start_upload_reads(&mut upload_reads, &upload_obligations, &upload)?;
                     }
                     PeerCommand::Shutdown => {
                         upload.upload_control.cancel();
@@ -8929,7 +8929,7 @@ async fn run_peer_loop(
                         match decision {
                             InboundDecision::Queue => start_upload_reads(
                                 &mut upload_reads,
-                                &mut upload_obligations,
+                                &upload_obligations,
                                 &upload,
                             )?,
                             InboundDecision::Reject(_) => {
@@ -9151,7 +9151,7 @@ async fn run_peer_loop(
                                 finish_upload_obligation(
                                     &mut peer_io,
                                     &upload,
-                                    &mut upload_obligations,
+                                    &upload_obligations,
                                     block_extent,
                                     InboundServed::Discarded,
                                 )
@@ -9194,7 +9194,7 @@ async fn run_peer_loop(
                         finish_upload_obligation(
                             &mut peer_io,
                             &upload,
-                            &mut upload_obligations,
+                            &upload_obligations,
                             block_extent,
                             InboundServed::Sent,
                         )
@@ -9208,7 +9208,7 @@ async fn run_peer_loop(
                         finish_upload_obligation(
                             &mut peer_io,
                             &upload,
-                            &mut upload_obligations,
+                            &upload_obligations,
                             block_extent,
                             InboundServed::Discarded,
                         )
@@ -9229,14 +9229,14 @@ async fn run_peer_loop(
                         finish_upload_obligation(
                             &mut peer_io,
                             &upload,
-                            &mut upload_obligations,
+                            &upload_obligations,
                             block_extent,
                             InboundServed::Failed,
                         )
                         .await?;
                     }
                 }
-                start_upload_reads(&mut upload_reads, &mut upload_obligations, &upload)?;
+                start_upload_reads(&mut upload_reads, &upload_obligations, &upload)?;
             }
             _ = timeout_tick.tick() => {
                 if last_activity.elapsed() > PEER_IDLE_TIMEOUT {
@@ -11409,7 +11409,7 @@ mod tests {
         .unwrap();
         let db = Arc::new(Mutex::new(conn));
         let (cmd_tx, cmd_rx) = mpsc::channel(1);
-        let mut task = TorrentTask::new(
+        let task = TorrentTask::new(
             meta,
             temp.path().to_path_buf(),
             true,

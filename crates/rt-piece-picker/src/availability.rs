@@ -965,7 +965,7 @@ mod tests {
             }
         }
 
-        assert!(av.buckets.capacity() >= max_peers + 1);
+        assert!(av.buckets.capacity() > max_peers);
         assert!(
             Availability::memory_bytes_upper_bound(piece_count, max_peers) >= av.memory_bytes(),
             "reserved bound must cover every live index allocation"

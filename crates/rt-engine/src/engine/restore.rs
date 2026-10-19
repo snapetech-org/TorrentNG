@@ -491,7 +491,7 @@ impl Engine {
                 if let Err(error) = spawn_result {
                     let _ = self.registry.write().await.remove(&row.info_hash);
                     self.restore_persisted_error_projection(
-                        &row,
+                        row,
                         "runtime",
                         &blob_path,
                         format!("could not restore torrent actor: {error}"),

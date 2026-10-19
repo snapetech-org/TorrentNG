@@ -2140,7 +2140,6 @@ mod tests {
                 misses: 4,
                 evictions: 3,
                 idle_closes: 5,
-                ..Default::default()
             },
             io_queue_depth: 2,
             hash_queue_depth: 1,

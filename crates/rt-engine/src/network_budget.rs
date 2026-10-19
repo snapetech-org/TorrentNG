@@ -448,14 +448,6 @@ impl SharedRateLimiter {
         self.limit_changed.cancel();
     }
 
-    pub(crate) async fn acquire(&self, bytes: u64) {
-        let cancellation = RateLimitCancellation::default();
-        let generation = cancellation.generation();
-        let _ = self
-            .acquire_or_cancelled(bytes, &cancellation, generation)
-            .await;
-    }
-
     pub(crate) async fn acquire_or_cancelled(
         &self,
         bytes: u64,

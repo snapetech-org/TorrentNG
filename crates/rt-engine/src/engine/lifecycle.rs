@@ -1552,14 +1552,15 @@ impl Engine {
 
     async fn restart_transfer_owner_after_failure(
         &mut self,
-        info_hash: &str,
-        owner: rt_db::TransferOwner,
+        intent: &rt_db::TransferCutoverRow,
         paused: bool,
         initial_state: TorrentState,
-        generation: i64,
         restore_actor: bool,
         reason: &str,
     ) -> CmdResult<()> {
+        let info_hash = intent.info_hash.as_str();
+        let owner = intent.owner;
+        let generation = intent.owner_generation;
         let db = self.db_executor();
         let hash = info_hash.to_owned();
         let current = db
@@ -1711,11 +1712,9 @@ impl Engine {
                 Err(error) => {
                     let rollback = self
                         .restart_transfer_owner_after_failure(
-                            info_hash,
-                            intent.owner,
+                            &intent,
                             initially_paused,
                             initial_state,
-                            intent.owner_generation,
                             true,
                             &error,
                         )
@@ -1731,11 +1730,9 @@ impl Engine {
             if let Err(error) = self.stop_torrent_actor_for_cutover(info_hash).await {
                 let rollback = self
                     .restart_transfer_owner_after_failure(
-                        info_hash,
-                        intent.owner,
+                        &intent,
                         was_paused,
                         initial_state,
-                        intent.owner_generation,
                         true,
                         &error,
                     )
@@ -1767,11 +1764,9 @@ impl Engine {
             let reason = format!("could not persist old-owner drain: {error}");
             let rollback = self
                 .restart_transfer_owner_after_failure(
-                    info_hash,
-                    intent.owner,
+                    &intent,
                     was_paused,
                     initial_state,
-                    intent.owner_generation,
                     was_active,
                     &reason,
                 )
@@ -1794,11 +1789,9 @@ impl Engine {
                 Err(error) => {
                     let rollback = self
                         .restart_transfer_owner_after_failure(
-                            info_hash,
-                            intent.owner,
+                            &intent,
                             was_paused,
                             initial_state,
-                            intent.owner_generation,
                             true,
                             &error,
                         )
@@ -1815,11 +1808,9 @@ impl Engine {
             if let Err(error) = self.wait_torrent_actor_ready(info_hash, &cmd_tx).await {
                 let rollback = self
                     .restart_transfer_owner_after_failure(
-                        info_hash,
-                        intent.owner,
+                        &intent,
                         was_paused,
                         initial_state,
-                        intent.owner_generation,
                         true,
                         &error,
                     )
@@ -1861,11 +1852,9 @@ impl Engine {
                 other => {
                     let rollback = self
                         .restart_transfer_owner_after_failure(
-                            info_hash,
-                            intent.owner,
+                            &intent,
                             was_paused,
                             initial_state,
-                            intent.owner_generation,
                             was_active,
                             &reason,
                         )

@@ -283,6 +283,7 @@ impl Default for TaskExits {
 impl TaskExits {
     /// A guard to move into the actor's future; dropping it (normal exit or
     /// unwinding panic) queues the hash.
+    #[allow(deprecated)] // AtomicU64::try_update is newer than the Rust 1.88 MSRV.
     pub(super) fn guard(&mut self, info_hash: &str) -> TaskExitGuard {
         let generation = self
             .next_generation
@@ -327,6 +328,7 @@ pub(super) struct TaskExitGuard {
     tx: mpsc::UnboundedSender<RuntimeTorrentExit>,
 }
 
+#[cfg(test)]
 impl TaskExitGuard {
     pub(super) fn generation(&self) -> u64 {
         self.notice

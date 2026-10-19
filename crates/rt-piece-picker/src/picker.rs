@@ -833,10 +833,10 @@ impl PiecePicker {
                 continue;
             };
             if state.block_received(block)
-                || !state
+                || state
                     .requested
                     .get(block)
-                    .is_some_and(|requested| *requested > 0)
+                    .is_none_or(|requested| *requested == 0)
             {
                 continue;
             }

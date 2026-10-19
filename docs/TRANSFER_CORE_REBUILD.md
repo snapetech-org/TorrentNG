@@ -408,17 +408,35 @@ peer-wire probes passed. These are diagnostic results without thresholds,
 physical-device qualification, or matched-client comparison. Logs are under
 `/tmp/tng-transfer-core-final-20261019.GSdus5/`.
 
-The `urtorrent` preflight could not start its pinned client because
+The pinned `urtorrent` preflight could not start its client because
 `io_uring_setup` returned `Cannot allocate memory`; no paired-client trial is
-qualified. Hosted Transfer Rebuild run
-[39233029958](https://github.com/snapetech-org/TorrentNG/actions/runs/39233029958)
+qualified. On `f7b7db6ab52645d23d429c60f8ef10c97fba9b06`, Release-note
+validation run [39250268316](https://github.com/snapetech-org/TorrentNG/actions/runs/39250268316)
+and CodeQL run
+[39250268368](https://github.com/snapetech-org/TorrentNG/actions/runs/39250268368)
+passed. CI run
+[39250268328](https://github.com/snapetech-org/TorrentNG/actions/runs/39250268328)
+failed only in strict stable Clippy (`bool_comparison`); this worktree fixes
+that and the related MSRV lint warnings, and both strict Clippy checks pass
+locally. Transfer Rebuild Qualification run
+[39250349300](https://github.com/snapetech-org/TorrentNG/actions/runs/39250349300)
 and Windows Smoke run
-[39233812206](https://github.com/snapetech-org/TorrentNG/actions/runs/39233812206)
-passed on `94c8c1b3ff14106db93ab1a9750a1bb00c808b7c`, before the latest
-harness-only change. The protected hardware lane was skipped. A read-only
-`kspls0` check confirmed the ext4 LVM path and 25 T free, but load averages
-were 89.93/89.71/94.70 with 17 users, so no new storage benchmark was run.
-Prior dedicated ext4 evidence remains tied to `eb5f3158`. See
+[39250349206](https://github.com/snapetech-org/TorrentNG/actions/runs/39250349206)
+passed; the protected hardware job was skipped. Backend Evidence run
+[39250349281](https://github.com/snapetech-org/TorrentNG/actions/runs/39250349281)
+passed its deterministic and live release-daemon fault matrices; public/client
+compatibility was still running at this check, and API/SSE load was not
+requested. These runs predate the pending lint-cleanup commit, so the final
+pushed source still needs fresh hosted evidence.
+
+On the current desktop, the seven ignored storage probes passed on the
+`nvme0n1p2` Btrfs volume (`profile=Nvme`, COW enabled, `auto` selected
+io_uring), and the 64 MiB move/import/delete probe passed on the same volume.
+These are local results, not target-server LVM qualification. The protected
+GitHub repository currently has no self-hosted runners. A fresh read-only
+`kspls0` check found load averages of 107.32/136.01/125.26 with 17 users, so
+no new server storage run was made. Prior dedicated ext4 evidence remains
+tied to `eb5f3158`. See
 [`TRANSFER_CORE_ACTIVE_SPECS.md`](TRANSFER_CORE_ACTIVE_SPECS.md) for commands,
 logs, artifact digests, and open gates.
 
@@ -757,3 +775,4 @@ cross-path correctness evidence.
 | 2026-10-19 | PERF-103 runner closure pass: repeated runner and preflight CLI options now fail closed, parser regressions cover duplicate options, endpoint/namespace policy, path collisions, and seed-window bounds, and hosted qualification now formats, builds, and tests the release runner on pinned Rust 1.98.1. No exact-source validation has run yet; Linux io_uring preflight and pinned-client qualification remain open. |
 | 2026-10-19 | Bulk validation found `db_worker::tests::cancelled_queued_operation_is_not_applied` timing out before its first operation started under heavy host load; the isolated case passed. Increased only the startup readiness bound from one to five seconds without changing the cancellation assertions. The consolidated rerun recorded above passed both toolchains. |
 | 2026-10-19 | The full-engine restart invariant also timed out during the parallel workspace pass; an isolated rerun passed in 35 seconds. Its state-convergence wait was raised from 20 to 60 seconds because this is a correctness gate, not a latency benchmark. The exact-source bulk rerun recorded above passed both toolchains. |
+| 2026-10-19 | Final lint and bulk validation on the worktree based on `f7b7db6a`: Clippy passed with `-D warnings` on stable and Rust 1.88; formatting passed on Rust 1.94 and 1.88; both full workspace all-target suites passed 2,301/0/12; release `rt-engine` passed 733/733; all 21 transfer-rebuild Python scripts passed. Seven ignored storage probes and the 64 MiB move/import/delete probe passed on the desktop NVMe Btrfs volume. Rust benchmark targets ran as part of the workspace suite; their single-run catalog/picker timings are diagnostic only. No paired-client, protected-hardware, target-LVM, crash-cut, soak/canary, independent-review, or release-bundle gate is closed by these local runs. Hosted checks for the final lint-cleanup commit remain pending. |

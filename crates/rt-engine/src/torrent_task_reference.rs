@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Retained as the selectable v1/hybrid reference actor.
+
 /// Per-torrent async task.
 ///
 /// One tokio task per torrent owns: tracker announce loop, peer connection
@@ -16,8 +18,6 @@ use reqwest::header::{CONTENT_RANGE, RANGE};
 use reqwest::StatusCode;
 use rt_bencode::{BValue, Decoder};
 use rusqlite::Connection;
-#[cfg(test)]
-use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit, RwLock};
 use tokio::time::{interval, sleep, timeout, Instant as TokioInstant, Sleep};
@@ -33,8 +33,6 @@ use rt_fastresume::{
     MAX_FASTRESUME_BLOCKS_PER_PARTIAL_PIECE,
 };
 use rt_hash::V2_BLOCK_SIZE;
-#[cfg(test)]
-use rt_metainfo::{torrent_info_bytes, TorrentMeta};
 use rt_metainfo::{
     torrent_info_bytes_with_allocation_reservation, TorrentFileV1, TorrentMetaV1, TorrentMetaV2,
 };
@@ -57,8 +55,6 @@ use rt_storage::{
     HybridV2PieceExpectation, IoClass, MountScheduler, PieceVerifier, SchedulerConfig,
     StorageIoConfig, VerifyResult,
 };
-#[cfg(test)]
-use rt_tracker::{AnnounceResponse, TrackerError};
 use rt_tracker::{
     TrackerEvent, TrackerState, TrackerStatus, MAX_TRACKER_PEERS, MAX_TRACKER_STATE_ID_BYTES,
     MAX_TRACKER_STATE_TEXT_BYTES,
@@ -1865,7 +1861,7 @@ impl HybridV2Meta {
 }
 
 #[derive(Clone)]
-struct TransferIoContext {
+pub(super) struct TransferIoContext {
     meta: Arc<TorrentMetaV1>,
     piece_map: Arc<PieceMap>,
     save_root: PathBuf,
@@ -8795,11 +8791,9 @@ fn take_matching_outstanding(
     begin: u32,
     length: u32,
 ) -> Option<OutstandingRequest> {
-    let Some(pos) = outstanding.iter().position(|out| {
+    let pos = outstanding.iter().position(|out| {
         out.req.piece == piece && out.req.begin == begin && out.req.length == length
-    }) else {
-        return None;
-    };
+    })?;
     Some(outstanding.swap_remove(pos))
 }
 

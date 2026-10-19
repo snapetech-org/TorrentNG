@@ -7,6 +7,8 @@
 //! actor separate prevents a v2 compatibility path from silently changing v1
 //! semantics.
 
+#![allow(dead_code)] // Retained as the selectable pure-v2 reference actor.
+
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -555,6 +557,7 @@ impl V2PeerContext {
     }
 
     fn next_piece_attempt_generation(&self) -> u64 {
+        #[allow(deprecated)] // AtomicU64::try_update is newer than the Rust 1.88 MSRV.
         self.piece_attempt_generation
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |generation| {
                 generation.checked_add(1)
@@ -2598,8 +2601,8 @@ impl V2TorrentTask {
         };
         let snapshots = self
             .peers
-            .iter()
-            .filter_map(|(_, handle)| {
+            .values()
+            .filter_map(|handle| {
                 let state = handle.state.lock().ok()?;
                 Some(PeerSnapshot {
                     id: handle.choker_id,
@@ -2617,8 +2620,8 @@ impl V2TorrentTask {
         let decisions = self.choker.run_with_mode(&snapshots, mode);
         let selected = self
             .peers
-            .iter()
-            .filter_map(|(_, handle)| {
+            .values()
+            .filter_map(|handle| {
                 (decisions.get(&handle.choker_id) == Some(&ChokeDecision::Unchoke))
                     .then_some(handle.choker_id)
             })
@@ -3417,7 +3420,7 @@ fn set_v2_upload_unchoked(state: &Arc<Mutex<V2PeerState>>, unchoked: bool) -> Op
 
 fn v2_upload_slot_selected(context: &V2PeerContext) -> bool {
     let selected = context.upload_unchoked.borrow();
-    v2_slot_selected(&**selected, context.choker_id)
+    v2_slot_selected(&selected, context.choker_id)
 }
 
 fn v2_slot_selected(selected: &HashSet<PeerId>, peer: PeerId) -> bool {
@@ -3434,8 +3437,8 @@ async fn run_v2_peer_protocol(
 ) -> anyhow::Result<()> {
     let _upload_control_guard = V2UploadControlGuard(context.upload_control.clone());
     let shutdown_generation = context.peer_generation;
-    if remote_supports_extension {
-        if !send_v2_peer_message(
+    if remote_supports_extension
+        && !send_v2_peer_message(
             &context,
             &mut framed,
             Message::Extended {
@@ -3444,9 +3447,8 @@ async fn run_v2_peer_protocol(
             },
         )
         .await?
-        {
-            return Ok(());
-        }
+    {
+        return Ok(());
     }
     let mut have_updates = context.have_updates.subscribe();
     let mut upload_unchoked = context.upload_unchoked.clone();
@@ -3500,7 +3502,7 @@ async fn run_v2_peer_protocol(
                 context.upload_control.cancel();
                 let selected = {
                     let current = upload_unchoked.borrow();
-                    v2_slot_selected(&**current, context.choker_id)
+                    v2_slot_selected(&current, context.choker_id)
                 };
                 if let Some(message) = set_v2_upload_unchoked(&state, selected) {
                     if !send_v2_peer_message(&context, &mut framed, message).await? {
@@ -3576,11 +3578,13 @@ async fn run_v2_peer_protocol(
                             &context,
                             &mut framed,
                             &state,
-                            &mut outstanding,
-                            &mut assemblies,
-                            transfer_jobs.len(),
-                            &pending_block_completions,
-                            &pending_piece_completions,
+                            V2RequestFillState {
+                                outstanding: &mut outstanding,
+                                assemblies: &mut assemblies,
+                                active_transfer_jobs: transfer_jobs.len(),
+                                pending_block_completions: &pending_block_completions,
+                                pending_piece_completions: &pending_piece_completions,
+                            },
                         ).await?;
                     }
                     Message::Have(piece) => {
@@ -3602,11 +3606,13 @@ async fn run_v2_peer_protocol(
                             &context,
                             &mut framed,
                             &state,
-                            &mut outstanding,
-                            &mut assemblies,
-                            transfer_jobs.len(),
-                            &pending_block_completions,
-                            &pending_piece_completions,
+                            V2RequestFillState {
+                                outstanding: &mut outstanding,
+                                assemblies: &mut assemblies,
+                                active_transfer_jobs: transfer_jobs.len(),
+                                pending_block_completions: &pending_block_completions,
+                                pending_piece_completions: &pending_piece_completions,
+                            },
                         ).await?;
                     }
                     Message::HaveAll => {
@@ -3625,11 +3631,13 @@ async fn run_v2_peer_protocol(
                             &context,
                             &mut framed,
                             &state,
-                            &mut outstanding,
-                            &mut assemblies,
-                            transfer_jobs.len(),
-                            &pending_block_completions,
-                            &pending_piece_completions,
+                            V2RequestFillState {
+                                outstanding: &mut outstanding,
+                                assemblies: &mut assemblies,
+                                active_transfer_jobs: transfer_jobs.len(),
+                                pending_block_completions: &pending_block_completions,
+                                pending_piece_completions: &pending_piece_completions,
+                            },
                         ).await?;
                     }
                     Message::HaveNone => {
@@ -3653,11 +3661,13 @@ async fn run_v2_peer_protocol(
                             &context,
                             &mut framed,
                             &state,
-                            &mut outstanding,
-                            &mut assemblies,
-                            transfer_jobs.len(),
-                            &pending_block_completions,
-                            &pending_piece_completions,
+                            V2RequestFillState {
+                                outstanding: &mut outstanding,
+                                assemblies: &mut assemblies,
+                                active_transfer_jobs: transfer_jobs.len(),
+                                pending_block_completions: &pending_block_completions,
+                                pending_piece_completions: &pending_piece_completions,
+                            },
                         ).await?;
                     }
                     Message::Choke => {
@@ -3763,11 +3773,13 @@ async fn run_v2_peer_protocol(
                             &context,
                             &mut framed,
                             &state,
-                            &mut outstanding,
-                            &mut assemblies,
-                            transfer_jobs.len(),
-                            &pending_block_completions,
-                            &pending_piece_completions,
+                            V2RequestFillState {
+                                outstanding: &mut outstanding,
+                                assemblies: &mut assemblies,
+                                active_transfer_jobs: transfer_jobs.len(),
+                                pending_block_completions: &pending_block_completions,
+                                pending_piece_completions: &pending_piece_completions,
+                            },
                         ).await?;
                     }
                     // BEP 6 Fast extension: TorrentNG does not bypass its
@@ -3802,11 +3814,13 @@ async fn run_v2_peer_protocol(
                             &context,
                             &mut framed,
                             &state,
-                            &mut outstanding,
-                            &mut assemblies,
-                            transfer_jobs.len(),
-                            &pending_block_completions,
-                            &pending_piece_completions,
+                            V2RequestFillState {
+                                outstanding: &mut outstanding,
+                                assemblies: &mut assemblies,
+                                active_transfer_jobs: transfer_jobs.len(),
+                                pending_block_completions: &pending_block_completions,
+                                pending_piece_completions: &pending_piece_completions,
+                            },
                         ).await?;
                     }
                     Message::HashRequest { pieces_root, base_layer, index, length, proof_layers } => {
@@ -3840,11 +3854,13 @@ async fn run_v2_peer_protocol(
                     &context,
                     &mut framed,
                     &state,
-                    &mut outstanding,
-                    &mut assemblies,
-                    transfer_jobs.len(),
-                    &pending_block_completions,
-                    &pending_piece_completions,
+                    V2RequestFillState {
+                        outstanding: &mut outstanding,
+                        assemblies: &mut assemblies,
+                        active_transfer_jobs: transfer_jobs.len(),
+                        pending_block_completions: &pending_block_completions,
+                        pending_piece_completions: &pending_piece_completions,
+                    },
                 )
                 .await?;
             }
@@ -3854,13 +3870,11 @@ async fn run_v2_peer_protocol(
                 };
                 match completion {
                     V2TransferCompletion::BlockStored(completion) => {
-                        if let Err(error) = apply_v2_block_completion(
+                        apply_v2_block_completion(
                             completion,
                             &mut assemblies,
                             &mut pending_block_completions,
-                        ) {
-                            return Err(error);
-                        }
+                        )?;
                     }
                     V2TransferCompletion::BlockAdmissionCancelled {
                         piece,
@@ -3912,11 +3926,13 @@ async fn run_v2_peer_protocol(
                     &context,
                     &mut framed,
                     &state,
-                    &mut outstanding,
-                    &mut assemblies,
-                    transfer_jobs.len(),
-                    &pending_block_completions,
-                    &pending_piece_completions,
+                    V2RequestFillState {
+                        outstanding: &mut outstanding,
+                        assemblies: &mut assemblies,
+                        active_transfer_jobs: transfer_jobs.len(),
+                        pending_block_completions: &pending_block_completions,
+                        pending_piece_completions: &pending_piece_completions,
+                    },
                 ).await?;
             }
             upload_result = upload_reads.next(), if !upload_reads.is_empty() => {
@@ -4010,18 +4026,16 @@ async fn run_v2_peer_protocol(
                             if !upload_obligations.requeue_front(block) {
                                 anyhow::bail!("v2 upload obligation could not be requeued");
                             }
-                        } else {
-                            if !finish_v2_upload_obligation(
-                                &context,
-                                &mut framed,
-                                &mut upload_obligations,
-                                block,
-                                InboundServed::Discarded,
-                            )
-                            .await?
-                            {
-                                return Ok(());
-                            }
+                        } else if !finish_v2_upload_obligation(
+                            &context,
+                            &mut framed,
+                            &mut upload_obligations,
+                            block,
+                            InboundServed::Discarded,
+                        )
+                        .await?
+                        {
+                            return Ok(());
                         }
                     }
                     V2UploadOutcome::Failed(error) => {
@@ -4192,16 +4206,27 @@ async fn update_v2_interest(
     Ok(())
 }
 
+struct V2RequestFillState<'a> {
+    outstanding: &'a mut HashMap<(u32, u32), V2OutstandingRequest>,
+    assemblies: &'a mut HashMap<u32, V2PieceAssembly>,
+    active_transfer_jobs: usize,
+    pending_block_completions: &'a HashMap<(u32, u32), V2PendingCompletion>,
+    pending_piece_completions: &'a HashMap<u32, V2PendingCompletion>,
+}
+
 async fn fill_v2_requests(
     context: &V2PeerContext,
     framed: &mut PeerIo,
     state: &Arc<Mutex<V2PeerState>>,
-    outstanding: &mut HashMap<(u32, u32), V2OutstandingRequest>,
-    assemblies: &mut HashMap<u32, V2PieceAssembly>,
-    active_transfer_jobs: usize,
-    pending_block_completions: &HashMap<(u32, u32), V2PendingCompletion>,
-    pending_piece_completions: &HashMap<u32, V2PendingCompletion>,
+    fill: V2RequestFillState<'_>,
 ) -> anyhow::Result<()> {
+    let V2RequestFillState {
+        outstanding,
+        assemblies,
+        active_transfer_jobs,
+        pending_block_completions,
+        pending_piece_completions,
+    } = fill;
     if context.peer_control.generation() != context.peer_generation {
         return Ok(());
     }
