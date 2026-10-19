@@ -5,6 +5,7 @@ import io
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -16,6 +17,42 @@ from scripts import backend_burndown_api_load as load
 
 
 class ApiLoadSecurityTests(unittest.TestCase):
+    def test_slow_sse_timeout_allows_server_keepalive_gap(self) -> None:
+        class Response:
+            def __init__(self, timeout: float) -> None:
+                self.timeout = timeout
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback) -> None:
+                return None
+
+            def read(self, _size: int) -> bytes:
+                if self.timeout <= load.SSE_KEEPALIVE_INTERVAL_SECONDS:
+                    raise TimeoutError("timed out waiting for SSE keepalive")
+                return b""
+
+        observed_timeouts: list[float] = []
+
+        def fake_open_direct(_request, timeout: float):
+            observed_timeouts.append(timeout)
+            return Response(timeout)
+
+        stats = load.LoadStats()
+        with patch.object(load, "open_direct", side_effect=fake_open_direct):
+            load.slow_sse_client(
+                "http://127.0.0.1:28080",
+                "test-token",
+                time.monotonic() + 1.0,
+                0.0,
+                stats,
+            )
+
+        self.assertEqual(observed_timeouts, [load.SSE_READ_TIMEOUT_SECONDS])
+        self.assertEqual(stats.sse["completed"], 1)
+        self.assertEqual(stats.sse["errors"], 0)
+
     def test_opener_bypasses_ambient_proxies_and_refuses_redirects(self) -> None:
         self.assertFalse(any(isinstance(handler, ProxyHandler) for handler in load.HTTP.handlers))
 

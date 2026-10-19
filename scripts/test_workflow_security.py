@@ -83,6 +83,29 @@ def run_interop_preflight(
 
 
 class WorkflowSecurityTests(unittest.TestCase):
+    def test_backend_api_load_uses_an_isolated_default_target(self) -> None:
+        workflow = (WORKFLOWS / "backend-evidence.yml").read_text(encoding="utf-8")
+        api_job = workflow.split("  api-load:\n", 1)[1].split(
+            "\n  public-compatibility:", 1
+        )[0]
+
+        self.assertIn("isolated local daemon when blank", workflow)
+        self.assertIn('if [[ -z "${TNG_BASE_URL:-}" ]]; then', api_job)
+        self.assertIn("scripts/backend_burndown_api_load_local.sh", api_job)
+        self.assertIn('if [[ -z "${TNG_API_TOKEN:-}" ]]; then', api_job)
+        self.assertIn("scripts/backend_burndown_api_load.py", api_job)
+        self.assertIn("TNG_PROTECTED_TARGET_ALLOWED_ORIGINS", api_job)
+        self.assertIn("persist-credentials: false", api_job)
+
+        local_runner = (ROOT / "scripts" / "backend_burndown_api_load_local.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('task_dir="$(mktemp -d', local_runner)
+        self.assertIn('trap cleanup EXIT', local_runner)
+        self.assertIn('api_bind = "127.0.0.1:{port}"', local_runner)
+        self.assertIn("secrets.token_hex(32)", local_runner)
+        self.assertIn('rm -rf -- "$task_dir"', local_runner)
+
     def assert_transfer_hardware_runner_is_opt_in_and_main_only(
         self, source: str
     ) -> None:

@@ -42,6 +42,8 @@ ENDPOINTS = (
 )
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MAX_LOAD_WORKERS = 96
+SSE_KEEPALIVE_INTERVAL_SECONDS = 15.0
+SSE_READ_TIMEOUT_SECONDS = 30.0
 
 
 class NoRedirectHandler(HTTPRedirectHandler):
@@ -179,7 +181,10 @@ def slow_sse_client(base: str, token: str, deadline: float, delay: float, stats:
     request = Request(base + "/api/v1/events?batch_size=1", headers=headers, method="GET")
     stats.sse_update("started")
     try:
-        with open_direct(request, 5.0) as response:
+        # Axum's default SSE keepalive interval is 15 seconds. A shorter
+        # socket timeout turns a healthy slow consumer into a false disconnect
+        # while it waits for the next keepalive frame.
+        with open_direct(request, SSE_READ_TIMEOUT_SECONDS) as response:
             line = bytearray()
             while time.monotonic() < deadline:
                 chunk = response.read(1)
