@@ -47,7 +47,7 @@ struct Args {
 }
 
 fn usage() -> &'static str {
-    "urtorrent-runner --mode download|seed --namespace tngt-NAME --torrent FILE \
+    "urtorrent-runner --mode download|seed --namespace tngt-NAME|tngs-NAME --torrent FILE \
      --save-path DIR --pid-file FILE --settings-file FILE --start-gate FILE --ready-file FILE \
      --stop-file FILE \
      --listen-v4 IP --peer IPv4:PORT [--max-connections N] [--max-peers N] \
@@ -232,7 +232,11 @@ fn parse_trial_args(values: impl IntoIterator<Item = String>) -> anyhow::Result<
     {
         bail!("runner control paths must be distinct");
     }
-    let namespace_suffix = args.namespace.strip_prefix("tngt-").unwrap_or_default();
+    let namespace_suffix = args
+        .namespace
+        .strip_prefix("tngt-")
+        .or_else(|| args.namespace.strip_prefix("tngs-"))
+        .unwrap_or_default();
     if namespace_suffix.is_empty()
         || namespace_suffix.len() > 32
         || !(namespace_suffix.as_bytes()[0].is_ascii_lowercase()
@@ -242,7 +246,7 @@ fn parse_trial_args(values: impl IntoIterator<Item = String>) -> anyhow::Result<
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
     {
-        bail!("--namespace must be a task-owned tngt-* namespace");
+        bail!("--namespace must be a task-owned tngt-* or tngs-* namespace");
     }
     if args.max_connections == 0
         || args.max_peers == 0
@@ -837,6 +841,15 @@ mod tests {
         assert_eq!(parsed.namespace, "tngt-unit");
         assert_eq!(parsed.listen_v4, Ipv4Addr::new(10, 0, 0, 2));
         assert_eq!(parsed.peer.to_string(), "10.0.0.3:5000");
+
+        let mut seed_namespace = valid_trial_args();
+        replace_value(&mut seed_namespace, "--namespace", "tngs-unit");
+        assert_eq!(
+            parse_trial_args(seed_namespace)
+                .expect("valid seed namespace")
+                .namespace,
+            "tngs-unit"
+        );
     }
 
     #[test]

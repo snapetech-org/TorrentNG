@@ -751,6 +751,31 @@ def _task_network_errors(observation: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _scorecard_errors(artifact: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    for index, group in enumerate(artifact.get("groups", [])):
+        fixture_digests = group.get("fixture_sha256s")
+        if fixture_digests is None:
+            continue  # Older scorecards recorded only one fixture digest.
+        expected_digest = (
+            fixture_digests[0]
+            if len(fixture_digests) == 1
+            else hashlib.sha256(
+                json.dumps(
+                    fixture_digests,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                ).encode()
+            ).hexdigest()
+        )
+        if group["fixture_sha256"] != expected_digest:
+            errors.append(
+                f"$.groups[{index}].fixture_sha256: does not match the recorded fixture set"
+            )
+    return errors
+
+
 def _canonical_record_digest(record: dict[str, Any]) -> str:
     unsigned = {key: value for key, value in record.items() if key != "artifact_sha256"}
     canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
@@ -2170,6 +2195,8 @@ def validate(
         formatted.extend(f"$.{error}" for error in _network_control_errors(artifact))
     if kind == "task-network" and not formatted and isinstance(artifact, dict):
         formatted.extend(f"$.{error}" for error in _task_network_errors(artifact))
+    if kind == "scorecard" and not formatted and isinstance(artifact, dict):
+        formatted.extend(_scorecard_errors(artifact))
     if kind == "task-tracker" and not formatted and isinstance(artifact, dict):
         formatted.extend(f"$.{error}" for error in _task_tracker_errors(artifact))
     if kind == "retargeted-metainfo" and not formatted and isinstance(artifact, dict):

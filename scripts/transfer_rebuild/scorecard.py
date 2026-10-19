@@ -65,23 +65,43 @@ def _canonical(value: Any) -> bytes:
     ).encode("utf-8")
 
 
-def _comparison_signature(trial: dict[str, Any]) -> tuple[str, str, str, str, str]:
-    workload = trial["workload"]
+def _normalized_environment(
+    trial: dict[str, Any], *, include_control_seeds: bool
+) -> dict[str, Any]:
     environment = json.loads(json.dumps(trial["environment"]))
     environment.pop("independent_ceiling_sha256", None)
-    environment["network"].pop("control_observation_sha256s", None)
+    environment.pop("cache_state_observation_sha256", None)
+    network = environment.get("network")
+    if isinstance(network, dict):
+        network.pop("control_observation_sha256s", None)
+        network.pop("task_topology_sha256", None)
+        if not include_control_seeds:
+            network.pop("control_prng_seeds", None)
+    return environment
+
+
+def _comparison_signature(trial: dict[str, Any]) -> tuple[str, str, str, str]:
+    workload = dict(trial["workload"])
+    workload.pop("fixture_sha256", None)
     signature = {
         "workload": workload,
-        "environment": environment,
+        "environment": _normalized_environment(trial, include_control_seeds=False),
     }
     signature_digest = hashlib.sha256(_canonical(signature)).hexdigest()
     return (
         workload["case_id"],
         workload["kind"],
         workload.get("protocol", "unspecified"),
-        workload["fixture_sha256"],
         signature_digest,
     )
+
+
+def _pair_signature(trial: dict[str, Any]) -> str:
+    signature = {
+        "workload": trial["workload"],
+        "environment": _normalized_environment(trial, include_control_seeds=True),
+    }
+    return hashlib.sha256(_canonical(signature)).hexdigest()
 
 
 def _client_key(trial: dict[str, Any]) -> str:
@@ -92,6 +112,10 @@ def _client_key(trial: dict[str, Any]) -> str:
 def _eligibility_reason(trial: dict[str, Any]) -> str | None:
     if trial["outcome"]["status"] != "complete":
         return f"outcome is {trial['outcome']['status']}"
+    if trial["environment"].get("cache_state") not in {"cold", "warm"}:
+        return "cache state was not verified"
+    if trial["environment"].get("cache_state_observation_sha256") is None:
+        return "cache-state observation is not linked"
     if trial["resources"].get("raw_artifact_sha256") is None:
         return "resource observer artifact is not linked"
     kind = trial["workload"]["kind"]
@@ -214,7 +238,13 @@ def analyze_trials(
 
     result: list[dict[str, Any]] = []
     for signature, group in sorted(_group_trials(trials).items()):
-        case_id, kind, protocol, fixture_digest, signature_digest = signature
+        case_id, kind, protocol, signature_digest = signature
+        fixture_digests = sorted({trial["workload"]["fixture_sha256"] for trial in group})
+        fixture_digest = (
+            fixture_digests[0]
+            if len(fixture_digests) == 1
+            else hashlib.sha256(_canonical(fixture_digests)).hexdigest()
+        )
         grouped_pairs: dict[str, list[dict[str, Any]]] = {}
         for trial in group:
             grouped_pairs.setdefault(trial["pair_id"], []).append(trial)
@@ -222,15 +252,20 @@ def analyze_trials(
         valid_pairs: dict[str, dict[str, dict[str, Any]]] = {}
         excluded_pairs: list[dict[str, str]] = []
         for pair_id, records in sorted(grouped_pairs.items()):
+            if len({_pair_signature(record) for record in records}) != 1:
+                excluded_pairs.append(
+                    {"pair_id": pair_id, "reason": "paired workload or environment settings differ"}
+                )
+                continue
             reasons = [
                 reason
                 for record in records
                 if (reason := _eligibility_reason(record)) is not None
             ]
-            clients = [_client_key(record) for record in records]
             if reasons:
                 excluded_pairs.append({"pair_id": pair_id, "reason": "; ".join(sorted(set(reasons)))})
                 continue
+            clients = [_client_key(record) for record in records]
             if len(set(clients)) != len(clients):
                 excluded_pairs.append({"pair_id": pair_id, "reason": "duplicate client trial in pair"})
                 continue
@@ -342,6 +377,7 @@ def analyze_trials(
                 "kind": kind,
                 "protocol": protocol,
                 "fixture_sha256": fixture_digest,
+                "fixture_sha256s": fixture_digests,
                 "comparison_signature_sha256": signature_digest,
                 "paired_release_sample_minimum": minimum_pairs,
                 "valid_pair_count": len(valid_pairs),

@@ -25,6 +25,7 @@ from network_control import (  # noqa: E402
     profile_settings,
     reset_profile,
 )
+from task_network import INTERFACE_NAME  # noqa: E402
 
 TOOLCHAIN_SHA = hashlib.sha256(b'{"ip":"ip v1","tc":"tc v1"}').hexdigest()
 
@@ -64,7 +65,10 @@ def netem_root(
 
 class TransferNetworkControlTests(unittest.TestCase):
     def test_network_names_are_limited_to_task_owned_namespace_and_veth(self) -> None:
-        _validate_names("tngt-case-1", "tngt0")
+        self.assertEqual(INTERFACE_NAME, "tngveth0")
+        for namespace in ("tngt-case-1", "tngs-case-1"):
+            _validate_names(namespace, INTERFACE_NAME)
+            _validate_names(namespace, "tngt0")
         with self.assertRaises(NetworkControlError):
             _validate_names("default", "tngt0")
         with self.assertRaises(NetworkControlError):

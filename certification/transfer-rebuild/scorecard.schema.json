@@ -83,6 +83,7 @@
         "kind": { "type": "string", "minLength": 1 },
         "protocol": { "type": "string", "minLength": 1 },
         "fixture_sha256": { "$ref": "#/$defs/sha256" },
+        "fixture_sha256s": { "type": "array", "items": { "$ref": "#/$defs/sha256" }, "minItems": 1, "uniqueItems": true },
         "comparison_signature_sha256": { "$ref": "#/$defs/sha256" },
         "paired_release_sample_minimum": { "type": "integer", "minimum": 1 },
         "valid_pair_count": { "type": "integer", "minimum": 0 },

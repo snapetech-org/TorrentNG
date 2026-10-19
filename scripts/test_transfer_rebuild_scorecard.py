@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import sys
+import hashlib
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -42,6 +43,8 @@ def trial(
         },
         "environment": {
             "independent_ceiling_sha256": ceiling_sha256,
+            "cache_state": "cold",
+            "cache_state_observation_sha256": "f" * 64,
             "network": {"control_observation_sha256s": [control_sha256]},
         },
         "outcome": {"status": outcome},
@@ -89,6 +92,62 @@ class PairedScorecardTests(unittest.TestCase):
                 self.assertEqual(group["clients"], [])
                 self.assertIn(reason, group["excluded_pairs"][0]["reason"])
 
+    def test_unmeasured_pair_without_client_identity_is_excluded(self) -> None:
+        records = [
+            trial("torrentngd", outcome="unmeasured"),
+            trial("qbittorrent", outcome="unmeasured"),
+        ]
+        for record in records:
+            record["client_identity"] = None
+
+        group = analyze_trials(records, bootstrap_samples=1_000)[0]
+
+        self.assertEqual(group["valid_pair_count"], 0)
+        self.assertEqual(group["clients"], [])
+        self.assertIn("outcome is unmeasured", group["excluded_pairs"][0]["reason"])
+
+    def test_distinct_paired_fixtures_and_random_seeds_share_one_group(self) -> None:
+        records = []
+        fixtures = ["d" * 64, "e" * 64]
+        for index, fixture_sha256 in enumerate(fixtures):
+            pair_records = [
+                trial("torrentngd", pair_id=f"pair-{index}"),
+                trial("qbittorrent", pair_id=f"pair-{index}"),
+            ]
+            for record in pair_records:
+                record["workload"]["fixture_sha256"] = fixture_sha256
+                network = record["environment"]["network"]
+                network["task_topology_sha256"] = f"{index + 1:064x}"
+                network["control_prng_seeds"] = [index + 1, index + 101]
+                network["control_observation_sha256s"] = [f"{index + 2:064x}"]
+            records.extend(pair_records)
+
+        groups = analyze_trials(records, bootstrap_samples=1_000, minimum_pairs=2)
+
+        self.assertEqual(len(groups), 1)
+        group = groups[0]
+        self.assertEqual(group["valid_pair_count"], 2)
+        self.assertEqual(group["fixture_sha256s"], fixtures)
+        self.assertEqual(
+            group["comparisons"][0]["metrics"]["goodput_bytes_per_second"][
+                "paired_sample_count"
+            ],
+            2,
+        )
+
+    def test_pair_with_different_network_seeds_is_excluded(self) -> None:
+        records = [trial("torrentngd"), trial("qbittorrent")]
+        records[0]["environment"]["network"]["control_prng_seeds"] = [1, 2]
+        records[1]["environment"]["network"]["control_prng_seeds"] = [1, 3]
+
+        group = analyze_trials(records, bootstrap_samples=1_000)[0]
+
+        self.assertEqual(group["valid_pair_count"], 0)
+        self.assertIn(
+            "paired workload or environment settings differ",
+            group["excluded_pairs"][0]["reason"],
+        )
+
     def test_legacy_complete_pair_without_resource_provenance_is_excluded(self) -> None:
         records = [trial("torrentngd"), trial("qbittorrent")]
         for record in records:
@@ -101,6 +160,16 @@ class PairedScorecardTests(unittest.TestCase):
             "resource observer artifact is not linked",
             group["excluded_pairs"][0]["reason"],
         )
+
+    def test_unverified_cache_state_excludes_complete_pair(self) -> None:
+        records = [trial("torrentngd"), trial("qbittorrent")]
+        for record in records:
+            record["environment"]["cache_state"] = "unknown"
+
+        group = analyze_trials(records, bootstrap_samples=1_000)[0]
+
+        self.assertEqual(group["valid_pair_count"], 0)
+        self.assertIn("cache state was not verified", group["excluded_pairs"][0]["reason"])
 
     def test_duplicate_client_record_excludes_pair(self) -> None:
         records = [trial("torrentngd"), trial("torrentngd")]
@@ -146,6 +215,10 @@ class PairedScorecardTests(unittest.TestCase):
 
 class ScorecardSchemaTests(unittest.TestCase):
     def test_versioned_scorecard_schema_rejects_threshold_claims(self) -> None:
+        fixture_digests = ["d" * 64, "e" * 64]
+        fixture_set_sha256 = hashlib.sha256(
+            json.dumps(fixture_digests, separators=(",", ":")).encode()
+        ).hexdigest()
         scorecard = {
             "schema_version": "transfer-scorecard-v1",
             "created_at": "2026-10-17T12:00:00Z",
@@ -159,13 +232,30 @@ class ScorecardSchemaTests(unittest.TestCase):
                 "minimum_paired_release_trials": 10,
                 "performance_thresholds_applied": False,
             },
-            "groups": [],
+            "groups": [
+                {
+                    "case_id": "N1/lan_1g",
+                    "kind": "download",
+                    "protocol": "v1",
+                    "fixture_sha256": fixture_set_sha256,
+                    "fixture_sha256s": fixture_digests,
+                    "comparison_signature_sha256": "b" * 64,
+                    "paired_release_sample_minimum": 10,
+                    "valid_pair_count": 0,
+                    "excluded_pairs": [],
+                    "clients": [],
+                    "comparisons": [],
+                }
+            ],
         }
         with tempfile.TemporaryDirectory(prefix="transfer-scorecard-") as temporary:
             path = Path(temporary) / "scorecard.json"
             path.write_text(json.dumps(scorecard), encoding="utf-8")
 
             self.assertEqual(validate("scorecard", path), [])
+            scorecard["groups"][0]["fixture_sha256"] = "f" * 64
+            path.write_text(json.dumps(scorecard), encoding="utf-8")
+            self.assertIn("fixture set", " ".join(validate("scorecard", path)))
             scorecard["analysis"]["performance_thresholds_applied"] = True
             path.write_text(json.dumps(scorecard), encoding="utf-8")
             self.assertTrue(validate("scorecard", path))

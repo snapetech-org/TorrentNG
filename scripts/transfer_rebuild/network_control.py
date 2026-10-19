@@ -29,8 +29,8 @@ TIMEOUT_SECONDS = 10
 DEFAULT_SEED = 1
 MAX_SEED = (1 << 64) - 1
 _LEGACY_PROFILE_KEYS = ("delay_ms", "rate_bps", "limit_packets")
-NETNS_RE = re.compile(r"^tngt-[a-z0-9][a-z0-9-]{0,31}$")
-INTERFACE_RE = re.compile(r"^tngt[a-z0-9][a-z0-9_.-]{0,9}$")
+NETNS_RE = re.compile(r"^tng[ts]-[a-z0-9][a-z0-9-]{0,31}$")
+INTERFACE_RE = re.compile(r"^(?:tngt[a-z0-9][a-z0-9_.-]{0,9}|tngveth0)$")
 SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 
 # Delay and jitter are one-way egress values on this interface; use one record
@@ -98,9 +98,9 @@ def _created_at() -> str:
 
 def _validate_names(namespace: str, interface: str) -> None:
     if not NETNS_RE.fullmatch(namespace):
-        raise NetworkControlError("namespace must be a task-owned tngt-* network namespace")
+        raise NetworkControlError("namespace must be a task-owned tngt-* or tngs-* network namespace")
     if not INTERFACE_RE.fullmatch(interface) or interface == "lo":
-        raise NetworkControlError("interface must be a task-owned tngt* interface, never lo")
+        raise NetworkControlError("interface must be a task-owned tngt* or tngveth0 veth, never lo")
     if len(interface.encode("utf-8")) > 15:
         raise NetworkControlError("interface name exceeds the Linux 15-byte limit")
 

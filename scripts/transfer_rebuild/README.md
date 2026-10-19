@@ -241,11 +241,18 @@ regressions are alongside the validator cases.
 ## Paired scorecard
 
 `scorecard.py` builds a descriptive comparison from a validated manifest. It
-groups only identical workload and environment signatures, pairs observations
-by `pair_id`, excludes incomplete or invalid transfer outcomes, and reports
-per-pair ratios with a deterministic percentile-bootstrap 95% interval for the
-median ratio. RSS, PSS, cgroup memory, CPU, I/O, descriptors, threads, and energy
-remain separate metrics; unavailable measurements stay absent or `null`.
+groups by workload case, mode, protocol, and pinned environment settings, then
+pairs observations by `pair_id`. Per-run artifact digests, topology IDs, and
+randomized per-pair network seeds do not split otherwise comparable groups;
+the paired records must still match on fixture digest, network seeds, and
+environment settings. `fixture_sha256s` lists every exact fixture in a group.
+When a group spans multiple fixtures, `fixture_sha256` is the SHA-256 of the
+canonical JSON encoding of that sorted digest list. The scorecard excludes
+incomplete or invalid outcomes, unverified cache states, and missing resource
+evidence, then reports per-pair ratios with a deterministic percentile-bootstrap
+95% interval for the median ratio. RSS, PSS, cgroup
+memory, CPU, I/O, descriptors, threads, and energy remain separate metrics;
+unavailable measurements stay absent or `null`.
 `minimum_sample_met` is informational. The scorecard applies no performance
 threshold and does not establish that one client is superior.
 
