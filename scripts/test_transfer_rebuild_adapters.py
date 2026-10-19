@@ -31,10 +31,23 @@ from adapters import (  # noqa: E402
     _verify_container_http_endpoint,
     load_pins,
     probe_client,
+    write_new_json,
 )
 
 
 class TransferClientAdapterTests(unittest.TestCase):
+    def test_write_new_json_returns_digest_of_persisted_observation(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="tng-adapter-observation-") as directory:
+            path = Path(directory) / "observation.json"
+            observation = {"client_id": "torrentngd", "version": "1.0"}
+
+            digest = write_new_json(path, observation)
+
+            encoded = path.read_bytes()
+            self.assertEqual(digest, hashlib.sha256(encoded).hexdigest())
+            self.assertEqual(json.loads(encoded), observation)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
     @staticmethod
     def urtorrent_isolated_settings() -> dict[str, object]:
         return {

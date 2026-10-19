@@ -1849,17 +1849,27 @@ def _validate_profile(client_id: str, profile: dict[str, Any]) -> None:
         raise AdapterError("rqbit profile must provide both username_env and password_env")
 
 
-def write_new_json(path: Path, value: dict[str, Any]) -> None:
+def write_new_json(path: Path, value: dict[str, Any]) -> str:
     if path.is_symlink() or path.exists():
         raise AdapterError(f"refusing to overwrite adapter observation: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = json.dumps(value, sort_keys=True, indent=2, ensure_ascii=False) + "\n"
+    data = (json.dumps(value, sort_keys=True, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
     try:
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except OSError as error:
         raise AdapterError(f"cannot create adapter observation {path}: {error}") from error
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        handle.write(data)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except OSError as error:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        raise AdapterError(f"cannot finish adapter observation {path}: {error}") from error
+    return _sha256_bytes(data)
 
 
 def main(argv: list[str] | None = None) -> int:
