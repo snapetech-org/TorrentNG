@@ -333,6 +333,10 @@ async fn repeated_reads_reuse_one_open_file_handle() {
         },
     );
 
+    // Production schedulers share the process-wide handle catalog. Other
+    // storage cases in this integration binary may already have populated its
+    // counters and open-file count, so measure this workload by deltas.
+    let before = scheduler.file_pool_stats();
     for i in 0..reads {
         let offset = (i % 2) * block_len as u64;
         let bytes = scheduler
@@ -344,13 +348,17 @@ async fn repeated_reads_reuse_one_open_file_handle() {
     }
 
     let stats = scheduler.file_pool_stats();
+    let misses = stats.misses.saturating_sub(before.misses);
+    let hits = stats.hits.saturating_sub(before.hits);
+    let opened = stats.open_files.saturating_sub(before.open_files);
     println!(
-        "tng_storage_file_pool reads={reads} hits={} misses={} open_files={} capacity={}",
-        stats.hits, stats.misses, stats.open_files, stats.capacity
+        "tng_storage_file_pool reads={reads} hits={hits} misses={misses} opened={opened} capacity={}",
+        stats.capacity
     );
 
-    assert_eq!(stats.misses, 1);
-    assert_eq!(stats.open_files, 1);
+    assert_eq!(misses, 1);
+    assert_eq!(hits, reads.saturating_sub(1));
+    assert_eq!(opened, 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

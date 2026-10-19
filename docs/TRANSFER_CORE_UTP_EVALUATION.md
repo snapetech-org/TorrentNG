@@ -1,8 +1,10 @@
 # uTP Implementation Evaluation
 
 Status: **TorrentNG-owned compatible implementation is in progress and wired
-through production peer paths; protocol correctness and efficiency remain
-unqualified until the requested bulk pass.** This is a source review and
+through production peer paths; its source-level regression suite passed in the
+previous workspace bulk pass. Protocol stress, target-network qualification,
+and matched whole-client efficiency remain open until the exact closeout
+revision and named runtime gates pass.** This is a source review and
 architecture decision, not benchmark evidence.
 
 ## Decision
@@ -76,7 +78,7 @@ review found these specific bottlenecks and correctness gaps:
 | Outgoing sockets | Production v1, pure-v2, and metadata paths use the shared runtime; endpoint generations are capped | One shared runtime/socket per address family in steady state |
 | Receive execution | One endpoint receive loop demultiplexes bounded per-stream queues; each stream still owns its I/O and retransmit waits | Bound dispatch and timer work without per-peer UDP sockets or unbounded queues |
 | Memory | Receive/reorder and retransmit windows are bounded per stream; route packets have bounded channel capacity | Each endpoint reserves stream windows and queue metadata, charges routed datagrams to a configurable aggregate budget (64 MiB default), and exposes reservation usage |
-| Scheduling | One endpoint deadline heap, FIFO ready queue with 32-event turns, one oldest outstanding packet retransmitted per timeout, and one reserved FIFO cancellation permit per admitted stream; source and regression changes are unrun | Keep deadline insertion/removal indexed, ready work deduplicated, cancellation lossless and FIFO ordered, and due/ready/command work bounded to 32 items per turn so timeouts do not trigger retransmit bursts or connection-table scans |
+| Scheduling | One endpoint deadline heap, FIFO ready queue with 32-event turns, one oldest outstanding packet retransmitted per timeout, and one reserved FIFO cancellation permit per admitted stream; source-level regression suite passed, with rebind and stress qualification open | Keep deadline insertion/removal indexed, ready work deduplicated, cancellation lossless and FIFO ordered, and due/ready/command work bounded to 32 items per turn so timeouts do not trigger retransmit bursts or connection-table scans |
 
 Windowing is not allowed to weaken TorrentNG's ownership rules. Bytes retained
 for retransmission remain charged until ACK or connection teardown; received
@@ -99,13 +101,15 @@ send or connection-table liveness scan.
    contiguous payloads in wire order.
 3. The stream adapter now fills its available window, keeps retransmit packets
    on the stream across canceled writes, and buffers reordering within bounded
-   slots. The regression sources are authored but unrun.
+   slots. The source regression suite passed in the previous workspace bulk
+   pass; it will be rerun on the exact closeout revision.
 4. NET-113 now has an engine-owned runtime, bounded endpoint admission, one
    receive loop per active family endpoint, and production v1, pure-v2, and
    metadata integration. Central deadline dispatch, a bounded fair ready queue,
    aggregate endpoint reservations, and per-timeout retransmit quanta are now
-   authored. Their regressions, rebind stress, and aggregate memory qualification
-   remain open. Existing uTP controls and TCP fallback are preserved.
+   implemented. Local source regressions passed in the previous workspace bulk
+   pass; rebind stress and aggregate memory qualification remain open. Existing
+   uTP controls and TCP fallback are preserved.
 5. Keep the implementation behind existing uTP controls until deterministic protocol
    coverage and matched efficiency evidence accept it. Do not run two protocol
    writers for one peer.

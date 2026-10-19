@@ -2,8 +2,8 @@
 
 Status: **native rebuild retained as a reversible candidate; reuse is not
 ruled out.** This is an architecture review, not a correctness or performance
-result. It answers whether TorrentNG should continue the current implementation
-or replace it with a maintained transfer engine before the deferred bulk pass.
+result. The workspace source bulk pass has run; matched whole-client comparison
+and qualification are still pending.
 
 ## Decision
 
@@ -26,15 +26,18 @@ complexity, replace the smallest failing boundary; restart the engine only if
 the evidence supports a whole-engine change.
 
 The current maintainers suggest different roles for the comparison. `rqbit`
-is the closest Rust baseline for v1, but its upstream feature list still says
-piece selection is sequential-only and does not list BEP 52. `libtorrent`'s
-manual documents v2 and hybrid support, making it the stronger full-protocol
-behavior reference, with a C++ and adapter cost that must be included in the
-comparison. `urtorrent` remains a focused Linux v1 and uTP reference whose
-Rust 1.98 and io_uring-only requirements do not fit TorrentNG's Rust 1.88
-portable-runtime contract. These are suitability observations, not
-performance results. The paired harness is still incomplete, so there is no
-measured winner yet.
+9.0.1 is the closest Rust baseline for v1; its published feature list still
+describes sequential selection as its only picker mode and does not list BEP
+52. `libtorrent` 2.1.2 documents v2/hybrid transfer and keeps pieces grouped
+by rarity with randomized ordering, making it the stronger full-protocol
+behavior reference, with C++ build and adapter cost included in any comparison.
+The `urtorrent` upstream `main` currently identifies itself as 0.14.3, requires
+Rust 1.98, pins toolchain 1.98.1, and targets Linux with io_uring and no
+portable I/O fallback. Our direct runner pins 0.14.3 and deliberately supports
+the v1 fixture profile only. These are suitability observations, not
+performance results. The paired harness source is integrated, but exact client
+profiles, compatibility preflight, and real paired runs are still missing, so
+there is no measured winner.
 
 This is a provisional decision. It does **not** assume that TorrentNG's new
 core is faster, better, or the final architecture. Keep subsystem boundaries
@@ -212,6 +215,13 @@ integration cost.
 
 ## Primary references
 
+- [`urtorrent` upstream workspace version and MSRV](https://raw.githubusercontent.com/giejqf/urtorrent/main/Cargo.toml)
+- [`urtorrent` pinned toolchain](https://raw.githubusercontent.com/giejqf/urtorrent/main/rust-toolchain.toml)
+- [`urtorrent` current project scope](https://github.com/giejqf/urtorrent)
+- [`rqbit` current supported BEPs and picker modes](https://raw.githubusercontent.com/ikatson/rqbit/main/README.md)
+- [`rqbit` 9.0.1 library manifest](https://github.com/ikatson/rqbit/blob/v9.0.1/crates/librqbit/Cargo.toml)
+- [`libtorrent` 2.1.2 release](https://github.com/arvidn/libtorrent/releases/tag/libtorrent-2_1_2)
+- [`libtorrent` 2.1 manual](https://github.com/arvidn/libtorrent/blob/RC_2_1/docs/manual.rst)
 - [rqbit repository](https://github.com/ikatson/rqbit)
 - [rqbit upstream feature list](https://github.com/ikatson/rqbit#features)
 - [`librqbit` 9.0.1 manifest](https://github.com/ikatson/rqbit/blob/v9.0.1/crates/librqbit/Cargo.toml)
@@ -234,12 +244,12 @@ integration cost.
 
 ## Evidence state
 
-No tests, builds, linters, or benchmarks were run for this review. The
-`urtorrent` 0.14.3 runner and its adapter settings contract are now authored,
-but they have not been built or run. They require a pinned release, a private
-v1 fixture, a task-local IPv4 listener and peer, and an isolated namespace on a
-compatible Linux 6.1+ host. The paired harness and the native-versus-maintained-
-engine decision remain open; the rebuild's bulk pass stays deferred until
-implementation and documentation work is complete.
+The TorrentNG workspace and harness regression sources passed the bulk run
+recorded in `TRANSFER_CORE_ACTIVE_SPECS.md`; that pass does not exercise the
+direct `urtorrent` runner as a live peer. The runner pins crate version 0.14.3
+and requires Rust 1.98.1, a private v1 fixture, a task-local IPv4 listener and
+peer, and an isolated namespace on a compatible Linux 6.1+ host. Its build/run
+status is tracked separately from TorrentNG workspace tests. No matched
+performance result or architecture win has been established.
 PERF-103/104/110/113 remain the path to a reproducible comparison; this
 document does not mark any ticket done or any gate passed.

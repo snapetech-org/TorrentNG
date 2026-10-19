@@ -4,6 +4,27 @@ This directory contains rebuild-specific qualification tools. Outputs belong
 in a task-owned scratch directory or certification artifact directory, never
 in the measured source checkout.
 
+## Validation status
+
+The closeout source passed the full Rust workspace on Rust 1.94.0 and 1.88.0:
+2,301 passed, 0 failed, and 12 ignored across 65 test-result summaries on each
+toolchain. Both 100k native catalog probes were also run explicitly: all rows
+persisted/restored, and the four-worker release mixed-load probe passed. The
+20 `scripts/test_transfer_rebuild_*.py` scripts passed. Sidecar tests passed
+424 with 0 failures and 2 ignored; both explicitly run 50k API benchmarks met
+their targets (`/sync/maindata` 33.7 ms against 50 ms, `/torrents/info`
+150.1 ms against 500 ms). Clippy exited 0 with warnings. On the verified
+`kspls0` LVM target, the 7 real-device storage tests and 64-file/64-MiB
+move/import test passed. The direct peer-wire encoder microbenchmark also
+passed in release mode; it is diagnostic only, not whole-client evidence.
+
+These local results do not complete pinned-client trials, active-transfer and
+multi-process catalog qualification, the hosted workflow, dedicated 10 Gb
+hardware evidence, crash-cut/soak/canary qualification, independent review,
+or the release decision. They make no efficiency or superiority claim. See
+[`TRANSFER_CORE_ACTIVE_SPECS.md`](../../docs/TRANSFER_CORE_ACTIVE_SPECS.md)
+for the full run record.
+
 ## Independent process observer
 
 `observe.py` samples a candidate process tree from `/proc` and cgroup v2 from a
@@ -100,8 +121,9 @@ namespaces, the isolated seed peer, observer lifecycle, fixture verification,
 and `manifest.py`. Client-control regressions are in
 `scripts/test_transfer_rebuild_client_control.py`; trial-record regressions are
 in `scripts/test_transfer_rebuild_trial_record.py`; trial/manifest validation
-regressions remain in `scripts/test_transfer_rebuild_validator.py`. They belong
-in the requested bulk pass and have not been run.
+regressions remain in `scripts/test_transfer_rebuild_validator.py`. These
+regressions passed on the recorded source revision; pinned-client trials and
+exact closeout revision validation remain separate.
 
 ## Trial and manifest validation
 
@@ -128,7 +150,8 @@ network totals from the streamed rows. Historical complete trial-v1 records
 without that link remain readable, but the scorecard excludes them. It reports
 field paths and returns nonzero for malformed JSON,
 schemas, records, or referenced files. The focused validator regressions are in
-`scripts/test_transfer_rebuild_validator.py` and belong in the bulk pass.
+`scripts/test_transfer_rebuild_validator.py`; they passed on the recorded source
+revision, with exact closeout revision validation pending.
 Every external JSON record is decoded strictly through
 `strict_json.py`: duplicate member names, nonstandard constants, and numbers
 that overflow the finite range are rejected before schema or semantic checks.
@@ -162,8 +185,8 @@ evidence paths, and output replacement. It hashes each input, validates the
 complete manifest and all referenced files, checks the inputs and source again,
 then publishes the mode-`0600` manifest atomically. Failed, invalid,
 incomplete, unmeasured, and successful trials are all retained. Manifest-writer
-regression sources are alongside the validator cases; all remain reserved for
-the bulk pass.
+regressions are alongside the validator cases. They passed on the recorded
+source revision; exact closeout revision validation remains pending.
 
 ## Paired scorecard
 
@@ -190,8 +213,8 @@ The scorecard retains pair-level metric samples, manifest digest, comparison
 signature, excluded-pair reasons, and sample counts. Output is created
 exclusively with mode `0600`. Safety limits cap input trials, clients per
 comparison group, and total resampled values. Regression sources are in
-`scripts/test_transfer_rebuild_scorecard.py`; they belong in the requested bulk
-pass and have not been run.
+`scripts/test_transfer_rebuild_scorecard.py`; they passed on the recorded source
+revision, with exact closeout revision validation pending.
 
 ## Independent capacity ceilings
 
@@ -222,7 +245,8 @@ report from its linked input. Trials can optionally reference the report by
 digest when the host, storage, network profile, and protocol match. A ceiling
 is diagnostic context; it is not measured client performance or scorecard
 evidence. Regression sources are in `scripts/test_transfer_rebuild_ceilings.py`
-and `scripts/test_transfer_rebuild_validator.py` and remain in the bulk pass.
+and `scripts/test_transfer_rebuild_validator.py`; they passed on the recorded
+source revision, with exact closeout revision validation pending.
 
 ## Client identity and settings adapters
 
@@ -336,8 +360,9 @@ observation window for seed trials. It does not replace the contract's
 externally measured `transfer_ns`.
 
 Regression sources are in `scripts/test_transfer_rebuild_adapters.py` and the
-runner's `src/main.rs`; runner, adapter, and validator cases are reserved for
-the requested bulk pass.
+runner's `src/main.rs`; adapter and validator regressions passed on the recorded
+source revision. The standalone runner build and pinned-client preflight remain
+open.
 
 ## Shared trial measurement primitives
 
@@ -348,8 +373,9 @@ Callers must create and clean a fresh barrier directory for each trial. The
 barrier creates readiness and release markers exclusively as regular files and
 rejects symlinks or non-file markers. These helpers do not launch clients,
 establish integrity, or calculate a scorecard.
-Their regression sources are in `scripts/test_transfer_rebuild_measurement.py`
-and belong in the bulk pass.
+Their regression sources are in `scripts/test_transfer_rebuild_measurement.py`;
+they passed on the recorded source revision. Exact closeout revision validation
+remains pending.
 
 TorrentNG builds expose three cumulative, site-scoped payload-copy counters on
 `/metrics`. Capture one immutable observation at each trial boundary with the
@@ -423,7 +449,8 @@ the result manifest and required artifacts. Fixture verification and cache
 preparation happen outside the transfer measurement interval.
 
 Regression sources are in `scripts/test_transfer_rebuild_fixtures.py` and
-belong in the requested bulk pass; none have been run for this slice.
+passed on the recorded source revision. Filesystem cache qualification and the
+exact closeout revision remain open.
 
 ## Live native dormant-catalog observation
 
@@ -485,7 +512,8 @@ manifest kind. The qualification wrapper goes in the SYS-015 stage
 declaration; its checks link to the report, which links to the retained raw
 log.
 The regression source is `scripts/test_transfer_rebuild_catalog_load_report.py`
-and is reserved for the requested bulk pass.
+and passed on the recorded source revision. Live 1k/100k catalog observations
+remain separate qualification evidence.
 
 These are diagnostic latencies, not fixed release thresholds. They exercise
 the in-process production engine and native router with a paused catalog; they
@@ -628,12 +656,12 @@ versioned shaping profiles. The manifest output must be directly in the
 scratch root so every linked trial and evidence file remains beneath its
 manifest. When requesting a manifest, first commit the exact harness source
 and use a clean worktree; the runner rejects a dirty source before launching
-clients. The runner and its local regression sources are authored but remain
-unrun; no host qualification or client performance result is claimed.
-Regression sources are in `scripts/test_transfer_rebuild_paired_plan.py`,
+clients. The local regression sources passed on the recorded source revision;
+no pinned-client trial or host qualification is claimed. Regression sources are
+in `scripts/test_transfer_rebuild_paired_plan.py`,
 `scripts/test_transfer_rebuild_compatibility.py`, and
-`scripts/test_transfer_rebuild_paired_runner.py`; they are reserved for the
-requested bulk pass.
+`scripts/test_transfer_rebuild_paired_runner.py`; exact closeout revision
+validation remains pending.
 
 ## PERF-111 picker and changed-snapshot probes
 
@@ -664,8 +692,11 @@ retained heap size. A changed-row sample waits outside the timed region for
 the API's 750 ms snapshot freshness window to expire. The probe does not
 include HTTP routing or JSON serialization. Retain host details and the exact
 commit with the CSV; compare results only on a controlled host and toolchain.
-These probes and the regression sources remain unrun until the requested bulk
-pass.
+The probes were run locally and are recorded in
+[`TRANSFER_CORE_PERF111_LOCAL.md`](../../docs/TRANSFER_CORE_PERF111_LOCAL.md).
+Their results are diagnostic samples, not adopted thresholds or hardware
+qualification. Regression scripts passed on the recorded source revision;
+exact closeout revision validation remains pending.
 
 ## PERF-115 hosted and dedicated hardware lanes
 
@@ -692,9 +723,10 @@ hybrid fixtures between isolated production engines over loopback TCP. It
 checks receiver payload bytes, persists completed state across a clean restart,
 then damages one pure-v2 payload byte between runs. Resume-time verification
 must mark that torrent incomplete while the unchanged v1 and hybrid payloads
-remain complete.
+remain complete. This source passed in the previous workspace bulk pass; it will
+be rerun on the exact closeout revision.
 
-Run this source during the requested bulk pass:
+Run it with:
 
 ```sh
 cargo test -p rt-metrics --test transfer_invariants -- --nocapture
@@ -800,8 +832,8 @@ The trial validator checks profile settings against `tc -j` readback and
 requires cleanup records for completed shaped trials. This helper controls the
 workload; it is not a network benchmark result. Regression sources are in
 `scripts/test_transfer_rebuild_network_control.py` and
-`scripts/test_transfer_rebuild_paired_runner.py`; the bulk pass remains
-pending.
+`scripts/test_transfer_rebuild_paired_runner.py`; these regressions passed on
+the recorded source revision, with exact closeout revision validation pending.
 
 ## Rollout qualification records
 

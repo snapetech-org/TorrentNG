@@ -95,6 +95,10 @@ fn is_task_local_ip(address: Ipv4Addr) -> bool {
     address.is_loopback() || address.is_private() || address.is_link_local()
 }
 
+fn is_help_flag(value: &str) -> bool {
+    matches!(value, "--help" | "-h")
+}
+
 fn parse_args() -> anyhow::Result<Args> {
     let mut values = std::env::args().skip(1);
     let mut mode = None;
@@ -118,6 +122,10 @@ fn parse_args() -> anyhow::Result<Args> {
     let mut seed_seconds = 60u64;
 
     while let Some(name) = values.next() {
+        if is_help_flag(&name) {
+            println!("{}", usage());
+            std::process::exit(0);
+        }
         let value = values
             .next()
             .ok_or_else(|| anyhow::anyhow!("missing value for {name}"))?;
@@ -147,10 +155,6 @@ fn parse_args() -> anyhow::Result<Args> {
             "--download-limit" => download_limit = parse_value(&name, &value)?,
             "--timeout-seconds" => timeout_seconds = parse_value(&name, &value)?,
             "--seed-seconds" => seed_seconds = parse_value(&name, &value)?,
-            "--help" | "-h" => {
-                println!("{}", usage());
-                std::process::exit(0);
-            }
             _ => bail!("unknown argument {name}; {}", usage()),
         }
     }
@@ -701,7 +705,13 @@ async fn run_preflight(values: Vec<String>) -> anyhow::Result<()> {
 async fn run() -> anyhow::Result<()> {
     let mut values = std::env::args().skip(1);
     if values.next().as_deref() == Some("preflight") {
-        run_preflight(values.collect()).await
+        let values: Vec<_> = values.collect();
+        if values.first().is_some_and(|value| is_help_flag(value)) {
+            println!("{}", usage());
+            Ok(())
+        } else {
+            run_preflight(values).await
+        }
     } else {
         run_trial().await
     }
@@ -717,10 +727,17 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_task_local_ip, parse_preflight_args};
+    use super::{is_help_flag, is_task_local_ip, parse_preflight_args};
     use std::net::Ipv4Addr;
     use std::path::PathBuf;
     use std::str::FromStr;
+
+    #[test]
+    fn help_flags_are_recognized_without_a_value() {
+        assert!(is_help_flag("--help"));
+        assert!(is_help_flag("-h"));
+        assert!(!is_help_flag("--mode"));
+    }
 
     #[test]
     fn preflight_requires_distinct_absolute_paths() {

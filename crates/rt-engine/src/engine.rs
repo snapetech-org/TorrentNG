@@ -202,7 +202,8 @@ const TORRENT_TRACKER_REPAIR_BATCH_SIZE: usize = 256;
 // A projection directory can contain crash residue or operator-planted
 // artifacts that are not represented by the bounded torrent-row query. Cap
 // the startup reconciliation scan before its issue vector can grow without
-// limit.
+// limit. The fixed `quarantine/` child is excluded from this count because
+// its entries and bytes have separate limits below.
 const MAX_PROJECTION_RECONCILIATION_ENTRIES: usize = rt_db::MAX_TORRENT_RESULT_ITEMS;
 const MAX_PROJECTION_QUARANTINE_COLLISIONS: usize = 1_024;
 // Quarantine preserves ambiguous crash residue for operator recovery, but it
@@ -8229,8 +8230,14 @@ impl Engine {
         let entries = std::fs::read_dir(directory)
             .with_context(|| format!("reading projection directory {}", directory.display()))?;
         for entry in entries {
-            admit_projection_scan_entry(&mut scanned, directory)?;
             let entry = entry?;
+            if is_projection_quarantine_directory(&entry)? {
+                // This fixed internal child has its own bounded entry and
+                // byte admission; it is not one of the torrent projections
+                // counted against the 100k catalog ceiling.
+                continue;
+            }
+            admit_projection_scan_entry(&mut scanned, directory)?;
             let path = entry.path();
             if !entry.file_type()?.is_file() {
                 continue;
@@ -8283,8 +8290,11 @@ impl Engine {
         let entries = std::fs::read_dir(directory)
             .with_context(|| format!("reading projection directory {}", directory.display()))?;
         for entry in entries {
-            admit_projection_scan_entry(&mut scanned, directory)?;
             let entry = entry?;
+            if is_projection_quarantine_directory(&entry)? {
+                continue;
+            }
+            admit_projection_scan_entry(&mut scanned, directory)?;
             let path = entry.path();
             if !entry.file_type()?.is_file() {
                 continue;
@@ -9144,6 +9154,13 @@ fn admit_projection_scan_entry(scanned: &mut usize, directory: &Path) -> anyhow:
     }
     *scanned += 1;
     Ok(())
+}
+
+fn is_projection_quarantine_directory(entry: &std::fs::DirEntry) -> std::io::Result<bool> {
+    Ok(
+        entry.file_name().as_os_str() == std::ffi::OsStr::new("quarantine")
+            && entry.file_type()?.is_dir(),
+    )
 }
 
 #[derive(Debug, Default)]
@@ -11597,6 +11614,28 @@ mod tests {
         assert!(admit_projection_scan_entry(&mut scanned, Path::new("/tmp/projection")).is_ok());
         assert_eq!(scanned, MAX_PROJECTION_RECONCILIATION_ENTRIES);
         assert!(admit_projection_scan_entry(&mut scanned, Path::new("/tmp/projection")).is_err());
+    }
+
+    #[test]
+    fn projection_scan_excludes_only_its_bounded_quarantine_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let quarantine = temp.path().join("quarantine");
+        std::fs::create_dir(&quarantine).unwrap();
+        let entry = std::fs::read_dir(temp.path())
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap();
+        assert!(is_projection_quarantine_directory(&entry).unwrap());
+
+        std::fs::remove_dir(&quarantine).unwrap();
+        std::fs::write(&quarantine, b"unexpected regular file").unwrap();
+        let entry = std::fs::read_dir(temp.path())
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap();
+        assert!(!is_projection_quarantine_directory(&entry).unwrap());
     }
 
     #[test]
@@ -20869,6 +20908,69 @@ mod tests {
             assert_eq!(trackers.len(), 1);
             assert_eq!(trackers[0].url, "http://tracker.example.com/announce");
         }
+    }
+
+    #[tokio::test]
+    async fn newly_added_paused_torrent_stays_dormant_until_resumed() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.storage.download_dir = temp.path().join("downloads");
+        config.daemon.session_dir = temp.path().join("session");
+        config.db.path = temp.path().join("state.db");
+        config.network.listen_port = 0;
+        config.dht.enabled = false;
+        std::fs::create_dir_all(&config.storage.download_dir).unwrap();
+
+        let registry = Arc::new(RwLock::new(SessionRegistry::new()));
+        let engine = Engine::start(Arc::new(config.clone()), Arc::clone(&registry))
+            .await
+            .unwrap();
+        let raw = raw_single_file_torrent_with_private(true);
+        let expected_hash = meta_info_hash_hex(&parse_torrent(&raw).unwrap());
+        let hash = engine
+            .add_torrent_raw_with_labels(
+                raw,
+                Some(config.storage.download_dir.clone()),
+                true,
+                None,
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(hash, expected_hash);
+        assert!(registry.read().await.is_dormant(&hash));
+        let stats = engine.stats().await.unwrap();
+        assert_eq!(stats.torrents_paused, 1);
+        assert_eq!(stats.torrents_activity_dormant, 1);
+        assert_eq!(stats.torrent_tasks_active, 0);
+        let resources = stats.resources.expect("resource snapshot");
+        assert_eq!(
+            resources.classes[MemoryClass::PieceIndex as usize].used_bytes,
+            0
+        );
+        assert_eq!(
+            resources.classes[MemoryClass::Metadata as usize].used_bytes,
+            0
+        );
+
+        engine.resume_torrent(hash.clone()).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let stats = engine.stats().await.unwrap();
+                if stats.torrent_tasks_active == 1 && !registry.read().await.is_dormant(&hash) {
+                    let resources = stats.resources.expect("resource snapshot");
+                    assert!(resources.classes[MemoryClass::PieceIndex as usize].used_bytes > 0);
+                    assert!(resources.classes[MemoryClass::Metadata as usize].used_bytes > 0);
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("paused torrent did not acquire a runtime task on resume");
+
+        engine.shutdown().await;
     }
 
     #[tokio::test]

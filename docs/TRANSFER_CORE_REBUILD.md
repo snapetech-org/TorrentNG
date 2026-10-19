@@ -267,7 +267,7 @@ reproduced).
 | F23 | P1 | v2 recheck does per-leaf small I/O | IO-012 | G4 | partly fixed (1 MiB chunks: bounded sparse extent pages persist across sequential v2 file chunks, plus one batched hash job per 64 leaves; hybrid disk recheck now routes through the IO-007 dual-view stream verifier; bulk evidence remains open) |
 | F24 | P0/P1 | v2 proof serving rereads file; 64 MiB ceiling | IO-013 | G3 | partly fixed (leaves are hashed in 256 KiB reads and layers are root-checked; a 64 MiB memory LRU retains governor-charged trees, while a 512 MiB/4,096-entry per-torrent session store serves root-authenticated requested ranges after restart; cold misses still build the full tree and bulk qualification remains open) |
 | F25 | P1 | secure copy re-verifies leaves per ancestor | IO-014 | G4 | fixed for hashing (nested entries copy-only; each file is hashed once in the final tree pass); source/destination device admission is ordered, directory entries stream without full-name vectors, regular-file and directory-tree copy/hash work yields every 64 KiB, and cancellation/rejection removes the staged tree under admission; final sync latency and qualification remain open |
-| F26 | P1 | one row change rebuilds a deep-cloned registry vector | SYS-005, SYS-006 | G5 | partly fixed (bounded coalesced delta pages cap journal copies; canonical v1/v2 API snapshot indexes and changed-hash sets use inline byte keys; copy-on-write chunks share unchanged `Arc<TorrentSnapshotItem>` row payloads across revisions; taskless torrents retain a compact dormant projection and promote only on mutation; catalog-scale and matched-client evidence remain open) |
+| F26 | P1 | one row change rebuilds a deep-cloned registry vector | SYS-005, SYS-006 | G5 | partly fixed (bounded coalesced delta pages cap journal copies; canonical v1/v2 API snapshot indexes and changed-hash sets use inline byte keys; copy-on-write chunks share unchanged `Arc<TorrentSnapshotItem>` row payloads across revisions; fresh paused additions and restored idle rows use a compact taskless dormant projection and promote only on mutation; catalog-scale and matched-client evidence remain open) |
 | F27 | P1 | dormant estimates incomplete; quadratic timer cancel | SYS-004, SYS-008 | G5 | partly fixed (tier/timer indexes use 8-byte slot/generation IDs; `ActivityDeadlineIndex` removes exact ordered nodes in O(log N), bounds due extraction by the caller limit, and retains no canceled tombstones; idle deadlines are staggered; `estimated_owner_bytes` covers maps, index nodes, interned keys and dormant snapshots; actor-exit notifications and engine runtime map/set keys retain canonical hashes inline under SYS-004; regression and bulk evidence remain open) |
 | F28 | P1 | every engine command scans all task handles | SYS-007 | G5 | fixed (supervised exit queue on the command path; 1 s full scan kept as reconciliation) |
 | F29 | P0 | metrics scrape builds a shadow storage runtime | SYS-011, PERF-108 | G0 | fixed (scrape uses `StorageRuntime::initialized()`; owner-specific metrics still SYS-011) |
@@ -303,7 +303,7 @@ the template in SYS-001 when picked up.
 | 3 | PERF-102 | P0 | Build independent cumulative resource observer | PERF-101 | wip | `scripts/transfer_rebuild/observe.py` streams process-tree `/proc` and cgroup v2 samples; unavailable values remain null across missing samples, and private CSV/summary outputs carry process identity and a CSV digest. The manifest writer requires observer evidence for new complete trials; validation recomputes linked peak/network values and checks trial totals. Historical source-less trial-v1 records remain readable but are excluded from scorecards. Optional RX/TX deltas use a named root-namespace interface with reset checks and an artifact-level attribution warning; the paired runner now links observer sampling to one-client task namespaces; runner integration is authored, while pinned-client execution and independent resource qualification remain open |
 | 3 | PERF-103 | P0 | Implement client adapters with pinned identity and settings readback | PERF-101 | wip | stdlib adapters cover TorrentNG, qBittorrent, Transmission, Deluge, rTorrent, rqbit, and a standalone `urtorrent` 0.14.3 library runner pinned to Rust 1.98.1; runner rejects v2/hybrid input, snapshots effective settings plus separately labeled hash-thread launch input, removes trackers/web seeds from a private fixture, binds only to a task-local IPv4 interface and explicit private IPv4 peer, disables IPv6/discovery, and waits in a named namespace; adapter independently validates both addresses and process-bound snapshot identity; runner unbuilt/unrun, exact client profiles, external preflight and bulk validation remain open; paired harness source now connects launch, observation and manifest emission |
 | 3 | PERF-105 | P0 | Build scoped deterministic fixtures and cache controls | PERF-101 | wip | `fixtures.py` writes v1/v2/hybrid metainfo with payload-derived hashes, authenticated v2 piece layers, hybrid BEP 47 alignment pads, and versioned info-hash records; pinned profiles bind protocol/piece geometry into fixture identity; `cache_control.py` requests per-file cold/warm state and records mincore residency without global cache writes; `metainfo.py` validates the canonical fixture identity and torrent record, then retargets only the top-level announce field while preserving exact encoded `info` bytes and its hashes, avoiding rehashing large payloads between paired trials; trial records and manifest validation bind achieved cache evidence to the fixture; caller-owned task cleanup policy documented; regressions authored, bulk pass and filesystem cache qualification remain open |
-| 3 | SYS-005 | P1 | Publish registry chunks and revision deltas without global deep clones | SYS-004 | wip | capped coalesced pages feed SSE/qBittorrent cursors and incremental API refresh; canonical v1/v2 API snapshot indexes and changed-hash sets use inline byte keys with exact-text fallbacks; `ChunkedVec` shares unchanged `Arc<TorrentSnapshotItem>` payloads when a changed row causes its pointer chunk to copy; taskless torrents retain compact `DormantTorrent` projections; compact key and row-sharing regressions are authored, while catalog-scale and matched-client evidence remain open |
+| 3 | SYS-005 | P1 | Publish registry chunks and revision deltas without global deep clones | SYS-004 | wip | capped coalesced pages feed SSE/qBittorrent cursors and incremental API refresh; canonical v1/v2 API snapshot indexes and changed-hash sets use inline byte keys with exact-text fallbacks; `ChunkedVec` shares unchanged `Arc<TorrentSnapshotItem>` payloads when a changed row causes its pointer chunk to copy; fresh paused additions and restored idle rows retain compact taskless `DormantTorrent` projections and materialize actors only on promotion; regressions cover dormant add/resume, compact keys, and row sharing, while 100k catalog, matched-client, and whole-process memory evidence remain open |
 | 3 | SYS-007 | P1 | Replace per-command task scans with supervised completions | SYS-004 | done | supervised exit queue (`TaskExits`); command path O(exits) |
 | 3 | SYS-008 | P1 | Replace quadratic timer cancellation and stagger bulk work | SYS-004 | wip | ordered `(deadline, sequence)` index provides exact O(log N) cancellation/reschedule without tombstones and FIFO ties; due extraction removes at most the configured limit; idle-check deadlines are staggered across coarse buckets (10% of delay, capped at 30 s); native bulk stop/recheck/label/location actions run with a fixed 32-operation ceiling while start/reannounce stay serial; regression sources authored, bulk evidence remains open |
 | 3 | SYS-012 | P0 | Preserve feature and platform compatibility through production fixtures | SYS-001, SYS-002, SYS-003 | wip | `rt-testkit` builds deterministic payload-derived v1/v2/hybrid metainfo fixtures with multi-piece, nested, empty-file, piece-layer, and hybrid-padding cases; production parsing plus v1/v2 piece-map regressions and Windows smoke wiring are authored, not run |
@@ -326,7 +326,7 @@ the template in SYS-001 when picked up.
 | 6 | NET-109 | P1 | Rebuild piece selection around active candidates and accurate accounting | NET-104 | wip | v1/hybrid array-backed rarity buckets, swap-remove positions, fresh-work candidate index, randomized equal-rarity choice, sparse-peer set-bit ingestion, peer-cap-aware capacity accounting, capacity trimming, packed in-progress receipt bitmap and forward-only cursor are implemented. Pure-v2 now maintains a separately memory-reserved rarity index, reconciles bitfield/Have/HaveAll/HaveNone/disconnect deltas, retires complete pieces, and chooses uniformly from the rarest peer-held bucket; sparse cyclic traversal remains the explicit memory-pressure fallback. Regression sources are authored; bulk pass and picker/API probes remain open |
 | 6 | PERF-110 | P0 | Automate 28-case catalog and randomized paired execution | PERF-103, PERF-104, PERF-105, PERF-106, PERF-107, PERF-109 | wip | seven adapters × four fixture profiles; versioned seeded pair planner, catalog/pin digests, strict plan and preflight schemas/validators, explicit exclusions, and regression sources authored; compatibility preflight builds protocol-shaped probes, checks admission state, reconciles uncertain adds by exact info hash, removes probes, and records pause mode, identity, settings, and cleanup; `process_supervisor.py` launches a native client through the pinned executable inode with explicit argv/environment, private logs, PID/start-time identity, and pidfd shutdown; `client_control.py` validates metainfo hashes and supplies identity-checked transfer operations for six API/RPC adapters, while `urtorrent_runner` retains its dedicated path; `trial_record.py` binds harness/client/resource identities and trial evidence, keeps unobserved byte counters null, and writes exclusive mode-0600 trials; `task_network.py` now creates and identity-checks target/seed namespaces and task-owned topology, while `task_tracker.py` binds seed peer ID/port from its first isolated announce and withholds it until ready; `metainfo.py` retargets fixture copies without changing info hashes; `paired_runner.py` now connects pinned native/container lifecycle, task topology/tracker, cache/network controls, observation, trial assembly and manifest emission. Exact runtime profiles, external preflight, real client runs, and bulk validation remain open |
 | 6 | PERF-111 | P1 | Add picker timer and changed-snapshot allocation regression probes | PERF-101, PERF-102, PERF-109 | wip | standalone picker and API snapshot probes executed locally at 1k–100k scales; raw diagnostic CSV and host/toolchain/source disclosure are in [`TRANSFER_CORE_PERF111_LOCAL.md`](TRANSFER_CORE_PERF111_LOCAL.md); no thresholds or comparative claim; dedicated-host and whole-client observations remain open |
-| 6 | SYS-014 | P1 | Qualify complete catalog cost and mixed-load responsiveness | SYS-005, SYS-006, SYS-007, SYS-008, SYS-009, SYS-010, PERF-109 | wip | `rt-metrics/tests/scale.rs` adds/restores the production catalog, then measures 16 concurrent rounds across two bounded list pages, transfer info, and `/metrics`; `catalog_load_report.py` requires 1k and 100k records, recomputes p50/p95 from retained route samples, binds the clean source/host, and the manifest validator links the report to its retained raw-log digest. SYS-015 enforces report-kind proofs. Regression sources and commands are documented but unrun; active-transfer/multi-process evidence and qualification remain open |
+| 6 | SYS-014 | P1 | Qualify complete catalog cost and mixed-load responsiveness | SYS-005, SYS-006, SYS-007, SYS-008, SYS-009, SYS-010, PERF-109 | wip | `rt-metrics/tests/scale.rs` passed the production 1k mixed-load case and both 100k persist/restore and mixed-load cases. The 100k release mixed run uses four Tokio workers and captures 16 concurrent rounds across two bounded list pages, transfer info, and `/metrics`; p50s were 0.27–0.28 ms for list pages, 0.050 ms for transfer info, and 0.057 ms for `/metrics`. Nearest-rank p95 includes cold snapshot creation (0.80 s and 0.77 s for the two list routes); these are local diagnostics, with no release threshold. `catalog_load_report.py` still needs a clean exact-revision report from the retained 1k/100k logs; active-transfer, multi-process resource, and hardware evidence remain open |
 | 7 | NET-106 | P1 | Separate peer read progress from write and storage waits | NET-103, NET-104, NET-105 | wip | v1 and pure-v2 peer loops now move upload storage reads and rate admission into bounded per-peer work while keeping the protocol loop available for incoming control messages; regression sources cover both paths. Socket writes remain serialized in their owner; actor-side piece writes, verification and persistence waits remain IO-008; bulk pass pending |
 | 7 | PERF-113 | P1 | Implement statistical analysis and explicit scorecard | PERF-101, PERF-102, PERF-104, PERF-110 | wip | descriptive paired scorecard, output schema, validator kind, and regression sources authored; paired runner source is now integrated; bulk pass remains open; no thresholds adopted |
 | 8 | IO-008 | P0 | Move transfer actors to completion-driven storage and hashing | IO-002, IO-006, IO-007, NET-104, NET-106 | wip | v1/hybrid received-block writes, verification and aggregate writes now use bounded actor-owned jobs with monotonic piece-attempt generations that fence stale block, verification, and aggregate-write completions; pure-v2 assemblies and block/piece completions also carry per-peer attempt generations; peer lifecycle generations stop new v2 work, cancel rate waits and framed sends, interrupt hash-proof waits, discard queued uploads, and drain dispatched upload reads plus admitted storage/verification jobs; failure/reset qualification, command-loop/disconnect/quiesce regressions and bulk evidence keep this open |
@@ -351,23 +351,57 @@ the template in SYS-001 when picked up.
 | 13 | PERF-116 | P1 | Run candidate soak recovery and reversible canary qualification | PERF-112, PERF-114, PERF-115, SYS-013, SYS-014 | wip | Added required soak, recovery and reversible-canary qualification records with source-bound evidence digests; no soak or canary has been run |
 | 14 | SYS-015 | P0 | Integrate final gates, independent review and reproducible release | SYS-013, SYS-014, NET-116, IO-016, PERF-116 | wip | Added independent-review, release-bundle, and complete-catalog mixed-load evidence types plus one final four-stage decision artifact; catalog checks require the report artifact kind, whose retained log digest and source revision are verified by manifest validation; every unresolved stage remains blocked until qualified evidence is present |
 
+### Implementation completion audit (2026-10-18)
+
+The source audit now covers all 63 packages, their ticket specs, the capability
+matrix, and the production ownership boundaries in section 2. All repository-
+owned implementation slices described in the package table are present,
+including the live shared-core routes, the reversible owner switch, storage
+contracts, and the measurement and rollout tooling. The reviewed transfer,
+storage, and harness sources contain no `TODO`, `FIXME`, `todo!()`, or
+`unimplemented!()` placeholders. The audit found no unowned production path or
+missing crate boundary that requires another architectural layer.
+
+The `wip` rows are still ticket-level open because their acceptance includes
+exact-revision, live-workload, storage, hosted, hardware, or release evidence.
+They do not indicate that those implementation slices have no source. A source
+review is not independent signoff, a passing workspace suite is not a live
+client comparison, and a local storage result is not target-device
+qualification.
+
+Several finding rows and older progress-log entries preserve the state at the
+time each regression was authored. Any “unrun” wording for an ordinary test in
+the Rust workspace or the 20-script transfer-rebuild suite is superseded by the
+dated bulk-validation record below; ignored cases and runtime, filesystem,
+hosted, hardware, soak, and client-comparison gates remain open unless they
+have their own retained evidence.
+
+The closeout source has now received fresh Rust 1.94.0 and 1.88.0 workspace
+passes, the transfer-harness suite, the sidecar suite, and the explicit
+100k catalog and benchmark runs. See
+[`TRANSFER_CORE_ACTIVE_SPECS.md`](TRANSFER_CORE_ACTIVE_SPECS.md) for the
+results, measured cold-start costs, and remaining ticket-specific gates.
+
 ### Status snapshot (2026-10-18)
 
-4 of 63 tickets are `done`, 59 `wip`, and 0 `todo`. `wip` means a bounded
-implementation or contract slice landed and the rest of its scope remains.
-The requested source validation has now passed on Rust 1.94.0 and 1.88.0:
-2,298 tests passed, 0 failed, and 12 were ignored on each toolchain across 65
-test-result summaries. All 20 transfer-rebuild Python regression scripts
-passed. `cargo clippy --workspace --all-targets` exited successfully with
-warnings. The exact commands and scope are recorded in
+4 of 63 tickets are `done`, 59 `wip`, and 0 `todo`. `wip` means the ticket's
+full written acceptance is not yet evidenced; it does not mean its source
+implementation is absent. The implementation audit above found all package
+slices in source, while live, hardware, hosted, paired-client, and final-release
+qualification remain separate gates.
+The closeout source passed 2,301 workspace tests, 0 failed, and 12 were ignored
+on both Rust 1.94.0 and 1.88.0 across 65 result summaries per toolchain. All 20
+transfer-rebuild Python regressions and 424 sidecar tests passed; both 50k
+sidecar API benchmarks met their targets. The production 100k catalog and
+release mixed-load probes passed. `cargo clippy --workspace --all-targets
+--locked` exited successfully with warnings. The exact commands and scope are recorded in
 [`TRANSFER_CORE_ACTIVE_SPECS.md`](TRANSFER_CORE_ACTIVE_SPECS.md#bulk-validation-2026-10-18).
 
-The transfer implementation is committed as `166ac506` and merged into clean
-`main` at `b1f0120855af86f9f9256b5e4f6bdf4bd02d9593`. Both toolchains and the
-Python regression suite passed again on that merged tree. No rollout gate has
-passed: G0 still needs SYS-009, SYS-011, PERF-101, and a valid baseline
-controller with pinned client profiles. The local PERF-111 probes are
-diagnostic samples only. Hosted workflow runs, hardware and filesystem
+The transfer implementation base remains committed as `166ac506` and merged
+into clean `main` at `b1f0120855af86f9f9256b5e4f6bdf4bd02d9593`; the closeout
+source has its own fresh validation record above. No rollout gate has passed:
+G0 still needs SYS-009, SYS-011, PERF-101, and a valid baseline controller
+with pinned client profiles. Hosted workflow runs, hardware and filesystem
 qualification, crash-cut evidence, live parity, and matched whole-client
 measurements remain open. Nothing here claims an efficiency result.
 
@@ -390,11 +424,12 @@ measurements remain open. Nothing here claims an efficiency result.
    `main`, and the full workspace suites also passed there on both toolchains.
    Named hardware, workflow, and matched-client evidence still need their own
    clean source-bound artifacts.
-3. **Repository qualification** — run the paired client matrix, live catalog
-   and mixed-transfer measurements, storage/device fault gates, and reversible
-   cutover recovery evidence on their named environments. Keep external and
-   hardware gates open until their artifacts validate against the tested
-   source.
+3. **Repository qualification** — the paused 100k production catalog and
+   four-route mixed API probes now pass locally. Assemble their clean-source
+   report, then run the paired client matrix, active-transfer/multi-process
+   measurements, storage/device fault gates, and reversible cutover recovery
+   on their named environments. Keep hosted, hardware, and client gates open
+   until their artifacts validate against the tested source.
 4. **Release decision** — preserve the reference route and make no efficiency
    or superiority claim until correctness gates and matched whole-client
    measurements pass on the exact source revision.
@@ -402,6 +437,7 @@ measurements remain open. Nothing here claims an efficiency result.
 ### Progress log
 
 | Date | Change |
+| 2026-10-18 | SYS-014/PERF-109 live catalog qualification and test correction: the opt-in production 100k add/persist/shutdown/restore/API-list probe passed on Rust 1.94.0 with all 100,000 paused rows restored; its cold first list was 7,587 ms in debug and the cached repeat 3 ms. The 100k mixed-load test passed in debug and optimized release. The release run was repeated after switching the mixed-load cases to four Tokio workers, matching `torrentngd`'s multi-thread runtime. Across 16 concurrent rounds, release p50s were 0.277 ms (default list), 0.271 ms (name-sorted list), 0.050 ms (transfer info), and 0.057 ms (`/metrics`); nearest-rank p95 includes first-round cold snapshot construction at 0.800 s and 0.773 s for the list routes, while transfer info and metrics were 2.674 ms and 0.222 ms. No timing threshold is asserted. The raw logs are task-scoped under `/tmp/tng-transfer-core-close-20261018/evidence/`; exact-source catalog report assembly, full workspace validation, and process-level/active-transfer/hardware qualification remain pending. |
 | 2026-10-18 | Bulk source validation and v2 projection correction: an earlier full run observed the reference-v2 actor reporting `Seeding` with `amount_left=1` during a held completion after prior completion. Live and reference pure-v2 persistence now downgrade stale seeding projections to `Downloading`, clear `completed_at`, and retain the one-byte `finalizing` signal; a new engine regression covers the case. The targeted regression and workspace runs on Rust 1.94.0 and Rust 1.88.0 each passed 2,298 tests, with 0 failed and 12 ignored across 65 result summaries. After merge, the clean `main` commit `b1f0120855af86f9f9256b5e4f6bdf4bd02d9593` passed both full suites with those same totals. All 20 `scripts/test_transfer_rebuild_*.py` regressions passed again on merged `main`. `cargo clippy --workspace --all-targets` exited 0 with warnings on both branch and merged main; formatting and JSON parsing passed. The transfer-invariant integration test verifies persisted `amount_left=0` before payload damage and the expected pure-v2 startup recheck afterward. PERF-111 probes were rerun on final code before its commit; local results are in `TRANSFER_CORE_PERF111_LOCAL.md` and remain diagnostic only. Transfer commit `166ac506` is merged and pushed; hosted workflow, hardware, crash-cut, and matched-client qualification remain open. |
 | 2026-10-18 | Architecture boundary review: the accepted target keeps the pure decision core under `crates/rt-engine/src/transfer/` and preserves current crate boundaries unless a dependency cycle forces a small extraction. A separate transfer-core crate is not an outstanding architecture requirement. The remaining unclosed gates are exact-revision validation and named runtime, hardware, crash-cut, or client evidence; no rollout or efficiency claim is implied. |
 | 2026-10-18 | NET-110 bulk-test correction: the upload-read admission regression now observes logical scheduled peer reads, not backend read operations, because the storage scheduler may coalesce adjacent requests without reducing service admission. The corrected assertion is authored and awaits the bulk rerun. |

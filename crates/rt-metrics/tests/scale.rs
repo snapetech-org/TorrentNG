@@ -353,6 +353,26 @@ struct LiveEngineCatalog {
     restore_ns: u128,
 }
 
+fn live_catalog_memory_caps_mb(count: usize) -> (u64, u64) {
+    const MIB: u64 = 1024 * 1024;
+    const METADATA_PER_TORRENT_BUDGET: u64 = 128 * 1024;
+    const MIN_METADATA_CAP_MB: u64 = 128;
+    const MIN_TOTAL_HEADROOM_MB: u64 = 512;
+
+    let count = u64::try_from(count).unwrap_or(u64::MAX);
+    let metadata_bytes = count.saturating_mul(METADATA_PER_TORRENT_BUDGET);
+    let metadata_cap_mb = metadata_bytes.div_ceil(MIB).max(MIN_METADATA_CAP_MB);
+    let total_headroom_mb = (metadata_cap_mb / 2).max(MIN_TOTAL_HEADROOM_MB);
+    let total_cap_mb = metadata_cap_mb.saturating_add(total_headroom_mb);
+    (metadata_cap_mb, total_cap_mb)
+}
+
+#[test]
+fn live_catalog_memory_caps_scale_with_catalog_size() {
+    assert_eq!(live_catalog_memory_caps_mb(1_000), (128, 640));
+    assert_eq!(live_catalog_memory_caps_mb(100_000), (12_500, 18_750));
+}
+
 impl LiveEngineCatalog {
     async fn build(count: usize) -> Result<Self, String> {
         let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
@@ -360,10 +380,12 @@ impl LiveEngineCatalog {
         std::fs::create_dir_all(&download_dir).map_err(|error| error.to_string())?;
 
         let mut config = Config::default();
-        // The production-shaped catalog fixture carries one bounded ~66 KiB
-        // metainfo per torrent. Give the 1k case an explicit budget instead
-        // of having the default cap reject a valid catalog halfway through.
-        config.memory.metadata_cap_mb = 128;
+        // Size metadata and API-snapshot headroom for the catalog query. The
+        // paused rows stay dormant and do not retain parsed metainfo or piece
+        // indexes; the 100k query still needs room for its live API projection.
+        let (metadata_cap_mb, total_cap_mb) = live_catalog_memory_caps_mb(count);
+        config.memory.metadata_cap_mb = metadata_cap_mb;
+        config.memory.total_cap_mb = total_cap_mb;
         config.daemon.session_dir = temp.path().join("session");
         config.daemon.shutdown_timeout_secs = 30;
         config.db.path = temp.path().join("state.sqlite");
@@ -532,7 +554,7 @@ async fn live_native_engine_catalog_1k_uses_valid_persisted_metainfo() {
     observe_live_native_engine_catalog(1_000).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn live_native_engine_catalog_scrape_mixed_load_1k() {
     observe_live_native_catalog_mixed_load(1_000).await;
 }
@@ -543,7 +565,7 @@ async fn live_native_engine_catalog_100k_uses_valid_persisted_metainfo() {
     observe_live_native_engine_catalog(100_000).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "100k live-engine mixed-load qualification belongs in the bulk scale pass"]
 async fn live_native_engine_catalog_scrape_mixed_load_100k() {
     observe_live_native_catalog_mixed_load(100_000).await;

@@ -5,27 +5,50 @@ This file instantiates the template in
 implementation slices currently in progress. A ticket stays `wip` until its
 written acceptance and exact-revision evidence are complete.
 
+## Completion audit — 2026-10-18
+
+The 63-row package table and all active ticket contracts have now been checked
+against the current source and regression inventory. The implementation slices
+are present across the pure transfer core, v1/v2/hybrid actors, storage,
+supervision, rollback routing, and qualification tooling; this audit found no
+missing owner boundary or placeholder implementation in the reviewed paths.
+`wip` therefore remains an acceptance/evidence status, not a count of code that
+has not been written.
+
+The final closeout source received a fresh bulk pass on both supported
+toolchains, the transfer-harness regressions, sidecar tests, and the explicit
+scale and microbenchmark cases listed below. The closeout commit and exact
+source-bound catalog report are the remaining local evidence steps. Source
+suites do not close the separate hosted-runner, client-profile/preflight,
+target-filesystem, physical crash-cut, matched whole-client, soak/canary, or
+independent-review gates.
+
 ## Bulk validation — 2026-10-18
 
-The source suites passed on the rebuild worktree with both installed
-toolchains, then passed again on the merged `main` commit
-`b1f0120855af86f9f9256b5e4f6bdf4bd02d9593`:
+The final closeout source passed the workspace suites on both installed
+toolchains:
 
 - `cargo test --workspace --no-fail-fast -- --test-threads=1 --format=terse`
-  on Rust 1.94.0, both on the rebuild worktree and merged `main`: 2,298
-  passed, 0 failed, 12 ignored across 65 result summaries per run.
+  on Rust 1.94.0: 2,301 passed, 0 failed, 12 ignored across 65 result
+  summaries. The first run had one load-sensitive v1 loopback timeout in the
+  transfer-invariant test; the exact test passed alone (35.1 s) and the full
+  rerun passed.
 - `cargo +1.88.0 test --workspace --no-fail-fast -- --test-threads=1 --format=terse`
-  on Rust 1.88.0, both on the rebuild worktree and merged `main`: 2,298
-  passed, 0 failed, 12 ignored across 65 result summaries per run.
+  on Rust 1.88.0: 2,301 passed, 0 failed, 12 ignored across 65 result
+  summaries.
 - All 20 `scripts/test_transfer_rebuild_*.py` regression scripts passed.
-- All 20 `scripts/test_transfer_rebuild_*.py` regression scripts passed again
-  on merged `main`.
-- `cargo clippy --workspace --all-targets` exited 0 with warnings on the
-  rebuild branch and merged `main`; warnings were not promoted to errors.
-- `cargo fmt --all -- --check` passed on merged `main`.
-- The local PERF-111 picker and API snapshot probes ran successfully. Their
-  raw CSV, host/toolchain details, and limits are in
-  [`TRANSFER_CORE_PERF111_LOCAL.md`](TRANSFER_CORE_PERF111_LOCAL.md).
+- Sidecar tests: 424 passed, 0 failed, 2 ignored; both explicitly run 50k API
+  benchmarks passed (`/sync/maindata` 33.7 ms under 50 ms and `/torrents/info`
+  150.1 ms under 500 ms).
+- Both 100k production-catalog cases passed. The release mixed-load probe used
+  four Tokio workers and retained all 16 samples for each route; results and
+  cold-snapshot limits are recorded in SYS-014.
+- Release peer-wire encoder and webseed rate-debit probes passed. The former
+  is a local microbenchmark only and proves no whole-client efficiency gain.
+- `cargo clippy --workspace --all-targets --locked` exited 0 with warnings;
+  formatting and `git diff --check` passed.
+- On verified `kspls0` storage, 7 real-device storage cases and the
+  64-file/64-MiB move/import case passed; evidence remains task-scoped.
 
 The first full pass exposed an invalid pure-v2 projection after a previously
 completed torrent entered a durability hold: the entry could remain `Seeding`
@@ -34,14 +57,13 @@ that stale state to `Downloading` and clear `completed_at`; the new
 `v2_reopens_a_stale_seeding_projection_during_completion_hold` regression
 passes in both final workspace runs.
 
-The initial run used a dirty worktree rooted at
-`4cd671b0d5eae1ddc096493ded381569e57f49f4`. The merged-main run is bound to
-the clean main commit above, which contains transfer commit `166ac506`. The
-per-ticket “Executed on exact revision: no” fields continue to mark ticket
-acceptance evidence that is still incomplete; they do not mean the workspace
-source suites were skipped. Earlier “await bulk pass” and “unrun” wording
-describes the state before this validation and is superseded for source-suite
-execution by this record.
+The test logs are retained under the task-scoped
+`/tmp/tng-transfer-core-close-20261018/evidence/` directory. Ordinary Rust and
+Python regressions described as “await bulk pass” or “authored but unrun” in
+the older per-ticket notes are superseded by this latest execution record.
+Ticket acceptance remains `wip` where it also requires runtime, hosted,
+hardware, filesystem fault, crash-cut, client, soak/canary, or independent
+review evidence.
 Ticket-specific acceptance that needs hosted workflows, dedicated hardware,
 filesystem fault qualification, crash cuts, live parity, or matched whole-
 client trials remains open.
@@ -2922,7 +2944,10 @@ across snapshot revisions, including when copy-on-write duplicates the small
 pointer array for a changed row's chunk. Structural add/remove changes rebuild
 the positional projection from the deterministic registry snapshot. Dormant
 torrents retain the registry's compact immutable projection until mutation
-promotes them.
+promotes them. With tiering enabled, fresh paused/stopped/queued additions use
+that same taskless path; metainfo and piece-index reservations are reacquired
+only when a lifecycle command promotes the row. Disabling tiering keeps the
+configured actor behavior.
 
 - **Invariant preserved:** every published snapshot is internally consistent
   at its revision; an incomplete or gapped delta page falls back to a full
@@ -2942,7 +2967,8 @@ promotes them.
 - Add/remove changes and incomplete delta history rebuild all positional
   indexes from the registry snapshot.
 - Regression sources cover compact key behavior, shared unchanged row identity,
-  and incremental filter-index consistency.
+  incremental filter-index consistency, and adding a paused torrent without a
+  task before verifying resume promotion reacquires runtime memory.
 - Bulk scale and matched-client evidence remain required before claiming a
   whole-process memory or throughput improvement.
 
@@ -2961,8 +2987,9 @@ promotes them.
 - **Regression source added or updated:** `replacing_one_item_shares_unchanged_rows_in_the_copied_chunk` and
   `snapshot_hash_keys_compact_canonical_hashes_and_preserve_other_text`, plus
   the existing registry delta-page and incremental filter-index regressions.
-- **Command or probe to run:** API model, API native, and session registry
-  suites during the requested bulk pass.
+- **Command or probe to run:** API model, API native, engine, and session
+  registry suites during the requested bulk pass; the 1k/100k live catalog
+  probes exercise the persisted add/restore path.
 - **Expected result:** unchanged row pointers remain shared in changed chunks,
   and API snapshots match a full rebuild at the same registry revision.
 - **Executed on exact revision:** no.
@@ -3312,7 +3339,20 @@ requires the report source commit to match the clean manifest source.
 
 ### Limits and evidence
 
-- The source is authored but has not been run on this revision.
+- Local source execution passed for the 1k mixed-load fixture, the 100k
+  persisted-metainfo catalog fixture, and the 100k mixed-load fixture. The
+  100k mixed-load probe passed in optimized Rust 1.94.0 on the corrected
+  four-worker Tokio runtime; its retained release log is the SYS-014 source
+  for final report generation.
+- In that 100k release run, nearest-rank p95 was 800 ms for the default
+  bounded list page and 773 ms for the name-sorted page because the sample set
+  includes first-round snapshot construction. After that first sample, list
+  medians were 0.277 ms and 0.271 ms. Transfer-info p50/p95 were 0.050/2.674
+  ms; `/metrics` p50/p95 were 0.057/0.222 ms. These are local in-process
+  diagnostic timings, not release thresholds or matched-client results.
+- `catalog_load_report.py` still needs to assemble the 1k and 100k retained
+  logs against the exact clean commit and host identity. Active-transfer,
+  multi-process resource, and hardware qualification remain open.
 - This in-process paused-catalog probe does not represent daemon RSS,
   concurrent payload transfer, independent clients, or a hardware capacity
   guarantee. PERF-102/PERF-110 own process-level resource and transfer evidence.
@@ -3321,8 +3361,9 @@ requires the report source commit to match the clean manifest source.
 - The SYS-015 `transfer-catalog-load-v1` qualification checks must each cite
   the `transfer-catalog-load-report-v1` artifact digest; the report itself
   cites the retained raw-log digest.
-- Regression commands are documented in
-  `scripts/transfer_rebuild/README.md`; both belong in the deferred bulk pass.
+- The 1k and 100k probes passed; their source-bound report still needs a clean
+  committed worktree and exact host/source identity. SYS-015 catalog
+  qualification and external process-level evidence remain open.
 
 ## PERF-108 — Stable memory accounting domains
 
@@ -3906,8 +3947,9 @@ lower-level proxies.
 
 The catalog fixture is metadata and persistence coverage. Its one-byte payload
 does not exercise payload I/O, hashing throughput, swarm activity, or useful
-goodput. The 100k live-engine case is opt-in and remains unrun until the bulk
-scale pass; its source is not capacity evidence.
+goodput. The opt-in 100k live-engine case passed: all 100,000 paused rows
+restored, and the native API returned the full count. Its in-process result is
+not process-attributed capacity evidence.
 
 ### Ownership and invariant
 
@@ -3920,8 +3962,7 @@ scale pass; its source is not capacity evidence.
   parseable info hashes and paused entries admitted by the engine; synthetic
   registry and row tests remain labeled as proxies.
 - **Must not:** treat in-process test RSS as daemon RSS, label a one-byte
-  catalog as transfer capacity, or infer 100k success before the ignored case
-  runs on the exact source-bound binary.
+  catalog as transfer capacity, or infer beyond the measured fixture.
 
 ### Acceptance
 
@@ -3960,15 +4001,16 @@ scale pass; its source is not capacity evidence.
 - **Regression source added or updated:** `rt-testkit` verifies deterministic
   parseable catalog metainfo; `rt-metrics/tests/scale.rs` exercises 1k and
   opt-in 100k engine-backed API paths and labels synthetic cases as proxies.
-- **Command or probe to run:** the live 1k case and the explicit ignored 100k
-  case during the requested bulk scale pass.
+- **Command or probe:** the live 1k case and explicit ignored 100k case passed
+  on the closeout source with Rust 1.94.0.
 - **Expected result:** each admitted fixture has a unique valid info hash and
   paused registry entry; restart restores the full catalog; API requests return
   successfully with separate setup, restore, first-page, and cached-page
   timings.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** none until PERF-110 writes source-bound trial
-  records and independent process observations.
+- **Executed on exact revision:** source tests passed; clean-commit
+  `catalog_load_report.py` assembly is pending.
+- **Artifact or report path:** task-scoped live-catalog test logs; the
+  source-bound report will be generated from them after commit.
 - **External evidence still required:** production-binary 10k/100k restore,
   process-attributed resource samples, mixed activity, and repeated trials.
 
@@ -4979,53 +5021,239 @@ prevent a late old actor exit from removing the replacement.
   injected failure/crash cuts; restart recovery; and rollback under real swarm
   activity remain required.
 
-## IO-016, NET-116, PERF-116, and SYS-015 — Final rollout evidence gates
-
-- **Owning component:** `scripts/transfer_rebuild/rollout_gate.py` and the
-  source-bound certification artifacts.
-- **Status:** `wip`; no stage has passed.
-
-### Contract
+## Final rollout evidence contract
 
 `qualification_record.py` creates strict, private, exclusive records for the
 named qualification kinds. Each record is bound to a 40-character source
 commit and lists required check IDs, each with one or more evidence digests.
 The record itself is included in the immutable manifest; its check digests
-must resolve to other files in that same manifest. The separate rollout
-evidence index is assembled by `rollout_index.py` and binds the source commit,
-exact manifest bytes, exact scorecard bytes, selected candidate, and stage
-declarations. Keeping the index outside the manifest avoids a
-self-referential digest.
+must resolve to other files in that same manifest. `rollout_index.py` binds the
+source commit, exact manifest bytes, exact scorecard bytes, selected candidate,
+and four stage declarations outside the manifest to avoid a self-referential
+digest.
 
 The final evaluator validates the manifest and scorecard, verifies every
-qualification record and cited proof digest, requires all stage-specific
-evidence kinds and named checks, checks candidate completion/integrity across
-v1, v2, and hybrid download and seed cases, and checks paired sample counts
-for goodput, RSS, and CPU metrics. It emits `blocked` until IO-016, NET-116,
-PERF-116, and SYS-015 all have complete evidence. It does not adopt a numeric
-performance threshold: decision D1 remains open, and the descriptive scorecard
-must retain `performance_thresholds_applied: false`.
+qualification record and cited proof digest, requires the stage-specific kinds
+and checks, checks candidate completion and integrity across v1, v2, and hybrid
+download and seed cases, and checks paired sample counts for goodput, RSS, and
+CPU metrics. It emits `blocked` until all four stage records pass. It applies
+no numeric performance threshold: decision D1 remains open, and the
+descriptive scorecard must retain `performance_thresholds_applied: false`.
 
-### Acceptance and limits
+Qualification records must be schema-valid, source-bound, created exclusively
+with mode `0600`, and link only to artifacts in the same manifest. Failed or
+unrun checks cannot pass. Each SYS-014 catalog check must cite a
+`transfer-catalog-load-report-v1`; that report must be source-bound, recompute
+from its retained samples, and cite a `transfer-catalog-load-log-v1` in the
+same manifest. Hashed declarations do not prove hardware, crash, soak, or
+independent-review execution by themselves.
 
-- Qualification records are schema-valid, source-bound, exclusive, mode 0600,
-  and link only to manifest artifacts.
-- A qualification cannot pass with a failed or unrun check or without its
-  required check IDs.
-- Each SYS-014 catalog qualification check must cite a manifest artifact of
-  kind `transfer-catalog-load-report-v1`; that report must be source-bound,
-  recompute from its retained samples, and cite a
-  `transfer-catalog-load-log-v1` artifact in the same manifest.
-- IO-016 requires live v1/v2/hybrid parity, storage, recovery, and gate-policy
-  evidence; NET-116 requires simulator, live parity, and performance-policy
-  evidence; PERF-116 requires soak, canary, recovery, and gate-policy evidence;
-  SYS-015 requires independent review, release bundle, complete-catalog
-  mixed-load qualification, and gate-policy evidence.
-- Candidate trials must come from the exact clean source commit, complete the
-  expected payload, pass integrity, and meet the scorecard's declared minimum
-  sample count for both download and seed work across all three protocols.
-- Source records and hashed declarations do not prove hardware or soak
-  execution by themselves. A release decision still depends on retained
-  external evidence and independent review.
-- Regression sources are in `scripts/test_transfer_rebuild_rollout_gate.py`;
-  run them with the requested bulk pass.
+## IO-016 — Live-engine parity, recovery, and storage qualification
+
+- **Priority / wave:** P0 / 13
+- **Prerequisites:** IO-008–015, PERF-110, SYS-013
+- **Owning component:** storage/runtime qualification and
+  `scripts/transfer_rebuild/rollout_gate.py`.
+- **Finding or capability:** demonstrate that the shared-core candidate
+  preserves live v1/v2/hybrid behavior, storage ownership, and recovery before
+  rollout.
+- **Status:** `wip`; qualification artifacts have not been produced.
+
+### Scope and invariant
+
+Run exact-source live parity for v1, pure-v2, and hybrid-v1/v2 download and
+seed cases, plus target-storage, injected-fault, crash-cut, and resume recovery
+cases. Keep the reference actor selectable through each trial. The acceptance
+boundary includes current storage and fast-resume ownership; it does not
+authorize a format change or production default switch.
+
+- **Invariant preserved:** only verified and durably published content is
+  reported complete; a failed candidate or interrupted recovery leaves one
+  known owner and a restartable state.
+- **Must not:** treat loopback source tests or a local filesystem result as
+  target-device or crash-recovery qualification.
+
+### Acceptance
+
+- `transfer-live-parity-v1` passes `live-v1-parity`, `live-v2-parity`, and
+  `live-hybrid-v1-v2-parity` on the exact clean source revision.
+- `transfer-storage-qualification-v1` passes `storage-fault-matrix`,
+  `real-device-workload`, and `bounded-resource-ownership` with retained raw
+  logs and device identity.
+- `transfer-recovery-qualification-v1` passes `crash-cut-recovery`,
+  `resume-restoration`, and `one-writer-recovery`; the reference route remains
+  usable after each injected failure.
+- `transfer-gate-policy-v1` records reviewed correctness checks and explicitly
+  states that unapproved performance thresholds were not applied.
+- The final evaluator accepts these proof kinds and reports IO-016 passed;
+  failed, missing, or source-mismatched evidence reports blocked.
+
+### Evidence
+
+- **Regression source:** workspace storage/engine suites, live parity
+  integration cases, crash-cut harness, and
+  `scripts/test_transfer_rebuild_rollout_gate.py`.
+- **Command or probe:** create source-bound qualification records, include
+  them and raw evidence in the immutable manifest, assemble the rollout index,
+  then run `scripts/transfer_rebuild/rollout_gate.py`.
+- **Expected result:** all named checks and proof digests validate against the
+  same clean source commit and the stage reports passed.
+- **Executed on exact revision:** no.
+- **External evidence still required:** target storage, crash-cut recovery,
+  live three-protocol parity, and independently retained device evidence.
+
+## NET-116 — Independent correctness and performance rollout gate
+
+- **Priority / wave:** P1 / 13
+- **Prerequisites:** NET-108, NET-109, NET-111, NET-113–115, PERF-112–113,
+  SYS-013
+- **Owning component:** transfer-core simulator, live actor adapters, and
+  `scripts/transfer_rebuild/rollout_gate.py`.
+- **Finding or capability:** decide whether the candidate can be enabled only
+  after independent correctness and matched whole-client evidence.
+- **Status:** `wip`; no matched catalog or qualification record is available.
+
+### Scope and invariant
+
+Combine deterministic simulator evidence, live protocol parity, and a paired
+whole-client scorecard for the same clean revision. The scorecard remains
+descriptive until D1 is explicitly decided.
+
+- **Invariant preserved:** every candidate and baseline trial uses the same
+  fixture, settings, resource limits, integrity rules, and observer contract.
+- **Must not:** infer efficiency from a component microbenchmark, omit an
+  unsupported client/profile silently, or apply thresholds after seeing data.
+
+### Acceptance
+
+- `transfer-live-parity-v1` passes live v1, pure-v2, and hybrid parity checks.
+- `transfer-simulator-qualification-v1` passes seeded invariant replay,
+  hybrid-race replay, and generation-reuse replay with the seed and artifact
+  digest retained.
+- `transfer-performance-policy-v1` records matched candidate/baseline
+  execution, the required whole-client metrics, and the explicit
+  no-unapproved-thresholds check.
+- The evaluator verifies complete, integrity-passed download and seed trials
+  for all three protocols and each declared candidate/baseline, plus required
+  pair counts for goodput, RSS, and CPU.
+- The descriptive report does not claim superiority or set
+  `performance_thresholds_applied` to true without a recorded D1 decision.
+
+### Evidence
+
+- **Regression source:** `crates/rt-engine/src/transfer/sim.rs`, live transfer
+  integration tests, PERF-110–114 scripts, and
+  `scripts/test_transfer_rebuild_rollout_gate.py`.
+- **Command or probe:** validate the source-bound manifest and scorecard, then
+  run `scripts/transfer_rebuild/rollout_gate.py` against the matching rollout
+  index.
+- **Expected result:** required protocols, workloads, sample counts, proof
+  kinds, source digests, and policy checks validate; otherwise the stage stays
+  blocked with reasons.
+- **Executed on exact revision:** no.
+- **External evidence still required:** pinned client identities/settings,
+  complete paired trials, and whole-client measurements.
+
+## PERF-116 — Candidate soak, recovery, and reversible canary
+
+- **Priority / wave:** P1 / 13
+- **Prerequisites:** PERF-112, PERF-114–115, SYS-013–014
+- **Owning component:** supervised runtime, owner-switch journal, and
+  `scripts/transfer_rebuild/rollout_gate.py`.
+- **Finding or capability:** demonstrate stable resource ownership and safe
+  activation/rollback over a predeclared soak and canary.
+- **Status:** `wip`; no soak or canary has been run.
+
+### Scope and invariant
+
+Run the declared soak profile, recovery scenarios, and reversible candidate
+canary on one exact source build. Keep the reference route available and retain
+the journal and process/resource observations throughout each transition.
+Duration, resource limits, and workload are fixed in the qualification input
+before execution; the run must not adopt an unapproved scorecard threshold.
+
+- **Invariant preserved:** one writer owns each torrent throughout drain,
+  candidate start, commit, rollback, and restart recovery.
+- **Must not:** replace the reference fallback, silently restart a failed
+  candidate, or call a short smoke run a soak.
+
+### Acceptance
+
+- `transfer-soak-qualification-v1` passes `soak-completed`,
+  `integrity-preserved`, and `resource-accounting-complete` for the declared
+  duration and workload, with raw samples and identity retained.
+- `transfer-recovery-qualification-v1` passes crash-cut recovery, resume
+  restoration, and one-writer recovery during and after the soak.
+- `transfer-canary-qualification-v1` proves candidate cutover, reference
+  rollback, and single-writer ownership throughout, including one injected
+  failure after the old actor drains.
+- `transfer-gate-policy-v1` records the reviewed correctness gate and that no
+  unapproved performance threshold was applied.
+- The stage evaluator accepts the same clean source, manifest, scorecard, and
+  required qualification records; missing dwell or rollback evidence leaves
+  it blocked.
+
+### Evidence
+
+- **Regression source:** SYS-013 cutover/recovery tests and
+  `scripts/test_transfer_rebuild_rollout_gate.py`.
+- **Command or probe:** run the predeclared soak and canary harnesses, build
+  source-bound records, then evaluate the final rollout index.
+- **Expected result:** all checks pass with complete raw resource samples and
+  source-bound transition/recovery records.
+- **Executed on exact revision:** no.
+- **External evidence still required:** controlled dwell, operational recovery,
+  and canary/rollback on the designated runtime environment.
+
+## SYS-015 — Independent review and reproducible release integration
+
+- **Priority / wave:** P0 / 14
+- **Prerequisites:** SYS-013–014, NET-116, IO-016, PERF-116
+- **Owning component:** release engineering, independent review, and
+  `scripts/transfer_rebuild/rollout_gate.py`.
+- **Finding or capability:** consolidate the completed gates into a
+  reproducible, reviewable release decision.
+- **Status:** `wip`; final evidence and independent signoff are absent.
+
+### Scope and invariant
+
+Rebuild the exact source commit, retain provenance and release notes, obtain an
+independent review, and include complete-catalog mixed-load evidence. The
+final decision consumes all four stage records and cannot infer a pass from
+the presence of a release bundle alone.
+
+- **Invariant preserved:** release artifacts identify the exact clean source
+  and required capabilities; unresolved findings or failed gates remain
+  visible and block the final decision.
+- **Must not:** self-attest the independent review, bypass required checks, or
+  bind stale evidence to a newer commit.
+
+### Acceptance
+
+- `transfer-independent-review-v1` passes `independent-reviewer-attested`,
+  `review-scope-complete`, and `findings-resolved`, with reviewer identity and
+  scope evidence.
+- `transfer-release-bundle-v1` passes `clean-source-rebuild`,
+  `artifact-provenance`, and `release-notes-and-bundle`; the release artifact
+  digest is tied to the exact source commit.
+- `transfer-catalog-load-v1` passes production catalog persist/restore,
+  mixed native API latency retention, and host/source identity checks using a
+  validated report and retained raw log.
+- `transfer-gate-policy-v1` records that required correctness gates were
+  reviewed and unapproved performance thresholds were not applied.
+- The final evaluator reports all four stages passed and the release bundle
+  is reproducible from the source-bound manifest.
+
+### Evidence
+
+- **Regression source:** `scripts/test_transfer_rebuild_rollout_gate.py`,
+  `scripts/test_transfer_rebuild_catalog_load_report.py`, release build and
+  provenance checks.
+- **Command or probe:** create independent-review, release-bundle, catalog,
+  and gate-policy records; assemble the final rollout index; run
+  `scripts/transfer_rebuild/rollout_gate.py`.
+- **Expected result:** the evaluator returns ready only when every stage
+  artifact is valid, source-matched, and independently reviewed.
+- **Executed on exact revision:** no.
+- **External evidence still required:** independent reviewer, reproducible
+  release artifact, and complete-catalog mixed-load report.

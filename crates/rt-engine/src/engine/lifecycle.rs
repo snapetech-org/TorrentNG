@@ -178,13 +178,27 @@ impl Engine {
         validate_command_item_len(tags.len(), MAX_ENGINE_MUTATION_ITEMS, "torrent tag list")?;
         validate_label_bytes(&tags, "torrent tag list")?;
         let info_hash_hex = meta_info_hash_hex(&meta);
-        let piece_index_memory_lease = reserve_piece_index_memory_for_meta(
-            &self.services.resources,
-            &meta,
-            self.config.network.max_peers,
-        )?;
-        let torrent_metadata_memory_lease =
-            reserve_torrent_metadata_memory_for_meta(&self.services.resources, &meta)?;
+        let initial_state = if paused {
+            TorrentState::Paused
+        } else {
+            TorrentState::Downloading
+        };
+        let start_task = !self.config.runtime.torrent_tiers_enabled
+            || should_start_task_on_restore(initial_state);
+        let piece_index_memory_lease = if start_task {
+            reserve_piece_index_memory_for_meta(
+                &self.services.resources,
+                &meta,
+                self.config.network.max_peers,
+            )?
+        } else {
+            None
+        };
+        let torrent_metadata_memory_lease = if start_task {
+            reserve_torrent_metadata_memory_for_meta(&self.services.resources, &meta)?
+        } else {
+            None
+        };
 
         if self.runtime.torrent_chans.contains_key(&info_hash_hex)
             || self.runtime.pending_torrent_adds.contains(&info_hash_hex)
@@ -208,16 +222,14 @@ impl Engine {
             entry.amount_left = entry.total_length;
             entry.category = normalize_category(category);
             entry.tags = normalize_tags(tags);
-            reg.add(entry).map_err(|e| e.to_string())?;
             // TorrentEntry starts in Stopped; transition to target state.
-            let target = if paused {
-                TorrentState::Paused
+            let _ = entry.transition(initial_state);
+            if start_task {
+                reg.add(entry).map_err(|e| e.to_string())?;
             } else {
-                TorrentState::Downloading
-            };
-            if let Some(mut e) = reg.get_mut(&info_hash_hex) {
-                let _ = e.transition(target);
-            };
+                reg.add_dormant(entry.into_dormant())
+                    .map_err(|e| e.to_string())?;
+            }
         }
 
         let is_private = meta.is_private();
@@ -264,38 +276,53 @@ impl Engine {
             return Err(error.to_string());
         }
 
-        let Some(piece_index_memory_lease) = piece_index_memory_lease else {
-            return Err("torrent add lost its piece-index memory reservation".to_owned());
-        };
-        let Some(torrent_metadata_memory_lease) = torrent_metadata_memory_lease else {
-            return Err("torrent add lost its metadata memory reservation".to_owned());
-        };
-        let initial_state = if paused {
-            TorrentState::Paused
-        } else {
-            TorrentState::Downloading
-        };
-        let spawn_result = self
-            .spawn_torrent_task_for_meta(
-                info_hash_hex.clone(),
-                meta,
-                save,
-                paused,
-                initial_state,
-                piece_index_memory_lease,
-                torrent_metadata_memory_lease,
-            )
-            .await;
-        if let Err(error) = spawn_result {
-            let persistence = self
-                .mark_torrent_actor_start_failed(&info_hash_hex, &error)
+        if start_task {
+            let Some(piece_index_memory_lease) = piece_index_memory_lease else {
+                return Err("torrent add lost its piece-index memory reservation".to_owned());
+            };
+            let Some(torrent_metadata_memory_lease) = torrent_metadata_memory_lease else {
+                return Err("torrent add lost its metadata memory reservation".to_owned());
+            };
+            let spawn_result = self
+                .spawn_torrent_task_for_meta(
+                    info_hash_hex.clone(),
+                    meta,
+                    save,
+                    paused,
+                    initial_state,
+                    piece_index_memory_lease,
+                    torrent_metadata_memory_lease,
+                )
                 .await;
-            return Err(match persistence {
-                Ok(()) => error,
-                Err(persistence) => {
-                    format!("{error}; failed to persist the actor-start failure: {persistence}")
-                }
-            });
+            if let Err(error) = spawn_result {
+                let persistence = self
+                    .mark_torrent_actor_start_failed(&info_hash_hex, &error)
+                    .await;
+                return Err(match persistence {
+                    Ok(()) => error,
+                    Err(persistence) => {
+                        format!("{error}; failed to persist the actor-start failure: {persistence}")
+                    }
+                });
+            }
+        } else {
+            let now = Instant::now();
+            self.runtime.tier_controller.apply_input(
+                info_hash_hex.clone(),
+                TierInput {
+                    state: initial_state,
+                    connected_peers: 0,
+                    outstanding_requests: 0,
+                    inbound_peer: false,
+                    tracker_due: false,
+                    last_active: None,
+                    now,
+                },
+            );
+            self.runtime.tier_controller.set_dormant_snapshot(
+                info_hash_hex.clone(),
+                dormant_snapshot_from_fields(&info_hash_hex, initial_state, None),
+            );
         }
         if !paused && !is_private {
             self.register_dht_torrent(dht_info_hash, &info_hash_hex)
