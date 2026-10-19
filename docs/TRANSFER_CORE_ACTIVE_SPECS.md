@@ -4161,7 +4161,10 @@ scheduled pair holds profile and repetition fixed while randomizing client
 order; `paired_runner.py` reuses one verified fixture for the paired trials.
 The same optional `--profiles` file must be supplied to plan generation,
 compatibility preflight, and execution so the catalog, probe, and measured
-fixture all use identical geometry.
+fixture all use identical geometry. The pinned TorrentNG paired profile opts
+into `tracker.allow_private_egress` so it can reach the isolated tracker's and
+peer's reserved `198.18.0.0/15` addresses; those addresses remain blocked by
+the production default policy.
 
 ### Ownership and invariant
 

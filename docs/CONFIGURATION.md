@@ -197,17 +197,19 @@ enqueue and released on queue rejection, cancellation, or completion.
 | `allow_http_webseeds` | `true` | Permit HTTP webseed requests |
 | `allow_https_webseeds` | `true` | Permit HTTPS webseed requests |
 | `allow_loopback_egress` | `false` | Permit outbound tracker, webseed, DHT, and peer traffic to loopback IPs |
-| `allow_private_egress` | `false` | Permit outbound tracker, webseed, DHT, and peer traffic to private/ULA/CGNAT IPs |
+| `allow_private_egress` | `false` | Permit outbound tracker, webseed, DHT, and peer traffic to private/ULA/CGNAT IPs and the reserved `198.18.0.0/15` benchmarking network |
 | `allow_link_local_egress` | `false` | Permit outbound tracker, webseed, DHT, and peer traffic to link-local IPs |
 | `allow_multicast_egress` | `false` | Permit outbound tracker, webseed, DHT, and peer traffic to multicast IPs |
 | `allow_unspecified_egress` | `false` | Permit outbound tracker, webseed, DHT, and peer traffic to unspecified IPs |
 
 The address-policy switches apply to every outbound peer connection, not only
 tracker and webseed traffic: DHT bootstrap/routing traffic and peer addresses
-from trackers, DHT, PEX, or manual requests use the same policy. Leave these
-switches disabled for public-swarm isolation; enable only the address classes
-needed for a deliberate LAN/private deployment. Denied destinations are
-skipped and counted by the egress-policy metrics.
+from trackers, DHT, PEX, or manual requests use the same policy. The reserved
+benchmarking network is also permitted only when `allow_private_egress` is
+enabled; other reserved ranges remain denied. Leave these switches disabled
+for public-swarm isolation; enable only the address classes needed for a
+deliberate LAN/private deployment. Denied destinations are skipped and
+counted by the egress-policy metrics.
 
 ### `[dht]`
 

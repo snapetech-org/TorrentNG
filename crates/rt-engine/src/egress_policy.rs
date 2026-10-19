@@ -187,7 +187,15 @@ impl OutboundEgressPolicy {
 
     pub fn validate_ip(&self, addr: IpAddr) -> Result<(), EgressPolicyError> {
         let class = AddressClass::classify(addr);
-        if class.allowed_by(*self) {
+        // The paired transfer harness uses RFC 2544's reserved benchmarking
+        // range for isolated peers and its local tracker. It remains denied
+        // by default and is allowed only under the existing private-egress
+        // opt-in, like an explicitly enabled LAN destination.
+        let benchmark_range = matches!(
+            addr,
+            IpAddr::V4(address) if ipv4_in_range(address, 198, 18, 15)
+        );
+        if class.allowed_by(*self) || (benchmark_range && self.allow_private) {
             Ok(())
         } else {
             ADDRESS_DENIED_TOTAL.fetch_add(1, Ordering::Relaxed);
@@ -853,14 +861,16 @@ mod tests {
     }
 
     #[test]
-    fn policy_can_explicitly_allow_private_lan() {
+    fn policy_can_explicitly_allow_private_and_benchmark_destinations() {
         let policy = OutboundEgressPolicy {
             allow_private: true,
             allow_link_local: true,
             ..OutboundEgressPolicy::default()
         };
         policy.validate_ip("192.168.1.1".parse().unwrap()).unwrap();
+        policy.validate_ip("198.18.0.1".parse().unwrap()).unwrap();
         policy.validate_ip("fe80::1".parse().unwrap()).unwrap();
+        assert!(policy.validate_ip("240.0.0.1".parse().unwrap()).is_err());
         assert!(policy.validate_ip("127.0.0.1".parse().unwrap()).is_err());
     }
 
@@ -868,11 +878,13 @@ mod tests {
     fn peer_destinations_use_the_configured_address_policy() {
         let lan_peer: SocketAddr = "192.168.1.20:51413".parse().unwrap();
         let loopback_peer: SocketAddr = "127.0.0.1:51413".parse().unwrap();
+        let benchmark_peer: SocketAddr = "198.18.0.1:51413".parse().unwrap();
         let public_peer: SocketAddr = "8.8.8.8:51413".parse().unwrap();
         let default = OutboundEgressPolicy::default();
 
         assert!(default.validate_peer_addr(lan_peer).is_err());
         assert!(default.validate_peer_addr(loopback_peer).is_err());
+        assert!(default.validate_peer_addr(benchmark_peer).is_err());
         assert!(default.validate_peer_addr(public_peer).is_ok());
 
         let lan_enabled = OutboundEgressPolicy {
@@ -882,5 +894,6 @@ mod tests {
         };
         assert!(lan_enabled.validate_peer_addr(lan_peer).is_ok());
         assert!(lan_enabled.validate_peer_addr(loopback_peer).is_ok());
+        assert!(lan_enabled.validate_peer_addr(benchmark_peer).is_ok());
     }
 }

@@ -18,10 +18,13 @@ engine Clippy passed on 1.94.0 with warnings and no errors. The runner-policy
 suite passed 4/4 with the protected hardware lane restricted to an explicit
 `main` dispatch.
 
-The current benchmark-harness changes pass all 195 transfer-rebuild Python
-tests and all six Rust 1.98.1 urtorrent-runner tests. The runner formatting
-check passes with Rust 1.94.0; rustfmt is not installed for the pinned 1.98.1
-toolchain. The exact source is being committed before paired-client execution.
+After the profile-scope and egress-policy changes, all 195 transfer-rebuild
+Python tests passed. Full workspace runs passed on Rust 1.94.0 and 1.88.0 with
+2,301 tests passed, 0 failed, and 12 ignored across 37 summaries. Strict
+workspace Clippy passed on both toolchains, and formatting passed with Rust
+1.94.0. The standalone Rust 1.98.1 urtorrent runner passed all six
+tests; its formatting check passed with Rust 1.94.0 because rustfmt is not
+installed for 1.98.1. Paired-client trials remain pending.
 
 The release 100k catalog case admitted paused rows in 213.730 s, restored in
 2.055 s, and listed the first sorted page in 807 ms; the cached page took under
@@ -40,7 +43,10 @@ whole-client efficiency evidence. Full commands and logs are recorded in
 The direct `urtorrent` preflight now starts with a per-process 64 MiB
 `RLIMIT_MEMLOCK`; the earlier default 8 MiB limit caused `io_uring_setup` to
 fail. The full compatibility preflight and paired-client trials are still
-pending. Hosted Transfer Rebuild and Windows Smoke passed on
+pending. TorrentNG's pinned paired-run config enables
+`tracker.allow_private_egress` for the isolated `198.18.0.0/15` tracker and
+peer endpoints; this reserved network remains denied by default. Hosted
+Transfer Rebuild and Windows Smoke passed on
 `94c8c1b3ff14106db93ab1a9750a1bb00c808b7c`, before this harness-only change.
 The protected hardware job was skipped because no runner is registered. The
 current read-only `kspls0` check confirmed the ext4 LVM path and 25 T free,
