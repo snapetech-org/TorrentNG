@@ -719,6 +719,11 @@ each candidate with the other of exactly two pinned clients. The runner rejects
 self-pairs. An explicit helper ID remains available for a scoped run, provided
 it is pinned and differs from that scheduled candidate.
 
+When urtorrent participates, the task-local tracker is hosted in the namespace
+of its pinned peer, matching the direct runner's tracker-address check. The
+trial timeout and seed-stop window are bound into the readback profile, so a
+trial cannot silently run with different timeout settings than the pin.
+
 ```sh
 python3 scripts/transfer_rebuild/paired_runner.py \
   --plan /path/to/task-scratch/transfer-run/paired-plan.json \

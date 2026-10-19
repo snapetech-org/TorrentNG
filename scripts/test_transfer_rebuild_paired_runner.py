@@ -35,6 +35,7 @@ from paired_runner import (  # noqa: E402
     _seed_payload,
     _start_urtorrent,
     _stage_input,
+    _task_tracker_endpoint,
     _transfer_duration_ns,
     _urtorrent_profile_for_trial,
     _validate_payload,
@@ -180,7 +181,12 @@ class PairedRunnerTests(unittest.TestCase):
                 "settings": {
                     "session": {"listen_v4": "127.0.0.1", "dht": False},
                     "control": {"pinned_peer": "127.0.0.1:1234"},
-                    "runner_inputs": {"mode": "download", "hash_threads": 2},
+                    "runner_inputs": {
+                        "mode": "download",
+                        "hash_threads": 2,
+                        "timeout_seconds": 60,
+                        "seed_seconds": 60,
+                    },
                 }
             }
         }
@@ -199,6 +205,8 @@ class PairedRunnerTests(unittest.TestCase):
         self.assertEqual(settings["control"]["tracker_url"], "http://198.18.1.2:45555/announce")
         self.assertEqual(settings["control"]["trackers_after_isolation"], 1)
         self.assertEqual(settings["runner_inputs"]["mode"], "seed")
+        self.assertEqual(settings["runner_inputs"]["timeout_seconds"], 60)
+        self.assertEqual(settings["runner_inputs"]["seed_seconds"], 60)
         self.assertEqual(profile["expected_settings"]["settings"]["session"]["listen_v4"], "127.0.0.1")
         self.assertEqual(profile["expected_settings"]["settings"]["runner_inputs"]["mode"], "download")
 
@@ -206,6 +214,25 @@ class PairedRunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(PairedRunnerError, "mode"):
             _urtorrent_profile_for_trial(
                 {}, "127.0.0.1", "127.0.0.1:1", "http://127.0.0.1:2/announce", "upload"
+            )
+
+    def test_urtorrent_trial_profile_rejects_invalid_timeout(self) -> None:
+        with self.assertRaisesRegex(PairedRunnerError, "timeout"):
+            _urtorrent_profile_for_trial(
+                {
+                    "expected_settings": {
+                        "settings": {
+                            "session": {},
+                            "control": {},
+                            "runner_inputs": {"timeout_seconds": 60},
+                        }
+                    }
+                },
+                "127.0.0.1",
+                "127.0.0.1:1",
+                "http://127.0.0.1:2/announce",
+                "download",
+                0,
             )
 
     def test_urtorrent_start_reads_nested_settings_pin_and_keeps_task_tracker(self) -> None:
@@ -273,9 +300,33 @@ class PairedRunnerTests(unittest.TestCase):
         self.assertEqual(args[args.index("--max-peers") + 1], "12")
         self.assertEqual(args[args.index("--hash-threads") + 1], "3")
         settings = endpoint.direct_profile["expected_settings"]["settings"]
+        self.assertEqual(settings["runner_inputs"]["timeout_seconds"], 120)
+        self.assertEqual(settings["runner_inputs"]["seed_seconds"], 120)
         self.assertEqual(settings["control"]["pinned_peer"], "198.18.2.2:44444")
         self.assertEqual(settings["control"]["tracker_url"], tracker_url)
         self.assertEqual(settings["control"]["trackers_after_isolation"], 1)
+
+    def test_direct_urtorrent_tracker_runs_on_its_pinned_peer_namespace(self) -> None:
+        paths = RuntimePaths(
+            root=Path("/tmp/endpoint"),
+            data=Path("/tmp"),
+            state=Path("/tmp"),
+            log=Path("/tmp"),
+            pid=Path("/tmp"),
+            env=Path("/tmp"),
+        )
+        torrentng_target = Endpoint("target", "torrentngd", {}, paths)
+        torrentng_seed = Endpoint("seed", "torrentngd", {}, paths)
+        urtorrent_target = Endpoint("target", "urtorrent", {}, paths)
+        urtorrent_seed = Endpoint("seed", "urtorrent", {}, paths)
+
+        self.assertIs(
+            _task_tracker_endpoint(torrentng_target, urtorrent_seed), torrentng_target
+        )
+        self.assertIs(
+            _task_tracker_endpoint(urtorrent_target, torrentng_seed), torrentng_seed
+        )
+        self.assertIs(_task_tracker_endpoint(torrentng_target, torrentng_seed), torrentng_seed)
 
     def test_runner_input_json_rejects_overflow_numbers(self) -> None:
         with tempfile.TemporaryDirectory(prefix="tng-paired-json-") as directory:

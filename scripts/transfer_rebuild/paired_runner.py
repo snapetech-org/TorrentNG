@@ -417,6 +417,15 @@ def _profile_listener_ports(profile: dict[str, Any]) -> set[int]:
     return ports
 
 
+def _task_tracker_endpoint(candidate_endpoint: Endpoint, helper_endpoint: Endpoint) -> Endpoint:
+    """Bind the tracker on urtorrent's pinned peer when it is a direct endpoint."""
+    if candidate_endpoint.client_id == "urtorrent":
+        return helper_endpoint
+    if helper_endpoint.client_id == "urtorrent":
+        return candidate_endpoint
+    return helper_endpoint
+
+
 def _mkdir_private(path: Path) -> None:
     if path.exists() or path.is_symlink():
         raise PairedRunnerError(f"runner output directory already exists: {path}")
@@ -606,7 +615,12 @@ def _profile_port(profile: dict[str, Any], client_id: str) -> int:
 
 
 def _urtorrent_profile_for_trial(
-    profile: dict[str, Any], listen_v4: str, peer_address: str, tracker_url: str, mode: str
+    profile: dict[str, Any],
+    listen_v4: str,
+    peer_address: str,
+    tracker_url: str,
+    mode: str,
+    timeout_seconds: int | None = None,
 ) -> dict[str, Any]:
     """Bind address- and mode-dependent settings to this isolated trial."""
     if mode not in {"download", "seed"}:
@@ -621,11 +635,21 @@ def _urtorrent_profile_for_trial(
     runner_inputs = settings.get("runner_inputs")
     if not all(isinstance(value, dict) for value in (session, control, runner_inputs)):
         raise PairedRunnerError("urtorrent pin omits a trial-bound settings section")
+    if timeout_seconds is None:
+        timeout_seconds = runner_inputs.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
+    if (
+        isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, int)
+        or not 1 <= timeout_seconds <= 24 * 60 * 60
+    ):
+        raise PairedRunnerError("urtorrent timeout must be within 1..86400 seconds")
     session["listen_v4"] = listen_v4
     control["pinned_peer"] = peer_address
     control["tracker_url"] = tracker_url
     control["trackers_after_isolation"] = 1
     runner_inputs["mode"] = mode
+    runner_inputs["timeout_seconds"] = timeout_seconds
+    runner_inputs["seed_seconds"] = timeout_seconds
     return result
 
 
@@ -996,7 +1020,12 @@ def _start_urtorrent(
         "--seed-seconds", str(timeout_seconds),
     ]
     endpoint.direct_profile = _urtorrent_profile_for_trial(
-        profile, str(task["address"]), peer_address, endpoint.paths.tracker_url, mode
+        profile,
+        str(task["address"]),
+        peer_address,
+        endpoint.paths.tracker_url,
+        mode,
+        timeout_seconds,
     )
     endpoint.direct_profile["pid_file"] = str(endpoint.paths.state / "urtorrent.pid")
     endpoint.direct_profile["settings_file"] = str(endpoint.paths.state / "settings.json")
@@ -1624,10 +1653,11 @@ def _run_trial(
             topology_sha256=str(topology_record["artifact_sha256"]),
             dialer_role=dialer_role,
         )
+        tracker_endpoint = _task_tracker_endpoint(candidate_endpoint, helper_endpoint)
         tracker_process, tracker_url = _start_task_tracker_worker(
             tracker,
             topology_record,
-            helper_endpoint.role,
+            tracker_endpoint.role,
             _profile_listener_ports(candidate_endpoint.profile)
             | _profile_listener_ports(helper_endpoint.profile),
             run_dir,

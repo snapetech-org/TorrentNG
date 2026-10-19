@@ -4201,9 +4201,11 @@ the production default policy.
   distinct pinned clients and resolves the other client for each candidate;
   explicit helper IDs must also be pinned and distinct. When `urtorrent` is the
   helper, it receives the opposite transfer mode and joins the same
-  candidate/helper readiness barrier. Direct receivers use the API-controlled
-  seed's uploaded-byte counter to bound useful progress; direct seeders stop
-  after the measured receiver verifies completion.
+  candidate/helper readiness barrier. The task tracker is hosted in the direct
+  runner's pinned peer namespace, and timeout/seed-stop values are bound into
+  its settings readback. Direct receivers use the API-controlled seed's
+  uploaded-byte counter to bound useful progress; direct seeders stop after the
+  measured receiver verifies completion.
 - **Must not:** treat `candidate` as verified client support, label a plan as
   measured evidence, silently skip a failed or incompatible trial, or conflate
   this efficiency catalog with protocol interop correctness.
