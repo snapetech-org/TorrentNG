@@ -49,15 +49,20 @@ refactor's change or rank whole clients. Full details, confidence intervals,
 and artifact digests are recorded under PERF-110 in
 [`TRANSFER_CORE_ACTIVE_SPECS.md`](../../docs/TRANSFER_CORE_ACTIVE_SPECS.md).
 
-Both slow rows are the TorrentNG-to-urtorrent direction. In each trial, the
-runner uses TorrentNG's own uploaded-byte counter, so the signal is in
-TorrentNG's upload path rather than only the urtorrent receiver's completion
-counter. The scoped result is still one host and one workload; it does not
-identify which upload-stage cost is responsible.
+Both slow rows are the TorrentNG-to-urtorrent direction. The runner uses
+TorrentNG's own uploaded-byte counter, so it verifies the served-byte rate
+independently of urtorrent's completion counter. That does not isolate whether
+the limit is TorrentNG's read/send path or the receiver's request cadence. The
+scoped result is still one host and one workload.
 
-The current code candidate raises per-peer admitted upload reads from 8 to 16
-to match the existing 16-response window. Its source-bound paired rerun is
-pending; the baseline result above is unchanged until that run completes.
+The 16-read upload-window candidate was tested in a second source-bound
+10-pair run on the same local-NVMe Btrfs host profile. All 40 records completed
+with verified hashes and achieved cold-cache state. TorrentNG's median seed
+goodput was 12.84 MB/s versus 12.88 MB/s in the 8-read baseline, so the change
+did not improve the intended path; its default is back to 8. The candidate
+download median was lower than the earlier run and remains unexplained. Exact
+candidate results and artifact digests are recorded under PERF-110 in
+[`TRANSFER_CORE_ACTIVE_SPECS.md`](../../docs/TRANSFER_CORE_ACTIVE_SPECS.md).
 
 The direct `urtorrent` preflight now starts with a per-process 64 MiB
 `RLIMIT_MEMLOCK`; the earlier default 8 MiB limit caused `io_uring_setup` to

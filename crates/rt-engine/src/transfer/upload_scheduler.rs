@@ -29,11 +29,7 @@ impl Default for UploadReadLimits {
             max_connections: 200,
             max_in_flight_jobs: 64,
             max_in_flight_bytes: 16 * 1024 * 1024,
-            // Match the live v1 response window so one fast peer can keep
-            // enough blocks in flight to cover a 1 Gbit/s, 1 ms-per-side
-            // bandwidth-delay product. Process-wide jobs and bytes remain
-            // the hard bounds when many peers upload at once.
-            max_in_flight_per_connection: 16,
+            max_in_flight_per_connection: 8,
             max_queued_per_connection: 8,
         }
     }

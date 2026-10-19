@@ -4350,14 +4350,41 @@ the production default policy.
   resource ratios had 10. Cgroup memory and energy metrics were unavailable.
   This is a narrow engine-runner comparison on one host and fixture; it does
   not establish a whole-client ranking or a change from a pre-refactor build.
-- **Upload-window follow-up under evaluation:** the shared upload-read broker
-  now admits up to 16 reads per peer, matching the live v1 response window and
-  the approximate bandwidth-delay product for this 1 Gbit/s, 1 ms-per-side
-  profile. The result above is the 8-read baseline; the source-bound rerun of
-  the 16-read candidate is pending and no improvement is claimed yet.
+- **16-read upload-window candidate, tested and rejected:** commit
+  `daded066d7d5b40b94ef1e4964a629fa28307efe` raised the shared upload-read
+  broker's per-peer admission from 8 to 16 while leaving the process-wide
+  limits unchanged. Its source-bound rerun used the same `kspld0` local-NVMe
+  Btrfs profile, 128 MiB v1 fixture, cold-cache verification, 1 Gbit/s / 1 ms
+  shaping, and pinned urtorrent `0.14.3` runner as the 8-read baseline. All 40
+  records completed, all 40 payload hashes passed, all 40 cache states were
+  achieved, and both the manifest and scorecard validate. The change did not
+  improve TorrentNG seeding: median goodput was 12.88 MB/s at 8 reads and
+  12.84 MB/s at 16; TorrentNG's median CPU cost rose from 4.56 to 4.72
+  CPU-s/GiB. The 16-read default is reverted in the current source.
+
+  | Mode | TorrentNG at 16 reads | urtorrent | urtorrent / TorrentNG goodput ratio (95% CI) |
+  |---|---:|---:|---:|
+  | Download | 66.11 MB/s | 13.10 MB/s | 0.198 (0.195–0.199), n=10 |
+  | Seed | 12.84 MB/s | 92.69 MB/s | 7.215 (7.145–7.248), n=10 |
+
+  Candidate median CPU use was 5.84 versus 2.24 CPU-s/GiB for downloads and
+  4.72 versus 2.00 CPU-s/GiB for seeding. Peak RSS medians were 33.98 versus
+  15.00 MiB on downloads and 35.04 versus 16.68 MiB on seeding. The relative
+  seeding result is effectively unchanged from the 8-read run. The lower
+  candidate download median is recorded, but this upload-window experiment
+  does not isolate its cause. Neither run supplies a pre-refactor build, so
+  the broader refactor's effect remains unmeasured.
+
+  The candidate manifest is
+  `/home/keith/.cache/torrentng-perf110-daded066-20261019/full-run/manifest.json`
+  (SHA-256 `075f2c268211f1731a602afc98733054f572912686fc9bc27ce92436f8e203c0`)
+  and its scorecard is
+  `/home/keith/.cache/torrentng-perf110-daded066-20261019/full-run/scorecard.json`
+  (SHA-256 `0c6032ee411785a588a414bc9d308391f29ae04b2ac21f81812a7100eeb223d3`).
 - **External evidence still required:** successful pinned compatibility
   preflights and paired trials across the other pinned clients and fixture
-  profiles, plus dedicated-host and pre-refactor baseline results.
+  profiles, plus dedicated-host qualification and a genuine pre-refactor
+  comparison.
 
 ## PERF-111 — Picker and changed-snapshot probes
 

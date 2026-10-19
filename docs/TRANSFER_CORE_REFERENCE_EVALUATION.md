@@ -171,6 +171,12 @@ results are in `TRANSFER_CORE_ACTIVE_SPECS.md`. No pre-refactor baseline exists,
 so the run does not show whether the refactor moved the needle or rank whole
 clients. Broader clients, profiles, and hardware qualification remain open.
 
+A follow-up tested the 16-read upload-admission candidate against the retained
+8-read result on the same Btrfs host profile. TNG seed median stayed flat at
+12.88 versus 12.84 MB/s, while CPU cost changed from 4.56 to 4.72 CPU-s/GiB.
+The 16-read default was reverted. The follow-up does not identify the cause of
+the seeding gap or measure the full refactor against a pre-refactor build.
+
 ## Why keep the current branch as a candidate
 
 - The new pure modules and storage work passed the recorded local source suite;
