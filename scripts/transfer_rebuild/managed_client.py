@@ -8,6 +8,7 @@ bind mounts; the task topology attaches their namespace before a trial starts.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import re
@@ -146,6 +147,8 @@ def _prepare_torrentng_config(
     daemon = config.get("daemon")
     network = config.get("network")
     storage = config.get("storage")
+    api_context = profile.get("task_api_context")
+    api_address = api_context.get("address") if isinstance(api_context, dict) else None
     api_port = launch.get("api_port")
     peer_port = launch.get("peer_port")
     state_path = runtime_paths.get("state")
@@ -154,6 +157,7 @@ def _prepare_torrentng_config(
         not isinstance(daemon, dict)
         or not isinstance(network, dict)
         or not isinstance(storage, dict)
+        or not isinstance(api_address, str)
         or isinstance(api_port, bool)
         or not isinstance(api_port, int)
         or not 1 <= api_port <= 65535
@@ -166,7 +170,13 @@ def _prepare_torrentng_config(
         or not data_path.is_absolute()
     ):
         raise ManagedClientError("TorrentNG paired launch config is missing pinned task paths or ports")
-    daemon["api_bind"] = f"127.0.0.1:{api_port}"
+    try:
+        parsed_api_address = ipaddress.ip_address(api_address)
+    except ValueError as error:
+        raise ManagedClientError("TorrentNG task API address must be an IP address") from error
+    if not isinstance(parsed_api_address, ipaddress.IPv4Address):
+        raise ManagedClientError("TorrentNG task API address must use IPv4")
+    daemon["api_bind"] = f"{parsed_api_address}:{api_port}"
     daemon["session_dir"] = str(state_path / "session")
     network["listen_port"] = peer_port
     storage["download_dir"] = str(data_path)
@@ -427,7 +437,9 @@ def _profile_for_role(
     result["base_url"] = (
         f"http://{address}:{launch['api_port']}" if launch["api_port"] is not None else None
     )
-    result["task_api_context"] = client_api_context(topology, role)
+    api_context = client_api_context(topology, role)
+    result["task_api_context"] = api_context
+    result["_task_local_api"] = api_context
     result["expected_settings"] = _render_tree(profile["expected_settings"], values)
     if client_id == "rtorrent":
         socket_name = "rtorrent.sock"
