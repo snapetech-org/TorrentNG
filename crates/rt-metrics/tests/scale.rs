@@ -380,6 +380,12 @@ impl LiveEngineCatalog {
         std::fs::create_dir_all(&download_dir).map_err(|error| error.to_string())?;
 
         let mut config = Config::default();
+        // Other scale tests can initialize the process-global storage pool
+        // before this engine starts. Match that fixed cap instead of
+        // depending on test execution order (the engine rejects a conflicting
+        // cap because changing a live pool would invalidate reservations).
+        config.memory.storage_frame_cap_mb =
+            rt_storage::global_frame_pool().cap_bytes() / (1024 * 1024);
         // Size metadata and API-snapshot headroom for the catalog query. The
         // paused rows stay dormant and do not retain parsed metainfo or piece
         // indexes; the 100k query still needs room for its live API projection.
