@@ -846,10 +846,13 @@ before each mutation.
 
 `task_tracker.py` serves HTTP announces only on a recorded task endpoint. It
 accepts only the target and seed source addresses and pinned v1/v2 info hashes.
-It learns each endpoint's peer ID and listening port from its announce, waits
-for the seed identity before returning that peer to the target, and gives the
-seed an empty peer list so a transfer has one dialer. Later announces must
-retain the same identity. Its snapshot
+It learns each endpoint's peer ID and listening port from its announce, then
+returns the other peer only to the selected dialer. A TorrentNG endpoint is
+selected as dialer when paired with another client, so it receives the peer
+from its tracker response and can satisfy private-peer admission; the target
+is selected when both endpoints are TorrentNG or neither is. The non-dialing
+endpoint receives an empty peer list, preventing reciprocal dials. Later
+announces must retain the same identity. Its snapshot
 contains the actual bound task address, counts, and hashes of both peer IDs,
 not the peer IDs themselves. The retargeted announce URL is checked against
 that bound address, which can be the helper endpoint rather than the topology

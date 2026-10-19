@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent / "transfer_rebuild"))
-from client_control import TorrentState  # noqa: E402
+from client_control import ClientControlError, TorrentState  # noqa: E402
 from cache_control import _reuse_verified_fixture_manifest  # noqa: E402
 from fixtures import FixtureFile, generate_fixture, verify_fixture  # noqa: E402
 from paired_runner import (  # noqa: E402
@@ -42,14 +42,17 @@ from paired_runner import (  # noqa: E402
 
 
 class _StatusSequence:
-    def __init__(self, states: list[TorrentState]) -> None:
+    def __init__(self, states: list[TorrentState | BaseException]) -> None:
         self.states = states
         self.calls = 0
 
     def status(self, _info_hash: str) -> TorrentState:
         index = min(self.calls, len(self.states) - 1)
         self.calls += 1
-        return self.states[index]
+        state = self.states[index]
+        if isinstance(state, BaseException):
+            raise state
+        return state
 
 
 class _LiveProcess:
@@ -474,6 +477,46 @@ class PairedRunnerTests(unittest.TestCase):
 
         self.assertIsNotNone(first_ns)
         self.assertEqual(first_ns, last_ns)
+        self.assertEqual(candidate_bytes, 200)
+
+    def test_transfer_wait_retries_a_transient_http_503_status_read(self) -> None:
+        info_hash = "a" * 40
+        transient = ClientControlError(
+            "torrentngd status read failed: HTTP 503 for /api/qb/v2/torrents/info"
+        )
+        controller = _StatusSequence([
+            _state(received=150),
+            transient,
+            _state(received=200, complete=True),
+            _state(received=200, complete=True),
+            _state(received=200, complete=True),
+        ])
+        paths = RuntimePaths(
+            root=Path("/tmp/endpoint"),
+            data=Path("/tmp/endpoint/data"),
+            state=Path("/tmp/endpoint/state"),
+            log=Path("/tmp/endpoint/client.log"),
+            pid=Path("/tmp/endpoint/state/client.pid"),
+            env=Path("/tmp/endpoint/state/client.env"),
+        )
+        endpoint = Endpoint("target", "torrentngd", {}, paths, controller=controller)  # type: ignore[arg-type]
+        helper = Endpoint("seed", "torrentngd", {}, paths, controller=controller)  # type: ignore[arg-type]
+
+        first_ns, last_ns, candidate_bytes = _wait_for_transfer(
+            target_controller=controller,  # type: ignore[arg-type]
+            helper_controller=controller,  # type: ignore[arg-type]
+            target_role="target",
+            target_endpoint=endpoint,
+            candidate_endpoint=endpoint,
+            helper_endpoint=helper,
+            info_hash=info_hash,
+            mode="download",
+            timeout_seconds=1,
+            counter_baseline=_state(received=100),
+        )
+
+        self.assertIsNotNone(first_ns)
+        self.assertIsNotNone(last_ns)
         self.assertEqual(candidate_bytes, 200)
 
     def test_missing_task_topology_remains_null_in_trial_environment(self) -> None:

@@ -304,6 +304,8 @@ def _start_task_tracker_worker(
         str(tracker.target_address),
         "--seed-address",
         str(tracker.seed_address),
+        "--dialer-role",
+        tracker.dialer_role,
         "--bind-address",
         bind_address,
         "--port",
@@ -1137,6 +1139,17 @@ def _status(controller: ClientController | None, info_hash: str) -> TorrentState
     return controller.status(info_hash)
 
 
+def _trial_status(
+    controller: ClientController | None, info_hash: str
+) -> tuple[TorrentState | None, str | None]:
+    try:
+        return _status(controller, info_hash), None
+    except ClientControlError as error:
+        if "HTTP 503 for " not in str(error):
+            raise
+        return None, str(error)
+
+
 def _runner_result(endpoint: Endpoint) -> dict[str, Any] | None:
     if endpoint.direct_process is None:
         return None
@@ -1178,9 +1191,11 @@ def _wait_for_transfer(
     first_ns: int | None = None
     last_ns: int | None = None
     candidate_bytes: int | None = None
+    last_transient_status_error: str | None = None
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
-        observed = _status(counter_controller, info_hash)
+        observed, transient_error = _trial_status(counter_controller, info_hash)
+        last_transient_status_error = transient_error or last_transient_status_error
         if observed is not None:
             current = getattr(observed, counter_field)
             if current < prior:
@@ -1192,7 +1207,8 @@ def _wait_for_transfer(
                 last_ns = now
             prior = current
         if target_api is not None:
-            state = target_api.status(info_hash)
+            state, transient_error = _trial_status(target_api, info_hash)
+            last_transient_status_error = transient_error or last_transient_status_error
             if state is not None:
                 if state.state.lower() in {"error", "stopped-on-error"}:
                     raise PairedRunnerError("receiver reported a transfer error")
@@ -1226,10 +1242,14 @@ def _wait_for_transfer(
                 break
         time.sleep(POLL_SECONDS)
     else:
-        raise PairedRunnerError("paired payload transfer exceeded its bounded timeout")
+        reason = "paired payload transfer exceeded its bounded timeout"
+        if last_transient_status_error is not None:
+            reason += f"; last transient status response: {last_transient_status_error}"
+        raise PairedRunnerError(reason)
 
     if mode == "download":
-        candidate_state = _status(candidate_endpoint.controller, info_hash)
+        candidate_state, transient_error = _trial_status(candidate_endpoint.controller, info_hash)
+        last_transient_status_error = transient_error or last_transient_status_error
         if candidate_state is not None:
             candidate_bytes = candidate_state.received_bytes
         elif candidate_endpoint.direct_process is not None:
@@ -1238,7 +1258,8 @@ def _wait_for_transfer(
                 raw_count = candidate_endpoint.direct_result.get("downloaded")
                 candidate_bytes = raw_count if isinstance(raw_count, int) and raw_count >= 0 else None
     elif candidate_endpoint.controller is not None:
-        candidate_state = _status(candidate_endpoint.controller, info_hash)
+        candidate_state, transient_error = _trial_status(candidate_endpoint.controller, info_hash)
+        last_transient_status_error = transient_error or last_transient_status_error
         if candidate_state is not None:
             candidate_bytes = candidate_state.uploaded_bytes
     return first_ns, last_ns, candidate_bytes
@@ -1531,6 +1552,12 @@ def _run_trial(
         if not info_hash_bytes:
             raise PairedRunnerError("fixture torrent record has no valid v1/v2 info hashes")
         seed_port = None if seed_endpoint.client_id == "urtorrent" else _profile_port(seed_endpoint.profile, seed_endpoint.client_id)
+        native_roles = [
+            endpoint.role
+            for endpoint in (candidate_endpoint, helper_endpoint)
+            if endpoint.client_id == "torrentngd"
+        ]
+        dialer_role = native_roles[0] if len(native_roles) == 1 else "target"
         tracker = TaskTracker(
             gateway=topology_record["gateway"],
             target_address=topology_record["target"]["address"],
@@ -1539,6 +1566,7 @@ def _run_trial(
             seed_peer_id=None,
             info_hashes=info_hash_bytes,
             topology_sha256=str(topology_record["artifact_sha256"]),
+            dialer_role=dialer_role,
         )
         tracker_process, tracker_url = _start_task_tracker_worker(
             tracker,

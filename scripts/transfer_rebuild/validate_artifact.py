@@ -786,6 +786,9 @@ def _task_tracker_errors(observation: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     if observation["artifact_sha256"] != _canonical_record_digest(observation):
         errors.append("artifact_sha256 does not match canonical task-tracker fields")
+    dialer_role = observation.get("dialer_role")
+    if "dialer_role" in observation and dialer_role not in {"target", "seed"}:
+        errors.append("dialer_role must be target or seed")
     counts = observation["announce_counts"]
     if sum(counts.values()) != observation["request_count"]:
         errors.append("request_count does not equal the announce counters")

@@ -204,7 +204,7 @@ class TaskTrackerTests(unittest.TestCase):
             + "&peer_id=" + urllib.parse.quote_from_bytes(b"-CMP100-" + b"t" * 12, safe="")
             + "&port=45678&event=started&compact=1"
         )
-        with self.assertRaisesRegex(TaskTrackerError, "seed did not announce before the readiness deadline"):
+        with self.assertRaisesRegex(TaskTrackerError, "other endpoint did not announce before the readiness deadline"):
             tracker.response("198.18.4.3", query)
         self.assertFalse(tracker.snapshot()["seed_ready"])
         self.assertTrue(tracker.snapshot()["target_ready"])
@@ -229,6 +229,38 @@ class TaskTrackerTests(unittest.TestCase):
         self.assertIn(b"5:peers0:", response)
         self.assertTrue(tracker.snapshot()["seed_ready"])
         self.assertFalse(tracker.snapshot()["target_ready"])
+
+    def test_selected_seed_dialer_gets_target_and_target_gets_no_peer(self) -> None:
+        tracker = TaskTracker(
+            gateway="198.18.4.1",
+            target_address="198.18.4.3",
+            seed_address="198.18.4.2",
+            seed_port=None,
+            seed_peer_id=None,
+            info_hashes={self.hash_v1},
+            topology_sha256="a" * 64,
+            dialer_role="seed",
+        )
+        target_peer_id = b"-CMP100-" + b"t" * 12
+        target_query = (
+            "info_hash=" + urllib.parse.quote_from_bytes(self.hash_v1, safe="")
+            + "&peer_id=" + urllib.parse.quote_from_bytes(target_peer_id, safe="")
+            + "&port=45678&event=started&compact=1"
+        )
+        self.assertIn(b"5:peers0:", tracker.response("198.18.4.3", target_query))
+
+        seed_query = (
+            "info_hash=" + urllib.parse.quote_from_bytes(self.hash_v1, safe="")
+            + "&peer_id=" + urllib.parse.quote_from_bytes(self.seed_peer_id, safe="")
+            + "&port=51413&event=started&compact=1"
+        )
+        response = tracker.response("198.18.4.2", seed_query)
+        expected_peer = bytes((198, 18, 4, 3)) + (45678).to_bytes(2, "big")
+        self.assertIn(
+            b"5:peers" + str(len(expected_peer)).encode() + b":" + expected_peer,
+            response,
+        )
+        self.assertEqual(tracker.snapshot()["dialer_role"], "seed")
 
     def test_bencode_is_canonical_and_rejects_boolean_counters(self) -> None:
         self.assertEqual(_bencode({b"z": 1, b"a": b"x"}), b"d1:a1:x1:zi1ee")

@@ -178,6 +178,7 @@ class PairedEvidenceLinkTests(unittest.TestCase):
             "topology_sha256": "a" * 64,
             "gateway": "198.18.4.1",
             "bind_address": "198.18.4.2",
+            "dialer_role": "seed",
             "target_address": "198.18.4.3",
             "target_port": 45678,
             "target_peer_id_sha256": "c" * 64,
@@ -192,6 +193,8 @@ class PairedEvidenceLinkTests(unittest.TestCase):
         })
         self.assertEqual(_task_tracker_errors(tracker), [])
         self.assertEqual(_task_tracker_topology_errors(tracker, self.topology), [])
+        invalid_dialer = _signed_record({**tracker, "dialer_role": None})
+        self.assertIn("dialer_role must be target or seed", _task_tracker_errors(invalid_dialer))
         tracker["request_count"] = 4
         self.assertIn("request_count does not equal the announce counters", _task_tracker_errors(tracker))
         self.assertEqual(

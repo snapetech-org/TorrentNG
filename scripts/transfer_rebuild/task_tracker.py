@@ -83,7 +83,7 @@ def _query_bytes(raw_query: str) -> dict[bytes, bytes]:
 
 
 class TaskTracker:
-    """A task-local peer directory that offers the pinned seed to the target."""
+    """Offer one pinned peer only to the selected endpoint dialer."""
 
     def __init__(
         self,
@@ -95,6 +95,7 @@ class TaskTracker:
         seed_peer_id: bytes | None,
         info_hashes: set[bytes],
         topology_sha256: str,
+        dialer_role: str = "target",
         seed_ready_timeout_seconds: float = 10.0,
     ) -> None:
         self.gateway = self._ipv4(gateway, "gateway")
@@ -120,6 +121,8 @@ class TaskTracker:
             not isinstance(seed_peer_id, bytes) or len(seed_peer_id) != 20
         ):
             raise TaskTrackerError("seed peer ID must contain exactly 20 bytes or be discovered")
+        if dialer_role not in {"target", "seed"}:
+            raise TaskTrackerError("dialer role must be target or seed")
         if (
             not isinstance(info_hashes, set)
             or any(not isinstance(value, bytes) or len(value) not in (20, 32) for value in info_hashes)
@@ -138,6 +141,7 @@ class TaskTracker:
             raise TaskTrackerError("seed readiness wait must be finite and within (0, 30] seconds")
         self.seed_port = seed_port
         self.seed_peer_id = seed_peer_id
+        self.dialer_role = dialer_role
         self.target_port: int | None = None
         self.target_peer_id: bytes | None = None
         self.bind_address: str | None = None
@@ -241,24 +245,37 @@ class TaskTracker:
                     raise TaskTrackerError("target peer port changed during the task")
 
             self._lock.notify_all()
-            if is_seed:
-                # The target initiates the transfer connection. Returning it
-                # to the seed too would create competing reciprocal dials.
+            dialer_address = (
+                self.target_address if self.dialer_role == "target" else self.seed_address
+            )
+            if source != dialer_address:
+                # The non-dialing endpoint needs no tracker peer, which avoids
+                # competing reciprocal connections.
                 peer_address = None
                 peer_port = None
                 peer_id = None
             else:
+                peer_is_seed = self.dialer_role == "target"
                 ready_deadline = time.monotonic() + self.seed_ready_timeout_seconds
-                while self.seed_port is None or self.seed_peer_id is None:
+                while (
+                    self.seed_port is None or self.seed_peer_id is None
+                    if peer_is_seed
+                    else self.target_port is None or self.target_peer_id is None
+                ):
                     remaining = ready_deadline - time.monotonic()
                     if remaining <= 0:
                         raise TaskTrackerError(
-                            "seed did not announce before the readiness deadline"
+                            "other endpoint did not announce before the readiness deadline"
                         )
                     self._lock.wait(remaining)
-                peer_address = self.seed_address
-                peer_port = self.seed_port
-                peer_id = self.seed_peer_id
+                if peer_is_seed:
+                    peer_address = self.seed_address
+                    peer_port = self.seed_port
+                    peer_id = self.seed_peer_id
+                else:
+                    peer_address = self.target_address
+                    peer_port = self.target_port
+                    peer_id = self.target_peer_id
             self._request_count += 1
             self._announces[event.decode("ascii") if event else "other"] += 1
 
@@ -290,6 +307,7 @@ class TaskTracker:
                 "topology_sha256": self.topology_sha256,
                 "gateway": str(self.gateway),
                 "bind_address": self.bind_address,
+                "dialer_role": self.dialer_role,
                 "target_address": str(self.target_address),
                 "target_port": self.target_port,
                 "target_peer_id_sha256": (
@@ -410,6 +428,7 @@ def _serve_worker(args: argparse.Namespace) -> int:
             seed_peer_id=None,
             info_hashes=hashes,
             topology_sha256=args.topology_sha256,
+            dialer_role=args.dialer_role,
         )
         reserved = set(args.reserved_port)
         for _attempt in range(128):
@@ -456,6 +475,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--gateway")
     parser.add_argument("--target-address")
     parser.add_argument("--seed-address")
+    parser.add_argument("--dialer-role", choices=("target", "seed"), default="target")
     parser.add_argument("--bind-address")
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--seed-port", type=int, default=0)

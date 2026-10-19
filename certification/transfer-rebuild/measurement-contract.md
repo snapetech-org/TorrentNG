@@ -113,12 +113,17 @@ still include tracker announces and protocol control traffic; useful goodput
 comes from verified payload bytes. Tracker announces are accepted only from
 the two recorded endpoint addresses and only for the fixture's info hashes.
 The tracker learns the seed and target peer IDs and listening ports from their
-announces, then returns the seed only to the target. Seed announces return an
-empty peer list, keeping one connection initiator. Its snapshot stores hashes
-of both peer IDs and the actual tracker bind address; validation requires the
-retargeted announce URL host to match that observed address. A trial's
-`task_topology_sha256` is
-the manifest-file digest for the topology record; the topology's internal
+announces, then returns the other peer only to the selected dialer. When one
+endpoint is TorrentNG, that endpoint dials so it learns the peer through the
+tracker response required by its private-peer admission policy. If both or
+neither endpoint is TorrentNG, the target dials. The other endpoint receives
+an empty peer list, keeping one connection initiator. Its snapshot stores the
+selected dialer role, hashes of both peer IDs, and the actual tracker bind
+address; validation requires the retargeted announce URL host to match that
+observed address. Transient HTTP 503 status reads are retried within the
+bounded transfer window; a persistent failure still invalidates the trial at
+timeout and is included in its diagnostic. A trial's `task_topology_sha256`
+is the manifest-file digest for the topology record; the topology's internal
 `artifact_sha256` is a separate self-digest used to guard task-local API access.
 Interface byte counters are attributable to one candidate only while the
 trial records this one-client namespace isolation.
