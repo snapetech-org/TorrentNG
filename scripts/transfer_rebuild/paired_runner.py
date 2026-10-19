@@ -64,7 +64,7 @@ RUNNER_SCHEMA_VERSION = "transfer-paired-runner-v1"
 DEFAULT_TIMEOUT_SECONDS = 1800
 POLL_SECONDS = 0.1
 MAX_JSON_BYTES = 16 * 1024 * 1024
-SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,180}$")
+SCHEDULED_TRIAL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./:-]{0,180}$")
 SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 INFO_HASH_RE = re.compile(r"^(?:[a-f0-9]{40}|[a-f0-9]{64})$")
 ENVIRONMENT_FIELDS = {
@@ -178,6 +178,18 @@ def _read_regular(path: Path, label: str, *, limit: int = MAX_JSON_BYTES) -> byt
     if len(content) != before.st_size or len(content) > limit or identity(before) != identity(after):
         raise PairedRunnerError(f"{label} changed while it was read")
     return bytes(content)
+
+
+def _scheduled_trial_key(trial_id: str, mode: str) -> str:
+    """Hash one schedule identity into a filesystem-safe key.
+
+    Catalog profile IDs include slashes and repetition IDs include hyphens.
+    The scheduled identity is metadata only; hashing it keeps it out of paths.
+    """
+    trial_suffix = f"{trial_id}:{mode}"
+    if SCHEDULED_TRIAL_ID_RE.fullmatch(trial_suffix) is None:
+        raise PairedRunnerError("scheduled trial identity contains unsafe characters")
+    return hashlib.sha256(trial_suffix.encode("utf-8")).hexdigest()[:20]
 
 
 def _load_json(path: Path, label: str) -> tuple[Any, bytes]:
@@ -1202,10 +1214,7 @@ def _run_trial(
         target_role = helper_role
     candidate_profile = profiles[candidate_id]
     helper_profile = profiles[helper_id]
-    trial_suffix = f"{planned['trial_id']}:{mode}"
-    if SAFE_ID_RE.fullmatch(trial_suffix) is None:
-        raise PairedRunnerError("scheduled trial identity contains unsafe characters")
-    trial_key = hashlib.sha256(trial_suffix.encode("utf-8")).hexdigest()[:20]
+    trial_key = _scheduled_trial_key(planned["trial_id"], mode)
     run_dir = scratch_root / "runs" / trial_key
     _mkdir_private(run_dir)
     barriers_dir = run_dir / "barrier"

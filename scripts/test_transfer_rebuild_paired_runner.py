@@ -27,6 +27,7 @@ from paired_runner import (  # noqa: E402
     _fixture_for_plan,
     _load_json,
     _network_seed,
+    _scheduled_trial_key,
     _sha256_file,
     _seed_payload,
     _stage_input,
@@ -68,6 +69,21 @@ def _state(*, received: int, complete: bool = False) -> TorrentState:
 
 
 class PairedRunnerTests(unittest.TestCase):
+    def test_scheduled_trial_key_accepts_catalog_profile_and_repetition_ids(self) -> None:
+        trial_id = "c5a1e354ae46fc313dc8:N1/lan_1g:rep-001:torrentngd:attempt-001"
+
+        key = _scheduled_trial_key(trial_id, "download")
+
+        self.assertEqual(
+            key,
+            hashlib.sha256(f"{trial_id}:download".encode("utf-8")).hexdigest()[:20],
+        )
+        self.assertRegex(key, r"^[a-f0-9]{20}$")
+
+    def test_scheduled_trial_key_rejects_unsupported_characters(self) -> None:
+        with self.assertRaisesRegex(PairedRunnerError, "scheduled trial identity"):
+            _scheduled_trial_key("trial with spaces", "download")
+
     def test_fixture_generation_uses_the_pinned_profile_file(self) -> None:
         with tempfile.TemporaryDirectory(prefix="tng-paired-profile-") as directory:
             root = Path(directory)
