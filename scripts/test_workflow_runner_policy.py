@@ -6,16 +6,47 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_DIR = ROOT / ".github" / "workflows"
 PUBLIC_JIT_WORKFLOW = "fork-safe-validation.yml"
+PROTECTED_TRANSFER_WORKFLOW = "transfer-rebuild.yml"
 
 
 class WorkflowRunnerPolicyTests(unittest.TestCase):
     def test_other_workflows_use_github_hosted_runners(self) -> None:
         for workflow in WORKFLOW_DIR.glob("*.y*"):
             source = workflow.read_text(encoding="utf-8")
-            if workflow.name == PUBLIC_JIT_WORKFLOW:
+            if workflow.name in {PUBLIC_JIT_WORKFLOW, PROTECTED_TRANSFER_WORKFLOW}:
                 continue
             self.assertNotRegex(source, r"(?m)^\s*(?:runs-on|labels):.*self-hosted")
             self.assertNotIn("TRUSTED_MAIN_RUNNERS_ENABLED", source)
+
+    def test_transfer_hardware_runner_is_explicitly_opt_in_and_main_only(self) -> None:
+        source = (WORKFLOW_DIR / PROTECTED_TRANSFER_WORKFLOW).read_text(encoding="utf-8")
+        self_hosted_lines = [
+            line.strip()
+            for line in source.splitlines()
+            if re.match(r"\s*(?:runs-on|labels):.*self-hosted", line)
+        ]
+        self.assertEqual(
+            self_hosted_lines,
+            ["runs-on: [self-hosted, linux, x64, torrentng-transfer-perf]"],
+        )
+        self.assertRegex(
+            source,
+            r"(?m)^\s*if: github\.ref == 'refs/heads/main' && "
+            r"inputs\.run_dedicated_hardware == true\s*$",
+        )
+        self.assertRegex(
+            source,
+            r"(?m)^\s*run_dedicated_hardware:\n"
+            r"\s+description:.*\n\s+required: true\n"
+            r"\s+default: false\n\s+type: boolean\s*$",
+        )
+        self.assertRegex(
+            source,
+            r"(?m)^\s*environment: transfer-rebuild-hardware\s*$",
+        )
+        self.assertIn("needs: hosted-correctness", source)
+        self.assertIn("persist-credentials: false", source)
+        self.assertNotIn("TRUSTED_MAIN_RUNNERS_ENABLED", source)
 
     def test_public_jit_runner_is_limited_to_fork_pull_requests(self) -> None:
         source = (WORKFLOW_DIR / PUBLIC_JIT_WORKFLOW).read_text(encoding="utf-8")

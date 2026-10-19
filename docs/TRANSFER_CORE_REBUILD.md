@@ -380,9 +380,9 @@ soak, and client-comparison gates remain open unless they have their own
 retained evidence.
 
 The production implementation remains at
-`354ad504f75b33c712b5ccd827cfef3eb0cf4414`. Before the harness-only test
-change, `main` was at `a274d35b`; the validated test tree includes a
-transfer-invariants harness change. The full
+`354ad504f75b33c712b5ccd827cfef3eb0cf4414`. The validated tree includes
+test-only transfer-invariants and runner-policy regression updates, plus
+documentation and release-note repairs; production code is unchanged. The full
 workspace passed on Rust 1.94.0 and 1.88.0 (2,301 passed, 0 failed, 12 ignored
 across 37 summaries per toolchain); release `rt-engine` passed 733 tests,
 including the seeded simulator; all 21 transfer-rebuild Python regressions and
@@ -390,7 +390,8 @@ all 11 runnable ignored cases passed. Clippy passed on both workspace
 toolchains, engine Clippy passed on 1.94.0, formatting passed, and the Rust
 1.98.1 comparator runner built, passed its six tests, and passed its help
 smoke. The focused transfer-invariants integration test passed on both Rust
-toolchains.
+toolchains. The workflow runner-policy suite passed 4/4 with the protected
+hardware lane restricted to the explicit `main` dispatch.
 
 The release 100k catalog admitted paused rows in 213.730 s, restored in
 2.055 s, and listed its first sorted page in 807 ms; cached listing was under

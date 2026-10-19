@@ -7,12 +7,15 @@ in the measured source checkout.
 ## Validation status
 
 The production implementation remains at
-`354ad504f75b33c712b5ccd827cfef3eb0cf4414`. The latest local test tree adds a
-transfer-invariants harness change; the focused test and full workspace were
-rerun with that change. Both Rust 1.94.0 and 1.88.0 workspace runs passed
+`354ad504f75b33c712b5ccd827cfef3eb0cf4414`. The latest local test tree adds
+transfer-invariants harness and runner-policy regression changes; the focused
+test and full workspace were rerun with them. Both Rust 1.94.0 and 1.88.0
+workspace runs passed
 2,301 tests, failed 0, and ignored 12 across 37 summaries. Release `rt-engine`
 passed 733 tests, all 21 transfer-rebuild Python regressions passed, and all
-11 runnable ignored cases passed. Workspace Clippy passed on both toolchains;
+11 runnable ignored cases passed. The runner-policy unit suite passed 4/4 with
+the protected hardware lane restricted to an explicit `main` dispatch.
+Workspace Clippy passed on both toolchains;
 engine Clippy passed on 1.94.0, with warnings and no errors. Formatting passed.
 The Rust 1.98.1 standalone comparator runner built, passed all six tests, and
 passed its help smoke.

@@ -8,20 +8,21 @@ written acceptance and exact-revision evidence are complete.
 ## Current bulk validation — 2026-10-19
 
 The production implementation remains at
-`354ad504f75b33c712b5ccd827cfef3eb0cf4414`. Before this harness-only test
-change, `main` was at `a274d35b`. The validated test tree includes a change to
-the transfer-invariants harness plus documentation updates; production code
-is unchanged. The loopback test uses fast durability
-for partial-piece progress so incidental checkpoints do not turn a protocol
-and restart check into an fsync timing test; completion still forces a real
-payload barrier before publishing `Seeding`.
+`354ad504f75b33c712b5ccd827cfef3eb0cf4414`. The validated tree includes
+test-only changes to the transfer-invariants harness and runner-policy tests,
+plus documentation and release-note repairs; production code is unchanged.
+The loopback test uses fast durability for partial-piece progress so incidental
+checkpoints do not turn a protocol and restart check into an fsync timing test;
+completion still forces a real payload barrier before publishing `Seeding`.
 
 The current local tree passed the full Rust workspace on Rust 1.94.0 and
 1.88.0: 2,301 passed, 0 failed, 12 ignored across 37 result summaries on each
 toolchain. The release `rt-engine` suite passed 733/733, including the seeded
 simulator. All 21 transfer-rebuild Python regressions passed. The focused
-`rt-metrics` transfer-invariants binary passed on both toolchains. All 11
-runnable ignored cases passed explicitly. Workspace Clippy passed on Rust
+`rt-metrics` transfer-invariants binary passed on both toolchains, and the
+workflow runner-policy suite passed 4/4 with the protected hardware exception
+restricted to the explicit `main` dispatch. All 11 runnable ignored cases
+passed explicitly. Workspace Clippy passed on Rust
 1.94.0 and 1.88.0; engine Clippy passed on 1.94.0, with warnings and no
 errors. Workspace and runner formatting checks passed on Rust 1.94.0. The
 standalone comparator runner built on Rust 1.98.1, passed all six tests, and

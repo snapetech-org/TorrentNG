@@ -3,8 +3,9 @@
 This matrix separates implemented source from qualification evidence. The
 production implementation remains at
 `354ad504f75b33c712b5ccd827cfef3eb0cf4414`; the validated test tree also
-includes a transfer-invariants harness change. The full workspace passed on
-Rust 1.94.0 and 1.88.0 (2,301 passed, 0 failed, 12 ignored on each toolchain),
+includes transfer-invariants and runner-policy test changes. The full
+workspace passed on Rust 1.94.0 and 1.88.0
+(2,301 passed, 0 failed, 12 ignored on each toolchain),
 the release `rt-engine` suite passed 733 tests, all 21 transfer-rebuild Python
 regressions passed, and all 11 runnable ignored cases passed. Formatting,
 Clippy, and the standalone Rust 1.98.1 comparator runner's six tests and CLI
