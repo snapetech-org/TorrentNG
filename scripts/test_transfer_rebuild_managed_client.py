@@ -55,7 +55,7 @@ api_tokens_file = "/tmp/tng-test-token"
             config_path = Path(launch["environment"]["TORRENTNGD_CONFIG"])
             config = tomllib.loads(config_path.read_text(encoding="utf-8"))
             self.assertEqual(config["daemon"]["session_dir"], str(state / "session"))
-            self.assertEqual(config["daemon"]["api_bind"], "0.0.0.0:18080")
+            self.assertEqual(config["daemon"]["api_bind"], "127.0.0.1:18080")
             self.assertEqual(config["network"]["listen_port"], 44444)
             self.assertEqual(config["storage"]["download_dir"], str(data))
             self.assertEqual(config["auth"]["api_tokens_file"], "/tmp/tng-test-token")

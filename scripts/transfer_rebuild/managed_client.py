@@ -166,7 +166,7 @@ def _prepare_torrentng_config(
         or not data_path.is_absolute()
     ):
         raise ManagedClientError("TorrentNG paired launch config is missing pinned task paths or ports")
-    daemon["api_bind"] = f"0.0.0.0:{api_port}"
+    daemon["api_bind"] = f"127.0.0.1:{api_port}"
     daemon["session_dir"] = str(state_path / "session")
     network["listen_port"] = peer_port
     storage["download_dir"] = str(data_path)
