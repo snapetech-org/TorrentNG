@@ -403,14 +403,17 @@ ext4 target or a whole-client result.
 The exact-source `urtorrent` runner preflight still cannot start the pinned
 client: `io_uring_setup` returns `Cannot allocate memory`. The runner's own
 build, parser tests, and CLI smoke pass, but no paired client trial is qualified.
-Hosted Transfer Rebuild, Windows Smoke, and protected-server hardware evidence
-below were collected on the prior production-source commit `eb5f3158`; the
-engine and storage production paths are unchanged since then. Intervening
-commits adjust two test timeouts and add the standalone comparator runner
-source and workflow.
-The hosted workflow must be dispatched on the current commit after it is
-pushed. See [`TRANSFER_CORE_ACTIVE_SPECS.md`](TRANSFER_CORE_ACTIVE_SPECS.md) for
-commands, logs, prior artifact digests, and open gates.
+Hosted Transfer Rebuild run
+[39233029958](https://github.com/snapetech-org/TorrentNG/actions/runs/39233029958)
+and Windows Smoke run
+[39233812206](https://github.com/snapetech-org/TorrentNG/actions/runs/39233812206)
+passed on exact commit `94c8c1b3ff14106db93ab1a9750a1bb00c808b7c`. The
+protected hardware lane was skipped. Dedicated ext4 LVM evidence below is
+from prior production-source commit `eb5f3158`; the engine and storage
+production paths are unchanged since then. Intervening commits adjust two
+test timeouts and add the standalone comparator runner source and workflow.
+See [`TRANSFER_CORE_ACTIVE_SPECS.md`](TRANSFER_CORE_ACTIVE_SPECS.md) for
+commands, logs, artifact digests, and open gates.
 
 ### Status snapshot (2026-10-19)
 
@@ -420,7 +423,11 @@ implementation is absent. The implementation audit above found all package
 slices in source, while live, hardware, hosted, paired-client, and final-release
 qualification remain separate gates.
 The 2026-10-19 follow-up above records exact-source tests on `354ad504`. The
-prior hosted run
+current hosted run
+[39233029958](https://github.com/snapetech-org/TorrentNG/actions/runs/39233029958)
+and Windows Smoke run
+[39233812206](https://github.com/snapetech-org/TorrentNG/actions/runs/39233812206)
+passed on `94c8c1b3`. The prior hosted run
 [39217933388](https://github.com/snapetech-org/TorrentNG/actions/runs/39217933388)
 and Windows Smoke run
 [39216147832](https://github.com/snapetech-org/TorrentNG/actions/runs/39216147832)
@@ -461,7 +468,7 @@ cross-path correctness evidence.
 ### Progress log
 
 | Date | Change |
-| 2026-10-19 | Exact-source bulk follow-up on `354ad504f75b33c712b5ccd827cfef3eb0cf4414`: full workspace passed on Rust 1.94.0 and 1.88.0 (2,301 passed, 0 failed, 12 ignored each); release `rt-engine` passed 733 tests; all 21 Python suites, formatting, workspace/engine Clippy, and the Rust 1.98.1 comparator runner build, 6 unit tests, and help smoke passed. Eleven runnable ignored tests were executed explicitly. Local release diagnostics passed for the two 100k catalog cases, 7 storage tests, move/import/delete, and peer-wire encode. The standalone `urtorrent` preflight still fails at `io_uring_setup: Cannot allocate memory`; no paired-client claim is made. Logs are under `/tmp/tng-transfer-core-close-20261019/evidence/`. The 100k sequential admission time was 220.587 s; restore took 2.143 s, cold list 809 ms, cached list <1 ms. These local diagnostics have no approved threshold and do not close matched-client, dedicated-hardware, crash-cut, soak/canary, or independent-review gates. |
+| 2026-10-19 | Exact-source bulk follow-up on `354ad504f75b33c712b5ccd827cfef3eb0cf4414`: full workspace passed on Rust 1.94.0 and 1.88.0 (2,301 passed, 0 failed, 12 ignored each); release `rt-engine` passed 733 tests; all 21 Python suites, formatting, workspace/engine Clippy, and the Rust 1.98.1 comparator runner build, 6 unit tests, and help smoke passed. Eleven runnable ignored tests were executed explicitly. Local release diagnostics passed for the two 100k catalog cases, 7 storage tests, move/import/delete, and peer-wire encode. Hosted Transfer Rebuild run [39233029958](https://github.com/snapetech-org/TorrentNG/actions/runs/39233029958) and Windows Smoke run [39233812206](https://github.com/snapetech-org/TorrentNG/actions/runs/39233812206) passed on exact commit `94c8c1b3ff14106db93ab1a9750a1bb00c808b7c`. The standalone `urtorrent` preflight still fails at `io_uring_setup: Cannot allocate memory`; no paired-client claim is made. Logs are under `/tmp/tng-transfer-core-close-20261019/evidence/`. The 100k sequential admission time was 220.587 s; restore took 2.143 s, cold list 809 ms, cached list <1 ms. These local diagnostics have no approved threshold and do not close matched-client, dedicated-hardware, crash-cut, soak/canary, or independent-review gates. |
 | 2026-10-18 | SYS-014/PERF-109 live catalog qualification and test correction: the opt-in production 100k add/persist/shutdown/restore/API-list probe passed on Rust 1.94.0 with all 100,000 paused rows restored; its cold first list was 7,587 ms in debug and the cached repeat 3 ms. The 100k mixed-load test passed in debug and optimized release. The release run was repeated after switching the mixed-load cases to four Tokio workers, matching `torrentngd`'s multi-thread runtime. Across 16 concurrent rounds, release p50s were 0.277 ms (default list), 0.271 ms (name-sorted list), 0.050 ms (transfer info), and 0.057 ms (`/metrics`); nearest-rank p95 includes first-round cold snapshot construction at 0.800 s and 0.773 s for the list routes, while transfer info and metrics were 2.674 ms and 0.222 ms. No timing threshold is asserted. The raw logs are task-scoped under `/tmp/tng-transfer-core-close-20261018/evidence/`; exact-source catalog report assembly, full workspace validation, and process-level/active-transfer/hardware qualification remain pending. |
 | 2026-10-18 | Bulk source validation and v2 projection correction: an earlier full run observed the reference-v2 actor reporting `Seeding` with `amount_left=1` during a held completion after prior completion. Live and reference pure-v2 persistence now downgrade stale seeding projections to `Downloading`, clear `completed_at`, and retain the one-byte `finalizing` signal; a new engine regression covers the case. The targeted regression and workspace runs on Rust 1.94.0 and Rust 1.88.0 each passed 2,298 tests, with 0 failed and 12 ignored across 65 result summaries. After merge, the clean `main` commit `b1f0120855af86f9f9256b5e4f6bdf4bd02d9593` passed both full suites with those same totals. All 20 `scripts/test_transfer_rebuild_*.py` regressions passed again on merged `main`. `cargo clippy --workspace --all-targets` exited 0 with warnings on both branch and merged main; formatting and JSON parsing passed. The transfer-invariant integration test verifies persisted `amount_left=0` before payload damage and the expected pure-v2 startup recheck afterward. PERF-111 probes were rerun on final code before its commit; local results are in `TRANSFER_CORE_PERF111_LOCAL.md` and remain diagnostic only. Transfer commit `166ac506` is merged and pushed; hosted workflow, hardware, crash-cut, and matched-client qualification remain open. |
 | 2026-10-18 | Architecture boundary review: the accepted target keeps the pure decision core under `crates/rt-engine/src/transfer/` and preserves current crate boundaries unless a dependency cycle forces a small extraction. A separate transfer-core crate is not an outstanding architecture requirement. The remaining unclosed gates are exact-revision validation and named runtime, hardware, crash-cut, or client evidence; no rollout or efficiency claim is implied. |

@@ -46,11 +46,16 @@ The `urtorrent` runner preflight was attempted on the current build (and on an
 earlier build of the same runner source) and failed to start the pinned client
 because `io_uring_setup` returned `Cannot allocate memory`. Runner build, unit
 tests, and CLI smoke pass, but no paired client trial is qualified. Previous
-hosted/Windows and dedicated ext4 LVM results
-below were collected on `eb5f3158`; no hosted or protected-runner result has
-yet been collected for `354ad504`. Since `eb5f3158`, the engine/storage
-production paths are unchanged; later commits adjust two test timeouts and add
-the standalone comparator runner and its workflow.
+The hosted correctness and Windows Smoke runs
+[39233029958](https://github.com/snapetech-org/TorrentNG/actions/runs/39233029958)
+and
+[39233812206](https://github.com/snapetech-org/TorrentNG/actions/runs/39233812206)
+passed on exact commit `94c8c1b3ff14106db93ab1a9750a1bb00c808b7c`. The
+protected hardware lane was skipped; its dedicated ext4 LVM evidence below is
+from `eb5f3158`, and no protected-runner result has been collected for the
+current source. Since `eb5f3158`, the engine/storage production paths are
+unchanged; later commits adjust two test timeouts and add the standalone
+comparator runner and its workflow.
 
 The source audit found all 63 repository-owned implementation slices and
 ticket contracts present with no remaining architecture boundary. The ledger
