@@ -713,6 +713,10 @@ jobs:
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#main-}"
+          if [[ -z "${DOCKERHUB_USERNAME:-}" || -z "${DOCKERHUB_TOKEN:-}" ]]; then
+            echo 'Docker Hub publisher credentials are required for stable releases.' >&2
+            exit 1
+          fi
           echo "$GHCR_TOKEN" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
           if [[ -n "${DOCKERHUB_USERNAME:-}" && -n "${DOCKERHUB_TOKEN:-}" ]]; then
             echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin

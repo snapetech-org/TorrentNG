@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>torrentng</Name>
-  <Repository>ghcr.io/snapetech/torrentng/native:main</Repository>
+  <Repository>ghcr.io/snapetech/torrentng/native:latest</Repository>
   <Registry>https://github.com/snapetech/TorrentNG/pkgs/container/torrentng%2Fnative</Registry>
   <Network>bridge</Network>
   <Privileged>false</Privileged>

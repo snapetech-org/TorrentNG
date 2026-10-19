@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>torrentng-webui</Name>
-  <Repository>ghcr.io/snapetech/torrentng/sidecar:main</Repository>
+  <Repository>ghcr.io/snapetech/torrentng/sidecar:latest</Repository>
   <Registry>https://github.com/snapetech/TorrentNG/pkgs/container/torrentng%2Fsidecar</Registry>
   <Network>bridge</Network>
   <Privileged>false</Privileged>
