@@ -8,10 +8,11 @@ written acceptance and exact-revision evidence are complete.
 ## Fresh full validation — 2026-10-19
 
 The tested production source is commit
-`354ad504f75b33c712b5ccd827cfef3eb0cf4414`. `main` is at
-`14308ca143e6fe46957267ed88ed54080a5bcbf2`; commits after the tested source
-change documentation only, and the working changes recorded here are also
-documentation only. The full workspace passed on Rust 1.94.0 and 1.88.0, with
+`354ad504f75b33c712b5ccd827cfef3eb0cf4414`. At the start of this run, `main`
+was at `14308ca143e6fe46957267ed88ed54080a5bcbf2`; all commits since the
+tested source change documentation only, and the later working changes
+recorded here are also documentation only. The full workspace passed on Rust
+1.94.0 and 1.88.0, with
 2,301 passed, 0 failed, and 12 ignored across 37 summaries on each toolchain.
 The release `rt-engine` library passed 733 tests. All 21 transfer-rebuild
 Python scripts passed. Workspace and engine Clippy exited 0 with warnings;
