@@ -688,7 +688,8 @@ independent process/resource observations, cache and optional network-control
 evidence, payload flush and independent digests, cleanup outcomes, and a
 source-bound manifest. Missing byte observations remain null. A trial is not
 complete unless the receiver payload verifies and both client identity and
-resource evidence were captured.
+resource evidence were captured. Resource sampling stops at the transfer
+boundary, before client teardown and harness-side payload verification.
 
 An API-controlled preloaded seed is started to verify its files while the
 receiver stays paused; the shared barrier release starts the measured receive.

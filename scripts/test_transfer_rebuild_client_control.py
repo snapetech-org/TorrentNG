@@ -53,6 +53,23 @@ def _controller(client_id: str, http: _Http) -> client_control.ClientController:
 
 
 class ClientControlRegressions(unittest.TestCase):
+    def test_state_convergence_retries_a_transient_http_503(self) -> None:
+        controller = _controller("qbittorrent", _Http())
+        attempts = 0
+
+        def converged() -> bool:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise client_control.ClientControlError("HTTP 503 for /api/v2/torrents/info")
+            return True
+
+        with patch.object(client_control.time, "sleep") as sleep:
+            controller._wait(converged, "test state", timeout_seconds=1)
+
+        self.assertEqual(attempts, 2)
+        sleep.assert_called_once_with(client_control.POLL_INTERVAL_SECONDS)
+
     def test_identity_guard_rejects_a_restarted_or_reconfigured_client(self) -> None:
         http = _Http()
         controller = _controller("qbittorrent", http)

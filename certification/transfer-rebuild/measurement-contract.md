@@ -27,6 +27,10 @@ start time to `client_identity`, carries the digest of its streamed CSV, and
 is checked against the trial's resource totals. The manifest validator also
 recomputes peak and network totals from the CSV rows. Historical trial-v1
 records without this link remain readable, but the scorecard excludes them.
+Sampling ends at the measured transfer boundary, before client teardown and
+harness-side payload hashing. Bounded HTTP 503 retries apply to transfer and
+state-convergence reads; persistent API errors remain attached to the failed
+trial.
 
 The trial's top-level `identity` describes the measurement harness invocation,
 while `client_identity` describes the measured torrent client. For this Python

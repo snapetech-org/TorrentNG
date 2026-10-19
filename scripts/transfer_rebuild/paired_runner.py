@@ -1812,6 +1812,19 @@ def _run_trial(
                 else None
             )
 
+        # Stop independent sampling at the transfer boundary, before client
+        # shutdown and verification cleanup add teardown-only samples.
+        if observer_process is not None and observer_stop is not None:
+            observer_code = _stop_observer(observer_process, observer_stop)
+            if observer_code != 0 or observer_summary is None or not observer_summary.is_file():
+                raise PairedRunnerError(f"independent observer exited with status {observer_code}")
+            resource_value = _resource_observation(observer_summary)
+            resource_sha = _sha256_file(observer_summary, "resource observation")
+            artifacts.add("transfer-resource-observation-v1", observer_summary)
+            if observer_csv is not None:
+                artifacts.add("transfer-resource-samples-v1", observer_csv)
+            observer_process = None
+
         if candidate_endpoint.client_id == "urtorrent" and mode == "seed":
             if not direct_stop.exists():
                 _create_marker(direct_stop, b"stop\n")
@@ -1870,10 +1883,10 @@ def _run_trial(
             if endpoint.controller is not None:
                 try:
                     endpoint.controller.remove(info_hash, delete_data=False)
-                except ClientControlError:
+                except ClientControlError as error:
                     if status == "complete":
                         status = "failed"
-                    reason = "client refused exact-hash torrent cleanup"
+                    reason = f"client refused exact-hash torrent cleanup: {error}"
         for endpoint in (candidate_endpoint, helper_endpoint):
             if endpoint.managed is not None:
                 endpoint.managed.stop()
@@ -1896,15 +1909,6 @@ def _run_trial(
             cleanup_topology_record(topology_record)
         durations["shutdown"] = time.perf_counter_ns() - shutdown_started_ns
 
-        if observer_process is not None and observer_stop is not None:
-            observer_code = _stop_observer(observer_process, observer_stop)
-            if observer_code != 0 or observer_summary is None or not observer_summary.is_file():
-                raise PairedRunnerError(f"independent observer exited with status {observer_code}")
-            resource_value = _resource_observation(observer_summary)
-            resource_sha = _sha256_file(observer_summary, "resource observation")
-            artifacts.add("transfer-resource-observation-v1", observer_summary)
-            if observer_csv is not None:
-                artifacts.add("transfer-resource-samples-v1", observer_csv)
         if tracker is not None:
             if not tracker_path.exists():
                 _write_private_json(tracker_path, tracker.snapshot())
@@ -1922,6 +1926,18 @@ def _run_trial(
             status = "unmeasured"
         elif status != "invalid":
             status = "incomplete"
+        if observer_process is not None and observer_stop is not None:
+            try:
+                observer_code = _stop_observer(observer_process, observer_stop)
+                if observer_code == 0 and observer_summary is not None and observer_summary.is_file():
+                    resource_value = _resource_observation(observer_summary)
+                    resource_sha = _sha256_file(observer_summary, "resource observation")
+                    artifacts.add("transfer-resource-observation-v1", observer_summary)
+                    if observer_csv is not None:
+                        artifacts.add("transfer-resource-samples-v1", observer_csv)
+                observer_process = None
+            except Exception as cleanup_error:
+                reason += f"; observer error: {cleanup_error}"
         # Cleanup is best-effort but identity guarded. Keep the task artifacts
         # when cleanup itself fails so its exact state remains inspectable.
         if shutdown_started_ns is None:
@@ -1966,17 +1982,6 @@ def _run_trial(
                 cleanup_topology_record(topology_record)
             except Exception as cleanup_error:
                 reason += f"; topology cleanup error: {cleanup_error}"
-        if observer_process is not None and observer_stop is not None:
-            try:
-                observer_code = _stop_observer(observer_process, observer_stop)
-                if observer_code == 0 and observer_summary is not None and observer_summary.is_file():
-                    resource_value = _resource_observation(observer_summary)
-                    resource_sha = _sha256_file(observer_summary, "resource observation")
-                    artifacts.add("transfer-resource-observation-v1", observer_summary)
-                    if observer_csv is not None:
-                        artifacts.add("transfer-resource-samples-v1", observer_csv)
-            except Exception as cleanup_error:
-                reason += f"; observer error: {cleanup_error}"
         if tracker is not None and not tracker_path.exists():
             try:
                 _write_private_json(tracker_path, tracker.snapshot())

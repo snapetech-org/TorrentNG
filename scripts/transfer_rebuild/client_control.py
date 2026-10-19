@@ -461,11 +461,20 @@ class ClientController:
 
     def _wait(self, predicate: Callable[[], bool], label: str, timeout_seconds: float = 20.0) -> None:
         deadline = time.monotonic() + timeout_seconds
+        last_transient_error: ClientControlError | None = None
         while time.monotonic() < deadline:
-            if predicate():
-                return
+            try:
+                if predicate():
+                    return
+            except ClientControlError as error:
+                if "HTTP 503 for " not in str(error):
+                    raise
+                last_transient_error = error
             time.sleep(POLL_INTERVAL_SECONDS)
-        raise ClientControlError(f"timed out waiting for {label}")
+        message = f"timed out waiting for {label}"
+        if last_transient_error is not None:
+            message += f"; last transient status response: {last_transient_error}"
+        raise ClientControlError(message)
 
     def _rtorrent_rows(self) -> list[list[Any]]:
         result = _scgi_call(self.socket_path, "d.multicall2", [
