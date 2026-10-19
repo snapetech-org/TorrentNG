@@ -120,8 +120,8 @@ The client command must stay in the foreground; daemonizing wrappers are not
 valid launch targets. `paired_runner.py` now connects this primitive to the
 native and container adapters, isolated seed/target endpoints, task tracker,
 resource observer, trial writer, and manifest assembler. Its regression suite
-passed on the exact source. No paired trial has run against pinned clients on
-a qualified host.
+passed on the exact source. Paired runtime trials have started, but no run has
+yet produced validated whole-client measurement artifacts.
 
 ## Trial record assembly
 

@@ -3,14 +3,19 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import ipaddress
 import json
 import math
+import os
+import signal
+import sys
 import threading
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 
 
@@ -283,10 +288,15 @@ class TaskTracker:
         return value
 
 
-def serve_tracker(tracker: TaskTracker, *, port: int = 0) -> ThreadingHTTPServer:
-    """Bind a private tracker only to the task bridge address."""
+def serve_tracker(
+    tracker: TaskTracker, *, port: int = 0, bind_address: str | None = None
+) -> ThreadingHTTPServer:
+    """Bind a private tracker to an address owned by the isolated task network."""
     if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
         raise TaskTrackerError("tracker port must be within 0..65535")
+    bind_ip = tracker.gateway if bind_address is None else tracker._ipv4(bind_address, "bind address")
+    if bind_ip not in {tracker.gateway, tracker.target_address, tracker.seed_address}:
+        raise TaskTrackerError("tracker bind address must belong to the task network")
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "TorrentNGTaskTracker/1"
@@ -321,6 +331,125 @@ def serve_tracker(tracker: TaskTracker, *, port: int = 0) -> ThreadingHTTPServer
         allow_reuse_address = False
 
     try:
-        return Server((str(tracker.gateway), port), Handler)
+        return Server((str(bind_ip), port), Handler)
     except OSError as error:
-        raise TaskTrackerError(f"cannot bind tracker to task bridge gateway: {error}") from error
+        raise TaskTrackerError(f"cannot bind tracker to task network address: {error}") from error
+
+
+def _write_worker_json(path: Path, value: dict[str, Any]) -> None:
+    if path.exists() or path.is_symlink():
+        raise TaskTrackerError(f"tracker worker output already exists: {path}")
+    encoded = (json.dumps(value, sort_keys=True, indent=2, allow_nan=False) + "\n").encode()
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
+        0o600,
+    )
+    try:
+        os.fchmod(descriptor, 0o600)
+        view = memoryview(encoded)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise TaskTrackerError("short write while publishing tracker worker output")
+            view = view[written:]
+        os.fsync(descriptor)
+    except BaseException:
+        os.close(descriptor)
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        raise
+    else:
+        os.close(descriptor)
+
+
+def _serve_worker(args: argparse.Namespace) -> int:
+    server: ThreadingHTTPServer | None = None
+    try:
+        hashes = {bytes.fromhex(value) for value in args.info_hash}
+        tracker = TaskTracker(
+            gateway=args.gateway,
+            target_address=args.target_address,
+            seed_address=args.seed_address,
+            seed_port=args.seed_port or None,
+            seed_peer_id=None,
+            info_hashes=hashes,
+            topology_sha256=args.topology_sha256,
+            allow_seedless_target=args.allow_seedless_target,
+        )
+        reserved = set(args.reserved_port)
+        for _attempt in range(128):
+            candidate = serve_tracker(tracker, port=args.port, bind_address=args.bind_address)
+            if candidate.server_address[1] not in reserved:
+                server = candidate
+                break
+            candidate.server_close()
+        if server is None:
+            raise TaskTrackerError("tracker could not find a port outside client listener pins")
+        server.timeout = 0.25
+        stopping = False
+
+        def request_stop(_signum: int, _frame: Any) -> None:
+            nonlocal stopping
+            stopping = True
+
+        signal.signal(signal.SIGTERM, request_stop)
+        signal.signal(signal.SIGINT, request_stop)
+        _write_worker_json(
+            args.ready_path,
+            {
+                "schema_version": "transfer-task-tracker-ready-v1",
+                "address": str(server.server_address[0]),
+                "port": server.server_address[1],
+            },
+        )
+        while not stopping:
+            server.handle_request()
+        server.server_close()
+        server = None
+        _write_worker_json(args.snapshot_path, tracker.snapshot())
+        return 0
+    except Exception as error:
+        print(f"task tracker worker failed: {type(error).__name__}: {error}", file=sys.stderr)
+        if server is not None:
+            server.server_close()
+        return 2
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--worker", action="store_true")
+    parser.add_argument("--gateway")
+    parser.add_argument("--target-address")
+    parser.add_argument("--seed-address")
+    parser.add_argument("--bind-address")
+    parser.add_argument("--port", type=int, default=0)
+    parser.add_argument("--seed-port", type=int, default=0)
+    parser.add_argument("--reserved-port", type=int, action="append", default=[])
+    parser.add_argument("--topology-sha256")
+    parser.add_argument("--info-hash", action="append", default=[])
+    parser.add_argument("--allow-seedless-target", action="store_true")
+    parser.add_argument("--ready-path", type=Path)
+    parser.add_argument("--snapshot-path", type=Path)
+    args = parser.parse_args(argv)
+    if (
+        not args.worker
+        or not args.gateway
+        or not args.target_address
+        or not args.seed_address
+        or not args.bind_address
+        or not args.topology_sha256
+        or not args.info_hash
+        or args.ready_path is None
+        or args.snapshot_path is None
+    ):
+        parser.error("worker mode requires task addresses, hashes, and ready/snapshot paths")
+    if any(len(value) not in {40, 64} for value in args.info_hash):
+        parser.error("worker info hashes must contain 40 or 64 hexadecimal characters")
+    return _serve_worker(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

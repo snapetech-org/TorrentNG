@@ -8,11 +8,12 @@ import time
 import unittest
 import urllib.parse
 from pathlib import Path
+from unittest.mock import patch
 
 TOOLS = Path(__file__).parent / "transfer_rebuild"
 sys.path.insert(0, str(TOOLS))
 
-from task_tracker import TaskTracker, TaskTrackerError, _bencode  # noqa: E402
+from task_tracker import TaskTracker, TaskTrackerError, _bencode, serve_tracker  # noqa: E402
 
 
 class TaskTrackerTests(unittest.TestCase):
@@ -216,6 +217,20 @@ class TaskTrackerTests(unittest.TestCase):
         self.assertEqual(_bencode({b"z": 1, b"a": b"x"}), b"d1:a1:x1:zi1ee")
         with self.assertRaises(TypeError):
             _bencode(True)
+
+    def test_tracker_can_bind_to_a_recorded_task_endpoint(self) -> None:
+        bound: list[tuple[str, int]] = []
+
+        class FakeServer:
+            def __init__(self, address: tuple[str, int], _handler: object) -> None:
+                bound.append(address)
+
+        with patch("task_tracker.ThreadingHTTPServer", FakeServer):
+            serve_tracker(self.tracker, bind_address="198.18.4.3")
+
+        self.assertEqual(bound, [("198.18.4.3", 0)])
+        with self.assertRaisesRegex(TaskTrackerError, "belong to the task network"):
+            serve_tracker(self.tracker, bind_address="198.18.4.9")
 
 
 if __name__ == "__main__":

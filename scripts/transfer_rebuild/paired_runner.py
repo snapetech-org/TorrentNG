@@ -48,7 +48,7 @@ from paired_plan import paired_plan_errors
 from process_supervisor import ManagedProcess, ProcessSupervisorError
 from task_network import TaskNetworkError, cleanup_topology_record, create_topology
 from strict_json import StrictJsonError, loads as strict_json_loads
-from task_tracker import TaskTracker, serve_tracker
+from task_tracker import TaskTracker
 from trial_record import (
     TrialRecordError,
     build_trial_record,
@@ -265,6 +265,156 @@ def _write_private_json(path: Path, value: dict[str, Any]) -> str:
     finally:
         os.close(parent_fd)
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _start_task_tracker_worker(
+    tracker: TaskTracker,
+    topology_record: dict[str, Any],
+    worker_role: str,
+    reserved_ports: set[int],
+    run_dir: Path,
+    snapshot_path: Path,
+) -> tuple[subprocess.Popen[bytes], str]:
+    ip = shutil.which("ip")
+    if ip is None:
+        raise PairedRunnerError("iproute2 is required to place the task tracker inside its namespace")
+    endpoint = topology_record.get(worker_role)
+    namespace = topology_record.get(f"{worker_role}_namespace")
+    if (
+        worker_role not in {"target", "seed"}
+        or not isinstance(endpoint, dict)
+        or not isinstance(endpoint.get("address"), str)
+        or not isinstance(namespace, str)
+    ):
+        raise PairedRunnerError("task topology has no valid endpoint for the tracker")
+    bind_address = endpoint["address"]
+    ready_path = run_dir / "tracker-ready.json"
+    log_path = run_dir / "tracker-worker.log"
+    command = [
+        ip,
+        "netns",
+        "exec",
+        namespace,
+        sys.executable,
+        str(Path(__file__).with_name("task_tracker.py").resolve()),
+        "--worker",
+        "--gateway",
+        str(tracker.gateway),
+        "--target-address",
+        str(tracker.target_address),
+        "--seed-address",
+        str(tracker.seed_address),
+        "--bind-address",
+        bind_address,
+        "--port",
+        "0",
+        "--seed-port",
+        str(tracker.seed_port or 0),
+        "--topology-sha256",
+        tracker.topology_sha256,
+        "--ready-path",
+        str(ready_path),
+        "--snapshot-path",
+        str(snapshot_path),
+    ]
+    for info_hash in sorted(tracker.info_hashes):
+        command.extend(("--info-hash", info_hash.hex()))
+    for port in sorted(reserved_ports):
+        command.extend(("--reserved-port", str(port)))
+    if tracker.allow_seedless_target:
+        command.append("--allow-seedless-target")
+    log_descriptor = os.open(
+        log_path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
+        0o600,
+    )
+    try:
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=log_descriptor,
+            stderr=log_descriptor,
+            close_fds=True,
+            start_new_session=True,
+        )
+    except OSError as error:
+        os.close(log_descriptor)
+        raise PairedRunnerError(f"could not start isolated task tracker: {error}") from error
+    else:
+        os.close(log_descriptor)
+
+    deadline = time.monotonic() + 10.0
+    try:
+        while time.monotonic() < deadline:
+            if ready_path.exists():
+                ready, _raw = _load_json(ready_path, "task tracker readiness")
+                if (
+                    not isinstance(ready, dict)
+                    or ready.get("schema_version") != "transfer-task-tracker-ready-v1"
+                    or ready.get("address") != bind_address
+                    or isinstance(ready.get("port"), bool)
+                    or not isinstance(ready.get("port"), int)
+                    or not 1 <= ready["port"] <= 65535
+                ):
+                    raise PairedRunnerError("task tracker published invalid readiness data")
+                return process, f"http://{bind_address}:{ready['port']}/announce"
+            if process.poll() is not None:
+                raise PairedRunnerError(
+                    f"isolated task tracker exited before readiness; inspect {log_path.name}"
+                )
+            time.sleep(0.05)
+        raise PairedRunnerError("isolated task tracker did not become ready within 10 seconds")
+    except BaseException:
+        try:
+            _stop_task_tracker_worker(process, snapshot_path)
+        except Exception:
+            pass
+        raise
+
+
+def _stop_task_tracker_worker(
+    process: subprocess.Popen[bytes], snapshot_path: Path
+) -> dict[str, Any] | None:
+    if process.poll() is None:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=5)
+    if process.returncode != 0:
+        raise PairedRunnerError(
+            f"isolated task tracker exited with status {process.returncode}; inspect tracker-worker.log"
+        )
+    if not snapshot_path.exists():
+        raise PairedRunnerError("isolated task tracker exited without publishing its snapshot")
+    snapshot, _raw = _load_json(snapshot_path, "task tracker snapshot")
+    if not isinstance(snapshot, dict) or snapshot.get("schema_version") != "transfer-task-tracker-v1":
+        raise PairedRunnerError("isolated task tracker published an invalid snapshot")
+    return snapshot
+
+
+def _profile_listener_ports(profile: dict[str, Any]) -> set[int]:
+    ports: set[int] = set()
+    launch = profile.get("paired_launch")
+    if isinstance(launch, dict):
+        for key in ("api_port", "peer_port"):
+            value = launch.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 65535:
+                ports.add(value)
+    expected = profile.get("expected_settings")
+    settings = expected.get("settings") if isinstance(expected, dict) else None
+    session = settings.get("session") if isinstance(settings, dict) else None
+    listen_port = session.get("listen_port") if isinstance(session, dict) else None
+    if isinstance(listen_port, int) and not isinstance(listen_port, bool) and 1 <= listen_port <= 65535:
+        ports.add(listen_port)
+    return ports
 
 
 def _mkdir_private(path: Path) -> None:
@@ -1256,10 +1406,8 @@ def _run_trial(
     topology = None
     topology_record: dict[str, Any] | None = None
     topology_path = run_dir / "task-network.json"
-    tracker_server = None
-    tracker_thread = None
-    tracker_thread_started = False
     tracker: TaskTracker | None = None
+    tracker_process: subprocess.Popen[bytes] | None = None
     network_applied: list[tuple[Path, Path, dict[str, Any]]] = []
     observer_process: subprocess.Popen[bytes] | None = None
     observer_stop: Path | None = None
@@ -1391,11 +1539,15 @@ def _run_trial(
             topology_sha256=str(topology_record["artifact_sha256"]),
             allow_seedless_target=seed_endpoint.client_id == "urtorrent",
         )
-        tracker_server = serve_tracker(tracker, port=0)
-        tracker_thread = threading.Thread(target=tracker_server.serve_forever, name=f"tracker-{trial_key}", daemon=True)
-        tracker_thread.start()
-        tracker_thread_started = True
-        tracker_url = f"http://{topology_record['gateway']}:{tracker_server.server_address[1]}/announce"
+        tracker_process, tracker_url = _start_task_tracker_worker(
+            tracker,
+            topology_record,
+            helper_endpoint.role,
+            _profile_listener_ports(candidate_endpoint.profile)
+            | _profile_listener_ports(helper_endpoint.profile),
+            run_dir,
+            tracker_path,
+        )
         retarget_record = retarget_fixture_torrent(fixture_dir, retargeted_path, tracker_url)
         artifacts.add("transfer-retargeted-metainfo-v1", retargeted_path)
         retarget_record_path = run_dir / "retargeted-metainfo.json"
@@ -1703,12 +1855,9 @@ def _run_trial(
                     endpoint.direct_process.stop(grace_seconds=10)
                 finally:
                     endpoint.direct_process.close()
-        if tracker_server is not None:
-            if tracker_thread_started:
-                tracker_server.shutdown()
-            tracker_server.server_close()
-            if tracker_thread_started and tracker_thread is not None:
-                tracker_thread.join(timeout=5)
+        if tracker_process is not None:
+            _stop_task_tracker_worker(tracker_process, tracker_path)
+            tracker_process = None
         for apply_path, reset_path, _record in network_applied:
             reset_record = reset_profile(apply_path, reset_path)
             artifacts.add("transfer-network-control-v1", reset_path)
@@ -1728,7 +1877,8 @@ def _run_trial(
             if observer_csv is not None:
                 artifacts.add("transfer-resource-samples-v1", observer_csv)
         if tracker is not None:
-            _write_private_json(tracker_path, tracker.snapshot())
+            if not tracker_path.exists():
+                _write_private_json(tracker_path, tracker.snapshot())
             artifacts.add("transfer-task-tracker-v1", tracker_path)
 
         if status == "complete" and (resource_value is None or candidate_observation is None):
@@ -1770,13 +1920,10 @@ def _run_trial(
                         endpoint.direct_process.close()
             except Exception as cleanup_error:
                 reason += f"; cleanup error: {cleanup_error}"
-        if tracker_server is not None:
+        if tracker_process is not None:
             try:
-                if tracker_thread_started:
-                    tracker_server.shutdown()
-                tracker_server.server_close()
-                if tracker_thread_started and tracker_thread is not None:
-                    tracker_thread.join(timeout=5)
+                _stop_task_tracker_worker(tracker_process, tracker_path)
+                tracker_process = None
             except Exception as cleanup_error:
                 reason += f"; tracker cleanup error: {cleanup_error}"
         for apply_path, reset_path, _record in network_applied:
@@ -1807,6 +1954,8 @@ def _run_trial(
                 artifacts.add("transfer-task-tracker-v1", tracker_path)
             except Exception:
                 pass
+        elif tracker is not None:
+            artifacts.add("transfer-task-tracker-v1", tracker_path)
         if durations["shutdown"] == 0:
             durations["shutdown"] = max(1, time.perf_counter_ns() - shutdown_started_ns)
 

@@ -27,6 +27,7 @@ from paired_runner import (  # noqa: E402
     _fixture_for_plan,
     _load_json,
     _network_seed,
+    _profile_listener_ports,
     _scheduled_trial_key,
     _sha256_file,
     _seed_payload,
@@ -83,6 +84,13 @@ class PairedRunnerTests(unittest.TestCase):
     def test_scheduled_trial_key_rejects_unsupported_characters(self) -> None:
         with self.assertRaisesRegex(PairedRunnerError, "scheduled trial identity"):
             _scheduled_trial_key("trial with spaces", "download")
+
+    def test_profile_listener_ports_cover_api_peer_and_direct_runner_ports(self) -> None:
+        profile = {
+            "paired_launch": {"api_port": 18080, "peer_port": 44444},
+            "expected_settings": {"settings": {"session": {"listen_port": 51413}}},
+        }
+        self.assertEqual(_profile_listener_ports(profile), {18080, 44444, 51413})
 
     def test_fixture_generation_uses_the_pinned_profile_file(self) -> None:
         with tempfile.TemporaryDirectory(prefix="tng-paired-profile-") as directory:

@@ -102,15 +102,19 @@ production-engine replacement decision.
 Paired runs use a task-owned bridge with separate target and seed network
 namespaces. The measured client's namespace contains only its task veth and
 the recorded connected `/24` route; the independent seed is observed and
-reported separately, outside the measured process tree. Private HTTP tracker
-announces are accepted only from those two recorded addresses and only for
-the fixture's info hashes. The tracker pins the seed's peer ID and listening
-port from its first announce before offering it to the measured client. A
-trial's `task_topology_sha256` is the manifest-file digest for the topology
-record; the topology's internal `artifact_sha256` is a separate self-digest
-used to guard task-local API access. Interface byte counters are attributable
-to one candidate only while the trial records this one-client namespace
-isolation.
+reported separately, outside the measured process tree. A harness-owned
+tracker process runs inside the helper endpoint's namespace and binds only to
+that endpoint's recorded task address, so it needs no host firewall exception
+and is outside the candidate's process tree. Candidate-side network counters
+still include tracker announces and protocol control traffic; useful goodput
+comes from verified payload bytes. Tracker announces are accepted only from
+the two recorded endpoint addresses and only for the fixture's info hashes.
+The tracker pins the seed's peer ID and listening port from its first announce
+before offering it to the measured client. A trial's `task_topology_sha256` is
+the manifest-file digest for the topology record; the topology's internal
+`artifact_sha256` is a separate self-digest used to guard task-local API access.
+Interface byte counters are attributable to one candidate only while the
+trial records this one-client namespace isolation.
 
 Task-specific metainfo is made by replacing only the top-level announce URL in
 the generated fixture copy. The helper checks the canonical fixture and torrent
