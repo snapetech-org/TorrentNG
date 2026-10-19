@@ -126,9 +126,9 @@ correctness and matched whole-client efficiency evidence.
 
 - `urtorrent` keeps protocol state machines sans-IO and drives them with
   recorded qBittorrent oracle captures and isolated local peers. TorrentNG's
-  pure transfer modules and seeded simulator follow the same useful boundary;
-  the simulator still needs to pass its bulk correctness gate before we trust
-  it.
+  pure transfer modules and seeded simulator follow the same useful boundary.
+  The simulator invariants passed in the 733-test release `rt-engine` suite at
+  exact source `354ad504`; live actor parity remains a separate gate.
 - Both libtorrent and `urtorrent` use locality-aware picker ideas. Libtorrent
   documents one contiguous vector shuffled within rarity classes and lazy
   rebuilding after expensive peer inventory changes. `urtorrent` adds an
@@ -139,8 +139,9 @@ correctness and matched whole-client efficiency evidence.
   verified goodput before changing the default or replacing NET-109.
 - `urtorrent`'s completion-owned buffers and explicit qdisc/runtime limits are
   useful ownership examples. TorrentNG already has cancellation-retained
-  storage and transfer leases; the bulk pass must establish that the full
-  actor paths preserve those charges across late completion.
+  storage and transfer leases; the local cancellation and ownership regressions
+  passed at `354ad504`. Live-client and platform resource qualification remains
+  open.
 - `urtorrent` records payload copies and hash readback bytes as runtime
   counters and documents expected copy counts by transport. TorrentNG now
   exposes identity-bound counters for pure-v2 assembly, peer file-segment
@@ -159,14 +160,16 @@ It binds to a task-local IPv4 interface, accepts a private fixture, removes
 tracker and web-seed endpoints, disables IPv6 and discovery, and dials one
 explicitly pinned private, link-local, or loopback IPv4 peer from a task-owned
 network namespace. The adapter independently checks the addresses in the live
-snapshot. Its control loop is part of the measured process. The runner and
-adapter are authored but unbuilt and unrun. The paired harness, workload
-qualification, and broader client comparison remain incomplete, so this adds
-decision evidence without endorsing either architecture.
+snapshot. Its control loop is part of the measured process. The standalone
+runner built under Rust 1.98.1, passed all 6 tests, and passed its CLI help
+smoke at `354ad504`. Its preflight could not start the pinned client because
+`io_uring_setup` returned `Cannot allocate memory`. The paired harness,
+workload qualification, and broader client comparison remain incomplete, so
+this adds decision evidence without endorsing either architecture.
 
 ## Why keep the current branch as a candidate
 
-- The new pure modules and storage work are already authored but unvalidated;
+- The new pure modules and storage work passed the recorded local source suite;
   restarting would discard that work without comparative evidence.
 - A major part of TorrentNG's differentiator is integration with its existing
   secure storage and persistence owners. Replacing only the transfer engine
@@ -244,9 +247,9 @@ integration cost.
 
 ## Evidence state
 
-The TorrentNG workspace and harness regression sources passed the bulk run
-recorded in `TRANSFER_CORE_ACTIVE_SPECS.md`; that pass does not exercise the
-direct `urtorrent` runner as a live peer. The runner pins crate version 0.14.3
+The TorrentNG workspace and harness regression sources passed at exact source
+`354ad504`, as recorded in `TRANSFER_CORE_ACTIVE_SPECS.md`; that pass does not
+exercise the direct `urtorrent` runner as a live peer. The runner pins crate version 0.14.3
 and requires Rust 1.98.1, a private v1 fixture, a task-local IPv4 listener and
 peer, and an isolated namespace on a compatible Linux 6.1+ host. Its build/run
 status is tracked separately from TorrentNG workspace tests. No matched

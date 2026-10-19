@@ -1,10 +1,9 @@
 # uTP Implementation Evaluation
 
-Status: **TorrentNG-owned compatible implementation is in progress and wired
-through production peer paths; its source-level regression suite passed in the
-previous workspace bulk pass. Protocol stress, target-network qualification,
-and matched whole-client efficiency remain open until the exact closeout
-revision and named runtime gates pass.** This is a source review and
+Status: **TorrentNG-owned compatible implementation is wired through production
+peer paths; the full `rt-utp` and engine suites passed on Rust 1.88.0 and 1.94.0
+at exact source `354ad504`. Protocol stress, target-network qualification, and
+matched whole-client efficiency remain open.** This is a source review and
 architecture decision, not benchmark evidence.
 
 ## Decision
@@ -72,9 +71,9 @@ review found these specific bottlenecks and correctness gaps:
 
 | Area | Current `rt-utp` | Target design |
 |---|---|---|
-| Send progress | Window fill and stream-owned retransmission packets are implemented; bulk validation remains open | Keep the congestion/remote window full and retransmit bounded unacknowledged packets |
-| ACK accounting | Per-sequence byte accounting and incoming SACK processing are implemented; bulk validation remains open | Debit each cumulative or selective ACK exactly once |
-| Reordering | Bounded receive-window buffering and ordered delivery are implemented; bulk validation remains open | Deliver accepted payloads in sequence and keep their memory charged until read |
+| Send progress | Window fill and stream-owned retransmission packets are implemented; source regressions passed at `354ad504`, with protocol stress open | Keep the congestion/remote window full and retransmit bounded unacknowledged packets |
+| ACK accounting | Per-sequence byte accounting and incoming SACK processing are implemented; source regressions passed at `354ad504`, with protocol stress open | Debit each cumulative or selective ACK exactly once |
+| Reordering | Bounded receive-window buffering and ordered delivery are implemented; source regressions passed at `354ad504`, with protocol stress open | Deliver accepted payloads in sequence and keep their memory charged until read |
 | Outgoing sockets | Production v1, pure-v2, and metadata paths use the shared runtime; endpoint generations are capped | One shared runtime/socket per address family in steady state |
 | Receive execution | One endpoint receive loop demultiplexes bounded per-stream queues; each stream still owns its I/O and retransmit waits | Bound dispatch and timer work without per-peer UDP sockets or unbounded queues |
 | Memory | Receive/reorder and retransmit windows are bounded per stream; route packets have bounded channel capacity | Each endpoint reserves stream windows and queue metadata, charges routed datagrams to a configurable aggregate budget (64 MiB default), and exposes reservation usage |
@@ -101,14 +100,13 @@ send or connection-table liveness scan.
    contiguous payloads in wire order.
 3. The stream adapter now fills its available window, keeps retransmit packets
    on the stream across canceled writes, and buffers reordering within bounded
-   slots. The source regression suite passed in the previous workspace bulk
-   pass; it will be rerun on the exact closeout revision.
+   slots. The source regression suite passed at exact source `354ad504`.
 4. NET-113 now has an engine-owned runtime, bounded endpoint admission, one
    receive loop per active family endpoint, and production v1, pure-v2, and
    metadata integration. Central deadline dispatch, a bounded fair ready queue,
    aggregate endpoint reservations, and per-timeout retransmit quanta are now
-   implemented. Local source regressions passed in the previous workspace bulk
-   pass; rebind stress and aggregate memory qualification remain open. Existing
+   implemented. Local source regressions passed at exact source `354ad504`;
+   rebind stress and aggregate memory qualification remain open. Existing
    uTP controls and TCP fallback are preserved.
 5. Keep the implementation behind existing uTP controls until deterministic protocol
    coverage and matched efficiency evidence accept it. Do not run two protocol

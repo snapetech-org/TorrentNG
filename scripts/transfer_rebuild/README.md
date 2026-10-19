@@ -6,7 +6,9 @@ in the measured source checkout.
 
 ## Validation status
 
-Exact tested source `eb5f31588beb4cf9ec0fb4c3509745c49c16f500` passed:
+Freshly revalidated production source `354ad504f75b33c712b5ccd827cfef3eb0cf4414`
+passed the following run on 2026-10-19. Later `main` commits and this worktree's
+pending edits are documentation-only:
 
 ```sh
 cargo +1.94.0 test --workspace --all-targets --locked --no-fail-fast -- --test-threads=1 --format=terse
@@ -16,27 +18,52 @@ cargo +1.94.0 test --locked --release -p rt-engine --lib -- --test-threads=1
 
 Each workspace run reported 2,301 passed, 0 failed, and 12 ignored across 37
 test-result summaries. The release `rt-engine` library suite passed 733 tests,
-including the seeded transfer simulator.
-All 21 `scripts/test_transfer_rebuild_*.py` scripts passed. Both explicit
-100k production-catalog cases passed, including the four-worker release
-mixed-load probe. Clippy exited 0 with warnings; formatting passed.
+including the seeded transfer simulator. All 21
+`scripts/test_transfer_rebuild_*.py` scripts passed. Both explicit 100k
+production-catalog cases passed, including the four-worker release mixed-load
+probe. Clippy exited 0 with warnings; formatting passed. The standalone
+comparator runner built under Rust 1.98.1, passed all 6 tests, and passed its
+CLI help smoke. Workspace and engine Clippy exited 0 with warnings; workspace
+and runner formatting passed under Rust 1.94.0. Eleven runnable ignored scale,
+storage-device, move/import, and peer-wire cases were run explicitly. The Rust
+1.98.1 rustfmt component was not installed, so runner formatting used Rust
+1.94.0.
 
-On the verified `kspls0` ext4 LVM target, the release-mode
-`storage_real_device` suite passed all 7 cases. Sequential readahead served
-4,096 submitted reads from 133 backend reads (30.8x) over 64 MiB; this is a
-workload-specific result, not a whole-client claim. The dedicated hardware
-script also passed twice on the exact source, including the 64-file/64-MiB
-storage move/import case. The direct peer-wire encoder microbenchmark passed
-in release mode and remains diagnostic only.
+The 100k release catalog case took 219.170 seconds to admit paused rows, 2.026
+seconds to restore, and 735 ms for its first sorted list; cached listing was
+under 1 ms. Across 16 mixed-load rounds, list p95 was 757.512 ms and 782.177
+ms, transfer info p95 was 4.32 ms, and `/metrics` p95 was 2.21 ms. The first
+cold snapshot drives list p95. These are local diagnostics, not approved
+thresholds or matched-client results.
 
-Hosted Transfer Rebuild run [39217933388](https://github.com/snapetech-org/TorrentNG/actions/runs/39217933388)
-and Windows Smoke [39216147832](https://github.com/snapetech-org/TorrentNG/actions/runs/39216147832)
-passed on this source. The protected hosted hardware job was not selected by
-the dispatch; no runner is registered for its label. Local results do not
-complete pinned-client trials, active-transfer/process resource qualification,
-protected-runner hardware evidence, crash-cut/soak/canary qualification,
-independent review, or the release decision. They support no efficiency or
-superiority claim. See
+The seven-case release storage suite passed, but all temporary files were on
+`/tmp` tmpfs and the harness reported `profile=Unknown`, `fs=None`, and no
+device identity. The HDD-only branch skipped as expected. The 256 MiB
+positioned-I/O stream reported 4,844 MiB/s writes and 6,872 MiB/s reads;
+readahead served 4,096 reads with 133 backend reads; and a 4,096-piece recheck
+reported 126.38 MiB/s. The 64-file/64 MiB move-import-delete test passed.
+These functional probes do not qualify a physical device or the dedicated ext4
+target.
+
+The 100k-piece picker probe measured 1,161 ns per pick/cancel operation. The
+API snapshot probe measured 502 ms cold, 86 ns for a cached read, and 151–313
+µs for one changed row. Peer-wire encode measured 2.131 ms owned versus 579 µs
+direct-reused across 10,000 frames. These microbenchmarks have no accepted
+threshold and do not establish whole-client efficiency. Detailed logs are in
+`/tmp/tng-transfer-core-final-20261019.GSdus5/`.
+
+Hosted Transfer Rebuild run [39233029958](https://github.com/snapetech-org/TorrentNG/actions/runs/39233029958)
+and Windows Smoke [39233812206](https://github.com/snapetech-org/TorrentNG/actions/runs/39233812206)
+passed on exact commit `94c8c1b3ff14106db93ab1a9750a1bb00c808b7c`; the
+production source under test is unchanged from `354ad504`. The optional
+protected hardware job was skipped, and no runner is registered for its
+protected label. The `kspls0` server was not used for another hardware run after
+read-only preflight reported load averages between 147 and 172. Earlier
+dedicated-ext4 evidence is explicitly tied to `eb5f3158` and remains
+historical. Local results do not complete pinned-client trials,
+active-transfer/process resource qualification, protected-runner hardware
+evidence, crash-cut/soak/canary qualification, independent review, or the
+release decision. They support no efficiency or superiority claim. See
 [`TRANSFER_CORE_ACTIVE_SPECS.md`](../../docs/TRANSFER_CORE_ACTIVE_SPECS.md)
 for the full run record.
 
@@ -97,8 +124,9 @@ Its `runtime_identity()` fields match the native identity used by
 The client command must stay in the foreground; daemonizing wrappers are not
 valid launch targets. `paired_runner.py` now connects this primitive to the
 native and container adapters, isolated seed/target endpoints, task tracker,
-resource observer, trial writer, and manifest assembler. That executor is
-authored but has not been run against pinned clients or a qualified host.
+resource observer, trial writer, and manifest assembler. Its regression suite
+passed on the exact source. No paired trial has run against pinned clients on
+a qualified host.
 
 ## Trial record assembly
 
@@ -387,10 +415,10 @@ observation window for seed trials. It does not replace the contract's
 externally measured `transfer_ns`.
 
 Regression sources are in `scripts/test_transfer_rebuild_adapters.py` and the
-runner's `src/main.rs`; adapter and validator regressions passed on the recorded
-source revision. The hosted qualification workflow now builds and tests the
-standalone release runner with pinned Rust 1.98.1. That new exact-source pass is
-pending. Linux io_uring preflight and pinned-client qualification remain open.
+runner's `src/main.rs`; adapter and validator regressions passed in the exact
+source suite. The standalone release runner also built and passed all 6 tests
+under pinned Rust 1.98.1, and its CLI help smoke passed. Linux io_uring
+preflight and pinned-client qualification remain open.
 
 ## Shared trial measurement primitives
 
@@ -683,12 +711,13 @@ versioned shaping profiles. The manifest output must be directly in the
 scratch root so every linked trial and evidence file remains beneath its
 manifest. When requesting a manifest, first commit the exact harness source
 and use a clean worktree; the runner rejects a dirty source before launching
-clients. The local regression sources passed on exact main `eb5f3158`; no
+clients. The local regression sources passed on exact source `354ad504`; no
 pinned-client trial or paired-run host qualification is claimed. Regression sources are
 in `scripts/test_transfer_rebuild_paired_plan.py`,
 `scripts/test_transfer_rebuild_compatibility.py`, and
-`scripts/test_transfer_rebuild_paired_runner.py`; exact closeout revision
-validation remains pending.
+`scripts/test_transfer_rebuild_paired_runner.py`; those local regressions
+passed in the exact-source suite. Pinned-client execution and paired-run host
+qualification remain open.
 
 ## PERF-111 picker and changed-snapshot probes
 
@@ -740,8 +769,11 @@ identity. `hardware_lane.sh` retains the picker and changed-snapshot benchmark
 logs and runs the real-root storage move/import exercise against the supplied
 directory. It preserves all exit statuses so later checks can diagnose each
 command. These outputs are diagnostic artifacts; workflow completion alone
-does not qualify a storage or performance gate. The workflow and script have
-not been run yet.
+does not qualify a storage or performance gate. Hosted Transfer Rebuild and
+Windows Smoke passed on exact commit `94c8c1b3`; the protected hardware job was
+skipped because no runner is registered for its label. `hardware_lane.sh` was
+run twice manually on `kspls0` at `eb5f3158`, so that hardware evidence remains
+historical and is not a protected-runner result for the current source.
 
 ## PERF-112 v2 and restart invariants
 
@@ -750,8 +782,8 @@ hybrid fixtures between isolated production engines over loopback TCP. It
 checks receiver payload bytes, persists completed state across a clean restart,
 then damages one pure-v2 payload byte between runs. Resume-time verification
 must mark that torrent incomplete while the unchanged v1 and hybrid payloads
-remain complete. This source passed in the previous workspace bulk pass; it will
-be rerun on the exact closeout revision.
+remain complete. This source passed in the exact-source workspace bulk run at
+`354ad504`.
 
 Run it with:
 

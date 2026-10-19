@@ -1,6 +1,9 @@
 # Storage Evidence Contract
 
-Status: design contract for IO-001/IO-005; a test-only scripted backend is
+Status: design contract for IO-001/IO-005. The deterministic scheduler and
+owner-chain regression sources described here passed the exact-source Rust
+workspace suite at `354ad504`. Physical crash cuts, the complete fault matrix,
+and platform qualification remain open. A test-only scripted backend is
 wired into scheduler tests for held write completions, injected failures, and
 partial-write errors. Scheduler completion watchers now retain queue/device
 permits and queued-byte charges for admitted reads, writes, and syncs if their
@@ -12,17 +15,17 @@ descriptor/payload owners. Read dispatch also records the actual frame-pool
 charge after size-class rounding; coalesced peer reads aggregate their queued
 credits and report their one shared frame charge separately from
 governor-backed bytes.
-The helper-level owner regressions are authored but unrun. Dropping the
+The helper-level owner regressions passed in that workspace suite. Dropping the
 scripted backend releases any held test completions to avoid leaving a blocked
 helper thread during failure cleanup. Zero-progress read/write error mapping
-now has authored scheduler regressions. Path identity replacement is covered
+also passed its scheduler regressions. Path identity replacement is covered
 for cached descriptors and readahead entries under IO-004. The identity
 captured by secure open now travels with the leased descriptor. On Unix and
 Windows, payload reads, writes, and data/checkpoint syncs verify that identity
 against the current path at operation boundaries; a mismatch prevents stale
 read bytes from returning and leaves dirty write evidence intact. Held-read,
-held-write, and held-checkpoint-sync replacement regression sources are
-authored but unrun. Frame-pool charge attribution is now present in read
+held-write, and held-checkpoint-sync replacement regressions passed in the
+workspace suite. Frame-pool charge attribution is now present in read
 dispatch traces. When TRACE is enabled during lease creation, each memory
 lease receives a stable process-wide ID that survives lease growth and is
 included in acquire, growth, release, and storage-operation credit events.
@@ -38,9 +41,9 @@ TRACE is enabled. A deterministic owner-chain fixture combines a local frame
 pool, shared payload lease, queued-disk lease, and hash owner; it checks that
 dispatch credit matches live governor snapshots while the hash owner retains
 the payload and that frame-pool, queue, and governor accounting return to
-baseline at their respective owner drops. Scheduler-backed end-to-end
-reconciliation, crash cuts, and the remaining fault matrix cases are still
-open. These sources are authored but unrun.
+baseline at their respective owner drops. The owner-chain and scheduler-backed
+end-to-end reconciliation regressions passed in the workspace suite. Crash
+cuts and the remaining fault matrix cases are still open.
 
 ## Evidence states
 
@@ -109,13 +112,15 @@ lifetime events are implemented. The controlled frame/queue/hash owner-chain
 regression reconciles its dispatch record to live frame-pool and governor
 snapshots. A held-backend regression now also executes a real scheduler read
 and reconciles its dispatch credit, range, descriptor owner, frame charge, and
-device permit with live queue and governor snapshots through completion. New
-unrun source regressions hold two reads and a shared-payload write concurrently
-and reconcile their distinct storage/device IDs, owners, ranges, and per-class
-credits against live snapshots. The frame/queue/hash fixture now retains two
+device permit with live queue and governor snapshots through completion. The
+multi-operation regression holds two reads and a shared-payload write
+concurrently and reconciles their distinct storage/device IDs, owners, ranges,
+and per-class credits against live snapshots. The frame/queue/hash fixture
+retains two
 independent hash-job owners, checks aggregate credit while both are held, and
-confirms partial and final release. Execution is pending the bulk pass; crash
-cuts and platform fault qualification remain open.
+confirms partial and final release. These deterministic owner and scheduler
+regressions passed at exact source `354ad504`. The complete injection matrix,
+crash cuts, and platform fault qualification remain open.
 
 Dirty evidence is tracked per normalized path, write sequence, and file
 identity. A barrier snapshots the dirty files and highest covered sequence for
@@ -148,12 +153,13 @@ lease and permit counts before/after, completion state, dirty sequences, and
 recovered content. Current dispatch/drop traces expose submitted credit and
 retained-owner counts; identity/growth/release and order-independent lossy
 coalesced-credit regressions, a deterministic frame/queue/hash owner-chain
-snapshot regression, and held-backend production scheduler reconciliations are
-authored. The multi-operation source covers two reads plus a shared-payload
-write across unique storage/device identities, queue and frame credit, a shared
-payload lease, descriptors, and live governor snapshots. These sources remain
-unrun pending the bulk pass. Physical crash cuts and platform fault
-qualification remain required. Wall-clock sleeps and “usually happens” race
+snapshot regression, and held-backend production scheduler reconciliations
+passed in the exact-source suite. The multi-operation source covers two reads
+plus a shared-payload write across unique storage/device identities, queue and
+frame credit, a shared payload lease, descriptors, and live governor snapshots.
+This source passed at
+exact source `354ad504`. Physical crash cuts and platform fault qualification
+remain required. Wall-clock sleeps and “usually happens” race
 tests do not satisfy this contract.
 
 ## Qualification boundary
