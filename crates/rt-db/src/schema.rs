@@ -49,6 +49,28 @@ pub fn migrate(conn: &Connection) -> Result<(), DbError> {
         version: CURRENT_SCHEMA_VERSION,
         reason: e.to_string(),
     })?;
+    // Keep the cutover journal as a backward-compatible additive table
+    // outside `user_version`: older binaries ignore unknown tables and can
+    // still reopen the database to run the retained reference actor during
+    // an application rollback.
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS transfer_cutovers (
+            info_hash       TEXT NOT NULL PRIMARY KEY REFERENCES torrents(info_hash) ON DELETE CASCADE,
+            owner_generation INTEGER NOT NULL DEFAULT 0 CHECK (owner_generation >= 0),
+            owner_kind      TEXT NOT NULL CHECK (owner_kind IN ('reference', 'shared_core')),
+            target_kind     TEXT NOT NULL CHECK (target_kind IN ('reference', 'shared_core')),
+            phase           TEXT NOT NULL CHECK (phase IN ('stable', 'draining', 'starting', 'rollback_required')),
+            failure_reason  TEXT CHECK (failure_reason IS NULL OR length(CAST(failure_reason AS BLOB)) <= 4096),
+            updated_at      INTEGER NOT NULL,
+            CHECK (phase != 'stable' OR owner_kind = target_kind)
+        );
+        CREATE INDEX IF NOT EXISTS idx_transfer_cutovers_phase
+            ON transfer_cutovers(phase, updated_at);",
+    )
+    .map_err(|error| DbError::Migration {
+        version: CURRENT_SCHEMA_VERSION,
+        reason: format!("creating backward-compatible transfer cutover journal: {error}"),
+    })?;
     Ok(())
 }
 
@@ -430,6 +452,7 @@ mod tests {
             "api_tokens",
             "projection_issues",
             "peer_bans",
+            "transfer_cutovers",
         ];
         for table in expected {
             let count: i64 = conn

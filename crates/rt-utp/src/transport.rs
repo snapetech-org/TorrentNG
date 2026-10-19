@@ -17,13 +17,17 @@ use tokio::{
 };
 
 use crate::{
-    deadline::{UtpDeadlineClient, UtpDeadlineScheduler},
+    deadline::{metadata_budget_bytes, UtpDeadlineClient, UtpDeadlineScheduler},
     error::UtpError,
+    memory::{
+        UtpBufferedPacket, UtpMemoryBudget, UtpMemoryReservation, UtpMemoryUsage,
+        DEFAULT_UTP_ENDPOINT_BUFFER_BYTES,
+    },
     packet::{PacketType, UtpPacket},
     state::{
         InboundAction, UtpConnection, DEFAULT_INITIAL_WINDOW_BYTES, DEFAULT_MTU_PAYLOAD_BYTES,
     },
-    window::MAX_WINDOW_PACKETS,
+    window::{MAX_IN_FLIGHT_BYTES, MAX_WINDOW_PACKETS},
 };
 
 const MAX_RECEIVE_BUFFER_BYTES: usize = DEFAULT_INITIAL_WINDOW_BYTES as usize;
@@ -41,6 +45,9 @@ pub struct UtpTransportConfig {
     pub io_timeout: Duration,
     pub max_datagram_len: usize,
     pub max_retransmits: usize,
+    /// Hard retained-buffer and queue-metadata budget for each shared UDP
+    /// endpoint generation.
+    pub max_endpoint_buffer_bytes: usize,
 }
 
 impl Default for UtpTransportConfig {
@@ -50,6 +57,7 @@ impl Default for UtpTransportConfig {
             io_timeout: Duration::from_secs(15),
             max_datagram_len: DEFAULT_MTU_PAYLOAD_BYTES + crate::HEADER_SIZE + 64,
             max_retransmits: 4,
+            max_endpoint_buffer_bytes: DEFAULT_UTP_ENDPOINT_BUFFER_BYTES,
         }
     }
 }
@@ -57,6 +65,8 @@ impl Default for UtpTransportConfig {
 pub struct UtpListener {
     socket: UdpSocket,
     config: UtpTransportConfig,
+    memory: Arc<UtpMemoryBudget>,
+    _receive_memory: UtpMemoryReservation,
 }
 
 #[derive(Clone)]
@@ -69,6 +79,7 @@ pub struct UtpEndpoint {
     recv_task: Arc<StdMutex<Option<JoinHandle<()>>>>,
     deadlines: UtpDeadlineScheduler,
     accept_new_connections: Arc<AtomicBool>,
+    memory: Arc<UtpMemoryBudget>,
 }
 
 /// Engine-owned uTP socket pool.
@@ -100,10 +111,12 @@ pub struct UtpStream {
     read_buf: Vec<u8>,
     reorder: ReorderBuffer,
     pending_send: VecDeque<PendingPacket>,
-    routed_rx: Option<mpsc::Receiver<UtpPacket>>,
+    routed_rx: Option<mpsc::Receiver<UtpBufferedPacket>>,
     deadline: Option<UtpDeadlineClient>,
     handshake_state: Option<UtpPacket>,
     route: Option<UtpRouteRegistration>,
+    memory: Arc<UtpMemoryBudget>,
+    _stream_memory: UtpMemoryReservation,
 }
 
 struct PendingPacket {
@@ -113,6 +126,44 @@ struct PendingPacket {
 }
 
 type ReorderSlot = Option<(u16, Vec<u8>)>;
+
+fn stream_memory_reservation_bytes(config: UtpTransportConfig) -> usize {
+    MAX_RECEIVE_BUFFER_BYTES
+        .saturating_add(MAX_IN_FLIGHT_BYTES as usize)
+        .saturating_add(config.max_datagram_len.saturating_mul(2))
+        .saturating_add(std::mem::size_of::<UtpStream>())
+        .saturating_add(std::mem::size_of::<UtpConnection>())
+        .saturating_add(ROUTE_PACKET_QUEUE_CAPACITY * std::mem::size_of::<UtpBufferedPacket>())
+        .saturating_add(MAX_WINDOW_PACKETS * std::mem::size_of::<PendingPacket>())
+        .saturating_add(MAX_WINDOW_PACKETS * std::mem::size_of::<ReorderSlot>())
+        .saturating_add(MAX_WINDOW_PACKETS * std::mem::size_of::<Option<u16>>())
+        .saturating_add(std::mem::size_of::<(UtpRouteKey, UtpRoute)>() + 64)
+        .saturating_add(128)
+        .saturating_add(2 * 1024)
+}
+
+fn endpoint_receive_memory_bytes(config: UtpTransportConfig) -> usize {
+    config
+        .max_datagram_len
+        .saturating_add(1)
+        .saturating_add(std::mem::size_of::<Vec<u8>>())
+}
+
+fn endpoint_runtime_memory_bytes(config: UtpTransportConfig) -> usize {
+    endpoint_receive_memory_bytes(config)
+        .saturating_add(256usize.saturating_mul(std::mem::size_of::<Result<UtpStream, UtpError>>()))
+        .saturating_add(metadata_budget_bytes(MAX_UTP_ENDPOINT_CONNECTIONS))
+}
+
+fn minimum_endpoint_buffer_bytes(config: UtpTransportConfig) -> usize {
+    stream_memory_reservation_bytes(config)
+        .saturating_add(endpoint_runtime_memory_bytes(config))
+        .saturating_add(
+            config
+                .max_datagram_len
+                .saturating_add(std::mem::size_of::<UtpBufferedPacket>()),
+        )
+}
 
 struct ReorderBuffer {
     next_sequence: u16,
@@ -300,7 +351,23 @@ fn validate_config(config: UtpTransportConfig) -> Result<(), UtpError> {
             "max_datagram_len exceeds the maximum UDP payload",
         ));
     }
+    let minimum_budget = minimum_endpoint_buffer_bytes(config);
+    if config.max_endpoint_buffer_bytes < minimum_budget
+        || config.max_endpoint_buffer_bytes > u32::MAX as usize
+    {
+        return Err(UtpError::InvalidConfig(
+            "max_endpoint_buffer_bytes must fit one stream and endpoint receive buffer and be at most u32::MAX",
+        ));
+    }
     Ok(())
+}
+
+fn buffer_budget_error(memory: &UtpMemoryBudget, requested: usize) -> UtpError {
+    let usage = memory.usage();
+    UtpError::BufferBudgetExceeded {
+        requested,
+        available: usage.limit_bytes.saturating_sub(usage.reserved_bytes),
+    }
 }
 
 impl std::fmt::Debug for UtpStream {
@@ -321,7 +388,7 @@ struct UtpRouteKey {
 }
 
 struct UtpRoute {
-    tx: mpsc::Sender<UtpPacket>,
+    tx: mpsc::Sender<UtpBufferedPacket>,
     token: Arc<()>,
     handshake_state: Option<UtpPacket>,
 }
@@ -364,10 +431,20 @@ impl UtpListener {
         config: UtpTransportConfig,
     ) -> Result<Self, UtpError> {
         validate_config(config)?;
+        let memory = Arc::new(UtpMemoryBudget::new(config.max_endpoint_buffer_bytes));
+        let receive_bytes = endpoint_receive_memory_bytes(config);
+        let receive_memory = memory
+            .try_reserve(receive_bytes)
+            .ok_or_else(|| buffer_budget_error(&memory, receive_bytes))?;
         let socket = UdpSocket::bind(addr)
             .await
             .map_err(|err| UtpError::Io(err.to_string()))?;
-        Ok(Self { socket, config })
+        Ok(Self {
+            socket,
+            config,
+            memory,
+            _receive_memory: receive_memory,
+        })
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr, UtpError> {
@@ -389,6 +466,11 @@ impl UtpListener {
             if len > self.config.max_datagram_len {
                 continue;
             }
+            let datagram_bytes = len.saturating_add(std::mem::size_of::<UtpBufferedPacket>());
+            let Some(_datagram_memory) = self.memory.try_reserve(datagram_bytes) else {
+                UTP_ROUTE_DROPS.fetch_add(1, Ordering::Relaxed);
+                continue;
+            };
             let packet = match UtpPacket::parse(&buf[..len]) {
                 Ok(packet) => packet,
                 Err(_error) => {
@@ -403,6 +485,12 @@ impl UtpListener {
             if packet.header.packet_type != PacketType::Syn {
                 continue;
             }
+
+            let stream_bytes = stream_memory_reservation_bytes(self.config);
+            let stream_memory = self
+                .memory
+                .try_reserve(stream_bytes)
+                .ok_or_else(|| buffer_budget_error(&self.memory, stream_bytes))?;
 
             self.socket
                 .connect(peer)
@@ -427,6 +515,8 @@ impl UtpListener {
                 deadline: None,
                 handshake_state: Some(state),
                 route: None,
+                memory: Arc::clone(&self.memory),
+                _stream_memory: stream_memory,
             });
         }
     }
@@ -442,6 +532,11 @@ impl UtpEndpoint {
         config: UtpTransportConfig,
     ) -> Result<Self, UtpError> {
         validate_config(config)?;
+        let memory = Arc::new(UtpMemoryBudget::new(config.max_endpoint_buffer_bytes));
+        let receive_bytes = endpoint_runtime_memory_bytes(config);
+        let receive_memory = memory
+            .try_reserve(receive_bytes)
+            .ok_or_else(|| buffer_budget_error(&memory, receive_bytes))?;
         let socket = UdpSocket::bind(addr)
             .await
             .map_err(|err| UtpError::Io(err.to_string()))?;
@@ -449,7 +544,7 @@ impl UtpEndpoint {
         let streams = Arc::new(StdMutex::new(HashMap::new()));
         let (accepted_tx, accepted_rx) = mpsc::channel(256);
         let (stop, stop_rx) = watch::channel(false);
-        let deadlines = UtpDeadlineScheduler::new(stop_rx.clone());
+        let deadlines = UtpDeadlineScheduler::new(stop_rx.clone(), MAX_UTP_ENDPOINT_CONNECTIONS);
         let accept_new_connections = Arc::new(AtomicBool::new(true));
         let recv_task = tokio::spawn(run_endpoint_recv(
             socket.clone(),
@@ -458,6 +553,8 @@ impl UtpEndpoint {
             accepted_tx,
             Arc::clone(&accept_new_connections),
             deadlines.clone(),
+            Arc::clone(&memory),
+            receive_memory,
             stop_rx,
         ));
         Ok(Self {
@@ -469,6 +566,7 @@ impl UtpEndpoint {
             recv_task: Arc::new(StdMutex::new(Some(recv_task))),
             deadlines,
             accept_new_connections,
+            memory,
         })
     }
 
@@ -495,6 +593,10 @@ impl UtpEndpoint {
         lock_routes(&self.streams).len()
     }
 
+    pub fn memory_usage(&self) -> UtpMemoryUsage {
+        self.memory.usage()
+    }
+
     /// Stop admitting fresh inbound SYNs while keeping established routes
     /// alive across a peer-listener port rebind.
     pub async fn retire_listener(&self) {
@@ -515,6 +617,12 @@ impl UtpEndpoint {
             ));
         }
 
+        let stream_bytes = stream_memory_reservation_bytes(self.config);
+        let stream_memory = self
+            .memory
+            .try_reserve(stream_bytes)
+            .ok_or_else(|| buffer_budget_error(&self.memory, stream_bytes))?;
+
         let mut conn = UtpConnection::connect(random_connection_id(), random_seq_nr());
         let syn = conn.build_syn(now_us());
         let key = UtpRouteKey {
@@ -523,7 +631,7 @@ impl UtpEndpoint {
         };
         let (tx, rx) = mpsc::channel(ROUTE_PACKET_QUEUE_CAPACITY);
         let token = Arc::new(());
-        {
+        let deadline = {
             let mut streams = lock_routes(&self.streams);
             if streams.len() >= MAX_UTP_ENDPOINT_CONNECTIONS {
                 return Err(UtpError::ConnectionLimit {
@@ -535,6 +643,9 @@ impl UtpEndpoint {
                     "random uTP connection id collided with a live route",
                 ));
             }
+            // Reserve a guaranteed FIFO cancellation slot before publishing
+            // the route. The route cap and deadline-client cap stay aligned.
+            let deadline = self.deadlines.client()?;
             streams.insert(
                 key,
                 UtpRoute {
@@ -543,7 +654,8 @@ impl UtpEndpoint {
                     handshake_state: None,
                 },
             );
-        }
+            deadline
+        };
         let route = UtpRouteRegistration {
             key,
             token,
@@ -559,9 +671,11 @@ impl UtpEndpoint {
             reorder: ReorderBuffer::new(0),
             pending_send: VecDeque::new(),
             routed_rx: Some(rx),
-            deadline: Some(self.deadlines.client()),
+            deadline: Some(deadline),
             handshake_state: None,
             route: Some(route),
+            memory: Arc::clone(&self.memory),
+            _stream_memory: stream_memory,
         };
 
         let mut established = false;
@@ -569,9 +683,9 @@ impl UtpEndpoint {
             stream.send_packet(&syn).await?;
             match stream.recv_packet(self.config.handshake_timeout).await {
                 Ok(packet) => {
-                    stream.conn.on_inbound(&packet, now_us())?;
+                    stream.conn.on_inbound(&packet.packet, now_us())?;
                     observe_connection(&stream.conn);
-                    stream.last_remote_timestamp_us = packet.header.timestamp_us;
+                    stream.last_remote_timestamp_us = packet.packet.header.timestamp_us;
                     if stream.conn.is_established() {
                         established = true;
                         break;
@@ -626,6 +740,27 @@ impl UtpRuntime {
             endpoints: Arc::new(TokioMutex::new(UtpRuntimeEndpoints::default())),
             config,
         }
+    }
+
+    /// Return aggregate buffer reservations across the active and retained
+    /// endpoint generations owned by this runtime.
+    pub async fn memory_usage(&self) -> UtpMemoryUsage {
+        let endpoints = self.endpoints.lock().await;
+        let mut total = UtpMemoryUsage::default();
+        for endpoint in endpoints
+            .ipv4
+            .iter()
+            .chain(endpoints.ipv6.iter())
+            .chain(endpoints.retired.iter())
+        {
+            let usage = endpoint.memory_usage();
+            total.reserved_bytes = total.reserved_bytes.saturating_add(usage.reserved_bytes);
+            total.limit_bytes = total.limit_bytes.saturating_add(usage.limit_bytes);
+            total.rejected_reservations = total
+                .rejected_reservations
+                .saturating_add(usage.rejected_reservations);
+        }
+        total
     }
 
     /// Install the listener endpoint so accepted and outgoing streams share
@@ -797,6 +932,8 @@ async fn run_endpoint_recv(
     accepted_tx: mpsc::Sender<Result<UtpStream, UtpError>>,
     accept_new_connections: Arc<AtomicBool>,
     deadlines: UtpDeadlineScheduler,
+    memory: Arc<UtpMemoryBudget>,
+    _receive_memory: UtpMemoryReservation,
     mut stop: watch::Receiver<bool>,
 ) {
     let mut buf = vec![0u8; config.max_datagram_len.saturating_add(1)];
@@ -822,6 +959,11 @@ async fn run_endpoint_recv(
             UTP_ROUTE_DROPS.fetch_add(1, Ordering::Relaxed);
             continue;
         }
+        let datagram_bytes = len.saturating_add(std::mem::size_of::<UtpBufferedPacket>());
+        let Some(datagram_memory) = memory.try_reserve(datagram_bytes) else {
+            UTP_ROUTE_DROPS.fetch_add(1, Ordering::Relaxed);
+            continue;
+        };
         let packet = match UtpPacket::parse(&buf[..len]) {
             Ok(packet) => packet,
             Err(_error) => {
@@ -843,7 +985,11 @@ async fn run_endpoint_recv(
                 streams.get(&key).map(|route| route.tx.clone())
             };
             if let Some(tx) = tx {
-                if tx.try_send(packet).is_err() {
+                let routed = UtpBufferedPacket {
+                    packet,
+                    _reservation: datagram_memory,
+                };
+                if tx.try_send(routed).is_err() {
                     UTP_ROUTE_DROPS.fetch_add(1, Ordering::Relaxed);
                 }
             } else {
@@ -881,6 +1027,12 @@ async fn run_endpoint_recv(
             continue;
         }
 
+        let stream_bytes = stream_memory_reservation_bytes(config);
+        let Some(stream_memory) = memory.try_reserve(stream_bytes) else {
+            UTP_ROUTE_DROPS.fetch_add(1, Ordering::Relaxed);
+            continue;
+        };
+
         let mut conn = match UtpConnection::accept(&packet.header, random_seq_nr()) {
             Ok(conn) => conn,
             Err(error) => {
@@ -897,26 +1049,31 @@ async fn run_endpoint_recv(
             recv_connection_id: conn.ids().recv,
         };
         let token = Arc::new(());
-        let admitted = {
+        let deadline = {
             let mut streams = lock_routes(&streams);
             if streams.len() >= MAX_UTP_ENDPOINT_CONNECTIONS {
-                false
+                None
             } else {
-                streams.insert(
-                    key,
-                    UtpRoute {
-                        tx,
-                        token: Arc::clone(&token),
-                        handshake_state: Some(state.clone()),
-                    },
-                );
-                true
+                match deadlines.client() {
+                    Ok(deadline) => {
+                        streams.insert(
+                            key,
+                            UtpRoute {
+                                tx,
+                                token: Arc::clone(&token),
+                                handshake_state: Some(state.clone()),
+                            },
+                        );
+                        Some(deadline)
+                    }
+                    Err(_) => None,
+                }
             }
         };
-        if !admitted {
+        let Some(deadline) = deadline else {
             UTP_ROUTE_DROPS.fetch_add(1, Ordering::Relaxed);
             continue;
-        }
+        };
         let route = UtpRouteRegistration {
             key,
             token,
@@ -941,9 +1098,11 @@ async fn run_endpoint_recv(
             reorder,
             pending_send: VecDeque::new(),
             routed_rx: Some(rx),
-            deadline: Some(deadlines.client()),
+            deadline: Some(deadline),
             handshake_state: Some(state),
             route: Some(route),
+            memory: Arc::clone(&memory),
+            _stream_memory: stream_memory,
         };
         observe_connection(&stream.conn);
         UTP_ACCEPTS.fetch_add(1, Ordering::Relaxed);
@@ -974,6 +1133,11 @@ impl UtpStream {
         config: UtpTransportConfig,
     ) -> Result<Self, UtpError> {
         validate_config(config)?;
+        let memory = Arc::new(UtpMemoryBudget::new(config.max_endpoint_buffer_bytes));
+        let stream_bytes = stream_memory_reservation_bytes(config);
+        let stream_memory = memory
+            .try_reserve(stream_bytes)
+            .ok_or_else(|| buffer_budget_error(&memory, stream_bytes))?;
         let bind_addr = if peer.is_ipv4() {
             "0.0.0.0:0"
         } else {
@@ -1024,6 +1188,8 @@ impl UtpStream {
             deadline: None,
             handshake_state: None,
             route: None,
+            memory,
+            _stream_memory: stream_memory,
         })
     }
 
@@ -1097,26 +1263,13 @@ impl UtpStream {
                     }
                     self.conn.on_timeout();
                     observe_connection(&self.conn);
-                    let socket = Arc::clone(&self.socket);
-                    let peer = self.peer;
-                    let routed = self.routed_rx.is_some();
-                    for pending in &mut self.pending_send {
-                        if !self.conn.packet_is_unacknowledged(pending.sequence) {
-                            continue;
-                        }
-                        if pending.retransmits >= self.config.max_retransmits {
-                            return Err(UtpError::Timeout);
-                        }
-                        pending.retransmits += 1;
-                        UTP_RETRANSMITS.fetch_add(1, Ordering::Relaxed);
-                        send_packet_using(&socket, peer, routed, &pending.packet).await?;
-                    }
+                    self.retransmit_oldest_unacknowledged().await?;
                     continue;
                 }
                 Err(error) => return Err(error),
             };
 
-            let action = self.process_inbound_packet(received).await?;
+            let action = self.process_received_packet(received).await?;
             self.pending_send
                 .retain(|pending| self.conn.packet_is_unacknowledged(pending.sequence));
             match action {
@@ -1137,25 +1290,12 @@ impl UtpStream {
                     UTP_SEND_TIMEOUTS.fetch_add(1, Ordering::Relaxed);
                     self.conn.on_timeout();
                     observe_connection(&self.conn);
-                    let socket = Arc::clone(&self.socket);
-                    let peer = self.peer;
-                    let routed = self.routed_rx.is_some();
-                    for pending in &mut self.pending_send {
-                        if !self.conn.packet_is_unacknowledged(pending.sequence) {
-                            continue;
-                        }
-                        if pending.retransmits >= self.config.max_retransmits {
-                            return Err(UtpError::Timeout);
-                        }
-                        pending.retransmits += 1;
-                        UTP_RETRANSMITS.fetch_add(1, Ordering::Relaxed);
-                        send_packet_using(&socket, peer, routed, &pending.packet).await?;
-                    }
+                    self.retransmit_oldest_unacknowledged().await?;
                     continue;
                 }
                 Err(error) => return Err(error),
             };
-            match self.process_inbound_packet(received).await? {
+            match self.process_received_packet(received).await? {
                 InboundAction::Close | InboundAction::Reset => return Err(UtpError::Closed),
                 _ => {}
             }
@@ -1230,6 +1370,37 @@ impl UtpStream {
         Ok(action)
     }
 
+    async fn process_received_packet(
+        &mut self,
+        received: UtpBufferedPacket,
+    ) -> Result<InboundAction, UtpError> {
+        let UtpBufferedPacket {
+            packet,
+            _reservation,
+        } = received;
+        self.process_inbound_packet(packet).await
+    }
+
+    async fn retransmit_oldest_unacknowledged(&mut self) -> Result<(), UtpError> {
+        let conn = &self.conn;
+        let Some(pending) = self
+            .pending_send
+            .iter_mut()
+            .find(|pending| conn.packet_is_unacknowledged(pending.sequence))
+        else {
+            return Ok(());
+        };
+        if pending.retransmits >= self.config.max_retransmits {
+            return Err(UtpError::Timeout);
+        }
+        pending.retransmits += 1;
+        UTP_RETRANSMITS.fetch_add(1, Ordering::Relaxed);
+        let socket = Arc::clone(&self.socket);
+        let peer = self.peer;
+        let routed = self.routed_rx.is_some();
+        send_packet_using(&socket, peer, routed, &pending.packet).await
+    }
+
     pub async fn write_all(&mut self, bytes: &[u8]) -> Result<(), UtpError> {
         self.send(bytes).await
     }
@@ -1262,16 +1433,16 @@ impl UtpStream {
     async fn receive_into_buffer(&mut self) -> Result<bool, UtpError> {
         loop {
             let packet = self.recv_packet(self.config.io_timeout).await?;
-            self.last_remote_timestamp_us = packet.header.timestamp_us;
-            if packet.header.packet_type == PacketType::Syn
-                && packet.header.connection_id == self.conn.ids().recv
+            self.last_remote_timestamp_us = packet.packet.header.timestamp_us;
+            if packet.packet.header.packet_type == PacketType::Syn
+                && packet.packet.header.connection_id == self.conn.ids().recv
             {
                 if let Some(state) = self.handshake_state.as_ref() {
                     self.send_packet(state).await?;
                     continue;
                 }
             }
-            match self.process_inbound_packet(packet).await? {
+            match self.process_received_packet(packet).await? {
                 InboundAction::DeliverPayload => return Ok(!self.read_buf.is_empty()),
                 InboundAction::Close | InboundAction::Reset => return Ok(false),
                 InboundAction::None | InboundAction::SendState | InboundAction::BufferPayload => {}
@@ -1368,7 +1539,7 @@ impl UtpStream {
                     }
                     Err(err) => return Err(err),
                 };
-                match self.process_inbound_packet(received).await? {
+                match self.process_received_packet(received).await? {
                     InboundAction::Close | InboundAction::Reset => return Ok(()),
                     _ => {}
                 }
@@ -1392,7 +1563,7 @@ impl UtpStream {
         send_packet_using(&self.socket, self.peer, self.routed_rx.is_some(), packet).await
     }
 
-    async fn recv_packet(&mut self, wait: Duration) -> Result<UtpPacket, UtpError> {
+    async fn recv_packet(&mut self, wait: Duration) -> Result<UtpBufferedPacket, UtpError> {
         if let (Some(rx), Some(deadline)) = (&mut self.routed_rx, &mut self.deadline) {
             deadline.recv_packet(rx, wait).await
         } else if let Some(rx) = &mut self.routed_rx {
@@ -1401,7 +1572,20 @@ impl UtpStream {
                 .map_err(|_| UtpError::Timeout)?
                 .ok_or(UtpError::Closed)
         } else {
-            recv_packet(&self.socket, wait, self.config.max_datagram_len).await
+            let reserved_bytes = self
+                .config
+                .max_datagram_len
+                .saturating_add(std::mem::size_of::<UtpBufferedPacket>());
+            let reservation = self
+                .memory
+                .reserve(reserved_bytes)
+                .await
+                .map_err(|requested| buffer_budget_error(&self.memory, requested))?;
+            let packet = recv_packet(&self.socket, wait, self.config.max_datagram_len).await?;
+            Ok(UtpBufferedPacket {
+                packet,
+                _reservation: reservation,
+            })
         }
     }
 }
@@ -1518,7 +1702,18 @@ mod tests {
             io_timeout: Duration::from_secs(2),
             max_datagram_len: 2048,
             max_retransmits: 1,
+            max_endpoint_buffer_bytes: DEFAULT_UTP_ENDPOINT_BUFFER_BYTES,
         }
+    }
+
+    fn test_stream_memory(
+        config: UtpTransportConfig,
+    ) -> (Arc<UtpMemoryBudget>, UtpMemoryReservation) {
+        let memory = Arc::new(UtpMemoryBudget::new(config.max_endpoint_buffer_bytes));
+        let reservation = memory
+            .try_reserve(stream_memory_reservation_bytes(config))
+            .expect("test endpoint budget admits one stream");
+        (memory, reservation)
     }
 
     #[test]
@@ -1572,11 +1767,13 @@ mod tests {
         let conn = UtpConnection::accept(&syn, 5).unwrap();
         let reorder = ReorderBuffer::new(conn.ack_nr().wrapping_add(1));
         let (_tx, rx) = mpsc::channel(1);
+        let config = test_config();
+        let (memory, stream_memory) = test_stream_memory(config);
         let mut stream = UtpStream {
             socket,
             peer: "127.0.0.1:9".parse().unwrap(),
             conn,
-            config: test_config(),
+            config,
             last_remote_timestamp_us: 0,
             read_buf: Vec::new(),
             reorder,
@@ -1585,6 +1782,8 @@ mod tests {
             deadline: None,
             handshake_state: None,
             route: None,
+            memory,
+            _stream_memory: stream_memory,
         };
 
         let mut future = inbound_data_packet(stream.conn.ids().recv, 101, b"later");
@@ -1875,6 +2074,7 @@ mod tests {
             io_timeout: Duration::from_millis(100),
             max_datagram_len: 2048,
             max_retransmits: 1,
+            max_endpoint_buffer_bytes: DEFAULT_UTP_ENDPOINT_BUFFER_BYTES,
         };
         let listener = UtpListener::bind_with_config("127.0.0.1:0".parse().unwrap(), config)
             .await
@@ -1974,11 +2174,13 @@ mod tests {
         let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
         let conn = UtpConnection::connect(1, 1);
         let reorder = ReorderBuffer::new(conn.ack_nr().wrapping_add(1));
+        let config = test_config();
+        let (memory, stream_memory) = test_stream_memory(config);
         let mut stream = UtpStream {
             socket,
             peer: "127.0.0.1:1".parse().unwrap(),
             conn,
-            config: test_config(),
+            config,
             last_remote_timestamp_us: 0,
             read_buf: Vec::new(),
             reorder,
@@ -1987,6 +2189,8 @@ mod tests {
             deadline: None,
             handshake_state: None,
             route: None,
+            memory,
+            _stream_memory: stream_memory,
         };
 
         stream
@@ -2133,6 +2337,45 @@ mod tests {
 
         drop(client);
         drop(accepted);
+    }
+
+    #[tokio::test]
+    async fn shared_endpoint_enforces_aggregate_memory_budget_and_reports_reservations() {
+        let mut config = test_config();
+        config.max_endpoint_buffer_bytes = minimum_endpoint_buffer_bytes(config);
+        let endpoint = UtpEndpoint::bind_with_config("127.0.0.1:0".parse().unwrap(), config)
+            .await
+            .unwrap();
+        assert_eq!(
+            endpoint.memory_usage().reserved_bytes,
+            endpoint_runtime_memory_bytes(config)
+        );
+
+        let listener = UtpListener::bind("127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accept = tokio::spawn(async move { listener.accept().await });
+        let stream = endpoint.connect(addr).await.unwrap();
+        let accepted = accept.await.unwrap().unwrap();
+        assert_eq!(
+            endpoint.memory_usage().reserved_bytes,
+            endpoint_runtime_memory_bytes(config) + stream_memory_reservation_bytes(config)
+        );
+
+        let error = endpoint
+            .connect("127.0.0.1:9".parse().unwrap())
+            .await
+            .unwrap_err();
+        assert!(matches!(error, UtpError::BufferBudgetExceeded { .. }));
+
+        drop(stream);
+        drop(accepted);
+        assert_eq!(
+            endpoint.memory_usage().reserved_bytes,
+            endpoint_runtime_memory_bytes(config)
+        );
+        endpoint.shutdown().await.unwrap();
     }
 
     #[tokio::test]

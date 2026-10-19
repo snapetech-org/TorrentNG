@@ -6,11 +6,26 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import ipaddress
 import json
+import math
+import re
 import sys
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from stat import S_ISREG
 from typing import Any
+from urllib.parse import urlsplit
+
+from strict_json import StrictJsonError, loads as strict_json_loads
+from network_control import (
+    PROFILES as NETWORK_PROFILES,
+    NetworkControlError,
+    derive_pair_seed,
+    expected_netem,
+    legacy_expected_netem,
+    legacy_profile_settings,
+    profile_settings,
+)
 
 try:
     from jsonschema import (
@@ -42,6 +57,15 @@ SCHEMAS = {
     "paired-plan": ROOT / "certification/transfer-rebuild/paired-plan.schema.json",
     "compatibility-preflight": ROOT
     / "certification/transfer-rebuild/compatibility-preflight.schema.json",
+    "task-network": ROOT / "certification/transfer-rebuild/task-network.schema.json",
+    "task-tracker": ROOT / "certification/transfer-rebuild/task-tracker.schema.json",
+    "retargeted-metainfo": ROOT
+    / "certification/transfer-rebuild/retargeted-metainfo.schema.json",
+    "catalog-load-report": ROOT
+    / "certification/transfer-rebuild/catalog-load-report.schema.json",
+    "rollout-evidence": ROOT / "certification/transfer-rebuild/rollout-evidence.schema.json",
+    "rollout-gate": ROOT / "certification/transfer-rebuild/rollout-gate.schema.json",
+    "qualification": ROOT / "certification/transfer-rebuild/qualification.schema.json",
 }
 CLIENT_OBSERVATION_KIND = "transfer-client-observation-v1"
 CACHE_STATE_KIND = "transfer-cache-state-v1"
@@ -51,6 +75,22 @@ CEILING_KIND = "transfer-ceiling-v1"
 CALIBRATION_RAW_KIND = "transfer-calibration-raw-v1"
 RESOURCE_OBSERVATION_KIND = "transfer-resource-observation-v1"
 PAYLOAD_COPY_OBSERVATION_KIND = "transfer-payload-copy-observation-v1"
+TASK_NETWORK_KIND = "transfer-task-network-v1"
+TASK_TRACKER_KIND = "transfer-task-tracker-v1"
+FIXTURE_MANIFEST_KIND = "transfer-fixture-manifest-v1"
+FIXTURE_TORRENT_KIND = "transfer-fixture-torrent-record-v1"
+RETARGETED_METAINFO_KIND = "transfer-retargeted-metainfo-record-v1"
+RETARGETED_TORRENT_KIND = "transfer-retargeted-metainfo-v1"
+CATALOG_LOAD_REPORT_KIND = "transfer-catalog-load-report-v1"
+CATALOG_LOAD_LOG_KIND = "transfer-catalog-load-log-v1"
+CATALOG_LOAD_ROUTES = frozenset(
+    {
+        "/api/v1/torrents?limit=200&sort=name&reverse=true",
+        "/api/v1/torrents?limit=200&offset=200",
+        "/api/v1/transfer/info",
+        "/metrics",
+    }
+)
 RESOURCE_SAMPLES_KIND = "transfer-resource-samples-v1"
 RESOURCE_SAMPLE_FIELDS = (
     "elapsed_ns",
@@ -83,18 +123,13 @@ RESOURCE_PEAK_FIELDS = {
     "block_read_bytes": "block_read_bytes",
     "block_write_bytes": "block_write_bytes",
 }
-NETWORK_PROFILES = {
-    "lan-1g-1ms-v1": {"delay_ms": 1, "rate_bps": 1_000_000_000, "limit_packets": 1000},
-    "metro-100m-10ms-v1": {"delay_ms": 10, "rate_bps": 100_000_000, "limit_packets": 1000},
-    "wan-20m-30ms-v1": {"delay_ms": 30, "rate_bps": 20_000_000, "limit_packets": 1000},
-}
+HEX_SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 
 
 def _load_json(path: Path) -> object:
     try:
-        with path.open("r", encoding="utf-8") as source:
-            return json.load(source)
-    except (OSError, json.JSONDecodeError) as error:
+        return strict_json_loads(path.read_bytes(), label=str(path))
+    except (OSError, StrictJsonError) as error:
         raise ValueError(f"{path}: {error}") from error
 
 
@@ -111,12 +146,20 @@ def _reject_nonstandard_number(value: str) -> None:
     raise ValueError(f"non-standard JSON number is not allowed: {value}")
 
 
+def _strict_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"JSON number is outside the finite range: {value}")
+    return parsed
+
+
 def _load_strict_json(path: Path) -> object:
     try:
         return json.loads(
             path.read_bytes(),
             object_pairs_hook=_strict_object,
             parse_constant=_reject_nonstandard_number,
+            parse_float=_strict_float,
         )
     except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError) as error:
         raise ValueError(f"{path}: {error}") from error
@@ -164,6 +207,70 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _catalog_percentile(samples: list[int], numerator: int, denominator: int) -> int:
+    ordered = sorted(samples)
+    rank = max(1, (len(ordered) * numerator + denominator - 1) // denominator)
+    return ordered[min(rank - 1, len(ordered) - 1)]
+
+
+def _catalog_load_report_errors(report: Any) -> list[str]:
+    if not isinstance(report, dict):
+        return ["catalog-load report must be an object"]
+    observations = report.get("observations")
+    if not isinstance(observations, list) or len(observations) != 2:
+        return ["catalog-load report must contain exactly two catalog observations"]
+    errors: list[str] = []
+    by_size: dict[int, dict[str, Any]] = {}
+    for index, observation in enumerate(observations):
+        if not isinstance(observation, dict):
+            errors.append(f"observations[{index}] must be an object")
+            continue
+        rows = observation.get("catalog_rows")
+        if type(rows) is not int or rows not in {1_000, 100_000}:
+            errors.append(f"observations[{index}].catalog_rows must be 1000 or 100000")
+            continue
+        if rows in by_size:
+            errors.append(f"observations contains duplicate {rows}-row catalog")
+            continue
+        by_size[rows] = observation
+        routes = observation.get("routes")
+        if not isinstance(routes, list) or len(routes) != len(CATALOG_LOAD_ROUTES):
+            errors.append(f"observations[{index}] must contain all four API routes")
+            continue
+        seen: set[str] = set()
+        for route_index, route_observation in enumerate(routes):
+            location = f"observations[{index}].routes[{route_index}]"
+            if not isinstance(route_observation, dict):
+                errors.append(f"{location} must be an object")
+                continue
+            route = route_observation.get("route")
+            if not isinstance(route, str) or route not in CATALOG_LOAD_ROUTES or route in seen:
+                errors.append(f"{location}.route is unknown or duplicated")
+                continue
+            seen.add(route)
+            samples = route_observation.get("samples_ns")
+            if (
+                not isinstance(samples, list)
+                or len(samples) != 16
+                or any(type(sample) is not int or sample <= 0 for sample in samples)
+            ):
+                errors.append(f"{location}.samples_ns must contain 16 positive integer samples")
+                continue
+            p50 = _catalog_percentile(samples, 50, 100)
+            p95 = _catalog_percentile(samples, 95, 100)
+            if type(route_observation.get("p50_ns")) is not int or route_observation["p50_ns"] != p50:
+                errors.append(f"{location}.p50_ns does not match the raw samples")
+            if type(route_observation.get("p95_ns")) is not int or route_observation["p95_ns"] != p95:
+                errors.append(f"{location}.p95_ns does not match the raw samples")
+            if type(route_observation.get("sample_count")) is not int or route_observation["sample_count"] != 16:
+                errors.append(f"{location}.sample_count must be 16")
+        if seen != CATALOG_LOAD_ROUTES:
+            errors.append(f"observations[{index}] omits one or more required routes")
+    if set(by_size) != {1_000, 100_000}:
+        errors.append("catalog-load report must include both 1000- and 100000-row observations")
+    return errors
 
 
 def _settings_digest(values: dict[str, Any]) -> str:
@@ -561,19 +668,28 @@ def _network_control_errors(observation: dict[str, Any]) -> list[str]:
     if observation["artifact_sha256"] != hashlib.sha256(canonical).hexdigest():
         errors.append("artifact_sha256 does not match canonical network-control fields")
     profile_id = observation["profile_id"]
-    expected_settings = NETWORK_PROFILES.get(profile_id)
-    if expected_settings is None or observation["settings"] != expected_settings:
+    expected_profile = NETWORK_PROFILES.get(profile_id)
+    settings = observation.get("settings")
+    if expected_profile is None or not isinstance(settings, dict):
+        errors.append("settings do not match the pinned network-control profile")
+        return errors
+    if "seed" in settings:
+        try:
+            expected_settings = profile_settings(profile_id, settings["seed"])
+            expected_qdisc = expected_netem(profile_id, settings["seed"])
+        except NetworkControlError:
+            errors.append("settings contain an invalid deterministic netem seed")
+            return errors
+    else:
+        expected_settings = legacy_profile_settings(profile_id)
+        expected_qdisc = legacy_expected_netem(profile_id)
+        if expected_profile["jitter_ms"] or expected_profile["loss_ppm"]:
+            errors.append("stochastic network profiles require a recorded seed")
+    if settings != expected_settings:
         errors.append("settings do not match the pinned network-control profile")
         return errors
     observed = observation["observed_root_qdisc"]
     if observation["action"] == "apply":
-        expected_qdisc = {
-            "kind": "netem",
-            "handle": "7fff:",
-            "delay_ns": expected_settings["delay_ms"] * 1_000_000,
-            "rate_bps": expected_settings["rate_bps"],
-            "limit_packets": expected_settings["limit_packets"],
-        }
         if observed != expected_qdisc:
             errors.append("observed root qdisc does not match the pinned profile")
         if observation["baseline_root_qdisc"] != {"kind": "noqueue", "handle": "0:"}:
@@ -592,6 +708,188 @@ def _network_control_errors(observation: dict[str, Any]) -> list[str]:
     ).hexdigest()
     if observation["toolchain_sha256"] != tool_digest:
         errors.append("toolchain_sha256 does not match iproute2 version strings")
+    return errors
+
+
+def _task_network_errors(observation: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    unsigned = {key: value for key, value in observation.items() if key != "artifact_sha256"}
+    canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    if observation["artifact_sha256"] != hashlib.sha256(canonical).hexdigest():
+        errors.append("artifact_sha256 does not match canonical task-network fields")
+    suffix = observation["suffix"]
+    if (
+        observation["target_namespace"] != f"tngt-{suffix}"
+        or observation["seed_namespace"] != f"tngs-{suffix}"
+        or observation["bridge"] != f"tngb{suffix}"
+    ):
+        errors.append("task-network names do not match the task suffix")
+    try:
+        subnet = ipaddress.ip_network(observation["subnet"], strict=True)
+        if (
+            not isinstance(subnet, ipaddress.IPv4Network)
+            or subnet.prefixlen != 24
+            or not subnet.subnet_of(ipaddress.ip_network("198.18.0.0/15"))
+        ):
+            errors.append("subnet is outside the reserved benchmark /24 pool")
+            return errors
+        expected_gateway = str(subnet.network_address + 1)
+        expected_addresses = {
+            "seed": str(subnet.network_address + 2),
+            "target": str(subnet.network_address + 3),
+        }
+        if observation["gateway"] != expected_gateway:
+            errors.append("gateway does not match the task-network subnet")
+        for role, prefix in (("target", "tngh"), ("seed", "tngs")):
+            endpoint = observation[role]
+            if endpoint["address"] != expected_addresses[role]:
+                errors.append(f"{role} address does not match the task-network subnet")
+            if endpoint["host_interface"] != f"{prefix}{suffix}":
+                errors.append(f"{role} host interface does not match the task suffix")
+    except (KeyError, TypeError, ValueError) as error:
+        errors.append(f"task-network address fields are malformed: {error}")
+    return errors
+
+
+def _canonical_record_digest(record: dict[str, Any]) -> str:
+    unsigned = {key: value for key, value in record.items() if key != "artifact_sha256"}
+    canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _task_tracker_errors(observation: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    if observation["artifact_sha256"] != _canonical_record_digest(observation):
+        errors.append("artifact_sha256 does not match canonical task-tracker fields")
+    counts = observation["announce_counts"]
+    if sum(counts.values()) != observation["request_count"]:
+        errors.append("request_count does not equal the announce counters")
+    ready = observation["seed_port"] is not None and observation["seed_peer_id_sha256"] is not None
+    if observation["seed_ready"] is not ready:
+        errors.append("seed_ready differs from the observed seed peer identity")
+    try:
+        gateway = ipaddress.ip_address(observation["gateway"])
+        target = ipaddress.ip_address(observation["target_address"])
+        seed = ipaddress.ip_address(observation["seed_address"])
+        subnet = ipaddress.ip_network(f"{gateway}/24", strict=False)
+        if (
+            not isinstance(gateway, ipaddress.IPv4Address)
+            or not isinstance(target, ipaddress.IPv4Address)
+            or not isinstance(seed, ipaddress.IPv4Address)
+            or target not in subnet
+            or seed not in subnet
+            or gateway == target
+            or gateway == seed
+            or target == seed
+        ):
+            errors.append("tracker addresses must be distinct IPv4 endpoints in one /24")
+    except (KeyError, TypeError, ValueError) as error:
+        errors.append(f"tracker addresses are malformed: {error}")
+    if observation["info_hashes_sha256"] != sorted(set(observation["info_hashes_sha256"])):
+        errors.append("info_hashes_sha256 must be sorted and unique")
+    return errors
+
+
+def _task_tracker_topology_errors(
+    tracker: dict[str, Any], topology: dict[str, Any]
+) -> list[str]:
+    errors: list[str] = []
+    if tracker["topology_sha256"] != topology["artifact_sha256"]:
+        errors.append("tracker refers to a different task-network topology")
+    expected = {
+        "gateway": topology["gateway"],
+        "target_address": topology["target"]["address"],
+        "seed_address": topology["seed"]["address"],
+    }
+    for field, value in expected.items():
+        if tracker[field] != value:
+            errors.append(f"tracker {field} differs from the task-network topology")
+    return errors
+
+
+def _retargeted_topology_errors(
+    retarget: dict[str, Any], topology: dict[str, Any]
+) -> list[str]:
+    try:
+        announce = urlsplit(retarget["announce_url"])
+        port = announce.port
+    except (KeyError, TypeError, ValueError) as error:
+        return [f"retargeted announce URL is malformed: {error}"]
+    if (
+        announce.scheme != "http"
+        or announce.hostname != topology["gateway"]
+        or port is None
+        or not 1 <= port <= 65535
+        or announce.username is not None
+        or announce.password is not None
+        or announce.path != "/announce"
+        or announce.query
+        or announce.fragment
+    ):
+        return ["retargeted announce URL does not use the task gateway tracker"]
+    return []
+
+
+def _retargeted_metainfo_errors(record: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    expected_hash_fields = {
+        "v1": {"sha1"},
+        "v2": {"sha256", "sha256_truncated_20"},
+        "hybrid": {"sha1", "sha256", "sha256_truncated_20"},
+    }.get(record["metainfo_kind"])
+    hashes = record["info_hashes"]
+    if expected_hash_fields is None or set(hashes) != expected_hash_fields:
+        errors.append("info_hashes fields do not match metainfo_kind")
+    elif "sha256" in hashes and hashes["sha256_truncated_20"] != hashes["sha256"][:40]:
+        errors.append("sha256_truncated_20 is not the first 20 bytes of sha256")
+    try:
+        announce = urlsplit(record["announce_url"])
+        port = announce.port
+    except (KeyError, TypeError, ValueError) as error:
+        errors.append(f"announce URL is malformed: {error}")
+    else:
+        if (
+            announce.scheme != "http"
+            or announce.hostname is None
+            or port is None
+            or not 1 <= port <= 65535
+            or announce.username is not None
+            or announce.password is not None
+            or announce.path != "/announce"
+            or announce.query
+            or announce.fragment
+        ):
+            errors.append("announce URL is not a private HTTP /announce endpoint")
+    return errors
+
+
+def _resource_namespace_errors(
+    workload_kind: str, resource_observation: dict[str, Any], topology: dict[str, Any]
+) -> list[str]:
+    role = {"download": "target", "seed": "seed"}.get(workload_kind)
+    if role is None:
+        return []
+    if (
+        resource_observation.get("network_namespace_inode")
+        != topology[role]["namespace_identity"]["inode"]
+    ):
+        return [f"resource observer used a different {role} namespace"]
+    return []
+
+
+def _cache_state_link_errors(
+    cache_state: str, fixture_sha256: str, observation: dict[str, Any]
+) -> list[str]:
+    errors: list[str] = []
+    if observation["fixture_sha256"] != fixture_sha256:
+        errors.append("fixture identity differs")
+    if cache_state in {"cold", "warm"}:
+        if observation["requested_state"] != cache_state:
+            errors.append("requested state differs")
+        if observation["status"] != "achieved":
+            errors.append("cache state was not achieved")
+    elif cache_state == "unknown" and observation["status"] == "achieved":
+        errors.append("an achieved cache state cannot be recorded as unknown")
     return errors
 
 
@@ -646,6 +944,22 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
     )
     cache_schema = _load_json(SCHEMAS["cache-state"])
     cache_validator = Draft202012Validator(cache_schema, format_checker=FormatChecker())
+    task_network_schema = _load_json(SCHEMAS["task-network"])
+    task_network_validator = Draft202012Validator(
+        task_network_schema, format_checker=FormatChecker()
+    )
+    task_tracker_schema = _load_json(SCHEMAS["task-tracker"])
+    task_tracker_validator = Draft202012Validator(
+        task_tracker_schema, format_checker=FormatChecker()
+    )
+    retargeted_metainfo_schema = _load_json(SCHEMAS["retargeted-metainfo"])
+    retargeted_metainfo_validator = Draft202012Validator(
+        retargeted_metainfo_schema, format_checker=FormatChecker()
+    )
+    catalog_report_schema = _load_json(SCHEMAS["catalog-load-report"])
+    catalog_report_validator = Draft202012Validator(
+        catalog_report_schema, format_checker=FormatChecker()
+    )
     network_schema = _load_json(SCHEMAS["network-control"])
     network_validator = Draft202012Validator(network_schema, format_checker=FormatChecker())
     ceiling_input_schema = _load_json(SCHEMAS["ceiling-input"])
@@ -658,14 +972,25 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
     payload_copy_observations: dict[str, dict[str, Any]] = {}
     cache_observations: dict[str, dict[str, Any]] = {}
     network_observations: dict[str, dict[str, Any]] = {}
+    task_network_observations: dict[str, dict[str, Any]] = {}
+    task_trackers_by_directory: dict[str, dict[str, Any]] = {}
+    fixtures_by_digest: dict[str, dict[str, Any]] = {}
+    fixture_directories: dict[str, str] = {}
+    pending_fixture_torrent_artifacts: dict[str, tuple[dict[str, Any], str, str]] = {}
+    retargeted_binary_digests: dict[str, str] = {}
     ceiling_inputs: dict[str, dict[str, Any]] = {}
     ceiling_reports: dict[str, dict[str, Any]] = {}
     ceiling_report_inputs: dict[str, dict[str, Any]] = {}
     verified_raw_digests: set[str] = set()
+    verified_catalog_log_sizes: dict[str, int] = {}
     pending_ceiling_reports: list[tuple[int, dict[str, Any]]] = []
 
     for index, record in enumerate(manifest.get("artifacts", [])):
-        if record["kind"] not in {CALIBRATION_RAW_KIND, RESOURCE_SAMPLES_KIND}:
+        if record["kind"] not in {
+            CALIBRATION_RAW_KIND,
+            RESOURCE_SAMPLES_KIND,
+            CATALOG_LOAD_LOG_KIND,
+        }:
             continue
         location = f"$.artifacts[{index}]"
         path, path_error = _referenced_file(root, record["path"])
@@ -682,8 +1007,56 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
             continue
         if record["kind"] == CALIBRATION_RAW_KIND:
             verified_raw_digests.add(observed_digest)
+        elif record["kind"] == CATALOG_LOAD_LOG_KIND:
+            try:
+                verified_catalog_log_sizes[observed_digest] = path.stat().st_size
+            except OSError as error:
+                errors.append(f"{location}.path: cannot stat catalog-load log: {error}")
         else:
             resource_sample_artifacts[record["path"]] = observed_digest
+
+    for index, record in enumerate(manifest.get("artifacts", [])):
+        if record["kind"] != CATALOG_LOAD_REPORT_KIND:
+            continue
+        location = f"$.artifacts[{index}]"
+        path, path_error = _referenced_file(root, record["path"])
+        if path_error is not None or path is None:
+            errors.append(f"{location}.path: {path_error}")
+            continue
+        try:
+            observed_digest = _sha256(path)
+        except OSError as error:
+            errors.append(f"{location}.path: cannot read catalog-load report: {error}")
+            continue
+        if observed_digest != record["sha256"]:
+            errors.append(f"{location}.sha256: catalog-load report digest does not match {record['path']}")
+            continue
+        try:
+            report = _load_strict_json(path)
+        except ValueError as error:
+            errors.append(f"{location}.path: {error}")
+            continue
+        schema_errors = sorted(
+            catalog_report_validator.iter_errors(report),
+            key=lambda error: (list(map(str, error.absolute_path)), error.message),
+        )
+        if schema_errors:
+            for error in schema_errors[:20]:
+                errors.append(f"{location}.path{_format_path(error)[1:]}: {error.message}")
+            continue
+        semantic_errors = _catalog_load_report_errors(report)
+        errors.extend(f"{location}.path: {message}" for message in semantic_errors[:20])
+        if report["source_commit"] != manifest["source_commit"]:
+            errors.append(f"{location}.source_commit: differs from the manifest source revision")
+        if report["worktree_dirty"] or manifest["worktree_dirty"]:
+            errors.append(f"{location}.worktree_dirty: catalog evidence requires a clean source revision")
+        raw_log_digest = report["raw_log"]["sha256"]
+        if raw_log_digest not in verified_catalog_log_sizes:
+            errors.append(
+                f"{location}.raw_log.sha256: raw test log is not a retained {CATALOG_LOAD_LOG_KIND} artifact"
+            )
+        elif report["raw_log"]["size_bytes"] != verified_catalog_log_sizes[raw_log_digest]:
+            errors.append(f"{location}.raw_log.size_bytes: differs from the retained raw-log file")
 
     for index, record in enumerate(manifest.get("artifacts", [])):
         if record["kind"] != RESOURCE_OBSERVATION_KIND:
@@ -799,7 +1172,7 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
                 errors.append(f"{location}.sha256: digest does not match {record['path']}")
                 continue
             try:
-                cache_observation = _load_json(path)
+                cache_observation = _load_strict_json(path)
             except ValueError as error:
                 errors.append(f"{location}.path: {error}")
                 continue
@@ -821,6 +1194,43 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
                     continue
                 cache_observations[record["sha256"]] = cache_observation
             continue
+        if record["kind"] == TASK_NETWORK_KIND:
+            location = f"$.artifacts[{index}]"
+            path, path_error = _referenced_file(root, record["path"])
+            if path_error is not None or path is None:
+                errors.append(f"{location}.path: {path_error}")
+                continue
+            try:
+                observed_digest = _sha256(path)
+            except OSError as error:
+                errors.append(f"{location}.path: cannot read task-network topology: {error}")
+                continue
+            if observed_digest != record["sha256"]:
+                errors.append(f"{location}.sha256: digest does not match {record['path']}")
+                continue
+            try:
+                topology = _load_strict_json(path)
+            except ValueError as error:
+                errors.append(f"{location}.path: {error}")
+                continue
+            schema_errors = sorted(
+                task_network_validator.iter_errors(topology),
+                key=lambda error: (list(map(str, error.absolute_path)), error.message),
+            )
+            if schema_errors:
+                for error in schema_errors[:20]:
+                    errors.append(
+                        f"{location}.path: invalid task-network topology "
+                        f"{_format_path(error)}: {error.message}"
+                    )
+                continue
+            if isinstance(topology, dict):
+                semantic_errors = _task_network_errors(topology)
+                if semantic_errors:
+                    errors.extend(f"{location}.path: {error}" for error in semantic_errors)
+                    continue
+                task_network_observations[record["sha256"]] = topology
+            continue
         if record["kind"] == NETWORK_CONTROL_KIND:
             location = f"$.artifacts[{index}]"
             path, path_error = _referenced_file(root, record["path"])
@@ -836,7 +1246,7 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
                 errors.append(f"{location}.sha256: digest does not match {record['path']}")
                 continue
             try:
-                network_observation = _load_json(path)
+                network_observation = _load_strict_json(path)
             except ValueError as error:
                 errors.append(f"{location}.path: {error}")
                 continue
@@ -938,7 +1348,7 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
             errors.append(f"{location}.sha256: digest does not match {record['path']}")
             continue
         try:
-            observation = _load_json(path)
+            observation = _load_strict_json(path)
         except ValueError as error:
             errors.append(f"{location}.path: {error}")
             continue
@@ -963,6 +1373,193 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
                 errors.extend(f"{location}.path: {error}" for error in semantic_errors)
                 continue
             client_observations[record["sha256"]] = observation
+
+    fixture_manifest_artifacts: dict[str, tuple[dict[str, Any], str]] = {}
+    fixture_torrent_artifacts: dict[str, dict[str, Any]] = {}
+    for index, record in enumerate(manifest.get("artifacts", [])):
+        if record["kind"] not in {FIXTURE_MANIFEST_KIND, FIXTURE_TORRENT_KIND}:
+            continue
+        location = f"$.artifacts[{index}]"
+        path, path_error = _referenced_file(root, record["path"])
+        if path_error is not None or path is None:
+            errors.append(f"{location}.path: {path_error}")
+            continue
+        try:
+            observed_digest = _sha256(path)
+            value = _load_strict_json(path)
+        except (OSError, ValueError) as error:
+            errors.append(f"{location}.path: cannot read fixture evidence: {error}")
+            continue
+        if observed_digest != record["sha256"]:
+            errors.append(f"{location}.sha256: digest does not match {record['path']}")
+            continue
+        if not isinstance(value, dict):
+            errors.append(f"{location}.path: fixture evidence must be an object")
+            continue
+        fixture_digest = value.get("fixture_sha256")
+        if not isinstance(fixture_digest, str) or HEX_SHA256_RE.fullmatch(fixture_digest) is None:
+            errors.append(f"{location}.path: fixture_sha256 is malformed")
+            continue
+        directory = PurePosixPath(record["path"]).parent.as_posix()
+        if record["kind"] == FIXTURE_MANIFEST_KIND:
+            try:
+                sys_path = str(ROOT / "scripts/transfer_rebuild")
+                if sys_path not in sys.path:
+                    sys.path.insert(0, sys_path)
+                from fixtures import verify_fixture
+
+                verified = verify_fixture(path.parent)
+            except (OSError, ValueError) as error:
+                errors.append(f"{location}.path: fixture content verification failed: {error}")
+                continue
+            if verified != value:
+                errors.append(f"{location}.path: fixture changed while its evidence was verified")
+                continue
+            if fixture_digest in fixtures_by_digest and fixtures_by_digest[fixture_digest] != value:
+                errors.append(f"{location}.path: fixture digest is reused for different manifests")
+                continue
+            fixtures_by_digest[fixture_digest] = value
+            fixture_directories[fixture_digest] = directory
+            fixture_manifest_artifacts[fixture_digest] = (value, record["path"])
+        else:
+            if fixture_digest in pending_fixture_torrent_artifacts:
+                errors.append(f"{location}.path: duplicate fixture torrent record")
+                continue
+            pending_fixture_torrent_artifacts[fixture_digest] = (value, directory, record["path"])
+
+    for fixture_digest, (torrent_record, directory, torrent_path) in pending_fixture_torrent_artifacts.items():
+        expected_directory = fixture_directories.get(fixture_digest)
+        if expected_directory is None or expected_directory != directory:
+            errors.append(f"$.artifacts: torrent record {torrent_path} has no matching fixture manifest")
+            continue
+        fixture_torrent_artifacts[fixture_digest] = torrent_record
+
+    for fixture_digest, (_fixture, fixture_path) in fixture_manifest_artifacts.items():
+        expected_torrent_path = (
+            PurePosixPath(fixture_path).parent / "torrent.json"
+        ).as_posix()
+        torrent_artifact = next(
+            (
+                record
+                for record in manifest.get("artifacts", [])
+                if record["kind"] == FIXTURE_TORRENT_KIND
+                and record["path"] == expected_torrent_path
+            ),
+            None,
+        )
+        if torrent_artifact is None or fixture_digest not in fixture_torrent_artifacts:
+            errors.append(
+                f"$.artifacts: fixture {fixture_digest} is missing its linked torrent-record artifact"
+            )
+
+    for index, record in enumerate(manifest.get("artifacts", [])):
+        if record["kind"] != TASK_TRACKER_KIND:
+            continue
+        location = f"$.artifacts[{index}]"
+        path, path_error = _referenced_file(root, record["path"])
+        if path_error is not None or path is None:
+            errors.append(f"{location}.path: {path_error}")
+            continue
+        try:
+            observed_digest = _sha256(path)
+            tracker = _load_strict_json(path)
+        except (OSError, ValueError) as error:
+            errors.append(f"{location}.path: cannot read task-tracker snapshot: {error}")
+            continue
+        if observed_digest != record["sha256"]:
+            errors.append(f"{location}.sha256: digest does not match {record['path']}")
+            continue
+        schema_errors = sorted(
+            task_tracker_validator.iter_errors(tracker),
+            key=lambda error: (list(map(str, error.absolute_path)), error.message),
+        )
+        if schema_errors:
+            for error in schema_errors[:20]:
+                errors.append(
+                    f"{location}.path: invalid task-tracker snapshot "
+                    f"{_format_path(error)}: {error.message}"
+                )
+            continue
+        if isinstance(tracker, dict):
+            semantic_errors = _task_tracker_errors(tracker)
+            if semantic_errors:
+                errors.extend(f"{location}.path: {message}" for message in semantic_errors)
+                continue
+            directory = PurePosixPath(record["path"]).parent.as_posix()
+            if directory in task_trackers_by_directory:
+                errors.append(f"{location}.path: multiple task trackers share one trial directory")
+            task_trackers_by_directory[directory] = tracker
+
+    retargeted_records_by_directory: dict[str, dict[str, Any]] = {}
+    for index, record in enumerate(manifest.get("artifacts", [])):
+        if record["kind"] == RETARGETED_TORRENT_KIND:
+            path, path_error = _referenced_file(root, record["path"])
+            location = f"$.artifacts[{index}]"
+            if path_error is not None or path is None:
+                errors.append(f"{location}.path: {path_error}")
+                continue
+            try:
+                observed_digest = _sha256(path)
+            except OSError as error:
+                errors.append(f"{location}.path: cannot read retargeted metainfo: {error}")
+                continue
+            if observed_digest != record["sha256"]:
+                errors.append(f"{location}.sha256: digest does not match {record['path']}")
+                continue
+            retargeted_binary_digests[PurePosixPath(record["path"]).parent.as_posix()] = observed_digest
+
+    for index, record in enumerate(manifest.get("artifacts", [])):
+        if record["kind"] != RETARGETED_METAINFO_KIND:
+            continue
+        location = f"$.artifacts[{index}]"
+        path, path_error = _referenced_file(root, record["path"])
+        if path_error is not None or path is None:
+            errors.append(f"{location}.path: {path_error}")
+            continue
+        try:
+            observed_digest = _sha256(path)
+            retarget = _load_strict_json(path)
+        except (OSError, ValueError) as error:
+            errors.append(f"{location}.path: cannot read retargeted metainfo record: {error}")
+            continue
+        if observed_digest != record["sha256"]:
+            errors.append(f"{location}.sha256: digest does not match {record['path']}")
+            continue
+        schema_errors = sorted(
+            retargeted_metainfo_validator.iter_errors(retarget),
+            key=lambda error: (list(map(str, error.absolute_path)), error.message),
+        )
+        if schema_errors:
+            for error in schema_errors[:20]:
+                errors.append(
+                    f"{location}.path: invalid retargeted metainfo record "
+                    f"{_format_path(error)}: {error.message}"
+                )
+            continue
+        semantic_errors = _retargeted_metainfo_errors(retarget)
+        if semantic_errors:
+            errors.extend(f"{location}.path: {message}" for message in semantic_errors)
+            continue
+        fixture_digest = retarget["fixture_sha256"]
+        fixture_torrent = fixture_torrent_artifacts.get(fixture_digest)
+        if fixture_digest not in fixtures_by_digest or fixture_torrent is None:
+            errors.append(f"{location}.path: retargeted metainfo has no verified source fixture")
+            continue
+        if (
+            fixture_torrent.get("format") != "transfer-torrent-v2"
+            or retarget["source_torrent_sha256"] != fixture_torrent.get("torrent_sha256")
+            or retarget["metainfo_kind"] != fixture_torrent.get("metainfo_kind")
+            or retarget["info_hashes"] != fixture_torrent.get("info_hashes")
+        ):
+            errors.append(f"{location}.path: retargeted metainfo identity differs from its fixture")
+            continue
+        directory = PurePosixPath(record["path"]).parent.as_posix()
+        if retargeted_binary_digests.get(directory) != retarget["torrent_sha256"]:
+            errors.append(f"{location}.path: retargeted binary digest is not linked in the same trial")
+            continue
+        if directory in retargeted_records_by_directory:
+            errors.append(f"{location}.path: multiple retargeted records share one trial directory")
+        retargeted_records_by_directory[directory] = retarget
 
     for index, report in pending_ceiling_reports:
         location = f"$.artifacts[{index}]"
@@ -1011,7 +1608,7 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
             errors.append(f"{location}.sha256: digest does not match {record['path']}")
             continue
         try:
-            trial = _load_json(path)
+            trial = _load_strict_json(path)
         except ValueError as error:
             errors.append(f"{location}.path: {error}")
             continue
@@ -1060,14 +1657,20 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
                     errors.append(
                         f"{location}.resources.sample_interval_ms: differs from its observation"
                     )
-                if resource_observation["root_pid"] != trial["client_identity"]["process_id"]:
+                trial_client = trial["client_identity"]
+                if trial_client is None:
+                    errors.append(
+                        f"{location}.resources.raw_artifact_sha256: "
+                        "resource evidence has no linked client process identity"
+                    )
+                elif resource_observation["root_pid"] != trial_client["process_id"]:
                     errors.append(
                         f"{location}.resources.raw_artifact_sha256: observer root PID "
                         "differs from the client process"
                     )
-                if resource_observation["root_process_start_ticks"] != trial[
-                    "client_identity"
-                ]["process_start_ticks"]:
+                if trial_client is not None and resource_observation[
+                    "root_process_start_ticks"
+                ] != trial_client["process_start_ticks"]:
                     errors.append(
                         f"{location}.resources.raw_artifact_sha256: observer root process "
                         "start identity differs from the client process"
@@ -1100,7 +1703,12 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
 
         copy_accounting = trial["payload"].get("copy_accounting")
         if copy_accounting is not None:
-            if trial["client_identity"]["client_id"] != "torrentngd":
+            trial_client = trial["client_identity"]
+            if trial_client is None:
+                errors.append(
+                    f"{location}.payload.copy_accounting: client process identity is missing"
+                )
+            elif trial_client["client_id"] != "torrentngd":
                 errors.append(
                     f"{location}.payload.copy_accounting: this observation format is TorrentNG-specific"
                 )
@@ -1122,8 +1730,8 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
                     f"{location}.payload.copy_accounting.end_observation_sha256: "
                     "no verified payload-copy observation artifact"
                 )
-            if start_copy is not None and end_copy is not None:
-                client = trial["client_identity"]
+            if start_copy is not None and end_copy is not None and trial_client is not None:
+                client = trial_client
                 for label, observation in (("start", start_copy), ("end", end_copy)):
                     if observation["process_id"] != client["process_id"]:
                         errors.append(
@@ -1187,16 +1795,22 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
                 if calibration is not None:
                     ceiling_calibration = calibration
                     target_identity = trial["client_identity"]
-                    for source_name in ("network", "disk", "hash", "pipeline"):
-                        source = calibration[source_name]
-                        if (
-                            source["process_id"] == target_identity["process_id"]
-                            and source["process_start_ticks"] == target_identity["process_start_ticks"]
-                        ):
-                            errors.append(
-                                f"{location}.environment.independent_ceiling_sha256: "
-                                f"{source_name} calibration uses the candidate process"
-                            )
+                    if target_identity is None:
+                        errors.append(
+                            f"{location}.environment.independent_ceiling_sha256: "
+                            "client process identity is missing"
+                        )
+                    else:
+                        for source_name in ("network", "disk", "hash", "pipeline"):
+                            source = calibration[source_name]
+                            if (
+                                source["process_id"] == target_identity["process_id"]
+                                and source["process_start_ticks"] == target_identity["process_start_ticks"]
+                            ):
+                                errors.append(
+                                    f"{location}.environment.independent_ceiling_sha256: "
+                                    f"{source_name} calibration uses the candidate process"
+                                )
         control_profile = network.get("control_profile_id")
         control_digests = network.get("control_observation_sha256s", [])
         if control_profile is None and control_digests:
@@ -1207,10 +1821,55 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
             expected_profile = NETWORK_PROFILES.get(control_profile)
             if expected_profile is None:
                 errors.append(f"{location}.environment.network.control_profile_id: unknown profile")
-            elif network["link_limit_bps"] != expected_profile["rate_bps"]:
-                errors.append(
-                    f"{location}.environment.network.link_limit_bps: differs from the controlled profile"
-                )
+            else:
+                if network["link_limit_bps"] != expected_profile["rate_bps"]:
+                    errors.append(
+                        f"{location}.environment.network.link_limit_bps: differs from the controlled profile"
+                    )
+                if (
+                    expected_profile["jitter_ms"] > 0
+                    and network.get("one_way_delay_ms") != expected_profile["delay_ms"]
+                ) or (
+                    "one_way_delay_ms" in network
+                    and network["one_way_delay_ms"] != expected_profile["delay_ms"]
+                ):
+                    errors.append(
+                        f"{location}.environment.network.one_way_delay_ms: differs from the controlled profile"
+                    )
+                expected_loss = expected_profile["loss_ppm"] / 10_000
+                if (
+                    expected_profile["loss_ppm"] > 0
+                    and network.get("loss_percent") != expected_loss
+                ) or (
+                    "loss_percent" in network
+                    and network["loss_percent"] != expected_loss
+                ):
+                    errors.append(
+                        f"{location}.environment.network.loss_percent: differs from the controlled profile"
+                    )
+                if (
+                    expected_profile["jitter_ms"] > 0
+                    and network.get("jitter_ms") != expected_profile["jitter_ms"]
+                ):
+                    errors.append(
+                        f"{location}.environment.network.jitter_ms: required by the controlled profile"
+                    )
+                elif (
+                    "jitter_ms" in network
+                    and network["jitter_ms"] != expected_profile["jitter_ms"]
+                ):
+                    errors.append(
+                        f"{location}.environment.network.jitter_ms: differs from the controlled profile"
+                    )
+                if (
+                    trial["outcome"]["status"] == "complete"
+                    and len(control_digests) != 2
+                ):
+                    errors.append(
+                        f"{location}.environment.network.control_observation_sha256s: "
+                        "complete shaped trial requires target and seed endpoint records"
+                    )
+            linked_seeds: list[int] = []
             for digest in control_digests:
                 control = network_observations.get(digest)
                 if control is None:
@@ -1228,11 +1887,151 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
                         f"{location}.environment.network.control_observation_sha256s: "
                         "profile differs from the trial"
                     )
-                elif trial["outcome"]["status"] == "complete" and digest not in reset_network_reports:
+                elif isinstance(control.get("settings"), dict):
+                    seed = control["settings"].get("seed")
+                    if isinstance(seed, int) and not isinstance(seed, bool):
+                        linked_seeds.append(seed)
+                if (
+                    control is not None
+                    and control["action"] == "apply"
+                    and trial["outcome"]["status"] == "complete"
+                    and digest not in reset_network_reports
+                ):
                     errors.append(
                         f"{location}.environment.network.control_observation_sha256s: "
                         "complete trial has no verified qdisc reset report"
                     )
+            recorded_seeds = network.get("control_prng_seeds")
+            if linked_seeds:
+                if recorded_seeds != linked_seeds:
+                    errors.append(
+                        f"{location}.environment.network.control_prng_seeds: "
+                        "does not match the linked endpoint control records"
+                    )
+                if len(linked_seeds) == 2:
+                    pair_id = trial.get("pair_id")
+                    workload_mode = trial.get("workload", {}).get("kind")
+                    suffix = f":{workload_mode}"
+                    if (
+                        workload_mode not in {"download", "seed"}
+                        or not isinstance(pair_id, str)
+                        or not pair_id.endswith(suffix)
+                    ):
+                        errors.append(
+                            f"{location}.pair_id: cannot derive the recorded network PRNG seeds"
+                        )
+                    else:
+                        base_pair_id = pair_id[: -len(suffix)]
+                        expected_seeds = [
+                            derive_pair_seed(base_pair_id, control_profile, role)
+                            for role in ("target", "seed")
+                        ]
+                        if linked_seeds != expected_seeds:
+                            errors.append(
+                                f"{location}.environment.network.control_prng_seeds: "
+                                "do not match the deterministic pair/profile/endpoint seeds"
+                            )
+                if network.get("rtt_ms") is not None:
+                    errors.append(
+                        f"{location}.environment.network.rtt_ms: configured delay is not a measured RTT"
+                    )
+            elif recorded_seeds not in (None, []):
+                errors.append(
+                    f"{location}.environment.network.control_prng_seeds: "
+                    "no linked control record contains a PRNG seed"
+                )
+        topology_digest = network.get("task_topology_sha256")
+        if topology_digest is not None:
+            topology = task_network_observations.get(topology_digest)
+            trial_directory = PurePosixPath(record["path"]).parent.as_posix()
+            if topology is None:
+                errors.append(
+                    f"{location}.environment.network.task_topology_sha256: "
+                    "no verified task-network artifact"
+                )
+            else:
+                resource_digest = trial["resources"].get("raw_artifact_sha256")
+                resource_observation = resource_observations.get(resource_digest)
+                if resource_observation is not None:
+                    for message in _resource_namespace_errors(
+                        trial["workload"].get("kind", ""), resource_observation, topology
+                    ):
+                        errors.append(
+                            f"{location}.environment.network.task_topology_sha256: {message}"
+                        )
+
+                tracker = task_trackers_by_directory.get(trial_directory)
+                if tracker is not None:
+                    for message in _task_tracker_topology_errors(tracker, topology):
+                        errors.append(f"{location}.environment.network.task_topology_sha256: {message}")
+
+                workload = trial["workload"]
+                fixture_digest = workload["fixture_sha256"]
+                fixture = fixtures_by_digest.get(fixture_digest)
+                fixture_torrent = fixture_torrent_artifacts.get(fixture_digest)
+                if fixture is None or fixture_torrent is None:
+                    errors.append(
+                        f"{location}.workload.fixture_sha256: no verified fixture manifest and torrent record"
+                    )
+                else:
+                    expected_payload_bytes = sum(
+                        item["size_bytes"] for item in fixture["files"]
+                    )
+                    if workload["expected_payload_bytes"] != expected_payload_bytes:
+                        errors.append(
+                            f"{location}.workload.expected_payload_bytes: differs from the verified fixture"
+                        )
+                    profile = fixture.get("profile")
+                    protocol = (
+                        profile.get("torrent_kind")
+                        if isinstance(profile, dict)
+                        else fixture_torrent.get("metainfo_kind")
+                    )
+                    if workload.get("protocol") != protocol:
+                        errors.append(
+                            f"{location}.workload.protocol: differs from the verified fixture profile"
+                        )
+
+                retarget = retargeted_records_by_directory.get(trial_directory)
+                if retarget is not None:
+                    if retarget["fixture_sha256"] != workload["fixture_sha256"]:
+                        errors.append(
+                            f"{location}.workload.fixture_sha256: retargeted torrent belongs to another fixture"
+                        )
+                    for message in _retargeted_topology_errors(retarget, topology):
+                        errors.append(
+                            f"{location}.environment.network.task_topology_sha256: {message}"
+                        )
+                if tracker is not None and retarget is not None:
+                    expected_info_hash_digests = sorted(
+                        hashlib.sha256(bytes.fromhex(value)).hexdigest()
+                        for value in retarget["info_hashes"].values()
+                    )
+                    if tracker["info_hashes_sha256"] != expected_info_hash_digests:
+                        errors.append(
+                            f"{location}.environment.network.task_topology_sha256: "
+                            "tracker info hashes differ from the retargeted torrent"
+                        )
+                if trial["outcome"]["status"] == "complete":
+                    if tracker is None:
+                        errors.append(
+                            f"{location}.environment.network.task_topology_sha256: "
+                            "complete paired trial has no tracker snapshot"
+                        )
+                    elif (
+                        not tracker["seed_ready"]
+                        or tracker["announce_counts"]["started"] < 2
+                        or tracker["request_count"] < 2
+                    ):
+                        errors.append(
+                            f"{location}.environment.network.task_topology_sha256: "
+                            "complete paired trial lacks both tracker peers and a ready seed"
+                        )
+                    if retarget is None:
+                        errors.append(
+                            f"{location}.environment.network.task_topology_sha256: "
+                            "complete paired trial has no verified retargeted metainfo record"
+                        )
         cache_state = environment["cache_state"]
         cache_sha = environment.get("cache_state_observation_sha256")
         if cache_state in {"cold", "warm"} or cache_sha is not None:
@@ -1242,20 +2041,20 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
                     f"{location}.environment.cache_state_observation_sha256: no verified cache-state artifact"
                 )
             else:
-                if cache_observation["fixture_sha256"] != trial["workload"]["fixture_sha256"]:
+                for message in _cache_state_link_errors(
+                    cache_state, trial["workload"]["fixture_sha256"], cache_observation
+                ):
                     errors.append(
-                        f"{location}.environment.cache_state_observation_sha256: fixture identity differs"
-                    )
-                if cache_observation["requested_state"] != cache_state:
-                    errors.append(
-                        f"{location}.environment.cache_state_observation_sha256: requested state differs"
-                    )
-                if cache_state in {"cold", "warm"} and cache_observation["status"] != "achieved":
-                    errors.append(
-                        f"{location}.environment.cache_state_observation_sha256: cache state was not achieved"
+                        f"{location}.environment.cache_state_observation_sha256: {message}"
                     )
 
         client_identity = trial["client_identity"]
+        if client_identity is None:
+            if trial["outcome"]["status"] != "unmeasured":
+                errors.append(
+                    f"{location}.client_identity: only an unmeasured trial may omit client identity"
+                )
+            continue
         observation = client_observations.get(client_identity["observation_sha256"])
         if observation is None:
             errors.append(
@@ -1323,6 +2122,7 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
             CLIENT_OBSERVATION_KIND,
             CACHE_STATE_KIND,
             NETWORK_CONTROL_KIND,
+            TASK_NETWORK_KIND,
             RESOURCE_OBSERVATION_KIND,
             RESOURCE_SAMPLES_KIND,
         }:
@@ -1349,11 +2149,7 @@ def validate(
     verify_referenced_files: bool = False,
 ) -> list[str]:
     schema = _load_json(SCHEMAS[kind])
-    artifact = (
-        _load_strict_json(artifact_path)
-        if kind in {"paired-plan", "compatibility-preflight"}
-        else _load_json(artifact_path)
-    )
+    artifact = _load_strict_json(artifact_path)
     try:
         Draft202012Validator.check_schema(schema)
     except SchemaError as error:
@@ -1372,6 +2168,14 @@ def validate(
         formatted.extend(f"$.{error}" for error in _cache_state_errors(artifact))
     if kind == "network-control" and not formatted and isinstance(artifact, dict):
         formatted.extend(f"$.{error}" for error in _network_control_errors(artifact))
+    if kind == "task-network" and not formatted and isinstance(artifact, dict):
+        formatted.extend(f"$.{error}" for error in _task_network_errors(artifact))
+    if kind == "task-tracker" and not formatted and isinstance(artifact, dict):
+        formatted.extend(f"$.{error}" for error in _task_tracker_errors(artifact))
+    if kind == "retargeted-metainfo" and not formatted and isinstance(artifact, dict):
+        formatted.extend(f"$.{error}" for error in _retargeted_metainfo_errors(artifact))
+    if kind == "catalog-load-report" and not formatted and isinstance(artifact, dict):
+        formatted.extend(f"$.{error}" for error in _catalog_load_report_errors(artifact))
     if kind == "paired-plan" and not formatted:
         transfer_tools = str(ROOT / "scripts/transfer_rebuild")
         if transfer_tools not in sys.path:
@@ -1381,6 +2185,21 @@ def validate(
         formatted.extend(f"$.{error}" for error in paired_plan_errors(artifact))
     if kind == "compatibility-preflight" and not formatted and isinstance(artifact, dict):
         formatted.extend(f"$.{error}" for error in _compatibility_preflight_errors(artifact))
+    if kind == "qualification" and not formatted and isinstance(artifact, dict):
+        if artifact["status"] == "passed" and any(
+            check["status"] != "passed" for check in artifact["checks"]
+        ):
+            formatted.append("$.status: cannot pass while any qualification check is failed or not_run")
+    if kind == "rollout-gate" and not formatted and isinstance(artifact, dict):
+        stage_statuses = [stage["status"] for stage in artifact["stages"].values()]
+        expected_decision = "release_eligible" if all(status == "passed" for status in stage_statuses) else "blocked"
+        if artifact["decision"] != expected_decision:
+            formatted.append("$.decision: does not match the four stage decisions")
+        for stage_id, stage in artifact["stages"].items():
+            if stage["status"] == "passed" and stage["reasons"]:
+                formatted.append(f"$.stages[{json.dumps(stage_id)}].reasons: passed stage cannot contain blockers")
+            if stage["status"] == "blocked" and not stage["reasons"]:
+                formatted.append(f"$.stages[{json.dumps(stage_id)}].reasons: blocked stage must explain why")
     if (
         verify_referenced_files
         and kind == "manifest"

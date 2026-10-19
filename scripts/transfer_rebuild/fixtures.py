@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -24,6 +25,26 @@ TORRENT_RECORD_FORMAT = "transfer-torrent-v2"
 V2_BLOCK_BYTES = 16 * 1024
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _PROFILE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./-]{0,127}$")
+
+
+def _strict_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON field: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_nonstandard_number(value: str) -> None:
+    raise ValueError(f"non-standard JSON number is not allowed: {value}")
+
+
+def _strict_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"JSON number is outside the finite range: {value}")
+    return parsed
 
 
 @dataclass(frozen=True)
@@ -121,8 +142,13 @@ def load_fixture_profile(path: Path, profile_id: str) -> dict[str, object]:
     if profile_path.is_symlink() or not profile_path.is_file():
         raise ValueError("fixture profile file must be a regular non-symlink file")
     try:
-        document = json.loads(profile_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+        document = json.loads(
+            profile_path.read_text(encoding="utf-8"),
+            object_pairs_hook=_strict_object,
+            parse_constant=_reject_nonstandard_number,
+            parse_float=_strict_float,
+        )
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError) as error:
         raise ValueError(f"cannot read fixture profiles: {error}") from error
     return load_fixture_profile_document(document, profile_id)
 
@@ -540,8 +566,13 @@ def verify_fixture(directory: Path) -> dict[str, object]:
     if manifest_path.is_symlink() or not manifest_path.is_file():
         raise ValueError("fixture manifest must be a regular file")
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+        manifest = json.loads(
+            manifest_path.read_text(encoding="utf-8"),
+            object_pairs_hook=_strict_object,
+            parse_constant=_reject_nonstandard_number,
+            parse_float=_strict_float,
+        )
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError) as error:
         raise ValueError(f"cannot read fixture manifest: {error}") from error
     expected_manifest_fields = {
         "format",
@@ -644,8 +675,13 @@ def _verify_torrent(directory: Path, manifest: dict[str, object]) -> None:
     ):
         raise ValueError("torrent metainfo and record must be regular files")
     try:
-        record = json.loads(record_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+        record = json.loads(
+            record_path.read_text(encoding="utf-8"),
+            object_pairs_hook=_strict_object,
+            parse_constant=_reject_nonstandard_number,
+            parse_float=_strict_float,
+        )
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError) as error:
         raise ValueError(f"cannot read torrent record: {error}") from error
     if not isinstance(record, dict):
         raise ValueError("torrent record must be an object")

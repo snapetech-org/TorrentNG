@@ -13,9 +13,13 @@ stop-and-wait send path, cumulative-only ACK accounting, and drop-on-reorder
 receive path with bounded windowed state. The engine now routes v1, pure-v2,
 and metadata outbound uTP through a shared runtime; incoming peers share the
 listener endpoint when enabled. The runtime keeps a small retired-endpoint
-window so established streams survive listener rebinds. Deadline scheduling,
-aggregate admission evidence, protocol qualification, and matched efficiency
-results remain open. Do not change rollout defaults before NET-116.
+window so established streams survive listener rebinds. Each endpoint now has
+one ordered deadline heap and a deduplicated FIFO ready queue drained in
+32-event turns. Per-stream reservations cover bounded receive/retransmit
+windows and fixed queue metadata; routed datagrams hold an aggregate
+endpoint-budget reservation until processing or discard. Protocol qualification
+and matched efficiency remain open. Do not change rollout defaults before
+NET-116.
 
 This is a compatibility and ownership decision, not a claim that an in-house
 implementation is automatically faster or more correct. The aim is to remove
@@ -71,14 +75,19 @@ review found these specific bottlenecks and correctness gaps:
 | Reordering | Bounded receive-window buffering and ordered delivery are implemented; bulk validation remains open | Deliver accepted payloads in sequence and keep their memory charged until read |
 | Outgoing sockets | Production v1, pure-v2, and metadata paths use the shared runtime; endpoint generations are capped | One shared runtime/socket per address family in steady state |
 | Receive execution | One endpoint receive loop demultiplexes bounded per-stream queues; each stream still owns its I/O and retransmit waits | Bound dispatch and timer work without per-peer UDP sockets or unbounded queues |
-| Memory | Application receive buffer is bounded per stream | Aggregate runtime budget covers app reads, reorder bytes, retransmit bytes, queued writes, and packet metadata |
-| Scheduling | Per-stream waits and receive routing | Earliest-deadline timer heap and bounded ready queue, with work quanta for fairness |
+| Memory | Receive/reorder and retransmit windows are bounded per stream; route packets have bounded channel capacity | Each endpoint reserves stream windows and queue metadata, charges routed datagrams to a configurable aggregate budget (64 MiB default), and exposes reservation usage |
+| Scheduling | One endpoint deadline heap, FIFO ready queue with 32-event turns, one oldest outstanding packet retransmitted per timeout, and one reserved FIFO cancellation permit per admitted stream; source and regression changes are unrun | Keep deadline insertion/removal indexed, ready work deduplicated, cancellation lossless and FIFO ordered, and due/ready/command work bounded to 32 items per turn so timeouts do not trigger retransmit bursts or connection-table scans |
 
 Windowing is not allowed to weaken TorrentNG's ownership rules. Bytes retained
 for retransmission remain charged until ACK or connection teardown; received
 out-of-order bytes remain charged until delivered or dropped; canceled writer
 futures cannot release capacity while protocol state still owns the data.
-Admission is bounded at both peer and runtime levels.
+Admission is bounded at both peer and endpoint levels. The endpoint snapshot
+reports reserved capacity, not RSS or whole-process memory use.
+Each live stream also holds one cancellation permit reserved from the bounded
+deadline-command FIFO. Deadline updates cannot consume those slots; dropping a
+stream enqueues cancellation behind its prior commands without a best-effort
+send or connection-table liveness scan.
 
 ## Implementation and acceptance
 
@@ -93,9 +102,10 @@ Admission is bounded at both peer and runtime levels.
    slots. The regression sources are authored but unrun.
 4. NET-113 now has an engine-owned runtime, bounded endpoint admission, one
    receive loop per active family endpoint, and production v1, pure-v2, and
-   metadata integration. Deadline/ready scheduling, rebind stress, and
-   aggregate memory qualification remain open. Existing uTP controls and TCP
-   fallback are preserved.
+   metadata integration. Central deadline dispatch, a bounded fair ready queue,
+   aggregate endpoint reservations, and per-timeout retransmit quanta are now
+   authored. Their regressions, rebind stress, and aggregate memory qualification
+   remain open. Existing uTP controls and TCP fallback are preserved.
 5. Keep the implementation behind existing uTP controls until deterministic protocol
    coverage and matched efficiency evidence accept it. Do not run two protocol
    writers for one peer.

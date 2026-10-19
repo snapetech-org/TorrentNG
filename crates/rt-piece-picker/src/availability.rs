@@ -65,6 +65,45 @@ impl Availability {
         }
     }
 
+    /// Create an availability index sized for a known connection ceiling.
+    /// Pre-sizing the bucket headers avoids repeated table growth as peers
+    /// advertise progressively rarer pieces; the per-bucket member vectors
+    /// remain proportional to pieces actually present at each rarity level.
+    pub fn new_bounded(piece_count: usize, max_peers: usize) -> Self {
+        let mut availability = Self::new(piece_count);
+        let bucket_count = max_peers.min(u32::MAX as usize).saturating_add(1);
+        availability.buckets.reserve(bucket_count);
+        availability.buckets.resize_with(bucket_count, Vec::new);
+        availability
+    }
+
+    /// Conservative owner charge for an index with `piece_count` entries and
+    /// at most `max_peers` live availability contributions. Bucket member
+    /// capacity is bounded at four times live membership by `bucket_remove`;
+    /// table-header capacity includes vector growth slack.
+    pub fn memory_bytes_upper_bound(piece_count: usize, max_peers: usize) -> usize {
+        let piece_slots = piece_count
+            .saturating_mul(4)
+            .saturating_mul(std::mem::size_of::<u32>());
+        let bucket_count = max_peers
+            .min(u32::MAX as usize)
+            .saturating_add(1)
+            .saturating_mul(2);
+        std::mem::size_of::<Self>()
+            .saturating_add(piece_slots)
+            .saturating_add(
+                piece_count
+                    .saturating_mul(4)
+                    .saturating_mul(std::mem::size_of::<u32>()),
+            )
+            .saturating_add(
+                piece_count
+                    .div_ceil(u64::BITS as usize)
+                    .saturating_mul(std::mem::size_of::<u64>()),
+            )
+            .saturating_add(bucket_count.saturating_mul(std::mem::size_of::<Vec<u32>>()))
+    }
+
     pub fn piece_count(&self) -> usize {
         self.counts.len()
     }
@@ -173,7 +212,7 @@ impl Availability {
     /// probes miss. For a large bucket, walk the peer's set bits once and use
     /// reservoir sampling across its actually available requestable pieces
     /// instead of testing every torrent candidate against the peer bitmap.
-    pub(crate) fn rarest_matching_random_from_peer<A, F, R>(
+    pub fn rarest_matching_random_from_peer<A, F, R>(
         &self,
         peer_has: &A,
         mut predicate: F,
@@ -311,6 +350,18 @@ impl Availability {
         self.candidates.len()
     }
 
+    /// Exclude a locally complete or otherwise unavailable piece from fresh
+    /// candidate selection while retaining its swarm count for diagnostics.
+    pub fn retire_candidate(&mut self, piece: usize) {
+        self.retire(piece);
+    }
+
+    /// Make a piece eligible for fresh candidate selection again after local
+    /// verification or file policy marks it incomplete and wanted.
+    pub fn reinstate_candidate(&mut self, piece: usize) {
+        self.reinstate(piece);
+    }
+
     pub(crate) fn candidate_min_by_key<F>(&self, mut key: F) -> Option<usize>
     where
         F: FnMut(usize) -> Option<usize>,
@@ -433,9 +484,9 @@ impl Availability {
             positions[piece as usize] = NO_POSITION;
             return;
         }
-        let moved = bucket.swap_remove(index);
+        bucket.swap_remove(index);
         positions[piece as usize] = NO_POSITION;
-        if moved != piece {
+        if let Some(&moved) = bucket.get(index) {
             positions[moved as usize] = index as u32;
         }
         if bucket.is_empty() {
@@ -464,9 +515,9 @@ impl Availability {
             positions[piece as usize] = NO_POSITION;
             return;
         }
-        let moved = candidates.swap_remove(index);
+        candidates.swap_remove(index);
         positions[piece as usize] = NO_POSITION;
-        if moved != piece {
+        if let Some(&moved) = candidates.get(index) {
             positions[moved as usize] = index as u32;
         }
     }
@@ -725,7 +776,9 @@ mod tests {
             false
         });
 
-        assert_eq!(found, vec![0, 2]);
+        assert_eq!(found, vec![0, 2, 3]);
+        assert_eq!(av.count(0), 1);
+        assert_eq!(av.count(2), 1);
         assert_eq!(av.count(3), 2);
         av.reinstate(1);
         assert_eq!(av.rarest_matching(|piece| piece == 1), Some(1));
@@ -745,6 +798,19 @@ mod tests {
         assert_eq!(av.candidate_count(), 3);
         assert_eq!(av.first_candidate_matching(|piece| piece == 1), Some(1));
         assert_eq!(av.count(1), 1);
+    }
+
+    #[test]
+    fn candidate_swap_remove_updates_the_tail_piece_position() {
+        let mut av = Availability::new(4);
+
+        av.retire(1);
+        av.retire(3);
+
+        assert_eq!(av.candidate_count(), 2);
+        assert_eq!(av.first_candidate_matching(|piece| piece == 1), None);
+        assert_eq!(av.first_candidate_matching(|piece| piece == 3), None);
+        assert_eq!(av.first_candidate_matching(|piece| piece == 2), Some(2));
     }
 
     #[test]
@@ -886,5 +952,23 @@ mod tests {
             .candidate_positions
             .iter()
             .all(|position| *position != NO_POSITION));
+    }
+
+    #[test]
+    fn bounded_index_reserves_header_and_member_growth_budget() {
+        let piece_count = 257;
+        let max_peers = 17;
+        let mut av = Availability::new_bounded(piece_count, max_peers);
+        for peer in 0..max_peers {
+            for piece in (peer..piece_count).step_by(3) {
+                av.add_have(piece);
+            }
+        }
+
+        assert!(av.buckets.capacity() >= max_peers + 1);
+        assert!(
+            Availability::memory_bytes_upper_bound(piece_count, max_peers) >= av.memory_bytes(),
+            "reserved bound must cover every live index allocation"
+        );
     }
 }

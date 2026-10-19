@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:torrentng:schema:transfer-catalog-load-report-v1",
+  "title": "Live native catalog mixed-load observations",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source_commit",
+    "worktree_dirty",
+    "captured_at",
+    "host",
+    "raw_log",
+    "observations"
+  ],
+  "properties": {
+    "schema_version": { "const": "transfer-catalog-load-report-v1" },
+    "source_commit": { "$ref": "#/$defs/git_sha" },
+    "worktree_dirty": { "const": false },
+    "captured_at": { "type": "string", "format": "date-time" },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hostname_sha256", "platform", "kernel_release", "machine", "cpu_model", "cgroup_version"],
+      "properties": {
+        "hostname_sha256": { "$ref": "#/$defs/sha256" },
+        "platform": { "type": "string", "minLength": 1 },
+        "kernel_release": { "type": "string", "minLength": 1 },
+        "machine": { "type": "string", "minLength": 1 },
+        "cpu_model": { "type": "string", "minLength": 1 },
+        "cgroup_version": { "enum": ["v1", "v2", "unknown"] }
+      }
+    },
+    "raw_log": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "size_bytes"],
+      "properties": {
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "size_bytes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "observations": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "$ref": "#/$defs/observation" }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "git_sha": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "route_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["route", "sample_count", "p50_ns", "p95_ns", "samples_ns"],
+      "properties": {
+        "route": {
+          "enum": [
+            "/api/v1/torrents?limit=200&sort=name&reverse=true",
+            "/api/v1/torrents?limit=200&offset=200",
+            "/api/v1/transfer/info",
+            "/metrics"
+          ]
+        },
+        "sample_count": { "const": 16 },
+        "p50_ns": { "type": "integer", "minimum": 1 },
+        "p95_ns": { "type": "integer", "minimum": 1 },
+        "samples_ns": {
+          "type": "array",
+          "minItems": 16,
+          "maxItems": 16,
+          "items": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["catalog_rows", "catalog_state", "rounds", "concurrent_routes_per_round", "routes"],
+      "properties": {
+        "catalog_rows": { "enum": [1000, 100000] },
+        "catalog_state": { "const": "restored_paused" },
+        "rounds": { "const": 16 },
+        "concurrent_routes_per_round": { "const": 4 },
+        "routes": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": { "$ref": "#/$defs/route_observation" }
+        }
+      }
+    }
+  }
+}

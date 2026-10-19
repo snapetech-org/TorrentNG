@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:torrentng:schema:transfer-retargeted-metainfo-record-v1",
+  "title": "TorrentNG retargeted metainfo evidence record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "fixture_sha256", "source_torrent_sha256",
+    "torrent_sha256", "announce_url", "metainfo_kind", "info_hashes"
+  ],
+  "properties": {
+    "schema_version": { "const": "transfer-retargeted-metainfo-v1" },
+    "fixture_sha256": { "$ref": "#/$defs/sha256" },
+    "source_torrent_sha256": { "$ref": "#/$defs/sha256" },
+    "torrent_sha256": { "$ref": "#/$defs/sha256" },
+    "announce_url": {
+      "type": "string", "pattern": "^http://(?:[0-9]{1,3}\\.){3}[0-9]{1,3}:[0-9]{1,5}/announce$"
+    },
+    "metainfo_kind": { "enum": ["v1", "v2", "hybrid"] },
+    "info_hashes": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["sha1"],
+          "properties": { "sha1": { "type": "string", "pattern": "^[a-f0-9]{40}$" } }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["sha256", "sha256_truncated_20"],
+          "properties": {
+            "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            "sha256_truncated_20": { "type": "string", "pattern": "^[a-f0-9]{40}$" }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["sha1", "sha256", "sha256_truncated_20"],
+          "properties": {
+            "sha1": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+            "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            "sha256_truncated_20": { "type": "string", "pattern": "^[a-f0-9]{40}$" }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

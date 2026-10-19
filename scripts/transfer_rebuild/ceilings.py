@@ -13,6 +13,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from strict_json import StrictJsonError, loads as strict_json_loads
+
 try:
     from jsonschema import Draft202012Validator, FormatChecker
 except ImportError as error:  # pragma: no cover - exercised by CLI environment
@@ -77,16 +79,9 @@ def read_calibration_input(path: Path) -> tuple[dict[str, Any], str]:
         if descriptor >= 0:
             os.close(descriptor)
 
-    def reject_constant(value: str) -> None:
-        raise CeilingError(f"non-standard JSON number is not allowed: {value}")
-
     try:
-        value = json.loads(
-            raw,
-            object_pairs_hook=_pairs_without_duplicates,
-            parse_constant=reject_constant,
-        )
-    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        value = strict_json_loads(raw, label="calibration input")
+    except StrictJsonError as error:
         raise CeilingError(f"invalid calibration JSON: {error}") from error
     if not isinstance(value, dict):
         raise CeilingError("calibration input must be a JSON object")
@@ -205,7 +200,7 @@ def calculate_report(calibration: dict[str, Any], input_sha256: str) -> dict[str
         },
         "download": _ceiling(download_candidates),
         "upload": _ceiling(upload_candidates),
-        "interpretation": "diagnostic upper-bound model; not a client measurement or performance claim",
+        "interpretation": "diagnostic upper-bound model; not a client measurement and not a performance claim",
     }
 
 

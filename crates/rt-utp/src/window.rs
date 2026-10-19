@@ -154,9 +154,10 @@ mod tests {
         window.record(22, 300).unwrap();
         window.record(23, 400).unwrap();
 
-        // ack_nr 20 plus bit 0 acknowledges sequence 22; 21 remains a hole.
-        assert_eq!(window.acknowledge(20, Some(&[0b0000_0001])), 300);
-        assert_eq!(window.bytes_in_flight(), 700);
+        // ack_nr 20 cumulatively acknowledges 20; bit 0 also acknowledges 22.
+        // Sequence 21 remains the hole and 23 remains outstanding.
+        assert_eq!(window.acknowledge(20, Some(&[0b0000_0001])), 400);
+        assert_eq!(window.bytes_in_flight(), 600);
         assert!(window.contains(21));
         assert!(!window.contains(22));
         assert!(window.contains(23));

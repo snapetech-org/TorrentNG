@@ -275,7 +275,7 @@ impl Engine {
         } else {
             TorrentState::Downloading
         };
-        let _cmd_tx = self
+        let spawn_result = self
             .spawn_torrent_task_for_meta(
                 info_hash_hex.clone(),
                 meta,
@@ -286,6 +286,17 @@ impl Engine {
                 torrent_metadata_memory_lease,
             )
             .await;
+        if let Err(error) = spawn_result {
+            let persistence = self
+                .mark_torrent_actor_start_failed(&info_hash_hex, &error)
+                .await;
+            return Err(match persistence {
+                Ok(()) => error,
+                Err(persistence) => {
+                    format!("{error}; failed to persist the actor-start failure: {persistence}")
+                }
+            });
+        }
         if !paused && !is_private {
             self.register_dht_torrent(dht_info_hash, &info_hash_hex)
                 .await;
@@ -838,6 +849,9 @@ impl Engine {
         if let Some(old_tx) = self.runtime.torrent_chans.remove(info_hash_hex) {
             let _ = old_tx.try_send(TorrentCmd::Shutdown);
         }
+        self.runtime
+            .task_exits
+            .remove_current_generation(info_hash_hex);
         if let Some(old_task) = self.runtime.torrent_tasks.remove(info_hash_hex) {
             // Metadata completion replaces the task incarnation. Do not
             // leave the old tracker/fetch loop detached while the new
@@ -865,7 +879,7 @@ impl Engine {
         let Some(torrent_metadata_memory_lease) = torrent_metadata_memory_lease else {
             return Err("magnet completion lost its metadata memory reservation".to_owned());
         };
-        let _tx = self
+        let spawn_result = self
             .spawn_torrent_task_for_meta(
                 info_hash_hex.to_owned(),
                 meta,
@@ -876,6 +890,17 @@ impl Engine {
                 torrent_metadata_memory_lease,
             )
             .await;
+        if let Err(error) = spawn_result {
+            let persistence = self
+                .mark_torrent_actor_start_failed(info_hash_hex, &error)
+                .await;
+            return Err(match persistence {
+                Ok(()) => error,
+                Err(persistence) => {
+                    format!("{error}; failed to persist the actor-start failure: {persistence}")
+                }
+            });
+        }
         if !start_paused && !is_private {
             self.register_dht_torrent(dht_info_hash, info_hash_hex)
                 .await;
@@ -950,7 +975,8 @@ impl Engine {
         }
         task.attach_torrent_metadata_memory_lease(torrent_metadata_memory_lease);
         task.attach_crash_safety(Arc::clone(&self.services.crash_safety));
-        let handle = spawn_supervised(self.runtime.task_exits.guard(&info_hash_hex), task.run());
+        let guard = self.runtime.task_exits.guard(&info_hash_hex);
+        let handle = spawn_supervised(guard, task.run());
         self.runtime
             .torrent_chans
             .insert(&info_hash_hex, cmd_tx.clone());
@@ -972,6 +998,122 @@ impl Engine {
         cmd_tx
     }
 
+    fn install_torrent_actor<F>(
+        &mut self,
+        info_hash: String,
+        cmd_tx: mpsc::Sender<TorrentCmd>,
+        initial_state: TorrentState,
+        future: F,
+    ) -> mpsc::Sender<TorrentCmd>
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let guard = self.runtime.task_exits.guard(&info_hash);
+        let handle = spawn_supervised(guard, future);
+        self.runtime
+            .torrent_chans
+            .insert(&info_hash, cmd_tx.clone());
+        self.runtime.torrent_tasks.insert(&info_hash, handle);
+        let now = Instant::now();
+        self.runtime.tier_last_active.insert(&info_hash, now);
+        self.runtime.tier_controller.apply_input(
+            info_hash,
+            TierInput {
+                state: initial_state,
+                connected_peers: 0,
+                outstanding_requests: 0,
+                inbound_peer: false,
+                tracker_due: false,
+                last_active: Some(now),
+                now,
+            },
+        );
+        cmd_tx
+    }
+
+    async fn ensure_transfer_owner_record(
+        &self,
+        info_hash: &str,
+    ) -> CmdResult<rt_db::TransferCutoverRow> {
+        let info_hash = info_hash.to_owned();
+        self.db_executor()
+            .run_durable("ensure_transfer_owner", move |db| {
+                rt_db::ensure_transfer_owner(
+                    db,
+                    &info_hash,
+                    rt_db::TransferOwner::SharedCore,
+                    unix_now_i64(),
+                )
+                .map_err(|error| error.to_string())
+            })
+            .await
+            .map_err(|error| format!("transfer owner journal failed: {error}"))
+    }
+
+    async fn mark_torrent_actor_start_failed(
+        &mut self,
+        info_hash: &str,
+        reason: &str,
+    ) -> CmdResult<()> {
+        let reason = if reason.is_empty() {
+            "torrent actor could not be started".to_owned()
+        } else {
+            reason.to_owned()
+        };
+        {
+            let mut registry = self.registry.write().await;
+            let mut entry = registry
+                .get_mut(info_hash)
+                .ok_or_else(|| format!("torrent {info_hash} not found"))?;
+            entry.set_error(reason.clone());
+        }
+        self.unregister_dht_torrent(info_hash).await;
+        let event = self.session_event_row(
+            Some(info_hash),
+            "torrent_actor_start_failed",
+            Some("torrent actor route could not be installed"),
+            serde_json::json!({
+                "state": TorrentState::Error.as_str(),
+                "error": reason,
+            }),
+        );
+        let retention = self.config.logging.event_retention;
+        let hash = info_hash.to_owned();
+        self.db_executor()
+            .run_durable("persist_torrent_actor_start_failure", move |db| {
+                let tx = db.transaction().map_err(|error| error.to_string())?;
+                if !rt_db::update_state_only_in_tx(&tx, &hash, TorrentState::Error.as_str())
+                    .map_err(|error| error.to_string())?
+                {
+                    return Err(format!("torrent {hash} is missing from the database"));
+                }
+                rt_db::append_session_event_in_tx(&tx, &event)
+                    .map_err(|error| error.to_string())?;
+                rt_db::prune_session_events_in_tx(&tx, retention)
+                    .map_err(|error| error.to_string())?;
+                tx.commit().map_err(|error| error.to_string())
+            })
+            .await
+            .map_err(|error| format!("could not persist actor-start failure: {error}"))?;
+        self.runtime.tier_controller.apply_input(
+            info_hash.to_owned(),
+            TierInput {
+                state: TorrentState::Error,
+                connected_peers: 0,
+                outstanding_requests: 0,
+                inbound_peer: false,
+                tracker_due: false,
+                last_active: None,
+                now: Instant::now(),
+            },
+        );
+        self.runtime.tier_controller.set_dormant_snapshot(
+            info_hash.to_owned(),
+            dormant_snapshot_from_fields(info_hash, TorrentState::Error, None),
+        );
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn spawn_torrent_task_for_meta(
         &mut self,
@@ -982,45 +1124,118 @@ impl Engine {
         initial_state: TorrentState,
         piece_index_memory_lease: MemoryLease,
         torrent_metadata_memory_lease: MemoryLease,
+    ) -> CmdResult<mpsc::Sender<TorrentCmd>> {
+        let route = self.ensure_transfer_owner_record(&info_hash_hex).await?;
+        if route.phase != rt_db::TransferCutoverPhase::Stable {
+            return Err(format!(
+                "torrent {info_hash_hex} has an unfinished transfer route transition"
+            ));
+        }
+        Ok(self
+            .spawn_torrent_task_for_owner(
+                info_hash_hex,
+                meta,
+                save,
+                paused,
+                initial_state,
+                piece_index_memory_lease,
+                torrent_metadata_memory_lease,
+                route.owner,
+            )
+            .await)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn spawn_torrent_task_for_owner(
+        &mut self,
+        info_hash_hex: String,
+        meta: TorrentMeta,
+        save: PathBuf,
+        paused: bool,
+        initial_state: TorrentState,
+        piece_index_memory_lease: MemoryLease,
+        torrent_metadata_memory_lease: MemoryLease,
+        owner: rt_db::TransferOwner,
     ) -> mpsc::Sender<TorrentCmd> {
         match meta {
             TorrentMeta::V1(meta) => {
-                self.spawn_torrent_task(
-                    info_hash_hex,
-                    meta,
-                    None,
-                    save,
-                    paused,
-                    initial_state,
-                    piece_index_memory_lease,
-                    torrent_metadata_memory_lease,
-                )
-                .await
+                if owner == rt_db::TransferOwner::Reference {
+                    self.spawn_reference_torrent_task(
+                        info_hash_hex,
+                        meta,
+                        None,
+                        save,
+                        paused,
+                        initial_state,
+                        piece_index_memory_lease,
+                        torrent_metadata_memory_lease,
+                    )
+                    .await
+                } else {
+                    self.spawn_torrent_task(
+                        info_hash_hex,
+                        meta,
+                        None,
+                        save,
+                        paused,
+                        initial_state,
+                        piece_index_memory_lease,
+                        torrent_metadata_memory_lease,
+                    )
+                    .await
+                }
             }
             TorrentMeta::Hybrid(meta, v2) => {
-                self.spawn_torrent_task(
-                    info_hash_hex,
-                    *meta,
-                    Some(v2),
-                    save,
-                    paused,
-                    initial_state,
-                    piece_index_memory_lease,
-                    torrent_metadata_memory_lease,
-                )
-                .await
+                if owner == rt_db::TransferOwner::Reference {
+                    self.spawn_reference_torrent_task(
+                        info_hash_hex,
+                        *meta,
+                        Some(v2),
+                        save,
+                        paused,
+                        initial_state,
+                        piece_index_memory_lease,
+                        torrent_metadata_memory_lease,
+                    )
+                    .await
+                } else {
+                    self.spawn_torrent_task(
+                        info_hash_hex,
+                        *meta,
+                        Some(v2),
+                        save,
+                        paused,
+                        initial_state,
+                        piece_index_memory_lease,
+                        torrent_metadata_memory_lease,
+                    )
+                    .await
+                }
             }
             TorrentMeta::V2(meta) => {
-                self.spawn_v2_torrent_task(
-                    info_hash_hex,
-                    meta,
-                    save,
-                    paused,
-                    initial_state,
-                    piece_index_memory_lease,
-                    torrent_metadata_memory_lease,
-                )
-                .await
+                if owner == rt_db::TransferOwner::Reference {
+                    self.spawn_reference_v2_torrent_task(
+                        info_hash_hex,
+                        meta,
+                        save,
+                        paused,
+                        initial_state,
+                        piece_index_memory_lease,
+                        torrent_metadata_memory_lease,
+                    )
+                    .await
+                } else {
+                    self.spawn_v2_torrent_task(
+                        info_hash_hex,
+                        meta,
+                        save,
+                        paused,
+                        initial_state,
+                        piece_index_memory_lease,
+                        torrent_metadata_memory_lease,
+                    )
+                    .await
+                }
             }
         }
     }
@@ -1064,7 +1279,8 @@ impl Engine {
         )
         .await;
         task.attach_crash_safety(Arc::clone(&self.services.crash_safety));
-        let handle = spawn_supervised(self.runtime.task_exits.guard(&info_hash_hex), task.run());
+        let guard = self.runtime.task_exits.guard(&info_hash_hex);
+        let handle = spawn_supervised(guard, task.run());
         self.runtime
             .torrent_chans
             .insert(&info_hash_hex, cmd_tx.clone());
@@ -1086,6 +1302,568 @@ impl Engine {
         cmd_tx
     }
 
+    #[allow(clippy::too_many_arguments)]
+    async fn spawn_reference_torrent_task(
+        &mut self,
+        info_hash_hex: String,
+        meta: TorrentMetaV1,
+        hybrid_v2: Option<TorrentMetaV2>,
+        save: PathBuf,
+        paused: bool,
+        initial_state: TorrentState,
+        piece_index_memory_lease: MemoryLease,
+        torrent_metadata_memory_lease: MemoryLease,
+    ) -> mpsc::Sender<TorrentCmd> {
+        let (cmd_tx, cmd_rx) = mpsc::channel::<TorrentCmd>(32);
+        let mut task = crate::torrent_task_reference::TorrentTask::new(
+            meta,
+            save,
+            paused,
+            initial_state,
+            Arc::clone(&self.registry),
+            self.db_executor(),
+            self.services.resources.clone(),
+            cmd_rx,
+            fastresume_dir(&self.config),
+            self.config.network.max_peers,
+            self.config.network.listen_port,
+            self.config.tracker.http_timeout_secs,
+            self.config.tracker.udp_timeout_secs,
+            self.config.tracker.min_interval_secs,
+            self.config
+                .memory
+                .piece_assembly_cap_mb
+                .saturating_mul(1024 * 1024) as usize,
+            storage_io_config_from_config(&self.config),
+            self.peer_exchange_enabled().await,
+            OutboundEgressPolicy::from_config(&self.config.tracker),
+            self.services.network_budget.clone(),
+            self.config.logging.event_retention,
+            Some(piece_index_memory_lease),
+        )
+        .await;
+        if let Some(hybrid_meta) = hybrid_v2 {
+            task.attach_hybrid_v2_metadata(hybrid_meta);
+        }
+        task.attach_torrent_metadata_memory_lease(torrent_metadata_memory_lease);
+        task.attach_crash_safety(Arc::clone(&self.services.crash_safety));
+        self.install_torrent_actor(info_hash_hex, cmd_tx, initial_state, task.run())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn spawn_reference_v2_torrent_task(
+        &mut self,
+        info_hash_hex: String,
+        meta: TorrentMetaV2,
+        save: PathBuf,
+        paused: bool,
+        initial_state: TorrentState,
+        piece_index_memory_lease: MemoryLease,
+        torrent_metadata_memory_lease: MemoryLease,
+    ) -> mpsc::Sender<TorrentCmd> {
+        let (cmd_tx, cmd_rx) = mpsc::channel::<TorrentCmd>(32);
+        let mut task = crate::torrent_task_v2_reference::V2TorrentTask::new(
+            meta,
+            save,
+            paused,
+            initial_state,
+            Arc::clone(&self.registry),
+            self.db_executor(),
+            self.services.resources.clone(),
+            cmd_rx,
+            self.config.network.max_peers,
+            self.config
+                .memory
+                .piece_assembly_cap_mb
+                .saturating_mul(1024 * 1024) as usize,
+            storage_io_config_from_config(&self.config),
+            OutboundEgressPolicy::from_config(&self.config.tracker),
+            self.config.network.listen_port,
+            self.config.tracker.http_timeout_secs,
+            self.config.tracker.udp_timeout_secs,
+            self.config.tracker.min_interval_secs,
+            self.services.network_budget.clone(),
+            Some(piece_index_memory_lease),
+            Some(torrent_metadata_memory_lease),
+        )
+        .await;
+        task.attach_crash_safety(Arc::clone(&self.services.crash_safety));
+        self.install_torrent_actor(info_hash_hex, cmd_tx, initial_state, task.run())
+    }
+
+    async fn wait_torrent_actor_ready(
+        &self,
+        info_hash: &str,
+        cmd_tx: &mpsc::Sender<TorrentCmd>,
+    ) -> CmdResult<()> {
+        let (reply, ready) = oneshot::channel();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            cmd_tx.send(TorrentCmd::GetRuntimeStats { reply }),
+        )
+        .await
+        .map_err(|_| "replacement torrent actor command timed out".to_owned())?
+        .map_err(|_| "replacement torrent actor stopped before readiness".to_owned())?;
+        tokio::time::timeout(Duration::from_secs(5), ready)
+            .await
+            .map_err(|_| "replacement torrent actor did not acknowledge readiness".to_owned())?
+            .map_err(|_| "replacement torrent actor stopped before readiness".to_owned())?;
+        if self
+            .runtime
+            .torrent_tasks
+            .get(info_hash)
+            .is_none_or(|task| task.is_finished())
+        {
+            return Err("replacement torrent actor exited during startup".to_owned());
+        }
+        Ok(())
+    }
+
+    async fn spawn_transfer_actor_from_storage(
+        &mut self,
+        info_hash: &str,
+        owner: rt_db::TransferOwner,
+        paused: bool,
+        initial_state: TorrentState,
+    ) -> CmdResult<(mpsc::Sender<TorrentCmd>, [u8; 20], bool)> {
+        let config = Arc::clone(&self.config);
+        let db = self.db_executor();
+        let resources = self.services.resources.clone();
+        let info_hash_owned = info_hash.to_owned();
+        let prepared = tokio::task::spawn_blocking(move || {
+            prepare_torrent_task_from_storage(&config, &db, &resources, &info_hash_owned)
+        })
+        .await
+        .map_err(|error| {
+            crate::task_join_error_summary("transfer actor metadata worker", &error)
+        })??;
+        let piece_index_memory_lease = reserve_piece_index_memory_for_meta(
+            &self.services.resources,
+            &prepared.meta,
+            self.config.network.max_peers,
+        )?
+        .ok_or_else(|| "transfer actor lost its piece-index memory reservation".to_owned())?;
+        let torrent_metadata_memory_lease =
+            reserve_torrent_metadata_memory_for_meta(&self.services.resources, &prepared.meta)?
+                .ok_or_else(|| "transfer actor lost its metadata memory reservation".to_owned())?;
+        let PreparedTorrentTaskData {
+            meta,
+            save_path,
+            info_hash: dht_info_hash,
+            is_private,
+            parse_memory_lease,
+        } = prepared;
+        drop(parse_memory_lease);
+        let cmd_tx = self
+            .spawn_torrent_task_for_owner(
+                info_hash.to_owned(),
+                meta,
+                save_path,
+                paused,
+                initial_state,
+                piece_index_memory_lease,
+                torrent_metadata_memory_lease,
+                owner,
+            )
+            .await;
+        Ok((cmd_tx, dht_info_hash, is_private))
+    }
+
+    async fn quiesce_torrent_actor_for_cutover(
+        cmd_tx: &mpsc::Sender<TorrentCmd>,
+    ) -> CmdResult<bool> {
+        let (reply, quiesced) = oneshot::channel();
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            cmd_tx.send(TorrentCmd::QuiesceForStorageMove { reply }),
+        )
+        .await
+        .map_err(|_| "old torrent actor did not accept the cutover drain".to_owned())?
+        .map_err(|_| "old torrent actor stopped before cutover drain".to_owned())?;
+        tokio::time::timeout(Duration::from_secs(10), quiesced)
+            .await
+            .map_err(|_| "old torrent actor drain timed out".to_owned())?
+            .map_err(|_| "old torrent actor stopped during drain".to_owned())?
+    }
+
+    async fn stop_torrent_actor_for_cutover(&mut self, info_hash: &str) -> CmdResult<()> {
+        if let Some(cmd_tx) = self.runtime.torrent_chans.get(info_hash).cloned() {
+            let _ = tokio::time::timeout(Duration::from_secs(5), cmd_tx.send(TorrentCmd::Shutdown))
+                .await;
+        }
+        let Some(task) = self.runtime.torrent_tasks.remove(info_hash) else {
+            self.runtime.torrent_chans.remove(info_hash);
+            self.runtime.task_exits.remove_current_generation(info_hash);
+            return Ok(());
+        };
+        self.runtime.task_exits.remove_current_generation(info_hash);
+        let mut guard = ShutdownTaskGuard { task: Some(task) };
+        let task = guard.task.as_mut().expect("task guard contains actor");
+        match tokio::time::timeout(Duration::from_secs(10), &mut *task).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                self.runtime.torrent_chans.remove(info_hash);
+                return Err(crate::task_join_error_summary("torrent actor", &error));
+            }
+            Err(_) => {
+                task.abort();
+                let _ = crate::reap_aborted_task(
+                    task,
+                    TASK_ABORT_GRACE,
+                    "engine",
+                    "transfer_cutover_stop",
+                    "torrent actor",
+                )
+                .await;
+                self.runtime.torrent_chans.remove(info_hash);
+                return Err("torrent actor did not stop before the cutover deadline".to_owned());
+            }
+        }
+        self.runtime.torrent_chans.remove(info_hash);
+        Ok(())
+    }
+
+    async fn restart_transfer_owner_after_failure(
+        &mut self,
+        info_hash: &str,
+        owner: rt_db::TransferOwner,
+        paused: bool,
+        initial_state: TorrentState,
+        generation: i64,
+        restore_actor: bool,
+        reason: &str,
+    ) -> CmdResult<()> {
+        let db = self.db_executor();
+        let hash = info_hash.to_owned();
+        let current = db
+            .run_durable("read_transfer_cutover_for_rollback", move |db| {
+                rt_db::get_transfer_cutover(db, &hash).map_err(|error| error.to_string())
+            })
+            .await
+            .map_err(|error| format!("could not inspect transfer rollback state: {error}"))?
+            .ok_or_else(|| format!("transfer rollback journal is missing for {info_hash}"))?;
+        if current.owner_generation != generation {
+            return Err(format!(
+                "transfer rollback generation changed for {info_hash}"
+            ));
+        }
+        match current.phase {
+            rt_db::TransferCutoverPhase::Stable if current.owner == owner => {}
+            rt_db::TransferCutoverPhase::Stable => {
+                return Err(format!(
+                    "transfer owner for {info_hash} was already committed to {:?}",
+                    current.owner
+                ));
+            }
+            rt_db::TransferCutoverPhase::Draining | rt_db::TransferCutoverPhase::Starting => {
+                let db = self.db_executor();
+                let hash = info_hash.to_owned();
+                let reason_owned = reason.to_owned();
+                db.run_durable("require_transfer_cutover_rollback", move |db| {
+                    rt_db::require_transfer_cutover_rollback(
+                        db,
+                        &hash,
+                        generation,
+                        &reason_owned,
+                        unix_now_i64(),
+                    )
+                    .map_err(|error| error.to_string())
+                })
+                .await
+                .map_err(|error| format!("could not persist transfer rollback intent: {error}"))?;
+            }
+            rt_db::TransferCutoverPhase::RollbackRequired => {}
+        }
+
+        let stop_result = self.stop_torrent_actor_for_cutover(info_hash).await;
+        if stop_result.is_err()
+            && (self.runtime.torrent_chans.contains_key(info_hash)
+                || self.runtime.torrent_tasks.contains_key(info_hash))
+        {
+            return stop_result;
+        }
+        self.unregister_dht_torrent(info_hash).await;
+
+        let mut restore_dht = None;
+        if restore_actor {
+            let (cmd_tx, dht_info_hash, is_private) = self
+                .spawn_transfer_actor_from_storage(info_hash, owner, paused, initial_state)
+                .await?;
+            self.wait_torrent_actor_ready(info_hash, &cmd_tx).await?;
+            restore_dht = Some((dht_info_hash, is_private));
+        }
+
+        if current.phase != rt_db::TransferCutoverPhase::Stable {
+            let db = self.db_executor();
+            let hash = info_hash.to_owned();
+            let reason_owned = reason.to_owned();
+            db.run_durable("finish_transfer_cutover_rollback", move |db| {
+                rt_db::finish_transfer_cutover_rollback(
+                    db,
+                    &hash,
+                    generation,
+                    &reason_owned,
+                    unix_now_i64(),
+                )
+                .map_err(|error| error.to_string())
+            })
+            .await
+            .map_err(|error| format!("could not finalize transfer rollback: {error}"))?;
+        }
+        if let Some((dht_info_hash, is_private)) = restore_dht {
+            if !is_private && should_register_dht_on_restore(initial_state) && !paused {
+                self.register_dht_torrent(dht_info_hash, info_hash).await;
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) async fn set_torrent_transfer_owner(
+        &mut self,
+        info_hash: &str,
+        target: rt_db::TransferOwner,
+    ) -> CmdResult<rt_db::TransferOwner> {
+        if self
+            .metadata_placeholder_row_checked(info_hash)
+            .await?
+            .is_some()
+        {
+            return Err(
+                "transfer route cannot change before torrent metadata is available".to_owned(),
+            );
+        }
+        self.reap_finished_torrent_tasks().await;
+        let initial_state = self
+            .registry
+            .read()
+            .await
+            .get(info_hash)
+            .map(|entry| entry.state)
+            .ok_or_else(|| format!("torrent {info_hash} not found"))?;
+        let route = self.ensure_transfer_owner_record(info_hash).await?;
+        if route.phase != rt_db::TransferCutoverPhase::Stable {
+            return Err(format!(
+                "torrent {info_hash} already has a transfer route transition"
+            ));
+        }
+        if route.owner == target {
+            return Ok(target);
+        }
+        let was_active = self.runtime.torrent_chans.contains_key(info_hash);
+        if self.runtime.torrent_tasks.contains_key(info_hash) != was_active {
+            return Err(format!(
+                "torrent {info_hash} actor registry is inconsistent"
+            ));
+        }
+
+        let db = self.db_executor();
+        let hash = info_hash.to_owned();
+        let generation = route.owner_generation;
+        let intent = db
+            .run_durable("begin_transfer_cutover", move |db| {
+                rt_db::begin_transfer_cutover(db, &hash, generation, target, unix_now_i64())
+                    .map_err(|error| error.to_string())
+            })
+            .await
+            .map_err(|error| format!("could not begin transfer cutover: {error}"))?;
+
+        let initially_paused = matches!(
+            initial_state,
+            TorrentState::Paused | TorrentState::Stopped | TorrentState::Queued
+        );
+        let mut was_paused = initially_paused;
+        if was_active {
+            let cmd_tx = self
+                .runtime
+                .torrent_chans
+                .get(info_hash)
+                .cloned()
+                .expect("active actor route has a command sender");
+            match Self::quiesce_torrent_actor_for_cutover(&cmd_tx).await {
+                Ok(actor_was_paused) => was_paused = actor_was_paused,
+                Err(error) => {
+                    let rollback = self
+                        .restart_transfer_owner_after_failure(
+                            info_hash,
+                            intent.owner,
+                            initially_paused,
+                            initial_state,
+                            intent.owner_generation,
+                            true,
+                            &error,
+                        )
+                        .await;
+                    return Err(match rollback {
+                        Ok(()) => error,
+                        Err(rollback) => {
+                            format!("{error}; restoring previous transfer owner failed: {rollback}")
+                        }
+                    });
+                }
+            }
+            if let Err(error) = self.stop_torrent_actor_for_cutover(info_hash).await {
+                let rollback = self
+                    .restart_transfer_owner_after_failure(
+                        info_hash,
+                        intent.owner,
+                        was_paused,
+                        initial_state,
+                        intent.owner_generation,
+                        true,
+                        &error,
+                    )
+                    .await;
+                return Err(match rollback {
+                    Ok(()) => error,
+                    Err(rollback) => {
+                        format!("{error}; restoring previous transfer owner failed: {rollback}")
+                    }
+                });
+            }
+            self.unregister_dht_torrent(info_hash).await;
+        }
+
+        let db = self.db_executor();
+        let hash = info_hash.to_owned();
+        let phase = db
+            .run_durable("mark_transfer_cutover_drained", move |db| {
+                rt_db::mark_transfer_cutover_drained(
+                    db,
+                    &hash,
+                    intent.owner_generation,
+                    unix_now_i64(),
+                )
+                .map_err(|error| error.to_string())
+            })
+            .await;
+        if let Err(error) = phase {
+            let reason = format!("could not persist old-owner drain: {error}");
+            let rollback = self
+                .restart_transfer_owner_after_failure(
+                    info_hash,
+                    intent.owner,
+                    was_paused,
+                    initial_state,
+                    intent.owner_generation,
+                    was_active,
+                    &reason,
+                )
+                .await;
+            return Err(match rollback {
+                Ok(()) => reason,
+                Err(rollback) => {
+                    format!("{reason}; restoring previous transfer owner failed: {rollback}")
+                }
+            });
+        }
+
+        let mut replacement_dht_registration = None;
+        if was_active {
+            let (cmd_tx, dht_info_hash, is_private) = match self
+                .spawn_transfer_actor_from_storage(info_hash, target, was_paused, initial_state)
+                .await
+            {
+                Ok(spawned) => spawned,
+                Err(error) => {
+                    let rollback = self
+                        .restart_transfer_owner_after_failure(
+                            info_hash,
+                            intent.owner,
+                            was_paused,
+                            initial_state,
+                            intent.owner_generation,
+                            true,
+                            &error,
+                        )
+                        .await;
+                    return Err(match rollback {
+                        Ok(()) => error,
+                        Err(rollback) => {
+                            format!("{error}; restoring previous transfer owner failed: {rollback}")
+                        }
+                    });
+                }
+            };
+            replacement_dht_registration = Some((dht_info_hash, is_private));
+            if let Err(error) = self.wait_torrent_actor_ready(info_hash, &cmd_tx).await {
+                let rollback = self
+                    .restart_transfer_owner_after_failure(
+                        info_hash,
+                        intent.owner,
+                        was_paused,
+                        initial_state,
+                        intent.owner_generation,
+                        true,
+                        &error,
+                    )
+                    .await;
+                return Err(match rollback {
+                    Ok(()) => error,
+                    Err(rollback) => {
+                        format!("{error}; restoring previous transfer owner failed: {rollback}")
+                    }
+                });
+            }
+        }
+
+        let db = self.db_executor();
+        let hash = info_hash.to_owned();
+        let commit = db
+            .run_durable("commit_transfer_cutover", move |db| {
+                rt_db::commit_transfer_cutover(db, &hash, intent.owner_generation, unix_now_i64())
+                    .map_err(|error| error.to_string())
+            })
+            .await;
+        if let Err(error) = commit {
+            let reason = format!("could not commit transfer owner: {error}");
+            let db = self.db_executor();
+            let hash = info_hash.to_owned();
+            let journal = db
+                .run_durable("inspect_transfer_cutover_commit", move |db| {
+                    rt_db::get_transfer_cutover(db, &hash).map_err(|error| error.to_string())
+                })
+                .await;
+            match journal {
+                Ok(Some(row))
+                    if row.owner_generation == intent.owner_generation
+                        && row.phase == rt_db::TransferCutoverPhase::Stable
+                        && row.owner == target =>
+                {
+                    // The durable commit succeeded but its reply was lost.
+                }
+                other => {
+                    let rollback = self
+                        .restart_transfer_owner_after_failure(
+                            info_hash,
+                            intent.owner,
+                            was_paused,
+                            initial_state,
+                            intent.owner_generation,
+                            was_active,
+                            &reason,
+                        )
+                        .await;
+                    let detail = match other {
+                        Ok(Some(row)) => format!("journal remains in {:?}", row.phase),
+                        Ok(None) => "journal row is missing".to_owned(),
+                        Err(error) => format!("journal inspection failed: {error}"),
+                    };
+                    return Err(rollback.err().map_or_else(
+                        || format!("{reason}; {detail}"),
+                        |rollback| format!("{reason}; {detail}; rollback failed: {rollback}"),
+                    ));
+                }
+            }
+        }
+
+        if let Some((dht_info_hash, is_private)) = replacement_dht_registration {
+            if !is_private && should_register_dht_on_restore(initial_state) && !was_paused {
+                self.register_dht_torrent(dht_info_hash, info_hash).await;
+            }
+        }
+        Ok(target)
+    }
+
     pub(super) fn spawn_metadata_task(
         &mut self,
         info_hash: MetadataInfoHash,
@@ -1096,8 +1874,9 @@ impl Engine {
         task_memory: MetadataTaskMemory,
     ) -> mpsc::Sender<TorrentCmd> {
         let (cmd_tx, cmd_rx) = mpsc::channel::<TorrentCmd>(32);
+        let guard = self.runtime.task_exits.guard(&info_hash_hex);
         let handle = spawn_supervised(
-            self.runtime.task_exits.guard(&info_hash_hex),
+            guard,
             run_metadata_task(
                 info_hash,
                 info_hash_hex.clone(),
@@ -1438,6 +2217,7 @@ impl Engine {
             let _ = send_torrent_command_until_delivered(&tx, TorrentCmd::Shutdown).await;
         }
         if let Some(task) = self.runtime.torrent_tasks.remove(info_hash) {
+            self.runtime.task_exits.remove_current_generation(info_hash);
             let mut task = ShutdownTaskGuard { task: Some(task) };
             let task = task
                 .task
@@ -1566,12 +2346,16 @@ impl Engine {
             .task_exits
             .drain(MAX_TORRENT_REAPS_PER_TICK)
             .into_iter()
-            .map(|info_hash| info_hash.into_info_hash())
-            .filter(|info_hash| {
+            .filter_map(|notice| {
+                if !self.runtime.task_exits.is_current(&notice) {
+                    return None;
+                }
+                let info_hash = notice.info_hash.into_info_hash();
                 self.runtime
                     .torrent_tasks
-                    .get(info_hash)
+                    .get(&info_hash)
                     .is_some_and(|task| task.is_finished())
+                    .then_some(info_hash)
             })
             .collect();
         self.reap_torrent_hashes(finished).await;
@@ -1582,6 +2366,9 @@ impl Engine {
             let Some(task) = self.runtime.torrent_tasks.remove(&info_hash) else {
                 continue;
             };
+            self.runtime
+                .task_exits
+                .remove_current_generation(&info_hash);
             let reason = match task.await {
                 Ok(()) => "torrent task exited unexpectedly".to_owned(),
                 Err(error) => crate::task_join_error_summary("torrent task", &error),
@@ -2114,6 +2901,7 @@ impl Engine {
             if let Some(task) = self.runtime.torrent_tasks.remove(info_hash) {
                 tasks.tasks.push((info_hash.clone(), task));
             }
+            self.runtime.task_exits.remove_current_generation(info_hash);
         }
 
         for info_hash in &info_hashes {

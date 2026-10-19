@@ -2087,7 +2087,10 @@ mod tests {
             return;
         }
         let file = Arc::new(crate::open::open_path_no_follow(&path, false, false).unwrap());
-        let pool = FramePool::new((block_len * block_count) as u64);
+        // 4 KiB requests are backed by the pool's 16 KiB frame class.
+        // Budget backing capacity, not just the logical request lengths, for
+        // every frame held while this test builds the bounded submission set.
+        let pool = FramePool::new((16 * 1024 * block_count) as u64);
         let reads = (0..block_count)
             .map(|index| {
                 let frame = pool.try_acquire(block_len).unwrap();

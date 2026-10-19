@@ -230,14 +230,6 @@ pub struct EngineTorrentMetadata {
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct SharedSchedulerStorageSnapshot {
-    file_pool_capacity: u64,
-    file_pool_open_files: u64,
-    file_pool_active_descriptors: u64,
-    file_pool_memory_bytes: u64,
-    file_pool_hits: u64,
-    file_pool_misses: u64,
-    file_pool_evictions: u64,
-    file_pool_idle_closes: u64,
     io_queue_depth: u64,
     hash_queue_depth: u64,
 }
@@ -245,14 +237,6 @@ pub(crate) struct SharedSchedulerStorageSnapshot {
 impl SharedSchedulerStorageSnapshot {
     fn from_stats(storage: &StorageIoStats) -> Self {
         Self {
-            file_pool_capacity: storage.file_pool.capacity as u64,
-            file_pool_open_files: storage.file_pool.open_files as u64,
-            file_pool_active_descriptors: storage.file_pool.active_descriptors as u64,
-            file_pool_memory_bytes: storage.file_pool.memory_bytes,
-            file_pool_hits: storage.file_pool.hits,
-            file_pool_misses: storage.file_pool.misses,
-            file_pool_evictions: storage.file_pool.evictions,
-            file_pool_idle_closes: storage.file_pool.idle_closes,
             io_queue_depth: storage.io_queue_depth as u64,
             hash_queue_depth: storage.hash_queue_depth as u64,
         }
@@ -260,16 +244,48 @@ impl SharedSchedulerStorageSnapshot {
 
     fn merge_observation(self, latest: Self) -> Self {
         Self {
-            file_pool_capacity: latest.file_pool_capacity,
-            file_pool_open_files: latest.file_pool_open_files,
-            file_pool_active_descriptors: latest.file_pool_active_descriptors,
-            file_pool_memory_bytes: latest.file_pool_memory_bytes,
-            file_pool_hits: self.file_pool_hits.max(latest.file_pool_hits),
-            file_pool_misses: self.file_pool_misses.max(latest.file_pool_misses),
-            file_pool_evictions: self.file_pool_evictions.max(latest.file_pool_evictions),
-            file_pool_idle_closes: self.file_pool_idle_closes.max(latest.file_pool_idle_closes),
             io_queue_depth: latest.io_queue_depth,
             hash_queue_depth: latest.hash_queue_depth,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct SharedFileCatalogSnapshot {
+    capacity: u64,
+    open_files: u64,
+    active_descriptors: u64,
+    memory_bytes: u64,
+    hits: u64,
+    misses: u64,
+    evictions: u64,
+    idle_closes: u64,
+}
+
+impl SharedFileCatalogSnapshot {
+    fn from_stats(storage: &StorageIoStats) -> Self {
+        Self {
+            capacity: storage.file_pool.capacity as u64,
+            open_files: storage.file_pool.open_files as u64,
+            active_descriptors: storage.file_pool.active_descriptors as u64,
+            memory_bytes: storage.file_pool.memory_bytes,
+            hits: storage.file_pool.hits,
+            misses: storage.file_pool.misses,
+            evictions: storage.file_pool.evictions,
+            idle_closes: storage.file_pool.idle_closes,
+        }
+    }
+
+    fn merge_observation(self, latest: Self) -> Self {
+        Self {
+            capacity: latest.capacity,
+            open_files: latest.open_files,
+            active_descriptors: latest.active_descriptors,
+            memory_bytes: latest.memory_bytes,
+            hits: self.hits.max(latest.hits),
+            misses: self.misses.max(latest.misses),
+            evictions: self.evictions.max(latest.evictions),
+            idle_closes: self.idle_closes.max(latest.idle_closes),
         }
     }
 }
@@ -579,7 +595,7 @@ impl EngineStats {
     }
 
     pub fn add_torrent_runtime(&mut self, info_hash: String, runtime: TorrentRuntimeStats) {
-        self.add_torrent_runtime_inner(info_hash, runtime, None);
+        self.add_torrent_runtime_inner(info_hash, runtime, None, None);
     }
 
     pub(crate) fn add_torrent_runtime_with_shared_storage_resources(
@@ -587,8 +603,14 @@ impl EngineStats {
         info_hash: String,
         runtime: TorrentRuntimeStats,
         shared_resources: &mut HashMap<u64, SharedSchedulerStorageSnapshot>,
+        file_catalogs: &mut HashMap<u64, SharedFileCatalogSnapshot>,
     ) {
-        self.add_torrent_runtime_inner(info_hash, runtime, Some(shared_resources));
+        self.add_torrent_runtime_inner(
+            info_hash,
+            runtime,
+            Some(shared_resources),
+            Some(file_catalogs),
+        );
     }
 
     fn add_torrent_runtime_inner(
@@ -596,6 +618,7 @@ impl EngineStats {
         info_hash: String,
         runtime: TorrentRuntimeStats,
         shared_resources: Option<&mut HashMap<u64, SharedSchedulerStorageSnapshot>>,
+        file_catalogs: Option<&mut HashMap<u64, SharedFileCatalogSnapshot>>,
     ) {
         self.record_hot_torrent_memory(info_hash, &runtime);
         self.torrent_tasks_active = self.torrent_tasks_active.saturating_add(1);
@@ -662,6 +685,19 @@ impl EngineStats {
             shared_resources.insert(storage.shared_resource_id, merged);
         } else {
             self.merge_shared_scheduler_storage_snapshot(None, observed);
+        }
+        let observed_catalog = SharedFileCatalogSnapshot::from_stats(&storage);
+        if storage.file_catalog_id == 0 {
+            self.merge_shared_file_catalog_snapshot(None, observed_catalog);
+        } else if let Some(file_catalogs) = file_catalogs {
+            let previous = file_catalogs.get(&storage.file_catalog_id).copied();
+            let merged = previous.map_or(observed_catalog, |previous| {
+                previous.merge_observation(observed_catalog)
+            });
+            self.merge_shared_file_catalog_snapshot(previous, merged);
+            file_catalogs.insert(storage.file_catalog_id, merged);
+        } else {
+            self.merge_shared_file_catalog_snapshot(None, observed_catalog);
         }
         let storage_device_id = storage.device_id.clone();
         let storage_profile = storage_profile_label(&storage.profile).to_string();
@@ -907,42 +943,6 @@ impl EngineStats {
         current: SharedSchedulerStorageSnapshot,
     ) {
         let previous = previous.unwrap_or_default();
-        self.storage_file_pool_capacity = self
-            .storage_file_pool_capacity
-            .saturating_sub(previous.file_pool_capacity)
-            .saturating_add(current.file_pool_capacity);
-        self.storage_file_pool_open_files = self
-            .storage_file_pool_open_files
-            .saturating_sub(previous.file_pool_open_files)
-            .saturating_add(current.file_pool_open_files);
-        self.storage_file_pool_active_descriptors = self
-            .storage_file_pool_active_descriptors
-            .saturating_sub(previous.file_pool_active_descriptors)
-            .saturating_add(current.file_pool_active_descriptors);
-        self.storage_file_pool_memory_bytes = self
-            .storage_file_pool_memory_bytes
-            .saturating_sub(previous.file_pool_memory_bytes)
-            .saturating_add(current.file_pool_memory_bytes);
-        self.storage_file_pool_hits = self.storage_file_pool_hits.saturating_add(
-            current
-                .file_pool_hits
-                .saturating_sub(previous.file_pool_hits),
-        );
-        self.storage_file_pool_misses = self.storage_file_pool_misses.saturating_add(
-            current
-                .file_pool_misses
-                .saturating_sub(previous.file_pool_misses),
-        );
-        self.storage_file_pool_evictions = self.storage_file_pool_evictions.saturating_add(
-            current
-                .file_pool_evictions
-                .saturating_sub(previous.file_pool_evictions),
-        );
-        self.storage_file_pool_idle_closes = self.storage_file_pool_idle_closes.saturating_add(
-            current
-                .file_pool_idle_closes
-                .saturating_sub(previous.file_pool_idle_closes),
-        );
         self.storage_io_queue_depth = self
             .storage_io_queue_depth
             .saturating_sub(previous.io_queue_depth)
@@ -953,13 +953,49 @@ impl EngineStats {
             .saturating_add(current.hash_queue_depth);
     }
 
+    fn merge_shared_file_catalog_snapshot(
+        &mut self,
+        previous: Option<SharedFileCatalogSnapshot>,
+        current: SharedFileCatalogSnapshot,
+    ) {
+        let previous = previous.unwrap_or_default();
+        self.storage_file_pool_capacity = self
+            .storage_file_pool_capacity
+            .saturating_sub(previous.capacity)
+            .saturating_add(current.capacity);
+        self.storage_file_pool_open_files = self
+            .storage_file_pool_open_files
+            .saturating_sub(previous.open_files)
+            .saturating_add(current.open_files);
+        self.storage_file_pool_active_descriptors = self
+            .storage_file_pool_active_descriptors
+            .saturating_sub(previous.active_descriptors)
+            .saturating_add(current.active_descriptors);
+        self.storage_file_pool_memory_bytes = self
+            .storage_file_pool_memory_bytes
+            .saturating_sub(previous.memory_bytes)
+            .saturating_add(current.memory_bytes);
+        self.storage_file_pool_hits = self
+            .storage_file_pool_hits
+            .saturating_add(current.hits.saturating_sub(previous.hits));
+        self.storage_file_pool_misses = self
+            .storage_file_pool_misses
+            .saturating_add(current.misses.saturating_sub(previous.misses));
+        self.storage_file_pool_evictions = self
+            .storage_file_pool_evictions
+            .saturating_add(current.evictions.saturating_sub(previous.evictions));
+        self.storage_file_pool_idle_closes = self
+            .storage_file_pool_idle_closes
+            .saturating_add(current.idle_closes.saturating_sub(previous.idle_closes));
+    }
+
     fn record_hot_torrent_memory(&mut self, info_hash: String, runtime: &TorrentRuntimeStats) {
         let peer_rx_reserved_bytes = runtime.peer_rx_buffer_bytes;
         let peer_tx_buffer_bytes = runtime.peer_tx_buffer_bytes;
         let peer_buffer_bytes = peer_rx_reserved_bytes.saturating_add(peer_tx_buffer_bytes);
         let tracker_peer_bytes = runtime.tracker_peer_cache_bytes;
         let peer_command_queue_bytes = runtime.peer_command_queue_bytes;
-        let storage_cache_bytes = if runtime.storage.shared_resource_id == 0 {
+        let storage_cache_bytes = if runtime.storage.file_catalog_id == 0 {
             runtime.storage.file_pool.memory_bytes
         } else {
             // Known shared scheduler cache memory is reported once in the
@@ -1608,6 +1644,12 @@ pub(crate) enum EngineCmd {
         limits: EngineTorrentLimits,
         reply: oneshot::Sender<CmdResult<()>>,
     },
+    /// Switch one torrent between the retained reference actor and shared-core candidate.
+    SetTransferOwner {
+        info_hash: String,
+        owner: rt_db::TransferOwner,
+        reply: oneshot::Sender<CmdResult<rt_db::TransferOwner>>,
+    },
     UpdateFilePriorities {
         info_hash: String,
         file_ids: Vec<u32>,
@@ -2055,6 +2097,7 @@ mod tests {
     fn engine_stats_deduplicates_shared_scheduler_snapshots() {
         let mut shared = StorageIoStats {
             shared_resource_id: 9001,
+            file_catalog_id: 7001,
             file_pool: FilePoolStats {
                 capacity: 64,
                 open_files: 8,
@@ -2087,14 +2130,16 @@ mod tests {
 
         let mut separate = StorageIoStats {
             shared_resource_id: 9002,
+            file_catalog_id: 7001,
             file_pool: FilePoolStats {
-                capacity: 16,
-                open_files: 3,
-                active_descriptors: 4,
-                memory_bytes: 2048,
-                hits: 2,
-                misses: 1,
-                idle_closes: 1,
+                capacity: 64,
+                open_files: 10,
+                active_descriptors: 12,
+                memory_bytes: 5120,
+                hits: 15,
+                misses: 4,
+                evictions: 3,
+                idle_closes: 5,
                 ..Default::default()
             },
             io_queue_depth: 2,
@@ -2106,6 +2151,7 @@ mod tests {
 
         let mut stats = EngineStats::default();
         let mut seen_shared_resources = HashMap::new();
+        let mut seen_file_catalogs = HashMap::new();
         stats.add_torrent_runtime_with_shared_storage_resources(
             "hash-a".to_string(),
             TorrentRuntimeStats {
@@ -2115,6 +2161,7 @@ mod tests {
                 ..Default::default()
             },
             &mut seen_shared_resources,
+            &mut seen_file_catalogs,
         );
         stats.add_torrent_runtime_with_shared_storage_resources(
             "hash-b".to_string(),
@@ -2125,6 +2172,7 @@ mod tests {
                 ..Default::default()
             },
             &mut seen_shared_resources,
+            &mut seen_file_catalogs,
         );
         stats.add_torrent_runtime_with_shared_storage_resources(
             "hash-c".to_string(),
@@ -2135,15 +2183,16 @@ mod tests {
                 ..Default::default()
             },
             &mut seen_shared_resources,
+            &mut seen_file_catalogs,
         );
 
-        assert_eq!(stats.storage_file_pool_capacity, 80);
-        assert_eq!(stats.storage_file_pool_open_files, 12);
-        assert_eq!(stats.storage_file_pool_active_descriptors, 15);
-        assert_eq!(stats.storage_file_pool_memory_bytes, 6656);
-        assert_eq!(stats.storage_file_pool_hits, 14);
+        assert_eq!(stats.storage_file_pool_capacity, 64);
+        assert_eq!(stats.storage_file_pool_open_files, 10);
+        assert_eq!(stats.storage_file_pool_active_descriptors, 12);
+        assert_eq!(stats.storage_file_pool_memory_bytes, 5120);
+        assert_eq!(stats.storage_file_pool_hits, 15);
         assert_eq!(stats.storage_file_pool_misses, 4);
-        assert_eq!(stats.storage_file_pool_evictions, 2);
+        assert_eq!(stats.storage_file_pool_evictions, 3);
         assert_eq!(stats.storage_file_pool_idle_closes, 5);
         assert_eq!(stats.storage_io_queue_depth, 8);
         assert_eq!(stats.storage_hash_queue_depth, 8);

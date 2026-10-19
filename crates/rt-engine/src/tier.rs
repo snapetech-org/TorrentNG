@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -268,7 +268,7 @@ struct TorrentKeySlot {
 pub struct TierController<K> {
     policy: TierPolicy,
     /// The interner key and slot share this identity allocation. Tier maps and
-    /// timer queues use the compact ID; the public dormant snapshot retains
+    /// deadline indexes use the compact ID; the public dormant snapshot retains
     /// its compatibility-owned hash string.
     key_ids: HashMap<Arc<str>, TorrentKeyId>,
     key_slots: Vec<TorrentKeySlot>,
@@ -277,8 +277,8 @@ pub struct TierController<K> {
     tier_counts: [usize; 3],
     dormant_snapshots: HashMap<TorrentKeyId, DormantTorrentSnapshot>,
     dormant_heap_bytes: usize,
-    idle_checks: ActivityTimerWheel<TorrentKeyId>,
-    tracker_checks: ActivityTimerWheel<TorrentKeyId>,
+    idle_checks: ActivityDeadlineIndex<TorrentKeyId>,
+    tracker_checks: ActivityDeadlineIndex<TorrentKeyId>,
     idle_stagger_sequence: u64,
     _key_type: PhantomData<fn() -> K>,
 }
@@ -297,8 +297,8 @@ where
             tier_counts: [0; 3],
             dormant_snapshots: HashMap::new(),
             dormant_heap_bytes: 0,
-            idle_checks: ActivityTimerWheel::default(),
-            tracker_checks: ActivityTimerWheel::default(),
+            idle_checks: ActivityDeadlineIndex::default(),
+            tracker_checks: ActivityDeadlineIndex::default(),
             idle_stagger_sequence: 0,
             _key_type: PhantomData,
         }
@@ -320,7 +320,7 @@ where
     }
 
     /// Estimated bytes owned by this controller, including the shared key
-    /// strings, compact identity table, maps, vectors and both timer wheels.
+    /// strings, compact identity table, maps, vectors and both deadline indexes.
     /// Hash maps use retained entry capacity plus a control byte per slot.
     pub fn estimated_owner_bytes(&self) -> usize {
         let mut total = std::mem::size_of::<Self>()
@@ -578,7 +578,7 @@ where
     /// Spread idle reconciliation deadlines across coarse one-second buckets.
     /// A bounded 10%-of-delay horizon (capped at 30 seconds) prevents a
     /// bulk restore from making every promoted torrent due in the same tick,
-    /// while coarse buckets keep the timer wheel compact.
+    /// while coarse buckets limit distinct deadlines in the ordered index.
     fn stagger_idle_delay(&mut self, delay: Duration) -> Duration {
         let max_stagger_seconds = (delay.as_secs() / 10).min(30);
         if max_stagger_seconds == 0 {
@@ -672,23 +672,17 @@ impl TierScaleSnapshot {
     }
 }
 
-/// Stale entries tolerated before compaction even when few are live.
-const STALE_COMPACT_FLOOR: usize = 1024;
-/// Queues up to this long are cleaned eagerly on cancel; longer ones (many
-/// entries sharing one deadline) use lazy deletion to stay linear.
-const EAGER_CANCEL_QUEUE_LEN: usize = 32;
-
 #[derive(Debug, Clone)]
-pub struct ActivityTimerWheel<K> {
-    deadlines: BTreeMap<Instant, VecDeque<K>>,
-    scheduled: HashMap<K, Instant>,
-    /// Entries left in `deadlines` by `cancel`/reschedule that no longer match
-    /// `scheduled`. They are skipped when popped and compacted away once they
-    /// outnumber live entries, so cancelling is O(1).
-    stale: usize,
+pub struct ActivityDeadlineIndex<K> {
+    /// Ordered by deadline and insertion sequence. Keeping K in the value
+    /// avoids requiring K: Ord, and the sequence preserves FIFO order when
+    /// several keys share one deadline.
+    deadlines: BTreeMap<(Instant, u64), K>,
+    scheduled: HashMap<K, (Instant, u64)>,
+    next_sequence: u64,
 }
 
-impl<K> Default for ActivityTimerWheel<K>
+impl<K> Default for ActivityDeadlineIndex<K>
 where
     K: Clone + Eq + Hash,
 {
@@ -696,12 +690,12 @@ where
         Self {
             deadlines: BTreeMap::new(),
             scheduled: HashMap::new(),
-            stale: 0,
+            next_sequence: 0,
         }
     }
 }
 
-impl<K> ActivityTimerWheel<K>
+impl<K> ActivityDeadlineIndex<K>
 where
     K: Clone + Eq + Hash,
 {
@@ -713,97 +707,63 @@ where
         self.scheduled.is_empty()
     }
 
-    /// Approximate collection memory using retained queue and map capacities,
-    /// including lazy-cancel entries that have not reached their deadline.
+    /// Approximate collection memory using retained ordered-index nodes and
+    /// hash-map capacity. Canceled timers are removed immediately, so there is
+    /// no deferred stale-entry backlog.
     fn estimated_collection_bytes(&self) -> usize {
-        let queued_keys = self
-            .deadlines
-            .values()
-            .map(|keys| keys.capacity().saturating_mul(std::mem::size_of::<K>()))
-            .fold(0usize, usize::saturating_add);
         let deadline_nodes = self.deadlines.len().saturating_mul(
-            std::mem::size_of::<Instant>()
-                .saturating_add(std::mem::size_of::<VecDeque<K>>())
+            std::mem::size_of::<((Instant, u64), K)>()
                 .saturating_add(3 * std::mem::size_of::<usize>()),
         );
         let scheduled_slots = self
             .scheduled
             .capacity()
-            .saturating_mul(std::mem::size_of::<(K, Instant)>().saturating_add(1))
+            .saturating_mul(std::mem::size_of::<(K, (Instant, u64))>().saturating_add(1))
             .saturating_add(std::mem::size_of::<usize>());
-        queued_keys
-            .saturating_add(deadline_nodes)
-            .saturating_add(scheduled_slots)
-            .saturating_add(std::mem::size_of::<usize>())
+        deadline_nodes.saturating_add(scheduled_slots)
     }
 
     pub fn schedule(&mut self, key: K, deadline: Instant) {
         self.cancel(&key);
-        self.deadlines
-            .entry(deadline)
-            .or_default()
-            .push_back(key.clone());
-        self.scheduled.insert(key, deadline);
+        let sequence = self.next_sequence;
+        self.next_sequence = self
+            .next_sequence
+            .checked_add(1)
+            .expect("activity deadline sequence exhausted");
+        self.deadlines.insert((deadline, sequence), key.clone());
+        self.scheduled.insert(key, (deadline, sequence));
     }
 
     pub fn cancel(&mut self, key: &K) -> bool {
-        let Some(deadline) = self.scheduled.remove(key) else {
+        let Some(registration) = self.scheduled.remove(key) else {
             return false;
         };
-        // A short queue (the normal case: one deadline per torrent) is cheap
-        // to clean immediately, so reschedule/cancel leaves nothing behind.
-        if let Some(keys) = self.deadlines.get_mut(&deadline) {
-            if keys.len() <= EAGER_CANCEL_QUEUE_LEN {
-                keys.retain(|candidate| candidate != key);
-                if keys.is_empty() {
-                    self.deadlines.remove(&deadline);
-                }
-                return true;
-            }
-        }
-        // Do not search the deadline's queue for the key. With N entries
-        // sharing one deadline, retaining across the queue per cancel made
-        // cancelling all of them quadratic (about five billion comparisons at
-        // 100,000 entries). Leave the old entry behind: `pop_due_limited`
-        // ignores entries that no longer match `scheduled`, and `compact`
-        // bounds how many can accumulate.
-        self.stale += 1;
-        if self.stale > self.scheduled.len().max(STALE_COMPACT_FLOOR) {
-            self.compact();
-        }
+        let removed = self.deadlines.remove(&registration).is_some();
+        assert!(removed, "scheduled deadline missing from ordered index");
         true
     }
 
-    fn compact(&mut self) {
-        let scheduled = &self.scheduled;
-        self.deadlines.retain(|deadline, keys| {
-            keys.retain(|key| scheduled.get(key) == Some(deadline));
-            !keys.is_empty()
-        });
-        self.stale = 0;
-    }
-
     pub fn next_deadline(&self) -> Option<Instant> {
-        if self.scheduled.is_empty() {
-            // Only stale entries (if any) remain; there is nothing to wake for.
-            return None;
-        }
-        self.deadlines.keys().next().copied()
+        self.deadlines
+            .first_key_value()
+            .map(|((deadline, _), _)| *deadline)
     }
 
     pub fn pop_due(&mut self, now: Instant) -> Vec<K> {
         self.pop_due_limited(now, usize::MAX)
     }
 
-    /// Pop at most `limit` live entries whose deadlines have elapsed. Older
-    /// implementations first collected every due deadline and then removed
-    /// every key, so a clock jump or restart could turn one timer tick into a
-    /// large allocation and a long engine-actor pause. Leave the remaining
-    /// due entries in the wheel for a later bounded pass.
+    /// Pop at most `limit` entries whose deadlines have elapsed. Each canceled
+    /// timer removes its ordered node directly, so every visited node is live
+    /// and a due pass stays proportional to its configured limit.
     pub fn pop_due_limited(&mut self, now: Instant, limit: usize) -> Vec<K> {
         let mut due = Vec::with_capacity(limit.min(self.scheduled.len()));
         while due.len() < limit {
-            let Some(deadline) = self.deadlines.keys().next().copied() else {
+            let Some((deadline, sequence)) = self
+                .deadlines
+                .first_key_value()
+                .map(|((deadline, sequence), _)| (*deadline, *sequence))
+            else {
                 break;
             };
             if deadline > now {
@@ -812,29 +772,22 @@ where
 
             let key = self
                 .deadlines
-                .get_mut(&deadline)
-                .and_then(|keys| keys.pop_front());
-            let Some(key) = key else {
-                self.deadlines.remove(&deadline);
-                continue;
-            };
-            if self
-                .deadlines
-                .get(&deadline)
-                .is_some_and(VecDeque::is_empty)
-            {
-                self.deadlines.remove(&deadline);
-            }
-            if self.scheduled.get(&key).copied() == Some(deadline) {
-                self.scheduled.remove(&key);
-                due.push(key);
-            } else {
-                self.stale = self.stale.saturating_sub(1);
-            }
+                .remove(&(deadline, sequence))
+                .expect("deadline index entry disappeared during pop");
+            let registration = self
+                .scheduled
+                .remove(&key)
+                .expect("ordered deadline has no live registration");
+            assert_eq!(registration, (deadline, sequence));
+            due.push(key);
         }
         due
     }
 }
+
+/// Compatibility name retained for existing engine clients. This is an
+/// ordered deadline index rather than a bucket-rotation timer wheel.
+pub type ActivityTimerWheel<K> = ActivityDeadlineIndex<K>;
 
 impl TierPolicy {
     pub fn decide(self, input: TierInput) -> TierDecision {
@@ -988,9 +941,9 @@ mod tests {
     }
 
     #[test]
-    fn timer_wheel_pops_due_torrents_without_one_timer_per_entry() {
+    fn timer_deadline_index_preserves_order_and_due_deadlines() {
         let now = Instant::now();
-        let mut wheel = ActivityTimerWheel::<String>::default();
+        let mut wheel = ActivityDeadlineIndex::<String>::default();
         wheel.schedule("a".to_owned(), now + Duration::from_secs(10));
         wheel.schedule("b".to_owned(), now + Duration::from_secs(20));
         wheel.schedule("c".to_owned(), now + Duration::from_secs(20));
@@ -1002,16 +955,15 @@ mod tests {
         assert_eq!(wheel.pop_due(now + Duration::from_secs(10)), vec!["a"]);
         assert_eq!(wheel.len(), 2);
 
-        let mut due = wheel.pop_due(now + Duration::from_secs(20));
-        due.sort();
+        let due = wheel.pop_due(now + Duration::from_secs(20));
         assert_eq!(due, vec!["b", "c"]);
         assert!(wheel.is_empty());
     }
 
     #[test]
-    fn timer_wheel_reschedule_and_cancel_ignore_stale_slots() {
+    fn timer_deadline_index_reschedule_and_cancel_remove_exact_entries() {
         let now = Instant::now();
-        let mut wheel = ActivityTimerWheel::<String>::default();
+        let mut wheel = ActivityDeadlineIndex::<String>::default();
         let torrent = "torrent".to_owned();
         wheel.schedule(torrent.clone(), now + Duration::from_secs(10));
         wheel.schedule(torrent.clone(), now + Duration::from_secs(30));
@@ -1024,9 +976,9 @@ mod tests {
     }
 
     #[test]
-    fn timer_wheel_limited_pop_leaves_due_entries_for_a_later_pass() {
+    fn timer_deadline_index_limited_pop_leaves_due_entries_for_a_later_pass() {
         let now = Instant::now();
-        let mut wheel = ActivityTimerWheel::<String>::default();
+        let mut wheel = ActivityDeadlineIndex::<String>::default();
         for index in 0..5 {
             wheel.schedule(format!("{index}"), now);
         }
@@ -1053,7 +1005,7 @@ mod tests {
             .idle_checks
             .scheduled
             .values()
-            .copied()
+            .map(|(deadline, _)| *deadline)
             .collect::<std::collections::HashSet<_>>();
         assert!(
             deadlines.len() >= 10,
@@ -1277,9 +1229,9 @@ mod tests {
     }
 
     #[test]
-    fn rescheduling_and_cancelling_removes_stale_idle_deadlines() {
+    fn rescheduling_and_cancelling_removes_old_idle_deadlines() {
         let now = Instant::now();
-        let mut wheel = ActivityTimerWheel::default();
+        let mut wheel = ActivityDeadlineIndex::default();
         let key = "torrent".to_owned();
 
         wheel.schedule(key.clone(), now + Duration::from_secs(1));
@@ -1292,22 +1244,18 @@ mod tests {
     }
 
     #[test]
-    fn cancelling_a_large_cohort_with_one_deadline_is_linear_and_bounded() {
+    fn cancelling_a_large_equal_deadline_cohort_keeps_the_index_exact() {
         let deadline = Instant::now() + Duration::from_secs(60);
-        let mut wheel = ActivityTimerWheel::default();
+        let mut wheel = ActivityDeadlineIndex::default();
         for key in 0..100_000u32 {
             wheel.schedule(key, deadline);
         }
-        let started = Instant::now();
         for key in 0..99_990u32 {
             assert!(wheel.cancel(&key));
         }
-        // Quadratic retain would take minutes here; lazy deletion is instant.
-        assert!(started.elapsed() < Duration::from_secs(5));
         assert_eq!(wheel.len(), 10);
-        // Compaction keeps the stale backlog from outliving the cohort.
-        assert!(wheel.stale <= STALE_COMPACT_FLOOR.max(wheel.len()));
-        let due = wheel.pop_due(deadline);
+        assert_eq!(wheel.deadlines.len(), wheel.scheduled.len());
+        let due = wheel.pop_due_limited(deadline, 10);
         assert_eq!(due.len(), 10);
         assert!(wheel.is_empty());
         assert!(wheel.next_deadline().is_none());
@@ -1350,7 +1298,7 @@ mod tests {
     }
 
     #[test]
-    fn reused_tier_identity_has_new_generation_and_skips_stale_timer() {
+    fn reused_tier_identity_has_new_generation_and_removes_old_deadline() {
         let now = Instant::now();
         let deadline = now + Duration::from_secs(10);
         let old_key = "old-torrent".to_owned();
@@ -1359,15 +1307,16 @@ mod tests {
         let old_id = controller.find_key_id(&old_key).unwrap();
         assert_eq!(std::mem::size_of::<TorrentKeyId>(), 8);
 
-        for index in 0..EAGER_CANCEL_QUEUE_LEN {
+        const EQUAL_DEADLINE_KEYS: usize = 32;
+        for index in 0..EQUAL_DEADLINE_KEYS {
             let key = format!("queued-{index}");
             let id = controller.intern_key(&key);
             controller.idle_checks.schedule(id, deadline);
         }
         controller.idle_checks.schedule(old_id, deadline);
         assert_eq!(
-            controller.idle_checks.deadlines[&deadline].len(),
-            EAGER_CANCEL_QUEUE_LEN + 1
+            controller.idle_checks.deadlines.len(),
+            EQUAL_DEADLINE_KEYS + 1
         );
 
         assert_eq!(
@@ -1382,7 +1331,7 @@ mod tests {
             .schedule(new_id, deadline + Duration::from_secs(1));
 
         let due_at_old_deadline = controller.pop_due_idle_checks(deadline);
-        assert_eq!(due_at_old_deadline.len(), EAGER_CANCEL_QUEUE_LEN);
+        assert_eq!(due_at_old_deadline.len(), EQUAL_DEADLINE_KEYS);
         assert!(!due_at_old_deadline
             .iter()
             .any(|key| key.as_str() == "new-torrent"));

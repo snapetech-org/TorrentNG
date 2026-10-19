@@ -7,11 +7,13 @@ import ctypes
 import json
 import mmap
 import os
+import stat
 import sys
 from pathlib import Path
 from typing import Any
 
 from fixtures import verify_fixture
+from strict_json import StrictJsonError, loads as strict_json_loads
 
 
 FORMAT = "transfer-cache-control-v1"
@@ -52,14 +54,18 @@ def _resident_bytes(fd: int, size_bytes: int, mincore: Any, page_bytes: int) -> 
         window_payload = min(WINDOW_BYTES, size_bytes - offset)
         pages = (window_payload + page_bytes - 1) // page_bytes
         mapped_bytes = pages * page_bytes
-        mapping = mmap.mmap(fd, mapped_bytes, access=mmap.ACCESS_COPY, offset=offset)
+        # Python requires the mapping length to fit inside the file, while
+        # mincore rounds its requested length up to whole pages. Map only the
+        # bytes that exist and still ask mincore about the final partial page.
+        mapping_bytes = min(mapped_bytes, size_bytes - offset)
+        mapping = mmap.mmap(fd, mapping_bytes, access=mmap.ACCESS_COPY, offset=offset)
         try:
             address = ctypes.addressof(ctypes.c_char.from_buffer(mapping))
             vector_type = ctypes.c_ubyte * pages
             vector = vector_type()
             result = mincore(
                 ctypes.c_void_p(address),
-                ctypes.c_size_t(mapped_bytes),
+                ctypes.c_size_t(window_payload),
                 vector,
             )
             if result != 0:
@@ -102,10 +108,83 @@ def _apply_state(path: Path, size_bytes: int, state: str) -> int:
         os.close(descriptor)
 
 
-def prepare_cache_state(fixture: Path, state: str) -> dict[str, object]:
+def _reuse_verified_fixture_manifest(
+    fixture: Path, verified_manifest: dict[str, object]
+) -> dict[str, object]:
+    """Check a previously hashed fixture's identity and file layout cheaply.
+
+    Paired trials reuse one payload fixture. Rehashing a multi-gigabyte fixture
+    for every cache transition would add hours of unmeasured work and warm the
+    cache before a cold run. The runner performs the full content check once;
+    subsequent calls verify the immutable manifest identity and regular-file
+    sizes without reading the payload bytes.
+    """
+    if fixture.is_symlink() or not fixture.is_dir():
+        raise CacheControlError("fixture root must be an existing, non-symlink directory")
+    if not isinstance(verified_manifest, dict):
+        raise CacheControlError("verified fixture manifest must be an object")
+    manifest_path = fixture / "fixture.json"
+    try:
+        descriptor = os.open(manifest_path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 8 * 1024 * 1024:
+                raise CacheControlError("fixture manifest must be a bounded regular file")
+            raw = bytearray()
+            while len(raw) <= 8 * 1024 * 1024:
+                chunk = os.read(descriptor, min(64 * 1024, 8 * 1024 * 1024 + 1 - len(raw)))
+                if not chunk:
+                    break
+                raw.extend(chunk)
+        finally:
+            os.close(descriptor)
+        observed = strict_json_loads(raw, label="fixture manifest")
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, StrictJsonError) as error:
+        raise CacheControlError("cannot read the verified fixture manifest without following links") from error
+    if observed != verified_manifest:
+        raise CacheControlError("fixture manifest changed after its full content verification")
+    files = verified_manifest.get("files")
+    fixture_sha256 = verified_manifest.get("fixture_sha256")
+    if not isinstance(files, list) or not isinstance(fixture_sha256, str):
+        raise CacheControlError("verified fixture manifest has an invalid shape")
+    for item in files:
+        if not isinstance(item, dict):
+            raise CacheControlError("verified fixture file entry is malformed")
+        name = item.get("name")
+        size_bytes = item.get("size_bytes")
+        if (
+            not isinstance(name, str)
+            or not name
+            or name.startswith("/")
+            or any(part in {"", ".", ".."} for part in name.split("/"))
+            or isinstance(size_bytes, bool)
+            or not isinstance(size_bytes, int)
+            or size_bytes < 0
+        ):
+            raise CacheControlError("verified fixture file identity is invalid")
+        path = fixture.joinpath(*name.split("/"))
+        try:
+            metadata = path.lstat()
+        except OSError as error:
+            raise CacheControlError(f"verified fixture payload is missing: {name}") from error
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size != size_bytes:
+            raise CacheControlError(f"verified fixture payload layout changed: {name}")
+    return verified_manifest
+
+
+def prepare_cache_state(
+    fixture: Path,
+    state: str,
+    *,
+    verified_manifest: dict[str, object] | None = None,
+) -> dict[str, object]:
     if state not in {"cold", "warm"}:
         raise CacheControlError("cache state must be cold or warm")
-    manifest = verify_fixture(fixture)
+    manifest = (
+        verify_fixture(fixture)
+        if verified_manifest is None
+        else _reuse_verified_fixture_manifest(Path(fixture), verified_manifest)
+    )
     files = manifest["files"]
     payload_bytes = sum(int(item["size_bytes"]) for item in files)
     if payload_bytes <= 0:

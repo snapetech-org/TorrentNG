@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -12,10 +12,10 @@ use tokio::sync::{mpsc, oneshot, Notify, Semaphore};
 use rt_utp::{UtpEndpoint, UtpRuntime};
 use tokio::time::Instant;
 
-use crate::transfer::coords::TorrentKey;
-#[cfg(test)]
-use crate::transfer::coords::{ConnectionId, TransferPeerId};
+use crate::transfer::coords::{ConnectionId, TorrentKey};
 use crate::transfer::rate::{Grant, RatePeerId, RateTree};
+use crate::transfer::shared_upload::SharedUploadService;
+use crate::transfer::upload_scheduler::UploadReadLimits;
 
 /// Matches the v1 adaptive per-peer request-window ceiling.
 const SOURCE_REQUESTS_PER_PEER_SLOT: usize = 128;
@@ -26,20 +26,30 @@ const MIN_GLOBAL_SOURCE_REQUESTS: usize = 128;
 const MAX_GLOBAL_SOURCE_REQUESTS: usize = 32_768;
 /// Matches the existing per-torrent adaptive request headroom.
 const MAX_TORRENT_SOURCE_REQUESTS: usize = 2_048;
+/// A source that stopped retrying cannot leave a stale round-robin turn at the
+/// head of either admission queue.
+const SOURCE_TURN_IDLE_TTL: Duration = Duration::from_secs(5);
 
 /// Process-wide network admission and traffic budgets.
 ///
 /// The peer semaphore counts live peer/metadata connections. A separate
 /// shared request semaphore bounds outstanding peer and webseed payload work
-/// at both process and torrent scope. The rate limiters count payload bytes
-/// at the engine boundary; protocol framing and TCP/IP overhead are not
-/// included in the current accounting contract.
+/// at both process and torrent scope. When sources contend, one demand turn is
+/// served at a time per source within its torrent and per torrent across the
+/// process; an uncontended request stays on the semaphore-only fast path.
+/// One shared upload service registers each live peer's BEP 6 obligations and
+/// its process-wide read/byte budget as a single lifetime. Rate limiters count
+/// payload bytes at the engine boundary; protocol framing and TCP/IP overhead
+/// are outside the current accounting contract.
 #[derive(Clone)]
 pub(crate) struct GlobalNetworkBudget {
     peer_slots: Arc<Semaphore>,
     source_admission: Arc<SourceAdmissionService>,
+    upload_service: SharedUploadService,
     download_tree: Arc<HierarchicalRateService>,
     upload_tree: Arc<HierarchicalRateService>,
+    compatibility_download: Arc<HierarchicalRateLimiter>,
+    compatibility_upload: Arc<HierarchicalRateLimiter>,
     listen_port: Arc<AtomicU16>,
     listener_rebind_tx: mpsc::Sender<PeerListenerRebindRequest>,
     listener_rebind_rx: Arc<Mutex<Option<mpsc::Receiver<PeerListenerRebindRequest>>>>,
@@ -62,23 +72,49 @@ impl GlobalNetworkBudget {
         let global_source_requests = max_peers
             .saturating_mul(SOURCE_REQUESTS_PER_PEER_SLOT)
             .clamp(MIN_GLOBAL_SOURCE_REQUESTS, MAX_GLOBAL_SOURCE_REQUESTS);
+        let download_tree = Arc::new(HierarchicalRateService {
+            tree: Mutex::new(RateTree::new(download_limit_bytes_per_sec, 0)),
+            origin: upload_origin,
+            changed: RateLimitCancellation::default(),
+            next_torrent: AtomicU64::new(1),
+        });
+        let upload_tree = Arc::new(HierarchicalRateService {
+            tree: Mutex::new(RateTree::new(upload_limit_bytes_per_sec, 0)),
+            origin: upload_origin,
+            changed: RateLimitCancellation::default(),
+            next_torrent: AtomicU64::new(1),
+        });
+        // The reference actors still expose the former process-global rate
+        // limiter API. Give each direction one stable synthetic peer in the
+        // same rate tree so rollback traffic shares the candidate's global
+        // ceiling instead of creating a second, independent token bucket.
+        let compatibility_torrent = upload_tree.new_torrent_key();
+        download_tree.register_torrent(compatibility_torrent, None);
+        upload_tree.register_torrent(compatibility_torrent, None);
         Self {
             peer_slots: Arc::new(Semaphore::new(max_peers.max(1))),
             source_admission: Arc::new(SourceAdmissionService::new(
                 global_source_requests,
                 global_source_requests.min(MAX_TORRENT_SOURCE_REQUESTS),
             )),
-            download_tree: Arc::new(HierarchicalRateService {
-                tree: Mutex::new(RateTree::new(download_limit_bytes_per_sec, 0)),
-                origin: upload_origin,
-                changed: RateLimitCancellation::default(),
-                next_torrent: AtomicU64::new(1),
+            upload_service: SharedUploadService::new(
+                max_peers.max(1),
+                UploadReadLimits {
+                    max_connections: max_peers.max(1),
+                    ..UploadReadLimits::default()
+                },
+            ),
+            download_tree: Arc::clone(&download_tree),
+            upload_tree: Arc::clone(&upload_tree),
+            compatibility_download: Arc::new(HierarchicalRateLimiter {
+                service: download_tree,
+                torrent: compatibility_torrent,
+                next_connection: AtomicU64::new(1),
             }),
-            upload_tree: Arc::new(HierarchicalRateService {
-                tree: Mutex::new(RateTree::new(upload_limit_bytes_per_sec, 0)),
-                origin: upload_origin,
-                changed: RateLimitCancellation::default(),
-                next_torrent: AtomicU64::new(1),
+            compatibility_upload: Arc::new(HierarchicalRateLimiter {
+                service: upload_tree,
+                torrent: compatibility_torrent,
+                next_connection: AtomicU64::new(1),
             }),
             listen_port: Arc::new(AtomicU16::new(0)),
             listener_rebind_tx,
@@ -138,12 +174,24 @@ impl GlobalNetworkBudget {
         Arc::clone(&self.peer_slots).try_acquire_owned()
     }
 
+    pub(crate) fn download(&self) -> Arc<HierarchicalRateLimiter> {
+        Arc::clone(&self.compatibility_download)
+    }
+
+    pub(crate) fn upload(&self) -> Arc<HierarchicalRateLimiter> {
+        Arc::clone(&self.compatibility_upload)
+    }
+
     pub(crate) fn download_available_credit_bytes_for(&self, peer_id: RatePeerId) -> u64 {
         self.download_tree.available_credit_bytes(peer_id)
     }
 
     pub(crate) fn utp_runtime(&self) -> UtpRuntime {
         self.utp_runtime.clone()
+    }
+
+    pub(crate) fn upload_service(&self) -> SharedUploadService {
+        self.upload_service.clone()
     }
 
     pub(crate) async fn install_utp_endpoint(
@@ -209,6 +257,7 @@ impl GlobalNetworkBudget {
     }
 
     pub(crate) fn remove_transfer_peer(&self, peer_id: RatePeerId) {
+        self.source_admission.remove_source(peer_id);
         self.upload_tree.remove_peer(peer_id);
         self.download_tree.remove_peer(peer_id);
     }
@@ -254,12 +303,13 @@ impl GlobalNetworkBudget {
         peer_id: RatePeerId,
     ) -> Option<SourceRequestPermit> {
         self.source_admission_for_torrent(peer_id.torrent)?
-            .try_acquire()
+            .try_acquire(peer_id)
     }
 
     /// Clone a torrent-scoped admission handle once per request-fill batch.
-    /// The hot block path then uses semaphore atomics without taking the
-    /// process-wide torrent-map mutex for every block.
+    /// The hot path avoids the process-wide torrent-map mutex; it uses atomic
+    /// semaphore admission when uncontended and short FIFO turn locks only
+    /// while sources are competing for capacity.
     pub(crate) fn source_admission_for_torrent(
         &self,
         key: TorrentKey,
@@ -268,21 +318,341 @@ impl GlobalNetworkBudget {
     }
 }
 
+/// Compatibility view used by the reversible reference actors. It reserves
+/// and settles against the same hierarchical process rate tree as candidate
+/// peers; it is not a second global token bucket.
+pub(crate) struct HierarchicalRateLimiter {
+    service: Arc<HierarchicalRateService>,
+    torrent: TorrentKey,
+    next_connection: AtomicU64,
+}
+
+impl HierarchicalRateLimiter {
+    fn register_operation(&self) -> RatePeerId {
+        let mut current = self.next_connection.load(Ordering::Relaxed);
+        loop {
+            let next = current
+                .checked_add(1)
+                .expect("compatibility rate connection identity space exhausted");
+            match self.next_connection.compare_exchange_weak(
+                current,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    let peer_id = RatePeerId::new(
+                        self.torrent,
+                        ConnectionId {
+                            slot: current as u32,
+                            generation: (current >> 32) as u32,
+                        },
+                    );
+                    self.service.register_peer(peer_id);
+                    return peer_id;
+                }
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    pub(crate) async fn acquire(&self, bytes: u64) {
+        if bytes == 0 {
+            return;
+        }
+        let cancellation = RateLimitCancellation::default();
+        let generation = cancellation.generation();
+        let _ = self
+            .acquire_or_cancelled(bytes, &cancellation, generation)
+            .await;
+    }
+
+    pub(crate) async fn acquire_or_cancelled(
+        &self,
+        bytes: u64,
+        cancellation: &RateLimitCancellation,
+        generation: u64,
+    ) -> bool {
+        if bytes == 0 {
+            return cancellation.generation() == generation;
+        }
+        let peer_id = self.register_operation();
+        let result = self
+            .service
+            .acquire(peer_id, bytes, cancellation, generation)
+            .await;
+        let admitted = match result {
+            Ok(Some(grant)) if cancellation.generation() == generation => {
+                grant.settle(bytes);
+                true
+            }
+            Ok(Some(grant)) => {
+                drop(grant);
+                false
+            }
+            Ok(None) | Err(_) => false,
+        };
+        self.service.remove_peer(peer_id);
+        admitted
+    }
+}
+
+const LEGACY_RATE_BURST_BYTES: u64 = 64 * 1024;
+
+#[derive(Debug)]
+struct LegacyRateState {
+    limit_bytes_per_sec: Option<u64>,
+    tokens: u64,
+    updated_at: Instant,
+}
+
+/// Retained only for the rollback actor's per-torrent upload ceiling. Global
+/// limits use `HierarchicalRateLimiter` so both actor routes share one process
+/// rate tree.
+pub(crate) struct SharedRateLimiter {
+    state: Mutex<LegacyRateState>,
+    limit_changed: RateLimitCancellation,
+}
+
+impl SharedRateLimiter {
+    pub(crate) fn new(limit_bytes_per_sec: Option<u64>) -> Self {
+        let limit = limit_bytes_per_sec.filter(|limit| *limit > 0);
+        let tokens = limit
+            .map(|limit| limit.max(LEGACY_RATE_BURST_BYTES))
+            .unwrap_or(u64::MAX);
+        Self {
+            state: Mutex::new(LegacyRateState {
+                limit_bytes_per_sec: limit,
+                tokens,
+                updated_at: Instant::now(),
+            }),
+            limit_changed: RateLimitCancellation::default(),
+        }
+    }
+
+    pub(crate) fn set_limit(&self, limit_bytes_per_sec: Option<u64>) {
+        let limit = limit_bytes_per_sec.filter(|limit| *limit > 0);
+        let mut state = self.lock_state();
+        if state.limit_bytes_per_sec == limit {
+            return;
+        }
+        Self::refill(&mut state, Instant::now());
+        state.tokens = match (state.limit_bytes_per_sec, limit) {
+            (None, Some(_)) => 0,
+            (_, None) => u64::MAX,
+            (Some(_), Some(new_limit)) => state.tokens.min(new_limit.max(LEGACY_RATE_BURST_BYTES)),
+        };
+        state.limit_bytes_per_sec = limit;
+        state.updated_at = Instant::now();
+        drop(state);
+        self.limit_changed.cancel();
+    }
+
+    pub(crate) async fn acquire(&self, bytes: u64) {
+        let cancellation = RateLimitCancellation::default();
+        let generation = cancellation.generation();
+        let _ = self
+            .acquire_or_cancelled(bytes, &cancellation, generation)
+            .await;
+    }
+
+    pub(crate) async fn acquire_or_cancelled(
+        &self,
+        bytes: u64,
+        cancellation: &RateLimitCancellation,
+        generation: u64,
+    ) -> bool {
+        if bytes == 0 {
+            return cancellation.generation() == generation;
+        }
+        let mut remaining = bytes;
+        let mut limit_generation = self.limit_changed.generation();
+        loop {
+            if cancellation.generation() != generation {
+                return false;
+            }
+            let wait = {
+                let mut state = self.lock_state();
+                let Some(limit) = state.limit_bytes_per_sec else {
+                    return true;
+                };
+                let now = Instant::now();
+                Self::refill(&mut state, now);
+                let chunk = remaining.min(limit.max(LEGACY_RATE_BURST_BYTES));
+                if state.tokens >= chunk {
+                    state.tokens -= chunk;
+                    remaining -= chunk;
+                    if remaining == 0 {
+                        return cancellation.generation() == generation;
+                    }
+                    Duration::ZERO
+                } else {
+                    token_refill_delay(chunk - state.tokens, limit)
+                }
+            };
+            if wait.is_zero() {
+                tokio::select! {
+                    _ = tokio::task::yield_now() => {}
+                    _ = cancellation.wait_for_change(generation) => return false,
+                    _ = self.limit_changed.wait_for_change(limit_generation) => {
+                        limit_generation = self.limit_changed.generation();
+                    }
+                }
+            } else {
+                tokio::select! {
+                    _ = tokio::time::sleep(wait) => {}
+                    _ = cancellation.wait_for_change(generation) => return false,
+                    _ = self.limit_changed.wait_for_change(limit_generation) => {
+                        limit_generation = self.limit_changed.generation();
+                    }
+                }
+            }
+        }
+    }
+
+    fn lock_state(&self) -> MutexGuard<'_, LegacyRateState> {
+        match self.state.lock() {
+            Ok(state) => state,
+            Err(poisoned) => {
+                self.state.clear_poison();
+                poisoned.into_inner()
+            }
+        }
+    }
+
+    fn refill(state: &mut LegacyRateState, now: Instant) {
+        let Some(limit) = state.limit_bytes_per_sec else {
+            state.tokens = u64::MAX;
+            state.updated_at = now;
+            return;
+        };
+        let elapsed = now.saturating_duration_since(state.updated_at);
+        let refill = elapsed.as_nanos().saturating_mul(u128::from(limit)) / 1_000_000_000;
+        let refill = refill.min(u128::from(u64::MAX)) as u64;
+        state.tokens = state
+            .tokens
+            .saturating_add(refill)
+            .min(limit.max(LEGACY_RATE_BURST_BYTES));
+        state.updated_at = now;
+    }
+}
+
+fn token_refill_delay(missing_bytes: u64, limit_bytes_per_sec: u64) -> Duration {
+    if missing_bytes == 0 {
+        return Duration::ZERO;
+    }
+    let rate = u128::from(limit_bytes_per_sec.max(1));
+    let wait_nanos = u128::from(missing_bytes)
+        .saturating_mul(1_000_000_000)
+        .saturating_add(rate.saturating_sub(1))
+        / rate;
+    let seconds = wait_nanos / 1_000_000_000;
+    if seconds > u128::from(u64::MAX) {
+        return Duration::MAX;
+    }
+    Duration::new(seconds as u64, (wait_nanos % 1_000_000_000) as u32)
+}
+
 struct SourceAdmissionService {
     process_slots: Arc<Semaphore>,
+    process_turns: Arc<Mutex<SourceTurnQueue<TorrentKey>>>,
+    process_turn_pending: Arc<AtomicBool>,
     per_torrent_limit: usize,
     torrent_slots: Mutex<HashMap<TorrentKey, Arc<TorrentSourceSlots>>>,
 }
 
 struct TorrentSourceSlots {
+    key: TorrentKey,
     slots: Arc<Semaphore>,
     active: AtomicBool,
+    source_turns: Mutex<SourceTurnQueue<RatePeerId>>,
+    source_turn_pending: AtomicBool,
+}
+
+struct SourceTurnQueue<T> {
+    pending: VecDeque<SourceTurnEntry<T>>,
+}
+
+struct SourceTurnEntry<T> {
+    key: T,
+    requested_at: Instant,
+    claimed: bool,
+}
+
+impl<T: Copy + Eq> SourceTurnQueue<T> {
+    fn new() -> Self {
+        Self {
+            pending: VecDeque::new(),
+        }
+    }
+
+    fn request(&mut self, key: T, now: Instant) {
+        self.pending.retain(|entry| {
+            now.saturating_duration_since(entry.requested_at) <= SOURCE_TURN_IDLE_TTL
+        });
+        if let Some(entry) = self.pending.iter_mut().find(|entry| entry.key == key) {
+            entry.requested_at = now;
+        } else {
+            self.pending.push_back(SourceTurnEntry {
+                key,
+                requested_at: now,
+                claimed: false,
+            });
+        }
+    }
+
+    fn is_turn(&self, key: T) -> bool {
+        self.pending.front().is_some_and(|entry| entry.key == key)
+    }
+
+    fn claim_turn(&mut self, key: T) -> bool {
+        let Some(entry) = self.pending.front_mut().filter(|entry| entry.key == key) else {
+            return false;
+        };
+        if entry.claimed {
+            return false;
+        }
+        entry.claimed = true;
+        true
+    }
+
+    fn release_claim(&mut self, key: T) {
+        if let Some(entry) = self.pending.front_mut().filter(|entry| entry.key == key) {
+            entry.claimed = false;
+        }
+    }
+
+    fn complete_turn(&mut self, key: T) {
+        if self.is_turn(key) {
+            self.pending.pop_front();
+        }
+    }
+
+    fn remove(&mut self, key: T) {
+        self.pending.retain(|entry| entry.key != key);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.pending.is_empty()
+    }
+}
+
+fn lock_source_turns<T>(turns: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    match turns.lock() {
+        Ok(turns) => turns,
+        Err(poisoned) => {
+            turns.clear_poison();
+            poisoned.into_inner()
+        }
+    }
 }
 
 impl SourceAdmissionService {
     fn new(process_limit: usize, per_torrent_limit: usize) -> Self {
         Self {
             process_slots: Arc::new(Semaphore::new(process_limit.max(1))),
+            process_turns: Arc::new(Mutex::new(SourceTurnQueue::new())),
+            process_turn_pending: Arc::new(AtomicBool::new(false)),
             per_torrent_limit: per_torrent_limit.max(1),
             torrent_slots: Mutex::new(HashMap::new()),
         }
@@ -291,8 +661,11 @@ impl SourceAdmissionService {
     fn register_torrent(&self, key: TorrentKey) {
         self.lock_torrents().entry(key).or_insert_with(|| {
             Arc::new(TorrentSourceSlots {
+                key,
                 slots: Arc::new(Semaphore::new(self.per_torrent_limit)),
                 active: AtomicBool::new(true),
+                source_turns: Mutex::new(SourceTurnQueue::new()),
+                source_turn_pending: AtomicBool::new(false),
             })
         });
     }
@@ -301,14 +674,38 @@ impl SourceAdmissionService {
         let mut torrents = self.lock_torrents();
         if let Some(torrent) = torrents.get(&key) {
             torrent.active.store(false, Ordering::Release);
+            lock_source_turns(&torrent.source_turns).pending.clear();
+            torrent.source_turn_pending.store(false, Ordering::Release);
         }
         torrents.remove(&key);
+        let mut process_turns = lock_source_turns(&self.process_turns);
+        process_turns.remove(key);
+        self.process_turn_pending
+            .store(!process_turns.is_empty(), Ordering::Release);
+    }
+
+    fn remove_source(&self, peer_id: RatePeerId) {
+        if let Some(torrent) = self.lock_torrents().get(&peer_id.torrent).cloned() {
+            let mut source_turns = lock_source_turns(&torrent.source_turns);
+            source_turns.remove(peer_id);
+            if source_turns.is_empty() {
+                torrent.source_turn_pending.store(false, Ordering::Release);
+                let mut process_turns = lock_source_turns(&self.process_turns);
+                process_turns.remove(peer_id.torrent);
+                self.process_turn_pending
+                    .store(!process_turns.is_empty(), Ordering::Release);
+            } else {
+                torrent.source_turn_pending.store(true, Ordering::Release);
+            }
+        }
     }
 
     fn for_torrent(&self, key: TorrentKey) -> Option<SourceAdmissionTorrent> {
         let torrent_slots = self.lock_torrents().get(&key).cloned()?;
         Some(SourceAdmissionTorrent {
             process_slots: Arc::clone(&self.process_slots),
+            process_turns: Arc::clone(&self.process_turns),
+            process_turn_pending: Arc::clone(&self.process_turn_pending),
             torrent_slots,
         })
     }
@@ -328,18 +725,84 @@ impl SourceAdmissionService {
 #[derive(Clone)]
 pub(crate) struct SourceAdmissionTorrent {
     process_slots: Arc<Semaphore>,
+    process_turns: Arc<Mutex<SourceTurnQueue<TorrentKey>>>,
+    process_turn_pending: Arc<AtomicBool>,
     torrent_slots: Arc<TorrentSourceSlots>,
 }
 
 impl SourceAdmissionTorrent {
-    pub(crate) fn try_acquire(&self) -> Option<SourceRequestPermit> {
+    pub(crate) fn try_acquire(&self, peer_id: RatePeerId) -> Option<SourceRequestPermit> {
+        if peer_id.torrent != self.torrent_slots.key {
+            return None;
+        }
         if !self.torrent_slots.active.load(Ordering::Acquire) {
             return None;
         }
-        let torrent = self.torrent_slots.slots.clone().try_acquire_owned().ok()?;
-        let process = self.process_slots.clone().try_acquire_owned().ok()?;
-        if !self.torrent_slots.active.load(Ordering::Acquire) {
+        if !self
+            .torrent_slots
+            .source_turn_pending
+            .load(Ordering::Acquire)
+            && !self.process_turn_pending.load(Ordering::Acquire)
+        {
+            if let Ok(torrent) = self.torrent_slots.slots.clone().try_acquire_owned() {
+                if let Ok(process) = self.process_slots.clone().try_acquire_owned() {
+                    if self.torrent_slots.active.load(Ordering::Acquire) {
+                        return Some(SourceRequestPermit {
+                            _process: process,
+                            _torrent: torrent,
+                        });
+                    }
+                    return None;
+                }
+            }
+        }
+        {
+            let mut source_turns = lock_source_turns(&self.torrent_slots.source_turns);
+            source_turns.request(peer_id, Instant::now());
+            self.torrent_slots
+                .source_turn_pending
+                .store(!source_turns.is_empty(), Ordering::Release);
+            if !source_turns.claim_turn(peer_id) {
+                return None;
+            }
+        }
+        let Some(torrent) = self.torrent_slots.slots.clone().try_acquire_owned().ok() else {
+            lock_source_turns(&self.torrent_slots.source_turns).release_claim(peer_id);
             return None;
+        };
+        let process = {
+            let mut process_turns = lock_source_turns(&self.process_turns);
+            process_turns.request(peer_id.torrent, Instant::now());
+            self.process_turn_pending
+                .store(!process_turns.is_empty(), Ordering::Release);
+            if !process_turns.claim_turn(peer_id.torrent) {
+                drop(process_turns);
+                lock_source_turns(&self.torrent_slots.source_turns).release_claim(peer_id);
+                return None;
+            }
+            let Some(process) = self.process_slots.clone().try_acquire_owned().ok() else {
+                process_turns.release_claim(peer_id.torrent);
+                drop(process_turns);
+                lock_source_turns(&self.torrent_slots.source_turns).release_claim(peer_id);
+                return None;
+            };
+            if !self.torrent_slots.active.load(Ordering::Acquire) {
+                process_turns.release_claim(peer_id.torrent);
+                drop(process_turns);
+                lock_source_turns(&self.torrent_slots.source_turns).release_claim(peer_id);
+                return None;
+            }
+            process_turns.complete_turn(peer_id.torrent);
+            self.process_turn_pending
+                .store(!process_turns.is_empty(), Ordering::Release);
+            process
+        };
+        {
+            let mut source_turns = lock_source_turns(&self.torrent_slots.source_turns);
+            source_turns.complete_turn(peer_id);
+            self.torrent_slots
+                .source_turn_pending
+                .store(!source_turns.is_empty(), Ordering::Release);
         }
         Some(SourceRequestPermit {
             _process: process,
@@ -628,7 +1091,7 @@ mod tests {
     use super::*;
 
     fn rate_peer(torrent: TorrentKey, slot: u32) -> RatePeerId {
-        TransferPeerId::new(
+        RatePeerId::new(
             torrent,
             ConnectionId {
                 slot,
@@ -659,16 +1122,21 @@ mod tests {
         // webseed connection. Both enter through the same admission method.
         let first = admission.for_torrent(first_torrent).unwrap();
         let second = admission.for_torrent(second_torrent).unwrap();
-        let peer_request = first.try_acquire().unwrap();
-        let webseed_request = first.try_acquire().unwrap();
-        assert!(first.try_acquire().is_none());
+        let peer = rate_peer(first_torrent, 0);
+        let webseed = rate_peer(first_torrent, 1);
+        let second_peer = rate_peer(second_torrent, 0);
+        let peer_request = first.try_acquire(peer).unwrap();
+        let webseed_request = first.try_acquire(webseed).unwrap();
+        assert!(first.try_acquire(peer).is_none());
 
-        let other_torrent_request = second.try_acquire().unwrap();
-        assert!(second.try_acquire().is_none());
+        let other_torrent_request = second.try_acquire(second_peer).unwrap();
+        assert!(second.try_acquire(second_peer).is_none());
 
         drop(webseed_request);
-        let reopened = first.try_acquire().unwrap();
-        assert!(second.try_acquire().is_none());
+        let reopened = second
+            .try_acquire(second_peer)
+            .expect("the torrent already waiting at the process turn gets the freed slot");
+        assert!(first.try_acquire(peer).is_none());
         drop(reopened);
         drop(peer_request);
         drop(other_torrent_request);
@@ -685,12 +1153,12 @@ mod tests {
 
         budget.remove_transfer_torrent(torrent);
 
-        assert!(cached.try_acquire().is_none());
+        assert!(cached.try_acquire(rate_peer(torrent, 0)).is_none());
         budget.register_download_torrent(torrent, None);
         assert!(budget
             .source_admission_for_torrent(torrent)
             .expect("re-registered torrent gets a fresh handle")
-            .try_acquire()
+            .try_acquire(rate_peer(torrent, 0))
             .is_some());
     }
 
@@ -710,16 +1178,45 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!(budget
-            .try_acquire_source_request(rate_peer(first_torrent, 0))
+            .try_acquire_source_request(rate_peer(second_torrent, 0))
             .is_none());
         assert!(budget
-            .try_acquire_source_request(rate_peer(second_torrent, 0))
+            .try_acquire_source_request(rate_peer(first_torrent, 0))
             .is_none());
 
         drop(first_torrent_requests.pop());
-        assert!(budget
+        let other_torrent_request = budget
             .try_acquire_source_request(rate_peer(second_torrent, 0))
+            .expect("queued torrent receives the next released process slot");
+        drop(other_torrent_request);
+        assert!(budget
+            .try_acquire_source_request(rate_peer(first_torrent, 0))
             .is_some());
+    }
+
+    #[test]
+    fn source_turn_queue_rotates_demand_and_expires_idle_sources() {
+        let now = Instant::now();
+        let torrent = TorrentKey(7);
+        let a = rate_peer(torrent, 1);
+        let b = rate_peer(torrent, 2);
+        let mut turns = SourceTurnQueue::new();
+
+        turns.request(a, now);
+        turns.request(b, now);
+        assert!(turns.is_turn(a));
+        assert!(turns.claim_turn(a));
+        assert!(!turns.claim_turn(a));
+        turns.release_claim(a);
+        turns.complete_turn(a);
+        assert!(turns.is_turn(b));
+        turns.request(a, now + Duration::from_millis(1));
+        turns.complete_turn(b);
+        assert!(turns.is_turn(a));
+
+        turns.request(b, now + SOURCE_TURN_IDLE_TTL + Duration::from_secs(1));
+        assert!(turns.is_turn(b));
+        assert!(!turns.pending.iter().any(|entry| entry.key == a));
     }
 
     #[test]
@@ -766,6 +1263,68 @@ mod tests {
 
         budget.set_download_limit(None);
         waiter.await.unwrap().unwrap().unwrap().settle(1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn reference_rate_compatibility_spends_the_candidate_global_bucket() {
+        let budget = GlobalNetworkBudget::new(2, Some(1), None);
+        let torrent = budget.new_transfer_torrent_key();
+        budget.register_upload_torrent(torrent, None);
+        budget.register_download_torrent(torrent, None);
+        let peer = rate_peer(torrent, 7);
+        budget.register_transfer_peer(peer);
+
+        let compatibility = budget.download();
+        let cancellation = RateLimitCancellation::default();
+        assert!(
+            compatibility
+                .acquire_or_cancelled(32 * 1024, &cancellation, cancellation.generation(),)
+                .await
+        );
+
+        let waiting_budget = budget.clone();
+        let waiter = tokio::spawn(async move {
+            let cancellation = RateLimitCancellation::default();
+            waiting_budget
+                .acquire_download(peer, 1, &cancellation, cancellation.generation())
+                .await
+        });
+        tokio::task::yield_now().await;
+        assert!(!waiter.is_finished());
+
+        budget.set_download_limit(None);
+        waiter.await.unwrap().unwrap().unwrap().settle(1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancelled_reference_rate_wait_removes_its_temporary_peer() {
+        let budget = GlobalNetworkBudget::new(1, Some(1), None);
+        let compatibility = budget.download();
+        let cancellation = RateLimitCancellation::default();
+        let generation = cancellation.generation();
+        assert!(
+            compatibility
+                .acquire_or_cancelled(32 * 1024, &cancellation, generation)
+                .await
+        );
+
+        let waiting_limiter = Arc::clone(&compatibility);
+        let waiting_cancellation = cancellation.clone();
+        let waiter = tokio::spawn(async move {
+            waiting_limiter
+                .acquire_or_cancelled(1, &waiting_cancellation, generation)
+                .await
+        });
+        tokio::task::yield_now().await;
+        assert_eq!(compatibility.service.lock_tree().waiting_peers(8).len(), 1);
+
+        cancellation.cancel();
+        assert!(!waiter.await.unwrap());
+        assert!(compatibility
+            .service
+            .lock_tree()
+            .waiting_peers(8)
+            .is_empty());
     }
 
     #[tokio::test(start_paused = true)]

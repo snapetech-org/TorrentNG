@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:torrentng:schema:transfer-task-network-v1",
+  "title": "TorrentNG task-scoped client and seeder network topology",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "suffix", "target_namespace", "seed_namespace", "bridge",
+    "bridge_ifindex", "subnet", "gateway", "target", "seed", "artifact_sha256"
+  ],
+  "properties": {
+    "schema_version": { "const": "transfer-task-network-v1" },
+    "suffix": { "type": "string", "pattern": "^[a-f0-9]{8,12}$" },
+    "target_namespace": { "type": "string", "pattern": "^tngt-[a-f0-9]{8,12}$" },
+    "seed_namespace": { "type": "string", "pattern": "^tngs-[a-f0-9]{8,12}$" },
+    "bridge": { "type": "string", "pattern": "^tngb[a-f0-9]{8,12}$" },
+    "bridge_ifindex": { "$ref": "#/$defs/positive_integer" },
+    "subnet": { "type": "string", "pattern": "^[0-9]{1,3}(?:\\.[0-9]{1,3}){3}/24$" },
+    "gateway": { "type": "string", "format": "ipv4" },
+    "target": { "$ref": "#/$defs/endpoint" },
+    "seed": { "$ref": "#/$defs/endpoint" },
+    "artifact_sha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "positive_integer": { "type": "integer", "minimum": 1 },
+    "namespace_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["device", "inode"],
+      "properties": {
+        "device": { "type": "integer", "minimum": 0 },
+        "inode": { "$ref": "#/$defs/positive_integer" }
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "address", "interface", "ifindex", "host_interface", "host_ifindex",
+        "namespace_identity"
+      ],
+      "properties": {
+        "address": { "type": "string", "format": "ipv4" },
+        "interface": { "const": "tngveth0" },
+        "ifindex": { "$ref": "#/$defs/positive_integer" },
+        "host_interface": { "type": "string", "pattern": "^tng[hs][a-f0-9]{8,12}$" },
+        "host_ifindex": { "$ref": "#/$defs/positive_integer" },
+        "namespace_identity": { "$ref": "#/$defs/namespace_identity" }
+      }
+    }
+  }
+}

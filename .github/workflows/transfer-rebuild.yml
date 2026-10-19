@@ -1,0 +1,134 @@
+name: Transfer Rebuild Qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_dedicated_hardware:
+        description: "Use the protected TorrentNG transfer performance runner"
+        required: true
+        default: false
+        type: boolean
+      storage_root:
+        description: "Pre-provisioned disposable directory on the dedicated storage target"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: transfer-rebuild-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  hosted-correctness:
+    name: Hosted transfer-core correctness
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Route temporary files to runner temp
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
+          mkdir -p "$RUNNER_TEMP"
+          runner_temp_root="$(realpath -e -- "$RUNNER_TEMP")"
+          test -d "$runner_temp_root"
+          test -w "$runner_temp_root"
+          printf 'TMPDIR=%s\n' "$runner_temp_root" >> "$GITHUB_ENV"
+
+      - name: Checkout exact dispatch revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install Rust 1.88.0
+        uses: dtolnay/rust-toolchain@688313b0823df1393bcebb1b4add0438a6d36884 # 1.88.0
+
+      - name: Build and test the transfer core
+        env:
+          RUSTUP_TOOLCHAIN: "1.88.0"
+        run: |
+          cargo test --locked -p rt-db
+          cargo test --locked -p rt-peer-wire
+          cargo test --locked -p rt-piece-picker
+          cargo test --locked -p rt-utp
+          cargo test --locked -p rt-storage --lib
+          cargo test --locked -p rt-engine --lib
+          cargo test --locked -p rt-api-native --lib
+          cargo test --locked -p rt-metrics --test scale live_native_engine_catalog_scrape_mixed_load_1k -- --nocapture
+
+      - name: Install pinned transfer-harness dependencies
+        run: |
+          python3 -m venv "$RUNNER_TEMP/transfer-rebuild-venv"
+          "$RUNNER_TEMP/transfer-rebuild-venv/bin/python" -m pip install \
+            --disable-pip-version-check \
+            -r scripts/transfer_rebuild/requirements.txt
+
+      - name: Run harness regression sources
+        run: |
+          set -euo pipefail
+          python="$RUNNER_TEMP/transfer-rebuild-venv/bin/python"
+          shopt -s nullglob
+          sources=(scripts/test_transfer_rebuild_*.py)
+          if (( ${#sources[@]} == 0 )); then
+            echo "no transfer rebuild regression sources found" >&2
+            exit 1
+          fi
+          for source in "${sources[@]}"; do
+            "$python" "$source"
+          done
+
+  dedicated-hardware:
+    name: Dedicated storage and performance qualification
+    if: github.ref == 'refs/heads/main' && inputs.run_dedicated_hardware == true
+    needs: hosted-correctness
+    runs-on: [self-hosted, linux, x64, torrentng-transfer-perf]
+    environment: transfer-rebuild-hardware
+    timeout-minutes: 180
+    steps:
+      - name: Require a configured disposable storage target
+        shell: bash
+        env:
+          STORAGE_ROOT: ${{ inputs.storage_root }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${STORAGE_ROOT:-}" ]]; then
+            echo "storage_root must name the pre-provisioned disposable storage directory" >&2
+            exit 1
+          fi
+          test -d "$STORAGE_ROOT"
+          test ! -L "$STORAGE_ROOT"
+
+      - name: Checkout exact dispatch revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install Rust stable with benchmark tools
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Capture host and run diagnostics
+        shell: bash
+        env:
+          STORAGE_ROOT: ${{ inputs.storage_root }}
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/transfer-rebuild-${GITHUB_RUN_ID}"
+          mkdir -m 700 "$output"
+          printf 'TRANSFER_REBUILD_EVIDENCE=%s\n' "$output" >> "$GITHUB_ENV"
+          scripts/transfer_rebuild/hardware_lane.sh "$output" "$STORAGE_ROOT"
+
+      - name: Upload immutable run evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: transfer-rebuild-hardware-${{ github.run_id }}
+          path: ${{ env.TRANSFER_REBUILD_EVIDENCE }}
+          if-no-files-found: warn
+          retention-days: 90

@@ -182,8 +182,12 @@ outbound `UtpStream` peer-wire path. The default `TNG_UTP_OUTGOING=auto`
 policy keeps tracker-discovered peers on TCP, attempts uTP first for DHT, PEX,
 and manually added peers, and forces TCP for private torrents. Explicit
 `TNG_UTP_OUTGOING=prefer` attempts uTP for eligible peers and falls back to TCP
-if the uTP connect fails; `TNG_UTP_OUTGOING=only` disables that fallback. The
-legacy `TNG_ENABLE_UTP_OUTGOING` flag maps to `prefer`.
+if the uTP connect fails or does not complete within three seconds;
+`TNG_UTP_OUTGOING=only` disables that fallback and returns a bounded connection
+failure after the same three-second attempt. The legacy
+`TNG_ENABLE_UTP_OUTGOING` flag maps to `prefer`. The same connect deadline is
+used by v1, pure-v2, reference-actor, and metadata-fetch paths so a silent UDP
+peer cannot hold a transfer slot indefinitely before TCP fallback.
 The engine also has an incoming shared `UtpEndpoint` peer listener behind
 `TNG_UTP_INCOMING=1`; accepted streams are routed by peer-wire handshake to the
 same torrent tasks as TCP peers. Magnet metadata fetch can use uTP through the

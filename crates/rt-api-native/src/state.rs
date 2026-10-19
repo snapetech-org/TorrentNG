@@ -4,6 +4,7 @@ use rt_api_model::{
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex as StdMutex;
 use std::{
+    borrow::Cow,
     cmp::Ordering,
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     net::IpAddr,
@@ -156,7 +157,7 @@ struct CachedTorrentSnapshot {
 
 #[derive(Debug, Clone)]
 struct TorrentFilterIndex {
-    by_hash: Arc<HashMap<String, usize>>,
+    by_hash: Arc<HashMap<CompactHashKey, usize>>,
     by_state: HashMap<String, Arc<ChunkedBitSet>>,
     by_media_type: HashMap<String, Arc<ChunkedBitSet>>,
     by_category: HashMap<String, Arc<ChunkedBitSet>>,
@@ -168,6 +169,65 @@ struct TorrentFilterIndex {
     by_text_byte: HashMap<u8, Arc<ChunkedBitSet>>,
     by_text_bigram: HashMap<[u8; 2], Arc<ChunkedBitSet>>,
     by_text_trigram: HashMap<[u8; 3], Arc<ChunkedBitSet>>,
+}
+
+/// Snapshot indexes keep canonical v1/v2 hashes in their wire-sized form.
+/// Noncanonical test and placeholder keys retain their exact string semantics.
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+enum CompactHashKey {
+    V1([u8; 20]),
+    V2([u8; 32]),
+    Other(String),
+}
+
+impl CompactHashKey {
+    fn from_hash(value: &str) -> Self {
+        if let Some(hash) = decode_lower_hex::<20>(value) {
+            return Self::V1(hash);
+        }
+        if let Some(hash) = decode_lower_hex::<32>(value) {
+            return Self::V2(hash);
+        }
+        Self::Other(value.to_owned())
+    }
+
+    fn lookup_text<'a>(&'a self) -> Cow<'a, str> {
+        match self {
+            Self::V1(hash) => Cow::Owned(encode_hex(hash)),
+            Self::V2(hash) => Cow::Owned(encode_hex(hash)),
+            Self::Other(value) => Cow::Borrowed(value),
+        }
+    }
+}
+
+fn decode_lower_hex<const N: usize>(value: &str) -> Option<[u8; N]> {
+    let encoded = value.as_bytes();
+    if encoded.len() != N.checked_mul(2)? {
+        return None;
+    }
+    let mut decoded = [0u8; N];
+    for (index, pair) in encoded.chunks_exact(2).enumerate() {
+        decoded[index] = lower_hex_nibble(pair[0])?.checked_mul(16)? + lower_hex_nibble(pair[1])?;
+    }
+    Some(decoded)
+}
+
+fn lower_hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        _ => None,
+    }
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len().saturating_mul(2));
+    for byte in bytes {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
 }
 
 /// Shared application state threaded through axum handlers.
@@ -420,18 +480,25 @@ fn apply_snapshot_changes(
 ) -> (ChunkedVec<TorrentSnapshotItem>, TorrentFilterIndex) {
     let changed_hashes = changes
         .iter()
-        .map(|change| change.info_hash.clone())
+        .map(|change| CompactHashKey::from_hash(&change.info_hash))
         .collect::<HashSet<_>>();
     apply_snapshot_hashes(registry, previous, &changed_hashes)
 }
 
-fn changed_hashes_since(registry: &SessionRegistry, revision: u64) -> Option<HashSet<String>> {
+fn changed_hashes_since(
+    registry: &SessionRegistry,
+    revision: u64,
+) -> Option<HashSet<CompactHashKey>> {
     let mut cursor = revision;
     let mut changed_hashes = HashSet::new();
     loop {
         let page = registry.delta_since_page(cursor, REGISTRY_DELTA_PAGE_MAX)?;
-        changed_hashes.extend(page.changed);
-        changed_hashes.extend(page.removed);
+        changed_hashes.extend(
+            page.changed
+                .into_iter()
+                .chain(page.removed)
+                .map(|hash| CompactHashKey::from_hash(&hash)),
+        );
         cursor = page.through_revision;
         if !page.has_more {
             return (cursor == page.current_revision).then_some(changed_hashes);
@@ -442,28 +509,35 @@ fn changed_hashes_since(registry: &SessionRegistry, revision: u64) -> Option<Has
 fn apply_snapshot_hashes(
     registry: &SessionRegistry,
     previous: &TorrentSnapshot,
-    changed_hashes: &HashSet<String>,
+    changed_hashes: &HashSet<CompactHashKey>,
 ) -> (ChunkedVec<TorrentSnapshotItem>, TorrentFilterIndex) {
     let mut replacements = Vec::new();
     let mut structural_change = false;
-    for info_hash in changed_hashes {
-        match registry.get(info_hash) {
+    for hash_key in changed_hashes {
+        let previous_index = previous.filters.by_hash.get(hash_key).copied();
+        let lookup = previous_index
+            .and_then(|index| previous.torrents.get(index))
+            .map(|item| Cow::Borrowed(item.summary.info_hash.as_str()))
+            .unwrap_or_else(|| hash_key.lookup_text());
+        match registry.get(lookup.as_ref()) {
             Some(entry) => {
                 let item = TorrentSnapshotItem {
                     summary: torrent_summary(&entry),
                     amount_left: entry.amount_left,
                     name_sort_key: entry.name.to_ascii_lowercase(),
                 };
-                if let Some(index) = previous.filters.by_hash.get(info_hash).copied() {
+                if let Some(index) = previous_index {
                     if let Some(old) = previous.torrents.get(index) {
                         replacements.push((index, old.clone(), item));
+                    } else {
+                        structural_change = true;
                     }
                 } else {
                     structural_change = true;
                 }
             }
             None => {
-                if previous.filters.by_hash.contains_key(info_hash) {
+                if previous_index.is_some() {
                     structural_change = true;
                 }
             }
@@ -609,7 +683,7 @@ impl TorrentSnapshot {
 }
 
 fn build_filter_index(torrents: &ChunkedVec<TorrentSnapshotItem>) -> TorrentFilterIndex {
-    let mut by_hash = HashMap::<String, usize>::new();
+    let mut by_hash = HashMap::<CompactHashKey, usize>::new();
     let mut by_state = HashMap::<String, Vec<usize>>::new();
     let mut by_media_type = HashMap::<String, Vec<usize>>::new();
     let mut by_category = HashMap::<String, Vec<usize>>::new();
@@ -618,7 +692,7 @@ fn build_filter_index(torrents: &ChunkedVec<TorrentSnapshotItem>) -> TorrentFilt
     let mut by_text_bigram = HashMap::<[u8; 2], Vec<usize>>::new();
     let mut by_text_trigram = HashMap::<[u8; 3], Vec<usize>>::new();
     for (index, item) in torrents.iter().enumerate() {
-        by_hash.insert(item.summary.info_hash.clone(), index);
+        by_hash.insert(CompactHashKey::from_hash(&item.summary.info_hash), index);
         add_text_ngrams(
             &item.summary.name,
             index,
@@ -1144,6 +1218,30 @@ impl Default for AppState {
 mod tests {
     use super::*;
     use rt_session::TorrentEntry;
+
+    #[test]
+    fn snapshot_hash_keys_compact_canonical_hashes_and_preserve_other_text() {
+        let v1 = "ab".repeat(20);
+        let v1_key = CompactHashKey::from_hash(&v1);
+        assert!(matches!(&v1_key, CompactHashKey::V1(_)));
+        assert_eq!(v1_key.lookup_text().as_ref(), v1.as_str());
+
+        let v2 = "cd".repeat(32);
+        let v2_key = CompactHashKey::from_hash(&v2);
+        assert!(matches!(&v2_key, CompactHashKey::V2(_)));
+        assert_eq!(v2_key.lookup_text().as_ref(), v2.as_str());
+
+        let placeholder = "TestHash-Upper";
+        let other_key = CompactHashKey::from_hash(placeholder);
+        assert!(matches!(&other_key, CompactHashKey::Other(_)));
+        assert_eq!(other_key.lookup_text().as_ref(), placeholder);
+
+        let uppercase_hash = v1.to_ascii_uppercase();
+        assert!(matches!(
+            CompactHashKey::from_hash(&uppercase_hash),
+            CompactHashKey::Other(_)
+        ));
+    }
 
     #[tokio::test]
     async fn login_attempt_limiter_bounds_failures_and_clears_after_success() {

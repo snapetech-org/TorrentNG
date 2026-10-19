@@ -18,6 +18,7 @@ import json
 import math
 import os
 import re
+import shutil
 import socket
 import stat
 import subprocess
@@ -28,7 +29,9 @@ import urllib.request
 import xmlrpc.client
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
+
+from strict_json import StrictJsonError, loads as strict_json_loads
 
 
 SCHEMA_VERSION = "transfer-client-observation-v1"
@@ -313,9 +316,12 @@ class HttpJson:
              form: dict[str, str] | None = None,
              headers: dict[str, str] | None = None) -> Any:
         try:
-            return json.loads(self.request(path, method=method, body=body, form=form, headers=headers))
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise AdapterError(f"{path} did not return valid JSON") from error
+            return strict_json_loads(
+                self.request(path, method=method, body=body, form=form, headers=headers),
+                label=f"{path} response",
+            )
+        except StrictJsonError as error:
+            raise AdapterError(f"{path} did not return strict JSON") from error
 
     def text(self, path: str, *, method: str = "GET", body: Any = None,
              form: dict[str, str] | None = None,
@@ -359,8 +365,8 @@ def _docker_launch_config(
             text=True,
             timeout=10,
         ).stdout.strip()
-        inspected = json.loads(raw)
-    except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as error:
+        inspected = strict_json_loads(raw, label="container inspect")
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError, StrictJsonError) as error:
         raise AdapterError(f"cannot read running launch settings for {container!r}") from error
     if not isinstance(inspected, dict) or not isinstance(inspected.get("State"), dict):
         raise AdapterError("docker inspect returned an unexpected container record")
@@ -504,8 +510,8 @@ def _docker_identity(profile: dict[str, Any], *, capture_command: bool = False) 
             text=True,
             timeout=10,
         ).stdout.strip()
-        repo_digests = json.loads(digests_raw)
-    except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as error:
+        repo_digests = strict_json_loads(digests_raw, label="container image inspect")
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError, StrictJsonError) as error:
         raise AdapterError(f"cannot inspect pinned container {container!r}") from error
     if not isinstance(repo_digests, list) or image_ref not in repo_digests:
         raise AdapterError(f"running image does not include pinned digest {image_ref}")
@@ -628,12 +634,198 @@ def _binary_identity(profile: dict[str, Any]) -> dict[str, Any]:
     return identity
 
 
-def _verify_native_http_listener(parsed: urllib.parse.SplitResult,
-                                runtime_identity: dict[str, Any] | None) -> None:
+def _task_local_api_context(profile: dict[str, Any]) -> dict[str, Any] | None:
+    context = profile.get("_task_local_api")
+    if context is None:
+        return None
+    if not isinstance(context, dict) or set(context) != {
+        "address", "namespace", "namespace_identity", "subnet", "interface", "ifindex",
+        "topology_sha256",
+    }:
+        raise AdapterError("task-local API context is malformed")
+    name = context.get("namespace")
+    identity = context.get("namespace_identity")
+    interface = context.get("interface")
+    if (
+        not isinstance(name, str)
+        or re.fullmatch(r"tng[ts]-[a-f0-9]{8,12}", name) is None
+        or not isinstance(identity, dict)
+        or set(identity) != {"device", "inode"}
+        or isinstance(identity.get("device"), bool)
+        or not isinstance(identity.get("device"), int)
+        or identity["device"] < 0
+        or isinstance(identity.get("inode"), bool)
+        or not isinstance(identity.get("inode"), int)
+        or identity["inode"] <= 0
+        or interface != "tngveth0"
+        or isinstance(context.get("ifindex"), bool)
+        or not isinstance(context.get("ifindex"), int)
+        or context["ifindex"] <= 0
+        or not isinstance(context.get("topology_sha256"), str)
+        or SHA256_RE.fullmatch(context["topology_sha256"]) is None
+    ):
+        raise AdapterError("task-local API context has an invalid namespace or interface identity")
+    try:
+        subnet = ipaddress.ip_network(context.get("subnet"), strict=True)
+        address = ipaddress.ip_address(context.get("address"))
+    except (TypeError, ValueError) as error:
+        raise AdapterError("task-local API context has an invalid address or subnet") from error
+    host_offset = 3 if name.startswith("tngt-") else 2
+    if (
+        not isinstance(subnet, ipaddress.IPv4Network)
+        or subnet.prefixlen != 24
+        or not subnet.subnet_of(ipaddress.ip_network("198.18.0.0/15"))
+        or not isinstance(address, ipaddress.IPv4Address)
+        or address not in subnet
+        or address != subnet.network_address + host_offset
+    ):
+        raise AdapterError("task-local API address does not match its isolated target subnet")
+    return context
+
+
+def _verify_task_local_namespace(pid: int, context: Mapping[str, Any]) -> None:
+    namespace = context["namespace"]
+    identity = context["namespace_identity"]
+    try:
+        namespace_fd = os.open(
+            "/run/netns",
+            os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+        try:
+            descriptor = os.open(
+                namespace,
+                os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                dir_fd=namespace_fd,
+            )
+        finally:
+            os.close(namespace_fd)
+        try:
+            named_identity = os.fstat(descriptor)
+        finally:
+            os.close(descriptor)
+        process_namespace = os.stat(f"/proc/{pid}/ns/net")
+    except OSError as error:
+        raise AdapterError("cannot recheck the task-local network namespace identity") from error
+    expected = (identity["device"], identity["inode"])
+    if (named_identity.st_dev, named_identity.st_ino) != expected or (
+        process_namespace.st_dev, process_namespace.st_ino
+    ) != expected:
+        raise AdapterError("client no longer runs in the recorded task network namespace")
+
+    ip = shutil.which("ip")
+    if ip is None:
+        raise AdapterError("iproute2 is required to verify the task-local client interface")
+    try:
+        link_result = subprocess.run(
+            [ip, "-n", namespace, "-j", "-d", "link", "show"],
+            check=True, capture_output=True, text=True, timeout=10,
+        )
+        address_result = subprocess.run(
+            [ip, "-n", namespace, "-j", "address", "show", "dev", context["interface"]],
+            check=True, capture_output=True, text=True, timeout=10,
+        )
+        route_result = subprocess.run(
+            [ip, "-n", namespace, "-j", "route", "show", "table", "main"],
+            check=True, capture_output=True, text=True, timeout=10,
+        )
+        links = strict_json_loads(link_result.stdout, label="task namespace link output")
+        addresses = strict_json_loads(address_result.stdout, label="task namespace address output")
+        routes = strict_json_loads(route_result.stdout, label="task namespace route output")
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError, StrictJsonError) as error:
+        raise AdapterError("cannot inspect the task-local client network topology") from error
+    if (
+        not isinstance(links, list)
+        or len(links) != 2
+        or {link.get("ifname") for link in links if isinstance(link, dict)} != {"lo", context["interface"]}
+    ):
+        raise AdapterError("task-local client namespace contains an unexpected interface")
+    task_link = next(
+        (link for link in links if isinstance(link, dict) and link.get("ifname") == context["interface"]),
+        None,
+    )
+    if (
+        not isinstance(task_link, dict)
+        or task_link.get("ifindex") != context["ifindex"]
+        or "UP" not in task_link.get("flags", [])
+        or not isinstance(task_link.get("linkinfo"), dict)
+        or task_link["linkinfo"].get("info_kind") != "veth"
+    ):
+        raise AdapterError("task-local client interface identity changed")
+    endpoint = None
+    if isinstance(addresses, list) and len(addresses) == 1 and isinstance(addresses[0], dict):
+        endpoint = addresses[0].get("addr_info")
+    if not isinstance(endpoint, list) or not any(
+        isinstance(item, dict)
+        and item.get("family") == "inet"
+        and item.get("local") == context["address"]
+        and item.get("prefixlen") == 24
+        for item in endpoint
+    ):
+        raise AdapterError("task-local API address is no longer assigned to its recorded interface")
+    if (
+        not isinstance(routes, list)
+        or len(routes) != 1
+        or not isinstance(routes[0], dict)
+        or routes[0].get("dst") != context["subnet"]
+    ):
+        raise AdapterError("task-local client namespace has an unexpected route")
+
+
+def _listener_inodes(pid: int, port: int) -> list[tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, str]]:
+    listeners: list[tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, str]] = []
+    for table in (f"/proc/{pid}/net/tcp", f"/proc/{pid}/net/tcp6"):
+        try:
+            table_contents = Path(table).read_text(encoding="ascii")
+        except OSError as error:
+            raise AdapterError("cannot inspect native client network namespace") from error
+        listeners.extend(_tcp_listener_addresses(table_contents, port))
+    return listeners
+
+
+def _assert_process_owns_listener(pid: int, inodes: set[str]) -> None:
+    try:
+        process_fds = Path(f"/proc/{pid}/fd").iterdir()
+        owns_listener = False
+        for fd in process_fds:
+            try:
+                target = os.readlink(fd)
+            except OSError:
+                continue
+            match = re.fullmatch(r"socket:\[(\d+)\]", target)
+            if match and match.group(1) in inodes:
+                owns_listener = True
+                break
+    except OSError as error:
+        raise AdapterError("cannot inspect client process sockets") from error
+    if not owns_listener:
+        raise AdapterError("pinned client process does not own its configured API listener")
+
+
+def _verify_task_local_http_listener(pid: int, port: int, context: Mapping[str, Any]) -> None:
+    _verify_task_local_namespace(pid, context)
+    listeners = _listener_inodes(pid, port)
+    expected_address = ipaddress.ip_address(context["address"])
+    matching = [
+        inode for address, inode in listeners
+        if address == expected_address or address.is_unspecified
+    ]
+    if not matching or len(matching) != len(listeners):
+        raise AdapterError("task-local client API is not bound only within its recorded namespace")
+    _assert_process_owns_listener(pid, set(matching))
+
+
+def _verify_native_http_listener(
+    parsed: urllib.parse.SplitResult,
+    runtime_identity: dict[str, Any] | None,
+    task_local: Mapping[str, Any] | None = None,
+) -> None:
     if runtime_identity is None or not isinstance(runtime_identity.get("process_id"), int):
         raise AdapterError("native HTTP adapter has no pinned process identity")
     host = parsed.hostname or ""
-    if host.lower() == "localhost":
+    if task_local is not None:
+        if host != task_local["address"]:
+            raise AdapterError("task-local API URL must use the recorded target interface address")
+    elif host.lower() == "localhost":
         pass
     else:
         try:
@@ -647,6 +839,9 @@ def _verify_native_http_listener(parsed: urllib.parse.SplitResult,
         raise AdapterError("native benchmark API has an invalid port") from error
     pid = runtime_identity["process_id"]
     _assert_native_process_identity(pid, runtime_identity)
+    if task_local is not None:
+        _verify_task_local_http_listener(pid, port, task_local)
+        return
     requested_address = None
     if host.lower() != "localhost":
         requested_address = ipaddress.ip_address(host)
@@ -669,22 +864,7 @@ def _verify_native_http_listener(parsed: urllib.parse.SplitResult,
         raise AdapterError("native client API port has a wildcard or non-loopback listener")
     if not listening_inodes:
         raise AdapterError("native client process does not own a listening socket for its API port")
-    try:
-        process_fds = Path(f"/proc/{pid}/fd").iterdir()
-        owns_listener = False
-        for fd in process_fds:
-            try:
-                target = os.readlink(fd)
-            except OSError:
-                continue
-            match = re.fullmatch(r"socket:\[(\d+)\]", target)
-            if match and match.group(1) in listening_inodes:
-                owns_listener = True
-                break
-    except OSError as error:
-        raise AdapterError("cannot inspect native client process sockets") from error
-    if not owns_listener:
-        raise AdapterError("native client process does not own its configured API listener")
+    _assert_process_owns_listener(pid, listening_inodes)
 
 
 def _verify_native_unix_listener(socket_path: Path,
@@ -764,8 +944,8 @@ def _verify_container_http_endpoint(profile: dict[str, Any],
             text=True,
             timeout=10,
         ).stdout.strip()
-        inspected = json.loads(raw)
-    except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as error:
+        inspected = strict_json_loads(raw, label="container inspect")
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError, StrictJsonError) as error:
         raise AdapterError("cannot bind HTTP endpoint to its pinned container") from error
     if not isinstance(inspected, dict):
         raise AdapterError("docker inspect returned an unexpected container record")
@@ -785,6 +965,14 @@ def _verify_container_http_endpoint(profile: dict[str, Any],
     if not isinstance(host_config, dict) or not isinstance(network_settings, dict):
         raise AdapterError("docker inspect omitted container network settings")
     network_mode = host_config.get("NetworkMode")
+    task_local = _task_local_api_context(profile)
+    if task_local is not None:
+        if (parsed.hostname or "") != task_local["address"]:
+            raise AdapterError("task-local API URL must use the recorded target interface address")
+        if network_mode != "none":
+            raise AdapterError("task-local comparator containers must start with Docker network mode none")
+        _verify_task_local_http_listener(state["Pid"], port, task_local)
+        return
     if network_mode == "host":
         if not _namespace_has_listener(state["Pid"], port, loopback_only=True):
             raise AdapterError("host-network client API must listen only on loopback")
@@ -889,7 +1077,11 @@ def _profile_http(profile: dict[str, Any], *, allow_basic_auth: bool = False,
     except ValueError as error:
         raise AdapterError("benchmark client API has an invalid port") from error
     host = parsed.hostname or ""
-    if host.lower() == "localhost":
+    task_local = _task_local_api_context(profile)
+    if task_local is not None:
+        if host != task_local["address"]:
+            raise AdapterError("task-local API URL must use the recorded target interface address")
+    elif host.lower() == "localhost":
         pass
     else:
         try:
@@ -898,7 +1090,7 @@ def _profile_http(profile: dict[str, Any], *, allow_basic_auth: bool = False,
         except ValueError as error:
             raise AdapterError("benchmark client API host must be localhost or a loopback IP") from error
     if profile.get("runtime") == "native_binary":
-        _verify_native_http_listener(parsed, runtime_identity)
+        _verify_native_http_listener(parsed, runtime_identity, task_local)
     elif profile.get("runtime") == "container" and runtime_identity is not None:
         _verify_container_http_endpoint(profile, runtime_identity, parsed)
     client = HttpJson(base_url, float(profile.get("timeout_seconds", 10)))
@@ -1075,8 +1267,8 @@ def _urtorrent_settings_file(
     _assert_native_process_identity(pid, runtime_identity)
     try:
         raw = _read_regular_file_nofollow(path, "urtorrent settings readback", 64 * 1024)
-        snapshot = json.loads(raw)
-    except (AdapterError, json.JSONDecodeError) as error:
+        snapshot = strict_json_loads(raw, label="urtorrent settings snapshot")
+    except (AdapterError, json.JSONDecodeError, StrictJsonError) as error:
         raise AdapterError("cannot read the bounded urtorrent settings snapshot") from error
     _assert_native_process_identity(pid, runtime_identity)
     if not isinstance(snapshot, dict) or snapshot.get("format") != "transfer-urtorrent-settings-v1":
@@ -1367,8 +1559,8 @@ def load_pins(path: Path) -> dict[str, dict[str, Any]]:
     if path.is_symlink() or not path.is_file():
         raise AdapterError("pin file must be an existing regular non-symlink file")
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+        data = strict_json_loads(path.read_bytes(), label="client pin file")
+    except (OSError, json.JSONDecodeError, StrictJsonError) as error:
         raise AdapterError(f"cannot read pin file: {error}") from error
     return load_pins_document(data)
 
@@ -1398,7 +1590,7 @@ def _validate_profile(client_id: str, profile: dict[str, Any]) -> None:
         "expected_dirty_worktree", "expected_lockfile_sha256", "expected_toolchain",
         "pid_file", "socket_path", "container_socket_path",
         "settings_methods", "settings_keys", "settings_env_allowlist", "settings_file_allowlist",
-        "settings_file", "preflight_save_path",
+        "settings_file", "preflight_save_path", "paired_launch",
     }
     unknown = sorted(set(profile) - common)
     if unknown:
@@ -1533,6 +1725,100 @@ def _validate_profile(client_id: str, profile: dict[str, Any]) -> None:
         base_url = profile.get("base_url")
         if not isinstance(base_url, str) or not base_url:
             raise AdapterError(f"HTTP profile for {client_id!r} must declare base_url")
+
+    paired_launch = profile.get("paired_launch")
+    if paired_launch is not None:
+        fields = {
+            "args",
+            "api_port",
+            "peer_port",
+            "environment",
+            "environment_from",
+            "container_workdir",
+            "entrypoint",
+            "startup_timeout_seconds",
+        }
+        if not isinstance(paired_launch, dict) or set(paired_launch) != fields:
+            raise AdapterError(
+                f"paired_launch for {client_id!r} must declare exactly: "
+                + ", ".join(sorted(fields))
+            )
+        args = paired_launch["args"]
+        if (
+            not isinstance(args, list)
+            or len(args) > 256
+            or any(not isinstance(value, str) or "\x00" in value for value in args)
+        ):
+            raise AdapterError(f"paired_launch args for {client_id!r} must be a bounded string array")
+        api_port = paired_launch["api_port"]
+        if client_id == "rtorrent":
+            if api_port is not None:
+                raise AdapterError("rTorrent paired_launch api_port must be null")
+        elif (
+            isinstance(api_port, bool)
+            or not isinstance(api_port, int)
+            or not 1 <= api_port <= 65535
+        ):
+            raise AdapterError(f"paired_launch api_port for {client_id!r} must be within 1..65535")
+        peer_port = paired_launch["peer_port"]
+        if (
+            isinstance(peer_port, bool)
+            or not isinstance(peer_port, int)
+            or not 1 <= peer_port <= 65535
+        ):
+            raise AdapterError(f"paired_launch peer_port for {client_id!r} must be within 1..65535")
+        environment = paired_launch["environment"]
+        environment_from = paired_launch["environment_from"]
+        if not isinstance(environment, dict) or not isinstance(environment_from, dict):
+            raise AdapterError("paired_launch environment declarations must be objects")
+        env_name_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+        for name, value in environment.items():
+            if (
+                not isinstance(name, str)
+                or env_name_re.fullmatch(name) is None
+                or not isinstance(value, str)
+                or "\x00" in value
+            ):
+                raise AdapterError("paired_launch environment contains an invalid entry")
+        for name, source in environment_from.items():
+            if (
+                not isinstance(name, str)
+                or env_name_re.fullmatch(name) is None
+                or not isinstance(source, str)
+                or env_name_re.fullmatch(source) is None
+            ):
+                raise AdapterError("paired_launch environment_from contains an invalid entry")
+        container_workdir = paired_launch["container_workdir"]
+        if runtime == "container":
+            workdir = Path(container_workdir) if isinstance(container_workdir, str) else Path()
+            if (
+                not isinstance(container_workdir, str)
+                or not workdir.is_absolute()
+                or ".." in workdir.parts
+                or len(workdir.parts) < 2
+            ):
+                raise AdapterError(
+                    "container paired_launch must pin an absolute container_workdir"
+                )
+        elif container_workdir is not None:
+            raise AdapterError("native paired_launch container_workdir must be null")
+        entrypoint = paired_launch["entrypoint"]
+        if entrypoint is not None and (
+            not isinstance(entrypoint, str) or not entrypoint or "\x00" in entrypoint
+        ):
+            raise AdapterError("paired_launch entrypoint must be a nonempty string or null")
+        startup_timeout = paired_launch["startup_timeout_seconds"]
+        if (
+            isinstance(startup_timeout, bool)
+            or not isinstance(startup_timeout, (int, float))
+            or not math.isfinite(startup_timeout)
+            or not 0 < startup_timeout <= 30
+        ):
+            raise AdapterError(
+                "paired_launch startup_timeout_seconds must be finite and within (0, 30]"
+            )
+        if client_id == "urtorrent":
+            raise AdapterError("urtorrent uses its dedicated direct runner, not paired_launch")
     if client_id == "deluge" and not isinstance(profile.get("password_env"), str):
         raise AdapterError("Deluge profile must name password_env")
     if client_id == "rqbit":

@@ -2273,6 +2273,26 @@ impl Engine {
             .await
             .map_err(anyhow::Error::msg)
             .context("restoring storage manual-recovery state"));
+        let recovered_transfer_cutovers = startup_try!(engine
+            .db_executor()
+            .run_durable("recover_interrupted_transfer_cutovers", |db| {
+                rt_db::recover_interrupted_transfer_cutovers(db, unix_now_i64())
+                    .map_err(|error| error.to_string())
+            })
+            .await
+            .map_err(anyhow::Error::msg)
+            .context("recovering interrupted transfer-core cutovers"));
+        if recovered_transfer_cutovers > 0 {
+            engine.append_session_event(
+                None,
+                EVENT_CRASH_RECOVERY,
+                Some("interrupted transfer-core cutovers were restored to the reference owner"),
+                serde_json::json!({
+                    "recovered_transfer_cutovers": recovered_transfer_cutovers,
+                    "owner": "reference",
+                }),
+            );
+        }
         startup_try!(engine.load_persisted_torrents().await);
         startup_try!(engine.resume_recovered_recheck_jobs().await);
         startup_try!(engine.resume_recovered_storage_jobs().await);
@@ -4143,6 +4163,14 @@ impl Engine {
                 reply,
             } => {
                 let result = self.update_torrent_limits_inner(&info_hash, limits).await;
+                let _ = reply.send(result);
+            }
+            EngineCmd::SetTransferOwner {
+                info_hash,
+                owner,
+                reply,
+            } => {
+                let result = self.set_torrent_transfer_owner(&info_hash, owner).await;
                 let _ = reply.send(result);
             }
             EngineCmd::UpdateFilePriorities {
@@ -6807,7 +6835,7 @@ impl Engine {
         self.runtime
             .tier_controller
             .clear_dormant_snapshot(&info_hash);
-        let _tx = self
+        let spawn_result = self
             .spawn_torrent_task_for_meta(
                 info_hash.clone(),
                 meta,
@@ -6818,6 +6846,11 @@ impl Engine {
                 torrent_metadata_memory_lease,
             )
             .await;
+        if let Err(error) = spawn_result {
+            self.fail_torrent_promotion_actions(&info_hash, actions, error)
+                .await;
+            return;
+        }
         // A dormant task is staged paused before its queued action runs. A
         // user-paused/stopped torrent must therefore not be registered with
         // DHT during a recheck: its task deliberately ignores discovered
@@ -7238,17 +7271,16 @@ impl Engine {
             .tier_controller
             .clear_dormant_snapshot(&tier_key);
         let initial_state = state_from_str(&row.state);
-        let _tx = self
-            .spawn_torrent_task_for_meta(
-                tier_key,
-                meta,
-                PathBuf::from(row.save_path),
-                true,
-                initial_state,
-                piece_index_memory_lease,
-                torrent_metadata_memory_lease,
-            )
-            .await;
+        self.spawn_torrent_task_for_meta(
+            tier_key,
+            meta,
+            PathBuf::from(row.save_path),
+            true,
+            initial_state,
+            piece_index_memory_lease,
+            torrent_metadata_memory_lease,
+        )
+        .await?;
         if !is_private {
             self.register_dht_torrent(info_hash, info_hash_hex).await;
         }
@@ -9367,6 +9399,7 @@ async fn collect_engine_stats_background(input: EngineStatsRefreshInput) -> CmdR
     }
 
     let mut seen_shared_storage_resources = HashMap::new();
+    let mut seen_file_catalogs = HashMap::new();
     let mut runtime_queries = stream::iter(input.task_channels.into_iter().map(
         |(info_hash, tx)| async move {
             let (reply, rx) = tokio::sync::oneshot::channel();
@@ -9392,6 +9425,7 @@ async fn collect_engine_stats_background(input: EngineStatsRefreshInput) -> CmdR
                     info_hash,
                     runtime,
                     &mut seen_shared_storage_resources,
+                    &mut seen_file_catalogs,
                 );
             }
         }

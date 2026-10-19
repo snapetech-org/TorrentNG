@@ -14,7 +14,9 @@ pub mod storage_authority;
 pub(crate) mod storage_jobs;
 pub mod tier;
 pub mod torrent_task;
+pub(crate) mod torrent_task_reference;
 pub(crate) mod torrent_task_v2;
+pub(crate) mod torrent_task_v2_reference;
 pub(crate) mod tracker_runtime;
 pub(crate) mod transfer;
 
@@ -46,10 +48,12 @@ pub use peer_ingress::{
 pub use rt_config::{
     CompletionVerifyMode, CrashSafetyConfig, HostCrashRecovery, StructuralAuditMode,
 };
+pub use rt_db::TransferOwner as TransferActorOwner;
 pub use storage_authority::{ServerStorageRoots, StorageAuthorityError};
 pub use tier::{
-    ActivityTimerWheel, CompactPieceBitmap, DormantTorrentSnapshot, TierController, TierDecision,
-    TierEvent, TierInput, TierPolicy, TierScaleBudget, TierScaleSnapshot, TorrentActivityTier,
+    ActivityDeadlineIndex, ActivityTimerWheel, CompactPieceBitmap, DormantTorrentSnapshot,
+    TierController, TierDecision, TierEvent, TierInput, TierPolicy, TierScaleBudget,
+    TierScaleSnapshot, TorrentActivityTier,
 };
 
 /// Summarize a Tokio task failure without formatting a panic payload, which

@@ -14,6 +14,7 @@
 
 use std::collections::{hash_map, HashMap, HashSet};
 use std::ops::Index;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use tokio::sync::mpsc;
@@ -42,8 +43,17 @@ pub(super) struct EngineRuntimeState {
 
 /// Queue of info hashes whose actor future has ended, including by panic.
 pub(super) struct TaskExits {
-    tx: mpsc::UnboundedSender<RuntimeTorrentKey>,
-    rx: mpsc::UnboundedReceiver<RuntimeTorrentKey>,
+    tx: mpsc::UnboundedSender<RuntimeTorrentExit>,
+    rx: mpsc::UnboundedReceiver<RuntimeTorrentExit>,
+    next_generation: AtomicU64,
+    /// Current actor incarnation, owned alongside the exit queue it fences.
+    current_generations: RuntimeTorrentMap<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct RuntimeTorrentExit {
+    pub(super) info_hash: RuntimeTorrentKey,
+    pub(super) generation: u64,
 }
 
 /// Canonical runtime identity kept inline instead of as a heap-backed hex
@@ -89,6 +99,13 @@ impl RuntimeTorrentKey {
             }
         }
     }
+}
+
+pub(super) fn exit_matches_current_generation(
+    notice: &RuntimeTorrentExit,
+    current_generations: &RuntimeTorrentMap<u64>,
+) -> bool {
+    current_generations.get(&notice.info_hash.clone().into_info_hash()) == Some(&notice.generation)
 }
 
 /// Hash maps for engine-owned torrent state. Lookups keep accepting `&str`
@@ -254,22 +271,38 @@ fn decode_hex_nibble(byte: u8) -> Option<u8> {
 impl Default for TaskExits {
     fn default() -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
-        Self { tx, rx }
+        Self {
+            tx,
+            rx,
+            next_generation: AtomicU64::new(0),
+            current_generations: RuntimeTorrentMap::new(),
+        }
     }
 }
 
 impl TaskExits {
     /// A guard to move into the actor's future; dropping it (normal exit or
     /// unwinding panic) queues the hash.
-    pub(super) fn guard(&self, info_hash: &str) -> TaskExitGuard {
+    pub(super) fn guard(&mut self, info_hash: &str) -> TaskExitGuard {
+        let generation = self
+            .next_generation
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                current.checked_add(1)
+            })
+            .expect("torrent task exit generation exhausted")
+            + 1;
+        self.current_generations.insert(info_hash, generation);
         TaskExitGuard {
-            info_hash: RuntimeTorrentKey::from_info_hash(info_hash),
+            notice: Some(RuntimeTorrentExit {
+                info_hash: RuntimeTorrentKey::from_info_hash(info_hash),
+                generation,
+            }),
             tx: self.tx.clone(),
         }
     }
 
     /// Up to `limit` queued exits; O(exits), independent of active tasks.
-    pub(super) fn drain(&mut self, limit: usize) -> Vec<RuntimeTorrentKey> {
+    pub(super) fn drain(&mut self, limit: usize) -> Vec<RuntimeTorrentExit> {
         let mut exits = Vec::new();
         while exits.len() < limit {
             match self.rx.try_recv() {
@@ -279,18 +312,35 @@ impl TaskExits {
         }
         exits
     }
+
+    pub(super) fn remove_current_generation(&mut self, info_hash: &str) {
+        self.current_generations.remove(info_hash);
+    }
+
+    pub(super) fn is_current(&self, notice: &RuntimeTorrentExit) -> bool {
+        exit_matches_current_generation(notice, &self.current_generations)
+    }
 }
 
 pub(super) struct TaskExitGuard {
-    info_hash: RuntimeTorrentKey,
-    tx: mpsc::UnboundedSender<RuntimeTorrentKey>,
+    notice: Option<RuntimeTorrentExit>,
+    tx: mpsc::UnboundedSender<RuntimeTorrentExit>,
+}
+
+impl TaskExitGuard {
+    pub(super) fn generation(&self) -> u64 {
+        self.notice
+            .as_ref()
+            .expect("task exit guard must retain its notice until drop")
+            .generation
+    }
 }
 
 impl Drop for TaskExitGuard {
     fn drop(&mut self) {
-        let info_hash =
-            std::mem::replace(&mut self.info_hash, RuntimeTorrentKey::Text(String::new()));
-        let _ = self.tx.send(info_hash);
+        if let Some(notice) = self.notice.take() {
+            let _ = self.tx.send(notice);
+        }
     }
 }
 
@@ -381,7 +431,7 @@ mod task_exit_tests {
         let mut reported = exits
             .drain(10)
             .into_iter()
-            .map(RuntimeTorrentKey::into_info_hash)
+            .map(|notice| notice.info_hash.into_info_hash())
             .collect::<Vec<_>>();
         reported.sort();
         assert_eq!(reported, ["boom", "ok"]);
@@ -396,6 +446,43 @@ mod task_exit_tests {
         }
         assert_eq!(exits.drain(2).len(), 2);
         assert_eq!(exits.drain(10).len(), 3);
+    }
+
+    #[test]
+    fn actor_replacements_receive_distinct_exit_generations() {
+        let mut exits = TaskExits::default();
+        let first = exits.guard("same-torrent");
+        let first_generation = first.generation();
+        drop(first);
+        let second = exits.guard("same-torrent");
+        let second_generation = second.generation();
+        assert!(second_generation > first_generation);
+        drop(second);
+
+        let mut exits = exits;
+        let notices = exits.drain(4);
+        assert_eq!(notices.len(), 2);
+        assert_eq!(notices[0].info_hash, notices[1].info_hash);
+        assert_eq!(notices[0].generation, first_generation);
+        assert_eq!(notices[1].generation, second_generation);
+    }
+
+    #[test]
+    fn stale_actor_exit_cannot_match_its_replacement() {
+        let mut exits = TaskExits::default();
+        let old = exits.guard("same-torrent");
+        let old_notice = RuntimeTorrentExit {
+            info_hash: RuntimeTorrentKey::from_info_hash("same-torrent"),
+            generation: old.generation(),
+        };
+        drop(old);
+        let new = exits.guard("same-torrent");
+        let new_notice = RuntimeTorrentExit {
+            info_hash: RuntimeTorrentKey::from_info_hash("same-torrent"),
+            generation: new.generation(),
+        };
+        assert!(!exits.is_current(&old_notice));
+        assert!(exits.is_current(&new_notice));
     }
 
     #[test]

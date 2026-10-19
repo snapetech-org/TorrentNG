@@ -325,6 +325,7 @@ impl Engine {
         .unwrap_or_default();
 
         let mut seen_shared_storage_resources = HashMap::new();
+        let mut seen_file_catalogs = HashMap::new();
         for (info_hash, runtime) in runtime_results {
             let Some(state) = states.remove(&info_hash) else {
                 continue;
@@ -346,6 +347,7 @@ impl Engine {
                     info_hash,
                     runtime,
                     &mut seen_shared_storage_resources,
+                    &mut seen_file_catalogs,
                 );
             } else if self.runtime.tier_controller.tier(&info_hash).is_none() {
                 self.runtime.tier_controller.apply_input(

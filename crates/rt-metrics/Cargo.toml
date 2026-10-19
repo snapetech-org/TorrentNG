@@ -22,6 +22,7 @@ rt-testkit = { path = "../rt-testkit" }
 rt-tracker = { path = "../rt-tracker" }
 rt-storage = { path = "../rt-storage" }
 rt-path = { path = "../rt-path" }
+rusqlite.workspace = true
 bytes.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

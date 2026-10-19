@@ -40,7 +40,7 @@ use rt_metainfo::{
     torrent_info_bytes_with_allocation_reservation, TorrentFileV1, TorrentMetaV1, TorrentMetaV2,
 };
 use rt_metrics::{MemoryClass, MemoryLease, PayloadCopyPath, ResourceGovernor};
-use rt_path::{StorageProfile, StorageRootId};
+use rt_path::{SafeRelPath, StorageProfile, StorageRootId};
 use rt_peer_manager::{
     ChokeDecision, ChokeMode, ChokeState, Choker, PeerId, PeerSnapshot, DEFAULT_MAX_UNCHOKED,
 };
@@ -54,9 +54,9 @@ use rt_piece_map::{FileSpan, PieceMap, V2FileSpan, V2PieceMap};
 use rt_piece_picker::{Availability, BlockRequest, PieceAvailability, PiecePicker, MAX_BLOCK_SIZE};
 use rt_session::{SessionRegistry, TorrentEntry, TorrentState};
 use rt_storage::{
-    scheduler::{scheduled_read_owned, scheduled_write, scheduled_write_with_shared_payload_lease},
-    HybridV2PieceExpectation, IoClass, MountScheduler, PieceVerifier, SchedulerConfig,
-    StorageIoConfig, VerifyResult,
+    scheduler::{scheduled_write, scheduled_write_with_shared_payload_lease},
+    HybridV2PieceExpectation, IoClass, IoRequestPriority, MountScheduler, PieceVerifier,
+    SchedulerConfig, StorageIoConfig, VerifyResult,
 };
 #[cfg(test)]
 use rt_tracker::{AnnounceResponse, TrackerError};
@@ -95,10 +95,12 @@ use crate::transfer::ledger::{
 };
 use crate::transfer::live::LiveTransferLedger as TransferLedger;
 use crate::transfer::obligations::{
-    InboundDecision, InboundObligations, Reject as InboundReject,
-    RejectReason as InboundRejectReason, Served as InboundServed,
+    InboundDecision, Reject as InboundReject, RejectReason as InboundRejectReason,
+    Served as InboundServed,
 };
 use crate::transfer::rate::RatePeerId;
+use crate::transfer::shared_upload::{SharedUploadPeer, SharedUploadReadHandle};
+use crate::transfer::upload_scheduler::UploadReadPermit;
 use crate::transfer::window::{WindowConfig, WindowController, WindowInputs};
 use crate::{EnginePeerSnapshot, EngineTorrentLimits, EngineWebseedSnapshot, TorrentRuntimeStats};
 
@@ -106,6 +108,25 @@ const LOCAL_UT_METADATA_ID: u8 = 1;
 const LOCAL_UT_PEX_ID: u8 = 2;
 const METADATA_PIECE_SIZE: usize = 16 * 1024;
 const PEER_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+pub(crate) const UTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+
+pub(crate) async fn connect_utp_with_deadline(
+    network_budget: &GlobalNetworkBudget,
+    addr: SocketAddr,
+) -> anyhow::Result<UtpStream> {
+    timeout(
+        UTP_CONNECT_TIMEOUT,
+        network_budget.utp_runtime().connect(addr),
+    )
+    .await
+    .map_err(|_| {
+        anyhow::anyhow!(
+            "uTP connection to {addr} timed out after {} ms",
+            UTP_CONNECT_TIMEOUT.as_millis()
+        )
+    })?
+    .map_err(Into::into)
+}
 
 fn lock_prepared_files(files: &Mutex<HashSet<u32>>) -> MutexGuard<'_, HashSet<u32>> {
     match files.lock() {
@@ -371,15 +392,22 @@ pub(crate) fn persistent_hybrid_metadata_memory_bytes(
                 .saturating_mul(std::mem::size_of::<[u8; 32]>()),
         );
     }
-    // The hybrid geometry owns cloned, validated v2 paths.
-    for file in v2.files.iter().filter(|file| file.length > 0) {
-        total = total.saturating_add(
-            file.path
-                .components()
-                .iter()
-                .map(|component| std::mem::size_of::<String>().saturating_add(component.capacity()))
-                .sum::<usize>(),
-        );
+    // The hybrid geometry owns normalized v2 paths that point at the v1
+    // storage layout. A rootless v2 tree can therefore add the v1 torrent-name
+    // directory that is absent from the original v2 metainfo path.
+    let path_bytes = |path: &SafeRelPath| {
+        path.components()
+            .iter()
+            .map(|component| std::mem::size_of::<String>().saturating_add(component.len()))
+            .sum::<usize>()
+    };
+    for (v1_file, v2_file) in v1
+        .files
+        .iter()
+        .filter(|file| !file.pad)
+        .zip(v2.files.iter().filter(|file| !file.pad))
+    {
+        total = total.saturating_add(path_bytes(&v1_file.path).max(path_bytes(&v2_file.path)));
     }
     total
 }
@@ -2019,6 +2047,7 @@ struct UploadReadContext {
     resources: ResourceGovernor,
     upload_control: RateLimitCancellation,
     upload_rate: UploadRateAdmission,
+    read_admission: SharedUploadReadHandle,
 }
 
 #[derive(Clone)]
@@ -2030,6 +2059,7 @@ struct UploadRateAdmission {
 struct LeasedUploadBlock {
     data: bytes::Bytes,
     _lease: MemoryLease,
+    _read_permit: UploadReadPermit,
     rate_grant: Option<RateAdmissionGrant>,
 }
 
@@ -2135,20 +2165,66 @@ impl HybridV2Meta {
             .filter(|file| !file.pad && file.length > 0)
             .count();
         let mut files = Vec::with_capacity(v1_payload_count);
-        let mut v1_files = v1.files.iter().filter(|file| !file.pad && file.length > 0);
         let mut valid_layout = v1.piece_length == v2.piece_length
             && v2.piece_length >= V2_BLOCK_SIZE as u64
             && v2.piece_length.is_power_of_two();
 
+        // A v1 multi-file torrent stores its payload under `name/`, while a
+        // BEP 52 file tree is rootless unless its creator explicitly includes
+        // that same directory. Normalize every v2 file span to the matching
+        // v1 path so path-based geometry comparisons and disk reads refer to
+        // the one physical payload.
+        let mut canonical_v2_paths = vec![None; v2.files.len()];
+        let mut v1_files = v1.files.iter().filter(|file| !file.pad);
+        for v2_file in v2.files.iter().filter(|file| !file.pad) {
+            let Some(v1_file) = v1_files.next() else {
+                valid_layout = false;
+                break;
+            };
+            if v1.name != v2.name
+                || !hybrid_file_paths_match(&v1.name, &v1_file.path, &v2_file.path)
+                || v1_file.length != v2_file.length
+                || (v2_file.length > 0 && v1_file.offset != v2_file.piece_offset)
+            {
+                valid_layout = false;
+            }
+            match usize::try_from(v2_file.index)
+                .ok()
+                .and_then(|index| canonical_v2_paths.get_mut(index))
+            {
+                Some(path) => *path = Some(v1_file.path.clone()),
+                None => valid_layout = false,
+            }
+            if v2_file.length > 0 {
+                files.push(HybridV2File {
+                    file_index: v1_file.index,
+                    v2_file_index: v2_file.index,
+                    length: v2_file.length,
+                    pieces_root: v2_file.pieces_root,
+                });
+            }
+        }
+        if v1_files.next().is_some() {
+            valid_layout = false;
+        }
+
         let v2_spans = v2
             .files
             .iter()
-            .map(|file| V2FileSpan {
-                file_index: file.index,
-                path: file.path.clone(),
-                piece_offset: file.piece_offset,
-                length: file.length,
-                pad: file.pad,
+            .map(|file| {
+                let path = usize::try_from(file.index)
+                    .ok()
+                    .and_then(|index| canonical_v2_paths.get(index))
+                    .and_then(Option::as_ref)
+                    .unwrap_or(&file.path)
+                    .clone();
+                V2FileSpan {
+                    file_index: file.index,
+                    path,
+                    piece_offset: file.piece_offset,
+                    length: file.length,
+                    pad: file.pad,
+                }
             })
             .collect();
         let geometry = V2PieceMap::new(v2.piece_length, v2_spans)
@@ -2162,28 +2238,6 @@ impl HybridV2Meta {
             // both validated views expose the same global piece index range.
             valid_layout &= PieceGeometry::piece_count(geometry.v1())
                 == PieceGeometry::piece_count(geometry.v2());
-        }
-
-        for v2_file in v2.files.iter().filter(|file| !file.pad && file.length > 0) {
-            let Some(v1_file) = v1_files.next() else {
-                valid_layout = false;
-                break;
-            };
-            if v1_file.path != v2_file.path
-                || v1_file.length != v2_file.length
-                || v1_file.offset != v2_file.piece_offset
-            {
-                valid_layout = false;
-            }
-            files.push(HybridV2File {
-                file_index: v1_file.index,
-                v2_file_index: v2_file.index,
-                length: v2_file.length,
-                pieces_root: v2_file.pieces_root,
-            });
-        }
-        if v1_files.next().is_some() {
-            valid_layout = false;
         }
         files.sort_unstable_by_key(|file| file.v2_file_index);
 
@@ -2228,6 +2282,21 @@ impl HybridV2Meta {
             piece_leaf_count,
         })
     }
+}
+
+fn hybrid_file_paths_match(
+    torrent_name: &str,
+    v1_path: &SafeRelPath,
+    v2_path: &SafeRelPath,
+) -> bool {
+    let v1_components = v1_path.components();
+    let v2_components = v2_path.components();
+    v1_components == v2_components
+        || (v1_components.len() == v2_components.len().saturating_add(1)
+            && v1_components
+                .first()
+                .is_some_and(|component| component == torrent_name)
+            && v1_components.get(1..) == Some(v2_components))
 }
 
 fn incoming_hybrid_plane(
@@ -2289,7 +2358,7 @@ async fn prepare_transfer_file_once(
     .await
 }
 
-async fn prepare_file_once_with_locks(
+pub(crate) async fn prepare_file_once_with_locks(
     storage: &MountScheduler,
     prepared_files: &Mutex<HashSet<u32>>,
     prepared_file_locks: &tokio::sync::Mutex<HashMap<u32, Arc<tokio::sync::Mutex<()>>>>,
@@ -5505,6 +5574,11 @@ impl TorrentTask {
             };
         }
 
+        // Fastresume is the piece/block trust source; the SQLite row is a
+        // runtime/API projection. Startup recheck and the state publication
+        // below rebuild that projection from validated payload state instead
+        // of treating a stale database amount_left as proof of content.
+
         if state.file_hints.is_empty() {
             self.save_fastresume(false).await;
         }
@@ -5955,6 +6029,10 @@ impl TorrentTask {
     }
 
     async fn persist_progress(&mut self) {
+        // This row is a coalesced runtime projection, not a payload
+        // checkpoint. Piece trust is committed separately by fastresume only
+        // after storage barrier evidence; restore derives this projection
+        // again from validated fastresume/recheck state.
         let (previous, row) = {
             let mut reg = self.registry.write().await;
             let Some(mut entry) = reg.get_mut(&self.info_hash_hex) else {
@@ -7209,6 +7287,7 @@ fn webseed_file_url(meta: &TorrentMetaV1, file: &TorrentFileV1, webseed: &str) -
         .and_then(|mut segments| segments.next_back())
         .is_some_and(|last| last == meta.name);
     let mut segments = url.path_segments_mut().ok()?;
+    segments.pop_if_empty();
     if base_has_trailing_slash || !root_is_explicit {
         segments.push(&meta.name);
     }
@@ -7523,69 +7602,72 @@ async fn run_outgoing_peer_with_policy(
             run_outgoing_utp_peer(addr, peer_id, info_hash, peer_event_tx, peer_cmd_rx, upload)
                 .await
         }
-        OutgoingTransportPolicy::PreferUtp => match upload
-            .upload_rate
-            .network_budget
-            .utp_runtime()
-            .connect(addr)
-            .await
-        {
-            Ok(stream) => match prepare_outgoing_utp_peer(addr, info_hash, &mut upload, stream)
-                .await
-            {
-                Ok((peer_io, fast, plane)) => {
-                    upload.fast_negotiated = fast;
-                    upload.plane = plane;
-                    if plane == Plane::V2
-                        && !send_peer_event(
-                            &peer_event_tx,
-                            PeerEvent::PlaneSelected {
-                                peer: addr,
-                                id: peer_id,
-                                plane,
-                            },
+        OutgoingTransportPolicy::PreferUtp => {
+            match connect_utp_with_deadline(&upload.upload_rate.network_budget, addr).await {
+                Ok(stream) => match prepare_outgoing_utp_peer(addr, info_hash, &mut upload, stream)
+                    .await
+                {
+                    Ok((peer_io, fast, plane)) => {
+                        upload.fast_negotiated = fast;
+                        upload.plane = plane;
+                        if plane == Plane::V2
+                            && !send_peer_event(
+                                &peer_event_tx,
+                                PeerEvent::PlaneSelected {
+                                    peer: addr,
+                                    id: peer_id,
+                                    plane,
+                                },
+                            )
+                            .await
+                        {
+                            anyhow::bail!("torrent task stopped before binding hybrid peer plane");
+                        }
+                        Ok(run_peer_loop(
+                            addr,
+                            peer_id,
+                            peer_io,
+                            peer_event_tx,
+                            peer_cmd_rx,
+                            upload,
+                            false,
+                        )
+                        .await)
+                    }
+                    Err(e) => {
+                        debug!(
+                            component = "peer",
+                            operation = "setup_utp",
+                            peer = %addr,
+                            result = "fallback",
+                            error = %e,
+                            "uTP peer setup failed; falling back to TCP"
+                        );
+                        run_outgoing_peer(
+                            addr,
+                            peer_id,
+                            info_hash,
+                            peer_event_tx,
+                            peer_cmd_rx,
+                            upload,
                         )
                         .await
-                    {
-                        anyhow::bail!("torrent task stopped before binding hybrid peer plane");
                     }
-                    Ok(run_peer_loop(
-                        addr,
-                        peer_id,
-                        peer_io,
-                        peer_event_tx,
-                        peer_cmd_rx,
-                        upload,
-                        false,
-                    )
-                    .await)
-                }
+                },
                 Err(e) => {
                     debug!(
                         component = "peer",
-                        operation = "setup_utp",
+                        operation = "connect_utp",
                         peer = %addr,
                         result = "fallback",
                         error = %e,
-                        "uTP peer setup failed; falling back to TCP"
+                        "uTP peer path failed; falling back to TCP"
                     );
                     run_outgoing_peer(addr, peer_id, info_hash, peer_event_tx, peer_cmd_rx, upload)
                         .await
                 }
-            },
-            Err(e) => {
-                debug!(
-                    component = "peer",
-                    operation = "connect_utp",
-                    peer = %addr,
-                    result = "fallback",
-                    error = %e,
-                    "uTP peer path failed; falling back to TCP"
-                );
-                run_outgoing_peer(addr, peer_id, info_hash, peer_event_tx, peer_cmd_rx, upload)
-                    .await
             }
-        },
+        }
     }
 }
 
@@ -7697,12 +7779,7 @@ async fn run_outgoing_utp_peer(
     peer_cmd_rx: mpsc::Receiver<PeerCommand>,
     upload: UploadContext,
 ) -> anyhow::Result<PeerLoopExit> {
-    let stream = upload
-        .upload_rate
-        .network_budget
-        .utp_runtime()
-        .connect(addr)
-        .await?;
+    let stream = connect_utp_with_deadline(&upload.upload_rate.network_budget, addr).await?;
     run_established_utp_peer(
         addr,
         peer_id,
@@ -8275,6 +8352,22 @@ async fn run_peer_loop(
     send_terminal_event_on_peer_channel: bool,
 ) -> PeerLoopExit {
     let mut outstanding = Vec::<OutstandingRequest>::new();
+    let upload_service = upload.upload_rate.network_budget.upload_service();
+    let mut upload_obligations = match upload_service.register(
+        upload.upload_rate.peer,
+        upload.fast_negotiated,
+        MAX_UPLOAD_WORK,
+    ) {
+        Ok(connection) => connection,
+        Err(error) => {
+            return PeerLoopExit {
+                result: Err(anyhow::anyhow!(
+                    "registering shared upload service: {error:?}"
+                )),
+                outstanding: drain_outstanding(&mut outstanding),
+            };
+        }
+    };
     // BEP 10 extension ids are negotiated per peer. The id in our outgoing
     // handshake is the id this loop receives from the peer; responses must
     // use the peer's advertised id rather than our local id.
@@ -8288,10 +8381,8 @@ async fn run_peer_loop(
     // prevents it from processing choke/shutdown/input messages. The loop
     // owns the socket; detached read futures only return a leased block.
     let mut upload_reads = UploadReadTasks::default();
-    // The shared obligation owner accounts for queued and in-service requests
-    // as one bounded per-connection state machine. Detached reads remain
-    // capped independently and are refilled as completions arrive.
-    let mut upload_obligations = InboundObligations::new(upload.fast_negotiated, MAX_UPLOAD_WORK);
+    // Protocol obligations are process-owned by generation-safe connection
+    // identity. The socket loop retains the only writer and read-task handles.
     let mut upload_request_drops = 0u64;
     let mut download_generation = 0u64;
 
@@ -8815,7 +8906,7 @@ async fn run_peer_loop(
                             .have_pieces
                             .get(block.piece as usize)
                             .unwrap_or(false);
-                        let decision = upload_obligations.on_request(block, have_piece);
+                        let decision = upload_obligations.admit(block, have_piece);
                         if matches!(
                             decision,
                             InboundDecision::Reject(InboundRejectReason::QueueFull)
@@ -9074,6 +9165,7 @@ async fn run_peer_loop(
                         let LeasedUploadBlock {
                             data,
                             _lease,
+                            _read_permit,
                             rate_grant,
                         } = upload_block;
                         let bytes = data.len() as u64;
@@ -9341,17 +9433,29 @@ async fn send_have_state(
 async fn read_upload_block(
     upload: &UploadReadContext,
     request: UploadRequest,
+    choke_critical: bool,
 ) -> anyhow::Result<LeasedUploadBlock> {
     let canonical = request.canonical_block();
     let length = canonical.length;
     if length == 0 || length > MAX_BLOCK_SIZE {
         anyhow::bail!("invalid upload block length {length}");
     }
+    let _read_permit = upload
+        .read_admission
+        .acquire_read(canonical)
+        .await
+        .map_err(|error| anyhow::anyhow!("global upload read admission failed: {error:?}"))?;
     PieceGeometry::validate_served_block(&upload.piece_map, canonical)?;
     let lease = reserve_peer_upload_bytes(&upload.resources, length)?;
     let regions = upload
         .piece_map
         .validate_request(canonical.piece, canonical.begin, length)?;
+    let deadline = Instant::now() + PEER_SOCKET_WRITE_TIMEOUT;
+    let priority = if choke_critical {
+        IoRequestPriority::choke_critical(deadline)
+    } else {
+        IoRequestPriority::deadline(deadline)
+    };
     let mut data = Vec::with_capacity(length as usize);
     for region in regions {
         if region.pad {
@@ -9359,14 +9463,16 @@ async fn read_upload_block(
             continue;
         }
         let path = region.path.resolve(&upload.save_root);
-        let read = scheduled_read_owned(
-            &upload.storage,
-            IoClass::PeerRead,
-            &path,
-            region.file_offset,
-            region.length as usize,
-        )
-        .await?;
+        let read = upload
+            .storage
+            .read_owned_at_with_priority(
+                IoClass::PeerRead,
+                &path,
+                region.file_offset,
+                region.length as usize,
+                priority,
+            )
+            .await?;
         data.extend_from_slice(read.as_slice());
     }
     if data.len() != length as usize {
@@ -9398,6 +9504,7 @@ async fn read_upload_block(
     Ok(LeasedUploadBlock {
         data,
         _lease: lease,
+        _read_permit,
         rate_grant: None,
     })
 }
@@ -9442,7 +9549,7 @@ async fn send_upload_obligation_reject(
 async fn finish_upload_obligation(
     peer_io: &mut PeerIo,
     upload: &UploadContext,
-    obligations: &mut InboundObligations,
+    obligations: &SharedUploadPeer,
     block: BlockExtent,
     served: InboundServed,
 ) -> anyhow::Result<()> {
@@ -9454,7 +9561,7 @@ async fn finish_upload_obligation(
 
 fn start_upload_reads(
     upload_reads: &mut futures::stream::FuturesUnordered<tokio::task::JoinHandle<UploadReadResult>>,
-    obligations: &mut InboundObligations,
+    obligations: &SharedUploadPeer,
     upload: &UploadContext,
 ) -> anyhow::Result<()> {
     let read_context = UploadReadContext {
@@ -9466,11 +9573,13 @@ fn start_upload_reads(
         resources: upload.resources.clone(),
         upload_control: upload.upload_control.clone(),
         upload_rate: upload.upload_rate.clone(),
+        read_admission: obligations.read_admission(),
     };
     while upload_reads.len() < MAX_PENDING_UPLOAD_READS {
         let Some(block) = obligations.next_request() else {
             break;
         };
+        let choke_critical = obligations.is_choked() && obligations.may_send(&block);
         let Some(wire_block) = upload.canonical_to_wire_block(block) else {
             obligations.close();
             anyhow::bail!("accepted upload obligation has no matching wire extent");
@@ -9480,7 +9589,7 @@ fn start_upload_reads(
         upload_reads.push(tokio::spawn(async move {
             let result = match timeout(
                 PEER_UPLOAD_READ_TIMEOUT,
-                read_upload_block(&read_context_for_task, request),
+                read_upload_block(&read_context_for_task, request, choke_critical),
             )
             .await
             {
@@ -9763,13 +9872,16 @@ mod tests {
     }
 
     #[test]
-    fn hybrid_v2_projection_maps_files_after_v1_padding() {
+    fn hybrid_v2_projection_normalizes_rootless_paths_after_v1_padding() {
         let piece_length = (V2_BLOCK_SIZE * 2) as u64;
         let first_length = piece_length + 17;
         let padding_length = piece_length - 17;
         let second_offset = piece_length * 2;
-        let first_path = SafeRelPath::from_name("first.bin", false).unwrap();
-        let second_path = SafeRelPath::from_name("second.bin", false).unwrap();
+        let first_v1_path = SafeRelPath::from_components(&["hybrid", "first.bin"], false).unwrap();
+        let first_v2_path = SafeRelPath::from_name("first.bin", false).unwrap();
+        let second_v1_path =
+            SafeRelPath::from_components(&["hybrid", "second.bin"], false).unwrap();
+        let second_v2_path = SafeRelPath::from_name("second.bin", false).unwrap();
         let v1 = TorrentMetaV1 {
             info_hash: [1; 20],
             announce: None,
@@ -9785,7 +9897,7 @@ mod tests {
                 TorrentFileV1 {
                     index: 0,
                     length: first_length,
-                    path: first_path.clone(),
+                    path: first_v1_path,
                     offset: 0,
                     pad: false,
                 },
@@ -9799,7 +9911,7 @@ mod tests {
                 TorrentFileV1 {
                     index: 2,
                     length: 11,
-                    path: second_path.clone(),
+                    path: second_v1_path,
                     offset: second_offset,
                     pad: false,
                 },
@@ -9821,7 +9933,7 @@ mod tests {
                 rt_metainfo::TorrentFileV2 {
                     index: 0,
                     length: first_length,
-                    path: first_path,
+                    path: first_v2_path,
                     offset: 0,
                     piece_offset: 0,
                     pieces_root: Some([9; 32]),
@@ -9830,7 +9942,7 @@ mod tests {
                 rt_metainfo::TorrentFileV2 {
                     index: 1,
                     length: 11,
-                    path: second_path,
+                    path: second_v2_path,
                     offset: first_length,
                     piece_offset: second_offset,
                     pieces_root: Some([8; 32]),
@@ -9998,6 +10110,12 @@ mod tests {
         assert_eq!(wire, BlockExtent::new(0, 0, 3));
 
         let resources = ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default());
+        let upload_rate = test_upload_rate_admission(None, 0).await;
+        let upload_registration = upload_rate
+            .network_budget
+            .upload_service()
+            .register(upload_rate.peer, false, MAX_UPLOAD_WORK)
+            .unwrap();
         let upload = UploadReadContext {
             save_root: dir.path().to_path_buf(),
             piece_map,
@@ -10013,9 +10131,10 @@ mod tests {
             ),
             resources: resources.clone(),
             upload_control: RateLimitCancellation::default(),
-            upload_rate: test_upload_rate_admission(None, 0).await,
+            upload_rate,
+            read_admission: upload_registration.read_admission(),
         };
-        let block = read_upload_block(&upload, UploadRequest::new(canonical, wire))
+        let block = read_upload_block(&upload, UploadRequest::new(canonical, wire), false)
             .await
             .unwrap();
 
@@ -10097,6 +10216,7 @@ mod tests {
         assert!(hybrid.valid_layout);
 
         let resources = ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default());
+        let upload_rate = test_upload_rate_admission(None, 0).await;
         let upload = UploadContext {
             save_root: dir.path().to_path_buf(),
             piece_map,
@@ -10119,7 +10239,7 @@ mod tests {
             fast_negotiated: false,
             upload_control: RateLimitCancellation::default(),
             shutdown_control: RateLimitCancellation::default(),
-            upload_rate: test_upload_rate_admission(None, 0).await,
+            upload_rate: upload_rate.clone(),
         };
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -11289,7 +11409,7 @@ mod tests {
         .unwrap();
         let db = Arc::new(Mutex::new(conn));
         let (cmd_tx, cmd_rx) = mpsc::channel(1);
-        let task = TorrentTask::new(
+        let mut task = TorrentTask::new(
             meta,
             temp.path().to_path_buf(),
             true,
@@ -14207,30 +14327,9 @@ mod tests {
 
     #[tokio::test]
     async fn webseed_rate_wait_does_not_block_lifecycle_commands() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
         let temp = tempfile::tempdir().unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let webseed_addr = listener.local_addr().unwrap();
-        let (request_started_tx, request_started_rx) = oneshot::channel();
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let mut request = Vec::new();
-            let mut buffer = [0_u8; 1024];
-            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
-                let read = stream.read(&mut buffer).await.unwrap();
-                if read == 0 {
-                    return;
-                }
-                request.extend_from_slice(&buffer[..read]);
-            }
-            let _ = request_started_tx.send(());
-            stream
-                .write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Length: 4\r\nContent-Range: bytes 0-3/4\r\nConnection: close\r\n\r\ndata")
-                .await
-                .unwrap();
-            stream.shutdown().await.unwrap();
-        });
 
         let meta = TorrentMetaV1 {
             info_hash: [26; 20],
@@ -14271,8 +14370,8 @@ mod tests {
         let (cmd_tx, cmd_rx) = mpsc::channel(4);
         let resources = ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default());
         let budget = GlobalNetworkBudget::new(8, Some(1), None);
-        // Put the process download bucket into debt. A four-byte webseed
-        // response then parks until refill unless shutdown cancels its worker.
+        // Put the process download bucket into debt. The four-byte webseed
+        // remains in rate admission, before opening its HTTP connection.
         let drain_torrent = budget.new_transfer_torrent_key();
         budget.register_download_torrent(drain_torrent, None);
         let drain_peer = TransferPeerId::new(
@@ -14295,7 +14394,7 @@ mod tests {
             .unwrap()
             .unwrap();
         drain_grant.settle(64 * 1024);
-        let task = TorrentTask::new(
+        let mut task = TorrentTask::new(
             meta,
             temp.path().to_path_buf(),
             false,
@@ -14322,12 +14421,24 @@ mod tests {
             None,
         )
         .await;
+        assert!(
+            task.start_webseed_block(),
+            "the webseed must enter rate admission"
+        );
         let task = tokio::spawn(task.run());
 
-        timeout(Duration::from_secs(2), request_started_rx)
+        let (webseed_reply, webseed_result) = oneshot::channel();
+        cmd_tx
+            .send(TorrentCmd::GetWebseeds {
+                reply: webseed_reply,
+            })
             .await
-            .expect("webseed request did not start")
-            .expect("webseed test server dropped before the request");
+            .unwrap();
+        let snapshots = timeout(Duration::from_secs(1), webseed_result)
+            .await
+            .expect("webseed snapshot query should complete during rate wait")
+            .unwrap();
+        assert_eq!(snapshots.len(), 1);
 
         let (pause_reply, pause_result) = oneshot::channel();
         cmd_tx
@@ -14342,6 +14453,12 @@ mod tests {
                 .expect("pause should interrupt the global download wait")
                 .unwrap(),
             Ok(())
+        );
+        assert!(
+            timeout(Duration::from_millis(50), listener.accept())
+                .await
+                .is_err(),
+            "a rate-blocked webseed must not open its HTTP connection"
         );
 
         let (webseed_reply, webseed_result) = oneshot::channel();
@@ -14364,8 +14481,6 @@ mod tests {
             .await
             .expect("webseed rate wait should not strand shutdown")
             .unwrap();
-        server.abort();
-        let _ = server.await;
     }
 
     #[tokio::test]
@@ -14889,6 +15004,15 @@ mod tests {
             private: false,
             raw: Vec::new(),
         };
+        let mut entry = rt_session::TorrentEntry::new(
+            hex::encode(meta.info_hash),
+            meta.name.clone(),
+            temp.path().to_string_lossy().into_owned(),
+        );
+        entry.total_length = 4;
+        entry.amount_left = 4;
+        entry.transition(TorrentState::Downloading).unwrap();
+        persist_task_row(&conn, &entry, &meta);
         let db = Arc::new(Mutex::new(conn));
         rt_db::upsert_torrent_limits(
             &db.lock().unwrap(),
@@ -14999,6 +15123,15 @@ mod tests {
             private: false,
             raw: Vec::new(),
         };
+        let mut entry = rt_session::TorrentEntry::new(
+            hex::encode(meta.info_hash),
+            meta.name.clone(),
+            temp.path().to_string_lossy().into_owned(),
+        );
+        entry.total_length = 4;
+        entry.amount_left = 4;
+        entry.transition(TorrentState::Downloading).unwrap();
+        persist_task_row(&conn, &entry, &meta);
         let db = Arc::new(Mutex::new(conn));
         rt_db::upsert_torrent_limits(
             &db.lock().unwrap(),
@@ -15484,6 +15617,12 @@ mod tests {
             offset += 256;
         }
         let piece_map = Arc::new(PieceMap::new(16 * 1024, files).unwrap());
+        let upload_rate = test_upload_rate_admission(None, 0).await;
+        let upload_registration = upload_rate
+            .network_budget
+            .upload_service()
+            .register(upload_rate.peer, false, MAX_UPLOAD_WORK)
+            .unwrap();
         let upload = UploadContext {
             save_root: dir.path().to_path_buf(),
             piece_map,
@@ -15506,7 +15645,7 @@ mod tests {
             fast_negotiated: false,
             upload_control: RateLimitCancellation::default(),
             shutdown_control: RateLimitCancellation::default(),
-            upload_rate: test_upload_rate_admission(None, 0).await,
+            upload_rate: upload_rate.clone(),
         };
 
         let read_context = UploadReadContext {
@@ -15518,9 +15657,10 @@ mod tests {
             resources: upload.resources.clone(),
             upload_control: upload.upload_control.clone(),
             upload_rate: upload.upload_rate.clone(),
+            read_admission: upload_registration.read_admission(),
         };
         let extent = BlockExtent::new(0, 0, 16 * 1024);
-        let block = read_upload_block(&read_context, UploadRequest::from_wire(extent))
+        let block = read_upload_block(&read_context, UploadRequest::from_wire(extent), false)
             .await
             .unwrap();
 
@@ -15555,6 +15695,12 @@ mod tests {
             },
         ];
         let piece_map = Arc::new(PieceMap::new_with_padding(16, files, [1]).unwrap());
+        let upload_rate = test_upload_rate_admission(None, 0).await;
+        let upload_registration = upload_rate
+            .network_budget
+            .upload_service()
+            .register(upload_rate.peer, false, MAX_UPLOAD_WORK)
+            .unwrap();
         let upload = UploadReadContext {
             save_root: dir.path().to_path_buf(),
             piece_map,
@@ -15569,12 +15715,13 @@ mod tests {
                 },
             ),
             resources: ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default()),
-            upload_rate: test_upload_rate_admission(None, 0).await,
+            upload_rate,
             upload_control: RateLimitCancellation::default(),
+            read_admission: upload_registration.read_admission(),
         };
 
         let extent = BlockExtent::new(0, 0, 16);
-        let block = read_upload_block(&upload, UploadRequest::from_wire(extent))
+        let block = read_upload_block(&upload, UploadRequest::from_wire(extent), false)
             .await
             .unwrap();
         let mut expected = b"abc".to_vec();
@@ -16031,15 +16178,22 @@ mod tests {
                 .await
                 .unwrap();
         }
-        timeout(Duration::from_secs(5), async {
-            while storage.stats().backend_read_ops_by_class[IoClass::PeerRead as usize]
-                < MAX_PENDING_UPLOAD_READS as u64
+        let service_read_window = MAX_PENDING_UPLOAD_READS.min(
+            crate::transfer::upload_scheduler::UploadReadLimits::default()
+                .max_in_flight_per_connection,
+        );
+        timeout(Duration::from_secs(15), async {
+            while storage.stats().read_ops_by_class[IoClass::PeerRead as usize]
+                < service_read_window as u64
             {
                 tokio::task::yield_now().await;
             }
         })
         .await
-        .expect("the bounded upload-read window did not fill");
+        .unwrap_or_else(|_| {
+            let observed = storage.stats().read_ops_by_class[IoClass::PeerRead as usize];
+            panic!("the process upload service admitted-read window did not fill: {observed}/{service_read_window} logical reads")
+        });
 
         let queued = (MAX_PENDING_UPLOAD_READS as u32) * REQUEST_BYTES as u32;
         remote
@@ -16866,13 +17020,17 @@ mod tests {
             .await
             .unwrap();
 
-        let Some(PeerEvent::Piece { block, .. }) =
-            timeout(Duration::from_secs(1), peer_event_rx.recv())
-                .await
-                .unwrap()
-        else {
-            panic!("expected a leased piece event");
-        };
+        let block = timeout(Duration::from_secs(1), async {
+            loop {
+                match peer_event_rx.recv().await {
+                    Some(PeerEvent::Piece { block, .. }) => break block,
+                    Some(PeerEvent::RequestSent { .. }) => continue,
+                    other => panic!("expected a leased piece event, got {other:?}"),
+                }
+            }
+        })
+        .await
+        .unwrap();
         assert_eq!(block.len(), 4);
         assert_eq!(
             resources.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,

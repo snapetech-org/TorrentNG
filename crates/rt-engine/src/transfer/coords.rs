@@ -957,8 +957,12 @@ mod tests {
             BlockExtent::new(1, 0, 8 * 1024),
         ));
         assert!(hybrid.blocks_match_content(
-            BlockExtent::new(2, 0, 24 * 1024),
-            BlockExtent::new(2, 0, 24 * 1024),
+            BlockExtent::new(2, 0, BLOCK_SIZE),
+            BlockExtent::new(2, 0, BLOCK_SIZE),
+        ));
+        assert!(hybrid.blocks_match_content(
+            BlockExtent::new(2, BLOCK_SIZE as u32, 8 * 1024),
+            BlockExtent::new(2, BLOCK_SIZE as u32, 8 * 1024),
         ));
         let v2_tail = BlockExtent::new(1, 0, 8 * 1024);
         let v2_tail_data = vec![0x5a; 8 * 1024];

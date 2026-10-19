@@ -749,6 +749,24 @@ impl EngineHandle {
         await_engine_reply(rx).await
     }
 
+    /// Route a torrent through the retained reference actor or shared-core candidate.
+    /// The engine journals and drains the route change before starting its replacement.
+    pub async fn set_transfer_owner(
+        &self,
+        info_hash: String,
+        owner: rt_db::TransferOwner,
+    ) -> CmdResult<rt_db::TransferOwner> {
+        let info_hash = canonical_info_hash_checked(info_hash)?;
+        let (reply, rx) = tokio::sync::oneshot::channel();
+        self.send_command(EngineCmd::SetTransferOwner {
+            info_hash,
+            owner,
+            reply,
+        })
+        .await?;
+        await_engine_reply(rx).await
+    }
+
     pub async fn update_file_priorities(
         &self,
         info_hash: String,

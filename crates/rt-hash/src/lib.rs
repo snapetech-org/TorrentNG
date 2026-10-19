@@ -317,10 +317,11 @@ mod tests {
     #[test]
     fn merkle_accumulator_rejects_invalid_padding_targets() {
         let mut accumulator = MerkleAccumulator::new();
-        accumulator.push(BlockHash::of(b"leaf").0);
+        let leaf = BlockHash::of(b"leaf").0;
+        accumulator.push(leaf);
         assert_eq!(accumulator.clone().finish_padded_to(0), None);
         assert_eq!(accumulator.clone().finish_padded_to(3), None);
-        assert_eq!(accumulator.finish_padded_to(1), None);
+        assert_eq!(accumulator.finish_padded_to(1), Some(merkle_root(&[leaf])));
     }
 
     #[test]

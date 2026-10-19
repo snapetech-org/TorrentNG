@@ -5,6 +5,155 @@ This file instantiates the template in
 implementation slices currently in progress. A ticket stays `wip` until its
 written acceptance and exact-revision evidence are complete.
 
+## Bulk validation — 2026-10-18
+
+The source suites passed on this worktree with both installed toolchains:
+
+- `cargo test --workspace --no-fail-fast -- --test-threads=1 --format=terse`
+  on Rust 1.94.0: 2,298 passed, 0 failed, 12 ignored across 65 result
+  summaries.
+- `cargo +1.88.0 test --workspace --no-fail-fast -- --test-threads=1 --format=terse`
+  on Rust 1.88.0: 2,298 passed, 0 failed, 12 ignored across 65 result
+  summaries.
+- All 20 `scripts/test_transfer_rebuild_*.py` regression scripts passed.
+- `cargo clippy --workspace --all-targets` exited 0 with warnings; warnings
+  were not promoted to errors.
+- The local PERF-111 picker and API snapshot probes ran successfully. Their
+  raw CSV, host/toolchain details, and limits are in
+  [`TRANSFER_CORE_PERF111_LOCAL.md`](TRANSFER_CORE_PERF111_LOCAL.md).
+
+The first full pass exposed an invalid pure-v2 projection after a previously
+completed torrent entered a durability hold: the entry could remain `Seeding`
+with the one-byte incomplete marker. Both v2 persistence paths now downgrade
+that stale state to `Downloading` and clear `completed_at`; the new
+`v2_reopens_a_stale_seeding_projection_during_completion_hold` regression
+passes in both final workspace runs.
+
+These commands ran against a dirty worktree rooted at
+`4cd671b0d5eae1ddc096493ded381569e57f49f4`; the run is not bound to a clean
+commit. Thus the per-ticket “Executed on exact revision: no” fields remain
+accurate. They do not mean the workspace source suites were skipped. Earlier
+“await bulk pass” and “unrun” wording describes the state before this
+validation and is superseded for source-suite execution by this record.
+Ticket-specific acceptance that needs hosted workflows, dedicated hardware,
+filesystem fault qualification, crash cuts, live parity, or matched whole-
+client trials remains open.
+
+## NET-101 — Typed transfer coordinates and geometry adapters
+
+- **Priority / wave:** P0 / 2
+- **Prerequisites:** SYS-001
+- **Owning component:** `rt-engine/src/transfer/coords.rs` and the live
+  protocol adapters.
+- **Finding or capability:** one ownership core must validate requests across
+  v1 concatenated-file geometry, v2 per-file geometry, and hybrid wire views.
+- **Status:** `wip`
+
+### Scope and invariant
+
+Define distinct `BlockExtent`, `PieceExtent`, `ContentRange`, `Plane`,
+generation-bearing `ConnectionId`, `TorrentKey`, and `TransferPeerId` types.
+`PieceGeometry` adapts `PieceMap` and `V2PieceMap`; `HybridGeometry` retains
+both prebuilt maps and can select the download view. Hybrid projection maps
+wire extents to canonical content ranges, synthesizes or removes BEP 47
+padding as required, and compares content ranges instead of equating numeric
+piece indexes.
+
+- **Invariant preserved:** a block is validated against its own protocol
+  geometry and every hybrid alias resolves to the same payload bytes.
+- **Must not:** treat a block extent as a whole-piece extent, infer content
+  identity from matching piece numbers, or merge v1 and v2 rarity counts.
+
+### Acceptance
+
+- Reject zero-length, overflowing, out-of-piece, and noncanonical request
+  extents; allow valid served tail extents that need not have request alignment.
+- Map file-spanning v1 ranges, file-local v2 ranges, hybrid padding, and short
+  final blocks without allocating duplicate piece maps.
+- Compare hybrid blocks by normalized payload ranges and preserve generation
+  identity when a connection slot is reused.
+- Regression sources cover block/piece type separation, short tails, padding
+  shifts, equal indexes with unequal content, selected hybrid plane, and shared
+  map ownership.
+
+### Files and compatibility
+
+- **Expected code paths:** `crates/rt-engine/src/transfer/coords.rs`,
+  `transfer/hybrid.rs`, `transfer/live.rs`, and `rt-piece-map` adapters.
+- **State or wire compatibility:** no resume or wire-format change; coordinates
+  are internal typed wrappers.
+- **Migration / rollback:** callers can retain their current picker geometry
+  while adopting adapters incrementally.
+- **Feature flag or rollout boundary:** live ownership parity is NET-114.
+
+### Evidence
+
+- **Regression source added or updated:** geometry and hybrid adapter tests in
+  `coords.rs`, `hybrid.rs`, and `live.rs`; simulator traces cover mixed planes.
+- **Command or probe to run:** transfer-core simulator and engine suites in the
+  requested bulk pass.
+- **Expected result:** only equivalent payload ranges alias across hybrid
+  planes, and stale connection generations cannot own new work.
+- **Executed on exact revision:** no.
+- **Artifact or report path:** pending bulk pass.
+- **External evidence still required:** matched v1/v2/hybrid live parity.
+
+## NET-102 — Seeded transfer simulator and invariant oracle
+
+- **Priority / wave:** P0 / 3
+- **Prerequisites:** NET-101
+- **Owning component:** `rt-engine/src/transfer/sim.rs`.
+- **Finding or capability:** ownership races and protocol transitions need a
+  deterministic virtual-time oracle independent of sockets and storage.
+- **Status:** `wip`
+
+### Scope and invariant
+
+Run a seeded swarm trace against the transfer ledger and hybrid adapter.
+`SimConfig` controls the seed and event behavior; `SimReport` records terminal
+completion, conservation, and invariant outcomes. Separate seeded traces
+exercise reserve/commit/response order, loss, peer churn, endgame races,
+late data, hybrid piece affinity, padding projection, and generation reuse.
+
+- **Invariant preserved:** simulation time and randomness are reproducible;
+  accepted content is accounted exactly once and every terminal path releases
+  ownership.
+- **Must not:** substitute simulation for the production actor, filesystem,
+  or interoperability qualification.
+
+### Acceptance
+
+- Identical configuration and seed produce identical reports.
+- Every trace checks ledger invariants and byte/request conservation at each
+  transition and at termination.
+- Seeded hybrid traces ensure one canonical piece is not split across planes,
+  losing responses project cancellation to the losing peer's wire plane, and
+  stale generations remain fenced after reconnect.
+- Run bounded matrices for one-peer, high-loss/churn, and mixed hybrid cases.
+
+### Files and compatibility
+
+- **Expected code paths:** `crates/rt-engine/src/transfer/sim.rs` and the pure
+  ownership core.
+- **State or wire compatibility:** simulator-only; no production state or
+  protocol change.
+- **Migration / rollback:** not applicable.
+- **Feature flag or rollout boundary:** oracle results support NET-114 and
+  NET-116 but do not authorize rollout alone.
+
+### Evidence
+
+- **Regression source added or updated:** deterministic replay, loss/churn,
+  commit/response race, degenerate swarm, and 64-seed hybrid trace tests.
+- **Command or probe to run:** simulator module tests during the requested
+  bulk pass.
+- **Expected result:** fixed seeds preserve all invariants and complete where
+  the configured source availability permits completion.
+- **Executed on exact revision:** no.
+- **Artifact or report path:** pending bulk pass.
+- **External evidence still required:** production actor and live-protocol
+  qualification.
+
 ## PERF-105 — Scoped deterministic fixture generation
 
 - **Priority / wave:** P0 / 3
@@ -102,13 +251,16 @@ Provide shared measurement primitives for a matched start barrier, unique
 accepted payload range accounting, and separate monotonic barrier, transfer,
 flush, validation, and shutdown intervals. Extend the trial artifact with
 optional, observation-linked payload-copy deltas for clients that expose
-instrumented counters. Fixture/client adapters, paired trial execution, and
-artifact assembly remain open.
+instrumented counters. The paired executor now connects the adapters, fixture,
+resource observer, trial records, and manifest; its real-client execution and
+qualification remain open.
 
 ### Ownership and invariant
 
-- **Current owner:** trial runner (barrier directory lifecycle), verifier
-  (which ranges are accepted), and timeline caller (phase boundaries).
+- **Current owner:** `paired_runner.py` owns the barrier lifecycle, measured
+  interval, fixture, client counters, and trial assembly; the independent
+  observer remains a separate process and `measurement.py` owns reusable
+  interval/range primitives.
 - **Target owner:** PERF-104 harness consumes pinned PERF-103 adapters and
   PERF-105 fixtures without controlling the client's resource observer.
 - **Invariant preserved:** goodput uses unique verifier-accepted payload bytes
@@ -185,6 +337,14 @@ pieces, excluding received and on-wire blocks, local completion, padding,
 unwanted files, pending completion, foreign piece ownership, and per-peer
 assembly/completion limits. Its count stops at the 32-block ceiling.
 
+PeerBuffer credit is measured in bytes and rounded to full blocks for ordinary
+window sizing. If positive headroom is smaller than one maximum block, retain
+a one-request attempt so a short piece-tail block can use its exact lease; an
+exact-size allocation still guards the byte cap. If there is no headroom, arm
+the bounded memory retry even though the window avoids a doomed allocation.
+This ensures a peer can resume when memory returns without waiting for another
+protocol event.
+
 ### Ownership and invariant
 
 - **Current owner:** `PiecePicker` tracks distinct fresh v1 blocks; each
@@ -208,6 +368,8 @@ assembly/completion limits. Its count stops at the 32-block ceiling.
   available-credit snapshot is advisory to the window; each actual request
   separately reserves global and torrent credit before enqueue. Rate changes
   and first-ready deadlines wake refill.
+- Positive sub-block PeerBuffer headroom permits one exact-size attempt for a
+  short tail block; zero headroom schedules the bounded retry path.
 - Regression sources cover the picker, packed early-stop traversal, endgame
   duplicate accounting, and pure-v2 availability/assembly counts.
 
@@ -217,7 +379,8 @@ assembly/completion limits. Its count stops at the 32-block ceiling.
   `useful_missing_preserves_peer_specific_endgame_duplicates`,
   `peer_bitmap_set_iteration_visits_only_valid_set_pieces`, and
   `v2_useful_missing_counts_only_remote_available_wanted_pieces` plus
-  `v2_useful_missing_counts_only_unreceived_blocks_without_wire_requests`.
+  `v2_useful_missing_counts_only_unreceived_blocks_without_wire_requests`,
+  `peer_request_admission_retries_after_payload_capacity_returns`.
 - **Command or probe:** run with the owner-requested bulk pass.
 - **Executed on exact revision:** no.
 - **Artifact or report path:** pending bulk pass.
@@ -237,13 +400,24 @@ assembly/completion limits. Its count stops at the 32-block ceiling.
 
 Replace per-piece tree nodes and full-torrent fresh-work scans with
 array-backed rarity buckets and an incrementally maintained candidate index.
-The live v1/v2 actor integration to the shared ledger remains NET-114.
+NET-114 connects v1/hybrid ownership to `PiecePicker`; pure-v2 maintains the
+same rarity policy in a separate v2-local `Availability` index. The indexes
+never combine numeric piece IDs across protocol geometries. If the v2 index
+cannot reserve its bounded memory estimate, the actor logs the degradation and
+keeps the sparse cyclic fallback.
 
 ### Ownership and invariant
 
-- **Current owner:** `PiecePicker` owns requestability and partial block state.
-- **Target owner:** `PiecePicker` continues to own selection policy; NET-114
-  will move cross-peer block ownership to the shared ledger.
+- **Current owner:** `PiecePicker` owns v1/hybrid rarity/priority selection
+  and a compact received-block projection used for selection and fastresume.
+  Pure-v2 owns a geometry-local rarity index and peer bitmaps. The live
+  generation-aware ledger is authoritative for cross-peer wire reservations,
+  response arbitration, and received-block ownership.
+- **Target owner:** protocol adapters provide their own piece-space index to
+  one bounded rarity policy; the shared ledger remains the sole cross-peer
+  ownership authority. Picker and v2 local-have state remain derived
+  selection/resume projections, never permission to reserve or publish
+  content.
 - **Invariant preserved:** cancellation, completion, rejection, restore, and
   enable/disable transitions update both the outstanding count and candidate
   membership consistently. Endgame sees only bounded in-progress pieces.
@@ -252,9 +426,15 @@ The live v1/v2 actor integration to the shared ledger remains NET-114.
 
 ### Acceptance
 
-- Rarity and active-work indexes use dense arrays with swap-remove positions.
+- Rarity and active-work indexes use dense arrays with swap-remove positions; after an interior removal, the position index points to the tail element left in that slot, not the removed element returned by `Vec::swap_remove`.
 - Peer bitfield add/remove walks set pieces and skips empty bytes while
   preserving BitTorrent's MSB-first order and ignoring unused tail bits.
+- Pure-v2 bitfield replacement, Have, HaveAll, HaveNone, and disconnect update
+  the v2-local rarity counts by exact set-difference; completed pieces leave
+  the fresh-candidate index and failed/rechecked pieces re-enter it.
+- Pure-v2 peer request filling drains the current piece before choosing a new
+  piece uniformly from the rarest peer-held bucket. A sparse cyclic fallback
+  remains available only when the memory governor cannot admit the index.
 - The picker exposes a constant-time fresh-work query so source schedulers can
   sleep while all wanted blocks are already requested.
 - Selection chooses uniformly among matching peers in the rarest matching
@@ -275,12 +455,16 @@ The live v1/v2 actor integration to the shared ledger remains NET-114.
   remain covered by regression cases.
 - Static and live estimates include packed flags, index arrays, bucket
   capacities, and the configured peer ceiling.
+- The pure-v2 availability index reserves a conservative capacity bound from
+  the configured connection ceiling before allocation; if admission fails,
+  the actor records the fallback state instead of allocating uncharged index
+  buckets.
 
 ### Files and compatibility
 
 - **Expected code paths:** `crates/rt-piece-picker/src/{availability,flags,picker}.rs`,
-  `crates/rt-engine/src/torrent_task.rs` packed peer availability, engine
-  reservation accounting, picker README.
+  `crates/rt-engine/src/{torrent_task.rs,torrent_task_v2.rs}` packed peer
+  availability, engine reservation accounting, picker README.
 - **State or wire compatibility:** no resume or wire-format change.
 - **Migration / rollback:** none; the reference API remains the current picker.
 - **Feature flag or rollout boundary:** none; qualification is required before
@@ -289,8 +473,9 @@ The live v1/v2 actor integration to the shared ledger remains NET-114.
 ### Evidence
 
 - **Regression source added or updated:** sparse bitfield MSB order and tail
-  handling, availability bucket movement,
+  handling, availability bucket movement and candidate-tail position repair after repeated interior removals,
   seeded random tie, sparse peer fallback and equal-rarity selection,
+  pure-v2 bitmap set-difference and rarest-peer-held selection,
   candidate lifecycle, source-scheduler fresh-work transitions, request
   cancellation, and picker memory estimate cases; block cursor advancement,
   cancellation rewind,
@@ -518,8 +703,8 @@ adapters; shared request ownership and actor migration remain NET-104/NET-114.
   `torrent_task.rs`, `torrent_task_v2.rs`, and the existing v2 tests.
 - **State or wire compatibility:** no format or wire change.
 - **Migration / rollback:** none; old storage map remains the reference.
-- **Feature flag or rollout boundary:** current v2 actor only; shared-core
-  rollout remains NET-114.
+- **Feature flag or rollout boundary:** live v1/hybrid picker and pure-v2 sparse
+  traversal; SYS-013 keeps the reference route available until qualification.
 
 ### Evidence
 
@@ -556,6 +741,11 @@ original allocation without creating a second piece-sized copy.
 - **Current owner:** the v1 actor admits peer-response bytes before requests;
   the peer loop carries the lease into the received event; webseed fetch
   reserves its response body.
+- **Core boundary:** the shared transfer ledger owns coordinate reservations
+  and arbitration. The actor's `LeasedBlockEvent` owns the immutable payload
+  and its `MemoryLease` together through actor and storage work. This keeps
+  the deterministic ledger independent of the resource governor without
+  splitting payload lifetime from its charge.
 - **Target owner:** the private LeasedBlockEvent carries both content and
   reservation into storage, which retains the same lease through backend
   completion without charging a shared payload a second time.
@@ -575,8 +765,10 @@ original allocation without creating a second piece-sized copy.
   fetch helper returns and releases when the event drops.
 - Evicted spill ranges share the original immutable allocation and lease.
 - Partial flush copies reserve their transient memory before allocation.
-- Shared v1/v2/hybrid ledger spans and device-operation ownership remain later
-  IO-003/IO-005 work; this slice does not claim them complete.
+- The live v1, pure-v2, and hybrid paths carry the admitted immutable payload
+  lease into actor handling; storage submission retains it through backend
+  completion. Hybrid wire/canonical conversion reuses contiguous Bytes and uses
+  bounded block-local copies only when file or padding spans are discontinuous.
 
 ### Files and compatibility
 
@@ -585,7 +777,7 @@ original allocation without creating a second piece-sized copy.
 - **State or wire compatibility:** no public BlockEvent, resume, or wire
   format change.
 - **Migration / rollback:** none; the wrapper is internal to the actor.
-- **Feature flag or rollout boundary:** v1 peer and webseed receive path only.
+- **Feature flag or rollout boundary:** live v1, pure-v2, and hybrid receive paths.
 
 ### Evidence
 
@@ -600,8 +792,8 @@ original allocation without creating a second piece-sized copy.
   and return to zero after it drops.
 - **Executed on exact revision:** no.
 - **Artifact or report path:** pending bulk pass.
-- **External evidence still required:** cross-plane payload ownership and
-  storage-operation completion retention.
+- **External evidence still required:** platform fault, cancellation, and
+  crash/replacement qualification of storage-operation completion ownership.
 
 ## IO-004 — Shared secure file identity and descriptor catalog
 
@@ -619,20 +811,21 @@ original allocation without creating a second piece-sized copy.
 Centralize path normalization, platform file identity, and replacement
 detection in `open.rs`. `HandleCache` is the sole descriptor-cache
 implementation; the scheduler's `FilePool` is a narrow stats/open-policy
-adapter. `StorageRuntime` and scheduler resources keep separate maps so their
-existing resource identities and accounting remain valid, while using the
-same secure identity helpers and descriptor-lease implementation.
+adapter. Production `StorageRuntime` and scheduler resources share the one
+process-global path map and descriptor limiter. Isolated caches remain
+available to unit fixtures. The catalog tightens its process capacity and
+idle lifetime to the strictest scheduler bounds observed during startup.
 
 ### Ownership and invariant
 
 - **Current owner:** `HandleCache` owns secure normalized path keys, identity
-  checks, descriptor leases, and cache lifecycle. `FilePool` delegates to it;
-  `StorageRuntime` and scheduler resources retain separate maps, while
-  `open.rs` owns no-follow opens and platform identity operations.
-- **Policy boundary:** each scheduler resource key and the direct runtime keep
-  their existing cache identity and capacity; all instances remain subject to
-  the shared process descriptor gate. A process-wide registry across those
-  owners is deferred until stats can identify and deduplicate cache ownership.
+  checks, descriptor leases, and cache lifecycle. `FilePool`, `StorageRuntime`,
+  and scheduler resources resolve through the same process-global descriptor
+  map; `open.rs` owns no-follow opens and platform identity operations.
+- **Policy boundary:** all production owners report the same nonzero
+  `catalog_id`; engine storage statistics merge its gauges and counters once
+  even when scheduler worker resources differ. Each instance retains its own
+  scheduler/backend identity and counters.
 - **Invariant preserved:** unlink/recreate or symlink replacement invalidates
   a cached descriptor before it serves a later path-based operation.
 - **Must not:** perform a filesystem identity check while holding the cache
@@ -661,9 +854,9 @@ same secure identity helpers and descriptor-lease implementation.
 - The public `HandleCache` reuses a current read+write descriptor for reads,
   never reuses read-only descriptors for writes, and removes a cached
   read-only entry when a read+write entry is published.
-- A process-wide map spanning scheduler and direct-runtime owners remains
-  open; merging it now would require separate cache identity in scheduler
-  metrics to avoid double-counting shared gauges and counters.
+- Scheduler and direct-runtime clones resolve the same absolute path to the
+  same catalog entry and descriptor lease; engine aggregation counts that
+  catalog once rather than once per scheduler resource.
 
 ### Files and compatibility
 
@@ -672,8 +865,9 @@ same secure identity helpers and descriptor-lease implementation.
 - **State or wire compatibility:** no storage-path, resume, or wire-format
   change.
 - **Migration / rollback:** none; path opening remains no-follow.
-- **Feature flag or rollout boundary:** none; qualify before broader storage
-  service integration.
+- **Feature flag or rollout boundary:** none; production runtime and scheduler
+  use the shared catalog, with portability and replacement qualification still
+  open.
 
 ### Evidence
 
@@ -681,6 +875,7 @@ same secure identity helpers and descriptor-lease implementation.
   `read_only_handles_do_not_serve_writes_and_reads_reuse_writable_handle`,
   `reopens_path_after_unlink_and_recreate`, `zero_idle_ttl_disables_expiry`,
   `write_handle_snapshot_drops_replaced_paths`,
+  `process_global_handle_catalog_has_one_identity_and_owner_map`,
   `replaced_path_after_held_read_is_not_returned_to_caller`, plus existing
   descriptor-budget, in-flight-lease, and scheduler cache-stat regressions.
 - **Command or probe to run:** `cargo test -p rt-storage` during the requested
@@ -830,9 +1025,19 @@ separate completion watermark for each path. Plan steps enter the destination
 mount's `MoveCopy` lane; source and destination paths each contribute
 physical-device admission, with all touched device queues acquired in stable
 key order. The 64 KiB streaming buffer is charged once while the operation
-owns mount/device admission. NET-114 still owns peer deadlines and
-choke-critical priorities. Cross-mount read coalescing and full
-injected-backend accounting remain open.
+owns mount/device admission. Live v1/hybrid and pure-v2 upload reads now pass a
+response deadline into device admission; Fast allowed-request reads that must
+be served while locally choked carry choke-critical priority. The dispatcher
+selects choke-critical work immediately, then expired-deadline work by earliest
+deadline, before normal weighted-class turns. These promotions occur only
+while dispatching the bounded pending queue; uncontended admission stays on
+the fast path. Urgent peer reads bypass the scheduler-local coalescer wait.
+Normal peer reads coalesce within one scheduler before entering the shared
+physical-device queue. Cross-mount coalescing is deferred as a performance
+experiment: it is useful only when distinct schedulers issue adjacent reads to
+the same file, and must preserve each caller's mount admission and completion
+owner. It is not a gap in physical-device ownership or fairness. Full
+injected-backend accounting remains open.
 
 ### Ownership and invariant
 
@@ -869,8 +1074,9 @@ injected-backend accounting remain open.
 - `MountScheduler::run_device_operation` is the reusable dispatch handoff for
   non-scheduler consumers. `run_device_operation_with_paths` admits every
   touched physical device in stable key order; secure copy/import steps use
-  this path so reverse-direction copies cannot deadlock. Peer
-  deadlines/choke-critical promotion remain in NET-114. Checkpoint barriers
+  this path so reverse-direction copies cannot deadlock. Peer deadline and
+  choke-critical inputs come from live v1/hybrid and pure-v2 upload-read
+  adapters. Checkpoint barriers
   resolve path groups before admission and dispatch a bounded same-device
   batch while preserving per-path fences and operation identities.
 - Canceling a caller after an external handoff starts does not release its
@@ -882,6 +1088,9 @@ injected-backend accounting remain open.
 - A skewed same-class queue from two storage-root owners verifies that a busy
   root cannot place all of its pending work ahead of another root sharing the
   same device. Regression source is authored; bulk execution remains deferred.
+- Device-queue regression sources cover choke-critical and expired-deadline
+  promotion ahead of normal work while ordinary traffic retains weighted
+  class shares.
 
 ### Files and compatibility
 
@@ -955,8 +1164,11 @@ files shift those indexes.
   spill blocks, and file writes; storage queues retain each view through
   backend completion and charge only per-job overhead in addition to the
   existing payload reservation.
-- **Target owner:** NET-114 moves the same content span and reservation into
-  the shared transfer/storage boundary without changing v1/v2 root semantics.
+- **Target owner:** NET-114 moves coordinates and request ownership into the
+  shared ledger; typed actor/storage events carry the immutable payload span
+  and its `MemoryLease` through hashing and backend completion. The pure
+  decision core remains independent of the runtime governor without changing
+  v1/v2 root semantics.
 - **Invariant preserved:** queue rejection cannot consume the caller's only
   hash state or release the payload lease early; v1 and v2 views refer to the
   same verified content while preserving their distinct padding rules. A
@@ -1140,24 +1352,21 @@ deferred.
 
 ### Scope
 
-Acquire `PeerBuffer` capacity before each v1 or pure-v2 request reaches the
-wire. The v1 reservation moves through the peer command and outstanding state
-into the matching `LeasedBlockEvent`; the pure-v2 reservation stays with its
-outstanding coordinate through piece storage and verification. Both paths retry
-after temporary capacity denial.
-
-This slice does not wire the pure transfer ledger into the actors, introduce
-cross-plane immutable spans, or integrate hybrid payload ownership.
+Acquire `PeerBuffer` capacity before each v1, pure-v2, or hybrid peer request
+reaches the wire. The v1/hybrid reservation is sized for its canonical extent,
+so hybrid v2 zero-padding expansion remains covered by the same lease. The
+matching response transfers its owner into actor handling; pure-v2 keeps each
+block lease with its outstanding coordinate through storage and verification.
+All paths retry after temporary capacity denial.
 
 ### Ownership and invariant
 
 - **Current owner:** v1 `TorrentTask` and `V2TorrentTask` choose coordinates;
-  their peer loops own outstanding responses.
-- **Target owner:** the request lease moves from the actor's command to the
-  v1 outstanding request and then its received block event; pure-v2 retains it
-  through the request's final block consumer.
-- **Invariant preserved:** no v1 or pure-v2 request reaches the wire unless
-  its expected payload bytes have already been admitted under
+  peer loops own outstanding responses and their generation-safe byte leases.
+- **Target owner:** the same admitted lease follows v1/hybrid responses into
+  their block event and pure-v2 responses through their final block consumer.
+- **Invariant preserved:** no v1, pure-v2, or hybrid request reaches the wire
+  unless its expected canonical payload bytes have already been admitted under
   `MemoryClass::PeerBuffer`.
 - **Must not:** reserve again after receiving an admitted response or strand a
   picker coordinate when a request command, socket write, peer event, or
@@ -1179,8 +1388,10 @@ cross-plane immutable spans, or integrate hybrid payload ownership.
 - A failed memory admission returns the picker coordinate and schedules a
   bounded retry on the existing one-second peer-control tick.
 - Unsolicited or mismatched blocks do not inherit a request lease.
-- Shared v1/v2/hybrid spans and device-operation ownership remain outside this
-  slice and are tracked by IO-003/IO-005/NET-104/NET-114.
+- The live ledger and hybrid facade now share canonical request ownership;
+  contiguous payload projections share Bytes, and only discontinuous hybrid
+  file/padding views need a bounded block-local copy. IO-003/IO-005 own the
+  immutable lease and device-operation lifetime.
 
 ### Files and compatibility
 
@@ -1191,8 +1402,8 @@ cross-plane immutable spans, or integrate hybrid payload ownership.
   admission may stop earlier under the existing memory cap.
 - **Migration / rollback:** none; the actor remains on its current picker and
   request maps.
-- **Feature flag or rollout boundary:** current v1 and pure-v2 peer request
-  paths; hybrid/shared-ledger rollout remains NET-114.
+- **Feature flag or rollout boundary:** live v1, pure-v2, and hybrid request
+  paths; reference rollback and qualification are tracked by SYS-013.
 
 ### Evidence
 
@@ -1210,8 +1421,8 @@ cross-plane immutable spans, or integrate hybrid payload ownership.
   checks the request lease survives Fast Choke and releases on legacy Choke;
   `v2_reject_releases_only_matching_response_lease` checks matching Reject
   release and mismatched Reject retention.
-  These v2 regressions are authored but remain unrun; hybrid/shared-span
-  admission remains open.
+  These v2 and hybrid regression sources are authored but unrun; bulk
+  qualification remains open.
 - **Command or probe to run:** targeted request-admission and peer-loop lease
   regressions during the requested bulk pass.
 - **Expected result:** request bytes are charged before enqueue, stay charged
@@ -1238,22 +1449,24 @@ reconciles response/commit event reordering, accepts useful late data, and
 returns bounded protocol actions. A conservative 64 MiB logical piece-state
 budget, a 4,096-live-connection ceiling, a 1,024-request per-peer ceiling, a
 65,536-owner torrent ceiling, and a four-owner endgame cap keep its principal
-retained collections bounded. NET-114 now uses it for live v1, hybrid-v1, and
-pure-v2 outbound request ownership and received-block arbitration. Pure-v2
-still keeps protocol-local response leases and per-peer piece assemblies; its
-reservations use piece affinity because those assemblies are not shared.
+retained collections bounded. NET-114 uses it for live v1, hybrid-v1, and pure-v2 outbound request ownership
+and received-block arbitration. Pure-v2 keeps protocol-local response leases
+and per-peer piece assemblies, with piece-affine reservations. The live hybrid
+facade binds both wire planes to one canonical v1 ledger and projects accepted
+data and cancellation actions back to each connection.
 
 ### Ownership and invariant
 
-- **Current owner:** the ledger owns live v1/hybrid-v1 and pure-v2 outbound
-  reservations, connection generations, received-block arbitration,
+- **Current owner:** the ledger owns live v1/hybrid-v1/pure-v2 outbound
+  reservations, hybrid dual-view arbitration, connection generations,
   fastresume-restored partial blocks, and applicable cancellation actions.
   `PiecePicker` remains the candidate-ranking and resume projection. Pure-v2
   actor maps retain response leases and per-peer assembly state, with atomic
   piece-affinity reservation.
-- **Target owner:** NET-114 extends the same ownership contract to hybrid
-  dual-view transfers and storage completion, with storage retaining payload
-  bytes until verification commits.
+- **Target owner:** NET-114 applies the same ownership contract to hybrid
+  dual-view transfers. Geometry-specific piece assembly and verification remain
+  with their actors; storage retains immutable payload owners through backend
+  completion.
 - **Invariant preserved:** each missing block is reserved once outside
   endgame; connection generations isolate stale events; received blocks are
   verified as complete pieces before `have` is set.
@@ -1289,14 +1502,14 @@ reservations use piece affinity because those assemblies are not shared.
   `crates/rt-engine/src/torrent_task/peer_transfer.rs`, and
   `crates/rt-engine/src/torrent_task/peer_session.rs`.
 - **State or wire compatibility:** the ledger is in-memory only; no wire or
-  fastresume format changed. The live request adapter is staged per protocol
-  plane.
+  fastresume format changed. The live request adapter is wired for v1, pure-v2,
+  and hybrid wire planes.
 - **Migration / rollback:** the picker remains the selection/resume projection;
   reverting the actor adapter returns request ownership to the prior actor path.
 - **Feature flag or rollout boundary:** v1, hybrid-v1, and pure-v2 outbound
   request ownership, including pure-v2 timeout expiry, are wired but
-  unqualified; hybrid dual-view integration, the simulator, and the bulk pass
-  remain open before the architecture is accepted.
+  unqualified; simulator execution and the bulk pass remain open before release
+  qualification.
 
 ### Evidence
 
@@ -1311,8 +1524,8 @@ reservations use piece affinity because those assemblies are not shared.
   configured simulator seeds complete reproducibly.
 - **Executed on exact revision:** no.
 - **Artifact or report path:** pending bulk pass.
-- **External evidence still required:** live actor parity, hybrid cross-plane
-  transfer, and storage commit ownership.
+- **External evidence still required:** matched live actor parity and storage
+  commit/recovery qualification.
 
 ## NET-105 — Negotiated peer request obligations
 
@@ -1331,8 +1544,7 @@ complete obligation state machine into the live shared runtime. The
 `transfer::InboundObligations` module owns the v1 and pure-v2 inbound upload
 queue/service lifecycle. The generation-aware ledger also owns live
 v1/hybrid-v1 and pure-v2 outbound reservations, received-block arbitration,
-and pure-v2's 60-second request expiry; hybrid dual-view ownership remains
-open.
+and pure-v2's 60-second request expiry; hybrid dual-view projection is wired through the canonical live ledger.
 
 ### Ownership and invariant
 
@@ -1340,9 +1552,10 @@ open.
   choke, and completion transitions use `InboundObligations`; the peer loops
   own storage futures and wire writes. The ledger owns v1/hybrid-v1 and
   pure-v2 outbound reservation and response arbitration, including v2 timeout
-  expiry; hybrid dual-view ownership remains open.
-- **Target owner:** `InboundObligations` and the shared ledger own response
-  obligations and outbound request state across both protocol planes.
+  expiry; hybrid dual-view projection is wired through the canonical live ledger; qualification remains open.
+- **Target owner:** `SharedUploadService` owns live inbound obligations and
+  upload read/byte admission; the shared ledger owns outbound request state
+  across both hybrid wire planes.
 - **Invariant preserved:** when Fast is negotiated, a request already
   accepted for processing remains owed a Piece or Reject response across
   Choke and Cancel; Reject is sent only when the peer negotiated Fast.
@@ -1374,8 +1587,8 @@ open.
 - Stale, duplicate, and unsolicited responses cannot mutate current content.
 - Both v1 and pure-v2 inbound upload paths use the shared obligation owner.
   v1/hybrid-v1 and pure-v2 outbound ownership now uses the ledger, including
-  v2 timeout expiry; hybrid dual-view arbitration and bulk qualification must
-  still close before this ticket is done.
+  v2 timeout expiry and hybrid dual-view arbitration. Regression and public-
+  client parity qualification remain open.
 
 ### Files and compatibility
 
@@ -1383,10 +1596,9 @@ open.
   `torrent_task.rs`, `torrent_task_v2.rs`, and NET-114 peer-runtime adapters.
 - **State or wire compatibility:** no wire-format change; negotiated Fast
   behavior follows the peer's handshake capabilities.
-- **Migration / rollback:** no persisted state changes. The inbound owner is
-  per connection and is cleared on disconnect; the v1/v2 adapters remain
-  independently reversible while hybrid dual-view and shared-runtime parity
-  are unfinished.
+- **Migration / rollback:** no persisted state changes. The inbound owner is registered in the process-wide shared service; v1, pure-v2,
+  and hybrid routes remain reversible through SYS-013 while parity/recovery
+  evidence is unfinished.
 - **Feature flag or rollout boundary:** no new advertisement or capability
   until the applicable live path satisfies its obligations.
 
@@ -1401,8 +1613,8 @@ open.
   existing v1 `fast_peer_request_while_choked_is_rejected_not_dropped`.
 - Focused v1 regression sources now cover queued-versus-in-service Cancel,
   late Piece after outbound Cancel, and exact endgame duplicate matching.
-  Shared-ledger outbound ownership, hybrid parity, public-client
-  interoperability, and all bulk validation remain open. Added shared-owner
+  Shared-ledger/hybrid regression qualification, public-client interoperability,
+  and all bulk validation remain open. Added shared-owner
   sources cover duplicate requests at capacity, total queued-plus-in-service
   bounds, allowed-fast dispatch while choked, and legacy in-service cleanup.
 - **Command or probe to run:** targeted v1/v2 Fast lifecycle and shared-ledger
@@ -1420,7 +1632,7 @@ open.
 - **Owning component:** v1 and pure-v2 peer protocol loops.
 - **Finding or capability:** keep protocol input and control handling responsive
   while bounded upload work waits on storage or rate admission.
-- **Status:** `wip`
+- **Status:** `wip`; live actors route this work through bounded tasks and shared admission, with regression qualification pending.
 
 ### Scope
 
@@ -1454,8 +1666,8 @@ progress persistence remain IO-008.
 - A deterministic regression holds upload rate admission after the storage
   read completes, sends a control message, and observes that message before
   the budget is released.
-- NET-114 later adopts the shared upload service without adding a second
-  socket writer or bypassing its ownership accounting.
+- NET-114 now uses the shared upload service without adding a second socket
+  writer or bypassing its ownership accounting.
 
 ### Files and compatibility
 
@@ -1463,10 +1675,11 @@ progress persistence remain IO-008.
   `torrent_task_v2.rs`, and the NET-114 peer adapters.
 - **State or wire compatibility:** no wire-format change; only scheduling
   between already bounded local jobs changes.
-- **Migration / rollback:** retain the per-actor worker path until shared
-  upload-service parity and rollback coverage exist.
-- **Feature flag or rollout boundary:** none; the shared core remains inactive
-  until NET-114.
+- **Migration / rollback:** keep the reference actor selectable through SYS-013 until bulk parity and
+  rollback coverage qualify a broader cutover.
+- **Feature flag or rollout boundary:** NET-114 is integrated behind the per-torrent
+  reference/shared route selected by SYS-013; keep both routes available until
+  rollback and parity evidence qualify the cutover.
 
 ### Evidence
 
@@ -1721,24 +1934,30 @@ transition-only outputs. Its source is authored but remains unrun.
 
 ### Scope
 
-The pure `UploadService` queues protocol obligations per torrent-scoped peer,
-dispatches bounded byte-admitted reads in round-robin order, and reports whether
-a read result may still be sent. Its composite identity permits one process-wide
-service even though each torrent ledger reuses local connection slots. Requests
-with zero or greater-than-one-block lengths are refused. The configured byte
-ceiling has a one-wire-block minimum, then acts as a hard cap. A disconnect ends
-protocol obligations but does not release capacity for reads already dispatched
-to storage. Actor integration and independent read/write progress remain
-NET-106/NET-114. The live identity table is capped by `max_connections`; its
-default mirrors the daemon's current 200-peer default, and the live adapter must
-pass the configured `network.max_peers` value.
+The pure `UploadService` remains the deterministic policy reference. The live
+`SharedUploadService` registers generation-safe BEP 6 obligations and
+process-wide round-robin job/byte admission together for v1/hybrid and pure-v2.
+The peer loop retains socket ownership and ordered responses. Composite
+torrent/connection identities prevent collisions between torrent-local slots.
+Requests with zero or greater-than-one-block lengths are refused. The configured byte ceiling has a
+one-wire-block minimum, then acts as a hard cap. A disconnect ends protocol
+obligations but does not release capacity for reads already dispatched to
+storage. The live read-registration cap uses configured `network.max_peers`;
+the live facade couples both registration lifetimes and derives a cloneable,
+generation-scoped read handle from the registered peer. New reads cannot be
+admitted through the process service without that handle; dropping the peer
+registration closes new work while already-issued permits remain charged
+through completion. Peer loops continue reading control input while bounded
+storage/rate jobs progress, with one ordered socket writer per peer.
 
 ### Ownership and invariant
 
-- **Current owner:** current v1/v2 peer loops own upload reads and responses;
-  the pure service is not live.
-- **Target owner:** the shared upload service owns accepted request obligations
-  and in-flight read accounting until storage completion.
+- **Current owner:** `SharedUploadService` owns live BEP 6 obligations and
+  read/byte admission by generation-safe peer identity; worker tasks receive
+  read admission only through a handle derived from that peer registration.
+  Actor loops own the socket and ordered response path.
+- **Target owner:** the same shared upload service owns accepted obligations
+  and in-flight read accounting until the actor completes or rejects a response.
 - **Invariant preserved:** live registrations stay within the process-wide
   connection cap; queued and active reads stay within per-peer queue, global
   job, per-peer job, and byte limits; a connection identity is not
@@ -1755,7 +1974,10 @@ pass the configured `network.max_peers` value.
   dispatches.
 - Job and byte budgets bound dispatched reads, including after disconnect;
   one valid block is admitted even when configuration is below one block.
-- The process-wide live registration table never exceeds `max_connections`;
+- Read-job identities are monotonic and never reused; exhaustion refuses
+  dispatch before removing an obligation from its per-peer queue.
+- The process-wide live read-registration table never exceeds configured
+  `network.max_peers`;
   disconnected generations with unfinished reads remain bounded by the job
   limit and do not consume a live-registration slot.
 - Re-registering a live connection identity is refused, including while its
@@ -1763,27 +1985,31 @@ pass the configured `network.max_peers` value.
 - Equal ledger connection slots and generations in separate torrents remain
   distinct registrations; disconnecting one cannot remove the other's work.
 - Regression sources cover queue bounds, byte bounds, fairness, invalid wire
-  lengths, connection-generation reuse, choke, cancel, and disconnect
-  completion ownership. Add a global-registration-capacity case before bulk
-  validation.
-- NET-114 routes live v1, v2, and hybrid uploads through the service before the
-  capability is considered integrated.
+  lengths, connection-generation reuse, live registration capacity, choke,
+  cancel, and disconnect completion ownership. They remain unrun pending the
+  requested bulk pass.
+- NET-114 routes live v1, pure-v2, and hybrid upload obligations through the
+  shared registration owner; code integration is present, with parity and
+  cancellation qualification deferred to the bulk pass.
+- The read scheduler's identity-based admission method is private to the
+  shared-service module; production actor jobs cannot construct an unscoped
+  read request directly from `GlobalNetworkBudget`.
 
 ### Files and compatibility
 
-- **Expected code paths:** `crates/rt-engine/src/transfer/{coords,upload,obligations}.rs`
+- **Expected code paths:** `crates/rt-engine/src/transfer/{coords,upload,upload_scheduler,obligations}.rs`
   and the NET-114 peer adapters.
 - **State or wire compatibility:** no wire-format change.
-- **Migration / rollback:** actor-local request handling remains selectable
-  until shared-service parity and rollback coverage exist.
+- **Migration / rollback:** the reference actor remains selectable through SYS-013 until bulk parity and
+  rollback coverage qualify a broader cutover.
 - **Feature flag or rollout boundary:** no release capability claim until
   live paths and cancellation accounting qualify.
 
 ### Evidence
 
 - **Regression source added or updated:** upload service queue, fairness,
-  budgets, cross-torrent identity isolation, choked reads, and disconnect-held
-  budget cases.
+  budgets, cross-torrent identity isolation, choked reads, disconnect-held
+  budget, and exhausted-job-identity preservation cases.
 - **Command or probe to run:** transfer-core upload tests during the requested
   bulk pass.
 - **Expected result:** no accepted request disappears and disconnected reads
@@ -1853,8 +2079,9 @@ sequence watermarks so a newer generation cannot be accidentally cleared.
   scheduler's dirty or active paths.
 - Ready paths on one resolved device enter a bounded batch together; batch
   size does not exceed the device dispatch window, handle-pool capacity, or
-  mount queue capacity, and each path retains an independent fence and dirty
-  generation.
+  mount queue capacity, and each path retains an independent fence, dirty
+  generation, storage-operation identity, and device-operation identity. A
+  reused barrier admission cannot pin the prior path descriptor across batches.
 - `sync_all_open_files_with_evidence` returns an opaque proof only after every
   path in the barrier succeeds; it reports synced-file count and the stable
   scheduler write-sequence watermark, and it retains write admission until
@@ -1922,6 +2149,15 @@ watermark fields default to zero when reading existing records.
   synced record.
 - Canceling the async waiter after the atomic writer starts does not release
   scheduler write admission before the resume write completes.
+- **Cross-store boundary:** fastresume and its barrier proof own piece/block
+  trust; `DbWorker` owns lifecycle and runtime/API projections. These stores do
+  not expose a shared transaction. Startup validates resume state or rechecks
+  payload, then republishes progress and lifecycle state from that result;
+  SQLite `amount_left` is never accepted as proof that payload bytes exist.
+  A crash between the fastresume rename and the following SQLite projection
+  can leave the projection stale, but restore repairs it before the actor
+  publishes its recovered running state. SYS-009 covers the worker commit
+  boundary, while physical crash-cut reconciliation remains qualification.
 - **Must not:** fabricate proof in `rt-fastresume`, infer durability from
   `clean_shutdown`, or break decoding of pre-evidence records.
 
@@ -1966,7 +2202,8 @@ watermark fields default to zero when reading existing records.
 - **Executed on exact revision:** no.
 - **Artifact or report path:** pending bulk pass.
 - **External evidence still required:** crash-cut qualification on supported
-  filesystems and integration with SYS-009 persistence ordering.
+  filesystems. SYS-009 separately qualifies the `DbWorker` actor path; no
+  distributed transaction spans SQLite and the fastresume file.
 
 ## IO-011 — Reuse-driven peer-read readahead
 
@@ -2048,6 +2285,131 @@ least-recently reused range. Live-engine qualification remains open.
 - **External evidence still required:** filesystem/backend read amplification
   and throughput under realistic peer request patterns.
 
+## IO-012 — Chunked v2 file-root recheck
+
+- **Priority / wave:** P1 / 6
+- **Prerequisites:** IO-006, IO-007
+- **Owning component:** `rt-storage::V2FileVerifier` and the shared hash pool.
+- **Finding or capability:** v2 recheck must verify large and sparse files
+  without one small I/O or hash-pool round trip per 16 KiB leaf.
+- **Status:** `wip`
+
+### Scope and invariant
+
+Read BEP 52 file content as a Merkle stream of 16 KiB leaves. The verifier
+uses chunks of 64 leaves (1 MiB), batches leaf hashing through the shared hash
+pool, and keeps a bounded page of sparse extents across sequential chunks.
+Sparse holes hash as zeroes; extent pages advance from an exclusive scan
+offset, and a final tail read detects truncation during a scan. Hybrid disk
+recheck uses IO-007's dual-view stream verifier to compute both protocol views
+from one read stream.
+
+- **Invariant preserved:** a file is valid only when its exact BEP 52 root
+  matches metainfo; missing/truncated data is never silently zero-filled.
+- **Must not:** materialize an entire large file, reread sparse-extent pages
+  for each chunk, or include BEP 47 padding in a file root.
+
+### Acceptance
+
+- Hash 64 leaves per bounded job and preserve Merkle layer/root semantics for
+  full chunks and final partial chunks.
+- Reuse no more than 64 sparse extents per page across sequential chunks;
+  advance the cursor monotonically and detect a truncated tail.
+- Sparse holes produce the same root as their logical zero bytes, while a
+  missing file, invalid root, or truncated file remains incomplete.
+- Hybrid disk verification reads each needed range once and checks both v1
+  and authenticated v2 views, excluding padding from the v2 root.
+- Regression sources cover batched leaf jobs, persistent cursor reuse, sparse
+  holes, truncation, empty files, invalid roots, and hybrid dual-view reads.
+
+### Files and compatibility
+
+- **Expected code paths:** `crates/rt-storage/src/verify.rs`,
+  `rt-storage/src/scheduler.rs`, and the hybrid verifier integration.
+- **State or wire compatibility:** verification output is unchanged; work is
+  internally chunked.
+- **Migration / rollback:** no state migration; verifier can retain the
+  existing bounded positioned-I/O backend.
+- **Feature flag or rollout boundary:** hardware/read-amplification claims
+  remain gated by IO-016 and PERF-110.
+
+### Evidence
+
+- **Regression source added or updated:** `v2_file_verify_batches_leaf_hashing_per_chunk`,
+  `v2_sparse_extent_cursor_reuses_pages_across_hash_chunks`, sparse-hole and
+  truncation cases, and hybrid dual-view verifier sources are present.
+- **Command or probe to run:** storage verification and engine restart suites
+  during the requested bulk pass.
+- **Expected result:** correct roots with bounded chunk and extent-page work;
+  truncated data fails verification.
+- **Executed on exact revision:** no.
+- **Artifact or report path:** pending bulk pass.
+- **External evidence still required:** target-filesystem read amplification,
+  CPU, and recheck throughput.
+
+## IO-013 — Persist authenticated v2 Merkle proof nodes
+
+- **Priority / wave:** P1 / 11
+- **Prerequisites:** IO-007, IO-010, IO-012
+- **Owning component:** pure-v2 proof serving in `torrent_task_v2.rs`.
+- **Finding or capability:** a BEP 52 hash request should not reread and hash
+  a whole file after every restart when authenticated nodes are available.
+- **Status:** `wip`
+
+### Scope and invariant
+
+Build a Merkle tree only from payload verified against the metainfo root.
+Keep up to 64 MiB of governor-charged proof layers in the in-memory LRU and a
+rebuildable per-torrent disk store capped at 512 MiB and 4,096 entries. Disk
+entries use a versioned header binding torrent identity, file root, length,
+and tree shape. Writes stage a unique no-follow temporary file, sync it, and
+install it by no-follow rename. Warm requests read the requested layer range
+and bounded authentication path, validate the header/shape, and authenticate
+the returned hashes to the metainfo root. Cold misses rebuild from content;
+oversized entries are skipped rather than weakening the cap.
+
+- **Invariant preserved:** persisted data is only a cache; no proof is served
+  unless its tree and requested path authenticate to the metainfo root.
+- **Must not:** trust a file because its name matches, follow attacker-created
+  symlinks, or make proof-cache durability a payload-completion condition.
+
+### Acceptance
+
+- Reject malformed headers, wrong torrent/root/length/tree shape, truncation,
+  and any returned range whose authentication path does not reach the root.
+- Enforce the memory and disk bounds per torrent; remove stale entries safely
+  and leave oversized trees rebuildable after restart.
+- A crash before rename leaves only a disposable temporary entry; restart can
+  ignore it and rebuild from verified content.
+- Charge retained trees and response buffers to their owning memory classes.
+- Regression sources cover cold build, warm range read, restart reuse, tampered
+  node rejection, cap eviction, and temporary-file cleanup.
+
+### Files and compatibility
+
+- **Expected code paths:** `crates/rt-engine/src/torrent_task_v2.rs` and
+  `rt-storage` no-follow filesystem helpers.
+- **State or wire compatibility:** cache format is versioned and rebuildable;
+  BEP 52 wire replies are unchanged.
+- **Migration / rollback:** remove or ignore cache entries to fall back to
+  content rehashing.
+- **Feature flag or rollout boundary:** proof serving remains on the existing
+  pure-v2 peer path; durability/corruption qualification remains required.
+
+### Evidence
+
+- **Regression source added or updated:** cold-cache round trip,
+  authenticated warm range, tampered-node rejection, size-cap, and
+  no-follow/temporary-file sources are present.
+- **Command or probe to run:** pure-v2 proof and restart suites during the
+  requested bulk pass.
+- **Expected result:** warm proofs match cold proofs, tampering is rejected,
+  and cache cleanup preserves the size bounds.
+- **Executed on exact revision:** no.
+- **Artifact or report path:** pending bulk pass.
+- **External evidence still required:** restart-heavy swarm workloads and
+  storage-device qualification.
+
 ## IO-014 — Schedule secure copies and verify each leaf once
 
 - **Priority / wave:** P1 / 10
@@ -2086,16 +2448,17 @@ When physical-device IDs are unavailable, all copy jobs through the engine's
 storage dispatcher share its stable fallback queue. This conservatively bounds
 unknown devices without assuming two paths are independent.
 
-Directory verification now streams entries on Unix and Windows without
-materializing per-directory name vectors. Unix recursive deletion retains at
-most 256 names per batch and restarts enumeration after each batch, so removing
-entries cannot invalidate an active directory cursor. Regular-file
-`CopyVerifyRename` steps and regular-file imports that cannot use a hard link
-now yield device slots between bounded copy and hash quanta. Directory-tree
-copies still hold their admitted device slots for the full secure step;
-Unix same-filesystem `ImportExisting` retains its one-operation hard-link
-fast path; Windows imports use bounded quanta for regular-file copies.
-Final file sync and recursive directory traversal are not preemptible yet.
+Directory copy and verification now use resumable cursors on Unix and Windows.
+They stream directory entries, advance one entry or one bounded file-copy,
+source-hash, or destination-hash quantum per device admission, and compare
+directory contents without materializing per-directory name vectors. Unix
+recursive deletion retains at most 256 names per batch and restarts enumeration
+after each batch, so removing entries cannot invalidate an active directory
+cursor. Unix same-filesystem `ImportExisting` retains its one-operation
+hard-link fast path; Windows imports use bounded quanta for regular-file copies.
+An individual directory entry operation and each file/directory sync are still
+non-preemptible within their admitted quantum; their latency and platform
+behavior require qualification.
 
 ### Ownership and invariant
 
@@ -2122,9 +2485,10 @@ Final file sync and recursive directory traversal are not preemptible yet.
   no more than 64 KiB per device admission, then release permits before the
   next quantum; one-block-per-quantum and cancellation cleanup regressions
   cover Unix and Windows.
-- Directory-tree copies and final syncs remain explicitly identified where a
-  full step can still hold device slots; Unix same-filesystem `ImportExisting`
-  retains the single-operation hard-link fast path.
+- Directory traversal and per-file copy/hash work yield between bounded
+  quanta. Individual directory-entry operations and file/directory syncs stay
+  within one admitted quantum; Unix same-filesystem `ImportExisting` retains
+  the single-operation hard-link fast path.
 - Source reads, destination writes, renames, deletes, and rollback mutations
   acquire admission for every touched physical device in a global order.
 - Opposing cross-device copies cannot deadlock while holding device permits.
@@ -2163,6 +2527,10 @@ Final file sync and recursive directory traversal are not preemptible yet.
   `regular_file_copy_cursor_advances_in_bounded_quanta` and
   `regular_file_copy_cursor_cancellation_removes_partial_destination` cover
   bounded file work and cancellation cleanup on Unix and Windows;
+  `directory_copy_cursor_preempts_and_verifies_streamed_tree` and
+  `directory_copy_cursor_cancellation_removes_partial_tree` cover tree
+  preemption, content verification, and cancellation cleanup on Unix and
+  Windows;
   `regular_file_import_keeps_the_hard_link_fast_path` protects the Unix
   same-filesystem import optimization;
   `streamed_tree_verification_rejects_destination_only_entries` preserves
@@ -2216,6 +2584,9 @@ scorecard thresholds.
 - The pinned validator checks trial, manifest, and client-observation
   schemas; manifest validation verifies non-symlink artifact/trial digests,
   source identity, and linked client/version/settings/process identity.
+- Every external JSON artifact and referenced JSON record is parsed with
+  duplicate-field, nonstandard-constant, and non-finite-number rejection
+  before schema or semantic validation.
 - Missing or unattributable platform counters remain explicit `null` values.
 - Scorecard thresholds remain proposed until separately adopted.
 
@@ -2234,8 +2605,10 @@ scorecard thresholds.
 
 - **Regression source added or updated:** complete-trial rules, malformed
   hashes, unknown fields, manifest digest shape, and referenced-file/provenance
-  checks in
-  `scripts/test_transfer_rebuild_validator.py`.
+  checks in `scripts/test_transfer_rebuild_validator.py`; duplicate-field,
+  non-finite numeric, and oversized-integer JSON inputs are rejected before
+  schema validation. The shared strict decoder also covers catalog-load logs,
+  rollout evidence, and paired-runner output.
 - **Command or probe to run:** schema validation and contract fixtures during
   the requested bulk pass; install the pinned helper dependency first.
 - **Expected result:** invalid types, hashes, and complete-trial omissions are
@@ -2455,7 +2828,7 @@ implemented and qualified.
 Replace repeated string keys inside high-cardinality runtime owners with
 compact identities while retaining the canonical info hash at string-facing
 boundaries. `TierController` uses owner-local slot/generation IDs: its tier
-maps and timer wheels use an 8-byte ID, while one interned `Arc<str>` identity
+maps and ordered deadline indexes use an 8-byte ID, while one interned `Arc<str>` identity
 supports lookups. `EngineRuntimeState` channel, task, activity, and pending-
 promotion maps, pending-add/delete sets, and supervised task-exit events use
 inline decoded keys for canonical v1/v2 hashes; the map and set adapters keep
@@ -2464,13 +2837,15 @@ text. No database, API, or wire representation changes.
 
 ### Ownership and invariant
 
-- **Current owner:** `TierController` stores full keys in its tier maps,
-  dormant projections, timer queues, and timer reverse index.
+- **Current owner:** `TierController` retains the canonical string in its
+  interner and uses compact IDs in tier maps, timer indexes, and dormant
+  projections.
 - **Target owner:** an owner-local key interner retains the canonical hash;
   tier maps and timers carry only `(slot, generation)`.
-- **Invariant preserved:** removing an identity invalidates its slot before
-  reuse; stale timer entries cannot resolve to a newer identity that reused
-  the same slot. Tier counts and dormant snapshot behavior remain unchanged.
+- **Invariant preserved:** removing an identity cancels its exact deadline
+  nodes before the slot can be reused; generation checks keep a recycled slot
+  distinct from the removed identity. Tier counts and dormant snapshot
+  behavior remain unchanged.
 - **Must not:** persist the runtime ID, change hash canonicalization, or let a
   stale timer act on a newly added torrent.
 
@@ -2480,11 +2855,11 @@ text. No database, API, or wire representation changes.
   slot share one interned string allocation.
 - Slot reuse increments generation. A generation that would overflow retires
   that slot instead of wrapping and aliasing an old ID.
-- Lazy stale timer entries are skipped after removal and do not target an ID
-  that reuses the old slot.
+- Timer cancellation removes the exact ordered-index node; no canceled timer
+  leaves a stale node or can target an ID that reuses the old slot.
 - Whole-owner estimates include retained map capacities, slot/free-list
-  capacities, timer queue capacities and stale entries, interned string bytes,
-  and separately owned dormant snapshot strings.
+  capacities, ordered timer-index nodes, interned string bytes, and separately
+  owned dormant snapshot strings.
 - Regression sources cover generation-safe slot reuse, dormant projection
   accounting, and whole-owner memory accounting.
 - Task-exit IDs, the four `EngineRuntimeState` maps, and the pending add/delete
@@ -2506,7 +2881,7 @@ text. No database, API, or wire representation changes.
 ### Evidence
 
 - **Regression source added or updated:**
-  `reused_tier_identity_has_new_generation_and_skips_stale_timer`,
+  `reused_tier_identity_has_new_generation_and_removes_old_deadline`,
   `dormant_snapshot_is_accounted_and_cleared_on_promotion`, and
   `owner_bytes_cover_maps_and_timers_not_just_the_hash_string`, plus
   `compact_exit_ids_roundtrip_v1_v2_and_keep_non_hash_test_keys` and
@@ -2514,12 +2889,177 @@ text. No database, API, or wire representation changes.
   and `runtime_torrent_sets_keep_canonical_keys_inline_and_accept_hash_strings`.
 - **Command or probe to run:** `cargo test -p rt-engine tier::tests` during
   the requested bulk pass.
-- **Expected result:** stale timer IDs never resolve after slot reuse and the
+- **Expected result:** a removed timer never fires for a reused slot and the
   owner estimate includes retained tier, snapshot, interner, and timer storage.
 - **Executed on exact revision:** no.
 - **Artifact or report path:** pending bulk pass.
 - **External evidence still required:** PERF-109/SYS-014 catalog and mixed-load
   qualification.
+
+## SYS-005 — Publish registry deltas and share immutable API rows
+
+- **Priority / wave:** P1 / 3
+- **Prerequisites:** SYS-004
+- **Owning component:** `rt-session::SessionRegistry` and native API snapshot
+  projection.
+- **Finding or capability:** F26; updates should not clone a full registry
+  journal or copy unrelated API row payloads.
+- **Status:** `wip`
+
+### Scope and invariant
+
+Publish bounded, coalesced registry revision pages and apply them to cached
+native API snapshots. Canonical v1/v2 hashes use fixed-size byte keys in the
+snapshot hash index and change set. `ChunkedVec` shares immutable row owners
+across snapshot revisions, including when copy-on-write duplicates the small
+pointer array for a changed row's chunk. Structural add/remove changes rebuild
+the positional projection from the deterministic registry snapshot. Dormant
+torrents retain the registry's compact immutable projection until mutation
+promotes them.
+
+- **Invariant preserved:** every published snapshot is internally consistent
+  at its revision; an incomplete or gapped delta page falls back to a full
+  deterministic rebuild; noncanonical fixture keys retain exact string
+  matching; public API fields and ordering are unchanged.
+- **Must not:** report an efficiency win based solely on compact keys or shared
+  rows. Per-row shared ownership has a fixed allocation cost; catalog and
+  matched-client evidence must measure its tradeoff.
+
+### Acceptance
+
+- Delta reads remain capped and coalesce repeated changes per hash.
+- Canonical v1/v2 snapshot indexes and delta sets use inline 20/32-byte keys;
+  noncanonical values preserve exact text behavior.
+- Updating one existing row allocates a replacement row while unchanged row
+  payload allocations remain shared across cached snapshot revisions.
+- Add/remove changes and incomplete delta history rebuild all positional
+  indexes from the registry snapshot.
+- Regression sources cover compact key behavior, shared unchanged row identity,
+  and incremental filter-index consistency.
+- Bulk scale and matched-client evidence remain required before claiming a
+  whole-process memory or throughput improvement.
+
+### Files and compatibility
+
+- **Expected code paths:** `crates/rt-session/src/registry.rs`,
+  `crates/rt-api-model/src/snapshot.rs`, and
+  `crates/rt-api-native/src/state.rs`.
+- **State or wire compatibility:** no persisted or API representation change.
+- **Migration / rollback:** none.
+- **Feature flag or rollout boundary:** snapshot implementation remains behind
+  the existing API cache; bulk validation and scale evidence qualify it.
+
+### Evidence
+
+- **Regression source added or updated:** `replacing_one_item_shares_unchanged_rows_in_the_copied_chunk` and
+  `snapshot_hash_keys_compact_canonical_hashes_and_preserve_other_text`, plus
+  the existing registry delta-page and incremental filter-index regressions.
+- **Command or probe to run:** API model, API native, and session registry
+  suites during the requested bulk pass.
+- **Expected result:** unchanged row pointers remain shared in changed chunks,
+  and API snapshots match a full rebuild at the same registry revision.
+- **Executed on exact revision:** no.
+- **Artifact or report path:** pending SYS-014 catalog-load and PERF-109 runs.
+- **External evidence still required:** matched whole-client resource and
+  throughput comparisons.
+
+## SYS-006 — Bounded API pages and revision deltas
+
+- **Priority / wave:** P1 / 4
+- **Prerequisites:** SYS-005
+- **Owning component:** native API snapshot projection, SSE handler, and
+  qBittorrent sync facade.
+- **Finding or capability:** list and change-feed endpoints must stay bounded
+  while clients page through one consistent catalog revision.
+- **Status:** `wip`
+
+### Scope and invariant
+
+Native torrent summaries are served from cached immutable snapshots, with
+revision-pinned pagination, indexed filters/sorts, a capped response count,
+and an estimated response-byte reservation before materializing the page.
+SSE advances through bounded registry-delta pages and requests a fresh snapshot
+when its cursor expires. qBittorrent `sync/maindata` projects the same bounded
+registry journal and uses an opaque RID that distinguishes the empty revision
+from the first mutation.
+
+- **Invariant preserved:** a page belongs to one registry revision; a delta
+  cursor advances only through rows included in that page; expired history
+  becomes an explicit restart/full-snapshot path.
+- **Must not:** allocate directly from an untrusted requested limit, return
+  mixed-revision pages, or interpret RID zero as a valid returned revision.
+
+### Acceptance
+
+- Native pages clamp `limit` to 1–5,000, keep a stable snapshot cursor, and
+  reserve the estimated response before cloning summaries.
+- SSE emits at most 1,000 changed/removed rows per page and advances through
+  `through_revision`; stale history resets the stream to a snapshot.
+- qBittorrent deltas cap each page and encode revision `r` as `r + 1` within
+  the supported integer range, so clients can distinguish initial state from
+  revision one.
+- Regression sources cover expired snapshots, pinned pages, delta continuation,
+  empty revision versus first mutation, and bounded response estimates.
+
+### Files and compatibility
+
+- **Expected code paths:** `crates/rt-api-native/src/state.rs`,
+  `rt-api-native/src/handlers.rs`, `rt-api-qbit/src/handlers.rs`, and
+  `rt-session/src/registry.rs`.
+- **State or wire compatibility:** additive page cursors and existing response
+  fields remain compatible; qBittorrent RID remains opaque to clients.
+- **Migration / rollback:** no persisted-state migration; handlers may fall
+  back to full snapshot semantics when journal history is unavailable.
+- **Feature flag or rollout boundary:** response budgets and 100k-catalog
+  responsiveness require SYS-014 qualification.
+
+### Evidence
+
+- **Regression source added or updated:** native snapshot/SSE page tests and
+  qBittorrent continuation, RID, and response-size tests are present.
+- **Command or probe to run:** API native, API qBittorrent, and session suites
+  during the requested bulk pass.
+- **Expected result:** page sizes stay within bounds and every continuation
+  either advances without a gap or explicitly requests a fresh snapshot.
+- **Executed on exact revision:** no.
+- **Artifact or report path:** pending bulk pass and SYS-014 load report.
+- **External evidence still required:** matched client load and mixed-transfer
+  responsiveness.
+
+## SYS-008 — Bounded timer maintenance and bulk-operation pacing
+
+- **Priority / wave:** P1 / 3
+- **Prerequisites:** SYS-004
+- **Owning component:** `rt-engine` tier maintenance and the native API bulk
+  action handler.
+- **Status:** `wip`
+
+### Scope and invariant
+
+Keep cancellation and due-timer maintenance bounded as the catalog grows, and
+avoid turning a large API bulk request into either a serial tail or an
+unbounded burst. An ordered `(deadline, sequence)` index removes canceled
+timers in O(log N), preserves FIFO order for equal deadlines, and pops at most
+the caller's per-tick limit without scanning tombstones. Bulk idle checks are
+staggered. Independent native bulk stop,
+recheck, label, and location operations run with at most 32 actions in flight,
+while start and reannounce remain ordered and serial because their lifecycle
+and fallback semantics are order-sensitive.
+
+The bulk response preserves the original selected-hash order and reports each
+selected hash exactly once as applied or failed. A failed operation does not
+cancel unrelated operations in the same request.
+
+### Regression and remaining evidence
+
+- **Regression source:** `bulk_operation_runner_bounds_concurrency_and_preserves_input_order`
+  checks the fixed concurrency ceiling, overlap, and ordered result accounting;
+  deadline-index regressions cover exact cancellation, equal-deadline order,
+  bounded due-pop after large cancellation cohorts, generation-safe slot reuse,
+  and staggered idle deadlines.
+- **Bulk evidence:** run the native API and engine tier suites during the
+  requested bulk pass. Catalog-scale and mixed-load evidence remains SYS-014.
+- **Executed on exact revision:** no.
 
 ## SYS-009 — Production database worker actor coverage
 
@@ -2730,6 +3270,53 @@ subsystems.
 - **External evidence still required:** large-catalog and mixed-load
   collection latency and resource impact.
 
+## SYS-014 — Complete-catalog cost and mixed-load responsiveness
+
+- **Priority / wave:** P1 / 6
+- **Prerequisites:** SYS-005, SYS-006, SYS-007, SYS-008, SYS-009, SYS-010,
+  PERF-109
+- **Owning component:** live native-engine catalog probe in
+  `crates/rt-metrics/tests/scale.rs`.
+- **Status:** `wip`
+
+### Scope and invariant
+
+Measure the native list and metrics paths with a catalog that entered through
+production metainfo admission, persisted, shut down, and restored. Keep the
+probe observational: all catalog torrents remain paused, API requests are
+read-only, responses are drained, and no timing threshold is treated as a
+release gate.
+
+### Implementation slice
+
+The mixed-load source runs 16 synchronized rounds of four concurrent requests:
+two bounded/sorted list pages, transfer info, and `/metrics`. It reports each
+route's raw latency samples and p50/p95 in a JSON log record. Both 1k and
+opt-in 100k catalog cases use the same production-engine create/persist/
+restore path as the existing live catalog probe. The 100k cases stay ignored
+by default due to their storage and resource cost.
+
+`catalog_load_report.py` assembles the retained full test log only for a clean,
+committed worktree and exact source commit. It requires both catalog sizes,
+validates all four routes and 16 positive raw samples per route, recomputes
+nearest-rank p50/p95, and records host identity. Manifest validation links the
+report to a separately retained `transfer-catalog-load-log-v1` artifact and
+requires the report source commit to match the clean manifest source.
+
+### Limits and evidence
+
+- The source is authored but has not been run on this revision.
+- This in-process paused-catalog probe does not represent daemon RSS,
+  concurrent payload transfer, independent clients, or a hardware capacity
+  guarantee. PERF-102/PERF-110 own process-level resource and transfer evidence.
+- Retain the exact source revision, host details, and complete JSON log line
+  when collecting this as SYS-014 evidence.
+- The SYS-015 `transfer-catalog-load-v1` qualification checks must each cite
+  the `transfer-catalog-load-report-v1` artifact digest; the report itself
+  cites the retained raw-log digest.
+- Regression commands are documented in
+  `scripts/transfer_rebuild/README.md`; both belong in the deferred bulk pass.
+
 ## PERF-108 — Stable memory accounting domains
 
 - **Priority / wave:** P0 / 4
@@ -2821,8 +3408,10 @@ Provide one deterministic, payload-derived Rust fixture corpus consumed by
 production metainfo parsing and piece-map code. Exercise the v1 and v2 views of
 the same multi-file torrent, including a multi-piece file, nested path, empty
 file, authenticated v2 piece layer, and BEP 47 alignment padding in hybrid
-metainfo. The shared core remains optional until SYS-013; this ticket does not
-switch production actors or claim equivalent runtime behavior across backends.
+metainfo. SYS-013 now provides a reversible per-torrent route between the
+reference and shared actor paths; this fixture ticket does not enable a cutover
+or claim equivalent runtime behavior across backends. Rollout remains gated by
+parity, recovery, and qualification evidence.
 
 The release build matrix remains Linux x86_64, Linux aarch64, macOS aarch64,
 and Windows x86_64. The normal workspace suite covers the fixture and full
@@ -2892,6 +3481,46 @@ sockets, or filesystem timing.
 - **External evidence still required:** hosted Windows smoke and release-matrix
   results for this exact revision.
 
+## SYS-013 — One-writer live cutover and durable rollback
+
+- **Priority / wave:** P0 / 12
+- **Prerequisites:** NET-114, IO-010, SYS-005, SYS-007, SYS-009, SYS-012
+- **Owning component:** `rt-engine` lifecycle, the supervised `DbWorker`, and
+  the `transfer_cutovers` database journal.
+- **Status:** `wip`
+
+### Scope and invariant
+
+Move one torrent between its retained reference route and the shared-core
+candidate only through a durable, generation-fenced actor transition. Exactly
+one actor owns transfer state for a torrent at every point. A candidate may
+start only after the reference actor has stopped and drained its admitted
+storage, hashing, peer, and completion work. An interrupted or failed cutover
+must restore the reference owner before torrent actors are restored.
+
+### Implementation slice
+
+An additive `transfer_cutovers` journal stores owner generation with stable,
+draining, starting, and rollback-required phases without advancing SQLite's
+`user_version`; older binaries can ignore the table and reopen the database
+for application rollback. Compare-and-swap transition helpers
+persist the intent before drain, refuse stale generations, and publish the new
+owner only after the caller records a successful start. Engine startup runs one
+transaction that fences every unfinished row back to the reference owner
+before `load_persisted_torrents()` can spawn actors. Supervised actor-exit
+notices also carry a unique incarnation generation, so a delayed exit from a
+replaced actor cannot reap its replacement. Database, actor-fence, strict native API, live route-selection, actor drain/start/readiness/rollback, and startup-recovery sources are authored but unrun.
+
+### Remaining qualification and acceptance
+
+- Run actor-level failure injection for held storage/hash completions, failed
+  spawn/readiness/commit, cancellation at each journal phase, process restart,
+  and per-torrent isolation during the requested bulk pass.
+- Exercise crash cuts and rollback under real v1, pure-v2, and hybrid swarm
+  activity before broadening the selectable route.
+- Keep the reference route available until parity and recovery evidence qualify
+  the shared-core cutover.
+
 ## NET-112 — Select and qualify the uTP protocol core
 
 - **Priority / wave:** P1 / 4
@@ -2928,12 +3557,19 @@ count, admitted bytes, per-peer overhead, and scheduling work measurable.
   runtime across peer and metadata tasks.
 - **Target owner:** one TorrentNG uTP runtime owns sockets, protocol state,
   connection identities, deadlines, readiness, and byte admission; each
-  logical `UtpStream` is a bounded handle into that owner. The source currently
-  has shared socket demultiplexing and bounded endpoint queues; central deadline
-  and ready-queue scheduling remain open.
-- **Invariant preserved:** every protocol and application buffer stays charged
-  until acknowledged, read by the consumer, or safely discarded after stream
-  termination; cancellation cannot release memory still owned by the runtime.
+  logical `UtpStream` is a bounded handle into that owner. Source now has shared
+  socket demultiplexing, one deadline heap per endpoint, a deduplicated FIFO
+  ready queue drained in 32-event turns, fixed per-stream reservations, and an
+  aggregate endpoint datagram budget. Each admitted stream reserves one
+  cancellation slot in the same bounded FIFO as its schedule commands, so a
+  dropped stream cannot lose or overtake its final cancellation. The scheduler
+  handles at most 32 due deadlines, ready signals, and queued commands per
+  turn, and does no full-table liveness sweep. Bulk qualification remains open.
+- **Invariant preserved:** per-stream reservations cover bounded receive and
+  retransmit windows plus route/deadline metadata; queued datagrams retain
+  endpoint-budget reservations until processing or discard. Cancellation cannot
+  release capacity still owned by the runtime. Usage reports reservations and
+  live packet charges, not process RSS.
 - **Must not:** use an ambient blocking thread, silently fall back from a
   rejected uTP datagram into an unbounded queue, exceed aggregate or per-peer
   receive/retransmit budgets, raise the workspace MSRV for the reference
@@ -2947,7 +3583,13 @@ count, admitted bytes, per-peer overhead, and scheduling work measurable.
   their address family; no per-peer UDP socket is created.
 - A SYN flood cannot exceed the configured stream cap. Read/write queues,
   receive capacity, retransmit storage, pending datagrams, and deadline/ready
-  metadata have hard aggregate budgets.
+  metadata have hard per-stream or aggregate endpoint budgets. The endpoint
+  defaults to a 64 MiB reservation limit and exposes current reservation usage.
+- Each admitted stream retains a bounded FIFO permit for cancellation. Saturating
+  the schedule-command capacity cannot drop a cancellation; FIFO ordering keeps
+  cancellation behind the stream's earlier deadline updates. Scheduler turns
+  process at most 32 due deadlines, ready signals, and queued commands apiece
+  and never scan the connection table.
 - The adapter preserves the peer-wire byte-stream interface, configured TCP
   fallback, close/shutdown behavior, and current metrics ownership.
 - Deterministic tests cover handshake, window refill, loss/retransmission,
@@ -2977,14 +3619,16 @@ count, admitted bytes, per-peer overhead, and scheduling work measurable.
 
 - **Regression source added or updated:** existing `rt-utp` transport tests
   remain the baseline; add deterministic state/window and adapter cases with
-  NET-112/113.
+  NET-112/113. Deadline coverage includes schedule-queue saturation with FIFO
+  cancellation and removal of canceled registered/ready state.
 - **Command or probe to run:** `cargo test -p rt-utp` and the focused engine
   uTP integration cases during the requested bulk pass.
 - **Expected result:** all protocol, ownership, socket-sharing, and boundedness
   cases pass on the exact integration revision.
 - **Executed on exact revision:** no; all uTP validation is deferred to the
   requested bulk pass.
-- **Artifact or report path:** pending implementation and bulk pass.
+- **Artifact or report path:** implementation and regression sources are in
+  `crates/rt-utp/`; bulk validation and efficiency reports remain pending.
 - **External evidence still required:** matched hardware/network trials under
   PERF-112 through PERF-116; source review is not a performance result.
 
@@ -3007,8 +3651,10 @@ metadata paths connect through that runtime. Incoming and outgoing IPv4 streams
 share the listener endpoint when incoming uTP is enabled; outbound-only address
 families lazily bind one shared endpoint. Listener rebind retires the old
 endpoint for existing routes and limits retained generations. Central timer
-scheduling, ready-queue fairness, aggregate memory charging, and the full
-loss/reorder acceptance matrix are still open.
+scheduling now uses one heap per endpoint and a deduplicated FIFO ready queue
+drained in 32-event turns. Per-stream reservations and live datagram charges
+share a hard aggregate endpoint budget. The full loss/reorder acceptance
+matrix and all validation remain open.
 
 ### Acceptance
 
@@ -3023,8 +3669,9 @@ loss/reorder acceptance matrix are still open.
 - Regression sources cover multi-packet window fill, SACK, reordering, wrap,
   cancellation, multi-stream socket sharing, rebind with an active stream, and
   route caps. All remain unrun until the requested bulk pass.
-- Deadline scheduling, queue fairness, and resource/efficiency claims require
-  their own implementation and matched evidence; a shared socket alone is not
+- Deadline scheduling and queue fairness now have source and regression
+  coverage, but remain unqualified until the bulk pass. Resource and efficiency
+  claims require matched evidence; a shared socket or memory limit alone is not
   a performance result.
 
 ### Evidence
@@ -3051,24 +3698,32 @@ loss/reorder acceptance matrix are still open.
 ### Scope
 
 Control the local peer network and its link profile so capacity and matched
-service runs do not depend on public-swarm availability. The first landed
-slice applies pinned, loss-free Linux egress profiles to a named task-owned
-veth in a `tngt-*` network namespace. It records namespace/interface identity,
-iproute2 versions, requested delay/rate/queue, and normalized `tc -j` qdisc
-readback. Reset removes only the exact recorded qdisc and verifies the default
-root qdisc returns.
+service runs do not depend on public-swarm availability. The helper applies
+pinned Linux egress profiles to a named task-owned veth in a `tngt-*` network
+namespace. Clean profiles provide fixed delay and rate. Seeded impairment
+profiles add independent random loss and delay jitter. Every apply records
+namespace/interface identity, iproute2 versions, requested delay/jitter/loss/
+rate/queue/seed, and normalized `tc -j` qdisc readback. Reset removes only the
+exact recorded qdisc and verifies the default root qdisc returns.
 
-The profiles are one-way egress controls. Apply one profile artifact per
-shaped endpoint when both directions need shaping. The helper does not create
-namespaces, shape host or loopback interfaces, apply random loss/jitter, or
-claim measured RTT. Independent tracker/seed/leecher setup, deterministic
-peer-start barriers, and paired endpoint orchestration remain open.
+Profiles are one-way egress controls. `paired_runner.py` applies one profile
+per endpoint when both directions need shaping. It derives distinct seeds from
+the randomized pair identity, profile, and endpoint role, then records the
+ordered target/seed values and both apply-artifact digests. The validator
+recomputes those seeds and verifies that each artifact's profile, settings,
+qdisc readback, and tool identity match. Configured one-way delay, jitter, and
+loss are recorded separately; `rtt_ms` stays null because the runner does not
+measure RTT. The helper does not create namespaces, shape host or loopback
+interfaces, or accept a non-default root qdisc. `paired_runner.py` composes it
+with an isolated tracker, seed/target endpoints, and deterministic peer-start
+barrier; client execution and host qualification remain open.
 
 ### Ownership and invariant
 
 - **Current owner:** `network_control.py` owns the task-namespace qdisc apply
-  and reset lifecycle; the manifest validator owns artifact digest and trial
-  linkage checks.
+  and reset lifecycle; `paired_runner.py` applies and resets it on both trial
+  endpoints; the manifest validator owns artifact digest and trial linkage
+  checks.
 - **Target owner:** PERF-104/106's paired runner owns fixture startup,
   independent peers, two-sided shaping, trial start barrier, and cleanup.
 - **Invariant preserved:** a profile claim is backed by exact pinned settings
@@ -3090,7 +3745,13 @@ peer-start barriers, and paired endpoint orchestration remain open.
   and writes a separate reset artifact.
 - Trials with a controlled profile link all apply-artifact digests. Manifest
   validation verifies the file digest, schema, profile settings, observed
-  qdisc, tool identity digest, link-rate value, and reset-to-apply reference.
+  qdisc, tool identity digest, link-rate value, deterministic endpoint seeds,
+  configured impairment summary, and reset-to-apply reference. Completed
+  shaped trials include both endpoint apply and reset records.
+- Stochastic profiles use independent random packet loss and jitter with zero
+  correlation. Their explicit unsigned 64-bit PRNG seeds are read back from
+  `tc -j`; records without a seed remain accepted only for historical clean
+  profiles, so existing loss-free artifacts remain resettable.
 - No performance result is accepted until the isolated swarm fixture and
   paired-run orchestration establish the same workload for each candidate.
 
@@ -3310,8 +3971,7 @@ scale pass; its source is not capacity evidence.
 - **Prerequisites:** PERF-103, PERF-104, PERF-105, PERF-106, PERF-107, PERF-109
 - **Owning component:** certification tooling.
 - **Finding or capability:** paired comparisons need a fixed workload catalog,
-  randomized order, and explicit exclusions before a runner can create trial
-  evidence.
+  randomized order, explicit exclusions, and retained execution evidence.
 - **Status:** `wip`
 
 ### Scope
@@ -3329,20 +3989,32 @@ The current known exclusions are the `urtorrent` runner's v2 and hybrid slots:
 it accepts private v1 metainfo only. Unpinned clients and profile/repetition
 pairs with fewer than two candidate clients are explicit exclusions. Every
 scheduled pair holds profile and repetition fixed while randomizing client
-order, so the future runner can reuse one identical fixture and environment
-for its paired clients.
+order; `paired_runner.py` reuses one verified fixture for the paired trials.
 
 ### Ownership and invariant
 
 - **Current owner:** `paired_plan.py` builds the catalog, seed-bound plan, and
   immutable output. `compatibility.py` probes each pinned candidate with a
   small private fixture, records add/paused/remove outcomes, and binds them to
-  client identity and settings readback. `validate_artifact.py` validates both
-  plan and preflight artifacts.
-- **Target owner:** PERF-110's process runner consumes the plan, performs
-  compatibility preflight, prepares shared fixtures and network state, starts
-  each client, observes independent resources, and emits PERF-101 trial and
-  manifest artifacts.
+  client identity and settings readback. `paired_runner.py` consumes the ready
+  preflight, stages inputs, creates or reuses fixtures, launches native and
+  container clients in isolated task namespaces, runs download and seed modes
+  behind a shared barrier, observes resources, and assembles trials and
+  manifests. `process_supervisor.py`, `client_control.py`, `task_network.py`,
+  `task_tracker.py`, and `trial_record.py` provide its identity-bound pieces.
+  `validate_artifact.py` validates the linked evidence, rehashes fixture
+  payloads and the original torrent record, checks retargeted metainfo hashes
+  against the original and retained binary, binds tracker addresses and hashes
+  to the task topology, and verifies that network observation sampled the
+  measured candidate namespace (target for downloads, seed for seeding). The
+  runner requires its task-local staged-input directory to have exact mode
+  `0700`; external JSON inputs and runner output records reject duplicate
+  fields, nonstandard constants, and non-finite numeric values. The private
+  tracker rejects malformed percent escapes, raw non-ASCII bytes, and
+  unescaped control bytes before interpreting binary hashes or peer IDs.
+  Complete trials require both tracker peers and a ready seed.
+- **Target owner:** the paired executor and compatibility preflight remain
+  separate commands; both must succeed before a trial can qualify.
 - **Invariant preserved:** every included schedule slot is pinned and
   catalogued; the seed, schedule algorithm, adapter pins, and fixture-profile
   digest are retained with the plan; no pair compares different profiles.
@@ -3376,8 +4048,17 @@ for its paired clients.
 - A passed case is eligible only when add, paused-state verification, and exact
   removal all succeed. A scheduled pair is excluded when fewer than two of its
   clients pass. No failed or cleanup-failed case is silently dropped.
+- Every attempted scheduled slot produces a trial record. A failed client
+  startup remains `unmeasured`, with no client process identity, settings
+  readback, or process resource observation; it is retained with its reason.
+  A complete payload transfer accounts for the full expected useful payload,
+  passes applicable integrity checks, and links the matching independent
+  process observation.
 - Plan output is exclusive, mode `0600`, schema-validated, and rejected if its
   catalog digest or deterministic schedule no longer matches its identity.
+- Trial output is schema-validated, mode `0600`, exclusive, and syncs both file
+  and parent directory. The source-bound manifest still requires a clean
+  committed worktree and verifies each trial and evidence digest.
 - Regression sources cover the 28 slots, balanced pairs, stable scheduling,
   exclusions, tamper rejection, bounds, and exclusive output.
 
@@ -3385,6 +4066,13 @@ for its paired clients.
 
 - **Expected code paths:** `scripts/transfer_rebuild/paired_plan.py`,
   `scripts/transfer_rebuild/compatibility.py`,
+  `scripts/transfer_rebuild/process_supervisor.py`,
+  `scripts/transfer_rebuild/paired_runner.py`,
+  `scripts/transfer_rebuild/managed_client.py`,
+  `scripts/transfer_rebuild/client_control.py`,
+  `scripts/transfer_rebuild/task_network.py`,
+  `scripts/transfer_rebuild/task_tracker.py`,
+  `scripts/transfer_rebuild/trial_record.py`,
   `scripts/transfer_rebuild/fixtures.py`,
   `scripts/transfer_rebuild/validate_artifact.py`,
   `certification/transfer-rebuild/{paired-plan,compatibility-preflight}.schema.json`,
@@ -3395,15 +4083,19 @@ for its paired clients.
 - **Migration / rollback:** none; plans are standalone artifacts and can be
   regenerated from pinned inputs and the recorded seed.
 - **Feature flag or rollout boundary:** no comparison or performance claim is
-  permitted from a plan or preflight alone. Process launch, trial/manifest
-  production, independent observation, and bulk validation remain required.
+  permitted from a plan, preflight, or authored runner alone. Real client runs,
+  independent observations, manifest validation, and the bulk pass remain
+  required.
 
 ### Evidence
 
 - **Regression source added or updated:**
   `scripts/test_transfer_rebuild_paired_plan.py`,
-  `scripts/test_transfer_rebuild_compatibility.py`, and semantic validation
-  for both artifacts.
+  `scripts/test_transfer_rebuild_compatibility.py`,
+  `scripts/test_transfer_rebuild_process_supervisor.py`,
+  `scripts/test_transfer_rebuild_trial_record.py`,
+  `scripts/test_transfer_rebuild_validator.py`, and semantic validation for
+  the plan, observations, trial, and manifest artifacts.
 - **Command or probe to run:** planner, compatibility preflight, schema
   validators, and regression cases during the requested bulk pass.
 - **Expected result:** byte-identical plan content for identical inputs;
@@ -3412,8 +4104,9 @@ for its paired clients.
   incomplete removal evidence; tampered identity or ordering rejected; no
   output overwrite.
 - **Executed on exact revision:** no.
-- **Artifact or report path:** none; planner, preflight, and validator source
-  only. No runtime preflight has been executed.
+- **Artifact or report path:** none; runner, planner, preflight, process
+  supervision, trial assembly, and validator sources are authored. No runtime
+  preflight or paired client trial has been executed.
 - **External evidence still required:** successful pinned compatibility
   preflights, actual paired process execution, complete trial records,
   independent resources, and dedicated-host results.
@@ -3467,8 +4160,8 @@ threshold tests or whole-client performance evidence.
   snapshot operation. Those numbers mean cumulative allocation traffic.
 - Both probes emit stable CSV headings, have no pass/fail thresholds, and
   document the need to retain commit, toolchain, and host identity with output.
-- Regression source records the intended probe workloads; the exact commands
-  and bulk measurements remain unrun.
+- Regression source records the intended probe workloads. The local commands
+  have run; dedicated-host repeats and whole-client evidence remain unrun.
 
 ### Files and compatibility
 
@@ -3486,13 +4179,15 @@ threshold tests or whole-client performance evidence.
 ### Evidence
 
 - **Regression source added or updated:** standalone picker and native API
-  benchmark targets; no benchmark was executed for this source slice.
-- **Command or probe to run:** both `cargo bench` commands documented in the
-  harness README during the requested bulk pass.
+  benchmark targets; both probes were executed locally.
+- **Command or probe run:** `cargo bench -p rt-piece-picker --bench perf` and
+  `cargo bench -p rt-api-native --bench perf`.
 - **Expected result:** valid CSV rows for each workload and explicitly
   separated initial/cache-hit/changed snapshot allocation traffic.
-- **Executed on exact revision:** no.
-- **Artifact or report path:** pending a task-owned PERF-111 bulk run.
+- **Executed on exact revision:** no clean commit; the probes ran on the dirty
+  worktree rooted at `4cd671b0d5eae1ddc096493ded381569e57f49f4`.
+- **Artifact or report path:**
+  [`TRANSFER_CORE_PERF111_LOCAL.md`](TRANSFER_CORE_PERF111_LOCAL.md).
 - **External evidence still required:** repeat runs on the dedicated,
   identified hardware; compare exact source/toolchain; independent process RSS
   and whole-service evidence remain separate.
@@ -3545,7 +4240,9 @@ transfer-rate or whole-client performance result.
 - Admit raw metainfo through `EngineHandle::add_torrent_raw_with_labels`,
   connect the receiver with `EngineHandle::add_peers`, and observe all three
   cases reach complete state with zero bytes remaining and exact payload-file
-  bytes at the receiver.
+  bytes at the receiver. Use the public compatibility matrix and one
+  initiating dial; private-torrent peer authorization is a separate policy
+  regression and must not be simulated by simultaneous reciprocal dials.
 - Pause the completed entries, shut down cleanly, and restore all three from
   the same database and metainfo blobs with their protocol identities and
   completed counters intact.
@@ -3735,6 +4432,78 @@ outcomes; it never reduces a run to a text summary.
   set on the selected comparison host; scorecard source alone is not a
   performance result.
 
+## PERF-115 — Hosted correctness and dedicated hardware lanes
+
+- **Priority / wave:** P1 / 9
+- **Prerequisites:** PERF-110, PERF-111, PERF-112, PERF-113, PERF-114
+- **Owning component:** GitHub Actions qualification workflows and run scripts.
+- **Status:** `wip`
+
+### Scope
+
+Provide repeatable hosted correctness coverage for the transfer core and its
+artifact tooling, plus an explicitly opted-in dedicated-host lane for picker
+and API snapshot diagnostics and the configured storage target exercise. The
+hardware lane is limited to `main`, a protected GitHub environment, and the
+dedicated `torrentng-transfer-perf` runner label. It retains the exact source
+commit, worktree state, compiler, host, storage mount, command logs, and exit
+statuses as run artifacts.
+
+### Ownership and invariant
+
+- **Current owner:** `.github/workflows/transfer-rebuild.yml` runs hosted
+  Rust/Python correctness and, when explicitly selected, calls
+  `scripts/transfer_rebuild/hardware_lane.sh` on the dedicated runner.
+- **Target owner:** the same workflow publishes immutable CI evidence; the
+  paired manifest remains the authority for actual PERF-110 client trials.
+- **Invariant preserved:** routine hosted CI never writes to a physical
+  storage target. The storage exercise requires an operator-supplied,
+  disposable directory outside the checkout. Benchmark output is diagnostic
+  until source, host, and environment are compared under PERF-113.
+- **Must not:** expose self-hosted hardware to pull-request code, silently
+  use a temporary filesystem as a physical disk, or turn benchmark output into
+  a performance claim.
+
+### Acceptance
+
+- Hosted execution runs the DB, peer-wire, picker, uTP, storage-library,
+  engine-library, native API, and 1k production-catalog mixed-load suites, plus
+  every `scripts/test_transfer_rebuild_*.py` regression source.
+- Dedicated execution is manual, main-only, environment-protected, and bound
+  to the dedicated runner label. It records host, worktree, toolchain, and
+  storage mount metadata before executing diagnostics.
+- Picker and changed-snapshot benchmarks run with raw logs retained. The
+  storage move/import exercise runs only against the explicit configured
+  storage root; all three exit statuses are retained even when one fails.
+- CI artifacts remain diagnostics. No gate, baseline, or comparative claim
+  passes from workflow completion alone.
+- Workflow and script changes receive syntax/security review before the first
+  hosted execution; the dedicated run remains external evidence.
+
+### Files and compatibility
+
+- **Expected code paths:** `.github/workflows/transfer-rebuild.yml`,
+  `scripts/transfer_rebuild/hardware_lane.sh`, this spec, harness README, and
+  the rebuild ledger.
+- **State or wire compatibility:** no runtime or artifact-schema changes.
+- **Migration / rollback:** none; delete or disable this manual workflow
+  without changing product behavior.
+- **Feature flag or rollout boundary:** dedicated hardware execution remains
+  opt-in and unavailable to untrusted pull requests.
+
+### Evidence
+
+- **Regression source added or updated:** workflow and hardware-lane source;
+  static workflow-policy regressions remain part of the deferred bulk pass.
+- **Command or probe to run:** hosted lane first, then the protected hardware
+  lane with an operator-provisioned storage root.
+- **Executed on exact revision:** no. Workflow and script sources are
+  authored but unrun.
+- **Artifact or report path:** GitHub Actions artifact
+  `transfer-rebuild-hardware-<run-id>` after the dedicated lane runs.
+- **External evidence still required:** hosted correctness run and dedicated
+  storage/performance observations on the selected machine.
+
 ## IO-015 — Continuous io_uring completion and retained registrations
 
 - **Priority / wave:** P1 / 10
@@ -3835,15 +4604,20 @@ piece. A centralized 60-second ledger expiry routes Cancel actions to peer
 tasks and drops matching actor requests. Hybrid live peers now negotiate v1 or
 v2 identity and run requests, responses, upload obligations, and availability
 through canonical v1 actor coordinates with wire-plane projection. Matched live
-hybrid qualification remains open. Concurrent shared source scheduling and
-shared rate/window/upload services across peer and webseed sources also remain
-open.
+hybrid qualification remains open. Shared process/torrent request-turn admission, rate credit, and adaptive
+windows are integrated across peers and webseeds. Candidate ranking remains
+geometry-specific by design; hybrid parity qualification remains open.
 Each pure-v2 assembly also keeps a forward request cursor over received and
 on-wire blocks. Matching Cancel and Reject responses rewind the cursor. Its
 received-block state is stored as a packed bitmap; both bitmap and cursor are
 included in the PieceAssembly memory lease. The peer request filler prioritizes
-its active assemblies and then walks set bits in remote availability, avoiding
-a whole-torrent scan for each requested block.
+its active assemblies, then selects uniformly among the rarest eligible pieces
+in the memory-governed v2 availability index. If that index cannot be admitted,
+it walks the remote bitmap with a bounded cyclic fallback.
+Both active and reference pure-v2 actors prepare the target file through the
+same per-file lock/cache helper before the first streamed block or verified
+piece write. Storage-root changes clear that preparation cache before the
+replacement actor resumes.
 
 ### Ownership and invariant
 
@@ -3907,7 +4681,11 @@ a whole-torrent scan for each requested block.
 - Pure-v2 request cursors skip received/on-wire blocks and rewind on matching
   Cancel/Reject responses.
 - Pure-v2 request filling continues active assemblies before considering new
-  pieces and visits only set bits in the remote availability bitmap.
+  pieces and selects uniformly among the rarest eligible remote pieces; its
+  bounded cyclic fallback visits only set bits in the remote bitmap.
+- Active and reference pure-v2 actors prepare parent directories and file
+  length before their first block or verified-piece write; storage-root
+  changes invalidate the per-file preparation cache.
 - Serial v1 webseed requests reserve before fetch, commit after a validated
   response, and release on fetch failure, cancellation, or response handling;
   temporary connection and piece-state allocations are charged to
@@ -3960,7 +4738,8 @@ a whole-torrent scan for each requested block.
   `transfer/sim.rs` now carries 64 seeded traces for piece-affinity exclusion,
   endgame response arbitration, loser cancel projection, padding expansion,
   late responses, canonical assembly, and generation reuse. Live hybrid actor
-  cases remain open. `v1_compat_disconnect_cannot_orphan_v2_ledger_connection`
+  regressions are authored and await the bulk pass.
+  `v1_compat_disconnect_cannot_orphan_v2_ledger_connection`
   protects a live v2 plane entry from the staged v1 cleanup adapter, and
   `peer_reqq_updates_the_live_v1_and_hybrid_ledger_bounds` and
   `v2_remote_reqq_bounds_the_peer_window_and_shared_ledger` cover negotiated
@@ -3979,6 +4758,10 @@ a whole-torrent scan for each requested block.
   canonical data projection with synthetic BEP 47 padding, then checks the
   second file's v2 piece after the preceding v1 pad extent. Live actor wiring
   is now present, but its regression sources and simulator remain unrun.
+  The transfer-invariant integration source also routes a pure-v2 receiver
+  through the reference actor, removes its save tree, downloads again, checks
+  the recreated payload, then restores the shared actor. Both actor paths use
+  the common locked file-preparation helper; this source is unrun.
 - **Command or probe:** run transfer-core simulator and engine regression
   suites only during the owner-requested bulk pass.
 - **Executed on exact revision:** no. No build or test commands were run for
@@ -4001,17 +4784,22 @@ path, then publish transfer progress in bounded batches. The v1 and pure-v2
 actors each dispatch one bounded webseed request at a time, including while
 peers are active, when fresh work is available. Both reserve through their
 shared transfer ledger and global/torrent download budgets before HTTP; an
-owned fetch task keeps actor commands and peer events responsive. The current
-adapters still select independently, but both sources compete for piece
-ownership in the same ledger. `GlobalNetworkBudget` also caps outstanding
+owned fetch task keeps actor commands and peer events responsive. Adapter
+candidate walkers remain protocol-specific, while both sources compete for
+piece ownership in the same ledger. `GlobalNetworkBudget` also caps outstanding
 payload requests across the process at `clamp(max_peers * 128, 128, 32768)`
 and across one torrent at `min(process_cap, 2048)`. Peer requests hold a slot
 until response or terminal cleanup; webseed requests hold it until the body is
 accepted or the attempt is cancelled. These non-waiting permits share one
 admission path and use bounded actor retries when capacity is full. Peer
-request-fill batches resolve one torrent-scoped handle and use semaphore
-atomics for each block; torrent removal revokes cached handles before dropping
-the registry entry. v1 maps multi-file blocks to bounded per-file HTTP ranges
+request-fill batches resolve one torrent-scoped handle. Uncontended requests
+use semaphore atomics; under contention, a short demand queue grants one
+admission turn per peer/webseed within a torrent and one turn per torrent
+across the process. Demand expires after five seconds without retry and is
+removed on source/torrent teardown. Torrent removal revokes cached handles
+before dropping the registry entry. This protects a hot source from consuming
+every newly freed slot while leaving protocol-specific piece ranking intact.
+v1 maps multi-file blocks to bounded per-file HTTP ranges
 and synthesizes BEP 47 padding locally. Pure-v2 maps its file paths to BEP 19
 URLs and routes returned blocks through its normal assembly, readback, and
 Merkle verification path.
@@ -4019,11 +4807,13 @@ Requests use the DNS-validated, address-pinned HTTP client and require an
 exact partial-content range response. Cancellation and the 60-second ledger
 timeout revoke the matching fetch and release its request ownership; timeout
 processing wakes source selection when a peer's expired reservation makes a
-piece available. Pure-v2 peer and webseed paths share a cyclic sparse-index
-traversal with independent cursors and active-piece priority. v1/hybrid-v1
-retain the rarest-first picker. All blocks in one active piece stay with one
-selected seed, and a typed Merkle mismatch backs that seed off before retrying
-the piece elsewhere.
+piece available. Pure-v2 peer selection uses its memory-governed rarest-first
+index, with bounded cyclic fallback if the index cannot be admitted; pure-v2
+webseed selection has an independent cyclic sparse-index cursor. Both source
+adapters share ledger ownership and active-piece priority. v1/hybrid-v1 retain
+the rarest-first picker. All blocks in one active piece stay with one selected
+seed, and a typed Merkle mismatch backs that seed off before retrying the piece
+elsewhere.
 
 v1 progress already batches at its five-second dirty-stat flush, and pure-v2
 batches upload/download statistics at its existing five-second runtime flush.
@@ -4035,11 +4825,15 @@ Completion and lifecycle boundaries flush immediately.
   synthetic webseed ledger connection, the in-flight fetch, and piece
   verification. Fetches run in cancellable tasks while the actor remains
   available for peer and lifecycle events. Pure-v2 publishes only verified
-  piece totals and persists them through `DbWorker`.
-- **Target owner:** the shared scheduler owns source admission, request
-  ownership, cancellation, rate credit, and bounded retry across peers and
-  webseeds. Torrent actors retain verification, storage publication, and
-  persistence ordering.
+  piece totals and persists them through `DbWorker`. `GlobalNetworkBudget`
+  owns process/torrent admission turns across every peer and webseed adapter;
+  each actor retains its own geometry-specific candidate walker.
+- **Target owner:** `GlobalNetworkBudget` owns shared peer/webseed request
+  admission and fair demand turns; the transfer ledger owns request/content
+  ownership and cancellation; `RateTree` owns shared credit; actor timers own
+  bounded retries. Torrent actors retain geometry-specific candidate ranking,
+  verification, storage publication, and persistence ordering. These are
+  cooperating bounded services rather than one scheduler with socket access.
 - **Invariant preserved:** every admitted source request has one owner until
   response, cancellation, or failure. Progress totals advance only after the
   corresponding database transaction succeeds; a failed transaction restores
@@ -4053,8 +4847,15 @@ Completion and lifecycle boundaries flush immediately.
 
 - Peers and supported webseeds share bounded per-torrent and process-wide
   source admission, rate budgets, and cancellation behavior.
-- Source selection preserves protocol geometry, file priorities, and picker
-  ownership while allowing useful sources to make progress concurrently.
+- Concurrent sources receive successive demand turns within their torrent,
+  and torrents receive successive demand turns at the process cap; idle
+  tickets expire and cannot reserve capacity.
+- Source candidate ranking preserves protocol geometry, file priorities, and
+  picker ownership: v1/hybrid-v1 retain rarest-first selection, pure-v2 peers
+  use the v2 availability index (with cyclic fallback under memory pressure),
+  and pure-v2 webseeds use an independent cyclic cursor. Common admission turns
+  arbitrate contention while useful peer and webseed work can proceed
+  concurrently.
 - Transfer events coalesce into bounded progress publications; completion,
   pause, storage-move, recheck, and shutdown boundaries flush pending totals.
 - A failed progress transaction restores the prior registry projection and
@@ -4076,24 +4877,148 @@ Completion and lifecycle boundaries flush immediately.
   `torrent_task.rs`. Pure-v2 now executes one webseed request through its
   ledger, shared download budget, bounded body lease, and verified-piece
   pipeline; source tests cover single/multi-file URL mapping, live status
-  snapshots, and timeout cancellation with ledger cleanup. Candidate traversal
-  uses bitmap-word skips and round-robin cursor advancement; peer-request
-  expiry wakes the scheduler. A source-affinity regression source checks that
+  snapshots, and timeout cancellation with ledger cleanup. Webseed traversal
+  uses bitmap-word skips and round-robin cursor advancement; pure-v2 peer
+  selection uses rarest-first availability with a memory-pressure cyclic
+  fallback; peer-request expiry wakes the scheduler. A source-affinity regression source checks that
   a Merkle mismatch backs off the contributing seed. New pure-v2 regressions
   hold a real HTTP body while status and pause commands are served, then prove
   the late body does not reach storage; another sends a valid ranged response
   into a deliberately unwriteable file target and checks the failed piece
   releases ledger and assembly ownership without publishing local-have state.
-  `network_budget.rs` covers common per-torrent/process request caps and
-  revocation of cached admission handles after torrent removal.
+  `network_budget.rs` covers common per-torrent/process request caps, source
+  and torrent turn order, idle-ticket expiry, and revocation of cached handles
+  after torrent removal.
   `transfer/selection.rs` covers cyclic wrap and unusable sparse candidates;
-  both pure-v2 source paths use this policy with their own cursors. All these
+  the pure-v2 webseed path uses this policy with its own cursor, while the peer
+  path uses the v2 availability index. All these
   sources remain authored but unrun.
 - **Command or probe:** run with the requested bulk engine suite; do not run
   this source independently before that pass.
 - **Executed on exact revision:** no.
-- **Remaining:** source prioritisation across v1/hybrid-v1 and pure-v2 actor
-  adapters, live-source workloads, and the bulk pass. Pure-v2 peers and
-  webseeds share sparse-index traversal, while v1/hybrid-v1 keep their
-  rarest-first picker; the common ledger, hierarchical rate tree, and bounded
-  source-request admission are shared.
+- **Remaining:** live-source workloads and the bulk pass. Candidate ranking
+  remains protocol-specific by design: v1/hybrid-v1 use rarest-first from
+  their wire availability, while pure-v2 uses its remote bitmap and piece
+  geometry. The shared owner now arbitrates request turns, ledger ownership,
+  rate credit, and capacity across those adapters.
+
+## SYS-013 — Reversible live transfer-owner cutover
+
+- **Priority / wave:** P0 / 12
+- **Prerequisites:** NET-114, IO-010, SYS-005, SYS-007, SYS-009, SYS-012
+- **Owning component:** `rt-db` transfer-owner journal and the engine actor
+  lifecycle coordinator.
+- **Status:** `wip`; the reversible path is implemented but unqualified.
+
+### Scope
+
+Keep the current actor available as a reference route while allowing one torrent
+at a time to move to the shared-core route. The additive SQLite journal records
+the owner, owner generation, transition phase, and rollback reason without
+changing `user_version`. New torrents default to `shared_core`; interrupted
+transitions recover to `reference` before any torrent actor is restored. The
+native API exposes a mutation-authenticated
+`PUT /api/v1/torrents/:hash/transfer-owner` endpoint.
+
+For an active torrent, the engine persists `draining`, asks the current actor
+to quiesce and finish its bounded work, stops it, persists `starting`, starts
+the requested owner from durable metadata/state, waits for the ready signal,
+then commits the new owner generation. Failure before durable commit stops the
+candidate, persists rollback intent, restores the old owner, waits for it to be
+ready, and only then returns the journal to stable. DHT registration follows
+the stable route. A paused or dormant torrent changes its durable route without
+starting an actor; later resume uses that route. Supervised exit generations
+prevent a late old actor exit from removing the replacement.
+
+### Ownership and invariant
+
+- **Current owner:** `transfer_cutovers` is the durable selector; the engine
+  lifecycle coordinator is the sole live transition writer. Both actor
+  implementations remain available for rollback.
+- **Target owner:** the same journal and coordinator remain authoritative; a
+  candidate cannot serve payload until its actor is ready and the generation
+  commit succeeds.
+- **Invariant preserved:** at most one actor route owns a torrent's live
+  payload at a time. Incomplete startup or cutover never silently selects the
+  partially started candidate after restart.
+- **Must not:** commit before the old actor drains, start both owners at once,
+  discard the reference implementation, or advance SQLite `user_version` for
+  this additive journal.
+
+### Acceptance
+
+- Route owner changes use generation-checked durable transitions and reject a
+  stale or concurrent generation.
+- Active switching quiesces and stops the old owner before candidate start;
+  candidate readiness precedes commit.
+- Injected drain, stop, spawn, ready, and commit failures restore the previous
+  owner or leave an explicit rollback-required row for startup recovery.
+- A lost commit reply is reconciled from the durable row before any rollback.
+- Startup recovery precedes actor restoration and fences stale actor exits by
+  incarnation generation.
+- Paused/dormant route changes persist without starting network activity;
+  subsequent activation uses the selected route.
+- Native API route parsing is strict, mutation-authenticated, and bound to an
+  existing torrent.
+
+### Evidence
+
+- **Regression sources:** database CAS/drain/commit/recovery tests, generation
+  fence tests, native API route parsing/registration tests, and
+  `failed_live_transfer_cutover_restores_the_previous_owner` are authored.
+- **Executed on exact revision:** no; all validation is deferred to the
+  requested bulk pass.
+- **External qualification:** active v1, pure-v2, and hybrid cutover parity;
+  injected failure/crash cuts; restart recovery; and rollback under real swarm
+  activity remain required.
+
+## IO-016, NET-116, PERF-116, and SYS-015 — Final rollout evidence gates
+
+- **Owning component:** `scripts/transfer_rebuild/rollout_gate.py` and the
+  source-bound certification artifacts.
+- **Status:** `wip`; no stage has passed.
+
+### Contract
+
+`qualification_record.py` creates strict, private, exclusive records for the
+named qualification kinds. Each record is bound to a 40-character source
+commit and lists required check IDs, each with one or more evidence digests.
+The record itself is included in the immutable manifest; its check digests
+must resolve to other files in that same manifest. The separate rollout
+evidence index is assembled by `rollout_index.py` and binds the source commit,
+exact manifest bytes, exact scorecard bytes, selected candidate, and stage
+declarations. Keeping the index outside the manifest avoids a
+self-referential digest.
+
+The final evaluator validates the manifest and scorecard, verifies every
+qualification record and cited proof digest, requires all stage-specific
+evidence kinds and named checks, checks candidate completion/integrity across
+v1, v2, and hybrid download and seed cases, and checks paired sample counts
+for goodput, RSS, and CPU metrics. It emits `blocked` until IO-016, NET-116,
+PERF-116, and SYS-015 all have complete evidence. It does not adopt a numeric
+performance threshold: decision D1 remains open, and the descriptive scorecard
+must retain `performance_thresholds_applied: false`.
+
+### Acceptance and limits
+
+- Qualification records are schema-valid, source-bound, exclusive, mode 0600,
+  and link only to manifest artifacts.
+- A qualification cannot pass with a failed or unrun check or without its
+  required check IDs.
+- Each SYS-014 catalog qualification check must cite a manifest artifact of
+  kind `transfer-catalog-load-report-v1`; that report must be source-bound,
+  recompute from its retained samples, and cite a
+  `transfer-catalog-load-log-v1` artifact in the same manifest.
+- IO-016 requires live v1/v2/hybrid parity, storage, recovery, and gate-policy
+  evidence; NET-116 requires simulator, live parity, and performance-policy
+  evidence; PERF-116 requires soak, canary, recovery, and gate-policy evidence;
+  SYS-015 requires independent review, release bundle, complete-catalog
+  mixed-load qualification, and gate-policy evidence.
+- Candidate trials must come from the exact clean source commit, complete the
+  expected payload, pass integrity, and meet the scorecard's declared minimum
+  sample count for both download and seed work across all three protocols.
+- Source records and hashed declarations do not prove hardware or soak
+  execution by themselves. A release decision still depends on retained
+  external evidence and independent review.
+- Regression sources are in `scripts/test_transfer_rebuild_rollout_gate.py`;
+  run them with the requested bulk pass.

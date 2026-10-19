@@ -22,8 +22,8 @@ use crate::{
         put_crash_safety, reannounce_torrent, recheck_torrent, remove_torrent_tags,
         reset_auth_settings, reset_crash_safety, restart_engine, resume_job, resume_torrent,
         rtorrent_settings, run_json_workflow, save_rtorrent_settings, session_features,
-        session_settings, set_torrent_category, set_user_agent, sidebar_facets, storage,
-        storage_execute_plan, storage_preview_plan, stream_events, tags, test_rss_rules,
+        session_settings, set_torrent_category, set_transfer_owner, set_user_agent, sidebar_facets,
+        storage, storage_execute_plan, storage_preview_plan, stream_events, tags, test_rss_rules,
         torrent_limits, tracker_health, transfer_info, transfer_limits, update_auth_settings,
         update_session_features, update_session_settings, update_torrent, update_torrent_limits,
         update_torrent_queue, update_transfer_limits, upsert_category, upsert_json_map,
@@ -97,6 +97,10 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::post(reannounce_torrent),
         )
         .route("/api/v1/torrents/:hash/category", put(set_torrent_category))
+        .route(
+            "/api/v1/torrents/:hash/transfer-owner",
+            put(set_transfer_owner),
+        )
         .route(
             "/api/v1/torrents/:hash/limits",
             get(torrent_limits).put(update_torrent_limits),

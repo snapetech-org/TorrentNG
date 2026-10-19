@@ -8,6 +8,7 @@ pub mod schema;
 pub mod settings_row;
 pub mod storage_row;
 pub mod torrent_row;
+pub mod transfer_cutover_row;
 
 pub use detail_row::{
     count_torrent_files, get_torrent_limits, list_all_torrent_trackers, list_torrent_files,
@@ -68,4 +69,12 @@ pub use torrent_row::{
     MAX_TORRENT_LABEL_ROW_BYTES, MAX_TORRENT_RESULT_BYTES, MAX_TORRENT_RESULT_ITEMS,
     MAX_TORRENT_TRACKER_RESULT_BYTES, MAX_TORRENT_TRACKER_RESULT_ITEMS,
     MAX_TORRENT_TRACKER_ROW_BYTES, MAX_TORRENT_TRACKER_URL_BYTES, TORRENT_LABEL_PAGE_SIZE,
+};
+pub use transfer_cutover_row::{
+    begin as begin_transfer_cutover, commit as commit_transfer_cutover,
+    ensure_owner as ensure_transfer_owner, finish_rollback as finish_transfer_cutover_rollback,
+    get as get_transfer_cutover, mark_drained as mark_transfer_cutover_drained,
+    recover_interrupted as recover_interrupted_transfer_cutovers,
+    require_rollback as require_transfer_cutover_rollback, TransferCutoverError,
+    TransferCutoverPhase, TransferCutoverRow, TransferOwner,
 };

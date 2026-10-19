@@ -8,8 +8,9 @@
 pub mod transfer_fixtures;
 
 pub use transfer_fixtures::{
-    production_catalog_metainfo, transfer_compatibility_fixture, transfer_compatibility_matrix,
-    TransferCompatibilityFixture, TransferProtocol,
+    production_catalog_metainfo, public_transfer_compatibility_fixture,
+    public_transfer_compatibility_matrix, transfer_compatibility_fixture,
+    transfer_compatibility_matrix, TransferCompatibilityFixture, TransferProtocol,
 };
 
 use rusqlite::Connection;

@@ -727,11 +727,19 @@ impl TorrentTask {
             ))
         };
         let peer_buffer = self.resources.snapshot().classes[MemoryClass::PeerBuffer as usize];
-        let buffer_blocks = usize::try_from(
-            peer_buffer.cap_bytes.saturating_sub(peer_buffer.used_bytes)
-                / u64::from(MAX_BLOCK_SIZE),
-        )
-        .unwrap_or(usize::MAX);
+        let peer_buffer_available_bytes =
+            peer_buffer.cap_bytes.saturating_sub(peer_buffer.used_bytes);
+        let buffer_blocks =
+            usize::try_from(peer_buffer_available_bytes / u64::from(MAX_BLOCK_SIZE))
+                .unwrap_or(usize::MAX);
+        // The tail block of a piece can be much smaller than the protocol
+        // maximum. Any positive headroom gets one bounded attempt; an exact
+        // lease failure below arms the normal memory retry path.
+        let buffer_blocks = if peer_buffer_available_bytes > 0 {
+            buffer_blocks.max(1)
+        } else {
+            0
+        };
         let rate_credit_blocks = rate_credit_blocks(
             Some(
                 self.network_budget
@@ -767,6 +775,11 @@ impl TorrentTask {
             other_peers_outstanding,
         )
         .min(controlled_window);
+        // The request window can avoid a doomed allocation entirely when
+        // less than one full block of payload headroom remains. Keep the
+        // capacity retry armed for that path too, or a peer can stay idle
+        // after memory returns without receiving another protocol event.
+        let memory_headroom_blocked = useful_missing > 0 && buffer_blocks == 0;
 
         let mut queue_full = 0u64;
         let mut memory_retry = false;
@@ -895,7 +908,7 @@ impl TorrentTask {
                 let source_permit = if wire_block.is_some() {
                     match source_admission
                         .as_ref()
-                        .and_then(|admission| admission.try_acquire())
+                        .and_then(|admission| admission.try_acquire(rate_peer))
                     {
                         Some(permit) => Some(permit),
                         None => {
@@ -949,7 +962,7 @@ impl TorrentTask {
                     .map_or(deadline, |current| current.min(deadline)),
             );
         }
-        if memory_retry {
+        if memory_retry || memory_headroom_blocked {
             self.peer_request_memory_retry_pending = true;
         }
         if memory_pipeline < PEER_REQUEST_PIPELINE_NORMAL {

@@ -34,6 +34,43 @@ use crate::{
     open::{create_dir_all_no_follow, normalized_storage_path, FileIdentity},
 };
 
+/// Optional urgency carried by a disk operation while it waits for shared
+/// device admission. Expired deadlines are promoted ahead of weighted normal
+/// traffic; choke-critical obligations are promoted immediately. Once a
+/// backend operation is dispatched, its completion ownership is unchanged.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct IoRequestPriority {
+    deadline: Option<Instant>,
+    choke_critical: bool,
+}
+
+impl IoRequestPriority {
+    pub const fn normal() -> Self {
+        Self {
+            deadline: None,
+            choke_critical: false,
+        }
+    }
+
+    pub const fn deadline(deadline: Instant) -> Self {
+        Self {
+            deadline: Some(deadline),
+            choke_critical: false,
+        }
+    }
+
+    pub const fn choke_critical(deadline: Instant) -> Self {
+        Self {
+            deadline: Some(deadline),
+            choke_critical: true,
+        }
+    }
+
+    pub const fn is_urgent(self) -> bool {
+        self.choke_critical || self.deadline.is_some()
+    }
+}
+
 #[cfg(test)]
 use crate::open::file_identity;
 
@@ -267,6 +304,10 @@ pub struct StorageIoStats {
     /// Zero means the identity is unavailable and must not be deduplicated.
     #[doc(hidden)]
     pub shared_resource_id: u64,
+    /// Identity for deduplicating the descriptor catalog independently from
+    /// scheduler workers. Zero means unavailable and must not be deduplicated.
+    #[doc(hidden)]
+    pub file_catalog_id: u64,
     pub device_id: Option<String>,
     pub profile: StorageProfile,
     pub file_pool: FilePoolStats,
@@ -361,6 +402,7 @@ impl Default for StorageIoStats {
     fn default() -> Self {
         Self {
             shared_resource_id: 0,
+            file_catalog_id: 0,
             device_id: None,
             profile: StorageProfile::Unknown,
             file_pool: FilePoolStats::default(),
@@ -443,9 +485,18 @@ struct FilePool {
 
 impl FilePool {
     fn new(capacity: usize, idle_ttl: Duration) -> Self {
-        Self {
-            catalog: HandleCache::new(capacity, idle_ttl),
-        }
+        let catalog = if cfg!(test) {
+            // Keep unit-test eviction fixtures hermetic. Production schedulers
+            // and StorageRuntime share the process-wide catalog.
+            HandleCache::new(capacity, idle_ttl)
+        } else {
+            HandleCache::process_global_with_bounds(capacity, idle_ttl)
+        };
+        Self { catalog }
+    }
+
+    fn catalog_id(&self) -> u64 {
+        self.catalog.catalog_id()
     }
 
     fn get_or_open(
@@ -1566,6 +1617,29 @@ impl DiskSubmission {
         self._payload_owner = None;
     }
 
+    /// Reuse only this barrier's mount admission and byte charge for the next
+    /// sequential path. Per-path identity, descriptor ownership, and device
+    /// admission must start fresh so a checkpoint never attributes two files
+    /// to one storage operation or pins an evicted descriptor across paths.
+    fn reset_for_next_checkpoint_path(&mut self) -> Result<(), StorageError> {
+        debug_assert!(self._device_operation.is_none());
+        debug_assert!(self._additional_device_operations.is_none());
+        self._file_owner = None;
+        self._payload_owner = None;
+        let storage_operation_id = allocate_storage_operation_id().ok_or_else(|| {
+            StorageError::io(
+                "storage operation identity",
+                io::Error::other("process-wide storage operation identity space exhausted"),
+            )
+        })?;
+        self.operation = StorageOperationRecord {
+            storage_operation_id: Some(storage_operation_id),
+            resource_credit: self._queued_bytes.resource_credit(),
+            ..StorageOperationRecord::default()
+        };
+        Ok(())
+    }
+
     fn bind_dirty_path(&mut self, state: DirtyPathState) {
         self.operation.bind_dirty_path(state);
     }
@@ -2029,6 +2103,7 @@ const DEVICE_DISPATCH_SLOT_COUNT: usize = 32;
 
 struct DeviceWaiter {
     id: u64,
+    priority: IoRequestPriority,
     sender: oneshot::Sender<DeviceOperationPermit>,
 }
 
@@ -2134,6 +2209,16 @@ impl DeviceQueue {
         class: IoClass,
         mount: String,
     ) -> Result<DeviceOperationPermit, StorageError> {
+        self.acquire_with_priority(class, mount, IoRequestPriority::normal())
+            .await
+    }
+
+    async fn acquire_with_priority(
+        self: &Arc<Self>,
+        class: IoClass,
+        mount: String,
+        priority: IoRequestPriority,
+    ) -> Result<DeviceOperationPermit, StorageError> {
         let (sender, receiver) = oneshot::channel();
         let (waiter_id, immediate, grant) = {
             let mut state = lock_recover(&self.state);
@@ -2165,7 +2250,11 @@ impl DeviceQueue {
                     &mut state,
                     class,
                     Arc::from(mount),
-                    DeviceWaiter { id, sender },
+                    DeviceWaiter {
+                        id,
+                        priority,
+                        sender,
+                    },
                 );
                 (Some(id), None, grant)
             }
@@ -2274,7 +2363,7 @@ fn collect_device_grant(
     state: &mut DeviceQueueState,
 ) -> Option<DeviceGrant> {
     while state.active < queue.active_limit {
-        let (slot, waiter) = pop_next_device_waiter(state)?;
+        let (slot, waiter) = pop_next_device_waiter(state, Instant::now())?;
         state.dispatch_cursor = next_device_cursor(slot);
         if waiter.sender.is_closed() {
             continue;
@@ -2336,7 +2425,13 @@ fn pop_mount_waiter(state: &mut DeviceQueueState, class_index: usize) -> Option<
     None
 }
 
-fn pop_next_device_waiter(state: &mut DeviceQueueState) -> Option<(usize, DeviceWaiter)> {
+fn pop_next_device_waiter(
+    state: &mut DeviceQueueState,
+    now: Instant,
+) -> Option<(usize, DeviceWaiter)> {
+    if let Some(urgent) = pop_urgent_device_waiter(state, now) {
+        return Some(urgent);
+    }
     for offset in 0..DEVICE_DISPATCH_SLOT_COUNT {
         let slot = (state.dispatch_cursor + offset) % DEVICE_DISPATCH_SLOT_COUNT;
         let class_index = device_class_index(device_dispatch_class(slot));
@@ -2345,6 +2440,63 @@ fn pop_next_device_waiter(state: &mut DeviceQueueState) -> Option<(usize, Device
         }
     }
     None
+}
+
+/// Promote choke-critical obligations immediately and expired-deadline work
+/// by earliest deadline. Only this bounded, already-admitted wait queue is
+/// scanned, and only when a device slot is being dispatched; enqueue and
+/// availability checks remain constant-time.
+fn pop_urgent_device_waiter(
+    state: &mut DeviceQueueState,
+    now: Instant,
+) -> Option<(usize, DeviceWaiter)> {
+    let mut selected: Option<(bool, Instant, u64, Arc<str>, usize, usize)> = None;
+    for (mount, mount_waiters) in &state.pending_by_mount {
+        for (class_index, queue) in mount_waiters.by_class.iter().enumerate() {
+            for (position, waiter) in queue.iter().enumerate() {
+                let expired_deadline = waiter.priority.deadline.filter(|deadline| *deadline <= now);
+                if !waiter.priority.choke_critical && expired_deadline.is_none() {
+                    continue;
+                }
+                let critical = waiter.priority.choke_critical;
+                let deadline = expired_deadline.unwrap_or(now);
+                let candidate = (
+                    critical,
+                    deadline,
+                    waiter.id,
+                    Arc::clone(mount),
+                    class_index,
+                    position,
+                );
+                let is_better = selected.as_ref().is_none_or(|current| {
+                    candidate.0 > current.0
+                        || (candidate.0 == current.0
+                            && (candidate.1, candidate.2) < (current.1, current.2))
+                });
+                if is_better {
+                    selected = Some(candidate);
+                }
+            }
+        }
+    }
+    let (_, _, _, mount, class_index, position) = selected?;
+    let mount_waiters = state.pending_by_mount.get_mut(&mount)?;
+    let queue = &mut mount_waiters.by_class[class_index];
+    let waiter = queue.remove(position)?;
+    state.pending_count = state.pending_count.saturating_sub(1);
+    let mount_has_more = !queue.is_empty();
+    let mount_is_empty = mount_waiters.is_empty();
+    if !mount_has_more {
+        state.mount_turns[class_index].retain(|turn| turn != &mount);
+    }
+    if mount_is_empty {
+        state.pending_by_mount.remove(&mount);
+    }
+    let slot = (0..DEVICE_DISPATCH_SLOT_COUNT)
+        .map(|offset| (state.dispatch_cursor + offset) % DEVICE_DISPATCH_SLOT_COUNT)
+        .find(|slot| device_class_index(device_dispatch_class(*slot)) == class_index)
+        .unwrap_or(state.dispatch_cursor);
+    Some((slot, waiter))
 }
 
 fn next_device_cursor(slot: usize) -> usize {
@@ -3082,6 +3234,7 @@ impl MountScheduler {
             .unwrap_or(0);
         StorageIoStats {
             shared_resource_id: self._shared_resources.id,
+            file_catalog_id: self.file_pool.catalog_id(),
             device_id: self.device_id.clone(),
             profile: self.profile.clone(),
             file_pool: self.file_pool.stats(),
@@ -3473,9 +3626,22 @@ impl MountScheduler {
         &self,
         class: IoClass,
     ) -> Result<DeviceOperationPermit, StorageError> {
+        self.acquire_device_operation_with_priority(class, IoRequestPriority::normal())
+            .await
+    }
+
+    async fn acquire_device_operation_with_priority(
+        &self,
+        class: IoClass,
+        priority: IoRequestPriority,
+    ) -> Result<DeviceOperationPermit, StorageError> {
         let device_operation = self
             .device_queue
-            .acquire(class, format!("storage-root-{}", self.storage_root.0))
+            .acquire_with_priority(
+                class,
+                format!("storage-root-{}", self.storage_root.0),
+                priority,
+            )
             .await;
         match device_operation {
             Ok(permit) => Ok(permit),
@@ -3530,6 +3696,18 @@ impl MountScheduler {
         offset: u64,
         len: usize,
     ) -> Result<StorageRead, StorageError> {
+        self.read_owned_at_with_priority(class, path, offset, len, IoRequestPriority::normal())
+            .await
+    }
+
+    pub async fn read_owned_at_with_priority(
+        &self,
+        class: IoClass,
+        path: &Path,
+        offset: u64,
+        len: usize,
+        priority: IoRequestPriority,
+    ) -> Result<StorageRead, StorageError> {
         checked_file_range_end(path, offset, len as u64)?;
         let _permit = self.acquire(class).await?;
         let pool = self.file_pool.clone();
@@ -3547,7 +3725,7 @@ impl MountScheduler {
         let cache_generation =
             (class == IoClass::PeerRead && readahead_bytes > len && readahead_cache_entries > 0)
                 .then(|| peer_read_cache_epoch.load(Ordering::Acquire));
-        if class == IoClass::PeerRead && readahead_bytes <= len {
+        if class == IoClass::PeerRead && readahead_bytes <= len && !priority.is_urgent() {
             if let Some(elevator) = peer_read_elevator {
                 let bytes = elevator.read(path.to_path_buf(), offset, len).await?;
                 counters.read_ops_by_class[class_index(class)].fetch_add(1, Ordering::Relaxed);
@@ -3694,7 +3872,10 @@ impl MountScheduler {
                         .resource_credit
                         .include(extra_charge.resource_credit());
                 }
-                submission.start_device_operation(self.acquire_device_operation(class).await?);
+                submission.start_device_operation(
+                    self.acquire_device_operation_with_priority(class, priority)
+                        .await?,
+                );
                 let frame = global_frame_pool().try_acquire(read_len).ok_or_else(|| {
                     StorageError::QueueFull {
                         mount: "scheduler-read-frame".to_string(),
@@ -4327,8 +4508,9 @@ impl MountScheduler {
         key: PathBuf,
         mount: String,
         queue: Arc<DeviceQueue>,
-        submission: DiskSubmission,
+        mut submission: DiskSubmission,
     ) -> Result<DiskSubmission, StorageError> {
+        submission.reset_for_next_checkpoint_path()?;
         let file_sync_fence = self.file_sync_fences.for_path(&key);
         let fence_guard = Arc::clone(&file_sync_fence.gate).write_owned().await;
         let watermark = file_sync_fence.watermark();
@@ -6284,14 +6466,18 @@ mod tests {
                     &mut state,
                     class,
                     Arc::from(format!("mount-{class:?}")),
-                    DeviceWaiter { id, sender },
+                    DeviceWaiter {
+                        id,
+                        priority: IoRequestPriority::normal(),
+                        sender,
+                    },
                 );
             }
         }
 
         let mut selected = [0usize; 6];
         for _ in 0..DEVICE_DISPATCH_SLOT_COUNT {
-            let (slot, waiter) = pop_next_device_waiter(&mut state).unwrap();
+            let (slot, waiter) = pop_next_device_waiter(&mut state, Instant::now()).unwrap();
             let class = device_dispatch_class(slot);
             selected[device_class_index(class)] += 1;
             enqueue_device_waiter(
@@ -6334,19 +6520,69 @@ mod tests {
                     &mut state,
                     IoClass::PeerRead,
                     Arc::from(mount),
-                    DeviceWaiter { id, sender },
+                    DeviceWaiter {
+                        id,
+                        priority: IoRequestPriority::normal(),
+                        sender,
+                    },
                 );
             }
         }
 
         let mut selected = Vec::new();
         for _ in 0..4 {
-            let (slot, waiter) = pop_next_device_waiter(&mut state).unwrap();
+            let (slot, waiter) = pop_next_device_waiter(&mut state, Instant::now()).unwrap();
             selected.push(waiter.id);
             state.dispatch_cursor = next_device_cursor(slot);
         }
 
         assert_eq!(selected, vec![1, 4, 2, 3]);
+        assert_eq!(state.pending_count, 0);
+        drop(receivers);
+    }
+
+    #[test]
+    fn device_dispatch_promotes_expired_and_choke_critical_requests() {
+        let mut state = DeviceQueueState {
+            active: 0,
+            pending_count: 0,
+            pending_by_mount: HashMap::new(),
+            mount_turns: std::array::from_fn(|_| VecDeque::new()),
+            next_waiter_id: 1,
+            next_operation_id: 1,
+            dispatch_cursor: 0,
+        };
+        let mut receivers = Vec::new();
+        let now = Instant::now();
+        let priorities = [
+            (IoRequestPriority::normal(), 1),
+            (IoRequestPriority::deadline(now - Duration::from_secs(1)), 2),
+            (
+                IoRequestPriority::choke_critical(now + Duration::from_secs(10)),
+                3,
+            ),
+        ];
+        for (priority, id) in priorities {
+            let (sender, receiver) = oneshot::channel();
+            receivers.push(receiver);
+            enqueue_device_waiter(
+                &mut state,
+                IoClass::PeerRead,
+                Arc::from("upload-owner"),
+                DeviceWaiter {
+                    id,
+                    priority,
+                    sender,
+                },
+            );
+        }
+
+        let critical = pop_next_device_waiter(&mut state, now).unwrap().1;
+        assert_eq!(critical.id, 3);
+        let expired = pop_next_device_waiter(&mut state, now).unwrap().1;
+        assert_eq!(expired.id, 2);
+        let normal = pop_next_device_waiter(&mut state, now).unwrap().1;
+        assert_eq!(normal.id, 1);
         assert_eq!(state.pending_count, 0);
         drop(receivers);
     }
@@ -6448,7 +6684,7 @@ mod tests {
         );
         assert!(Arc::ptr_eq(&first.device_queue, &second.device_queue));
 
-        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
         let (finish_tx, finish_rx) = std::sync::mpsc::channel();
         let operation = tokio::spawn(async move {
             first
@@ -6459,9 +6695,10 @@ mod tests {
                 })
                 .await
         });
-        started_rx
-            .recv_timeout(Duration::from_secs(2))
-            .expect("external operation did not start on the storage pool");
+        tokio::time::timeout(Duration::from_secs(2), started_rx)
+            .await
+            .expect("external operation did not start on the storage pool")
+            .expect("external operation start notification was dropped");
 
         let rejected = second
             .run_device_operation(IoClass::PeerRead, 8, || Ok(()))
@@ -6509,7 +6746,7 @@ mod tests {
         );
         assert!(Arc::ptr_eq(&first.device_queue, &second.device_queue));
 
-        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
         let (finish_tx, finish_rx) = std::sync::mpsc::channel();
         let first_operation_scheduler = first.clone();
         let operation = tokio::spawn(async move {
@@ -6528,9 +6765,10 @@ mod tests {
                 )
                 .await
         });
-        started_rx
-            .recv_timeout(Duration::from_secs(2))
-            .expect("external operation did not start on the storage pool");
+        tokio::time::timeout(Duration::from_secs(2), started_rx)
+            .await
+            .expect("external operation did not start on the storage pool")
+            .expect("external operation start notification was dropped");
 
         assert_eq!(
             first.stats().queued_disk_bytes,
@@ -6618,7 +6856,7 @@ mod tests {
         let source_check = source.clone();
         let source_key = device_queue_key(source.storage_root, source.device_id.as_deref());
         let source_mount = format!("storage-root-{}", source.storage_root.0);
-        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
         let (finish_tx, finish_rx) = std::sync::mpsc::channel();
         let operation = tokio::spawn(async move {
             destination
@@ -6634,9 +6872,10 @@ mod tests {
                 )
                 .await
         });
-        started_rx
-            .recv_timeout(Duration::from_secs(2))
-            .expect("multi-device operation did not start");
+        tokio::time::timeout(Duration::from_secs(2), started_rx)
+            .await
+            .expect("multi-device operation did not start")
+            .expect("multi-device operation start notification was dropped");
 
         let blocked = source_check
             .run_device_operation(IoClass::PeerRead, 0, || Ok(()))
@@ -6661,7 +6900,7 @@ mod tests {
             ..Default::default()
         };
         let make_scheduler = |device: &str| {
-            MountScheduler::new_with_profile_and_io_config(
+            let mut scheduler = MountScheduler::new_with_profile_and_io_config(
                 StorageRootId::new(),
                 &config,
                 StorageProfile::Hdd,
@@ -6672,7 +6911,14 @@ mod tests {
                     fs_type: Some("ext4".to_owned()),
                     cow: false,
                 }),
-            )
+            );
+            let key = device_queue_key(scheduler.storage_root, scheduler.device_id.as_deref());
+            // This test asserts cross-device lock order with one in-flight
+            // operation per device. Pin that admission limit explicitly so
+            // the result is independent of whether Auto selected io_uring.
+            scheduler.device_queue = Arc::new(DeviceQueue::new(Arc::from(key), 2, 1));
+            scheduler.device_queue_capacity = 2;
+            scheduler
         };
         let device_a = make_scheduler("multi-device-order-a");
         let device_b = make_scheduler("multi-device-order-b");
@@ -6683,7 +6929,7 @@ mod tests {
                 Arc::clone(&scheduler.device_queue),
             )
         };
-        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (started_tx, mut started_rx) = tokio::sync::mpsc::unbounded_channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         let release_rx = Arc::new(Mutex::new(release_rx));
 
@@ -6706,9 +6952,10 @@ mod tests {
                 .await
         });
         tokio::task::yield_now().await;
-        started_rx
-            .recv_timeout(Duration::from_secs(2))
-            .expect("first cross-device operation did not start");
+        tokio::time::timeout(Duration::from_secs(2), started_rx.recv())
+            .await
+            .expect("first cross-device operation did not start")
+            .expect("first cross-device operation start notification was dropped");
 
         let second_scheduler = device_b.clone();
         let second_other_queue = queue_for(&device_a);
@@ -6744,9 +6991,10 @@ mod tests {
         .expect("opposing operation did not wait on the first ordered device");
 
         release_tx.send(()).unwrap();
-        started_rx
-            .recv_timeout(Duration::from_secs(2))
-            .expect("opposing cross-device operation deadlocked");
+        tokio::time::timeout(Duration::from_secs(2), started_rx.recv())
+            .await
+            .expect("opposing cross-device operation deadlocked")
+            .expect("opposing cross-device start notification was dropped");
         release_tx.send(()).unwrap();
         tokio::time::timeout(Duration::from_secs(2), async {
             first.await.unwrap().unwrap();
@@ -9637,7 +9885,7 @@ mod tests {
                 &first_path,
                 0,
                 bytes::Bytes::from_static(b"first-dirty-path"),
-                false,
+                true,
             )
             .await
             .unwrap();
@@ -9647,7 +9895,7 @@ mod tests {
                 &second_path,
                 0,
                 bytes::Bytes::from_static(b"second-dirty-path"),
-                false,
+                true,
             )
             .await
             .unwrap();
@@ -9674,6 +9922,22 @@ mod tests {
         let evidence = barrier.await.unwrap().unwrap();
         assert_eq!(evidence.synced_file_count(), 2);
         assert_eq!(scheduler.stats().dirty_files, 0);
+        let checkpoint_operations: Vec<_> = lock_recover(&scheduler.counters.operation_dispatches)
+            .iter()
+            .filter(|operation| operation.operation_kind == "checkpoint_file_sync")
+            .cloned()
+            .collect();
+        assert_eq!(checkpoint_operations.len(), 2);
+        assert_ne!(
+            checkpoint_operations[0].storage_operation_id,
+            checkpoint_operations[1].storage_operation_id,
+            "each file sync gets a distinct operation identity"
+        );
+        assert_ne!(
+            checkpoint_operations[0].device_operation_id,
+            checkpoint_operations[1].device_operation_id,
+            "each file sync gets a distinct device admission identity"
+        );
         drop(evidence);
         assert_storage_admission_released(&scheduler);
     }
@@ -9731,7 +9995,11 @@ mod tests {
         backend.wait_until_completion_is_held().await;
 
         let capacity = scheduler.stats().device_queue_capacity;
-        assert_eq!(scheduler.stats().device_queue_available, capacity - 1);
+        let available_during_barrier = scheduler.stats().device_queue_available;
+        assert!(
+            (capacity.saturating_sub(2)..capacity).contains(&available_during_barrier),
+            "one or both snapshot syncs should retain device admission"
+        );
         assert_eq!(
             queued_disk_used_bytes(&resources),
             QUEUED_DISK_JOB_OVERHEAD_BYTES
@@ -9757,7 +10025,11 @@ mod tests {
         started_rx.await.unwrap();
         tokio::task::yield_now().await;
         assert_eq!(backend.pending_releases(), 1);
-        assert_eq!(scheduler.stats().device_queue_available, capacity - 1);
+        let available_after_later_write = scheduler.stats().device_queue_available;
+        assert!(
+            (capacity.saturating_sub(2)..capacity).contains(&available_after_later_write),
+            "the later write must not acquire device admission before the snapshot barrier"
+        );
         assert_eq!(
             queued_disk_used_bytes(&resources),
             QUEUED_DISK_JOB_OVERHEAD_BYTES
@@ -9769,7 +10041,7 @@ mod tests {
 
         assert!(backend.release_next());
         tokio::time::timeout(Duration::from_secs(1), async {
-            while scheduler.stats().sync_ops < 2 {
+            while scheduler.stats().sync_ops < 1 {
                 tokio::task::yield_now().await;
             }
         })
@@ -9885,7 +10157,10 @@ mod tests {
             );
         backend.wait_until_completion_is_held().await;
         let capacity = scheduler.stats().device_queue_capacity;
-        assert_eq!(scheduler.stats().device_queue_available, capacity - 1);
+        assert!(
+            scheduler.stats().device_queue_available < capacity,
+            "the held checkpoint sync retains its device admission"
+        );
         assert_eq!(
             queued_disk_used_bytes(&resources),
             QUEUED_DISK_JOB_OVERHEAD_BYTES
@@ -9911,7 +10186,15 @@ mod tests {
         started_rx.await.unwrap();
         tokio::task::yield_now().await;
         assert_eq!(backend.pending_releases(), 1);
-        assert_eq!(scheduler.stats().device_queue_available, capacity - 1);
+        assert!(
+            scheduler.stats().device_queue_available < capacity,
+            "the detached barrier retains device admission through the failed sync"
+        );
+        assert!(!later_write.is_finished());
+        assert!(
+            !later_path.exists(),
+            "the later write waits for the barrier"
+        );
         assert_eq!(
             queued_disk_used_bytes(&resources),
             QUEUED_DISK_JOB_OVERHEAD_BYTES,
