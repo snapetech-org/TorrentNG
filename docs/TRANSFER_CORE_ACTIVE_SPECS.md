@@ -4280,9 +4280,10 @@ the production default policy.
 - **Migration / rollback:** none; plans are standalone artifacts and can be
   regenerated from pinned inputs and the recorded seed.
 - **Feature flag or rollout boundary:** no comparison or performance claim is
-  permitted from a plan, preflight, or authored runner alone. Local plan,
-  observation, manifest, and validator regressions passed at `354ad504`; real
-  client runs and independent observations remain required.
+  permitted from a plan, preflight, or authored runner alone. A scoped paired
+  run now exists for TorrentNG and the pinned urtorrent v1 library runner on
+  `N1/lan_1g`; the remaining catalog profiles, adapters, dedicated-host
+  qualification, and a pre-refactor baseline remain open.
 
 ### Evidence
 
@@ -4300,15 +4301,38 @@ the production default policy.
   identify rqbit's after-add pause mode, reconcile uncertain adds, and reject
   incomplete removal evidence; tampered identity or ordering rejected; no
   output overwrite.
-- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `354ad504`. External acceptance remains listed below.
-- **Artifact or report path:** runner, planner, preflight, process supervision,
-  trial assembly, and validator regressions passed at `354ad504`. The pinned
-  `urtorrent` runtime preflight was attempted but failed because
-  `io_uring_setup` returned `Cannot allocate memory`; no paired client trial
-  has completed.
+- **Executed on exact revision:** the transfer-rebuild suite passed 230/230
+  tests on `1ebb320ebdad3747c8be3cbaf3db95cd7c932d58`; the scoped paired run,
+  source-bound manifest, and scorecard also validate on that exact source.
+- **Artifact or report path:** manifest
+  `/home/keith/.cache/torrentng-perf110-0896a736-20261019/run18-d9747574/full-run/manifest.json`
+  (SHA-256 `a7f7ccf387ad53da5d9cdeceac0de1653179bb25043419833fb6baa5b2eb9c1f`)
+  and scorecard
+  `/home/keith/.cache/torrentng-perf110-0896a736-20261019/run18-d9747574/full-run/scorecard.json`
+  (SHA-256 `cfe79795780d14ee475c17f3638a9b2bec1d23c04b1f359cb99cc65860f8edc9`).
+  The plan and ready compatibility preflight bind the same two client pins.
+- **Scoped result:** 10 randomized cold-cache pairs, one 128 MiB private v1
+  fixture, TorrentNG `0.1.0` versus the pinned urtorrent `0.14.3` direct library
+  runner, and the `lan-1g-1ms-v1` task-network profile. All 40 transfer records
+  completed with independently verified payload hashes; there were no
+  excluded pairs. The qdisc readback was 1,000,000,000 bit/s with 1 ms delay;
+  maximum measured goodput was 873.51 Mbit/s.
+
+  | Mode | TorrentNG median | urtorrent median | urtorrent / TorrentNG goodput ratio (95% CI) |
+  |---|---:|---:|---:|
+  | Download | 83.77 MB/s | 13.07 MB/s | 0.162 (0.120–0.197), n=10 |
+  | Seed | 12.88 MB/s | 93.08 MB/s | 7.220 (7.177–7.252), n=10 |
+
+  Median CPU use was 5.92 versus 2.24 CPU-s/GiB for downloads and 4.56 versus
+  2.04 CPU-s/GiB for seeding (TorrentNG versus urtorrent). Peak RSS medians
+  were 33.05 versus 14.96 MiB on downloads and 34.99 versus 16.70 MiB on
+  seeding; download RSS and PSS ratios had 9 matched observations, while seed
+  resource ratios had 10. Cgroup memory and energy metrics were unavailable.
+  This is a narrow engine-runner comparison on one host and fixture; it does
+  not establish a whole-client ranking or a change from a pre-refactor build.
 - **External evidence still required:** successful pinned compatibility
-  preflights, actual paired process execution, complete trial records,
-  independent resources, and dedicated-host results.
+  preflights and paired trials across the other pinned clients and fixture
+  profiles, plus dedicated-host and pre-refactor baseline results.
 
 ## PERF-111 — Picker and changed-snapshot probes
 
