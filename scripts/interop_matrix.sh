@@ -18,6 +18,7 @@ REPORT_DIR="$ROOT/certification/reports"
 REPORT="${INTEROP_REPORT:-$REPORT_DIR/interop-matrix-$STAMP-$$.md}"
 
 MODE="all"
+LOCAL_SUITE="${INTEROP_LOCAL_SUITE:-all}"
 TIMEOUT_LOCAL="${INTEROP_LOCAL_TIMEOUT_SECS:-900}"
 TIMEOUT_PUBLIC="${INTEROP_PUBLIC_TIMEOUT_SECS:-7200}"
 PUBLIC_MAX_PARALLEL="${INTEROP_PUBLIC_MAX_PARALLEL:-3}"
@@ -68,6 +69,7 @@ Usage: scripts/interop_matrix.sh [--local|--public|--all] [--report PATH]
 
 Environment:
   INTEROP_LOCAL_TIMEOUT_SECS=900
+  INTEROP_LOCAL_SUITE=all|base|extended|protocol
   INTEROP_PUBLIC_TIMEOUT_SECS=7200
   INTEROP_PUBLIC_MAX_PARALLEL=3
   INTEROP_PUBLIC_MIN_RUST_PEERS=2
@@ -214,6 +216,28 @@ validate_protocol_only() {
     printf '  %s\n' "${PROTOCOL_CASES[@]}"
   } >&2
   return 2
+}
+
+validate_local_suite() {
+  case "$LOCAL_SUITE" in
+    all|base|extended|protocol) ;;
+    *)
+      echo "unknown INTEROP_LOCAL_SUITE=$LOCAL_SUITE (expected all, base, extended, or protocol)" >&2
+      return 2
+      ;;
+  esac
+  if [[ -n "${INTEROP_PROTOCOL_ONLY:-}" && "$LOCAL_SUITE" != "all" && "$LOCAL_SUITE" != "protocol" ]]; then
+    echo "INTEROP_PROTOCOL_ONLY can only be used with INTEROP_LOCAL_SUITE=all or protocol" >&2
+    return 2
+  fi
+  if [[ "$LOCAL_SUITE" == "extended" && "${INTEROP_EXTENDED_LOCAL:-1}" != "1" ]]; then
+    echo "INTEROP_LOCAL_SUITE=extended requires INTEROP_EXTENDED_LOCAL=1" >&2
+    return 2
+  fi
+  if [[ "$LOCAL_SUITE" == "protocol" && "${INTEROP_PROTOCOL_LOCAL:-1}" != "1" ]]; then
+    echo "INTEROP_LOCAL_SUITE=protocol requires INTEROP_PROTOCOL_LOCAL=1" >&2
+    return 2
+  fi
 }
 
 should_run_protocol_case() {
@@ -1956,18 +1980,33 @@ run_local_matrix() {
   append_report "# Local Swarm"
   append_report ""
   create_fixture_files
-  if [[ -n "${INTEROP_PROTOCOL_ONLY:-}" ]]; then
-    append_report "- Base local cases skipped because INTEROP_PROTOCOL_ONLY=${INTEROP_PROTOCOL_ONLY}"
-    append_report ""
-  elif [[ "${INTEROP_EXTENDED_ONLY:-0}" != "1" ]]; then
-    for row in "${LOCAL_CASES[@]}"; do
-      run_local_case "$row" || failures=$((failures + 1))
-    done
-  fi
-  if [[ -z "${INTEROP_PROTOCOL_ONLY:-}" ]]; then
-    run_extended_local_matrix || failures=$((failures + 1))
-  fi
-  run_protocol_local_matrix || failures=$((failures + 1))
+  case "$LOCAL_SUITE" in
+    base)
+      for row in "${LOCAL_CASES[@]}"; do
+        run_local_case "$row" || failures=$((failures + 1))
+      done
+      ;;
+    extended)
+      run_extended_local_matrix || failures=$((failures + 1))
+      ;;
+    protocol)
+      run_protocol_local_matrix || failures=$((failures + 1))
+      ;;
+    all)
+      if [[ -n "${INTEROP_PROTOCOL_ONLY:-}" ]]; then
+        append_report "- Base local cases skipped because INTEROP_PROTOCOL_ONLY=${INTEROP_PROTOCOL_ONLY}"
+        append_report ""
+      elif [[ "${INTEROP_EXTENDED_ONLY:-0}" != "1" ]]; then
+        for row in "${LOCAL_CASES[@]}"; do
+          run_local_case "$row" || failures=$((failures + 1))
+        done
+      fi
+      if [[ -z "${INTEROP_PROTOCOL_ONLY:-}" ]]; then
+        run_extended_local_matrix || failures=$((failures + 1))
+      fi
+      run_protocol_local_matrix || failures=$((failures + 1))
+      ;;
+  esac
   (( failures == 0 ))
 }
 
@@ -1976,6 +2015,7 @@ main() {
   require_cmd curl
   require_cmd jq
   require_cmd base64
+  validate_local_suite
   validate_protocol_only
   validate_workdir
   acquire_interop_lock
@@ -2021,4 +2061,6 @@ main() {
   return "$failed"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

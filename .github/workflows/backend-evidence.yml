@@ -88,7 +88,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: main
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Cache Cargo package downloads
@@ -140,7 +140,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: main
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Run API/SSE load
@@ -174,7 +174,7 @@ jobs:
           if-no-files-found: warn
 
   public-compatibility:
-    name: Public/client compatibility evidence
+    name: API and storage compatibility contracts
     if: github.ref == 'refs/heads/main' && inputs.run_public_compat == true
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -190,21 +190,99 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: main
+          ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Run explicitly opted-in public compatibility matrix
+      - name: Run repository compatibility contract matrix
         env:
-          UNIVERSAL_COMPAT_LIVE: "1"
-          UNIVERSAL_COMPAT_PUBLIC: "1"
+          UNIVERSAL_COMPAT_LIVE: "0"
+          UNIVERSAL_COMPAT_PUBLIC: "0"
         run: |
           scripts/universal_compatibility_certification.sh \
-            "certification/reports/universal-compat-backend-${GITHUB_RUN_ID}.md"
+            "certification/reports/universal-compat-contracts-${GITHUB_RUN_ID}.md"
 
-      - name: Upload public compatibility evidence
+      - name: Upload compatibility contract evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: backend-public-compat-${{ github.run_id }}
-          path: certification/reports/universal-compat-backend-*
+          name: backend-compat-contracts-${{ github.run_id }}
+          path: certification/reports/universal-compat-contracts-${{ github.run_id }}.md*
+          if-no-files-found: warn
+
+  local-client-interop:
+    name: Local/client interop (${{ matrix.suite }})
+    if: github.ref == 'refs/heads/main' && inputs.run_public_compat == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [base, extended, protocol]
+    steps:
+      - name: Route temporary files to runner temp
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
+          mkdir -p "$RUNNER_TEMP"
+          test -w "$RUNNER_TEMP"
+          printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Run local client interop suite
+        env:
+          INTEROP_LOCAL_SUITE: ${{ matrix.suite }}
+          INTEROP_LOCAL_TIMEOUT_SECS: "900"
+          INTEROP_EXTENDED_LOCAL: "1"
+          INTEROP_PROTOCOL_LOCAL: "1"
+          INTEROP_WORKDIR: ${{ runner.temp }}/torrentng-interop-${{ github.run_id }}-${{ matrix.suite }}
+          INTEROP_REPORT: certification/reports/interop-matrix-${{ matrix.suite }}-${{ github.run_id }}.md
+        run: scripts/interop_matrix.sh --local
+
+      - name: Upload local client interop evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: backend-local-interop-${{ matrix.suite }}-${{ github.run_id }}
+          path: certification/reports/interop-matrix-${{ matrix.suite }}-${{ github.run_id }}.md
+          if-no-files-found: warn
+
+  public-torrent-interop:
+    name: Public torrent client interop
+    if: github.ref == 'refs/heads/main' && inputs.run_public_compat == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - name: Route temporary files to runner temp
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
+          mkdir -p "$RUNNER_TEMP"
+          test -w "$RUNNER_TEMP"
+          printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Run public torrent client interop suite
+        env:
+          INTEROP_PUBLIC_TIMEOUT_SECS: "7200"
+          INTEROP_PUBLIC_MAX_PARALLEL: "3"
+          INTEROP_WORKDIR: ${{ runner.temp }}/torrentng-interop-${{ github.run_id }}-public
+          INTEROP_REPORT: certification/reports/interop-matrix-public-${{ github.run_id }}.md
+        run: scripts/interop_matrix.sh --public
+
+      - name: Upload public torrent interop evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: backend-public-interop-${{ github.run_id }}
+          path: certification/reports/interop-matrix-public-${{ github.run_id }}.md
           if-no-files-found: warn

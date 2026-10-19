@@ -106,6 +106,44 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("secrets.token_hex(32)", local_runner)
         self.assertIn('rm -rf -- "$task_dir"', local_runner)
 
+    def test_backend_compatibility_suites_have_bounded_exact_commit_evidence(self) -> None:
+        workflow = (WORKFLOWS / "backend-evidence.yml").read_text(encoding="utf-8")
+        contracts_job = workflow.split("  public-compatibility:\n", 1)[1].split(
+            "\n  local-client-interop:", 1
+        )[0]
+        local_job = workflow.split("  local-client-interop:\n", 1)[1].split(
+            "\n  public-torrent-interop:", 1
+        )[0]
+        public_job = workflow.split("  public-torrent-interop:\n", 1)[1]
+
+        self.assertIn('UNIVERSAL_COMPAT_LIVE: "0"', contracts_job)
+        self.assertIn('UNIVERSAL_COMPAT_PUBLIC: "0"', contracts_job)
+        self.assertIn("ref: ${{ github.sha }}", contracts_job)
+        self.assertIn(
+            "universal-compat-contracts-${{ github.run_id }}.md*", contracts_job
+        )
+
+        self.assertIn("timeout-minutes: 300", local_job)
+        self.assertIn("suite: [base, extended, protocol]", local_job)
+        self.assertIn("INTEROP_LOCAL_SUITE: ${{ matrix.suite }}", local_job)
+        self.assertIn("INTEROP_LOCAL_TIMEOUT_SECS: \"900\"", local_job)
+        self.assertIn(
+            "INTEROP_WORKDIR: ${{ runner.temp }}/torrentng-interop-${{ github.run_id }}-${{ matrix.suite }}",
+            local_job,
+        )
+        self.assertIn("ref: ${{ github.sha }}", local_job)
+        self.assertIn("interop-matrix-${{ matrix.suite }}-${{ github.run_id }}.md", local_job)
+
+        self.assertIn("timeout-minutes: 240", public_job)
+        self.assertIn('INTEROP_PUBLIC_TIMEOUT_SECS: "7200"', public_job)
+        self.assertIn('INTEROP_PUBLIC_MAX_PARALLEL: "3"', public_job)
+        self.assertIn(
+            "INTEROP_WORKDIR: ${{ runner.temp }}/torrentng-interop-${{ github.run_id }}-public",
+            public_job,
+        )
+        self.assertIn("ref: ${{ github.sha }}", public_job)
+        self.assertIn("interop-matrix-public-${{ github.run_id }}.md", public_job)
+
     def assert_transfer_hardware_runner_is_opt_in_and_main_only(
         self, source: str
     ) -> None:
@@ -1547,6 +1585,79 @@ class WorkflowSecurityTests(unittest.TestCase):
             self.assertEqual(completed.returncode, 2, completed.stderr)
             self.assertIn("refusing to reset non-empty INTEROP_WORKDIR", completed.stderr)
             self.assertEqual(protected_file.read_text(encoding="utf-8"), "user data")
+
+    def test_interop_matrix_rejects_invalid_suite_before_starting_docker(self) -> None:
+        script = ROOT / "scripts" / "interop_matrix.sh"
+        with tempfile.TemporaryDirectory() as temporary:
+            temp_path = Path(temporary)
+            cases = (
+                ({"INTEROP_LOCAL_SUITE": "unknown"}, "unknown INTEROP_LOCAL_SUITE"),
+                (
+                    {
+                        "INTEROP_LOCAL_SUITE": "extended",
+                        "INTEROP_EXTENDED_LOCAL": "0",
+                    },
+                    "requires INTEROP_EXTENDED_LOCAL=1",
+                ),
+                (
+                    {
+                        "INTEROP_LOCAL_SUITE": "protocol",
+                        "INTEROP_PROTOCOL_LOCAL": "0",
+                    },
+                    "requires INTEROP_PROTOCOL_LOCAL=1",
+                ),
+                (
+                    {
+                        "INTEROP_LOCAL_SUITE": "base",
+                        "INTEROP_PROTOCOL_ONLY": "rust-magnet-with-tracker",
+                    },
+                    "can only be used with INTEROP_LOCAL_SUITE=all or protocol",
+                ),
+            )
+            for index, (overrides, expected_error) in enumerate(cases):
+                with self.subTest(overrides=overrides):
+                    completed, docker_log = run_interop_preflight(
+                        script, temp_path / f"case-{index}", overrides
+                    )
+                    self.assertEqual(completed.returncode, 2, completed.stderr)
+                    self.assertIn(expected_error, completed.stderr)
+                    self.assertFalse(
+                        docker_log.exists() and docker_log.read_text(encoding="utf-8")
+                    )
+
+    def test_interop_local_suites_dispatch_only_the_selected_case_groups(self) -> None:
+        script = ROOT / "scripts" / "interop_matrix.sh"
+        harness = r"""
+source "$INTEROP_SCRIPT"
+append_report() { :; }
+create_fixture_files() { :; }
+run_local_case() { printf 'base:%s\n' "$1"; }
+run_extended_local_matrix() { printf 'extended\n'; }
+run_protocol_local_matrix() { printf 'protocol\n'; }
+run_local_matrix
+"""
+        expected = {
+            "base": (10, False, False),
+            "extended": (0, True, False),
+            "protocol": (0, False, True),
+            "all": (10, True, True),
+        }
+        for suite, (base_count, has_extended, has_protocol) in expected.items():
+            with self.subTest(suite=suite):
+                environment = os.environ.copy()
+                environment["INTEROP_SCRIPT"] = str(script)
+                environment["INTEROP_LOCAL_SUITE"] = suite
+                completed = subprocess.run(
+                    ["bash", "-c", harness],
+                    capture_output=True,
+                    text=True,
+                    env=environment,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                lines = completed.stdout.splitlines()
+                self.assertEqual(sum(line.startswith("base:") for line in lines), base_count)
+                self.assertEqual("extended" in lines, has_extended)
+                self.assertEqual("protocol" in lines, has_protocol)
 
     def test_interop_matrix_refuses_home_and_user_data_workdirs_before_docker(self) -> None:
         script = ROOT / "scripts" / "interop_matrix.sh"
