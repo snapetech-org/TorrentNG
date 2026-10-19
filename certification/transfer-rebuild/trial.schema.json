@@ -90,6 +90,10 @@
         "protocol": { "enum": ["v1", "v2", "hybrid"] },
         "fixture_sha256": { "$ref": "#/$defs/sha256" },
         "expected_payload_bytes": { "$ref": "#/$defs/nonnegative_integer" },
+        "counterpart_client_id": {
+          "enum": ["torrentngd", "qbittorrent", "transmission", "deluge", "rtorrent", "rqbit", "urtorrent"],
+          "description": "Pinned client at the other transfer endpoint. When present, scorecard matching requires the same counterpart."
+        },
         "peer_count": { "$ref": "#/$defs/nonnegative_integer" },
         "block_bytes": { "type": "integer", "minimum": 1 },
         "duration_seconds": { "type": "number", "exclusiveMinimum": 0 }

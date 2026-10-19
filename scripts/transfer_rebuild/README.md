@@ -49,11 +49,14 @@ refactor's change or rank whole clients. Full details, confidence intervals,
 and artifact digests are recorded under PERF-110 in
 [`TRANSFER_CORE_ACTIVE_SPECS.md`](../../docs/TRANSFER_CORE_ACTIVE_SPECS.md).
 
-Both slow rows are the TorrentNG-to-urtorrent direction. The runner uses
-TorrentNG's own uploaded-byte counter, so it verifies the served-byte rate
-independently of urtorrent's completion counter. That does not isolate whether
-the limit is TorrentNG's read/send path or the receiver's request cadence. The
-scoped result is still one host and one workload.
+Both slow rows are the TorrentNG-to-urtorrent direction. The seed trial uses
+TorrentNG's uploaded-byte counter, independently of urtorrent's completion
+counter. The initial plan paired each client with the other, however, so its
+client rows changed both sender and receiver. It established that the
+TorrentNG-to-urtorrent direction was slow, but could not isolate which
+endpoint caused it. New trials bind the counterpart client into the workload
+and the scorecard will only compare candidates measured against the same
+counterpart.
 
 The 16-read upload-window candidate was tested in a second source-bound
 10-pair run on the same local-NVMe Btrfs host profile. All 40 records completed
@@ -740,9 +743,15 @@ and be reserved for this task. The host needs Linux network namespaces,
 interfaces. Every selected client must have pinned runtime settings, and every
 selected profile must have passed compatibility preflight. The direct
 `urtorrent` runner can occupy either endpoint; `--helper-client auto` pairs
-each candidate with the other of exactly two pinned clients. The runner rejects
-self-pairs. An explicit helper ID remains available for a scoped run, provided
-it is pinned and differs from that scheduled candidate.
+each candidate with the other of exactly two pinned clients. An explicit
+helper ID may equal the candidate, which runs two separate instances of that
+client in the task namespaces. This supports crossed trials that hold the
+receiver constant while comparing senders. The direct `urtorrent` runner still
+cannot occupy both endpoints in one trial.
+
+Every new trial records `counterpart_client_id`. The scorecard includes that
+field in its workload signature, so it will not compare uploaders observed
+through different receivers or downloaders served by different senders.
 
 When urtorrent participates, the task-local tracker is hosted in the namespace
 of its pinned peer, matching the direct runner's tracker-address check. The

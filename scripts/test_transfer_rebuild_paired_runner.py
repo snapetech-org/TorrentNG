@@ -96,9 +96,13 @@ class PairedRunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(PairedRunnerError, "exactly two"):
             _resolve_helper_id("torrentngd", "auto", ["torrentngd", "torrentngd"])
 
-    def test_explicit_helper_must_be_pinned_and_distinct(self) -> None:
-        with self.assertRaisesRegex(PairedRunnerError, "different"):
-            _resolve_helper_id("torrentngd", "torrentngd", ["torrentngd", "urtorrent"])
+    def test_explicit_helper_may_be_the_same_pinned_client(self) -> None:
+        pins = ["torrentngd", "urtorrent"]
+
+        self.assertEqual(_resolve_helper_id("torrentngd", "torrentngd", pins), "torrentngd")
+        self.assertEqual(_resolve_helper_id("urtorrent", "torrentngd", pins), "torrentngd")
+
+    def test_explicit_helper_must_be_pinned(self) -> None:
         with self.assertRaisesRegex(PairedRunnerError, "not present"):
             _resolve_helper_id("torrentngd", "qbittorrent", ["torrentngd", "urtorrent"])
 

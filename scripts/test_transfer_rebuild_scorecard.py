@@ -21,6 +21,7 @@ FIXTURE = "a" * 64
 def trial(
     client_id: str,
     *,
+    counterpart_client_id: str | None = None,
     pair_id: str = "pair-01",
     version: str = "1.0",
     case_id: str = "N1/lan_1g",
@@ -41,6 +42,11 @@ def trial(
             "protocol": "v1",
             "fixture_sha256": FIXTURE,
             "expected_payload_bytes": GIB,
+            **(
+                {"counterpart_client_id": counterpart_client_id}
+                if counterpart_client_id is not None
+                else {}
+            ),
         },
         "environment": {
             "independent_ceiling_sha256": ceiling_sha256,
@@ -57,6 +63,28 @@ def trial(
 
 
 class PairedScorecardTests(unittest.TestCase):
+    def test_sender_comparison_requires_the_same_receiver(self) -> None:
+        records = [
+            trial("torrentngd", counterpart_client_id="torrentngd"),
+            trial("urtorrent", counterpart_client_id="urtorrent"),
+        ]
+
+        groups = analyze_trials(records, bootstrap_samples=1_000)
+
+        self.assertEqual(len(groups), 2)
+        self.assertTrue(all(group["valid_pair_count"] == 0 for group in groups))
+
+    def test_fixed_receiver_allows_a_fair_sender_comparison(self) -> None:
+        records = [
+            trial("torrentngd", counterpart_client_id="torrentngd"),
+            trial("urtorrent", counterpart_client_id="torrentngd", transfer_ns=2_000_000_000),
+        ]
+
+        groups = analyze_trials(records, bootstrap_samples=1_000)
+
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["valid_pair_count"], 1)
+
     def test_client_qualified_case_ids_pair_as_the_same_fixture_profile(self) -> None:
         records = [
             trial("torrentngd", case_id="torrentngd:N1/lan_1g", transfer_ns=1_000_000_000),

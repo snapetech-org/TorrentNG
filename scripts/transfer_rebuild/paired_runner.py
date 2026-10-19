@@ -586,7 +586,12 @@ def _check_eligible(
 def _resolve_helper_id(
     candidate_id: str, helper_request: str, pinned_client_ids: list[str]
 ) -> str:
-    """Resolve an explicit helper or pair a candidate with the other pinned client."""
+    """Resolve an explicit helper or pair with the other pinned client.
+
+    An explicit helper may be the same implementation as the candidate. That
+    lets a crossed run hold the receiving client constant while comparing
+    senders (or vice versa) in separate task namespaces.
+    """
     if candidate_id not in pinned_client_ids:
         raise PairedRunnerError("scheduled candidate is not present in the pin set")
     if helper_request == "auto":
@@ -599,8 +604,6 @@ def _resolve_helper_id(
         helper_id = helper_request
         if helper_id not in pinned_client_ids:
             raise PairedRunnerError("helper client is not present in the pin set")
-    if helper_id == candidate_id:
-        raise PairedRunnerError("candidate and helper must be different pinned clients")
     return helper_id
 
 
@@ -2145,6 +2148,7 @@ def _run_trial(
         "protocol": fixture_manifest["profile"]["torrent_kind"],
         "fixture_sha256": fixture_manifest["fixture_sha256"],
         "expected_payload_bytes": sum(item["size_bytes"] for item in fixture_manifest["files"]),
+        "counterpart_client_id": helper_id,
     }
     if status == "complete" and integrity["status"] == "passed":
         payload["useful_bytes"] = trial_workload["expected_payload_bytes"]
@@ -2335,7 +2339,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--helper-client",
         required=True,
-        help="pinned API/direct client ID, or auto to pair each candidate with the other of exactly two pins",
+        help="pinned API/direct client ID (may match the candidate), or auto to pair with the other of exactly two pins",
     )
     parser.add_argument("--network-profile", choices=sorted(NETWORK_PROFILES))
     parser.add_argument("--cache-state", choices=("warm", "cold"), default="cold")

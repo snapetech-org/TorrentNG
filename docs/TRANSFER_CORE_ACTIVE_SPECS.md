@@ -4219,7 +4219,11 @@ the production default policy.
 - The pinned direct `urtorrent` runner may be either the scheduled candidate
   or its transfer peer. `--helper-client auto` is valid only with exactly two
   distinct pinned clients and resolves the other client for each candidate;
-  explicit helper IDs must also be pinned and distinct. When `urtorrent` is the
+  explicit helper IDs must be pinned and may match the candidate, allowing a
+  same-implementation receiver or sender in a separate task namespace. The
+  direct urtorrent runner remains disallowed at both endpoints in one trial.
+  New trial workload records include `counterpart_client_id`, and scorecard
+  pairing requires that value to match when present. When `urtorrent` is the
   helper, it receives the opposite transfer mode and joins the same
   candidate/helper readiness barrier. The task tracker is hosted in the direct
   runner's pinned peer namespace, and timeout/seed-stop values are bound into
@@ -4268,9 +4272,13 @@ the production default policy.
   passes applicable integrity checks, and links the matching independent
   process observation.
 - The runner can pair exactly two pinned clients in both candidate orders.
-  Helper `auto` maps each scheduled candidate to the other client, direct
-  `urtorrent` readiness is role-scoped, and candidate/helper self-pairs are
-  rejected before a trial starts.
+  Helper `auto` maps each scheduled candidate to the other client. An
+  explicit helper may match the candidate so crossed trials can keep one
+  endpoint implementation fixed; the direct `urtorrent` runner remains
+  disallowed at both endpoints. The runner records the endpoint client ID in
+  `workload.counterpart_client_id`, and the scorecard refuses to pair records
+  whose counterpart IDs differ. Direct `urtorrent` readiness remains
+  role-scoped.
 - Plan output is exclusive, mode `0600`, schema-validated, and rejected if its
   catalog digest or deterministic schedule no longer matches its identity.
 - Trial output is schema-validated, mode `0600`, exclusive, and syncs both file
@@ -4290,20 +4298,24 @@ the production default policy.
   `scripts/transfer_rebuild/task_network.py`,
   `scripts/transfer_rebuild/task_tracker.py`,
   `scripts/transfer_rebuild/trial_record.py`,
+  `scripts/transfer_rebuild/scorecard.py`,
   `scripts/transfer_rebuild/fixtures.py`,
   `scripts/transfer_rebuild/validate_artifact.py`,
-  `certification/transfer-rebuild/{paired-plan,compatibility-preflight}.schema.json`,
+  `certification/transfer-rebuild/{paired-plan,compatibility-preflight,trial}.schema.json`,
   harness README, and the paired-plan and compatibility regression sources.
-- **State or wire compatibility:** additive `transfer-paired-plan-v1` and
-  `transfer-compatibility-preflight-v1` certification artifacts; no runtime
-  product format changes.
+- **State or wire compatibility:** optional `counterpart_client_id` in the
+  existing `transfer-trial-v1` record; historical trials without it remain
+  readable. No runtime product format changes.
 - **Migration / rollback:** none; plans are standalone artifacts and can be
   regenerated from pinned inputs and the recorded seed.
 - **Feature flag or rollout boundary:** no comparison or performance claim is
-  permitted from a plan, preflight, or authored runner alone. A scoped paired
-  run now exists for TorrentNG and the pinned urtorrent v1 library runner on
-  `N1/lan_1g`; the remaining catalog profiles, adapters, dedicated-host
-  qualification, and a pre-refactor baseline remain open.
+  permitted from a plan, preflight, or authored runner alone. The initial
+  reciprocal TorrentNG/urtorrent run found the TorrentNG-to-urtorrent
+  direction slow but changed both endpoints between client rows, so it could
+  not isolate sender from receiver. Fixed-counterpart execution now supports
+  a matched sender comparison; the 10-pair result and its scope are recorded
+  below. Other catalog profiles, adapters, dedicated-host qualification, and a
+  pre-refactor baseline remain open.
 
 ### Evidence
 
@@ -4312,6 +4324,8 @@ the production default policy.
   `scripts/test_transfer_rebuild_compatibility.py`,
   `scripts/test_transfer_rebuild_process_supervisor.py`,
   `scripts/test_transfer_rebuild_trial_record.py`,
+  `scripts/test_transfer_rebuild_paired_runner.py`,
+  `scripts/test_transfer_rebuild_scorecard.py`,
   `scripts/test_transfer_rebuild_validator.py`, and semantic validation for
   the plan, observations, trial, and manifest artifacts.
 - **Command or probe to run:** planner, compatibility preflight, schema
