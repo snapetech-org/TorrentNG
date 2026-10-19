@@ -3335,7 +3335,9 @@ committed worktree and exact source commit. It requires both catalog sizes,
 validates all four routes and 16 positive raw samples per route, recomputes
 nearest-rank p50/p95, and records host identity. Manifest validation links the
 report to a separately retained `transfer-catalog-load-log-v1` artifact and
-requires the report source commit to match the clean manifest source.
+requires the report source commit to match the clean manifest source. The
+manifest writer accepts this artifact-only evidence set directly, without a
+synthetic transfer trial.
 
 ### Limits and evidence
 
@@ -3350,9 +3352,11 @@ requires the report source commit to match the clean manifest source.
   medians were 0.277 ms and 0.271 ms. Transfer-info p50/p95 were 0.050/2.674
   ms; `/metrics` p50/p95 were 0.057/0.222 ms. These are local in-process
   diagnostic timings, not release thresholds or matched-client results.
-- `catalog_load_report.py` still needs to assemble the 1k and 100k retained
-  logs against the exact clean commit and host identity. Active-transfer,
-  multi-process resource, and hardware qualification remain open.
+- The 1k/100k report builder and artifact-only manifest path are implemented.
+  The existing report is bound to `77c8cd6d`; final report and manifest
+  assembly against the manifest-fix revision remain pending its bulk pass.
+  Active-transfer, multi-process resource, and hardware qualification remain
+  open.
 - This in-process paused-catalog probe does not represent daemon RSS,
   concurrent payload transfer, independent clients, or a hardware capacity
   guarantee. PERF-102/PERF-110 own process-level resource and transfer evidence.
@@ -3361,9 +3365,10 @@ requires the report source commit to match the clean manifest source.
 - The SYS-015 `transfer-catalog-load-v1` qualification checks must each cite
   the `transfer-catalog-load-report-v1` artifact digest; the report itself
   cites the retained raw-log digest.
-- The 1k and 100k probes passed; their source-bound report still needs a clean
-  committed worktree and exact host/source identity. SYS-015 catalog
-  qualification and external process-level evidence remain open.
+- The 1k and 100k probes passed on `77c8cd6d`; the report is retained, while
+  the final-revision artifact manifest and SYS-014 qualification record remain
+  pending. SYS-015 integration and external process-level evidence remain
+  open.
 
 ## PERF-108 — Stable memory accounting domains
 

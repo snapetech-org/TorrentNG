@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent / "transfer_rebuild"))
 from catalog_load_report import (  # noqa: E402
@@ -16,8 +17,8 @@ from catalog_load_report import (  # noqa: E402
     build_report,
     write_report,
 )
+from manifest import ManifestError, create_manifest  # noqa: E402
 from validate_artifact import validate  # noqa: E402
-from test_transfer_rebuild_trial_record import valid_unmeasured_trial  # noqa: E402
 
 
 COMMIT = "b" * 40
@@ -61,6 +62,25 @@ def retained_log(*records: dict[str, object]) -> bytes:
 
 
 class CatalogLoadReportTests(unittest.TestCase):
+    def test_manifest_schema_rejects_no_trials_or_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "manifest.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "transfer-manifest-v1",
+                        "manifest_id": "empty-manifest",
+                        "created_at": "2026-10-18T12:00:00Z",
+                        "source_commit": COMMIT,
+                        "worktree_dirty": False,
+                        "trial_files": [],
+                        "artifacts": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertTrue(validate("manifest", path))
+
     def test_report_binds_both_catalog_sizes_and_raw_log(self) -> None:
         log = retained_log(observation(1000), observation(100000))
         report = build_report(log, hashlib.sha256(log).hexdigest(), COMMIT)
@@ -134,33 +154,19 @@ class CatalogLoadReportTests(unittest.TestCase):
         report = build_report(log, hashlib.sha256(log).hexdigest(), COMMIT)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            (root / "trials").mkdir()
             artifacts = root / "artifacts"
             artifacts.mkdir()
             log_path = artifacts / "catalog-load.log"
             log_path.write_bytes(log)
             report_path = artifacts / "catalog-load-report.json"
             report_path.write_text(json.dumps(report), encoding="utf-8")
-            trial = valid_unmeasured_trial()
-            trial["identity"]["source_commit"] = COMMIT
-            trial_bytes = json.dumps(trial).encode("utf-8")
-            trial_path = root / "trials" / "trial.json"
-            trial_path.write_bytes(trial_bytes)
             manifest = {
                 "schema_version": "transfer-manifest-v1",
                 "manifest_id": "catalog-load-manifest",
                 "created_at": "2026-10-18T12:00:00Z",
                 "source_commit": COMMIT,
                 "worktree_dirty": False,
-                "trial_files": [
-                    {
-                        "path": "trials/trial.json",
-                        "sha256": hashlib.sha256(trial_bytes).hexdigest(),
-                        "trial_id": trial["trial_id"],
-                        "pair_id": trial["pair_id"],
-                        "outcome": "unmeasured",
-                    }
-                ],
+                "trial_files": [],
                 "artifacts": [
                     {
                         "path": "artifacts/catalog-load-report.json",
@@ -185,6 +191,43 @@ class CatalogLoadReportTests(unittest.TestCase):
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             errors = validate("manifest", manifest_path, verify_referenced_files=True)
             self.assertTrue(any("retained transfer-catalog-load-log-v1" in error for error in errors))
+
+    def test_writer_publishes_catalog_evidence_without_a_synthetic_trial(self) -> None:
+        log = retained_log(observation(1000), observation(100000))
+        report = build_report(log, hashlib.sha256(log).hexdigest(), COMMIT)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            artifacts = root / "artifacts"
+            artifacts.mkdir()
+            log_path = artifacts / "catalog-load.log"
+            log_path.write_bytes(log)
+            report_path = artifacts / "catalog-load-report.json"
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+            manifest_path = root / "manifest.json"
+
+            with patch("manifest._git_identity", return_value=(COMMIT, False)):
+                manifest = create_manifest(
+                    manifest_path,
+                    [],
+                    [
+                        ("transfer-catalog-load-report-v1", report_path),
+                        ("transfer-catalog-load-log-v1", log_path),
+                    ],
+                    repo=Path(__file__).resolve().parents[1],
+                )
+
+            self.assertEqual(manifest["trial_files"], [])
+            self.assertEqual(
+                validate("manifest", manifest_path, verify_referenced_files=True),
+                [],
+            )
+            self.assertEqual(manifest_path.stat().st_mode & 0o777, 0o600)
+
+    def test_writer_rejects_a_manifest_with_no_trials_or_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "manifest.json"
+            with self.assertRaisesRegex(ManifestError, "trial file or evidence artifact"):
+                create_manifest(output, [], [], repo=Path(__file__).resolve().parents[1])
 
 
 if __name__ == "__main__":

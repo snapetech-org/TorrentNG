@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assemble exact, immutable manifests for transfer-rebuild trial evidence."""
+"""Assemble exact, immutable manifests for transfer-rebuild evidence."""
 
 from __future__ import annotations
 
@@ -287,8 +287,8 @@ def create_manifest(
     repo: Path = ROOT,
 ) -> dict[str, Any]:
     """Create and validate a mode-0600 manifest without overwriting evidence."""
-    if not trial_paths:
-        raise ManifestError("at least one trial file is required")
+    if not trial_paths and not artifacts:
+        raise ManifestError("at least one trial file or evidence artifact is required")
     repo = Path(repo).resolve(strict=True)
     output = Path(output)
     if output.is_symlink():
@@ -441,7 +441,7 @@ def main(argv: list[str] | None = None) -> int:
         "--trial",
         action="append",
         type=Path,
-        required=True,
+        default=[],
         help="trial JSON file; repeat for every outcome",
     )
     parser.add_argument(

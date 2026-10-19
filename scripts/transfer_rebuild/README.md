@@ -163,10 +163,10 @@ Cold/warm trials must link a verified `transfer-cache-state-v1` artifact;
 manifest validation checks that the observed fixture and requested state match
 the trial and rejects a partial or unsupported state claim.
 
-`manifest.py` assembles every trial outcome and additional evidence artifact
-into one source-bound manifest. Give it the exact committed worktree root, a
-new manifest path outside that worktree, every trial JSON file, and each
-additional artifact with its schema kind:
+`manifest.py` assembles trial outcomes and evidence artifacts into one
+source-bound manifest. Give it the exact committed worktree root, a new
+manifest path outside that worktree, every trial JSON file (when trials exist),
+and each additional artifact with its schema kind:
 
 ```sh
 python3 scripts/transfer_rebuild/manifest.py \
@@ -178,6 +178,19 @@ python3 scripts/transfer_rebuild/manifest.py \
   --artifact transfer-resource-samples-v1=/path/to/task-scratch/run-01/artifacts/resources.csv
 ```
 
+At least one trial or one evidence artifact is required. Evidence-only
+manifests are supported for qualifications such as SYS-014, where inventing a
+trial record would misstate the workload. For a catalog-only report, omit
+`--trial` and pass both linked catalog artifacts:
+
+```sh
+python3 scripts/transfer_rebuild/manifest.py \
+  --repo /path/to/clean/TorrentNG \
+  --output /path/to/task-scratch/run-01/catalog-manifest.json \
+  --artifact transfer-catalog-load-report-v1=/path/to/task-scratch/run-01/catalog-load-report.json \
+  --artifact transfer-catalog-load-log-v1=/path/to/task-scratch/run-01/catalog-load.log
+```
+
 The evidence files must be regular files below the manifest directory and
 outside the measured checkout. The writer rejects dirty source worktrees,
 source-commit or worktree mismatches, duplicate trial IDs, symlinks, duplicate
@@ -185,8 +198,7 @@ evidence paths, and output replacement. It hashes each input, validates the
 complete manifest and all referenced files, checks the inputs and source again,
 then publishes the mode-`0600` manifest atomically. Failed, invalid,
 incomplete, unmeasured, and successful trials are all retained. Manifest-writer
-regressions are alongside the validator cases. They passed on the recorded
-source revision; exact closeout revision validation remains pending.
+regressions are alongside the validator cases.
 
 ## Paired scorecard
 
