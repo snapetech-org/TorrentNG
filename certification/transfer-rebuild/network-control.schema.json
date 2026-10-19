@@ -27,10 +27,10 @@
     "format": { "const": "transfer-network-control-v1" },
     "action": { "enum": ["apply", "reset"] },
     "created_at": { "type": "string", "format": "date-time" },
-    "namespace_name": { "type": "string", "pattern": "^tngt-[a-z0-9][a-z0-9-]{0,31}$" },
+    "namespace_name": { "type": "string", "pattern": "^tng[ts]-[a-z0-9][a-z0-9-]{0,31}$" },
     "namespace_device": { "$ref": "#/$defs/nonnegative_integer" },
     "namespace_inode": { "$ref": "#/$defs/positive_integer" },
-    "interface": { "type": "string", "pattern": "^tngt[a-z0-9][a-z0-9_.-]{0,9}$" },
+    "interface": { "type": "string", "pattern": "^(?:tngt[a-z0-9][a-z0-9_.-]{0,9}|tngveth0)$" },
     "ifindex": { "$ref": "#/$defs/positive_integer" },
     "profile_id": {
       "enum": [

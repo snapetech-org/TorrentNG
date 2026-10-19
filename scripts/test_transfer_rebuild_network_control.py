@@ -27,13 +27,14 @@ from network_control import (  # noqa: E402
     reset_profile,
 )
 from task_network import INTERFACE_NAME  # noqa: E402
+from validate_artifact import validate  # noqa: E402
 
 TOOLCHAIN_SHA = hashlib.sha256(b'{"ip":"ip v1","tc":"tc v1"}').hexdigest()
 
 
-def link_info(ifindex: int = 17) -> dict[str, object]:
+def link_info(ifindex: int = 17, interface: str = "tngt0") -> dict[str, object]:
     return {
-        "ifname": "tngt0",
+        "ifname": interface,
         "ifindex": ifindex,
         "flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
         "linkinfo": {"info_kind": "veth"},
@@ -97,6 +98,33 @@ class TransferNetworkControlTests(unittest.TestCase):
             _validate_names("tngt-case-1", "lo")
         with self.assertRaises(NetworkControlError):
             _validate_names("tngt-case-1", "eth0")
+
+    def test_seed_endpoint_tngveth_record_passes_the_versioned_schema(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="tng-network-control-seed-") as directory:
+            output = Path(directory) / "apply.json"
+            with (
+                patch("network_control._tools", return_value=("/sbin/ip", "/sbin/tc")),
+                patch("network_control._namespace_identity", return_value={"device": 8, "inode": 9}),
+                patch(
+                    "network_control._link_info",
+                    side_effect=[link_info(interface="tngveth0"), link_info(interface="tngveth0")],
+                ),
+                patch(
+                    "network_control._root_qdisc",
+                    side_effect=[
+                        {"kind": "noqueue", "handle": "0:", "root": True},
+                        netem_root(seed=7),
+                    ],
+                ),
+                patch(
+                    "network_control._toolchain_identity",
+                    return_value=("ip v1", "tc v1", TOOLCHAIN_SHA),
+                ),
+                patch("network_control._run"),
+            ):
+                apply_profile("tngs-case-1", "tngveth0", "lan-1g-1ms-v1", output, seed=7)
+
+            self.assertEqual(validate("network-control", output), [])
 
     def test_apply_records_only_a_verified_pinned_profile(self) -> None:
         with tempfile.TemporaryDirectory(prefix="tng-network-control-") as directory:

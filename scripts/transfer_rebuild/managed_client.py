@@ -12,7 +12,9 @@ import json
 import os
 import re
 import secrets
+import stat
 import subprocess
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -26,10 +28,151 @@ from strict_json import StrictJsonError, loads as strict_json_loads
 SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
 PLACEHOLDER_RE = re.compile(r"\{([a-z_]+)\}")
 MAX_ENV_FILE_BYTES = 1024 * 1024
+MAX_TORRENTNG_CONFIG_BYTES = 64 * 1024
 
 
 class ManagedClientError(RuntimeError):
     """A pinned native or container client could not be managed safely."""
+
+
+def _toml_literal(value: Any) -> str:
+    if type(value) is bool:
+        return "true" if value else "false"
+    if type(value) is int:
+        return str(value)
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_literal(item) for item in value) + "]"
+    raise ManagedClientError("pinned TorrentNG config has an unsupported TOML value")
+
+
+def _serialize_torrentng_config(config: dict[str, Any]) -> bytes:
+    lines: list[str] = []
+    for section, values in config.items():
+        if not isinstance(section, str) or re.fullmatch(r"[A-Za-z0-9_-]+", section) is None:
+            raise ManagedClientError("pinned TorrentNG config has an unsupported table name")
+        if not isinstance(values, dict):
+            raise ManagedClientError("pinned TorrentNG config must contain flat tables")
+        lines.append(f"[{section}]")
+        for key, value in values.items():
+            if not isinstance(key, str) or re.fullmatch(r"[A-Za-z0-9_-]+", key) is None:
+                raise ManagedClientError("pinned TorrentNG config has an unsupported key")
+            lines.append(f"{key} = {_toml_literal(value)}")
+        lines.append("")
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def _read_torrentng_config(path: Path) -> dict[str, Any]:
+    if not path.is_absolute() or path.is_symlink():
+        raise ManagedClientError("pinned TorrentNG config must be an absolute regular file")
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    except OSError as error:
+        raise ManagedClientError("cannot open pinned TorrentNG config without following links") from error
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or before.st_size > MAX_TORRENTNG_CONFIG_BYTES:
+            raise ManagedClientError("pinned TorrentNG config must be a bounded regular file")
+        raw = bytearray()
+        while len(raw) <= MAX_TORRENTNG_CONFIG_BYTES:
+            chunk = os.read(descriptor, min(16 * 1024, MAX_TORRENTNG_CONFIG_BYTES + 1 - len(raw)))
+            if not chunk:
+                break
+            raw.extend(chunk)
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    if len(raw) != before.st_size or len(raw) > MAX_TORRENTNG_CONFIG_BYTES:
+        raise ManagedClientError("pinned TorrentNG config changed while it was read")
+    if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+    ):
+        raise ManagedClientError("pinned TorrentNG config changed while it was read")
+    try:
+        value = tomllib.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+        raise ManagedClientError("pinned TorrentNG config is not valid UTF-8 TOML") from error
+    if not isinstance(value, dict):
+        raise ManagedClientError("pinned TorrentNG config root must be a table")
+    return value
+
+
+def _write_torrentng_config(path: Path, config: dict[str, Any]) -> None:
+    if path.exists() or path.is_symlink():
+        raise ManagedClientError("trial TorrentNG config already exists")
+    encoded = _serialize_torrentng_config(config)
+    try:
+        descriptor = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
+            0o600,
+        )
+    except OSError as error:
+        raise ManagedClientError("cannot create private trial TorrentNG config") from error
+    try:
+        os.fchmod(descriptor, 0o600)
+        view = memoryview(encoded)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise ManagedClientError("short write while creating trial TorrentNG config")
+            view = view[written:]
+        os.fsync(descriptor)
+    except BaseException:
+        os.close(descriptor)
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        raise
+    else:
+        os.close(descriptor)
+
+
+def _prepare_torrentng_config(
+    profile: dict[str, Any], runtime_paths: dict[str, Any]
+) -> None:
+    launch = profile.get("paired_launch")
+    if not isinstance(launch, dict) or not isinstance(launch.get("environment"), dict):
+        raise ManagedClientError("TorrentNG paired launch has no pinned config environment")
+    config_path = launch["environment"].get("TORRENTNGD_CONFIG")
+    if not isinstance(config_path, str):
+        raise ManagedClientError("TorrentNG paired launch must pin TORRENTNGD_CONFIG")
+    config = _read_torrentng_config(Path(config_path))
+    daemon = config.get("daemon")
+    network = config.get("network")
+    storage = config.get("storage")
+    api_port = launch.get("api_port")
+    peer_port = launch.get("peer_port")
+    state_path = runtime_paths.get("state")
+    data_path = runtime_paths.get("data")
+    if (
+        not isinstance(daemon, dict)
+        or not isinstance(network, dict)
+        or not isinstance(storage, dict)
+        or isinstance(api_port, bool)
+        or not isinstance(api_port, int)
+        or not 1 <= api_port <= 65535
+        or isinstance(peer_port, bool)
+        or not isinstance(peer_port, int)
+        or not 1 <= peer_port <= 65535
+        or not isinstance(state_path, Path)
+        or not state_path.is_absolute()
+        or not isinstance(data_path, Path)
+        or not data_path.is_absolute()
+    ):
+        raise ManagedClientError("TorrentNG paired launch config is missing pinned task paths or ports")
+    daemon["api_bind"] = f"0.0.0.0:{api_port}"
+    daemon["session_dir"] = str(state_path / "session")
+    network["listen_port"] = peer_port
+    storage["download_dir"] = str(data_path)
+    destination = state_path / "torrentngd.toml"
+    _write_torrentng_config(destination, config)
+    launch["environment"]["TORRENTNGD_CONFIG"] = str(destination)
 
 
 def _render(value: str, values: Mapping[str, str]) -> str:
@@ -414,6 +557,8 @@ def launch_client(
         )
 
     role_profile, values = _profile_for_role(client_id, profile, role, topology, runtime_paths)
+    if client_id == "torrentngd":
+        _prepare_torrentng_config(role_profile, runtime_paths)
     launch = role_profile["paired_launch"]
     environment = _launch_environment(role_profile, values)
     namespace = role_profile["task_api_context"]["namespace"]
