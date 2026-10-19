@@ -6,64 +6,46 @@ in the measured source checkout.
 
 ## Validation status
 
-Freshly revalidated production source `354ad504f75b33c712b5ccd827cfef3eb0cf4414`
-passed the following run on 2026-10-19. Later `main` commits and this worktree's
-pending edits are documentation-only:
+The production implementation remains at
+`354ad504f75b33c712b5ccd827cfef3eb0cf4414`. The latest local test tree adds a
+transfer-invariants harness change; the focused test and full workspace were
+rerun with that change. Both Rust 1.94.0 and 1.88.0 workspace runs passed
+2,301 tests, failed 0, and ignored 12 across 37 summaries. Release `rt-engine`
+passed 733 tests, all 21 transfer-rebuild Python regressions passed, and all
+11 runnable ignored cases passed. Workspace Clippy passed on both toolchains;
+engine Clippy passed on 1.94.0, with warnings and no errors. Formatting passed.
+The Rust 1.98.1 standalone comparator runner built, passed all six tests, and
+passed its help smoke.
 
-```sh
-cargo +1.94.0 test --workspace --all-targets --locked --no-fail-fast -- --test-threads=1 --format=terse
-cargo +1.88.0 test --workspace --all-targets --locked --no-fail-fast -- --test-threads=1 --format=terse
-cargo +1.94.0 test --locked --release -p rt-engine --lib -- --test-threads=1
-```
-
-Each workspace run reported 2,301 passed, 0 failed, and 12 ignored across 37
-test-result summaries. The release `rt-engine` library suite passed 733 tests,
-including the seeded transfer simulator. All 21
-`scripts/test_transfer_rebuild_*.py` scripts passed. Both explicit 100k
-production-catalog cases passed, including the four-worker release mixed-load
-probe. Clippy exited 0 with warnings; formatting passed. The standalone
-comparator runner built under Rust 1.98.1, passed all 6 tests, and passed its
-CLI help smoke. Workspace and engine Clippy exited 0 with warnings; workspace
-and runner formatting passed under Rust 1.94.0. Eleven runnable ignored scale,
-storage-device, move/import, and peer-wire cases were run explicitly. The Rust
-1.98.1 rustfmt component was not installed, so runner formatting used Rust
-1.94.0.
-
-The 100k release catalog case took 219.170 seconds to admit paused rows, 2.026
-seconds to restore, and 735 ms for its first sorted list; cached listing was
-under 1 ms. Across 16 mixed-load rounds, list p95 was 757.512 ms and 782.177
-ms, transfer info p95 was 4.32 ms, and `/metrics` p95 was 2.21 ms. The first
-cold snapshot drives list p95. These are local diagnostics, not approved
-thresholds or matched-client results.
-
-The seven-case release storage suite passed, but all temporary files were on
-`/tmp` tmpfs and the harness reported `profile=Unknown`, `fs=None`, and no
-device identity. The HDD-only branch skipped as expected. The 256 MiB
-positioned-I/O stream reported 4,844 MiB/s writes and 6,872 MiB/s reads;
-readahead served 4,096 reads with 133 backend reads; and a 4,096-piece recheck
-reported 126.38 MiB/s. The 64-file/64 MiB move-import-delete test passed.
-These functional probes do not qualify a physical device or the dedicated ext4
-target.
-
-The 100k-piece picker probe measured 1,161 ns per pick/cancel operation. The
-API snapshot probe measured 502 ms cold, 86 ns for a cached read, and 151–313
-µs for one changed row. Peer-wire encode measured 2.131 ms owned versus 579 µs
-direct-reused across 10,000 frames. These microbenchmarks have no accepted
-threshold and do not establish whole-client efficiency. Detailed logs are in
+The release 100k catalog case admitted paused rows in 213.730 s, restored in
+2.055 s, and listed the first sorted page in 807 ms; the cached page took under
+1 ms. In 16 mixed-load rounds, default and sorted list p95 were 773.313 ms and
+799.208 ms, transfer-info p95 was 3.225 ms, and `/metrics` p95 was 181.965 µs.
+Cold snapshot construction drives list p95. Seven release storage tests passed
+on `/tmp` tmpfs (`profile=Unknown`, `fs=None`); 256 MiB positioned I/O reported
+5,913.90 MiB/s writes and 8,840.05 MiB/s reads, readahead served 4,096 reads
+with 133 backend reads, and a 64 MiB recheck reported 151.51 MiB/s. The
+64-file/64 MiB move-import-delete and 10,000-frame peer-wire probes passed.
+These results are diagnostics, not physical-device qualification or
+whole-client efficiency evidence. Full commands and logs are recorded in
+[`TRANSFER_CORE_ACTIVE_SPECS.md`](../../docs/TRANSFER_CORE_ACTIVE_SPECS.md) and
 `/tmp/tng-transfer-core-final-20261019.GSdus5/`.
 
-Hosted Transfer Rebuild run [39233029958](https://github.com/snapetech-org/TorrentNG/actions/runs/39233029958)
-and Windows Smoke [39233812206](https://github.com/snapetech-org/TorrentNG/actions/runs/39233812206)
-passed on exact commit `94c8c1b3ff14106db93ab1a9750a1bb00c808b7c`; the
-production source under test is unchanged from `354ad504`. The optional
-protected hardware job was skipped, and no runner is registered for its
-protected label. The `kspls0` server was not used for another hardware run after
-read-only preflight reported load averages between 147 and 172. Earlier
-dedicated-ext4 evidence is explicitly tied to `eb5f3158` and remains
-historical. Local results do not complete pinned-client trials,
-active-transfer/process resource qualification, protected-runner hardware
-evidence, crash-cut/soak/canary qualification, independent review, or the
-release decision. They support no efficiency or superiority claim. See
+The `urtorrent` preflight could not start its pinned client because
+`io_uring_setup` returned `Cannot allocate memory`; no paired-client result is
+qualified. Hosted Transfer Rebuild and Windows Smoke passed on
+`94c8c1b3ff14106db93ab1a9750a1bb00c808b7c`, before this harness-only change.
+The protected hardware job was skipped because no runner is registered. The
+current read-only `kspls0` check confirmed the ext4 LVM path and 25 T free,
+but load averages were 89.93/89.71/94.70 with 17 users, so no new hardware
+benchmark was run. Prior dedicated ext4 evidence remains bound to `eb5f3158`.
+Pinned-client trials, active-transfer/process resource qualification,
+protected-runner hardware evidence, crash-cut, soak/canary, independent review,
+and release evidence remain open; no efficiency or superiority claim is made.
+
+The source audit found no missing architecture boundary. The ledger remains
+12/63 `done`, 51/63 `wip`, and 0 `todo`; those WIP rows need the runtime and
+external acceptance evidence listed above. See
 [`TRANSFER_CORE_ACTIVE_SPECS.md`](../../docs/TRANSFER_CORE_ACTIVE_SPECS.md)
 for the full run record.
 

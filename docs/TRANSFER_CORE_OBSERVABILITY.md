@@ -49,12 +49,16 @@ pool.
 
 ## Current gaps
 
-- The pure transfer ledger, upload service, and hierarchical rate scheduler
-  are not wired to live actors, so their state is not represented here.
+- The live v1, pure-v2, and hybrid transfer actors use the shared ownership
+  ledger, upload service, and hierarchical rate scheduler. Metrics do not yet
+  expose their full per-connection ownership and grant state; the current
+  surface reports aggregate transfer totals and selected request-window and
+  storage counters.
 - The external PERF-102 observer supplies process and cgroup measurements;
   those values are deliberately separate from resource-governor leases.
-- Exact API scrape cost under a large active catalog, mixed control load, and
-  repeated scrapes still requires the SYS-014/PERF-109 measurements.
+- SYS-014/PERF-109 local catalog and mixed-control measurements are recorded,
+  but exact-source report qualification, process-resource attribution, and
+  repeated active-transfer scrape measurements remain open.
 - The metrics surface has cumulative counters and selected storage buckets,
   but it does not provide tail histograms for every owner.
 
@@ -66,6 +70,7 @@ reservations and upload buffers separately so readers can inspect that overlap.
 Neither metric family is a substitute for PERF-102 process, allocator, or
 cgroup observations.
 
-SYS-011 remains in progress until the fresh-process passivity regression and
-mixed-load collection behavior are reviewed together. This inventory does not
+SYS-011's passive-scrape implementation and regression are present. Its
+fresh-process, owner-attribution, and mixed-load evidence still needs review
+against the exact-source qualification artifacts. This inventory does not
 turn the current metric families into a gate or capacity claim.

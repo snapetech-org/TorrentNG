@@ -274,12 +274,14 @@ async fn wait_for_state(
 // setup and the seed's first unchoke have their own window so they cannot use
 // that entire budget before the receiver gets its first block.
 async fn wait_for_transfer_peer_ready(
+    seed_engine: &EngineHandle,
     engine: &EngineHandle,
     registry: &Arc<RwLock<SessionRegistry>>,
     info_hash: &str,
     context: &str,
 ) {
     let mut last_peers = None;
+    let mut last_seed_peers = None;
     let mut last_error = None;
     let result = tokio::time::timeout(TRANSFER_STATE_TIMEOUT, async {
         loop {
@@ -292,6 +294,17 @@ async fn wait_for_transfer_peer_ready(
             if receiver_complete {
                 return;
             }
+            match seed_engine.torrent_peers(info_hash.to_owned()).await {
+                Ok(peers) => {
+                    let unchoked = peers.iter().any(|peer| !peer.upload_choked);
+                    last_seed_peers = Some(peers);
+                    if unchoked {
+                        return;
+                    }
+                    last_error = None;
+                }
+                Err(error) => last_error = Some(format!("seed: {error}")),
+            }
             match engine.torrent_peers(info_hash.to_owned()).await {
                 Ok(peers) => {
                     last_peers = Some(peers.clone());
@@ -300,7 +313,7 @@ async fn wait_for_transfer_peer_ready(
                     }
                     last_error = None;
                 }
-                Err(error) => last_error = Some(error),
+                Err(error) => last_error = Some(format!("receiver: {error}")),
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
@@ -308,12 +321,17 @@ async fn wait_for_transfer_peer_ready(
     .await;
     assert!(
         result.is_ok(),
-        "{context} transfer peer remained choked and incomplete; last peers={last_peers:?}; last query error={last_error:?}"
+        "{context} transfer peer remained choked and incomplete; receiver peers={last_peers:?}; seed peers={last_seed_peers:?}; last query error={last_error:?}"
     );
 }
 
 fn test_config(root: &Path, listen_port: u16) -> Config {
     let mut config = Config::default();
+    // These full-engine cases exercise protocol and restart behavior. Use fast
+    // durability during partial-piece progress so incidental periodic
+    // checkpoints do not turn the loopback transfer into an fsync timing test;
+    // the completion gate still forces a real data barrier before Seeding.
+    config.storage.durability_mode = rt_config::StorageDurabilityMode::Fast;
     config.daemon.session_dir = root.join("session");
     config.daemon.shutdown_timeout_secs = 30;
     config.db.path = root.join("state.sqlite");
@@ -446,6 +464,7 @@ async fn persisted_v2_completion_is_rechecked_after_restart() {
                 )
             });
         wait_for_transfer_peer_ready(
+            &seed_engine,
             &receive_engine,
             &receive_registry,
             &case.info_hash,
@@ -500,6 +519,7 @@ async fn persisted_v2_completion_is_rechecked_after_restart() {
                 .await
                 .expect("connect reference pure-v2 receiver to seed");
             wait_for_transfer_peer_ready(
+                &seed_engine,
                 &receive_engine,
                 &receive_registry,
                 &case.info_hash,

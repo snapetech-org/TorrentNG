@@ -1,28 +1,28 @@
 # Transfer Core Capability Matrix
 
-This matrix separates implemented source from qualification evidence. A fresh
-local run on 2026-10-19 verified production source
-`354ad504f75b33c712b5ccd827cfef3eb0cf4414` (later `main` commits are
-documentation-only): the full Rust workspace passed on Rust 1.94.0 and 1.88.0
-(2,301 passed, 0 failed, 12 ignored on each toolchain), all 21 transfer-rebuild
-Python regressions passed, the release `rt-engine` suite passed 733 tests,
-formatting passed, and Clippy exited 0 with warnings. The standalone
-`urtorrent` comparator runner built and passed its 6 tests and CLI smoke.
-Hosted Transfer Rebuild and Windows Smoke passed on exact commit
-`94c8c1b3ff14106db93ab1a9750a1bb00c808b7c`, whose production source matches
-`354ad504`; the protected hardware job was skipped because no runner is
-registered for its label. The dated evidence record is in
+This matrix separates implemented source from qualification evidence. The
+production implementation remains at
+`354ad504f75b33c712b5ccd827cfef3eb0cf4414`; the validated test tree also
+includes a transfer-invariants harness change. The full workspace passed on
+Rust 1.94.0 and 1.88.0 (2,301 passed, 0 failed, 12 ignored on each toolchain),
+the release `rt-engine` suite passed 733 tests, all 21 transfer-rebuild Python
+regressions passed, and all 11 runnable ignored cases passed. Formatting,
+Clippy, and the standalone Rust 1.98.1 comparator runner's six tests and CLI
+smoke passed. The release 100k catalog and `/tmp` tmpfs storage diagnostics
+also passed; they do not qualify physical storage or whole-client efficiency.
+The `urtorrent` preflight could not start because `io_uring_setup` returned
+`Cannot allocate memory`. The dated evidence and exact limits are in
 [`TRANSFER_CORE_ACTIVE_SPECS.md`](TRANSFER_CORE_ACTIVE_SPECS.md).
 
-Older row wording such as “await bulk pass” and “authored but unrun” is stale
-when it refers to ordinary Rust or Python regressions included in those exact
-source suites. The 11 runnable ignored tests, picker/API snapshot probes, and
-local 100k scale probes also passed. The storage probe ran on `/tmp` tmpfs and
-reported an unknown device profile; it does not qualify physical storage.
-Real-client trials, target-filesystem and crash-cut exercises, protected
-hardware evidence, live parity, soak/canary, independent review, and
-matched-client measurements remain open. No release capability or efficiency
-claim follows from repository tests or hosted correctness alone.
+Hosted Transfer Rebuild and Windows Smoke passed on
+`94c8c1b3ff14106db93ab1a9750a1bb00c808b7c`, before the latest harness-only
+change. The protected hardware lane was skipped because no runner is
+registered. The source audit found all 63 repository-owned implementation
+slices present and no missing architecture boundary. The ledger remains
+12/63 `done`, 51/63 `wip`, and 0 `todo`: WIP denotes uncollected runtime,
+platform, hardware, crash-cut, matched-client, soak/canary, independent-review,
+or release evidence. No release capability or efficiency claim follows from
+repository tests or hosted correctness alone.
 
 | Capability | Current native path | Shared-core path | Current state | Qualification gate |
 | --- | --- | --- | --- | --- |

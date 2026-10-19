@@ -379,71 +379,60 @@ cases were also run explicitly; runtime, filesystem, hosted, hardware-runner,
 soak, and client-comparison gates remain open unless they have their own
 retained evidence.
 
-The current tested production source is `354ad504f75b33c712b5ccd827cfef3eb0cf4414`;
-later `main` commits and this worktree's pending changes are documentation-only.
-Both full workspace runs passed on Rust 1.94.0 and 1.88.0 (2,301 passed,
-0 failed, 12 ignored on each toolchain); the release `rt-engine` library
-passed 733 tests, all 21 transfer-rebuild Python regressions passed, formatting
-passed, and workspace and engine Clippy exited 0 with warnings. The standalone
-comparator runner built and passed all 6 tests with Rust 1.98.1, and its help
-smoke passed. Eleven runnable ignored tests were also exercised explicitly;
-the ignored panic-hook child runs through its parent regression. The picker and
-API snapshot microbenchmarks passed.
+The production implementation remains at
+`354ad504f75b33c712b5ccd827cfef3eb0cf4414`. Before the harness-only test
+change, `main` was at `a274d35b`; the validated test tree includes a
+transfer-invariants harness change. The full
+workspace passed on Rust 1.94.0 and 1.88.0 (2,301 passed, 0 failed, 12 ignored
+across 37 summaries per toolchain); release `rt-engine` passed 733 tests,
+including the seeded simulator; all 21 transfer-rebuild Python regressions and
+all 11 runnable ignored cases passed. Clippy passed on both workspace
+toolchains, engine Clippy passed on 1.94.0, formatting passed, and the Rust
+1.98.1 comparator runner built, passed its six tests, and passed its help
+smoke. The focused transfer-invariants integration test passed on both Rust
+toolchains.
 
-The fresh 100k catalog and mixed-load cases passed. Sequential admission of
-100,000 paused rows took 219.170 s, restore took 2.026 s, the cold first sorted
-list took 735 ms, and cached listing was under 1 ms. Across 16 rounds, the two
-list routes had 757.512 ms and 782.177 ms p95; transfer info and `/metrics`
-had 4.32 ms and 2.21 ms p95. Cold snapshot construction drives the list p95.
-These local diagnostics have no acceptance threshold or client comparison.
-
-The 7-case release storage suite passed, but its temporary files were on `/tmp`
-tmpfs and the harness reported `profile=Unknown`, `fs=None`, and no device
-identity. The HDD-only case skipped as expected. The 256 MiB positioned-I/O
-probe reported 4,844 MiB/s writes and 6,872 MiB/s reads; readahead served 4,096
-reads with 133 backend reads; a 4,096-piece recheck reported 126.38 MiB/s. The
-64-file/64 MiB move/import/delete check and peer-wire encode microbenchmark
-passed. These are functional diagnostics, not physical-device qualification
-or whole-client results. Detailed logs are under
+The release 100k catalog admitted paused rows in 213.730 s, restored in
+2.055 s, and listed its first sorted page in 807 ms; cached listing was under
+1 ms. Across 16 mixed-load rounds, default/sorted list p95 was
+773.313/799.208 ms, transfer-info p95 was 3.225 ms, and `/metrics` p95 was
+181.965 µs. Cold snapshot construction drives list p95. The seven-case release
+storage suite passed on `/tmp` tmpfs (`profile=Unknown`, `fs=None`): 256 MiB
+positioned I/O reported 5,913.90 MiB/s writes and 8,840.05 MiB/s reads,
+readahead served 4,096 reads with 133 backend reads, and a 64 MiB recheck
+reported 151.51 MiB/s. The 64-file/64 MiB move-import-delete and 10,000-frame
+peer-wire probes passed. These are diagnostic results without thresholds,
+physical-device qualification, or matched-client comparison. Logs are under
 `/tmp/tng-transfer-core-final-20261019.GSdus5/`.
 
-The exact-source `urtorrent` runner preflight still cannot start the pinned
-client: `io_uring_setup` returns `Cannot allocate memory`. The runner's own
-build, parser tests, and CLI smoke pass, but no paired client trial is qualified.
-Hosted Transfer Rebuild run
+The `urtorrent` preflight could not start its pinned client because
+`io_uring_setup` returned `Cannot allocate memory`; no paired-client trial is
+qualified. Hosted Transfer Rebuild run
 [39233029958](https://github.com/snapetech-org/TorrentNG/actions/runs/39233029958)
 and Windows Smoke run
 [39233812206](https://github.com/snapetech-org/TorrentNG/actions/runs/39233812206)
-passed on exact commit `94c8c1b3ff14106db93ab1a9750a1bb00c808b7c`. The
-protected hardware lane was skipped. Dedicated ext4 LVM evidence below is
-from prior production-source commit `eb5f3158`; the engine and storage
-production paths are unchanged since then. Intervening commits adjust two
-test timeouts and add the standalone comparator runner source and workflow.
-See [`TRANSFER_CORE_ACTIVE_SPECS.md`](TRANSFER_CORE_ACTIVE_SPECS.md) for
-commands, logs, artifact digests, and open gates.
+passed on `94c8c1b3ff14106db93ab1a9750a1bb00c808b7c`, before the latest
+harness-only change. The protected hardware lane was skipped. A read-only
+`kspls0` check confirmed the ext4 LVM path and 25 T free, but load averages
+were 89.93/89.71/94.70 with 17 users, so no new storage benchmark was run.
+Prior dedicated ext4 evidence remains tied to `eb5f3158`. See
+[`TRANSFER_CORE_ACTIVE_SPECS.md`](TRANSFER_CORE_ACTIVE_SPECS.md) for commands,
+logs, artifact digests, and open gates.
 
 ### Status snapshot (2026-10-19)
 
 12 of 63 tickets are `done`, 51 `wip`, and 0 `todo`. `wip` means the ticket's
-full written acceptance is not yet evidenced; it does not mean its source
-implementation is absent. The implementation audit above found all package
-slices in source, while live, hardware, hosted, paired-client, and final-release
-qualification remain separate gates.
-The 2026-10-19 follow-up above records exact-source tests on `354ad504`. The
-current hosted run
-[39233029958](https://github.com/snapetech-org/TorrentNG/actions/runs/39233029958)
-and Windows Smoke run
-[39233812206](https://github.com/snapetech-org/TorrentNG/actions/runs/39233812206)
-passed on `94c8c1b3`. The prior hosted run
-[39217933388](https://github.com/snapetech-org/TorrentNG/actions/runs/39217933388)
-and Windows Smoke run
-[39216147832](https://github.com/snapetech-org/TorrentNG/actions/runs/39216147832)
-passed on `eb5f3158`. The hosted hardware job was not selected and no runner is
-registered for its protected label. The manual hardware script passed twice
-on `kspls0` against the verified `ext4` LVM target, and the 7-case release
-storage suite passed there on `eb5f3158`. Current local follow-up logs are under
-`/tmp/tng-transfer-core-close-20261019/evidence/`; prior host artifacts remain
-under `/tmp/tng-transfer-core-close-20261018/evidence/`.
+full written acceptance is not yet evidenced; it does not mean that its source
+implementation is absent. The current implementation audit found all package
+slices in source, while live-client, platform, hardware, crash-cut, matched
+performance, hosted-runner, soak/canary, independent-review, and release
+evidence remain open.
+Earlier hosted Transfer Rebuild and Windows Smoke results passed on `94c8c1b3`,
+before this harness change; those runs do not qualify a later commit. Hosted
+results must be checked against the exact commit being qualified. The protected hardware job was skipped
+because no runner is registered for its label. The manual hardware script and
+release storage suite passed on `kspls0` against the verified ext4 LVM target on
+`eb5f3158`; those results remain bound to that prior source revision.
 
 The prior clean-source 100k catalog report, artifact-only manifest, and
 qualification passed validation on `eb5f3158`. The list-route p95 includes
@@ -475,7 +464,9 @@ cross-path correctness evidence.
 ### Progress log
 
 | Date | Change |
-| 2026-10-19 | Fresh bulk rerun against production source `354ad504f75b33c712b5ccd827cfef3eb0cf4414` (later `main` commits are docs-only): Rust 1.94.0 and 1.88.0 workspace suites each passed 2,301/0/12 across 37 summaries; release `rt-engine` passed 733 tests; all 21 Python suites, workspace and runner formatting, workspace/engine Clippy, and Rust 1.98.1 comparator build, 6 tests, and help smoke passed. Eleven runnable ignored tests passed; picker and API snapshot probes also completed. The 100k catalog admitted in 219.170 s, restored in 2.026 s, and listed cold/cached in 735 ms/<1 ms; mixed-load list p95 was 757.512/782.177 ms, transfer info 4.32 ms, metrics 2.21 ms. Seven storage probes passed on `/tmp` tmpfs (`profile=Unknown`, `fs=None`), not a physical device; the 64-file/64 MiB move/import/delete probe passed. Hosted Transfer Rebuild run [39233029958](https://github.com/snapetech-org/TorrentNG/actions/runs/39233029958) and Windows Smoke run [39233812206](https://github.com/snapetech-org/TorrentNG/actions/runs/39233812206) passed on exact commit `94c8c1b3ff14106db93ab1a9750a1bb00c808b7c`. The existing `urtorrent` preflight still fails at `io_uring_setup: Cannot allocate memory`; no paired-client claim is made. Read-only server preflight found `kspls0` load at 147–172, so no additional server storage run was made. Logs are under `/tmp/tng-transfer-core-final-20261019.GSdus5/`. Local diagnostics have no approved thresholds and do not close matched-client, dedicated-hardware, crash-cut, soak/canary, or independent-review gates. |
+| --- | --- |
+| 2026-10-19 | Current local bulk rerun including the transfer-invariants harness change: Rust 1.94.0 and 1.88.0 workspace suites each passed 2,301/0/12 across 37 summaries; focused transfer-invariants tests passed on both toolchains; release `rt-engine` passed 733/733 including the seeded simulator; all 21 Python scripts and 11 runnable ignored cases passed. Workspace Clippy passed on both toolchains, engine Clippy on 1.94.0, and formatting passed; the Rust 1.98.1 comparator runner built, passed six tests, and passed help smoke. Release 100k catalog admission/restore/cold-list were 213.730 s/2.055 s/807 ms; mixed-load list p95 was 773.313/799.208 ms, transfer info 3.225 ms, and metrics 181.965 µs. Seven storage tests passed on `/tmp` tmpfs (unknown profile/device); positioned I/O was 5,913.90/8,840.05 MiB/s, readahead served 4,096 reads with 133 backend reads, and 64 MiB recheck was 151.51 MiB/s. 64 MiB move/import/delete and 10,000-frame peer-wire probes passed. The pinned `urtorrent` preflight failed at `io_uring_setup: Cannot allocate memory`; no paired-client trial is qualified. `kspls0` load was 89.93/89.71/94.70 with 17 users, so no new hardware run was made. Detailed logs: `/tmp/tng-transfer-core-final-20261019.GSdus5/`. Remaining WIP is live/client, platform, crash-cut, matched-efficiency, protected-runner, soak/canary, review, and release evidence; no efficiency or release claim is made. |
+| 2026-10-19 | Previous full bulk validation against production source `354ad504f75b33c712b5ccd827cfef3eb0cf4414`: Rust 1.94.0 and 1.88.0 workspace suites each passed 2,301/0/12 across 37 summaries; release `rt-engine` passed 733 tests; all 21 Python suites, workspace and runner formatting, workspace/engine Clippy, and Rust 1.98.1 comparator build, 6 tests, and help smoke passed. Eleven runnable ignored tests passed; picker and API snapshot probes also completed. The 100k catalog admitted in 219.170 s, restored in 2.026 s, and listed cold/cached in 735 ms/<1 ms; mixed-load list p95 was 757.512/782.177 ms, transfer info 4.32 ms, metrics 2.21 ms. Seven storage probes passed on `/tmp` tmpfs (`profile=Unknown`, `fs=None`), not a physical device; the 64-file/64 MiB move/import/delete probe passed. Hosted Transfer Rebuild run [39233029958](https://github.com/snapetech-org/TorrentNG/actions/runs/39233029958) and Windows Smoke run [39233812206](https://github.com/snapetech-org/TorrentNG/actions/runs/39233812206) passed on exact commit `94c8c1b3ff14106db93ab1a9750a1bb00c808b7c`. The existing `urtorrent` preflight still fails at `io_uring_setup: Cannot allocate memory`; no paired-client claim is made. Read-only server preflight found `kspls0` load at 147–172, so no additional server storage run was made. Logs are under `/tmp/tng-transfer-core-final-20261019.GSdus5/`. Local diagnostics have no approved thresholds and do not close matched-client, dedicated-hardware, crash-cut, soak/canary, or independent-review gates. |
 | 2026-10-18 | SYS-014/PERF-109 live catalog qualification and test correction: the opt-in production 100k add/persist/shutdown/restore/API-list probe passed on Rust 1.94.0 with all 100,000 paused rows restored; its cold first list was 7,587 ms in debug and the cached repeat 3 ms. The 100k mixed-load test passed in debug and optimized release. The release run was repeated after switching the mixed-load cases to four Tokio workers, matching `torrentngd`'s multi-thread runtime. Across 16 concurrent rounds, release p50s were 0.277 ms (default list), 0.271 ms (name-sorted list), 0.050 ms (transfer info), and 0.057 ms (`/metrics`); nearest-rank p95 includes first-round cold snapshot construction at 0.800 s and 0.773 s for the list routes, while transfer info and metrics were 2.674 ms and 0.222 ms. No timing threshold is asserted. The raw logs are task-scoped under `/tmp/tng-transfer-core-close-20261018/evidence/`; exact-source catalog report assembly, full workspace validation, and process-level/active-transfer/hardware qualification remain pending. |
 | 2026-10-18 | Bulk source validation and v2 projection correction: an earlier full run observed the reference-v2 actor reporting `Seeding` with `amount_left=1` during a held completion after prior completion. Live and reference pure-v2 persistence now downgrade stale seeding projections to `Downloading`, clear `completed_at`, and retain the one-byte `finalizing` signal; a new engine regression covers the case. The targeted regression and workspace runs on Rust 1.94.0 and Rust 1.88.0 each passed 2,298 tests, with 0 failed and 12 ignored across 65 result summaries. After merge, the clean `main` commit `b1f0120855af86f9f9256b5e4f6bdf4bd02d9593` passed both full suites with those same totals. All 20 `scripts/test_transfer_rebuild_*.py` regressions passed again on merged `main`. `cargo clippy --workspace --all-targets` exited 0 with warnings on both branch and merged main; formatting and JSON parsing passed. The transfer-invariant integration test verifies persisted `amount_left=0` before payload damage and the expected pure-v2 startup recheck afterward. PERF-111 probes were rerun on final code before its commit; local results are in `TRANSFER_CORE_PERF111_LOCAL.md` and remain diagnostic only. Transfer commit `166ac506` is merged and pushed; hosted workflow, hardware, crash-cut, and matched-client qualification remain open. |
 | 2026-10-18 | Architecture boundary review: the accepted target keeps the pure decision core under `crates/rt-engine/src/transfer/` and preserves current crate boundaries unless a dependency cycle forces a small extraction. A separate transfer-core crate is not an outstanding architecture requirement. The remaining unclosed gates are exact-revision validation and named runtime, hardware, crash-cut, or client evidence; no rollout or efficiency claim is implied. |
@@ -760,5 +751,5 @@ cross-path correctness evidence.
 | 2026-10-19 | PERF-115 hardware-lane entrypoint fix: the first manual attempt stopped with `Permission denied` before running any workload because `hardware_lane.sh` lacked its executable bit. The script is now tracked executable, the workflow invokes it with `bash`, and a regression checks both handoff paths. The failed attempt created no benchmark or storage data; validation and the manual lane rerun remain pending. |
 | 2026-10-19 | Final exact-main closeout: both all-target Rust workspace runs passed on Rust 1.94.0 and 1.88.0 (2,301 passed, 0 failed, 12 ignored); all 21 transfer-rebuild Python regressions passed; release `rt-engine` passed 733 tests including the seeded simulator; release real-device storage passed 7/7 on the verified `kspls0` ext4 LVM target; and the manual hardware lane passed twice. Hosted Transfer Rebuild and Windows Smoke passed on exact `eb5f3158`. PERF-111's two exact-source dedicated-host probe runs satisfy its acceptance, bringing the ledger to 12 done and 51 wip. Remaining WIP rows have explicit live-client, platform, crash/recovery, soak/canary, protected-runner, or independent-review evidence requirements; no efficiency or release qualification is claimed. |
 | 2026-10-19 | PERF-103 runner closure pass: repeated runner and preflight CLI options now fail closed, parser regressions cover duplicate options, endpoint/namespace policy, path collisions, and seed-window bounds, and hosted qualification now formats, builds, and tests the release runner on pinned Rust 1.98.1. No exact-source validation has run yet; Linux io_uring preflight and pinned-client qualification remain open. |
-| 2026-10-19 | Bulk validation found `db_worker::tests::cancelled_queued_operation_is_not_applied` timing out before its first operation started under heavy host load; the isolated case passed. Increased only the startup readiness bound from one to five seconds without changing the cancellation assertions. The consolidated pass is being rerun. |
-| 2026-10-19 | The full-engine restart invariant also timed out during the parallel workspace pass; an isolated rerun passed in 35 seconds. Its state-convergence wait was raised from 20 to 60 seconds because this is a correctness gate, not a latency benchmark. The exact-source bulk rerun continues. |
+| 2026-10-19 | Bulk validation found `db_worker::tests::cancelled_queued_operation_is_not_applied` timing out before its first operation started under heavy host load; the isolated case passed. Increased only the startup readiness bound from one to five seconds without changing the cancellation assertions. The consolidated rerun recorded above passed both toolchains. |
+| 2026-10-19 | The full-engine restart invariant also timed out during the parallel workspace pass; an isolated rerun passed in 35 seconds. Its state-convergence wait was raised from 20 to 60 seconds because this is a correctness gate, not a latency benchmark. The exact-source bulk rerun recorded above passed both toolchains. |

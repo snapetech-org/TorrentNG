@@ -5,91 +5,86 @@ This file instantiates the template in
 implementation slices currently in progress. A ticket stays `wip` until its
 written acceptance and exact-revision evidence are complete.
 
-## Fresh full validation — 2026-10-19
+## Current bulk validation — 2026-10-19
 
-The tested production source is commit
-`354ad504f75b33c712b5ccd827cfef3eb0cf4414`. At the start of this run, `main`
-was at `14308ca143e6fe46957267ed88ed54080a5bcbf2`; all commits since the
-tested source change documentation only, and the later working changes
-recorded here are also documentation only. The full workspace passed on Rust
-1.94.0 and 1.88.0, with
-2,301 passed, 0 failed, and 12 ignored across 37 summaries on each toolchain.
-The release `rt-engine` library passed 733 tests. All 21 transfer-rebuild
-Python scripts passed. Workspace and engine Clippy exited 0 with warnings;
-workspace formatting and runner formatting on Rust 1.94.0 passed. The
-standalone comparator runner built under Rust 1.98.1, passed all six tests,
-and passed its `--help` smoke. Rust 1.98.1 `rustfmt` was not installed, so the
-runner formatting check used Rust 1.94.0. The ignored panic-hook child is
+The production implementation remains at
+`354ad504f75b33c712b5ccd827cfef3eb0cf4414`. Before this harness-only test
+change, `main` was at `a274d35b`. The validated test tree includes a change to
+the transfer-invariants harness plus documentation updates; production code
+is unchanged. The loopback test uses fast durability
+for partial-piece progress so incidental checkpoints do not turn a protocol
+and restart check into an fsync timing test; completion still forces a real
+payload barrier before publishing `Seeding`.
+
+The current local tree passed the full Rust workspace on Rust 1.94.0 and
+1.88.0: 2,301 passed, 0 failed, 12 ignored across 37 result summaries on each
+toolchain. The release `rt-engine` suite passed 733/733, including the seeded
+simulator. All 21 transfer-rebuild Python regressions passed. The focused
+`rt-metrics` transfer-invariants binary passed on both toolchains. All 11
+runnable ignored cases passed explicitly. Workspace Clippy passed on Rust
+1.94.0 and 1.88.0; engine Clippy passed on 1.94.0, with warnings and no
+errors. Workspace and runner formatting checks passed on Rust 1.94.0. The
+standalone comparator runner built on Rust 1.98.1, passed all six tests, and
+passed its help smoke. Its Rust 1.98.1 rustfmt component was unavailable, so
+the runner formatting check used Rust 1.94.0. The ignored panic-hook child is
 covered through its parent regression.
 
-The workspace commands were:
+The main validation commands were:
 
-- `cargo +1.94.0 test --workspace --all-targets --locked --no-fail-fast -- --test-threads=1 --format=terse`, and the same command with `+1.88.0`.
-- `cargo +1.94.0 test --locked --release -p rt-engine --lib --jobs 1 -- --test-threads=1`.
-- All 21 `python3 scripts/test_transfer_rebuild_*.py` scripts.
-- `cargo +1.94.0 clippy --workspace --all-targets --locked --jobs 1` and `cargo +1.94.0 clippy --locked -p rt-engine --all-targets --jobs 1`.
-- Workspace and standalone-runner `cargo fmt -- --check` on Rust 1.94.0.
-- Rust 1.98.1 release build/test/help smoke for `scripts/transfer_rebuild/urtorrent_runner`.
+```sh
+cargo +1.94.0 test --workspace --all-targets --locked --no-fail-fast --jobs 1 -- --test-threads=1 --format=terse
+cargo +1.88.0 test --workspace --all-targets --locked --no-fail-fast --jobs 1 -- --test-threads=1 --format=terse
+cargo +1.94.0 test --locked --release -p rt-engine --lib --jobs 1 -- --test-threads=1
+cargo +1.94.0 clippy --workspace --all-targets --locked --jobs 1
+cargo +1.88.0 clippy --workspace --all-targets --locked --jobs 1
+cargo +1.94.0 clippy --locked -p rt-engine --all-targets --jobs 1
+cargo +1.94.0 fmt --all -- --check
+cargo +1.94.0 fmt --manifest-path scripts/transfer_rebuild/urtorrent_runner/Cargo.toml -- --check
+```
 
-All 11 runnable ignored test cases passed explicitly: two 100k catalog tests,
-seven release storage tests, the 64-file/64 MiB move-import-delete test, and
-the peer-wire encoder probe. The picker and API snapshot Criterion-style
-benchmarks also completed. The 100k catalog restored in 2.026 s after 219.170
-s admission; first sorted list was 735 ms and cached listing was below 1 ms.
-Across 16 mixed-load rounds, list p95 was 757.512 ms and 782.177 ms, transfer
-info p95 was 4.32 ms, and `/metrics` p95 was 2.21 ms. The cold first snapshot
-drives the list p95; these are diagnostics without approved thresholds.
+The 21 Python regressions ran from `scripts/test_transfer_rebuild_*.py`.
+Detailed logs are under `/tmp/tng-transfer-core-final-20261019.GSdus5/`.
 
-The storage suite passed 7/7. Its temp paths were on `/tmp` tmpfs and the
-harness reported `profile=Unknown`, `fs=None`, and no device identity; the
-HDD-only branch skipped as expected. The 256 MiB positioned-I/O probe reported
-4,844 MiB/s writes and 6,872 MiB/s reads; readahead served 4,096 reads with 133
-backend reads (30.8x fewer); the 4,096-piece recheck reported 126.38 MiB/s.
-The 64 MiB move/import/delete probe passed. These results are functional
-diagnostics, not physical-device or dedicated-ext4 qualification.
+Both 100k production-catalog cases passed. The release catalog admitted
+100,000 paused rows in 213.730 s, restored in 2.055 s, listed the first sorted
+page in 807 ms, and served the cached listing in under 1 ms. Across 16
+mixed-load rounds, the default and name-sorted list routes had p50/p95 of
+224.876 µs/773.313 ms and 228.022 µs/799.208 ms; transfer info had
+41.499 µs/3.225 ms, and `/metrics` had 45.306 µs/181.965 µs. The first cold
+snapshot dominates list p95. These are diagnostics without accepted timing
+thresholds or matched-client comparison.
 
-At 100,000 pieces, picker pick/cancel measured 1,161 ns per operation and
-reported 5.80 MB of picker storage. The API snapshot probe measured a 502 ms
-cold initial snapshot, 86 ns per cached read, and 151–313 µs for a one-row
-change. The peer-wire microbenchmark measured 2.131 ms for owned encoding and
-579 µs for direct reused encoding over 10,000 frames. These isolated probes
-have no accepted threshold and do not establish whole-client efficiency.
-Detailed logs are under
+The seven-case release storage suite passed on `/tmp` tmpfs; the harness
+reported `profile=Unknown`, `fs=None`, and no device identity, and skipped its
+HDD-only case. The 256 MiB positioned-I/O probe reported 5,913.90 MiB/s writes
+and 8,840.05 MiB/s reads. Readahead served 4,096 reads with 133 backend reads
+(30.8x fewer); a 64 MiB recheck reported 151.51 MiB/s. The 64-file/64 MiB
+move-import-delete check passed. The 10,000-frame peer-wire probe measured
+1.920 ms for owned encoding and 677 µs for direct reused encoding. These are
+functional diagnostics, not physical-device qualification or whole-client
+efficiency evidence. Logs are under
 `/tmp/tng-transfer-core-final-20261019.GSdus5/`.
 
-The `urtorrent` runner preflight was attempted on the current build (and on an
-earlier build of the same runner source) and failed to start the pinned client
-because `io_uring_setup` returned `Cannot allocate memory`. Runner build, unit
-tests, and CLI smoke pass, but no paired client trial is qualified. The hosted
-correctness and Windows Smoke runs
-[39233029958](https://github.com/snapetech-org/TorrentNG/actions/runs/39233029958)
-and
-[39233812206](https://github.com/snapetech-org/TorrentNG/actions/runs/39233812206)
-passed on exact commit `94c8c1b3ff14106db93ab1a9750a1bb00c808b7c`. The
-protected hardware lane was skipped; its dedicated ext4 LVM evidence below is
-from `eb5f3158`, and no protected-runner result has been collected for the
-current source. Since `eb5f3158`, the engine/storage production paths are
-unchanged; later commits adjust two test timeouts and add the standalone
-comparator runner and its workflow.
-
-The source audit found all 63 repository-owned implementation slices and
-ticket contracts present with no remaining architecture boundary. The ledger
-remains 12/63 `done`, 51/63 `wip`, 0 `todo`: the remaining status is for live
-client, platform, crash-cut, matched efficiency, protected-runner, soak/canary,
-independent-review, and release evidence. Ordinary “await bulk” notes below
-are superseded for repository-local tests by the fresh run above. Detailed
-logs are under `/tmp/tng-transfer-core-final-20261019.GSdus5/`.
-
-The server storage target was not rerun: read-only preflight found `kspls0`
-load averages of 147.29, 171.55, and 171.72. Earlier ext4 evidence remains
-bound to its recorded source revision. The existing `urtorrent` preflight also
-remains unable to start because `io_uring_setup` returns `Cannot allocate
-memory`; no paired client trial is qualified. Hosted Transfer Rebuild run
+The Rust 1.98.1 `urtorrent` runner built and passed its tests and help smoke,
+but its pinned-client preflight failed at `io_uring_setup: Cannot allocate
+memory`; no paired-client trial is qualified. Hosted Transfer Rebuild run
 [39233029958](https://github.com/snapetech-org/TorrentNG/actions/runs/39233029958)
 and Windows Smoke run
 [39233812206](https://github.com/snapetech-org/TorrentNG/actions/runs/39233812206)
-passed on `94c8c1b3ff14106db93ab1a9750a1bb00c808b7c`; the protected hardware
-lane was skipped because no runner is registered.
+passed on `94c8c1b3ff14106db93ab1a9750a1bb00c808b7c`, before the latest
+harness-only change. The protected hardware lane was skipped because no runner
+is registered. A read-only `kspls0` preflight confirmed the ext4 LVM target,
+but its load averages were 89.93, 89.71, and 94.70 with 17 users; no new
+storage benchmark was run under that load. Prior dedicated ext4 evidence is
+recorded separately against `eb5f3158`.
+
+The source audit found all 63 repository-owned implementation slices and
+ticket contracts present, with no missing architecture boundary. The ledger
+remains 12/63 `done`, 51/63 `wip`, and 0 `todo`; those WIP rows require live
+client, platform, crash-cut, matched-efficiency, protected-runner,
+soak/canary, independent-review, or release evidence. Ordinary “await bulk”
+notes below are superseded for repository-local tests by this run. Local tests do not replace hosted qualification or close the remaining
+acceptance gates.
 
 ## Previous exact-source closeout — 2026-10-19 (`eb5f3158`)
 
