@@ -122,7 +122,7 @@ jobs:
           output="$RUNNER_TEMP/transfer-rebuild-${GITHUB_RUN_ID}"
           mkdir -m 700 "$output"
           printf 'TRANSFER_REBUILD_EVIDENCE=%s\n' "$output" >> "$GITHUB_ENV"
-          scripts/transfer_rebuild/hardware_lane.sh "$output" "$STORAGE_ROOT"
+          bash scripts/transfer_rebuild/hardware_lane.sh "$output" "$STORAGE_ROOT"
 
       - name: Upload immutable run evidence
         if: always()
