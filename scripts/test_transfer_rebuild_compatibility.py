@@ -11,12 +11,26 @@ from pathlib import Path
 TOOLS = Path(__file__).parent / "transfer_rebuild"
 sys.path.insert(0, str(TOOLS))
 
-from compatibility import _probe_files, _probe_payload_bytes, _run_mutation  # noqa: E402
+from adapters import AdapterError  # noqa: E402
+from compatibility import _poll, _probe_files, _probe_payload_bytes, _run_mutation  # noqa: E402
 from fixtures import load_fixture_profile_document  # noqa: E402
 from validate_artifact import _settings_digest, validate  # noqa: E402
 
 
 class CompatibilityPreflightTests(unittest.TestCase):
+    def test_poll_retries_transient_http_503_until_state_converges(self) -> None:
+        calls = 0
+
+        def read() -> str:
+            nonlocal calls
+            calls += 1
+            if calls < 3:
+                raise AdapterError("HTTP 503 for /api/qb/v2/torrents/info")
+            return "removed"
+
+        self.assertEqual(_poll(read, lambda value: value == "removed", "probe removal"), "removed")
+        self.assertEqual(calls, 3)
+
     def test_probe_payloads_preserve_protocol_edges_without_large_payloads(self) -> None:
         profile_path = TOOLS / "fixture_profiles.json"
         document = json.loads(profile_path.read_text(encoding="utf-8"))

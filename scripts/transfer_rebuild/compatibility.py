@@ -146,11 +146,26 @@ def _multipart(fields: list[tuple[str, str | None, bytes, str]]) -> tuple[bytes,
 def _poll(read: Callable[[], Any], ready: Callable[[Any], bool], label: str) -> Any:
     deadline = time.monotonic() + POLL_TIMEOUT_SECONDS
     last: Any = None
+    last_transient_error: AdapterError | None = None
     while time.monotonic() < deadline:
-        last = read()
+        try:
+            last = read()
+        except AdapterError as error:
+            # Some API projections briefly return 503 while a just-deleted
+            # torrent leaves a pinned snapshot. Retry within this bounded
+            # state-convergence poll; persistent service errors still fail.
+            if not str(error).startswith("HTTP 503 for "):
+                raise
+            last_transient_error = error
+            time.sleep(POLL_INTERVAL_SECONDS)
+            continue
         if ready(last):
             return last
         time.sleep(POLL_INTERVAL_SECONDS)
+    if last_transient_error is not None:
+        raise PreflightError(
+            f"timed out waiting for {label}; last transient response: {last_transient_error}"
+        )
     raise PreflightError(f"timed out waiting for {label}")
 
 
