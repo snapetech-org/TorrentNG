@@ -8921,6 +8921,24 @@ mod tests {
         scheduler_with_scripted_backend_for(hdd_scheduler())
     }
 
+    fn set_test_device_queue_for_path(
+        scheduler: &mut MountScheduler,
+        path: &Path,
+        capacity: usize,
+        active_limit: usize,
+    ) {
+        // Checkpoint barriers resolve admission from each path's physical
+        // device. Keep the scheduler's observed queue keyed to that same
+        // topology, including when TMPDIR is on a different mount than the
+        // process working directory (as it is on hosted CI).
+        scheduler.device_id = detect_storage_topology(path)
+            .device_id
+            .map(|device| device.0);
+        let key = device_queue_key(scheduler.storage_root, scheduler.device_id.as_deref());
+        scheduler.device_queue = Arc::new(DeviceQueue::new(Arc::from(key), capacity, active_limit));
+        scheduler.device_queue_capacity = capacity;
+    }
+
     fn queued_disk_governor(cap_bytes: u64) -> ResourceGovernor {
         let mut class_caps = [1024 * 1024; rt_metrics::MEMORY_CLASS_COUNT];
         class_caps[MemoryClass::QueuedDisk as usize] = cap_bytes;
@@ -9337,8 +9355,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        scheduler.device_queue = Arc::new(DeviceQueue::new(Arc::from("device:scheduler"), 4, 4));
-        scheduler.device_queue_capacity = 4;
+        set_test_device_queue_for_path(&mut scheduler, &first_path, 4, 4);
         let backend = Arc::new(ScriptedDiskBackend::new(1, 8));
         scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(backend.clone()));
         backend.inject(Operation::Write, Effect::HoldCompletion);
@@ -9875,8 +9892,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        scheduler.device_queue = Arc::new(DeviceQueue::new(Arc::from("device:scheduler"), 4, 2));
-        scheduler.device_queue_capacity = 4;
+        set_test_device_queue_for_path(&mut scheduler, &first_path, 4, 2);
         let backend = Arc::new(ScriptedDiskBackend::new(2, 4));
         scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(backend.clone()));
         scheduler
@@ -9963,8 +9979,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        scheduler.device_queue = Arc::new(DeviceQueue::new(Arc::from("device:scheduler"), 4, 4));
-        scheduler.device_queue_capacity = 4;
+        set_test_device_queue_for_path(&mut scheduler, &first_path, 4, 4);
         let backend = Arc::new(ScriptedDiskBackend::new(1, 8));
         scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(backend.clone()));
         scheduler
@@ -10125,8 +10140,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        scheduler.device_queue = Arc::new(DeviceQueue::new(Arc::from("device:scheduler"), 4, 4));
-        scheduler.device_queue_capacity = 4;
+        set_test_device_queue_for_path(&mut scheduler, &first_path, 4, 4);
         let backend = Arc::new(ScriptedDiskBackend::new(1, 8));
         scheduler.disk_backend = Arc::new(SelectedDiskBackend::with_test_backend(backend.clone()));
         for (path, payload) in [
