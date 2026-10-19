@@ -602,10 +602,13 @@ add_rust_url() {
 transmission_rpc() {
   local body="$1" url sid
   url="$(client_url transmission)/transmission/rpc"
-  # Keep large metainfo JSON out of curl's argv.  Public torrents can exceed
-  # the host's execve argument budget once base64 encoded for Transmission's
-  # torrent-add request; stream the body over stdin instead.
-  sid="$(curl --max-time "$CURL_MAX_TIME" -sS -D - -o /dev/null -H "Content-Type: application/json" --data-binary @- "$url" <<<"$body" | awk 'tolower($0) ~ /^x-transmission-session-id:/ {print $2}' | tr -d '\r')"
+  # Get the daemon's CSRF token with an empty POST.  curl_policy deliberately
+  # blocks response-header output when a request carries a body, so sending
+  # the JSON here would suppress the challenge header and leave a blank token.
+  sid="$(curl --max-time "$CURL_MAX_TIME" -sS -X POST -D - -o /dev/null "$url" | awk 'tolower($0) ~ /^x-transmission-session-id:/ {print $2}' | tr -d '\r')"
+  [[ -n "$sid" ]] || { log "Transmission did not return X-Transmission-Session-Id"; return 1; }
+  # Keep large metainfo JSON out of curl's argv. Public torrents can exceed the
+  # host's execve argument budget once base64 encoded for torrent-add.
   curl --max-time "$CURL_MAX_TIME" -fsS -H "X-Transmission-Session-Id: $sid" -H "Content-Type: application/json" --data-binary @- "$url" <<<"$body"
 }
 
@@ -770,10 +773,12 @@ poll_rust_compat() {
 }
 
 rust_transmission_rpc() {
-  local body="$1" url sid
+  local body="$1" url
   url="$(client_url torrentngd)/transmission/rpc"
-  sid="$(curl --max-time "$CURL_MAX_TIME" -sS -D - -o /dev/null -H "Authorization: Bearer $RUST_TOKEN" -H "Content-Type: application/json" -d "$body" "$url" | awk 'tolower($0) ~ /^x-transmission-session-id:/ {print $2}' | tr -d '\r')"
-  curl --max-time "$CURL_MAX_TIME" -fsS -H "Authorization: Bearer $RUST_TOKEN" -H "X-Transmission-Session-Id: $sid" -H "Content-Type: application/json" -d "$body" "$url"
+  # rt-api-transmission exposes its fixed compatibility session id as
+  # "TorrentNG". Sending it directly avoids authenticated header diagnostics,
+  # which curl_policy rejects by design.
+  curl --max-time "$CURL_MAX_TIME" -fsS -H "Authorization: Bearer $RUST_TOKEN" -H 'X-Transmission-Session-Id: TorrentNG' -H "Content-Type: application/json" -d "$body" "$url"
 }
 
 rust_deluge_rpc() {

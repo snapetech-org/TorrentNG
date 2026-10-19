@@ -1659,6 +1659,70 @@ run_local_matrix
                 self.assertEqual("extended" in lines, has_extended)
                 self.assertEqual("protocol" in lines, has_protocol)
 
+    def test_interop_transmission_rpc_negotiates_session_ids_without_header_policy_failure(self) -> None:
+        script = ROOT / "scripts" / "interop_matrix.sh"
+        with tempfile.TemporaryDirectory() as temporary:
+            temp_path = Path(temporary)
+            bin_path = temp_path / "bin"
+            bin_path.mkdir()
+            curl_stub = bin_path / "curl"
+            curl_stub.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "for arg in \"$@\"; do\n"
+                "  if [[ \"$arg\" == @* && -r \"${arg#@}\" ]]; then\n"
+                "    sed -n '/^[Xx]-Transmission-Session-Id:/p' \"${arg#@}\" >>\"$CURL_SESSION_CAPTURE\"\n"
+                "  fi\n"
+                "done\n"
+                "if [[ \" $* \" == *\" -D - \"* ]]; then\n"
+                "  printf 'handshake\\n' >>\"$CURL_CAPTURE\"\n"
+                "  printf 'X-Transmission-Session-Id: dynamic-test-id\\r\\n'\n"
+                "else\n"
+                "  printf 'rpc\\n' >>\"$CURL_CAPTURE\"\n"
+                "  printf '{\\\"result\\\":\\\"success\\\"}\\n'\n"
+                "fi\n",
+                encoding="utf-8",
+            )
+            curl_stub.chmod(0o700)
+            capture = temp_path / "curl-calls.txt"
+            session_capture = temp_path / "session-headers.txt"
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "PATH": f"{bin_path}:{environment['PATH']}",
+                    "CURL_CAPTURE": str(capture),
+                    "CURL_SESSION_CAPTURE": str(session_capture),
+                    "RUST_TOKEN": "test-token",
+                    "CURL_MAX_TIME": "5",
+                }
+            )
+            harness = (
+                f'source "{script}"\n'
+                "client_url() { printf 'http://interop.test'; }\n"
+                "transmission_rpc '{\"method\":\"session-stats\"}' >/dev/null\n"
+                "rust_transmission_rpc '{\"method\":\"session-stats\"}' >/dev/null\n"
+            )
+            completed = subprocess.run(
+                ["bash", "-c", harness],
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertNotIn("curl policy:", completed.stderr)
+            self.assertEqual(
+                capture.read_text(encoding="utf-8").splitlines(),
+                ["handshake", "rpc", "rpc"],
+            )
+            self.assertEqual(
+                session_capture.read_text(encoding="utf-8").splitlines(),
+                [
+                    "X-Transmission-Session-Id: dynamic-test-id",
+                    "X-Transmission-Session-Id: TorrentNG",
+                ],
+            )
+
     def test_interop_matrix_refuses_home_and_user_data_workdirs_before_docker(self) -> None:
         script = ROOT / "scripts" / "interop_matrix.sh"
         with tempfile.TemporaryDirectory() as temporary:
