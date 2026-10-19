@@ -51,8 +51,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rustup toolchain install 1.98.1 --profile minimal --no-self-update
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt --no-self-update
           target="$RUNNER_TEMP/urtorrent-runner-target"
+          cargo +1.98.1 fmt --manifest-path scripts/transfer_rebuild/urtorrent_runner/Cargo.toml -- --check
           CARGO_TARGET_DIR="$target" cargo +1.98.1 build --release --locked \
             --manifest-path scripts/transfer_rebuild/urtorrent_runner/Cargo.toml
           CARGO_TARGET_DIR="$target" cargo +1.98.1 test --release --locked \

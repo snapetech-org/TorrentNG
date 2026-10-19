@@ -2880,8 +2880,8 @@ implemented and qualified.
   `cargo +1.98.1 build --release --locked --manifest-path
   scripts/transfer_rebuild/urtorrent_runner/Cargo.toml` and the corresponding
   `cargo +1.98.1 test --release --locked` command; the hosted qualification
-  workflow now runs both plus a CLI help smoke check, followed by the adapter
-  and validator regressions.
+  workflow now runs the runner format check, both release commands, and a CLI
+  help smoke check, followed by the adapter and validator regressions.
 - **Expected result:** only identity-bound, version-matched, settings-matched
   readbacks produce an observation; mismatches are rejected.
 - **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.

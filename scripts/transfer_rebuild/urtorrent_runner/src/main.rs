@@ -740,9 +740,7 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        is_help_flag, is_task_local_ip, parse_preflight_args, parse_trial_args, Mode,
-    };
+    use super::{Mode, is_help_flag, is_task_local_ip, parse_preflight_args, parse_trial_args};
     use std::net::Ipv4Addr;
     use std::path::PathBuf;
     use std::str::FromStr;
