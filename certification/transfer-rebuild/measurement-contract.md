@@ -86,11 +86,13 @@ process start time; the adapter verifies that identity before accepting the
 readback. Hash-pool threads are recorded as a command-line input because the
 public settings API does not expose that value. The runner requires a private
 fixture, binds to one explicit task-local IPv4 interface, removes its trackers
-and web seeds, and dials one explicit private, link-local, or loopback IPv4
-peer. The adapter independently checks both addresses in the process-bound
-snapshot. The runner refuses to start outside the named `tngt-*` task network
-namespace, disables IPv6/DHT/PEX/LSD, and waits for the common start barrier. It
-rejects v2 and hybrid metainfo. Its `barrier_to_trial_end_ms` result includes
+and web seeds, and dials one explicit task-local IPv4 peer. The paired topology
+allocates task addresses from reserved `198.18.0.0/15`; isolated probes may
+also use private, link-local, or loopback addresses. The adapter independently
+checks both addresses in the process-bound snapshot. The runner refuses to
+start outside the named `tngt-*` task network namespace, disables
+IPv6/DHT/PEX/LSD, and waits for the common start barrier. It rejects v2 and
+hybrid metainfo. Its `barrier_to_trial_end_ms` result includes
 resume/connect setup and completion polling, plus the configured seed
 observation window for seed trials, so it is diagnostic and does not replace
 `transfer_ns`. The control loop is part of the measured process. The comparison

@@ -1229,6 +1229,7 @@ def _is_task_local_ipv4(value: Any) -> bool:
         or address in ipaddress.ip_network("10.0.0.0/8")
         or address in ipaddress.ip_network("172.16.0.0/12")
         or address in ipaddress.ip_network("192.168.0.0/16")
+        or address in ipaddress.ip_network("198.18.0.0/15")
     )
 
 
@@ -1475,6 +1476,10 @@ def probe_client(client_id: str, profile: dict[str, Any]) -> dict[str, Any]:
             raise AdapterError("rqbit observed launch settings must exactly match the declared pin")
         differences: list[str] = []
     else:
+        if client_id == "urtorrent":
+            expected_settings = expected_settings.get("settings")
+            if not isinstance(expected_settings, dict):
+                raise AdapterError("urtorrent expected_settings must contain a settings object")
         differences = _settings_subset(safe_settings, expected_settings)
     if differences:
         raise AdapterError("effective settings differ from the trial pin: " + ", ".join(differences))
@@ -1694,7 +1699,7 @@ def _validate_profile(client_id: str, profile: dict[str, Any]) -> None:
             if not isinstance(expected.get(section), dict):
                 raise AdapterError(f"urtorrent expected_settings must pin the {section} section")
         if not _is_task_local_ipv4(expected["session"].get("listen_v4")):
-            raise AdapterError("urtorrent expected_settings must pin one private IPv4 listener")
+            raise AdapterError("urtorrent expected_settings must pin one task-local IPv4 listener")
         isolation_pins = {
             "session": {
                 "dht": False,
@@ -1715,7 +1720,7 @@ def _validate_profile(client_id: str, profile: dict[str, Any]) -> None:
             },
         }
         if not _is_task_local_ipv4_peer(expected["control"].get("manual_peer")):
-            raise AdapterError("urtorrent expected_settings must pin one private IPv4 peer")
+            raise AdapterError("urtorrent expected_settings must pin one task-local IPv4 peer")
         for section, values in isolation_pins.items():
             if any(expected[section].get(key, object()) != value for key, value in values.items()):
                 raise AdapterError(f"urtorrent expected_settings must pin isolated {section} settings")

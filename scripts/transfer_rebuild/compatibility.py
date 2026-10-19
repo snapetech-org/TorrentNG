@@ -1031,6 +1031,7 @@ def create_preflight(
     pins_path: Path,
     output_path: Path,
     scratch_parent: Path,
+    profile_path: Path = DEFAULT_PROFILE_PATH,
 ) -> dict[str, Any]:
     plan_bytes, plan_sha256 = _read_regular_file(plan_path, "paired plan")
     pins_bytes, pins_sha256 = _read_regular_file(pins_path, "client pin file")
@@ -1044,14 +1045,21 @@ def create_preflight(
     pins = load_pins_document(pin_document)
     if set(pins) - set(CLIENT_IDS):
         raise PreflightError("pin file contains an unsupported client id")
-    artifact = build_preflight(plan, plan_sha256, pins, pins_sha256, scratch_parent)
+    artifact = build_preflight(
+        plan,
+        plan_sha256,
+        pins,
+        pins_sha256,
+        scratch_parent,
+        profile_path=profile_path,
+    )
     plan_after, plan_digest_after = _read_regular_file(plan_path, "paired plan")
     pins_after, pins_digest_after = _read_regular_file(pins_path, "client pin file")
     if plan_digest_after != plan_sha256 or plan_after != plan_bytes:
         raise PreflightError("paired plan changed while compatibility preflight was running")
     if pins_digest_after != pins_sha256 or pins_after != pins_bytes:
         raise PreflightError("client pin file changed while compatibility preflight was running")
-    _, profile_digest_after = _read_regular_file(DEFAULT_PROFILE_PATH, "fixture profile file")
+    _, profile_digest_after = _read_regular_file(profile_path, "fixture profile file")
     if profile_digest_after != plan["catalog"]["profiles_sha256"]:
         raise PreflightError("fixture profile file changed while compatibility preflight was running")
     write_new_json(output_path, artifact)
@@ -1064,9 +1072,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pins", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--scratch-parent", type=Path, required=True)
+    parser.add_argument("--profiles", type=Path, default=DEFAULT_PROFILE_PATH)
     args = parser.parse_args(argv)
     try:
-        artifact = create_preflight(args.plan, args.pins, args.output, args.scratch_parent)
+        artifact = create_preflight(
+            args.plan,
+            args.pins,
+            args.output,
+            args.scratch_parent,
+            profile_path=args.profiles,
+        )
     except (AdapterError, OSError, ValueError, subprocess.SubprocessError, xmlrpc.client.Error) as error:
         print(f"compatibility preflight: {error}", file=sys.stderr)
         return 2

@@ -97,7 +97,9 @@ where
 }
 
 fn is_task_local_ip(address: Ipv4Addr) -> bool {
-    address.is_loopback() || address.is_private() || address.is_link_local()
+    let octets = address.octets();
+    let benchmark_network = octets[0] == 198 && matches!(octets[1], 18 | 19);
+    address.is_loopback() || address.is_private() || address.is_link_local() || benchmark_network
 }
 
 fn is_help_flag(value: &str) -> bool {
@@ -874,19 +876,21 @@ mod tests {
     }
 
     #[test]
-    fn task_peer_policy_accepts_private_and_loopback_ranges_only() {
+    fn task_peer_policy_accepts_isolated_ranges_and_rejects_public_addresses() {
         for address in [
             "127.0.0.1",
             "10.2.3.4",
             "172.20.0.8",
             "192.168.4.9",
             "169.254.2.3",
+            "198.18.1.3",
+            "198.19.254.2",
         ] {
             assert!(is_task_local_ip(
                 Ipv4Addr::from_str(address).expect("valid test IP")
             ));
         }
-        for address in ["8.8.8.8", "100.96.0.2", "203.0.113.9"] {
+        for address in ["8.8.8.8", "100.96.0.2", "198.20.1.3", "203.0.113.9"] {
             assert!(!is_task_local_ip(
                 Ipv4Addr::from_str(address).expect("valid test IP")
             ));

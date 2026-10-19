@@ -35,6 +35,12 @@
     "schedule": {
       "type": "array",
       "items": { "$ref": "#/$defs/trial_slot" }
+    },
+    "profile_scope": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/profile_id" }
     }
   },
   "$defs": {

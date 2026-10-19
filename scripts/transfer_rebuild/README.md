@@ -6,20 +6,22 @@ in the measured source checkout.
 
 ## Validation status
 
-The production implementation remains at
-`354ad504f75b33c712b5ccd827cfef3eb0cf4414`. The latest local test tree adds
-transfer-invariants harness and runner-policy regression changes; the focused
-test and full workspace were rerun with them. Both Rust 1.94.0 and 1.88.0
-workspace runs passed
-2,301 tests, failed 0, and ignored 12 across 37 summaries. Release `rt-engine`
-passed 733 tests, all 21 transfer-rebuild Python regressions passed, and all
-11 runnable ignored cases passed. The runner-policy unit suite passed 4/4 with
-the protected hardware lane restricted to an explicit `main` dispatch.
-The trusted bubblewrap validation-engine contract task passed 67/67 Python
-tests. Workspace Clippy passed on both toolchains;
-engine Clippy passed on 1.94.0, with warnings and no errors. Formatting passed.
-The Rust 1.98.1 standalone comparator runner built, passed all six tests, and
-passed its help smoke.
+The production transfer-core implementation is unchanged from
+`354ad504f75b33c712b5ccd827cfef3eb0cf4414`; the current main checkout before
+these harness fixes was `9b31f76c1c2c1228ea1065eae7bf43789414229f`. At that
+revision, both Rust 1.94.0 and 1.88.0 workspace runs passed 2,301 tests,
+failed 0, and ignored 12 across 37 summaries. Release `rt-engine` passed 733
+tests, the then-current transfer-rebuild regressions passed, all 11 runnable
+ignored cases passed, and the trusted bubblewrap validation-engine contract
+task passed 67/67 Python tests. Workspace Clippy passed on both toolchains;
+engine Clippy passed on 1.94.0 with warnings and no errors. The runner-policy
+suite passed 4/4 with the protected hardware lane restricted to an explicit
+`main` dispatch.
+
+The current benchmark-harness changes pass all 195 transfer-rebuild Python
+tests and all six Rust 1.98.1 urtorrent-runner tests. The runner formatting
+check passes with Rust 1.94.0; rustfmt is not installed for the pinned 1.98.1
+toolchain. The exact source is being committed before paired-client execution.
 
 The release 100k catalog case admitted paused rows in 213.730 s, restored in
 2.055 s, and listed the first sorted page in 807 ms; the cached page took under
@@ -35,9 +37,10 @@ whole-client efficiency evidence. Full commands and logs are recorded in
 [`TRANSFER_CORE_ACTIVE_SPECS.md`](../../docs/TRANSFER_CORE_ACTIVE_SPECS.md) and
 `/tmp/tng-transfer-core-final-20261019.GSdus5/`.
 
-The `urtorrent` preflight could not start its pinned client because
-`io_uring_setup` returned `Cannot allocate memory`; no paired-client result is
-qualified. Hosted Transfer Rebuild and Windows Smoke passed on
+The direct `urtorrent` preflight now starts with a per-process 64 MiB
+`RLIMIT_MEMLOCK`; the earlier default 8 MiB limit caused `io_uring_setup` to
+fail. The full compatibility preflight and paired-client trials are still
+pending. Hosted Transfer Rebuild and Windows Smoke passed on
 `94c8c1b3ff14106db93ab1a9750a1bb00c808b7c`, before this harness-only change.
 The protected hardware job was skipped because no runner is registered. The
 current read-only `kspls0` check confirmed the ext4 LVM path and 25 T free,
@@ -360,14 +363,15 @@ as a command-line input rather than an effective readback.
 
 The runner is Linux-only and refuses to start outside a named task-owned
 `tngt-*` network namespace. It requires private v1 metainfo and rejects v2 or
-hybrid fixtures. It binds only to an explicit private, link-local, or loopback
-IPv4 interface, disables IPv6, DHT, PEX, and LSD, removes tracker and web-seed
-endpoints before release, and dials one explicit private, link-local, or
-loopback IPv4 peer. The adapter independently verifies the listener and peer
-addresses in the process-bound snapshot. It starts only after the common file
-barrier is released. It requires the pinned Rust 1.98.1 toolchain and a kernel
-where io_uring is available; this comparator does not qualify v2/hybrid
-behavior.
+hybrid fixtures. It binds only to an explicit task-local IPv4 interface,
+disables IPv6, DHT, PEX, and LSD, removes tracker and web-seed endpoints before
+release, and dials one explicit task-local IPv4 peer. Task-network addresses
+come from the reserved `198.18.0.0/15` pool; private, link-local, and loopback
+addresses are also accepted for isolated probes. The adapter independently
+verifies the listener and peer addresses in the process-bound snapshot. It
+starts only after the common file barrier is released. It requires the pinned
+Rust 1.98.1 toolchain and a kernel where io_uring is available; this comparator
+does not qualify v2/hybrid behavior.
 
 Build to a task-owned target directory so build artifacts stay out of the
 checkout:
@@ -382,7 +386,8 @@ The caller prepares an existing empty download directory or verified seed
 directory, creates the `tngt-*` namespace, and starts the runner with
 `--namespace`, `--torrent`, `--save-path`, `--pid-file`, `--settings-file`,
 `--start-gate`, `--mode download|seed`, required `--listen-v4 IP`, and required
-`--peer IPv4:PORT`. Both addresses must be private, link-local, or loopback.
+`--peer IPv4:PORT`. Both addresses must belong to the isolated task network or
+use a private, link-local, or loopback range.
 The runner also checks that the process is in the named namespace. Download
 mode requires an empty directory; seed mode checks that the existing payload
 is complete before waiting at the barrier. The runner never deletes files. Its
@@ -577,6 +582,12 @@ matrix in `docs/INTEROP_MATRIX.md`. The catalog binds a SHA-256 digest of the
 profile file and records every client/profile slot. `urtorrent` v2 and hybrid
 slots are explicitly unsupported because its pinned runner accepts private v1
 metainfo only. An unpinned client is excluded from the schedule with a reason.
+The catalog always retains all 28 slots, while optional `--profile-scope`
+arguments limit scheduled profile groups for partial-protocol clients.
+Optional `--profiles` inputs let a task bind custom workload geometry while
+keeping the same four profile IDs; the exact file digest is included in the
+catalog and staged into the final manifest. Pass the same profile file to
+planning, compatibility preflight, and execution.
 
 Create the plan in a new task-owned directory with a valid
 `transfer-client-pins-v1` file:
@@ -584,9 +595,11 @@ Create the plan in a new task-owned directory with a valid
 ```sh
 python3 scripts/transfer_rebuild/paired_plan.py \
   --pins /path/to/task-scratch/client-pins.json \
+  --profiles /path/to/task-scratch/fixture-profiles.json \
   --output /path/to/task-scratch/transfer-run/paired-plan.json \
   --repetitions 10 \
-  --seed 17
+  --seed 17 \
+  --profile-scope N1/lan_1g
 
 python3 scripts/transfer_rebuild/validate_artifact.py paired-plan \
   /path/to/task-scratch/transfer-run/paired-plan.json
@@ -596,9 +609,12 @@ The scheduler uses the versioned `sha256-fisher-yates-v1` algorithm and
 records its seed, plan identity, pins digest, catalog digest, exclusions, pair
 IDs, and trial order. Each pair fixes the fixture profile and repetition while
 randomizing the order of its pinned candidate clients. A pair with fewer than
-two clients is excluded. The plan is written exclusively with mode `0600`; an
-existing output is never replaced. Its schema validator also recomputes the
-catalog digest and seeded schedule, so edits to the plan are rejected.
+two clients is excluded. `--profile-scope` is repeatable and accepts catalog
+profile IDs; the full catalog and compatibility matrix remain in the plan
+even when only selected profiles are scheduled. The plan is written
+exclusively with mode `0600`; an existing output is never replaced. Its schema
+validator also recomputes the catalog digest and seeded schedule, so edits to
+the plan are rejected.
 
 `candidate` means the checked-in catalog does not already know that a slot is
 unsupported; it does not prove the pinned client can run that protocol. A
@@ -628,6 +644,7 @@ unsupported for v2 and hybrid.
 python3 scripts/transfer_rebuild/compatibility.py \
   --plan /path/to/task-scratch/transfer-run/paired-plan.json \
   --pins /path/to/task-scratch/client-pins.json \
+  --profiles /path/to/task-scratch/fixture-profiles.json \
   --output /path/to/task-scratch/transfer-run/compatibility-preflight.json \
   --scratch-parent /path/to/task-scratch/transfer-run
 
@@ -685,6 +702,7 @@ python3 scripts/transfer_rebuild/paired_runner.py \
   --pins /path/to/task-scratch/client-pins.json \
   --preflight /path/to/task-scratch/transfer-run/compatibility-preflight.json \
   --environment /path/to/task-scratch/benchmark-environment.json \
+  --profiles /path/to/task-scratch/fixture-profiles.json \
   --scratch-root /path/to/task-scratch/transfer-run \
   --helper-client qbittorrent \
   --cache-state cold \

@@ -2907,13 +2907,14 @@ The `urtorrent` comparator is a separate Linux-only binary pinned to library
 The API does not expose the configured hash-pool thread count, so the snapshot
 labels that value as a command-line input instead of claiming effective
 readback. The runner requires private v1 metainfo, rejects v2/hybrid fixtures,
-binds to one private, link-local, or loopback IPv4 interface, removes tracker
-and web-seed endpoints before release, and dials one explicit private,
-link-local, or loopback IPv4 peer. IPv6, DHT, PEX, and LSD are disabled, and
-the adapter independently checks both addresses from the live process-bound
-snapshot. Its control loop stays inside the measured process. Its
-barrier-to-trial-end duration is diagnostic and does not replace the
-measurement contract's `transfer_ns`.
+binds to one task-local IPv4 interface, removes tracker and web-seed endpoints
+before release, and dials one explicit task-local IPv4 peer. The paired
+topology allocates task addresses from reserved `198.18.0.0/15`; isolated
+probes may also use private, link-local, or loopback addresses. IPv6, DHT, PEX,
+and LSD are disabled, and the adapter independently checks both addresses
+from the live process-bound snapshot. Its control loop stays inside the
+measured process. Its barrier-to-trial-end duration is diagnostic and does not
+replace the measurement contract's `transfer_ns`.
 This comparator covers v1 only; it cannot decide whether the native core should
 be kept, refactored, or replaced until the broader paired comparison is
 implemented and qualified.
@@ -2945,10 +2946,10 @@ implemented and qualified.
   settings digest, runtime kind, and process start identity.
 - The `urtorrent` profile requires the pinned native runner, an absolute live
   settings snapshot, the Linux task namespace, private metainfo, discovery
-  disabled, an explicit private IPv4 listener and peer, and v1-only geometry;
-  unobservable hash-thread count is labeled as a launch input. The runner
-  rejects public peer addresses, duplicate CLI options, colliding control
-  paths, existing start-gate files, and v2/hybrid metainfo.
+  disabled, an explicit task-local IPv4 listener and peer, and v1-only
+  geometry; unobservable hash-thread count is labeled as a launch input. The
+  runner rejects public peer addresses, duplicate CLI options, colliding
+  control paths, existing start-gate files, and v2/hybrid metainfo.
 - Regression sources cover auth text responses, credential redaction,
   endpoint/process binding, schema linkage, urtorrent snapshot/process binding,
   IPv4 listener and peer policy, fixture-isolation rejection, and mismatch
@@ -4143,17 +4144,24 @@ not process-attributed capacity evidence.
 This spec interprets the ticket's “28-case catalog” as the seven checked-in
 client adapters crossed with the four checked-in fixture profiles. This is a
 separate efficiency catalog from the 28-row protocol correctness matrix in
-`docs/INTEROP_MATRIX.md`. The plan generator records all 28 slots, including
-known unsupported combinations, and produces a seeded schedule for pinned
-clients. The `candidate` label means only “not known to be unsupported by this
-catalog”; client/profile compatibility still needs a runtime preflight before
-the trial is considered eligible.
+`docs/INTEROP_MATRIX.md`. The plan generator always records all 28 slots,
+including known unsupported combinations, and produces a seeded schedule for
+pinned clients. Optional profile scope schedules only selected profile groups
+without changing the full catalog. A custom profile file may change workload
+geometry while retaining the four profile IDs; its digest is bound to the
+catalog and the runner stages the file into the manifest. The `candidate`
+label means only “not known to be unsupported by this catalog”; client/profile
+compatibility still needs a runtime preflight before the trial is considered
+eligible.
 
 The current known exclusions are the `urtorrent` runner's v2 and hybrid slots:
 it accepts private v1 metainfo only. Unpinned clients and profile/repetition
 pairs with fewer than two candidate clients are explicit exclusions. Every
 scheduled pair holds profile and repetition fixed while randomizing client
 order; `paired_runner.py` reuses one verified fixture for the paired trials.
+The same optional `--profiles` file must be supplied to plan generation,
+compatibility preflight, and execution so the catalog, probe, and measured
+fixture all use identical geometry.
 
 ### Ownership and invariant
 
@@ -4194,6 +4202,11 @@ order; `paired_runner.py` reuses one verified fixture for the paired trials.
 - A caller supplies a valid pin file, unsigned 64-bit seed, and 1–100
   repetitions. The plan records the pin and catalog digests and the explicit
   `sha256-fisher-yates-v1` scheduling algorithm.
+- Optional `--profile-scope` values are unique catalog profile IDs; scope is
+  recorded in plan identity and limits schedule groups while leaving the
+  28-slot catalog intact. The default remains the full profile schedule.
+- Plan, preflight, and runner accept the same optional custom profile file;
+  its digest must match the catalog and the runner stages it into the manifest.
 - Pair-group and client order are randomized reproducibly from the seed. Every
   pair uses one profile and repetition, has distinct clients, and includes all
   pinned candidate clients for that profile. Pairs with fewer than two clients

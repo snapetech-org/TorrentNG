@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "transfer_rebuild"))
 from validate_artifact import validate
 from paired_plan import (
+    DEFAULT_PROFILE_PATH,
     EXPECTED_CLIENT_IDS,
     EXPECTED_PROFILE_IDS,
     PlanError,
@@ -109,6 +110,50 @@ class PairedPlanTests(unittest.TestCase):
 
         self.assertEqual(plan["schedule"], [])
         self.assertEqual(len(plan["excluded_pairs"]), 4)
+
+    def test_profile_scope_allows_v1_only_comparisons_and_binds_custom_geometry(self) -> None:
+        profile_document = json.loads(DEFAULT_PROFILE_PATH.read_text(encoding="utf-8"))
+        profile_document["profiles"]["N1/lan_1g"]["files"][0]["size_bytes"] = 128 * 1024 * 1024
+        with tempfile.TemporaryDirectory() as temporary:
+            profiles = Path(temporary) / "profiles.json"
+            profiles.write_text(json.dumps(profile_document), encoding="utf-8")
+            catalog = build_case_catalog(profiles)
+            plan = build_paired_plan(
+                catalog,
+                {"torrentngd", "urtorrent"},
+                repetitions=3,
+                seed=17,
+                pins_sha256="d" * 64,
+                profile_scope=["N1/lan_1g"],
+            )
+            plan_path = Path(temporary) / "scoped-plan.json"
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
+
+            self.assertEqual(plan["profile_scope"], ["N1/lan_1g"])
+            self.assertEqual(len(plan["schedule"]), 6)
+            self.assertEqual(plan["excluded_pairs"], [])
+            self.assertTrue(all(item["profile_id"] == "N1/lan_1g" for item in plan["schedule"]))
+            self.assertEqual(
+                next(
+                    case["expected_payload_bytes"]
+                    for case in catalog["cases"]
+                    if case["case_id"] == "torrentngd:N1/lan_1g"
+                ),
+                128 * 1024 * 1024,
+            )
+            self.assertEqual(validate("paired-plan", plan_path), [])
+
+    def test_profile_scope_rejects_duplicates_and_unknown_profiles(self) -> None:
+        for scope in (["N1/lan_1g", "N1/lan_1g"], ["N1/not-pinned"]):
+            with self.subTest(scope=scope), self.assertRaises(PlanError):
+                build_paired_plan(
+                    self.catalog,
+                    {"torrentngd", "urtorrent"},
+                    repetitions=1,
+                    seed=17,
+                    pins_sha256="e" * 64,
+                    profile_scope=list(scope),
+                )
 
     def test_invalid_bounds_and_overwrite_fail_closed(self) -> None:
         with self.assertRaises(PlanError):

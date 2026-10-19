@@ -59,6 +59,7 @@ from validate_artifact import validate as validate_artifact
 
 
 ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_PROFILE_PATH = Path(__file__).with_name("fixture_profiles.json")
 RUNNER_SCHEMA_VERSION = "transfer-paired-runner-v1"
 DEFAULT_TIMEOUT_SECONDS = 1800
 POLL_SECONDS = 0.1
@@ -334,15 +335,19 @@ def _load_inputs(
     pins_path: Path,
     preflight_path: Path,
     environment_path: Path,
+    profiles_path: Path,
     scratch_root: Path,
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]], dict[str, Any], dict[str, Any], list[tuple[str, Path]]]:
     plan_value, plan_raw = _load_json(plan_path, "paired plan")
     pins_value, pins_raw = _load_json(pins_path, "client pins")
     preflight_value, preflight_raw = _load_json(preflight_path, "compatibility preflight")
     environment_value, environment_raw = _load_json(environment_path, "environment template")
+    _profiles_value, profiles_raw = _load_json(profiles_path, "fixture profiles")
     errors = paired_plan_errors(plan_value)
     if errors:
         raise PairedRunnerError("paired plan is invalid: " + "; ".join(errors))
+    if hashlib.sha256(profiles_raw).hexdigest() != plan_value["catalog"]["profiles_sha256"]:
+        raise PairedRunnerError("fixture profiles digest does not match the paired plan")
     for kind, path in (
         ("paired-plan", plan_path),
         ("compatibility-preflight", preflight_path),
@@ -381,6 +386,10 @@ def _load_inputs(
             "transfer-benchmark-environment-v1",
             _stage_input(scratch_root, environment_path, environment_raw, "environment-template.json"),
         ),
+        (
+            "transfer-fixture-profiles-v1",
+            _stage_input(scratch_root, profiles_path, profiles_raw, "fixture-profiles.json"),
+        ),
     ]
     return plan_value, profiles, preflight_value, environment_value, staged
 
@@ -411,6 +420,28 @@ def _profile_port(profile: dict[str, Any], client_id: str) -> int:
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
         raise PairedRunnerError(f"{client_id} has no fixed pinned peer listener port")
     return port
+
+
+def _urtorrent_profile_for_trial(
+    profile: dict[str, Any], listen_v4: str, peer_address: str, mode: str
+) -> dict[str, Any]:
+    """Bind address- and mode-dependent settings to this isolated trial."""
+    if mode not in {"download", "seed"}:
+        raise PairedRunnerError("urtorrent trial mode must be download or seed")
+    result = copy.deepcopy(profile)
+    expected = result.get("expected_settings")
+    settings = expected.get("settings") if isinstance(expected, dict) else None
+    if not isinstance(settings, dict):
+        raise PairedRunnerError("urtorrent pin has no expected settings object")
+    session = settings.get("session")
+    control = settings.get("control")
+    runner_inputs = settings.get("runner_inputs")
+    if not all(isinstance(value, dict) for value in (session, control, runner_inputs)):
+        raise PairedRunnerError("urtorrent pin omits a trial-bound settings section")
+    session["listen_v4"] = listen_v4
+    control["manual_peer"] = peer_address
+    runner_inputs["mode"] = mode
+    return result
 
 
 def _safe_relative(name: str) -> PurePosixPath:
@@ -773,7 +804,9 @@ def _start_urtorrent(
         "--timeout-seconds", str(timeout_seconds),
         "--seed-seconds", str(timeout_seconds),
     ]
-    endpoint.direct_profile = dict(profile)
+    endpoint.direct_profile = _urtorrent_profile_for_trial(
+        profile, str(task["address"]), peer_address, mode
+    )
     endpoint.direct_profile["pid_file"] = str(endpoint.paths.state / "urtorrent.pid")
     endpoint.direct_profile["settings_file"] = str(endpoint.paths.state / "settings.json")
     endpoint.direct_profile["_task_local_api"] = None
@@ -1837,7 +1870,7 @@ def _run_trial(
 
 
 def _fixture_for_plan(
-    root: Path, plan: dict[str, Any], planned: dict[str, Any]
+    root: Path, plan: dict[str, Any], planned: dict[str, Any], profiles_path: Path
 ) -> tuple[Path, dict[str, Any]]:
     pair_key = hashlib.sha256(planned["pair_id"].encode("utf-8")).hexdigest()[:20]
     fixture_dir = root / "fixtures" / pair_key
@@ -1849,7 +1882,7 @@ def _fixture_for_plan(
         return fixture_dir, manifest
     from fixtures import load_fixture_profile
 
-    profile = load_fixture_profile(Path(__file__).with_name("fixture_profiles.json"), planned["profile_id"])
+    profile = load_fixture_profile(profiles_path, planned["profile_id"])
     seed = "perf110-" + hashlib.sha256(
         f"{plan['plan_id']}\0{planned['profile_id']}\0{planned['repetition']}".encode("utf-8")
     ).hexdigest()
@@ -1881,6 +1914,7 @@ def run_plan(
     observer_interval_ms: int,
     manifest_path: Path | None,
     trial_id_filter: set[str] | None = None,
+    profiles_path: Path = DEFAULT_PROFILE_PATH,
 ) -> list[Path]:
     scratch_root = _ensure_private_root(scratch_root)
     for directory in (scratch_root / "runs", scratch_root / "endpoints", scratch_root / "fixtures"):
@@ -1889,8 +1923,14 @@ def run_plan(
         elif directory.is_symlink() or not directory.is_dir():
             raise PairedRunnerError(f"scratch subdirectory is not a real directory: {directory}")
     plan, profiles, preflight, environment, staged_inputs = _load_inputs(
-        plan_path, pins_path, preflight_path, environment_path, scratch_root
+        plan_path, pins_path, preflight_path, environment_path, profiles_path, scratch_root
     )
+    staged_profiles_path = next(
+        (path for kind, path in staged_inputs if kind == "transfer-fixture-profiles-v1"),
+        None,
+    )
+    if staged_profiles_path is None:
+        raise PairedRunnerError("fixture profiles were not staged with the source-bound inputs")
     if helper_id == "urtorrent" or helper_id not in profiles:
         raise PairedRunnerError("helper client must be a pinned API-controlled client")
     if timeout_seconds <= 0 or timeout_seconds > 24 * 60 * 60:
@@ -1934,7 +1974,9 @@ def run_plan(
         _check_eligible(plan, preflight, {candidate_id, helper_id}, planned["profile_id"])
         fixture_key = planned["pair_id"]
         if fixture_key not in fixture_cache:
-            fixture_dir, fixture_manifest = _fixture_for_plan(scratch_root, plan, planned)
+            fixture_dir, fixture_manifest = _fixture_for_plan(
+                scratch_root, plan, planned, staged_profiles_path
+            )
             fixture_cache[fixture_key] = (
                 fixture_dir,
                 fixture_manifest,
@@ -1980,6 +2022,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pins", type=Path, required=True)
     parser.add_argument("--preflight", type=Path, required=True)
     parser.add_argument("--environment", type=Path, required=True)
+    parser.add_argument("--profiles", type=Path, default=DEFAULT_PROFILE_PATH)
     parser.add_argument("--scratch-root", type=Path, required=True)
     parser.add_argument("--helper-client", required=True)
     parser.add_argument("--network-profile", choices=sorted(NETWORK_PROFILES))
@@ -2000,6 +2043,7 @@ def main(argv: list[str] | None = None) -> int:
             pins_path=args.pins,
             preflight_path=args.preflight,
             environment_path=args.environment,
+            profiles_path=args.profiles,
             scratch_root=args.scratch_root,
             helper_id=args.helper_client,
             network_profile=args.network_profile,

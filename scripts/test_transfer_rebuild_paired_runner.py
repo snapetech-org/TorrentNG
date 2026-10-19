@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import sys
 import tempfile
@@ -17,16 +18,19 @@ from paired_runner import (  # noqa: E402
     Endpoint,
     PairedRunnerError,
     RuntimePaths,
+    DEFAULT_PROFILE_PATH,
     _aggregate_payload_digest,
     _candidate_info_hash,
     _environment_for_trial,
     _fixture_file_identities,
     _fixture_matches_identities,
+    _fixture_for_plan,
     _load_json,
     _network_seed,
     _sha256_file,
     _seed_payload,
     _stage_input,
+    _urtorrent_profile_for_trial,
     _validate_payload,
     _wait_for_observer_sample,
     _wait_for_transfer,
@@ -64,6 +68,55 @@ def _state(*, received: int, complete: bool = False) -> TorrentState:
 
 
 class PairedRunnerTests(unittest.TestCase):
+    def test_fixture_generation_uses_the_pinned_profile_file(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="tng-paired-profile-") as directory:
+            root = Path(directory)
+            profiles = json.loads(DEFAULT_PROFILE_PATH.read_text(encoding="utf-8"))
+            profiles["profiles"]["N1/lan_1g"]["files"][0]["size_bytes"] = 64 * 1024
+            profile_path = root / "profiles.json"
+            profile_path.write_text(json.dumps(profiles), encoding="utf-8")
+            (root / "fixtures").mkdir(mode=0o700)
+            plan = {"plan_id": "scoped-test-plan"}
+            planned = {
+                "pair_id": "scoped-test-pair",
+                "profile_id": "N1/lan_1g",
+                "repetition": 1,
+            }
+
+            fixture_dir, manifest = _fixture_for_plan(root, plan, planned, profile_path)
+
+            self.assertEqual(manifest["files"][0]["size_bytes"], 64 * 1024)
+            self.assertTrue((fixture_dir / "fixture.torrent").is_file())
+
+    def test_urtorrent_profile_binds_dynamic_peer_addresses_and_workload_mode(self) -> None:
+        profile = {
+            "expected_settings": {
+                "settings": {
+                    "session": {"listen_v4": "127.0.0.1", "dht": False},
+                    "control": {"manual_peer": "127.0.0.1:1234"},
+                    "runner_inputs": {"mode": "download", "hash_threads": 2},
+                }
+            }
+        }
+
+        trial = _urtorrent_profile_for_trial(
+            profile,
+            "198.18.1.3",
+            "198.18.1.2:44444",
+            "seed",
+        )
+
+        settings = trial["expected_settings"]["settings"]
+        self.assertEqual(settings["session"]["listen_v4"], "198.18.1.3")
+        self.assertEqual(settings["control"]["manual_peer"], "198.18.1.2:44444")
+        self.assertEqual(settings["runner_inputs"]["mode"], "seed")
+        self.assertEqual(profile["expected_settings"]["settings"]["session"]["listen_v4"], "127.0.0.1")
+        self.assertEqual(profile["expected_settings"]["settings"]["runner_inputs"]["mode"], "download")
+
+    def test_urtorrent_trial_profile_rejects_unknown_mode(self) -> None:
+        with self.assertRaisesRegex(PairedRunnerError, "mode"):
+            _urtorrent_profile_for_trial({}, "127.0.0.1", "127.0.0.1:1", "upload")
+
     def test_runner_input_json_rejects_overflow_numbers(self) -> None:
         with tempfile.TemporaryDirectory(prefix="tng-paired-json-") as directory:
             artifact = Path(directory) / "plan.json"

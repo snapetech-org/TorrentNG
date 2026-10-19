@@ -272,6 +272,7 @@ def build_paired_plan(
     repetitions: int,
     seed: int,
     pins_sha256: str,
+    profile_scope: list[str] | None = None,
 ) -> dict[str, Any]:
     """Randomize profile-pair order and client order using one recorded seed."""
     if isinstance(repetitions, bool) or not isinstance(repetitions, int):
@@ -291,6 +292,21 @@ def build_paired_plan(
         raise PlanError("at least one known pinned client is required")
     _validate_catalog(catalog)
     catalog_cases = catalog["cases"]
+    available_profiles = catalog["profile_ids"]
+    scoped = profile_scope is not None
+    if profile_scope is None:
+        selected_profiles = list(available_profiles)
+    else:
+        if (
+            not isinstance(profile_scope, list)
+            or not profile_scope
+            or any(not isinstance(profile_id, str) for profile_id in profile_scope)
+            or len(profile_scope) != len(set(profile_scope))
+            or any(profile_id not in available_profiles for profile_id in profile_scope)
+        ):
+            raise PlanError("profile scope must select unique catalog profiles")
+        selected_set = set(profile_scope)
+        selected_profiles = [profile_id for profile_id in available_profiles if profile_id in selected_set]
 
     excluded_cases = []
     eligible_by_profile: dict[str, list[str]] = {profile: [] for profile in EXPECTED_PROFILE_IDS}
@@ -318,12 +334,14 @@ def build_paired_plan(
         "seed": seed,
         "schedule_algorithm": SCHEDULE_ALGORITHM,
     }
+    if scoped:
+        identity["profile_scope"] = selected_profiles
     plan_id = hashlib.sha256(_canonical_json(identity)).hexdigest()[:20]
     shuffle_counter = [0]
     pair_groups = [
         (profile_id, repetition)
         for repetition in range(1, repetitions + 1)
-        for profile_id in EXPECTED_PROFILE_IDS
+        for profile_id in selected_profiles
     ]
     _shuffle(pair_groups, seed, shuffle_counter)
 
@@ -360,7 +378,7 @@ def build_paired_plan(
                 }
             )
 
-    return {
+    plan = {
         "schema_version": PLAN_SCHEMA_VERSION,
         "plan_id": plan_id,
         **identity,
@@ -370,6 +388,9 @@ def build_paired_plan(
         "excluded_pairs": excluded_pairs,
         "schedule": schedule,
     }
+    if scoped:
+        plan["profile_scope"] = selected_profiles
+    return plan
 
 
 def paired_plan_errors(plan: Any) -> list[str]:
@@ -386,6 +407,7 @@ def paired_plan_errors(plan: Any) -> list[str]:
             repetitions=plan["repetitions"],
             seed=plan["seed"],
             pins_sha256=plan["pins_sha256"],
+            profile_scope=plan.get("profile_scope"),
         )
     except (KeyError, TypeError, PlanError) as error:
         return [f"paired plan identity is invalid: {error}"]
@@ -430,6 +452,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repetitions", type=int, default=10)
     parser.add_argument("--seed", type=int, required=True)
+    parser.add_argument(
+        "--profile-scope",
+        action="append",
+        choices=EXPECTED_PROFILE_IDS,
+        help="run only selected fixture profiles; repeat to select more than one",
+    )
     args = parser.parse_args(argv)
     try:
         pins_bytes, pins_sha256 = _read_regular_file(args.pins, "client pin file")
@@ -445,6 +473,7 @@ def main(argv: list[str] | None = None) -> int:
             repetitions=args.repetitions,
             seed=args.seed,
             pins_sha256=pins_sha256,
+            profile_scope=args.profile_scope,
         )
         plan_errors = paired_plan_errors(plan)
         if plan_errors:

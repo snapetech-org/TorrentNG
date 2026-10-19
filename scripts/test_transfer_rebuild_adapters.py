@@ -30,6 +30,7 @@ from adapters import (  # noqa: E402
     _urtorrent_settings_file,
     _verify_container_http_endpoint,
     load_pins,
+    probe_client,
 )
 
 
@@ -446,6 +447,22 @@ class TransferClientAdapterTests(unittest.TestCase):
             with self.assertRaises(AdapterError):
                 _urtorrent_settings_file(profile, {"process_id": 1, "process_start_ticks": 789})
 
+    def test_urtorrent_probe_compares_the_nested_settings_pin(self) -> None:
+        settings = self.urtorrent_isolated_settings()
+        profile = {
+            "runtime": "native_binary",
+            "expected_version": "0.14.3",
+            "expected_settings": {"settings": settings},
+        }
+        with (
+            patch("adapters._binary_identity", return_value={"process_id": 456}),
+            patch("adapters._probe_api", return_value=("0.14.3", settings)),
+        ):
+            observation = probe_client("urtorrent", profile)
+
+        self.assertEqual(observation["client_id"], "urtorrent")
+        self.assertEqual(observation["settings_readback"]["values"], settings)
+
     def test_urtorrent_readback_rejects_public_listener_and_peer(self) -> None:
         identity = {"process_id": 456, "process_start_ticks": 789}
         profile = {"settings_file": "/task/run/settings.json"}
@@ -456,6 +473,15 @@ class TransferClientAdapterTests(unittest.TestCase):
             "process_start_ticks": 789,
             "settings": self.urtorrent_isolated_settings(),
         }
+        snapshot["settings"]["session"]["listen_v4"] = "198.18.1.3"
+        snapshot["settings"]["control"]["manual_peer"] = "198.19.254.2:1234"
+        with (
+            patch("adapters._assert_native_process_identity"),
+            patch("adapters._read_regular_file_nofollow", return_value=json.dumps(snapshot).encode()),
+        ):
+            _urtorrent_settings_file(profile, identity)
+
+        snapshot["settings"] = self.urtorrent_isolated_settings()
         for section, key, value in (
             ("session", "listen_v4", "8.8.8.8"),
             ("control", "manual_peer", "8.8.8.8:1234"),
