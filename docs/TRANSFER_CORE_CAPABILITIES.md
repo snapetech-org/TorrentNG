@@ -1,13 +1,13 @@
 # Transfer Core Capability Matrix
 
 This matrix separates the code that exists today from the shared-core
-integration and the evidence needed to qualify it. The source bulk pass has
-now run on Rust 1.94.0 and 1.88.0 (2,298 passed, 0 failed, 12 ignored on each
-toolchain), and all 20 transfer-rebuild Python regression scripts passed.
-The worktree was dirty, so these results are not bound to a clean source
-commit. Older row wording such as “await bulk pass” describes the earlier
-status and is superseded for source-suite execution by the dated validation
-record in [`TRANSFER_CORE_ACTIVE_SPECS.md`](TRANSFER_CORE_ACTIVE_SPECS.md#bulk-validation-2026-10-18).
+integration and the evidence needed to qualify it. Clean merged `main` commit
+`b1f0120855af86f9f9256b5e4f6bdf4bd02d9593` passed the full workspace suite on
+Rust 1.94.0 and 1.88.0 (2,298 passed, 0 failed, 12 ignored on each toolchain),
+all 20 transfer-rebuild Python regressions, and Clippy (exit 0 with warnings).
+Older row wording such as “await bulk pass” describes the earlier status and
+is superseded for source-suite execution by the dated validation record in
+[`TRANSFER_CORE_ACTIVE_SPECS.md`](TRANSFER_CORE_ACTIVE_SPECS.md#bulk-validation-2026-10-18).
 Hosted workflow execution, hardware/storage qualification, crash-cut testing,
 live parity, and matched-client evidence are still open; no release capability
 or efficiency claim follows from the source-suite pass.

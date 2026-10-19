@@ -7,17 +7,22 @@ written acceptance and exact-revision evidence are complete.
 
 ## Bulk validation — 2026-10-18
 
-The source suites passed on this worktree with both installed toolchains:
+The source suites passed on the rebuild worktree with both installed
+toolchains, then passed again on the merged `main` commit
+`b1f0120855af86f9f9256b5e4f6bdf4bd02d9593`:
 
 - `cargo test --workspace --no-fail-fast -- --test-threads=1 --format=terse`
-  on Rust 1.94.0: 2,298 passed, 0 failed, 12 ignored across 65 result
-  summaries.
+  on Rust 1.94.0, both on the rebuild worktree and merged `main`: 2,298
+  passed, 0 failed, 12 ignored across 65 result summaries per run.
 - `cargo +1.88.0 test --workspace --no-fail-fast -- --test-threads=1 --format=terse`
-  on Rust 1.88.0: 2,298 passed, 0 failed, 12 ignored across 65 result
-  summaries.
+  on Rust 1.88.0, both on the rebuild worktree and merged `main`: 2,298
+  passed, 0 failed, 12 ignored across 65 result summaries per run.
 - All 20 `scripts/test_transfer_rebuild_*.py` regression scripts passed.
-- `cargo clippy --workspace --all-targets` exited 0 with warnings; warnings
-  were not promoted to errors.
+- All 20 `scripts/test_transfer_rebuild_*.py` regression scripts passed again
+  on merged `main`.
+- `cargo clippy --workspace --all-targets` exited 0 with warnings on the
+  rebuild branch and merged `main`; warnings were not promoted to errors.
+- `cargo fmt --all -- --check` passed on merged `main`.
 - The local PERF-111 picker and API snapshot probes ran successfully. Their
   raw CSV, host/toolchain details, and limits are in
   [`TRANSFER_CORE_PERF111_LOCAL.md`](TRANSFER_CORE_PERF111_LOCAL.md).
@@ -29,12 +34,14 @@ that stale state to `Downloading` and clear `completed_at`; the new
 `v2_reopens_a_stale_seeding_projection_during_completion_hold` regression
 passes in both final workspace runs.
 
-These commands ran against a dirty worktree rooted at
-`4cd671b0d5eae1ddc096493ded381569e57f49f4`; the run is not bound to a clean
-commit. Thus the per-ticket “Executed on exact revision: no” fields remain
-accurate. They do not mean the workspace source suites were skipped. Earlier
-“await bulk pass” and “unrun” wording describes the state before this
-validation and is superseded for source-suite execution by this record.
+The initial run used a dirty worktree rooted at
+`4cd671b0d5eae1ddc096493ded381569e57f49f4`. The merged-main run is bound to
+the clean main commit above, which contains transfer commit `166ac506`. The
+per-ticket “Executed on exact revision: no” fields continue to mark ticket
+acceptance evidence that is still incomplete; they do not mean the workspace
+source suites were skipped. Earlier “await bulk pass” and “unrun” wording
+describes the state before this validation and is superseded for source-suite
+execution by this record.
 Ticket-specific acceptance that needs hosted workflows, dedicated hardware,
 filesystem fault qualification, crash cuts, live parity, or matched whole-
 client trials remains open.

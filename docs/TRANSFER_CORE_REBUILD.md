@@ -362,13 +362,14 @@ passed. `cargo clippy --workspace --all-targets` exited successfully with
 warnings. The exact commands and scope are recorded in
 [`TRANSFER_CORE_ACTIVE_SPECS.md`](TRANSFER_CORE_ACTIVE_SPECS.md#bulk-validation-2026-10-18).
 
-The checkout is still a dirty worktree, so no clean immutable source commit is
-bound to this validation. No rollout gate has passed: G0 still needs SYS-009,
-SYS-011, PERF-101, and a valid baseline controller with pinned client profiles.
-The local PERF-111 probes are diagnostic samples only. Hosted workflow runs,
-hardware and filesystem qualification, crash-cut evidence, live parity, and
-matched whole-client measurements remain open. Nothing here claims an
-efficiency result.
+The transfer implementation is committed as `166ac506` and merged into clean
+`main` at `b1f0120855af86f9f9256b5e4f6bdf4bd02d9593`. Both toolchains and the
+Python regression suite passed again on that merged tree. No rollout gate has
+passed: G0 still needs SYS-009, SYS-011, PERF-101, and a valid baseline
+controller with pinned client profiles. The local PERF-111 probes are
+diagnostic samples only. Hosted workflow runs, hardware and filesystem
+qualification, crash-cut evidence, live parity, and matched whole-client
+measurements remain open. Nothing here claims an efficiency result.
 
 ### Immediate code sequence
 
@@ -385,8 +386,10 @@ efficiency result.
    durability hold after a prior completion. Both live and reference v2
    persistence now return such entries to `Downloading` and clear the stale
    completion timestamp; a regression covers it. The targeted regression and
-   both final workspace passes succeeded. The worktree is dirty, so record a
-   clean source revision before treating this as release evidence.
+   both final workspace passes succeeded. The transfer branch is merged to
+   `main`, and the full workspace suites also passed there on both toolchains.
+   Named hardware, workflow, and matched-client evidence still need their own
+   clean source-bound artifacts.
 3. **Repository qualification** — run the paired client matrix, live catalog
    and mixed-transfer measurements, storage/device fault gates, and reversible
    cutover recovery evidence on their named environments. Keep external and
@@ -399,7 +402,7 @@ efficiency result.
 ### Progress log
 
 | Date | Change |
-| 2026-10-18 | Bulk source validation and v2 projection correction: an earlier full run observed the reference-v2 actor reporting `Seeding` with `amount_left=1` during a held completion after prior completion. Live and reference pure-v2 persistence now downgrade stale seeding projections to `Downloading`, clear `completed_at`, and retain the one-byte `finalizing` signal; a new engine regression covers the case. The targeted regression and final `cargo test --workspace --no-fail-fast -- --test-threads=1 --format=terse` runs on Rust 1.94.0 and Rust 1.88.0 each passed 2,298 tests, with 0 failed and 12 ignored across 65 result summaries. All 20 `scripts/test_transfer_rebuild_*.py` regressions passed (the final source change was Rust-only). `cargo clippy --workspace --all-targets` exited 0 with warnings; formatting and JSON parsing passed. The transfer-invariant integration test also verifies persisted `amount_left=0` before payload damage and the expected pure-v2 startup recheck afterward. PERF-111 probes were rerun on the final code; local results are in `TRANSFER_CORE_PERF111_LOCAL.md` and remain diagnostic only. Full details are in `TRANSFER_CORE_ACTIVE_SPECS.md`; the worktree is dirty and hosted, hardware, crash-cut, and matched-client qualification remain open. |
+| 2026-10-18 | Bulk source validation and v2 projection correction: an earlier full run observed the reference-v2 actor reporting `Seeding` with `amount_left=1` during a held completion after prior completion. Live and reference pure-v2 persistence now downgrade stale seeding projections to `Downloading`, clear `completed_at`, and retain the one-byte `finalizing` signal; a new engine regression covers the case. The targeted regression and workspace runs on Rust 1.94.0 and Rust 1.88.0 each passed 2,298 tests, with 0 failed and 12 ignored across 65 result summaries. After merge, the clean `main` commit `b1f0120855af86f9f9256b5e4f6bdf4bd02d9593` passed both full suites with those same totals. All 20 `scripts/test_transfer_rebuild_*.py` regressions passed again on merged `main`. `cargo clippy --workspace --all-targets` exited 0 with warnings on both branch and merged main; formatting and JSON parsing passed. The transfer-invariant integration test verifies persisted `amount_left=0` before payload damage and the expected pure-v2 startup recheck afterward. PERF-111 probes were rerun on final code before its commit; local results are in `TRANSFER_CORE_PERF111_LOCAL.md` and remain diagnostic only. Transfer commit `166ac506` is merged and pushed; hosted workflow, hardware, crash-cut, and matched-client qualification remain open. |
 | 2026-10-18 | Architecture boundary review: the accepted target keeps the pure decision core under `crates/rt-engine/src/transfer/` and preserves current crate boundaries unless a dependency cycle forces a small extraction. A separate transfer-core crate is not an outstanding architecture requirement. The remaining unclosed gates are exact-revision validation and named runtime, hardware, crash-cut, or client evidence; no rollout or efficiency claim is implied. |
 | 2026-10-18 | NET-110 bulk-test correction: the upload-read admission regression now observes logical scheduled peer reads, not backend read operations, because the storage scheduler may coalesce adjacent requests without reducing service admission. The corrected assertion is authored and awaits the bulk rerun. |
 | 2026-10-18 | IO-009 checkpoint ownership correction: a bounded barrier can reuse its mount admission and shared byte charge between sequential file batches, but now releases each completed file owner and resets a fresh storage-operation record before opening the next path. This fixes low-descriptor deadlock and preserves unique per-file operation/device identities. Corrected the regression to count the whole checkpoint as one sync operation, and fixed the batch fixture to create its files. `rt-storage` now passes 322/323 under single-thread execution before the final stale-counter assertion fix; one assertion rerun is pending. |
