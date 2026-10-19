@@ -148,8 +148,8 @@ correctness and matched whole-client efficiency evidence.
   copying, and webseed range reassembly. These are intentionally scoped to
   those observed sites; the trial contract must not present them as a complete
   copy total or compare them with another client's broader counter. Measure
-  their relationship to CPU and verified goodput once paired execution is
-  available.
+  their relationship to CPU and verified goodput in the scoped PERF-110 run;
+  broader client/profile coverage and a pre-refactor baseline remain open.
 
 These are hypotheses and implementation lessons, not claimed TorrentNG wins.
 PERF-103 now includes a direct `urtorrent` 0.14.3 library runner as a
@@ -163,9 +163,13 @@ network namespace. The adapter independently checks the addresses in the live
 snapshot. Its control loop is part of the measured process. The standalone
 runner built under Rust 1.98.1, passed all 6 tests, and passed its CLI help
 smoke at `354ad504`. Its preflight could not start the pinned client because
-`io_uring_setup` returned `Cannot allocate memory`. The paired harness,
-workload qualification, and broader client comparison remain incomplete, so
-this adds decision evidence without endorsing either architecture.
+`io_uring_setup` returned `Cannot allocate memory`; a later retry set a 64 MiB
+per-process memlock limit and completed the scoped PERF-110 comparison. In its
+ten randomized pairs, TorrentNG was faster downloading and slower seeding than
+the pinned direct library runner, while using more CPU and RSS. The exact
+results are in `TRANSFER_CORE_ACTIVE_SPECS.md`. No pre-refactor baseline exists,
+so the run does not show whether the refactor moved the needle or rank whole
+clients. Broader clients, profiles, and hardware qualification remain open.
 
 ## Why keep the current branch as a candidate
 

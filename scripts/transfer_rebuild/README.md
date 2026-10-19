@@ -49,6 +49,16 @@ refactor's change or rank whole clients. Full details, confidence intervals,
 and artifact digests are recorded under PERF-110 in
 [`TRANSFER_CORE_ACTIVE_SPECS.md`](../../docs/TRANSFER_CORE_ACTIVE_SPECS.md).
 
+Both slow rows are the TorrentNG-to-urtorrent direction. In each trial, the
+runner uses TorrentNG's own uploaded-byte counter, so the signal is in
+TorrentNG's upload path rather than only the urtorrent receiver's completion
+counter. The scoped result is still one host and one workload; it does not
+identify which upload-stage cost is responsible.
+
+The current code candidate raises per-peer admitted upload reads from 8 to 16
+to match the existing 16-response window. Its source-bound paired rerun is
+pending; the baseline result above is unchanged until that run completes.
+
 The direct `urtorrent` preflight now starts with a per-process 64 MiB
 `RLIMIT_MEMLOCK`; the earlier default 8 MiB limit caused `io_uring_setup` to
 fail. One compatibility preflight and the scoped pair passed; broader client
@@ -753,13 +763,13 @@ versioned shaping profiles. The manifest output must be directly in the
 scratch root so every linked trial and evidence file remains beneath its
 manifest. When requesting a manifest, first commit the exact harness source
 and use a clean worktree; the runner rejects a dirty source before launching
-clients. The local regression sources passed on exact source `354ad504`; no
-pinned-client trial or paired-run host qualification is claimed. Regression sources are
-in `scripts/test_transfer_rebuild_paired_plan.py`,
+clients. The source-bound 10-pair TorrentNG/urtorrent v1 result is recorded
+under PERF-110. Other pinned client/profile trials and dedicated-host
+qualification remain open. Regression sources are in
+`scripts/test_transfer_rebuild_paired_plan.py`,
 `scripts/test_transfer_rebuild_compatibility.py`, and
 `scripts/test_transfer_rebuild_paired_runner.py`; those local regressions
-passed in the exact-source suite. Pinned-client execution and paired-run host
-qualification remain open. The scorecard strips a candidate's client ID prefix
+passed in the exact-source suite. The scorecard strips a candidate's client ID prefix
 from the catalog case ID for grouping, then verifies that both records in a
 pair share the same normalized workload, fixture, and environment.
 

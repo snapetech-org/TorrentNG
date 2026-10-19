@@ -2811,7 +2811,9 @@ For an isolated one-client network namespace, read the named interface from
 `/proc/<pid>/net/dev`, retaining namespace identity and reporting byte deltas.
 The versioned summary binds its CSV digest and root process start identity;
 manifest validation checks trial totals against the summary and recomputes
-values from the CSV. Fixture control and paired runner integration remain open.
+values from the CSV. Fixture control and paired-run integration are present;
+the PERF-110 scoped run exercised them. Broader client/profile and independent
+resource qualification remain open.
 
 ### Ownership and invariant
 
@@ -2876,10 +2878,17 @@ values from the CSV. Fixture control and paired runner integration remain open.
 - **Expected result:** cumulative counters and process-tree attribution match
   synthetic fixtures without retaining samples; per-interface network deltas
   are scoped to the observed namespace and fail closed on missing/reset data.
-- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `354ad504`. External acceptance remains listed below.
-- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261019/evidence/`; external acceptance remains listed below.
-- **External evidence still required:** Linux cgroup-v2 permission and overhead
-  characterization on the dedicated qualification host.
+- **Executed on exact revision:** the repository Rust suites passed on Rust
+  1.88.0 and 1.94.0, and the current 22-script transfer-rebuild suite passed.
+  The PERF-110 scoped run exercised the observer and its linked evidence
+  validates against the run's source commit, `1ebb320e`.
+- **Artifact or report path:** the scoped run's observer CSV and summary are
+  linked from the PERF-110 manifest; repository regression sources remain
+  under `scripts/test_transfer_rebuild_observer.py` and
+  `scripts/test_transfer_rebuild_validator.py`.
+- **External evidence still required:** cgroup-v2 permission/overhead
+  characterization on a dedicated qualification host and broader
+  client/profile resource observations.
 
 ## PERF-103 — Pinned client adapters and settings readback
 
@@ -2988,11 +2997,16 @@ implemented and qualified.
   help smoke check, followed by the adapter and validator regressions.
 - **Expected result:** only identity-bound, version-matched, settings-matched
   readbacks produce an observation; mismatches are rejected.
-- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `354ad504`. External acceptance remains listed below.
-- **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261019/evidence/`; external acceptance remains listed below.
-- **External evidence still required:** all seven client pin profiles, API
-  surface review for locked versions, Linux io_uring and namespace
-  qualification for urtorrent, and local process/container qualification.
+- **Executed on exact revision:** the pinned urtorrent runner passed its Rust
+  1.98.1 format/build/test checks; the current 22-script transfer-rebuild
+  suite passed. One pinned v1 profile ran in the source-bound PERF-110 result
+  at `1ebb320e`.
+- **Artifact or report path:** the PERF-110 manifest links the pinned inputs,
+  trial records, and client observations for the scoped TorrentNG/urtorrent
+  comparison.
+- **External evidence still required:** the other client/profile pins and
+  compatibility preflights, dedicated-host io_uring/namespace qualification,
+  and broader local process/container qualification.
 
 ## SYS-004 — Compact generation-checked tier identities
 
@@ -3884,7 +3898,8 @@ loss are recorded separately; `rtt_ms` stays null because the runner does not
 measure RTT. The helper does not create namespaces, shape host or loopback
 interfaces, or accept a non-default root qdisc. `paired_runner.py` composes it
 with an isolated tracker, seed/target endpoints, and deterministic peer-start
-barrier; client execution and host qualification remain open.
+barrier. One scoped TorrentNG/urtorrent v1 execution passed; additional client
+profiles, impairment profiles, and host qualification remain open.
 
 ### Ownership and invariant
 
@@ -3947,11 +3962,12 @@ barrier; client execution and host qualification remain open.
 - **Expected result:** apply/reset refuses unrelated qdiscs, records only
   verified settings, and manifest validation rejects unlinked or mismatched
   profile evidence.
-- **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `354ad504`. External acceptance remains listed below.
-- **Artifact or report path:** pending isolated-network qualification.
-- **External evidence still required:** task-owned namespace lifecycle,
-  two-ended control, independent swarm readiness, and repeatability on the
-  qualification kernel/iproute2 matrix.
+- **Executed on exact revision:** repository Rust regressions passed on Rust 1.88.0 and 1.94.0; the current 22-script transfer-rebuild suite passes. One scoped two-ended 1 Gbit/s, 1 ms TorrentNG/urtorrent v1 run completed with verified payloads at `1ebb320e`. Broader profiles and external acceptance remain open.
+- **Artifact or report path:** the scoped two-ended network-control records
+  are linked from the PERF-110 manifest and scorecard.
+- **External evidence still required:** additional client/profile pairs,
+  impairment profiles, and repeatability on the qualification kernel/iproute2
+  matrix.
 
 ## PERF-107 — Independent network, hash, disk, and pipeline ceilings
 
@@ -4334,6 +4350,11 @@ the production default policy.
   resource ratios had 10. Cgroup memory and energy metrics were unavailable.
   This is a narrow engine-runner comparison on one host and fixture; it does
   not establish a whole-client ranking or a change from a pre-refactor build.
+- **Upload-window follow-up under evaluation:** the shared upload-read broker
+  now admits up to 16 reads per peer, matching the live v1 response window and
+  the approximate bandwidth-delay product for this 1 Gbit/s, 1 ms-per-side
+  profile. The result above is the 8-read baseline; the source-bound rerun of
+  the 16-read candidate is pending and no improvement is claimed yet.
 - **External evidence still required:** successful pinned compatibility
   preflights and paired trials across the other pinned clients and fixture
   profiles, plus dedicated-host and pre-refactor baseline results.
@@ -4578,6 +4599,24 @@ to match while preserving all remaining workload fields.
 - **State or wire compatibility:** additive `transfer-scorecard-v1` report;
   trial and manifest formats do not change.
 
+### Evidence
+
+- **Regression source added or updated:**
+  `scripts/test_transfer_rebuild_scorecard.py` covers deterministic
+  bootstrap intervals, normalized client/profile signatures, incomplete and
+  failed trials, malformed pairs, and work bounds.
+- **Command or probe to run:** `python3 scripts/test_transfer_rebuild_scorecard.py`
+  and artifact validation on a source-bound PERF-110 manifest.
+- **Expected result:** complete same-profile trials produce reproducible
+  paired ratios and intervals; invalid, incomplete, or unpaired trials remain
+  explicit and do not enter comparisons.
+- **Executed on exact revision:** all 22 transfer-rebuild scripts passed on
+  the current tree; the scorecard validates against the scoped 10-pair run
+  bound to `1ebb320e`.
+- **Artifact or report path:** see the PERF-110 manifest and scorecard above.
+- **External evidence still required:** additional clients and profiles for a
+  broader comparison; this scorecard does not provide a pre-refactor baseline.
+
 ## PERF-114 — Source-bound result manifest assembly
 
 - **Priority / wave:** P0 / 8
@@ -4625,7 +4664,8 @@ outcomes; it never reduces a run to a text summary.
 - Regression sources cover all trial outcomes, clean-source binding, dirty
   source rejection, in-tree evidence, duplicate IDs, and overwrite rejection.
 - Paired executor integration and local tests passed at exact source
-  `354ad504`; cross-platform support, paired-client outputs, and qualification
+  `354ad504`; one scoped paired-client output is recorded at `1ebb320e`.
+  Cross-platform support, broader client/profile outputs, and qualification
   remain open.
 
 ### Files and compatibility
@@ -4637,8 +4677,9 @@ outcomes; it never reduces a run to a text summary.
   `transfer-manifest-v1` records.
 - **Migration / rollback:** none; the writer creates a new artifact and never
   edits existing manifests.
-- **Feature flag or rollout boundary:** none; paired measurements remain
-  unqualified until PERF-110 produces complete, source-bound client trials.
+- **Feature flag or rollout boundary:** none; the scoped pair is descriptive.
+  Broader comparisons remain unqualified until PERF-110 produces the full
+  source-bound client/profile set.
 
 ### Evidence
 
@@ -4648,32 +4689,16 @@ outcomes; it never reduces a run to a text summary.
   duplicate JSON fields and trial IDs, and exclusive output.
 - **Command or probe to run:** the focused manifest/validator suite during the
   requested bulk pass.
-- **Executed on exact revision:** yes; the full repository Rust and transfer-harness regression suites passed at `354ad504`. Paired-run evidence remains open.
-- **Artifact or report path:** paired-run manifest emission is integrated and
-  its regression suite passed at `354ad504`; measured trial artifacts remain
-  pending PERF-110 client execution.
-- **External evidence still required:** exact matched client observations and
-  trial outputs from the paired executor.
+- **Executed on exact revision:** the full repository Rust and transfer-harness regression suites passed at `354ad504`; the scoped paired-run manifest and scorecard validate at `1ebb320e`.
+- **Artifact or report path:** the scoped run's manifest and scorecard are
+  listed under PERF-110; additional client/profile artifacts remain pending.
+- **External evidence still required:** additional pinned-client/profile
+  trials, dedicated-host qualification, and the pre-refactor baseline.
 - **Migration / rollback:** none; scorecards can be regenerated from retained
   manifests and the pinned analysis revision.
-- **Feature flag or rollout boundary:** no superiority or release claim until
-  PERF-110 produces complete paired samples and PERF-113 analyzes them. No
-  threshold is adopted here.
-
-### Evidence
-
-- **Regression source added or updated:**
-  `scripts/test_transfer_rebuild_scorecard.py`.
-- **Command or probe to run:** scorecard and artifact-validator regressions in
-  the requested bulk pass.
-- **Expected result:** deterministic paired ratios and intervals; malformed,
-  unpaired, or incomplete evidence is rejected or explicitly excluded.
-- **Executed on exact revision:** yes; the full repository Rust and transfer-harness regression suites passed at `354ad504`. Paired-run evidence remains open.
-- **Artifact or report path:** pending PERF-110 paired-run artifacts; repository
-  regression sources passed at `354ad504`.
-- **External evidence still required:** a complete randomized paired workload
-  set on the selected comparison host; scorecard source alone is not a
-  performance result.
+- **Feature flag or rollout boundary:** no broad superiority or release claim
+  until the PERF-110 profile/client matrix and PERF-113 analysis are complete.
+  The scoped result is descriptive; no threshold is adopted here.
 
 ## PERF-115 — Hosted correctness and dedicated hardware lanes
 
@@ -4737,7 +4762,7 @@ statuses as run artifacts.
 ### Evidence
 
 - **Regression source added or updated:** workflow and hardware-lane source;
-  workflow-policy and hardware-lane regressions passed in the exact 21-script
+  workflow-policy and hardware-lane regressions passed in the exact 22-script
   Python suite.
 - **Command or probe to run:** hosted lane first, then the protected hardware
   lane with an operator-provisioned storage root.
