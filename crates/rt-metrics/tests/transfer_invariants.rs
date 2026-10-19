@@ -20,6 +20,10 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
+// These full-engine checks can share a host with other workspace targets; they
+// verify eventual state convergence, not a transfer-rate threshold.
+const TRANSFER_STATE_TIMEOUT: Duration = Duration::from_secs(60);
+
 struct ProtocolCase {
     protocol: TransferProtocol,
     info_hash: String,
@@ -231,7 +235,7 @@ async fn wait_for_state(
     context: &str,
 ) -> u64 {
     let mut last_observed = None;
-    let result = tokio::time::timeout(Duration::from_secs(20), async {
+    let result = tokio::time::timeout(TRANSFER_STATE_TIMEOUT, async {
         loop {
             let observed = {
                 let registry = registry.read().await;
