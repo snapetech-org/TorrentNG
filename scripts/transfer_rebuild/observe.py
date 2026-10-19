@@ -395,6 +395,7 @@ class PeakSummary:
         self._network_namespace_inode: int | None = None
         self._network_first: tuple[int, int] | None = None
         self._network_last: tuple[int, int] | None = None
+        self._network_partial = False
 
     def observe(self, sample: Sample) -> None:
         self.sample_count += 1
@@ -416,12 +417,29 @@ class PeakSummary:
 
         if self.network_interface is None:
             return
+        if self._network_partial:
+            # A gap ends the attributable interval. Later samples cannot
+            # extend this delta because the counter epoch across the gap is
+            # unknown.
+            return
         if (
             sample.network_namespace_inode is None
             or sample.network_rx_bytes is None
             or sample.network_tx_bytes is None
         ):
-            self._network_valid = False
+            if (
+                self._network_observation_count >= 2
+                and self._network_first is not None
+                and self._network_last is not None
+            ):
+                # Preserve a valid delta through the last sample with a
+                # verified namespace and monotonic counters. The gap can
+                # occur when the client exits or its isolated interface is
+                # removed during teardown; neither case justifies discarding
+                # the already measured interval.
+                self._network_partial = True
+            else:
+                self._network_valid = False
             return
         self._network_observation_count += 1
         if self._network_namespace_inode is None:
@@ -476,9 +494,16 @@ class PeakSummary:
                 "Network byte counters were not requested."
                 if self.network_interface is None
                 else (
-                    "RX/TX count all traffic on the named interface in the root "
-                    "process's network namespace; treat them as one client's bytes "
-                    "only when that namespace isolates exactly one client."
+                    (
+                        "RX/TX are a partial delta through the last valid sample; "
+                        "they count all traffic on the named interface in the root "
+                        "process's network namespace. Treat them as one client's bytes "
+                        "only when that namespace isolates exactly one client."
+                        if self._network_partial
+                        else "RX/TX count all traffic on the named interface in the root "
+                        "process's network namespace; treat them as one client's bytes "
+                        "only when that namespace isolates exactly one client."
+                    )
                 )
             ),
             "network_interface": self.network_interface,

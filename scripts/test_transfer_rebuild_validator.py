@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import sys
@@ -13,10 +14,14 @@ TOOLS = Path(__file__).parent / "transfer_rebuild"
 sys.path.insert(0, str(TOOLS))
 
 from validate_artifact import (  # noqa: E402
+    RESOURCE_PEAK_FIELDS,
+    RESOURCE_SAMPLE_FIELDS,
     _load_strict_json,
     _cache_state_link_errors,
+    _complete_paired_tracker_error,
     _network_control_errors,
     _resource_namespace_errors,
+    _resource_samples_errors,
     _retargeted_metainfo_errors,
     _retargeted_topology_errors,
     _task_tracker_errors,
@@ -209,6 +214,63 @@ class PairedEvidenceLinkTests(unittest.TestCase):
             ),
             ["tracker bind_address is not a recorded task endpoint"],
         )
+
+    def test_complete_tracker_does_not_require_two_started_announces(self) -> None:
+        tracker = _signed_record({
+            "schema_version": "transfer-task-tracker-v1",
+            "topology_sha256": "a" * 64,
+            "gateway": "198.18.4.1",
+            "bind_address": "198.18.4.2",
+            "dialer_role": "seed",
+            "target_address": "198.18.4.3",
+            "target_port": 45678,
+            "target_peer_id_sha256": "c" * 64,
+            "target_ready": True,
+            "seed_address": "198.18.4.2",
+            "seed_port": 51413,
+            "seed_peer_id_sha256": "b" * 64,
+            "seed_ready": True,
+            "info_hashes_sha256": ["c" * 64],
+            "announce_counts": {"started": 1, "completed": 2, "stopped": 2, "other": 0},
+            "request_count": 5,
+        })
+
+        self.assertIsNone(_complete_paired_tracker_error(tracker))
+
+    def test_resource_samples_retain_partial_network_delta_after_a_counter_gap(self) -> None:
+        rows: list[dict[str, int | None]] = []
+        for index, (received, transmitted) in enumerate(((100, 200), (145, 280), (None, None)), 1):
+            row: dict[str, int | None] = {field: index for field in RESOURCE_SAMPLE_FIELDS}
+            row.update(
+                elapsed_ns=index,
+                processes=1,
+                network_namespace_inode=None if received is None else 77,
+                network_rx_bytes=received,
+                network_tx_bytes=transmitted,
+            )
+            rows.append(row)
+        with tempfile.TemporaryDirectory(prefix="transfer-resource-gap-") as directory:
+            path = Path(directory) / "resources.csv"
+            with path.open("w", encoding="utf-8", newline="") as stream:
+                writer = csv.DictWriter(stream, fieldnames=RESOURCE_SAMPLE_FIELDS)
+                writer.writeheader()
+                writer.writerows(rows)
+
+            observation: dict[str, object] = {
+                "sample_count": len(rows),
+                "started_monotonic_ns": 0,
+                "finished_monotonic_ns": 10,
+                "network_interface": "tngveth0",
+                "network_namespace_inode": 77,
+                "network_rx_bytes": 45,
+                "network_tx_bytes": 80,
+                "network_note": "partial delta through last valid sample; isolates exactly one client",
+                "peaks": {
+                    field: max(int(row[field]) for row in rows if row[field] is not None)
+                    for field in RESOURCE_PEAK_FIELDS
+                },
+            }
+            self.assertEqual(_resource_samples_errors(path, observation), [])
 
 
 if __name__ == "__main__":

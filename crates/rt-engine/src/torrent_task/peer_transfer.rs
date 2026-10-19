@@ -1452,18 +1452,23 @@ impl TorrentTask {
                 };
                 work.verify_in_flight = false;
                 let aggregate_piece = work.aggregate_write;
-                match result {
+                let force_checkpoint = match result {
                     VerifyResult::Valid if aggregate_piece => {
                         if let Some(work) = self.pending_transfer_pieces.get_mut(&piece) {
                             work.aggregate_write_ready = true;
                             work.verified_payload = assembled;
                         }
                         self.start_ready_transfer_jobs();
+                        false
                     }
-                    VerifyResult::Valid => self.finish_verified_piece(piece).await,
+                    VerifyResult::Valid => {
+                        self.finish_verified_piece(piece).await;
+                        false
+                    }
                     VerifyResult::Invalid => {
                         warn!(piece, torrent = %self.info_hash_hex, "piece verification failed");
                         self.fail_piece_transfer(piece);
+                        true
                     }
                     VerifyResult::Missing { file_index, reason } => {
                         warn!(
@@ -1474,10 +1479,14 @@ impl TorrentTask {
                             "piece verification could not read data"
                         );
                         self.fail_piece_transfer(piece);
+                        true
                     }
-                }
+                };
                 if !self.picker.is_complete() {
-                    self.persist_progress_throttled(false).await;
+                    // A failed complete-piece verification can invalidate a
+                    // previously trusted resume bit. Record that correction
+                    // even when this is the actor's first checkpoint window.
+                    self.persist_progress_throttled(force_checkpoint).await;
                 }
             }
             TransferCompletion::AggregatePieceWritten {

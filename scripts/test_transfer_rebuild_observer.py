@@ -143,6 +143,62 @@ class NetworkObservationTests(unittest.TestCase):
         self.assertIsNone(summary.as_json()["network_rx_bytes"])
         self.assertIsNone(summary.as_json()["network_tx_bytes"])
 
+    def test_client_exit_preserves_network_delta_through_last_live_sample(self):
+        summary = observer.PeakSummary("veth0")
+        summary.observe(self.sample(77, 100, 200))
+        summary.observe(self.sample(77, 145, 280))
+        summary.observe(
+            observer.Sample(
+                2,
+                0,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+        )
+
+        result = summary.as_json()
+        self.assertEqual(result["network_namespace_inode"], 77)
+        self.assertEqual(result["network_rx_bytes"], 45)
+        self.assertEqual(result["network_tx_bytes"], 80)
+        self.assertIn("partial delta", result["network_note"])
+
+    def test_missing_interface_after_valid_samples_keeps_an_explicit_partial_delta(self):
+        summary = observer.PeakSummary("veth0")
+        summary.observe(self.sample(77, 100, 200))
+        summary.observe(self.sample(77, 145, 280))
+        summary.observe(
+            observer.Sample(
+                2,
+                1,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+        )
+        summary.observe(self.sample(77, 200, 400))  # ignored across the gap
+
+        result = summary.as_json()
+        self.assertEqual(result["network_rx_bytes"], 45)
+        self.assertEqual(result["network_tx_bytes"], 80)
+        self.assertIn("partial delta", result["network_note"])
+
 
 class ProcessTreeTests(unittest.TestCase):
     def test_process_tree_reads_direct_children(self):

@@ -5480,12 +5480,19 @@ impl TorrentTask {
     async fn persist_progress_throttled(&mut self, force: bool) {
         const PROGRESS_PERSIST_INTERVAL: Duration = Duration::from_secs(5);
         let now = Instant::now();
-        if !force
-            && self
-                .last_progress_persist
-                .is_some_and(|last| now.duration_since(last) < PROGRESS_PERSIST_INTERVAL)
-        {
-            return;
+        if !force {
+            match self.last_progress_persist {
+                Some(last) if now.duration_since(last) < PROGRESS_PERSIST_INTERVAL => return,
+                None => {
+                    // Start the checkpoint interval on the first partial
+                    // completion. Persisting here would make the transfer
+                    // actor await a database commit and payload barrier
+                    // before it can process the next peer command or block.
+                    self.last_progress_persist = Some(now);
+                    return;
+                }
+                Some(_) => {}
+            }
         }
         self.last_progress_persist = Some(now);
         self.persist_progress().await;

@@ -6084,12 +6084,19 @@ impl TorrentTask {
     async fn persist_progress_throttled(&mut self, force: bool) {
         const PROGRESS_PERSIST_INTERVAL: Duration = Duration::from_secs(5);
         let now = Instant::now();
-        if !force
-            && self
-                .last_progress_persist
-                .is_some_and(|last| now.duration_since(last) < PROGRESS_PERSIST_INTERVAL)
-        {
-            return;
+        if !force {
+            match self.last_progress_persist {
+                Some(last) if now.duration_since(last) < PROGRESS_PERSIST_INTERVAL => return,
+                None => {
+                    // Start the checkpoint interval on the first partial
+                    // completion. Persisting here would make the transfer
+                    // actor await a database commit and payload barrier
+                    // before it can process the next peer command or block.
+                    self.last_progress_persist = Some(now);
+                    return;
+                }
+                Some(_) => {}
+            }
         }
         self.last_progress_persist = Some(now);
         self.persist_progress().await;
@@ -10936,6 +10943,21 @@ mod tests {
         let row = rt_db::get(&reopened, &info_hash).unwrap();
         assert_eq!(row.uploaded, 2);
         assert_eq!(row.downloaded, 4);
+    }
+
+    #[tokio::test]
+    async fn first_throttled_progress_starts_interval_without_blocking_on_checkpoint() {
+        let fixture = crash_fixture(vec![0x31; 8], 4, 73).await;
+        let mut task = crash_task(&fixture, quiet_runtime(), StorageIoConfig::default()).await;
+        task.transfer_stats_dirty = true;
+
+        task.persist_progress_throttled(false).await;
+
+        assert!(task.last_progress_persist.is_some());
+        assert!(
+            task.transfer_stats_dirty,
+            "the first partial completion should only start the timer; the actor must not wait for a DB commit or storage barrier"
+        );
     }
 
     #[tokio::test]

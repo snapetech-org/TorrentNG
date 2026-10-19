@@ -507,6 +507,7 @@ def _resource_samples_errors(path: Path, observation: dict[str, Any]) -> list[st
     namespace_inode: int | None = None
     first_network: tuple[int, int] | None = None
     last_network: tuple[int, int] | None = None
+    network_partial = False
     network_values_without_interface = False
 
     try:
@@ -567,8 +568,16 @@ def _resource_samples_errors(path: Path, observation: dict[str, Any]) -> list[st
                         network_values_without_interface = True
                         network_valid = False
                     continue
+                if network_partial:
+                    # The summary intentionally ends at the last valid
+                    # sample before a gap; later values cannot prove the
+                    # counter epoch remained continuous.
+                    continue
                 if any(value is None for value in sample_network):
-                    network_valid = False
+                    if network_count >= 2 and first_network is not None and last_network is not None:
+                        network_partial = True
+                    else:
+                        network_valid = False
                     continue
                 sample_inode, received, transmitted = sample_network
                 assert sample_inode is not None and received is not None and transmitted is not None
@@ -594,6 +603,8 @@ def _resource_samples_errors(path: Path, observation: dict[str, Any]) -> list[st
         errors.append("CSV row count differs from sample_count")
     if network_values_without_interface:
         errors.append("CSV has network values although network observation was not requested")
+    if network_partial and "partial delta" not in observation["network_note"].lower():
+        errors.append("network_note does not identify the counter delta as partial")
     for field, observed in observation["peaks"].items():
         expected = peaks[field] if peak_valid[field] else None
         if observed != expected:
@@ -835,6 +846,19 @@ def _task_tracker_errors(observation: dict[str, Any]) -> list[str]:
     if observation["info_hashes_sha256"] != sorted(set(observation["info_hashes_sha256"])):
         errors.append("info_hashes_sha256 must be sorted and unique")
     return errors
+
+
+def _complete_paired_tracker_error(observation: dict[str, Any] | None) -> str | None:
+    if observation is None:
+        return "complete paired trial has no tracker snapshot"
+    if (
+        not observation["seed_ready"]
+        or not observation["target_ready"]
+        or observation["request_count"] < 2
+        or ("bind_address" in observation and observation["bind_address"] is None)
+    ):
+        return "complete paired trial lacks both announced peers and a ready seed"
+    return None
 
 
 def _task_tracker_topology_errors(
@@ -2074,21 +2098,11 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
                             "tracker info hashes differ from the retargeted torrent"
                         )
                 if trial["outcome"]["status"] == "complete":
-                    if tracker is None:
+                    tracker_error = _complete_paired_tracker_error(tracker)
+                    if tracker_error is not None:
                         errors.append(
                             f"{location}.environment.network.task_topology_sha256: "
-                            "complete paired trial has no tracker snapshot"
-                        )
-                    elif (
-                        not tracker["seed_ready"]
-                        or not tracker["target_ready"]
-                        or tracker["announce_counts"]["started"] < 2
-                        or tracker["request_count"] < 2
-                        or ("bind_address" in tracker and tracker["bind_address"] is None)
-                    ):
-                        errors.append(
-                            f"{location}.environment.network.task_topology_sha256: "
-                            "complete paired trial lacks both announced peers and a ready seed"
+                            f"{tracker_error}"
                         )
                     if retarget is None:
                         errors.append(

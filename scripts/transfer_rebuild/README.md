@@ -93,7 +93,11 @@ does not start or signal the client. Its cumulative disk counters are Linux
 bytes are read from that interface in the root process's network namespace via
 `/proc/<pid>/net/dev`. The summary records the namespace inode and RX/TX deltas
 from the first to last valid sample; missing interfaces, namespace changes,
-counter resets, or fewer than two valid samples leave the totals `null`.
+counter resets, or fewer than two valid samples leave the totals `null`. If the
+interface or process disappears after at least two valid samples, the summary
+keeps the delta through the last valid sample and labels it partial; samples
+after the gap are not included. This preserves valid observations from failed
+trials without implying that they cover the full transfer interval.
 Network counters include every process using that namespace and interface, so
 the runner must isolate exactly one client there before treating them as that
 client's traffic. The summary JSON repeats this scope warning. Link the matching
