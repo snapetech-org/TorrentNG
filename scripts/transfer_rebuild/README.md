@@ -15,7 +15,8 @@ workspace runs passed
 passed 733 tests, all 21 transfer-rebuild Python regressions passed, and all
 11 runnable ignored cases passed. The runner-policy unit suite passed 4/4 with
 the protected hardware lane restricted to an explicit `main` dispatch.
-Workspace Clippy passed on both toolchains;
+The trusted bubblewrap validation-engine contract task passed 67/67 Python
+tests. Workspace Clippy passed on both toolchains;
 engine Clippy passed on 1.94.0, with warnings and no errors. Formatting passed.
 The Rust 1.98.1 standalone comparator runner built, passed all six tests, and
 passed its help smoke.

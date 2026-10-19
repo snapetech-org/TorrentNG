@@ -9,7 +9,8 @@ workspace passed on Rust 1.94.0 and 1.88.0
 the release `rt-engine` suite passed 733 tests, all 21 transfer-rebuild Python
 regressions passed, and all 11 runnable ignored cases passed. Formatting,
 Clippy, and the standalone Rust 1.98.1 comparator runner's six tests and CLI
-smoke passed. The release 100k catalog and `/tmp` tmpfs storage diagnostics
+smoke passed. The trusted bubblewrap validation-engine contract task passed
+67/67 Python tests. The release 100k catalog and `/tmp` tmpfs storage diagnostics
 also passed; they do not qualify physical storage or whole-client efficiency.
 The `urtorrent` preflight could not start because `io_uring_setup` returned
 `Cannot allocate memory`. The dated evidence and exact limits are in

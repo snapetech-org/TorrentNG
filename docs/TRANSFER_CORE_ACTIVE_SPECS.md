@@ -30,6 +30,9 @@ passed its help smoke. Its Rust 1.98.1 rustfmt component was unavailable, so
 the runner formatting check used Rust 1.94.0. The ignored panic-hook child is
 covered through its parent regression.
 
+The trusted bubblewrap validation-engine contract task passed 67/67 Python
+tests, including workflow security and protected API/load-runner boundaries.
+
 The main validation commands were:
 
 ```sh

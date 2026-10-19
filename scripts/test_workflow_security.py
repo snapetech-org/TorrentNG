@@ -24,6 +24,7 @@ CHECKOUT_WORKFLOWS = (
     "package-smoke-disabled.yml",
     "fork-safe-validation.yml",
 )
+TRANSFER_HARDWARE_WORKFLOW = "transfer-rebuild.yml"
 
 
 def run_scripts(source: str) -> list[str]:
@@ -82,6 +83,37 @@ def run_interop_preflight(
 
 
 class WorkflowSecurityTests(unittest.TestCase):
+    def assert_transfer_hardware_runner_is_opt_in_and_main_only(
+        self, source: str
+    ) -> None:
+        self_hosted_lines = [
+            line.strip()
+            for line in source.splitlines()
+            if re.match(r"\s*(?:runs-on|labels):.*self-hosted", line)
+        ]
+        self.assertEqual(
+            self_hosted_lines,
+            ["runs-on: [self-hosted, linux, x64, torrentng-transfer-perf]"],
+        )
+        self.assertRegex(
+            source,
+            r"(?m)^\s*if: github\.ref == 'refs/heads/main' && "
+            r"inputs\.run_dedicated_hardware == true\s*$",
+        )
+        self.assertRegex(
+            source,
+            r"(?m)^\s*run_dedicated_hardware:\n"
+            r"\s+description:.*\n\s+required: true\n"
+            r"\s+default: false\n\s+type: boolean\s*$",
+        )
+        self.assertRegex(
+            source,
+            r"(?m)^\s*environment: transfer-rebuild-hardware\s*$",
+        )
+        self.assertIn("needs: hosted-correctness", source)
+        self.assertIn("persist-credentials: false", source)
+        self.assertNotIn("TRUSTED_MAIN_RUNNERS_ENABLED", source)
+
     def test_workflows_use_github_hosted_runners(self) -> None:
         public_jit_runner = (
             "runs-on: ${{ github.event_name == 'pull_request' && "
@@ -101,6 +133,9 @@ class WorkflowSecurityTests(unittest.TestCase):
                 self.assertIn("contents: read", source)
                 self.assertNotIn("secrets:", source)
                 self.assertNotIn("pull_request_target", source)
+                continue
+            if workflow_path.name == TRANSFER_HARDWARE_WORKFLOW:
+                self.assert_transfer_hardware_runner_is_opt_in_and_main_only(source)
                 continue
             self.assertNotRegex(source, r"(?m)^\s*(?:runs-on|labels):.*self-hosted")
             self.assertNotIn("TRUSTED_MAIN_RUNNERS_ENABLED", source)
