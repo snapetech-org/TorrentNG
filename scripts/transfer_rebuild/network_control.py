@@ -307,8 +307,13 @@ def _observed_netem(root: dict[str, Any]) -> dict[str, Any]:
         loss_ppm = int(round(loss * 1_000_000))
     rate = options.get("rate")
     if isinstance(rate, dict):
+        # iproute2 exposes the kernel tc_ratespec rate in bytes per second.
+        # Convert back to the benchmark contract's bits-per-second unit.
         rate = rate.get("rate64", rate.get("rate", rate.get("value")))
-    rate_bps = _as_nonnegative_int(rate)
+        observed_rate = _as_nonnegative_int(rate)
+        rate_bps = observed_rate * 8 if observed_rate is not None else None
+    else:
+        rate_bps = _as_nonnegative_int(rate)
     limit = _as_nonnegative_int(options.get("limit"))
     seed = _as_nonnegative_int(options.get("seed"))
     if (

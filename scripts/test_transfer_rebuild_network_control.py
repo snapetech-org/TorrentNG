@@ -14,6 +14,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parent / "transfer_rebuild"))
 from network_control import (  # noqa: E402
     NetworkControlError,
+    PROFILES,
     _assert_expected_qdisc,
     _expected_netem,
     _observed_netem,
@@ -52,7 +53,11 @@ def netem_root(
                 "delay": expected["delay_ns"] / 1_000_000_000,
                 "jitter": expected["jitter_ns"] / 1_000_000_000,
             },
-            "rate": {"rate": expected["rate_bps"], "packetoverhead": 0, "cellsize": 0},
+            "rate": {
+                "rate": expected["rate_bps"] // 8,
+                "packetoverhead": 0,
+                "cellsize": 0,
+            },
             "loss-random": {
                 "loss": expected["loss_ppm"] / 1_000_000,
                 "correlation": 0.0,
@@ -64,6 +69,23 @@ def netem_root(
 
 
 class TransferNetworkControlTests(unittest.TestCase):
+    def test_tc_netem_rate_readback_converts_bytes_per_second_to_bits(self) -> None:
+        root = netem_root()
+        self.assertEqual(
+            _observed_netem(root)["rate_bps"],
+            PROFILES["lan-1g-1ms-v1"]["rate_bps"],
+        )
+
+        root["options"]["rate"] = {
+            "rate64": PROFILES["lan-1g-1ms-v1"]["rate_bps"] // 8,
+            "packetoverhead": 0,
+            "cellsize": 0,
+        }
+        self.assertEqual(
+            _observed_netem(root)["rate_bps"],
+            PROFILES["lan-1g-1ms-v1"]["rate_bps"],
+        )
+
     def test_network_names_are_limited_to_task_owned_namespace_and_veth(self) -> None:
         self.assertEqual(INTERFACE_NAME, "tngveth0")
         for namespace in ("tngt-case-1", "tngs-case-1"):
