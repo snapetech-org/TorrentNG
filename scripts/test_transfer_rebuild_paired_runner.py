@@ -34,6 +34,7 @@ from paired_runner import (  # noqa: E402
     _seed_payload,
     _start_urtorrent,
     _stage_input,
+    _transfer_duration_ns,
     _urtorrent_profile_for_trial,
     _validate_payload,
     _wait_for_observer_sample,
@@ -75,6 +76,37 @@ def _state(*, received: int, complete: bool = False) -> TorrentState:
 
 
 class PairedRunnerTests(unittest.TestCase):
+    def test_transfer_clock_includes_progress_before_first_counter_poll(self) -> None:
+        self.assertEqual(
+            _transfer_duration_ns(
+                barrier_released_ns=1_000,
+                first_useful_ns=1_250,
+                last_useful_ns=2_000,
+                completion_observed_ns=2_050,
+            ),
+            1_000,
+        )
+
+    def test_single_progress_sample_uses_barrier_to_completion(self) -> None:
+        self.assertEqual(
+            _transfer_duration_ns(
+                barrier_released_ns=1_000,
+                first_useful_ns=1_500,
+                last_useful_ns=1_500,
+                completion_observed_ns=1_800,
+            ),
+            800,
+        )
+
+    def test_transfer_clock_rejects_progress_before_barrier_release(self) -> None:
+        with self.assertRaisesRegex(ValueError, "out of order"):
+            _transfer_duration_ns(
+                barrier_released_ns=1_000,
+                first_useful_ns=900,
+                last_useful_ns=1_100,
+                completion_observed_ns=1_200,
+            )
+
     def test_scheduled_trial_key_accepts_catalog_profile_and_repetition_ids(self) -> None:
         trial_id = "c5a1e354ae46fc313dc8:N1/lan_1g:rep-001:torrentngd:attempt-001"
 

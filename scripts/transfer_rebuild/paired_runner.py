@@ -1265,6 +1265,38 @@ def _wait_for_transfer(
     return first_ns, last_ns, candidate_bytes
 
 
+def _transfer_duration_ns(
+    *,
+    barrier_released_ns: int,
+    first_useful_ns: int | None,
+    last_useful_ns: int | None,
+    completion_observed_ns: int,
+) -> int | None:
+    """Measure from the common release through the last useful-byte sample.
+
+    Starting at the first polled byte counter can omit a large initial part of
+    a fast transfer. When all progress lands in one poll, use the completion
+    observation as the conservative end bound.
+    """
+    if first_useful_ns is None and last_useful_ns is None:
+        return None
+    if first_useful_ns is None or last_useful_ns is None:
+        raise ValueError("useful-byte progress bounds must be recorded together")
+    if barrier_released_ns < 0 or completion_observed_ns < barrier_released_ns:
+        raise ValueError("transfer timing bounds are invalid")
+    if first_useful_ns < barrier_released_ns or last_useful_ns < first_useful_ns:
+        raise ValueError("useful-byte progress bounds are out of order")
+    if last_useful_ns > completion_observed_ns:
+        raise ValueError("useful-byte progress was observed after completion")
+
+    end_ns = (
+        last_useful_ns
+        if last_useful_ns > first_useful_ns
+        else completion_observed_ns
+    )
+    return max(1, end_ns - barrier_released_ns)
+
+
 def _create_marker(path: Path, payload: bytes) -> None:
     descriptor = os.open(
         path,
@@ -1758,8 +1790,8 @@ def _run_trial(
         direct_stop = barriers_dir / "stop-runner"
         if not barrier_results:
             raise PairedRunnerError("no API-controlled participant observed the released barrier")
-        # BarrierResult timestamps the release marker observation. Starting at
-        # this shared event avoids dropping API-resume latency from tiny trials.
+        # BarrierResult timestamps the shared release event. Starting here
+        # includes progress that arrives before the first status poll sees it.
         transfer_started_ns = min(result.released_observed_ns for result in barrier_results)
         receiver_baseline = (
             helper_baseline
@@ -1779,14 +1811,14 @@ def _run_trial(
             counter_baseline=receiver_baseline,
         )
         transfer_finished_ns = time.perf_counter_ns()
-        if first_payload_ns is not None and last_payload_ns is not None:
-            if last_payload_ns > first_payload_ns:
-                durations["transfer"] = last_payload_ns - first_payload_ns
-            else:
-                # A small fixture can finish between adjacent samples. The
-                # barrier-to-completion interval is the conservative measured
-                # bound; reporting one nanosecond would manufacture throughput.
-                durations["transfer"] = max(1, transfer_finished_ns - transfer_started_ns)
+        measured_transfer_ns = _transfer_duration_ns(
+            barrier_released_ns=transfer_started_ns,
+            first_useful_ns=first_payload_ns,
+            last_useful_ns=last_payload_ns,
+            completion_observed_ns=transfer_finished_ns,
+        )
+        if measured_transfer_ns is not None:
+            durations["transfer"] = measured_transfer_ns
         elif transfer_finished_ns > transfer_started_ns:
             raise PairedRunnerError("receiver completed but no useful-byte progress interval was observed")
         if mode == "download":

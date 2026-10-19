@@ -418,10 +418,13 @@ qualification remain open.
 - **Target owner:** PERF-104 harness consumes pinned PERF-103 adapters and
   PERF-105 fixtures without controlling the client's resource observer.
 - **Invariant preserved:** goodput uses unique verifier-accepted payload bytes
-  divided by transfer time; padding, duplicate overlaps, flush, validation, and
-  shutdown are accounted separately.
+  divided by time from the common barrier release through the last observed
+  useful-byte progress; padding, duplicate overlaps, flush, validation, and
+  shutdown are accounted separately. A single-poll completion uses the
+  barrier-to-completion interval.
 - **Must not:** infer a start time from process launch or count bytes merely
-  offered by peers.
+  offered by peers, or start at the first polling sample that sees byte-count
+  progress.
 
 ### Acceptance
 

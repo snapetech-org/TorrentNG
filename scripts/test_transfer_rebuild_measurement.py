@@ -123,7 +123,7 @@ class TrialTimelineTests(unittest.TestCase):
             timeline.durations_ns(),
             {
                 "barrier_wait": 10,
-                "transfer": 50,
+                "transfer": 60,
                 "flush": 20,
                 "validation": 30,
                 "shutdown": 40,
@@ -179,7 +179,7 @@ class TrialTimelineTests(unittest.TestCase):
             overlap.durations_ns()
 
         zero_transfer = timeline_with(
-            dict(zip(ordered_names, (0, 1, 2, 2, 3, 4, 5, 6, 7, 8)))
+            dict(zip(ordered_names, (0, 1, 1, 1, 2, 3, 4, 5, 6, 7)))
         )
         with self.assertRaises(ValueError):
             zero_transfer.durations_ns()

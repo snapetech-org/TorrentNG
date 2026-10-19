@@ -160,16 +160,17 @@ class UsefulRangeLedger:
 
 
 class TrialTimeline:
-    """Capture separate monotonic intervals required by transfer-trial-v1."""
+    """Capture the barrier-to-payload interval and later trial phases."""
 
     _PHASES = {
         "barrier_wait": ("barrier_wait_started", "barrier_released"),
-        "transfer": ("first_useful_byte", "last_useful_byte"),
+        "transfer": ("barrier_released", "last_useful_byte"),
         "flush": ("flush_started", "flush_completed"),
         "validation": ("validation_started", "validation_completed"),
         "shutdown": ("shutdown_started", "shutdown_completed"),
     }
     _MARKERS = {marker for pair in _PHASES.values() for marker in pair}
+    _MARKERS.add("first_useful_byte")
     _ORDERED_MARKERS = (
         "barrier_wait_started",
         "barrier_released",
