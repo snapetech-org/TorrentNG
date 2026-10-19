@@ -712,10 +712,12 @@ real-client execution or host qualification.
 The external scratch directory must already exist, be outside the source tree,
 and be reserved for this task. The host needs Linux network namespaces,
 `iproute2`, and the privileges required to create the task bridge and shape its
-interfaces. Every selected candidate and the fixed API-controlled helper must
-have pinned runtime launch settings, and every selected profile must have
-passed compatibility preflight. `urtorrent` may be the candidate but is not
-used as the helper.
+interfaces. Every selected client must have pinned runtime settings, and every
+selected profile must have passed compatibility preflight. The direct
+`urtorrent` runner can occupy either endpoint; `--helper-client auto` pairs
+each candidate with the other of exactly two pinned clients. The runner rejects
+self-pairs. An explicit helper ID remains available for a scoped run, provided
+it is pinned and differs from that scheduled candidate.
 
 ```sh
 python3 scripts/transfer_rebuild/paired_runner.py \
@@ -725,7 +727,7 @@ python3 scripts/transfer_rebuild/paired_runner.py \
   --environment /path/to/task-scratch/benchmark-environment.json \
   --profiles /path/to/task-scratch/fixture-profiles.json \
   --scratch-root /path/to/task-scratch/transfer-run \
-  --helper-client qbittorrent \
+  --helper-client auto \
   --cache-state cold \
   --manifest /path/to/task-scratch/transfer-run/manifest.json
 ```
@@ -742,7 +744,9 @@ in `scripts/test_transfer_rebuild_paired_plan.py`,
 `scripts/test_transfer_rebuild_compatibility.py`, and
 `scripts/test_transfer_rebuild_paired_runner.py`; those local regressions
 passed in the exact-source suite. Pinned-client execution and paired-run host
-qualification remain open.
+qualification remain open. The scorecard strips a candidate's client ID prefix
+from the catalog case ID for grouping, then verifies that both records in a
+pair share the same normalized workload, fixture, and environment.
 
 ## PERF-111 picker and changed-snapshot probes
 

@@ -29,6 +29,7 @@ from paired_runner import (  # noqa: E402
     _load_json,
     _network_seed,
     _profile_listener_ports,
+    _resolve_helper_id,
     _scheduled_trial_key,
     _sha256_file,
     _seed_payload,
@@ -61,14 +62,20 @@ class _LiveProcess:
         return None
 
 
-def _state(*, received: int, complete: bool = False) -> TorrentState:
+class _CompleteDirectProcess:
+    def wait(self, timeout_seconds: float) -> int:
+        del timeout_seconds
+        return 0
+
+
+def _state(*, received: int, uploaded: int = 0, complete: bool = False) -> TorrentState:
     return TorrentState(
         info_hash="a" * 40,
         state="complete" if complete else "downloading",
         progress=1.0 if complete else received / 200,
         total_bytes=200,
         received_bytes=received,
-        uploaded_bytes=0,
+        uploaded_bytes=uploaded,
         download_rate_bps=0,
         upload_rate_bps=0,
         peers=1,
@@ -76,6 +83,24 @@ def _state(*, received: int, complete: bool = False) -> TorrentState:
 
 
 class PairedRunnerTests(unittest.TestCase):
+    def test_auto_helper_selects_the_other_pinned_client_for_each_candidate(self) -> None:
+        pins = ["torrentngd", "urtorrent"]
+
+        self.assertEqual(_resolve_helper_id("torrentngd", "auto", pins), "urtorrent")
+        self.assertEqual(_resolve_helper_id("urtorrent", "auto", pins), "torrentngd")
+
+    def test_auto_helper_requires_exactly_two_distinct_pins(self) -> None:
+        with self.assertRaisesRegex(PairedRunnerError, "exactly two"):
+            _resolve_helper_id("torrentngd", "auto", ["torrentngd"])
+        with self.assertRaisesRegex(PairedRunnerError, "exactly two"):
+            _resolve_helper_id("torrentngd", "auto", ["torrentngd", "torrentngd"])
+
+    def test_explicit_helper_must_be_pinned_and_distinct(self) -> None:
+        with self.assertRaisesRegex(PairedRunnerError, "different"):
+            _resolve_helper_id("torrentngd", "torrentngd", ["torrentngd", "urtorrent"])
+        with self.assertRaisesRegex(PairedRunnerError, "not present"):
+            _resolve_helper_id("torrentngd", "qbittorrent", ["torrentngd", "urtorrent"])
+
     def test_transfer_clock_includes_progress_before_first_counter_poll(self) -> None:
         self.assertEqual(
             _transfer_duration_ns(
@@ -226,6 +251,7 @@ class PairedRunnerTests(unittest.TestCase):
                 },
                 "target_namespace": "tngt-test-run",
             }
+            barriers = root / "barriers"
             with patch("paired_runner.ManagedProcess.start") as start:
                 _start_urtorrent(
                     endpoint,
@@ -233,12 +259,15 @@ class PairedRunnerTests(unittest.TestCase):
                     root / "fixture.torrent",
                     "198.18.2.2:44444",
                     "download",
-                    root / "barriers",
+                    barriers,
                     120,
+                    barrier_participant="helper",
                 )
 
         args = start.call_args.args[0]
         self.assertIn("--tracker-url", args)
+        self.assertEqual(args[args.index("--mode") + 1], "download")
+        self.assertEqual(args[args.index("--ready-file") + 1], str(barriers / "helper.ready"))
         self.assertEqual(args[args.index("--tracker-url") + 1], tracker_url)
         self.assertEqual(args[args.index("--max-connections") + 1], "40")
         self.assertEqual(args[args.index("--max-peers") + 1], "12")
@@ -295,8 +324,6 @@ class PairedRunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(PairedRunnerError, "counter regressed"):
             _wait_for_transfer(
                 target_controller=controller,  # type: ignore[arg-type]
-                helper_controller=controller,  # type: ignore[arg-type]
-                target_role="target",
                 target_endpoint=candidate,
                 candidate_endpoint=candidate,
                 helper_endpoint=helper,
@@ -496,8 +523,6 @@ class PairedRunnerTests(unittest.TestCase):
 
         first_ns, last_ns, candidate_bytes = _wait_for_transfer(
             target_controller=controller,  # type: ignore[arg-type]
-            helper_controller=controller,  # type: ignore[arg-type]
-            target_role="target",
             target_endpoint=endpoint,
             candidate_endpoint=endpoint,
             helper_endpoint=helper,
@@ -506,6 +531,39 @@ class PairedRunnerTests(unittest.TestCase):
             timeout_seconds=1,
             counter_baseline=baseline,
         )
+
+        self.assertIsNotNone(first_ns)
+        self.assertEqual(first_ns, last_ns)
+        self.assertEqual(candidate_bytes, 200)
+
+    def test_direct_receiver_uses_api_seed_uploads_for_progress(self) -> None:
+        info_hash = "a" * 40
+        paths = RuntimePaths(
+            root=Path("/tmp/direct-endpoint"),
+            data=Path("/tmp/direct-endpoint/data"),
+            state=Path("/tmp/direct-endpoint/state"),
+            log=Path("/tmp/direct-endpoint/client.log"),
+            pid=Path("/tmp/direct-endpoint/state/client.pid"),
+            env=Path("/tmp/direct-endpoint/state/client.env"),
+        )
+        seed_controller = _StatusSequence([_state(received=0, uploaded=50), _state(received=0, uploaded=200)])
+        candidate = Endpoint(
+            "seed", "torrentngd", {}, paths, controller=seed_controller  # type: ignore[arg-type]
+        )
+        target = Endpoint("target", "urtorrent", {}, paths)
+        target.direct_process = _CompleteDirectProcess()  # type: ignore[assignment]
+
+        with patch("paired_runner._runner_result", return_value={"complete": True}):
+            first_ns, last_ns, candidate_bytes = _wait_for_transfer(
+                target_controller=None,
+                target_endpoint=target,
+                candidate_endpoint=candidate,
+                helper_endpoint=target,
+                info_hash=info_hash,
+                mode="seed",
+                timeout_seconds=1,
+                counter_baseline=_state(received=0, uploaded=10),
+            )
 
         self.assertIsNotNone(first_ns)
         self.assertEqual(first_ns, last_ns)
@@ -536,8 +594,6 @@ class PairedRunnerTests(unittest.TestCase):
 
         first_ns, last_ns, candidate_bytes = _wait_for_transfer(
             target_controller=controller,  # type: ignore[arg-type]
-            helper_controller=controller,  # type: ignore[arg-type]
-            target_role="target",
             target_endpoint=endpoint,
             candidate_endpoint=endpoint,
             helper_endpoint=helper,

@@ -23,6 +23,7 @@ def trial(
     *,
     pair_id: str = "pair-01",
     version: str = "1.0",
+    case_id: str = "N1/lan_1g",
     transfer_ns: int = 1_000_000_000,
     useful_bytes: int = GIB,
     rss_peak_bytes: int = 100,
@@ -35,7 +36,7 @@ def trial(
         "pair_id": pair_id,
         "client_identity": {"client_id": client_id, "version": version},
         "workload": {
-            "case_id": "N1/lan_1g",
+            "case_id": case_id,
             "kind": "download",
             "protocol": "v1",
             "fixture_sha256": FIXTURE,
@@ -56,6 +57,26 @@ def trial(
 
 
 class PairedScorecardTests(unittest.TestCase):
+    def test_client_qualified_case_ids_pair_as_the_same_fixture_profile(self) -> None:
+        records = [
+            trial("torrentngd", case_id="torrentngd:N1/lan_1g", transfer_ns=1_000_000_000),
+            trial("urtorrent", case_id="urtorrent:N1/lan_1g", transfer_ns=2_000_000_000),
+        ]
+
+        groups = analyze_trials(records, bootstrap_samples=1_000)
+
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["case_id"], "N1/lan_1g")
+        self.assertEqual(groups[0]["valid_pair_count"], 1)
+        comparison = groups[0]["comparisons"][0]
+        self.assertEqual(
+            comparison["metrics"]["goodput_bytes_per_second"]["paired_sample_count"], 1
+        )
+        self.assertAlmostEqual(
+            comparison["metrics"]["goodput_bytes_per_second"]["ratio_b_over_a_median"],
+            0.5,
+        )
+
     def test_comparison_uses_paired_ratios_and_ignores_artifact_ids(self) -> None:
         records = [
             trial("torrentngd", transfer_ns=1_000_000_000, rss_peak_bytes=100),

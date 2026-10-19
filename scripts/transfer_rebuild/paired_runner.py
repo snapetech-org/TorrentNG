@@ -574,6 +574,27 @@ def _check_eligible(
             raise PairedRunnerError(f"compatibility preflight did not pass {case_id}")
 
 
+def _resolve_helper_id(
+    candidate_id: str, helper_request: str, pinned_client_ids: list[str]
+) -> str:
+    """Resolve an explicit helper or pair a candidate with the other pinned client."""
+    if candidate_id not in pinned_client_ids:
+        raise PairedRunnerError("scheduled candidate is not present in the pin set")
+    if helper_request == "auto":
+        if len(pinned_client_ids) != 2 or len(set(pinned_client_ids)) != 2:
+            raise PairedRunnerError(
+                "automatic helper selection requires exactly two distinct pinned clients"
+            )
+        helper_id = next(client_id for client_id in pinned_client_ids if client_id != candidate_id)
+    else:
+        helper_id = helper_request
+        if helper_id not in pinned_client_ids:
+            raise PairedRunnerError("helper client is not present in the pin set")
+    if helper_id == candidate_id:
+        raise PairedRunnerError("candidate and helper must be different pinned clients")
+    return helper_id
+
+
 def _profile_port(profile: dict[str, Any], client_id: str) -> int:
     launch = profile.get("paired_launch")
     if client_id == "urtorrent" or not isinstance(launch, dict):
@@ -931,7 +952,11 @@ def _start_urtorrent(
     mode: str,
     barrier_dir: Path,
     timeout_seconds: int,
+    *,
+    barrier_participant: str = "candidate",
 ) -> None:
+    if barrier_participant not in {"candidate", "helper"}:
+        raise PairedRunnerError("urtorrent barrier participant must be candidate or helper")
     profile = endpoint.profile
     binary_path = Path(str(profile.get("binary_path", ""))).expanduser()
     digest = profile.get("expected_binary_sha256")
@@ -956,7 +981,7 @@ def _start_urtorrent(
         "--pid-file", str(endpoint.paths.state / "urtorrent.pid"),
         "--settings-file", str(endpoint.paths.state / "settings.json"),
         "--start-gate", str(barrier_dir / "released"),
-        "--ready-file", str(barrier_dir / "candidate.ready"),
+        "--ready-file", str(barrier_dir / f"{barrier_participant}.ready"),
         "--stop-file", str(barrier_dir / "stop-runner"),
         "--listen-v4", str(task["address"]),
         "--peer", peer_address,
@@ -1170,8 +1195,6 @@ def _runner_result(endpoint: Endpoint) -> dict[str, Any] | None:
 def _wait_for_transfer(
     *,
     target_controller: ClientController | None,
-    helper_controller: ClientController,
-    target_role: str,
     target_endpoint: Endpoint,
     candidate_endpoint: Endpoint,
     helper_endpoint: Endpoint,
@@ -1184,8 +1207,11 @@ def _wait_for_transfer(
     target_api = target_controller
     counter_controller = target_controller
     counter_field = "received_bytes"
-    if target_role == "target" and target_endpoint.client_id == "urtorrent":
-        counter_controller = helper_controller
+    seed_endpoint = candidate_endpoint if candidate_endpoint.role == "seed" else helper_endpoint
+    if target_endpoint.client_id == "urtorrent":
+        # A direct receiver has no API counters. Its API-controlled seed is
+        # the independent source of useful-byte progress in either direction.
+        counter_controller = seed_endpoint.controller
         counter_field = "uploaded_bytes"
     prior = getattr(counter_baseline, counter_field) if counter_baseline is not None else 0
     first_ns: int | None = None
@@ -1214,16 +1240,14 @@ def _wait_for_transfer(
                     raise PairedRunnerError("receiver reported a transfer error")
                 if state.complete:
                     break
-            if candidate_endpoint.client_id == "urtorrent" and mode == "seed":
-                process = candidate_endpoint.direct_process
-                if process is None:
-                    raise PairedRunnerError("direct seeder process is missing")
+            if seed_endpoint.direct_process is not None:
+                process = seed_endpoint.direct_process
                 try:
                     process.wait(timeout_seconds=0.01)
                 except subprocess.TimeoutExpired:
                     pass
                 else:
-                    raise PairedRunnerError("direct seeder exited before the helper verified the payload")
+                    raise PairedRunnerError("direct seeder exited before the receiver verified the payload")
         else:
             process = target_endpoint.direct_process
             if process is None:
@@ -1633,48 +1657,58 @@ def _run_trial(
             status = "incomplete"
 
         info_hash = _candidate_info_hash(retarget_record, candidate_id)
-        if candidate_endpoint.controller is not None:
-            candidate_endpoint.controller.add_paused(
-                retargeted_path,
-                str(candidate_endpoint.paths.data) if candidate_endpoint.profile.get("runtime") != "container" else "/data",
-                info_hash,
+        for participant, endpoint in (
+            ("candidate", candidate_endpoint),
+            ("helper", helper_endpoint),
+        ):
+            if endpoint.controller is not None:
+                endpoint.controller.add_paused(
+                    retargeted_path,
+                    str(endpoint.paths.data)
+                    if endpoint.profile.get("runtime") != "container"
+                    else "/data",
+                    info_hash,
+                )
+                continue
+            if endpoint.client_id != "urtorrent":
+                raise PairedRunnerError(f"{participant} endpoint has no pinned transfer controller")
+            direct_mode = (
+                mode
+                if endpoint is candidate_endpoint
+                else ("seed" if endpoint.role == "seed" else "download")
             )
-        else:
             _start_urtorrent(
-                candidate_endpoint,
+                endpoint,
                 topology_record,
                 retargeted_path,
-                candidate_endpoint.paths.peer_address,
-                mode,
+                endpoint.paths.peer_address,
+                direct_mode,
                 barriers_dir,
                 timeout_seconds,
+                barrier_participant=participant,
             )
 
-        if helper_endpoint.controller is not None:
-            helper_endpoint.controller.add_paused(
-                retargeted_path,
-                str(helper_endpoint.paths.data) if helper_endpoint.profile.get("runtime") != "container" else "/data",
-                info_hash,
-            )
-        else:
-            raise PairedRunnerError("the trial helper must use an API-controlled client")
-
-        # The direct runner adds its own torrent and reports readiness before the
-        # shared gate; API-controlled endpoints must be pinned and paused here.
-        if candidate_endpoint.client_id == "urtorrent":
+        # The direct runner adds its own torrent and reports readiness before
+        # the shared gate; API-controlled endpoints remain pinned and paused.
+        for participant, endpoint in (
+            ("candidate", candidate_endpoint),
+            ("helper", helper_endpoint),
+        ):
+            if endpoint.direct_process is None:
+                continue
+            ready_path = barriers_dir / f"{participant}.ready"
             direct_deadline = time.monotonic() + 30
-            while not (barriers_dir / "candidate.ready").is_file():
-                if candidate_endpoint.direct_process is not None:
-                    try:
-                        candidate_endpoint.direct_process.wait(timeout_seconds=0.02)
-                    except subprocess.TimeoutExpired:
-                        pass
-                    else:
-                        raise PairedRunnerError("urtorrent exited before reaching the start barrier")
+            while not ready_path.is_file():
+                try:
+                    endpoint.direct_process.wait(timeout_seconds=0.02)
+                except subprocess.TimeoutExpired:
+                    pass
+                else:
+                    raise PairedRunnerError("urtorrent exited before reaching the start barrier")
                 if time.monotonic() >= direct_deadline:
                     raise PairedRunnerError("urtorrent did not reach the start barrier")
                 time.sleep(0.05)
-            candidate_endpoint.observation = _probe_endpoint(candidate_endpoint)
+            endpoint.observation = _probe_endpoint(endpoint)
 
         if candidate_endpoint.observation is not None:
             candidate_observation = candidate_endpoint.observation
@@ -1707,7 +1741,7 @@ def _run_trial(
             candidate_baseline = candidate_endpoint.controller.status(info_hash)
         if helper_endpoint.controller is not None:
             helper_baseline = helper_endpoint.controller.status(info_hash)
-        if helper_baseline is None:
+        if helper_endpoint.controller is not None and helper_baseline is None:
             raise PairedRunnerError("helper did not report a baseline state for the exact torrent")
         if candidate_endpoint.controller is not None and candidate_baseline is None:
             raise PairedRunnerError("candidate did not report a baseline state for the exact torrent")
@@ -1734,10 +1768,14 @@ def _run_trial(
             raise PairedRunnerError("independent observer did not provide a CSV path")
         _wait_for_observer_sample(observer_process, observer_csv)
 
-        if candidate_endpoint.client_id == "urtorrent":
-            candidate_ready = barriers_dir / "candidate.ready"
-        else:
-            candidate_ready = None
+        direct_ready = {
+            participant: barriers_dir / f"{participant}.ready"
+            for participant, endpoint in (
+                ("candidate", candidate_endpoint),
+                ("helper", helper_endpoint),
+            )
+            if endpoint.direct_process is not None
+        }
         barrier = FileStartBarrier(barriers_dir, ["candidate", "helper"])
         barrier_errors: list[BaseException] = []
         barrier_results: list[Any] = []
@@ -1754,7 +1792,7 @@ def _run_trial(
         barrier_started_ns = time.perf_counter_ns()
         threads = []
         for name, endpoint in (("candidate", candidate_endpoint), ("helper", helper_endpoint)):
-            if name == "candidate" and candidate_ready is not None:
+            if name in direct_ready:
                 continue
             thread = threading.Thread(
                 target=release_endpoint,
@@ -1781,11 +1819,8 @@ def _run_trial(
         # Poll the receiver's exact-hash counters so the transfer window is
         # bounded by observed useful progress instead of the whole process life.
         target_controller = target_endpoint.controller
-        if target_controller is None and candidate_endpoint.client_id != "urtorrent":
-            raise PairedRunnerError("API-controlled receiver has no transfer controller")
-        helper_controller = helper_endpoint.controller
-        if helper_controller is None:
-            raise PairedRunnerError("helper transfer controller is missing")
+        if target_controller is None and target_endpoint.direct_process is None:
+            raise PairedRunnerError("receiver has neither an API controller nor a direct process")
         timeout = timeout_seconds
         direct_stop = barriers_dir / "stop-runner"
         if not barrier_results:
@@ -1793,15 +1828,16 @@ def _run_trial(
         # BarrierResult timestamps the shared release event. Starting here
         # includes progress that arrives before the first status poll sees it.
         transfer_started_ns = min(result.released_observed_ns for result in barrier_results)
-        receiver_baseline = (
-            helper_baseline
-            if target_endpoint.controller is None or target_endpoint is helper_endpoint
-            else candidate_baseline
-        )
+        baselines = {
+            candidate_endpoint.role: candidate_baseline,
+            helper_endpoint.role: helper_baseline,
+        }
+        receiver_role = target_endpoint.role if target_endpoint.controller is not None else seed_endpoint.role
+        receiver_baseline = baselines[receiver_role]
+        if receiver_baseline is None:
+            raise PairedRunnerError("no API-controlled endpoint reported the transfer counter baseline")
         first_payload_ns, last_payload_ns, candidate_bytes = _wait_for_transfer(
             target_controller=target_controller,
-            helper_controller=helper_controller,
-            target_role=target_role,
             target_endpoint=target_endpoint,
             candidate_endpoint=candidate_endpoint,
             helper_endpoint=helper_endpoint,
@@ -1857,18 +1893,30 @@ def _run_trial(
                 artifacts.add("transfer-resource-samples-v1", observer_csv)
             observer_process = None
 
-        if candidate_endpoint.client_id == "urtorrent" and mode == "seed":
+        direct_seed_endpoint = next(
+            (
+                endpoint
+                for endpoint in (candidate_endpoint, helper_endpoint)
+                if endpoint.direct_process is not None
+                and endpoint.direct_profile is not None
+                and endpoint.direct_profile["expected_settings"]["settings"]["runner_inputs"].get("mode")
+                == "seed"
+            ),
+            None,
+        )
+        if direct_seed_endpoint is not None:
             if not direct_stop.exists():
                 _create_marker(direct_stop, b"stop\n")
-            if candidate_endpoint.direct_process is not None:
-                exit_code = candidate_endpoint.direct_process.wait(timeout_seconds=min(timeout_seconds, 300))
+            if direct_seed_endpoint.direct_process is not None:
+                exit_code = direct_seed_endpoint.direct_process.wait(timeout_seconds=min(timeout_seconds, 300))
                 if exit_code != 0:
                     raise PairedRunnerError(f"urtorrent seeder exited with status {exit_code}")
-                candidate_endpoint.direct_result = _runner_result(candidate_endpoint)
-                if candidate_endpoint.direct_result is None:
+                direct_seed_endpoint.direct_result = _runner_result(direct_seed_endpoint)
+                if direct_seed_endpoint.direct_result is None:
                     raise PairedRunnerError("urtorrent seeder omitted its final result counters")
-                raw_count = candidate_endpoint.direct_result.get("uploaded")
-                measured_uploaded = raw_count if isinstance(raw_count, int) and raw_count >= 0 else None
+                if direct_seed_endpoint is candidate_endpoint and mode == "seed":
+                    raw_count = direct_seed_endpoint.direct_result.get("uploaded")
+                    measured_uploaded = raw_count if isinstance(raw_count, int) and raw_count >= 0 else None
 
         receiver_data = target_endpoint.paths.data
         durations["flush"] = 0
@@ -2156,8 +2204,10 @@ def run_plan(
     )
     if staged_profiles_path is None:
         raise PairedRunnerError("fixture profiles were not staged with the source-bound inputs")
-    if helper_id == "urtorrent" or helper_id not in profiles:
-        raise PairedRunnerError("helper client must be a pinned API-controlled client")
+    if helper_id != "auto" and helper_id not in profiles:
+        raise PairedRunnerError("helper client must be pinned or set to auto")
+    if helper_id == "auto" and len(plan["pinned_client_ids"]) != 2:
+        raise PairedRunnerError("automatic helper selection requires exactly two pinned clients")
     if timeout_seconds <= 0 or timeout_seconds > 24 * 60 * 60:
         raise PairedRunnerError("trial timeout must be within 1..86400 seconds")
     if observer_interval_ms < 10 or observer_interval_ms > 60_000:
@@ -2194,9 +2244,12 @@ def run_plan(
     ] = {}
     for planned in selected:
         candidate_id = planned["client_id"]
-        if candidate_id == helper_id and len(plan["pinned_client_ids"]) < 2:
-            raise PairedRunnerError("candidate/helper comparison needs two independently pinned clients")
-        _check_eligible(plan, preflight, {candidate_id, helper_id}, planned["profile_id"])
+        scheduled_helper_id = _resolve_helper_id(
+            candidate_id, helper_id, plan["pinned_client_ids"]
+        )
+        _check_eligible(
+            plan, preflight, {candidate_id, scheduled_helper_id}, planned["profile_id"]
+        )
         fixture_key = planned["pair_id"]
         if fixture_key not in fixture_cache:
             fixture_dir, fixture_manifest = _fixture_for_plan(
@@ -2217,7 +2270,7 @@ def run_plan(
                 planned=planned,
                 mode=mode,
                 candidate_id=candidate_id,
-                helper_id=helper_id,
+                helper_id=scheduled_helper_id,
                 profiles=profiles,
                 fixture_dir=fixture_dir,
                 fixture_manifest=fixture_manifest,
@@ -2249,7 +2302,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--environment", type=Path, required=True)
     parser.add_argument("--profiles", type=Path, default=DEFAULT_PROFILE_PATH)
     parser.add_argument("--scratch-root", type=Path, required=True)
-    parser.add_argument("--helper-client", required=True)
+    parser.add_argument(
+        "--helper-client",
+        required=True,
+        help="pinned API/direct client ID, or auto to pair each candidate with the other of exactly two pins",
+    )
     parser.add_argument("--network-profile", choices=sorted(NETWORK_PROFILES))
     parser.add_argument("--cache-state", choices=("warm", "cold"), default="cold")
     parser.add_argument("--timeout-seconds", type=int, default=DEFAULT_TIMEOUT_SECONDS)

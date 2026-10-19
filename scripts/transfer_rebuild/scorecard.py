@@ -80,8 +80,20 @@ def _normalized_environment(
     return environment
 
 
-def _comparison_signature(trial: dict[str, Any]) -> tuple[str, str, str, str]:
+def _normalized_workload(trial: dict[str, Any]) -> dict[str, Any]:
     workload = dict(trial["workload"])
+    identity = trial.get("client_identity")
+    client_id = identity.get("client_id") if isinstance(identity, dict) else None
+    case_id = workload.get("case_id")
+    if isinstance(client_id, str) and isinstance(case_id, str):
+        prefix = f"{client_id}:"
+        if case_id.startswith(prefix):
+            workload["case_id"] = case_id[len(prefix) :]
+    return workload
+
+
+def _comparison_signature(trial: dict[str, Any]) -> tuple[str, str, str, str]:
+    workload = _normalized_workload(trial)
     workload.pop("fixture_sha256", None)
     signature = {
         "workload": workload,
@@ -98,7 +110,7 @@ def _comparison_signature(trial: dict[str, Any]) -> tuple[str, str, str, str]:
 
 def _pair_signature(trial: dict[str, Any]) -> str:
     signature = {
-        "workload": trial["workload"],
+        "workload": _normalized_workload(trial),
         "environment": _normalized_environment(trial, include_control_seeds=True),
     }
     return hashlib.sha256(_canonical(signature)).hexdigest()

@@ -4196,6 +4196,14 @@ the production default policy.
 - **Invariant preserved:** every included schedule slot is pinned and
   catalogued; the seed, schedule algorithm, adapter pins, and fixture-profile
   digest are retained with the plan; no pair compares different profiles.
+- The pinned direct `urtorrent` runner may be either the scheduled candidate
+  or its transfer peer. `--helper-client auto` is valid only with exactly two
+  distinct pinned clients and resolves the other client for each candidate;
+  explicit helper IDs must also be pinned and distinct. When `urtorrent` is the
+  helper, it receives the opposite transfer mode and joins the same
+  candidate/helper readiness barrier. Direct receivers use the API-controlled
+  seed's uploaded-byte counter to bound useful progress; direct seeders stop
+  after the measured receiver verifies completion.
 - **Must not:** treat `candidate` as verified client support, label a plan as
   measured evidence, silently skip a failed or incompatible trial, or conflate
   this efficiency catalog with protocol interop correctness.
@@ -4237,6 +4245,10 @@ the production default policy.
   A complete payload transfer accounts for the full expected useful payload,
   passes applicable integrity checks, and links the matching independent
   process observation.
+- The runner can pair exactly two pinned clients in both candidate orders.
+  Helper `auto` maps each scheduled candidate to the other client, direct
+  `urtorrent` readiness is role-scoped, and candidate/helper self-pairs are
+  rejected before a trial starts.
 - Plan output is exclusive, mode `0600`, schema-validated, and rejected if its
   catalog digest or deterministic schedule no longer matches its identity.
 - Trial output is schema-validated, mode `0600`, exclusive, and syncs both file
@@ -4490,6 +4502,11 @@ for their median. Preserve per-pair observations and reasons for excluded
 attempts. The scorecard is descriptive; it does not make release decisions or
 adopt the proposal in `TRANSFER_CORE_REBUILD.md`.
 
+The runner's catalog case IDs include the candidate ID (for example,
+`torrentngd:N1/lan_1g`). The scorecard removes that exact client-ID prefix for
+comparison and pair signatures, allowing different clients on the same profile
+to match while preserving all remaining workload fields.
+
 ### Ownership and invariant
 
 - **Current owner:** `scorecard.py` consumes immutable PERF-101 manifest
@@ -4519,6 +4536,9 @@ adopt the proposal in `TRANSFER_CORE_REBUILD.md`.
   thresholds require a separate decision before results are observed.
 - Regression sources cover deterministic intervals, signature normalization,
   failed/incomplete exclusion, malformed pair membership, and work bounds.
+- Client-qualified case IDs for two different clients normalize to the same
+  profile group and remain pair-eligible only when the rest of the workload,
+  fixture, and environment signatures match.
 
 ### Files and compatibility
 
