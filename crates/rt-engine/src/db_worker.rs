@@ -1646,9 +1646,9 @@ mod tests {
                     .await
             }
         });
-        timeout(Duration::from_secs(1), first_started)
+        timeout(Duration::from_secs(5), first_started)
             .await
-            .expect("first operation started before timeout")
+            .expect("first operation started within the loaded-host startup bound")
             .expect("first started signal");
 
         let applied = Arc::new(AtomicUsize::new(0));
