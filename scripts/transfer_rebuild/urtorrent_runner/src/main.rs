@@ -31,6 +31,8 @@ struct Args {
     pid_file: PathBuf,
     settings_file: PathBuf,
     start_gate: PathBuf,
+    ready_file: PathBuf,
+    stop_file: PathBuf,
     listen_v4: Ipv4Addr,
     peer: SocketAddr,
     max_connections: usize,
@@ -45,7 +47,8 @@ struct Args {
 
 fn usage() -> &'static str {
     "urtorrent-runner --mode download|seed --namespace tngt-NAME --torrent FILE \
-     --save-path DIR --pid-file FILE --settings-file FILE --start-gate FILE \
+     --save-path DIR --pid-file FILE --settings-file FILE --start-gate FILE --ready-file FILE \
+     --stop-file FILE \
      --listen-v4 IP --peer IPv4:PORT [--max-connections N] [--max-peers N] \
      [--unchoke-slots N] [--hash-threads N] [--upload-limit BPS] \
      [--download-limit BPS] [--timeout-seconds N] [--seed-seconds N]\n\
@@ -101,6 +104,8 @@ fn parse_args() -> anyhow::Result<Args> {
     let mut pid_file = None;
     let mut settings_file = None;
     let mut start_gate = None;
+    let mut ready_file = None;
+    let mut stop_file = None;
     let mut listen_v4 = None;
     let mut peer = None;
     let mut max_connections = 500usize;
@@ -130,6 +135,8 @@ fn parse_args() -> anyhow::Result<Args> {
             "--pid-file" => pid_file = Some(PathBuf::from(value)),
             "--settings-file" => settings_file = Some(PathBuf::from(value)),
             "--start-gate" => start_gate = Some(PathBuf::from(value)),
+            "--ready-file" => ready_file = Some(PathBuf::from(value)),
+            "--stop-file" => stop_file = Some(PathBuf::from(value)),
             "--listen-v4" => listen_v4 = Some(parse_value("IPv4 listen address", &value)?),
             "--peer" => peer = Some(parse_value("peer address", &value)?),
             "--max-connections" => max_connections = parse_value(&name, &value)?,
@@ -157,6 +164,8 @@ fn parse_args() -> anyhow::Result<Args> {
         settings_file: settings_file
             .ok_or_else(|| anyhow::anyhow!("--settings-file is required"))?,
         start_gate: start_gate.ok_or_else(|| anyhow::anyhow!("--start-gate is required"))?,
+        ready_file: ready_file.ok_or_else(|| anyhow::anyhow!("--ready-file is required"))?,
+        stop_file: stop_file.ok_or_else(|| anyhow::anyhow!("--stop-file is required"))?,
         listen_v4: listen_v4
             .ok_or_else(|| anyhow::anyhow!("--listen-v4 must bind a private task interface"))?,
         peer: peer.ok_or_else(|| {
@@ -188,6 +197,8 @@ fn parse_args() -> anyhow::Result<Args> {
         ("--pid-file", &args.pid_file),
         ("--settings-file", &args.settings_file),
         ("--start-gate", &args.start_gate),
+        ("--ready-file", &args.ready_file),
+        ("--stop-file", &args.stop_file),
     ] {
         if !path.is_absolute() {
             bail!("{name} must be an absolute path");
@@ -196,6 +207,13 @@ fn parse_args() -> anyhow::Result<Args> {
     if args.pid_file == args.settings_file
         || args.pid_file == args.start_gate
         || args.settings_file == args.start_gate
+        || args.pid_file == args.ready_file
+        || args.settings_file == args.ready_file
+        || args.start_gate == args.ready_file
+        || args.pid_file == args.stop_file
+        || args.settings_file == args.stop_file
+        || args.start_gate == args.stop_file
+        || args.ready_file == args.stop_file
     {
         bail!("PID, settings, and start-gate paths must be distinct");
     }
@@ -332,6 +350,16 @@ async fn run_trial() -> anyhow::Result<()> {
         Ok(_) => bail!("start gate must be absent until every trial participant is ready"),
         Err(error) => return Err(error).context("cannot inspect start gate before setup"),
     }
+    match fs::symlink_metadata(&args.ready_file) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Ok(_) => bail!("ready marker must be absent before trial setup"),
+        Err(error) => return Err(error).context("cannot inspect ready marker before setup"),
+    }
+    match fs::symlink_metadata(&args.stop_file) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Ok(_) => bail!("stop marker must be absent before trial setup"),
+        Err(error) => return Err(error).context("cannot inspect stop marker before setup"),
+    }
     let metadata = fs::symlink_metadata(&args.torrent)
         .with_context(|| format!("cannot inspect torrent file {}", args.torrent.display()))?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
@@ -457,6 +485,7 @@ async fn run_trial() -> anyhow::Result<()> {
             }
         });
         write_identity_files(&args, settings)?;
+        write_new_private(&args.ready_file, b"ready\n")?;
 
         let ready_deadline = Instant::now() + Duration::from_secs(args.timeout_seconds);
         wait_for_gate(&args.start_gate, ready_deadline).await?;
@@ -478,6 +507,14 @@ async fn run_trial() -> anyhow::Result<()> {
                 first_complete_at.get_or_insert_with(Instant::now);
                 if args.mode == Mode::Download {
                     break status;
+                }
+                match fs::symlink_metadata(&args.stop_file) {
+                    Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                        break status;
+                    }
+                    Ok(_) => bail!("stop marker must be a regular non-symlink file"),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error).context("cannot inspect trial stop marker"),
                 }
                 if first_complete_at
                     .is_some_and(|start| start.elapsed() >= Duration::from_secs(args.seed_seconds))

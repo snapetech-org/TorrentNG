@@ -26,6 +26,7 @@ from adapters import (  # noqa: E402
     _sha256_regular_file_nofollow,
     _tcp_listener_addresses,
     _tcp_listener_inodes,
+    _task_local_api_context,
     _urtorrent_settings_file,
     _verify_container_http_endpoint,
     load_pins,
@@ -62,6 +63,36 @@ class TransferClientAdapterTests(unittest.TestCase):
                 "hash_threads_source": "command_line",
             },
         }
+
+    def test_http_json_rejects_duplicate_fields_and_overflow_numbers(self) -> None:
+        client = HttpJson("http://127.0.0.1:1")
+        for body in (
+            b'{"settings":{"dht":false,"dht":true}}',
+            b'{"download_rate":1e999}',
+            b'{"download_rate":NaN}',
+        ):
+            with self.subTest(body=body), patch.object(client, "request", return_value=body):
+                with self.assertRaises(AdapterError):
+                    client.json("/api/settings")
+
+    def test_task_local_api_context_is_bound_to_the_recorded_private_subnet(self) -> None:
+        digest = "a" * 64
+        context = {
+            "address": "198.18.0.3",
+            "namespace": "tngt-a1b2c3d4",
+            "namespace_identity": {"device": 1, "inode": 2},
+            "subnet": "198.18.0.0/24",
+            "interface": "tngveth0",
+            "ifindex": 9,
+            "topology_sha256": digest,
+        }
+        self.assertEqual(_task_local_api_context({"_task_local_api": context}), context)
+        invalid = dict(context, address="192.168.1.3")
+        with self.assertRaisesRegex(AdapterError, "does not match"):
+            _task_local_api_context({"_task_local_api": invalid})
+        invalid_identity = dict(context, namespace_identity={"device": True, "inode": 2})
+        with self.assertRaisesRegex(AdapterError, "invalid namespace"):
+            _task_local_api_context({"_task_local_api": invalid_identity})
 
     def test_native_process_identity_detects_reexec_of_same_pid(self) -> None:
         identity = {

@@ -173,6 +173,39 @@ def build(**changes: object) -> dict[str, object]:
     return build_trial_record(**values)  # type: ignore[arg-type]
 
 
+def valid_unmeasured_trial() -> dict[str, object]:
+    values = trial_inputs()
+    values.update(
+        client_observation=None,
+        client_observation_sha256=None,
+        resource_observation=None,
+        resource_observation_sha256=None,
+        outcome={"status": "unmeasured", "reason": "pinned client did not start", "exit_code": 127},
+        integrity={
+            "status": "not_run",
+            "expected_sha256": None,
+            "observed_sha256": None,
+            "hash_failures": 0,
+            "false_completions": 0,
+        },
+        payload={
+            "useful_bytes": 0,
+            "received_bytes": 0,
+            "written_bytes": 0,
+            "read_bytes": 0,
+            "duplicate_bytes": 0,
+        },
+        durations_ns={
+            "barrier_wait": 0,
+            "transfer": 0,
+            "flush": 0,
+            "validation": 0,
+            "shutdown": 0,
+        },
+    )
+    return build_trial_record(**values)  # type: ignore[arg-type]
+
+
 class TrialRecordTests(unittest.TestCase):
     def test_complete_trial_binds_client_and_resource_process_identity(self) -> None:
         trial = build()
@@ -183,37 +216,7 @@ class TrialRecordTests(unittest.TestCase):
         self.assertEqual(validate_document(trial), [])
 
     def test_unmeasured_startup_trial_has_no_client_or_observer_identity(self) -> None:
-        values = trial_inputs()
-        values.update(
-            client_observation=None,
-            client_observation_sha256=None,
-            resource_observation=None,
-            resource_observation_sha256=None,
-            outcome={"status": "unmeasured", "reason": "pinned client did not start", "exit_code": 127},
-            integrity={
-                "status": "not_run",
-                "expected_sha256": None,
-                "observed_sha256": None,
-                "hash_failures": 0,
-                "false_completions": 0,
-            },
-            payload={
-                "useful_bytes": 0,
-                "received_bytes": 0,
-                "written_bytes": 0,
-                "read_bytes": 0,
-                "duplicate_bytes": 0,
-            },
-            durations_ns={
-                "barrier_wait": 0,
-                "transfer": 0,
-                "flush": 0,
-                "validation": 0,
-                "shutdown": 0,
-            },
-        )
-
-        trial = build_trial_record(**values)  # type: ignore[arg-type]
+        trial = valid_unmeasured_trial()
 
         self.assertIsNone(trial["client_identity"])
         self.assertIsNone(trial["resources"]["raw_artifact_sha256"])  # type: ignore[index]
@@ -244,6 +247,47 @@ class TrialRecordTests(unittest.TestCase):
         integrity["observed_sha256"] = "6" * 64
         with self.assertRaisesRegex(TrialRecordError, "matching payload digests"):
             build(integrity=integrity)
+
+    def test_unavailable_payload_counters_remain_null_without_invalidating_verified_bytes(self) -> None:
+        payload = dict(trial_inputs()["payload"])
+        payload.update(received_bytes=None, written_bytes=None, read_bytes=None, duplicate_bytes=None)
+
+        trial = build(payload=payload)
+
+        self.assertEqual(trial["payload"]["useful_bytes"], EXPECTED_BYTES)  # type: ignore[index]
+        self.assertIsNone(trial["payload"]["received_bytes"])  # type: ignore[index]
+        self.assertIsNone(trial["payload"]["written_bytes"])  # type: ignore[index]
+        self.assertEqual(validate_document(trial), [])
+
+    def test_incomplete_trial_can_leave_useful_bytes_unknown(self) -> None:
+        values = trial_inputs()
+        values["outcome"] = {
+            "status": "incomplete",
+            "reason": "receiver stopped before independent validation",
+            "exit_code": None,
+        }
+        values["integrity"] = {
+            "status": "not_run",
+            "expected_sha256": None,
+            "observed_sha256": None,
+            "hash_failures": 0,
+            "false_completions": 0,
+        }
+        payload = dict(values["payload"])
+        payload["useful_bytes"] = None
+        values["payload"] = payload
+
+        trial = build_trial_record(**values)  # type: ignore[arg-type]
+
+        self.assertIsNone(trial["payload"]["useful_bytes"])  # type: ignore[index]
+        self.assertEqual(validate_document(trial), [])
+
+    def test_complete_trial_cannot_leave_useful_bytes_unknown(self) -> None:
+        payload = dict(trial_inputs()["payload"])
+        payload["useful_bytes"] = None
+
+        with self.assertRaisesRegex(TrialRecordError, "nonnegative integer"):
+            build(payload=payload)
 
     def test_observation_schema_and_process_mismatch_are_rejected(self) -> None:
         observation = client_observation()

@@ -59,10 +59,10 @@ Its `runtime_identity()` fields match the native identity used by
 `adapters.py`; an optional per-trial PID file is created exclusively with mode
 `0600`. Shutdown uses a Linux pidfd and refuses to signal after that identity changes.
 The client command must stay in the foreground; daemonizing wrappers are not
-valid launch targets. This primitive does not create namespaces, containers,
-or trial records. The paired runner still has to connect it to each adapter,
-the isolated seed process, resource observation, and manifest emission. No
-client was launched while adding this source.
+valid launch targets. `paired_runner.py` now connects this primitive to the
+native and container adapters, isolated seed/target endpoints, task tracker,
+resource observer, trial writer, and manifest assembler. That executor is
+authored but has not been run against pinned clients or a qualified host.
 
 ## Trial record assembly
 
@@ -83,14 +83,25 @@ recorded as `unmeasured` with null client identity and no observer link; a
 missing client observation cannot be relabeled as another outcome.
 `write_trial()` creates a new, exclusive mode-`0600` JSON file and syncs the
 file and its directory. It returns the artifact digest for manifest assembly.
+Unobserved received, written, read, and duplicate byte counters remain `null`;
+the runner must not fill missing client instrumentation with zeros.
 
-This module does not launch clients, create namespaces, run the seed peer, or
-publish a manifest. The paired runner must still connect it to the adapters,
-`process_supervisor.py`, observer lifecycle, isolated fixture/seeder, and
-`manifest.py`. Trial-record regressions are in
-`scripts/test_transfer_rebuild_trial_record.py`; trial/manifest validation
-regressions remain in `scripts/test_transfer_rebuild_validator.py`. Both are
-reserved for the requested bulk pass.
+`client_control.py` provides the identity-bound transfer API used by the
+paired runner for TorrentNG, qBittorrent, Transmission, Deluge, rTorrent, and
+rqbit. It admits metainfo only after validating its canonical info hash, adds
+it paused, reads status by exact hash, starts or pauses it, and removes it by
+exact hash. Where an API supports it, the caller must explicitly choose whether
+to delete downloaded data; rTorrent's control API cannot make that choice, so
+the caller removes its task-owned output directory separately. Runtime
+identity and settings are checked around mutations and at a bounded polling
+interval. `urtorrent` remains controlled by its dedicated Rust runner.
+`paired_runner.py` composes these controls with process/container launch, task
+namespaces, the isolated seed peer, observer lifecycle, fixture verification,
+and `manifest.py`. Client-control regressions are in
+`scripts/test_transfer_rebuild_client_control.py`; trial-record regressions are
+in `scripts/test_transfer_rebuild_trial_record.py`; trial/manifest validation
+regressions remain in `scripts/test_transfer_rebuild_validator.py`. They belong
+in the requested bulk pass and have not been run.
 
 ## Trial and manifest validation
 
@@ -118,6 +129,13 @@ without that link remain readable, but the scorecard excludes them. It reports
 field paths and returns nonzero for malformed JSON,
 schemas, records, or referenced files. The focused validator regressions are in
 `scripts/test_transfer_rebuild_validator.py` and belong in the bulk pass.
+Every external JSON record is decoded strictly through
+`strict_json.py`: duplicate member names, nonstandard constants, and numbers
+that overflow the finite range are rejected before schema or semantic checks.
+The same parser covers evidence files and rollout inputs, client pin/profile
+inputs, client API readbacks, container and network-command identity output,
+catalog-load log records, paired-runner output, and referenced cache, network,
+client, tracker, fixture, and trial records.
 Cold/warm trials must link a verified `transfer-cache-state-v1` artifact;
 manifest validation checks that the observed fixture and requested state match
 the trial and rejects a partial or unsupported state claim.
@@ -429,6 +447,52 @@ cargo test -p rt-metrics --test scale live_native_engine_catalog_1k_uses_valid_p
 cargo test -p rt-metrics --test scale live_native_engine_catalog_100k_uses_valid_persisted_metainfo -- --ignored --nocapture
 ```
 
+The mixed-load probes reuse the restored catalog and release 16 rounds of
+four concurrent native requests: two bounded/sorted list pages, transfer info,
+and `/metrics`. Each response is drained. The probe records every route's raw
+latencies plus p50/p95 in one `scale_live_native_catalog_mixed_json=` line so
+the bulk run can retain and compare the full scrape and API distributions.
+The 1k probe is suitable for the hosted correctness lane; the 100k probe stays
+opt-in with the other large-catalog work:
+
+```sh
+cargo test -p rt-metrics --test scale live_native_engine_catalog_scrape_mixed_load_1k -- --nocapture
+cargo test -p rt-metrics --test scale live_native_engine_catalog_scrape_mixed_load_100k -- --ignored --nocapture
+```
+
+Retain the full output of both mixed-load commands outside the measured
+worktree. After the exact source revision is committed and the worktree is
+clean, assemble the report from that log:
+
+```sh
+python3 scripts/transfer_rebuild/catalog_load_report.py \
+  --repo /path/to/clean/TorrentNG \
+  --source-commit <40-character-commit> \
+  --log /path/to/task-scratch/run-01/catalog-load.log \
+  --output /path/to/task-scratch/run-01/catalog-load-report.json
+```
+
+The assembler requires one 1k and one 100k restored-catalog observation,
+recomputes every route percentile from its 16 raw latency samples, records host
+and source identity, and writes an exclusive mode-`0600` report. Include both
+files in the manifest as
+`transfer-catalog-load-report-v1=<report.json>` and
+`transfer-catalog-load-log-v1=<catalog-load.log>`. Manifest validation checks
+that the report cites the retained raw-log digest and the same clean source
+revision. For the `transfer-catalog-load-v1` SYS-015 qualification, all three
+required checks must cite the report artifact digest; the gate checks its
+manifest kind. The qualification wrapper goes in the SYS-015 stage
+declaration; its checks link to the report, which links to the retained raw
+log.
+The regression source is `scripts/test_transfer_rebuild_catalog_load_report.py`
+and is reserved for the requested bulk pass.
+
+These are diagnostic latencies, not fixed release thresholds. They exercise
+the in-process production engine and native router with a paused catalog; they
+do not model concurrent payload transfer, production-daemon RSS, or multiple
+independent processes. Keep output with the exact source revision and host
+details before using it as SYS-014 evidence.
+
 The one-byte paused catalog does not measure payload I/O, hashing throughput,
 peer activity, or useful goodput. In-process test measurements are not
 production-daemon RSS or descriptor evidence; PERF-102 and PERF-110 own those
@@ -506,13 +570,70 @@ The command refuses a changed plan/pin/profile digest and records all 28 slots,
 including unpinned, statically unsupported, failed, and cleanup-failed cases.
 A scheduled comparison is excluded when fewer than two clients pass; every
 failed case remains visible in the artifact. The artifact is exclusive, mode
-`0600`, and contains no API credentials. The runner still has
-to create the full payload fixtures, isolate and launch clients, execute paired
-trials, observe their process trees independently, and emit trial/manifest
-records. Regression sources are in
-`scripts/test_transfer_rebuild_paired_plan.py` and
-`scripts/test_transfer_rebuild_compatibility.py`; both remain reserved for the
-requested bulk pass and have not been run.
+`0600`, and contains no API credentials. `client_control.py` owns the six
+HTTP/RPC clients' exact-hash transfer operations and metainfo identity check;
+`urtorrent_runner` owns its direct library path.
+
+### Execute paired download and seed trials
+
+`paired_runner.py` consumes the pinned plan and ready compatibility report. It
+stages the source inputs, verifies or generates one fixture per randomized
+pair, creates an isolated target/seed namespace and task-local tracker, starts
+fresh pinned clients, and releases them through a shared barrier. Each
+scheduled candidate produces a download trial and a seed trial. The runner
+records exact-hash transfer counters as deltas from the paused baseline,
+independent process/resource observations, cache and optional network-control
+evidence, payload flush and independent digests, cleanup outcomes, and a
+source-bound manifest. Missing byte observations remain null. A trial is not
+complete unless the receiver payload verifies and both client identity and
+resource evidence were captured.
+
+An API-controlled preloaded seed is started to verify its files while the
+receiver stays paused; the shared barrier release starts the measured receive.
+This prevents a client that verifies files only after starting from deadlocking
+seed setup, and the seed's pre-barrier counters are included in the baseline.
+
+Manifest validation also checks paired evidence meaning and cross-links: it
+re-verifies fixture payloads and the original torrent record, validates the
+retargeted metainfo record against the original info hashes and retained
+binary, binds the private tracker snapshot to the task topology and those info
+hashes, and verifies that the observer sampled the candidate's target
+namespace for a download or seed namespace for a seed trial. Complete trials
+must retain both tracker peers and a ready seed. These checks do not replace
+real-client execution or host qualification.
+
+The external scratch directory must already exist, be outside the source tree,
+and be reserved for this task. The host needs Linux network namespaces,
+`iproute2`, and the privileges required to create the task bridge and shape its
+interfaces. Every selected candidate and the fixed API-controlled helper must
+have pinned runtime launch settings, and every selected profile must have
+passed compatibility preflight. `urtorrent` may be the candidate but is not
+used as the helper.
+
+```sh
+python3 scripts/transfer_rebuild/paired_runner.py \
+  --plan /path/to/task-scratch/transfer-run/paired-plan.json \
+  --pins /path/to/task-scratch/client-pins.json \
+  --preflight /path/to/task-scratch/transfer-run/compatibility-preflight.json \
+  --environment /path/to/task-scratch/benchmark-environment.json \
+  --scratch-root /path/to/task-scratch/transfer-run \
+  --helper-client qbittorrent \
+  --cache-state cold \
+  --manifest /path/to/task-scratch/transfer-run/manifest.json
+```
+
+Use `--trial-id` once per scheduled ID to run a subset; both workload modes
+are emitted for each selected ID. `--network-profile` selects one of the
+versioned shaping profiles. The manifest output must be directly in the
+scratch root so every linked trial and evidence file remains beneath its
+manifest. When requesting a manifest, first commit the exact harness source
+and use a clean worktree; the runner rejects a dirty source before launching
+clients. The runner and its local regression sources are authored but remain
+unrun; no host qualification or client performance result is claimed.
+Regression sources are in `scripts/test_transfer_rebuild_paired_plan.py`,
+`scripts/test_transfer_rebuild_compatibility.py`, and
+`scripts/test_transfer_rebuild_paired_runner.py`; they are reserved for the
+requested bulk pass.
 
 ## PERF-111 picker and changed-snapshot probes
 
@@ -546,6 +667,24 @@ commit with the CSV; compare results only on a controlled host and toolchain.
 These probes and the regression sources remain unrun until the requested bulk
 pass.
 
+## PERF-115 hosted and dedicated hardware lanes
+
+`.github/workflows/transfer-rebuild.yml` provides a manually dispatched
+hosted lane for the transfer-core Rust suites and rebuild-harness regression
+sources. Its optional hardware job runs only from `main`, requires the
+protected `transfer-rebuild-hardware` environment, and selects a runner with
+the `torrentng-transfer-perf` label. Pull-request code never reaches that
+self-hosted machine.
+
+The hardware job requires an operator-provisioned disposable storage directory
+and records the exact commit, worktree state, Rust toolchain, host, and mount
+identity. `hardware_lane.sh` retains the picker and changed-snapshot benchmark
+logs and runs the real-root storage move/import exercise against the supplied
+directory. It preserves all exit statuses so later checks can diagnose each
+command. These outputs are diagnostic artifacts; workflow completion alone
+does not qualify a storage or performance gate. The workflow and script have
+not been run yet.
+
 ## PERF-112 v2 and restart invariants
 
 The `rt-metrics` integration source transfers deterministic v1, pure-v2, and
@@ -568,10 +707,59 @@ properties owned by IO-009/IO-010. The PERF-110 paired runner must separately
 validate downloaded bytes and record applicable protocol support before
 emitting comparable transfer results.
 
+## Task-owned trial topology and tracker
+
+`task_network.py` creates a task bridge with separate target and seed network
+namespaces, one `/24` selected from the reserved `198.18.0.0/15` pool, and no
+default route. The target and seed receive only their recorded veth links;
+cleanup validates bridge, namespace, interface, and inode identities before
+removing those task-owned links. For a container, start it with Docker
+`--network none` and pass its PID to `create --target-pid`; attachment refuses
+a namespace that already has another interface or a main-table route.
+
+```sh
+sudo python3 scripts/transfer_rebuild/task_network.py create \
+  --output /path/to/task-scratch/transfer-run/task-network.json
+
+sudo python3 scripts/transfer_rebuild/task_network.py cleanup \
+  --topology /path/to/task-scratch/transfer-run/task-network.json
+```
+
+The topology record contains a canonical self-digest. Its API-control context
+uses that digest, while a trial's `task_topology_sha256` links the SHA-256 of
+the topology JSON file recorded in the manifest. Those are different digests
+with different purposes. `client_control.py` can receive an ephemeral
+`_task_local_api` context so the adapter checks the client's API address,
+listener, PID, namespace inode, veth ifindex, address, and connected route
+before each mutation.
+
+`task_tracker.py` serves HTTP announces only on the bridge gateway. It accepts
+only the target and seed source addresses and pinned v1/v2 info hashes. The
+first seed announce binds its peer ID and listening port; target announces
+receive that seed only after the binding is complete. Later seed announces
+must retain the same identity. Its snapshot contains counts and a hash of the
+seed peer ID, not the peer ID itself. Topology and tracker are control-plane
+helpers; they are not part of the measured client's resource totals. Malformed
+percent escapes, unescaped non-ASCII bytes, and unescaped control bytes are
+rejected before the tracker interprets binary hashes and peer IDs. The paired
+runner's staged input directory must have exact mode `0700`.
+
+`metainfo.py` prepares a private per-task copy of a generated torrent. It
+checks the canonical fixture-manifest digest, the source torrent digest, the
+recorded v1/v2 info hashes, and the torrent's name, piece length, protocol
+fields, and original announce URL. It then replaces only the top-level
+`announce` value and verifies that the exact encoded `info` dictionary is
+unchanged. Paired clients can therefore use one payload fixture and stable
+info hash while receiving a task-local tracker address, without rebuilding or
+rehashing multi-gigabyte payloads for each run. The output is exclusive and
+mode `0600`; alternate trackers, web seeds, and embedded DHT nodes are
+rejected.
+
 ## Task-scoped network control
 
-`network_control.py` applies a pinned loss-free egress profile to a `tngt*`
-veth inside an explicitly named `tngt-*` Linux network namespace. It refuses
+`network_control.py` applies a pinned egress profile to a `tngt*` veth inside
+an explicitly named `tngt-*` Linux network namespace. Profiles cover clean
+paths and seeded packet loss/jitter. It refuses
 `lo`, host interfaces, non-veth links, non-default root qdiscs, and mutable
 output paths. It records the namespace and interface identity, the iproute2
 versions, requested settings, and `tc -j` readback in an immutable
@@ -583,7 +771,8 @@ Example for an isolated harness namespace:
 python3 scripts/transfer_rebuild/network_control.py apply \
   --namespace tngt-run-a \
   --interface tngt0 \
-  --profile metro-100m-10ms-v1 \
+  --profile wan-20m-30ms-jitter-loss-v1 \
+  --seed 123456789 \
   --output /path/to/task-scratch/network-apply.json
 
 python3 scripts/transfer_rebuild/network_control.py reset \
@@ -593,16 +782,44 @@ python3 scripts/transfer_rebuild/network_control.py reset \
 
 Reset checks the original namespace inode and interface index, then removes
 only the recorded `netem` qdisc with handle `7fff:` and verifies the default
-`noqueue` qdisc returned. Apply also checks the observed delay, rate, and queue
-limit before it emits evidence; if evidence creation fails, it removes only
-that exact qdisc. Run this helper only inside a task-owned network namespace.
+`noqueue` qdisc returned. Apply checks the observed delay, jitter, loss rate,
+link rate, queue limit, and 64-bit PRNG seed before it emits evidence. If
+readback or artifact creation fails, it removes only the qdisc it installed.
+Run this helper only inside a task-owned network namespace. The pinned
+`tc`/kernel pair must accept and report `netem seed`; unsupported combinations
+fail closed.
 
-Profiles shape one egress direction and apply fixed delay, rate, and queue
-limit. They do not yet inject random loss or jitter, create namespaces, apply
-to both directions automatically, or establish a measured RTT. Apply one
-record per shaped endpoint; record the profile id and all apply artifact
-digests in `trial.environment.network`. The trial validator requires those
-artifacts to match the selected profile and link rate. This helper is a
-reproducibility control, not a network benchmark result. Regression sources
-are in `scripts/test_transfer_rebuild_network_control.py` and belong in the
-requested bulk pass; none have been run.
+Profiles shape one egress direction. The paired runner shapes both endpoints,
+deriving separate deterministic seeds from the plan pair, profile, and endpoint
+role so reruns reproduce a pair without correlating both directions to the
+same random stream. Apply one record per shaped endpoint; the trial records
+both ordered seed values and apply artifact digests in
+`trial.environment.network`. `rtt_ms` remains `null` because the runner does
+not measure RTT; configured one-way delay and jitter are recorded separately.
+The trial validator checks profile settings against `tc -j` readback and
+requires cleanup records for completed shaped trials. This helper controls the
+workload; it is not a network benchmark result. Regression sources are in
+`scripts/test_transfer_rebuild_network_control.py` and
+`scripts/test_transfer_rebuild_paired_runner.py`; the bulk pass remains
+pending.
+
+## Rollout qualification records
+
+Use `qualification_record.py` to turn named checks and retained artifact
+digests into a strict qualification record. Add that record to the immutable
+manifest as the matching `transfer-…-v1` artifact kind, build the descriptive
+scorecard from that manifest, then use `rollout_index.py` to bind stage
+declarations to the exact manifest and scorecard digests. `rollout_gate.py`
+validates all links and emits one exclusive decision artifact. A missing or
+blocked check produces a blocked decision. The gate requires complete v1, v2,
+and hybrid candidate trials and the scorecard's configured minimum paired
+samples; it does not apply any performance threshold that has not been
+approved in D1.
+
+For SYS-014, the `transfer-catalog-load-v1` checks
+`production-catalog-persist-restore`, `mixed-native-api-latencies-retained`,
+and `host-and-source-identity-recorded` each require the digest of a
+`transfer-catalog-load-report-v1` manifest artifact. That report in turn must
+cite a retained `transfer-catalog-load-log-v1`; the evaluator rejects an
+unlinked log, another source revision, a dirty source manifest, or altered
+percentiles.

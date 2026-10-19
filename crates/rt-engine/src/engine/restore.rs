@@ -474,7 +474,7 @@ impl Engine {
                     .await?;
                     continue;
                 };
-                let _tx = self
+                let spawn_result = self
                     .spawn_torrent_task_for_meta(
                         row.info_hash.clone(),
                         meta,
@@ -488,6 +488,18 @@ impl Engine {
                         torrent_metadata_memory_lease,
                     )
                     .await;
+                if let Err(error) = spawn_result {
+                    let _ = self.registry.write().await.remove(&row.info_hash);
+                    self.restore_persisted_error_projection(
+                        &row,
+                        "runtime",
+                        &blob_path,
+                        format!("could not restore torrent actor: {error}"),
+                        false,
+                    )
+                    .await?;
+                    continue;
+                }
                 if !is_private && should_register_dht_on_restore(state) {
                     self.register_dht_torrent(dht_info_hash, &row.info_hash)
                         .await;

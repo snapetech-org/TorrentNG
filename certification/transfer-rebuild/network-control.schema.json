@@ -33,7 +33,13 @@
     "interface": { "type": "string", "pattern": "^tngt[a-z0-9][a-z0-9_.-]{0,9}$" },
     "ifindex": { "$ref": "#/$defs/positive_integer" },
     "profile_id": {
-      "enum": ["lan-1g-1ms-v1", "metro-100m-10ms-v1", "wan-20m-30ms-v1"]
+      "enum": [
+        "lan-1g-1ms-v1",
+        "metro-100m-10ms-v1",
+        "wan-20m-30ms-v1",
+        "metro-100m-10ms-jitter-loss-v1",
+        "wan-20m-30ms-jitter-loss-v1"
+      ]
     },
     "settings": {
       "type": "object",
@@ -41,8 +47,11 @@
       "required": ["delay_ms", "rate_bps", "limit_packets"],
       "properties": {
         "delay_ms": { "$ref": "#/$defs/positive_integer" },
+        "jitter_ms": { "$ref": "#/$defs/nonnegative_integer" },
+        "loss_ppm": { "type": "integer", "minimum": 0, "maximum": 1000000 },
         "rate_bps": { "$ref": "#/$defs/positive_integer" },
-        "limit_packets": { "const": 1000 }
+        "limit_packets": { "const": 1000 },
+        "seed": { "$ref": "#/$defs/uint64" }
       }
     },
     "baseline_root_qdisc": { "$ref": "#/$defs/default_qdisc" },
@@ -83,11 +92,28 @@
           "applied_record_sha256": { "$ref": "#/$defs/sha256" }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "profile_id": {
+            "enum": ["metro-100m-10ms-jitter-loss-v1", "wan-20m-30ms-jitter-loss-v1"]
+          }
+        },
+        "required": ["profile_id"]
+      },
+      "then": {
+        "properties": {
+          "settings": { "required": ["jitter_ms", "loss_ppm", "seed"] },
+          "observed_root_qdisc": { "required": ["jitter_ns", "loss_ppm", "seed"] }
+        }
+      }
     }
   ],
   "$defs": {
     "nonnegative_integer": { "type": "integer", "minimum": 0 },
     "positive_integer": { "type": "integer", "minimum": 1 },
+    "uint64": { "type": "integer", "minimum": 0, "maximum": 18446744073709551615 },
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "default_qdisc": {
       "type": "object",
@@ -106,8 +132,11 @@
         "kind": { "const": "netem" },
         "handle": { "const": "7fff:" },
         "delay_ns": { "$ref": "#/$defs/positive_integer" },
+        "jitter_ns": { "$ref": "#/$defs/nonnegative_integer" },
+        "loss_ppm": { "type": "integer", "minimum": 0, "maximum": 1000000 },
         "rate_bps": { "$ref": "#/$defs/positive_integer" },
-        "limit_packets": { "const": 1000 }
+        "limit_packets": { "const": 1000 },
+        "seed": { "$ref": "#/$defs/uint64" }
       }
     }
   }

@@ -35,6 +35,7 @@ from adapters import (
     probe_client,
     write_new_json,
 )
+from strict_json import StrictJsonError, loads as strict_json_loads
 from fixtures import (
     FixtureFile,
     generate_fixture,
@@ -61,18 +62,10 @@ class PreflightCleanupError(PreflightError):
 
 
 def _strict_json(raw: bytes, label: str) -> Any:
-    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
-        value: dict[str, Any] = {}
-        for key, item in items:
-            if key in value:
-                raise ValueError(f"duplicate JSON field {key!r}")
-            value[key] = item
-        return value
-
     try:
-        return json.loads(raw, object_pairs_hook=pairs)
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
-        raise PreflightError(f"{label} is not strict JSON: {error}") from error
+        return strict_json_loads(raw, label=label)
+    except StrictJsonError as error:
+        raise PreflightError(str(error)) from error
 
 
 def _probe_files(profile: dict[str, Any]) -> list[FixtureFile]:

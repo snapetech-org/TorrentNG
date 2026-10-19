@@ -56,8 +56,18 @@ PAYLOAD_FIELDS = (
     "received_bytes",
     "written_bytes",
     "read_bytes",
+    "uploaded_bytes",
     "duplicate_bytes",
 )
+REQUIRED_PAYLOAD_FIELDS = {"received_bytes", "written_bytes", "read_bytes", "duplicate_bytes"}
+OPTIONAL_PAYLOAD_FIELDS = {
+    "useful_bytes",
+    "received_bytes",
+    "written_bytes",
+    "read_bytes",
+    "uploaded_bytes",
+    "duplicate_bytes",
+}
 
 
 class TrialRecordError(ValueError):
@@ -466,23 +476,41 @@ def build_trial_record(
     if outcome_status == "complete" and duration_values["transfer"] == 0:
         raise TrialRecordError("a complete transfer must have a positive transfer duration")
 
-    if not isinstance(payload, dict) or not set(PAYLOAD_FIELDS) <= set(payload):
+    if not isinstance(payload, dict) or not REQUIRED_PAYLOAD_FIELDS <= set(payload):
         raise TrialRecordError("payload accounting is missing required byte counters")
-    payload_result: dict[str, Any] = {
-        name: _strict_nonnegative_integer(payload[name], f"payload {name}")
-        for name in PAYLOAD_FIELDS
-    }
+    payload_result: dict[str, Any] = {}
+    for name in PAYLOAD_FIELDS:
+        value = payload.get(name)
+        if name in OPTIONAL_PAYLOAD_FIELDS and value is None:
+            payload_result[name] = None
+        else:
+            payload_result[name] = _strict_nonnegative_integer(value, f"payload {name}")
     expected_payload_bytes = _strict_nonnegative_integer(
         workload.get("expected_payload_bytes"), "workload expected payload bytes"
     )
-    if payload_result["useful_bytes"] > expected_payload_bytes:
+    if (
+        payload_result["useful_bytes"] is not None
+        and payload_result["useful_bytes"] > expected_payload_bytes
+    ):
         raise TrialRecordError("useful payload bytes exceed the workload payload")
-    if payload_result["received_bytes"] < payload_result["useful_bytes"]:
+    if (
+        payload_result["received_bytes"] is not None
+        and payload_result["useful_bytes"] is not None
+        and payload_result["received_bytes"] < payload_result["useful_bytes"]
+    ):
         raise TrialRecordError("received bytes cannot be less than useful payload bytes")
-    if payload_result["duplicate_bytes"] > payload_result["received_bytes"]:
+    if (
+        payload_result["duplicate_bytes"] is not None
+        and payload_result["received_bytes"] is not None
+        and payload_result["duplicate_bytes"] > payload_result["received_bytes"]
+    ):
         raise TrialRecordError("duplicate bytes cannot exceed received bytes")
-    if outcome_status == "complete" and payload_result["useful_bytes"] != expected_payload_bytes:
-        raise TrialRecordError("a complete trial must account for the full useful payload")
+    if outcome_status == "complete":
+        useful_bytes = _strict_nonnegative_integer(
+            payload_result["useful_bytes"], "payload useful bytes"
+        )
+        if useful_bytes != expected_payload_bytes:
+            raise TrialRecordError("a complete trial must account for the full useful payload")
     if "copy_accounting" in payload:
         payload_result["copy_accounting"] = payload["copy_accounting"]
 

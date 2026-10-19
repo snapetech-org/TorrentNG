@@ -1,6 +1,7 @@
 pub mod congestion;
 mod deadline;
 pub mod error;
+mod memory;
 pub mod packet;
 pub mod selective_ack;
 pub mod state;
@@ -12,6 +13,7 @@ pub use congestion::{
     TARGET_DELAY_US,
 };
 pub use error::UtpError;
+pub use memory::{UtpMemoryUsage, DEFAULT_UTP_ENDPOINT_BUFFER_BYTES};
 pub use packet::{PacketType, UtpExtension, UtpHeader, UtpPacket, HEADER_SIZE};
 pub use selective_ack::SelectiveAck;
 pub use state::{

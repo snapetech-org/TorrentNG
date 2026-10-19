@@ -3,7 +3,8 @@
 //! A snapshot refresh usually changes a small number of torrents. Keeping the
 //! item vector as one `Vec<T>` makes every refresh copy the complete pointer
 //! array before it can replace those few items. `ChunkedVec` shares unchanged
-//! chunks between generations and clones only the chunks containing updates.
+//! chunks and row values between generations; an update clones only the
+//! pointer array for its chunk and allocates a new owner for each changed row.
 
 use std::sync::Arc;
 
@@ -14,17 +15,15 @@ const BITSET_BITS_PER_CHUNK: usize = BITSET_WORDS_PER_CHUNK * u64::BITS as usize
 
 #[derive(Debug, Clone)]
 pub struct ChunkedVec<T> {
-    chunks: Arc<Vec<Arc<Vec<T>>>>,
+    chunks: Arc<Vec<Arc<Vec<Arc<T>>>>>,
     len: usize,
 }
 
 impl<T> ChunkedVec<T> {
-    pub fn from_vec(values: Vec<T>) -> Self
-    where
-        T: Clone,
-    {
+    pub fn from_vec(values: Vec<T>) -> Self {
         let len = values.len();
-        let chunks = values
+        let shared_values = values.into_iter().map(Arc::new).collect::<Vec<_>>();
+        let chunks = shared_values
             .chunks(SNAPSHOT_CHUNK_SIZE)
             .map(|chunk| Arc::new(chunk.to_vec()))
             .collect();
@@ -34,12 +33,12 @@ impl<T> ChunkedVec<T> {
         }
     }
 
-    /// Replace existing positions with copy-on-write at chunk granularity.
-    /// Callers must provide valid positions; invalid positions are ignored so
-    /// a stale journal entry cannot panic a request path.
+    /// Replace existing positions with copy-on-write at row and chunk
+    /// granularity. Unchanged rows keep their original allocations even when
+    /// their containing chunk is copied. Invalid positions are ignored so a
+    /// stale journal entry cannot panic a request path.
     pub fn replace_many<I>(&self, replacements: I) -> Self
     where
-        T: Clone,
         I: IntoIterator<Item = (usize, T)>,
     {
         let mut chunks = self.chunks.as_ref().clone();
@@ -50,7 +49,7 @@ impl<T> ChunkedVec<T> {
             let chunk_index = index / SNAPSHOT_CHUNK_SIZE;
             let offset = index % SNAPSHOT_CHUNK_SIZE;
             if let Some(chunk) = chunks.get_mut(chunk_index) {
-                Arc::make_mut(chunk)[offset] = value;
+                Arc::make_mut(chunk)[offset] = Arc::new(value);
             }
         }
         Self {
@@ -74,10 +73,13 @@ impl<T> ChunkedVec<T> {
         self.chunks
             .get(index / SNAPSHOT_CHUNK_SIZE)
             .and_then(|chunk| chunk.get(index % SNAPSHOT_CHUNK_SIZE))
+            .map(Arc::as_ref)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &T> {
-        self.chunks.iter().flat_map(|chunk| chunk.iter())
+        self.chunks
+            .iter()
+            .flat_map(|chunk| chunk.iter().map(Arc::as_ref))
     }
 
     pub fn range(&self, start: usize, end: usize) -> ChunkedRange<'_, T> {
@@ -99,7 +101,7 @@ impl<T> ChunkedVec<T> {
     }
 
     #[cfg(test)]
-    pub fn chunk_ptr(&self, index: usize) -> Option<*const Vec<T>> {
+    pub fn chunk_ptr(&self, index: usize) -> Option<*const Vec<Arc<T>>> {
         self.chunks.get(index).map(Arc::as_ptr)
     }
 }
@@ -271,6 +273,19 @@ mod tests {
         assert_eq!(first.chunk_ptr(0), second.chunk_ptr(0));
         assert_ne!(first.chunk_ptr(1), second.chunk_ptr(1));
         assert_eq!(first.chunk_ptr(2), second.chunk_ptr(2));
+    }
+
+    #[test]
+    fn replacing_one_item_shares_unchanged_rows_in_the_copied_chunk() {
+        let first = ChunkedVec::from_vec((0..SNAPSHOT_CHUNK_SIZE).collect::<Vec<_>>());
+        let unchanged = first.get(7).unwrap() as *const usize;
+        let replaced = first.get(8).unwrap() as *const usize;
+        let second = first.replace_many([(8, 99)]);
+
+        assert_eq!(second.get(7).unwrap() as *const usize, unchanged);
+        assert_ne!(second.get(8).unwrap() as *const usize, replaced);
+        assert_eq!(second.get(8), Some(&99));
+        assert_eq!(first.get(8), Some(&8));
     }
 
     #[test]

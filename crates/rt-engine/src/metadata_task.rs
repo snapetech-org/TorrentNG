@@ -38,7 +38,7 @@ use url::Url;
 use crate::command::EngineCmd;
 use crate::egress_policy::{OutboundEgressPolicy, OutboundTargetKind};
 use crate::network_budget::GlobalNetworkBudget;
-use crate::torrent_task::{TorrentCmd, UtpFrameDecoder, UtpWireBuffer};
+use crate::torrent_task::{connect_utp_with_deadline, TorrentCmd, UtpFrameDecoder, UtpWireBuffer};
 use crate::tracker_runtime::{is_udp_tracker_url, protocol_numwant, url_log_target};
 
 const METADATA_PIECE_SIZE: usize = 16 * 1024;
@@ -1698,7 +1698,7 @@ async fn fetch_from_outgoing_utp_peer(
     resources: ResourceGovernor,
     network_budget: &GlobalNetworkBudget,
 ) -> anyhow::Result<FetchedMetadata> {
-    let mut stream = network_budget.utp_runtime().connect(addr).await?;
+    let mut stream = connect_utp_with_deadline(network_budget, addr).await?;
     write_utp_handshake(&mut stream, info_hash).await?;
 
     let remote_hs = read_utp_handshake(&mut stream).await?;
@@ -3727,6 +3727,7 @@ mod tests {
             io_timeout: Duration::from_secs(1),
             max_datagram_len: 2048,
             max_retransmits: 1,
+            max_endpoint_buffer_bytes: rt_utp::DEFAULT_UTP_ENDPOINT_BUFFER_BYTES,
         };
         let listener = UtpListener::bind_with_config("127.0.0.1:0".parse().unwrap(), config)
             .await

@@ -11,12 +11,14 @@ between digest capture and exec cannot substitute another binary.
 from __future__ import annotations
 
 import hashlib
+import fcntl
 import math
 import os
 import re
 import signal
 import stat
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +27,7 @@ from typing import Callable, Mapping, Sequence
 
 SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+NETWORK_NAMESPACE_RE = re.compile(r"^tng[ts]-[a-f0-9]{8,12}$")
 READ_CHUNK_BYTES = 1024 * 1024
 
 
@@ -38,6 +41,8 @@ class ProcessIdentity:
     start_ticks: int
     executable_device: int
     executable_inode: int
+    network_namespace_device: int | None = None
+    network_namespace_inode: int | None = None
 
 
 def _file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
@@ -123,7 +128,11 @@ def _open_new_private_file(path: Path, label: str) -> int:
         os.close(current)
 
 
-def _process_identity(pid: int, proc_root: Path = Path("/proc")) -> ProcessIdentity | None:
+def _process_identity(
+    pid: int,
+    proc_root: Path = Path("/proc"),
+    expected_network_namespace: tuple[int, int] | None = None,
+) -> ProcessIdentity | None:
     try:
         raw_stat = (proc_root / str(pid) / "stat").read_text(encoding="ascii")
         close_paren = raw_stat.rfind(")")
@@ -134,16 +143,77 @@ def _process_identity(pid: int, proc_root: Path = Path("/proc")) -> ProcessIdent
             return None
         start_ticks = int(fields[19])
         executable = os.stat(proc_root / str(pid) / "exe")
+        namespace = os.stat(proc_root / str(pid) / "ns" / "net") if expected_network_namespace else None
     except (OSError, UnicodeDecodeError, ValueError):
         return None
     if not stat.S_ISREG(executable.st_mode):
+        return None
+    if namespace is not None and (
+        namespace.st_dev,
+        namespace.st_ino,
+    ) != expected_network_namespace:
         return None
     return ProcessIdentity(
         pid=pid,
         start_ticks=start_ticks,
         executable_device=executable.st_dev,
         executable_inode=executable.st_ino,
+        network_namespace_device=namespace.st_dev if namespace is not None else None,
+        network_namespace_inode=namespace.st_ino if namespace is not None else None,
     )
+
+
+def _validate_network_namespace(
+    name: str | None,
+    identity: Mapping[str, int] | None,
+) -> tuple[int, int] | None:
+    if name is None and identity is None:
+        return None
+    if not isinstance(name, str) or NETWORK_NAMESPACE_RE.fullmatch(name) is None:
+        raise ProcessSupervisorError("network namespace must use a task-owned tngt/tngs name")
+    if not isinstance(identity, Mapping) or set(identity) != {"device", "inode"}:
+        raise ProcessSupervisorError("network namespace launch requires its recorded device and inode")
+    device = identity.get("device")
+    inode = identity.get("inode")
+    if (
+        isinstance(device, bool)
+        or not isinstance(device, int)
+        or device < 0
+        or isinstance(inode, bool)
+        or not isinstance(inode, int)
+        or inode <= 0
+    ):
+        raise ProcessSupervisorError("network namespace identity is malformed")
+    return device, inode
+
+
+def _open_network_namespace(name: str, expected: tuple[int, int]) -> int:
+    try:
+        parent_fd = os.open(
+            "/run/netns",
+            os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+    except OSError as error:
+        raise ProcessSupervisorError("cannot open /run/netns without following links") from error
+    try:
+        descriptor = os.open(
+            name,
+            os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+            dir_fd=parent_fd,
+        )
+    except OSError as error:
+        os.close(parent_fd)
+        raise ProcessSupervisorError("cannot open the recorded network namespace safely") from error
+    else:
+        os.close(parent_fd)
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or (metadata.st_dev, metadata.st_ino) != expected:
+            raise ProcessSupervisorError("network namespace no longer matches its recorded identity")
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
 
 
 def _validate_command(
@@ -214,6 +284,8 @@ class ManagedProcess:
         pid_file_path: Path | None = None,
         cwd: Path | None = None,
         startup_timeout_seconds: float = 5.0,
+        network_namespace: str | None = None,
+        network_namespace_identity: Mapping[str, int] | None = None,
         proc_root: Path = Path("/proc"),
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
@@ -224,24 +296,48 @@ class ManagedProcess:
             raise ProcessSupervisorError("pidfd process control is required for safe client shutdown")
         if cwd is not None and (not cwd.is_absolute() or not cwd.is_dir()):
             raise ProcessSupervisorError("client working directory must be an existing absolute directory")
+        namespace_identity = _validate_network_namespace(
+            network_namespace, network_namespace_identity
+        )
 
         executable_fd, executable_metadata = _open_pinned_executable(
             binary_path, expected_binary_sha256
         )
         log_fd: int | None = None
+        namespace_fd: int | None = None
         process: subprocess.Popen[bytes] | None = None
         pidfd: int | None = None
         try:
+            if network_namespace is not None and namespace_identity is not None:
+                namespace_fd = _open_network_namespace(network_namespace, namespace_identity)
             log_fd = _open_new_private_file(log_path, "client log")
             descriptor_path = f"/proc/{os.getpid()}/fd/{executable_fd}"
+            if namespace_fd is None:
+                launch_arguments = arguments
+                launch_executable = descriptor_path
+                pass_fds: tuple[int, ...] = ()
+            else:
+                helper = Path(__file__).with_name("namespace_exec.py")
+                interpreter = Path(sys.executable).resolve(strict=True)
+                launch_arguments = [
+                    str(interpreter), "-I", str(helper),
+                    "--namespace-fd", str(namespace_fd),
+                    "--namespace-device", str(namespace_identity[0]),
+                    "--namespace-inode", str(namespace_identity[1]),
+                    "--executable-fd", str(executable_fd),
+                    "--", *arguments,
+                ]
+                launch_executable = str(interpreter)
+                pass_fds = (executable_fd, namespace_fd)
             try:
                 process = subprocess.Popen(
-                    arguments,
-                    executable=descriptor_path,
+                    launch_arguments,
+                    executable=launch_executable,
                     stdin=subprocess.DEVNULL,
                     stdout=log_fd,
                     stderr=subprocess.STDOUT,
                     close_fds=True,
+                    pass_fds=pass_fds,
                     start_new_session=True,
                     cwd=cwd,
                     env=dict(environment),
@@ -251,6 +347,9 @@ class ManagedProcess:
             finally:
                 os.close(log_fd)
                 log_fd = None
+                if namespace_fd is not None:
+                    os.close(namespace_fd)
+                    namespace_fd = None
 
             opened_after_exec = os.fstat(executable_fd)
             if _file_identity(executable_metadata) != _file_identity(opened_after_exec):
@@ -267,37 +366,42 @@ class ManagedProcess:
 
             deadline = monotonic() + float(startup_timeout_seconds)
             expected_executable = (executable_metadata.st_dev, executable_metadata.st_ino)
+            expected_namespace = namespace_identity
             while True:
                 if process.poll() is not None:
                     raise ProcessSupervisorError(
                         f"pinned client exited during startup with status {process.returncode}"
                     )
-                observed = _process_identity(process.pid, proc_root)
+                observed = _process_identity(process.pid, proc_root, expected_namespace)
                 if observed is not None:
                     if (observed.executable_device, observed.executable_inode) != expected_executable:
-                        raise ProcessSupervisorError("started process does not use the pinned executable inode")
-                    if pid_file_path is not None:
-                        pid_file_fd = _open_new_private_file(pid_file_path, "client PID file")
-                        try:
-                            pending = memoryview(f"{observed.pid}\n".encode("ascii"))
-                            while pending:
-                                written = os.write(pid_file_fd, pending)
-                                if written <= 0:
-                                    raise ProcessSupervisorError("short write while recording client PID")
-                                pending = pending[written:]
-                            os.fsync(pid_file_fd)
-                        finally:
-                            os.close(pid_file_fd)
-                    return cls(
-                        process,
-                        pidfd,
-                        observed,
-                        binary_path,
-                        expected_binary_sha256,
-                        executable_metadata.st_size,
-                        log_path,
-                        proc_root,
-                    )
+                        if expected_namespace is None:
+                            raise ProcessSupervisorError(
+                                "started process does not use the pinned executable inode"
+                            )
+                    else:
+                        if pid_file_path is not None:
+                            pid_file_fd = _open_new_private_file(pid_file_path, "client PID file")
+                            try:
+                                pending = memoryview(f"{observed.pid}\n".encode("ascii"))
+                                while pending:
+                                    written = os.write(pid_file_fd, pending)
+                                    if written <= 0:
+                                        raise ProcessSupervisorError("short write while recording client PID")
+                                    pending = pending[written:]
+                                os.fsync(pid_file_fd)
+                            finally:
+                                os.close(pid_file_fd)
+                        return cls(
+                            process,
+                            pidfd,
+                            observed,
+                            binary_path,
+                            expected_binary_sha256,
+                            executable_metadata.st_size,
+                            log_path,
+                            proc_root,
+                        )
                 remaining = deadline - monotonic()
                 if remaining <= 0:
                     raise ProcessSupervisorError("timed out waiting for the pinned client process identity")
@@ -311,6 +415,8 @@ class ManagedProcess:
                 os.close(pidfd)
             if log_fd is not None:
                 os.close(log_fd)
+            if namespace_fd is not None:
+                os.close(namespace_fd)
             if executable_fd >= 0:
                 os.close(executable_fd)
             raise
@@ -320,7 +426,16 @@ class ManagedProcess:
         return self.identity.pid
 
     def still_matches_pin(self) -> bool:
-        return _process_identity(self.pid, self._proc_root) == self.identity
+        namespace_identity = None
+        if (
+            self.identity.network_namespace_device is not None
+            and self.identity.network_namespace_inode is not None
+        ):
+            namespace_identity = (
+                self.identity.network_namespace_device,
+                self.identity.network_namespace_inode,
+            )
+        return _process_identity(self.pid, self._proc_root, namespace_identity) == self.identity
 
     def runtime_identity(self) -> dict[str, object]:
         """Return the native identity fields consumed by ``adapters.py``."""

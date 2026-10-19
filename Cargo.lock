@@ -1730,6 +1730,7 @@ dependencies = [
  "rt-storage",
  "rt-testkit",
  "rt-tracker",
+ "rusqlite",
  "serde_json",
  "tempfile",
  "tokio",

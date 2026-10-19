@@ -71,4 +71,7 @@ pub enum UtpError {
 
     #[error("uTP endpoint connection cap reached ({max})")]
     ConnectionLimit { max: usize },
+
+    #[error("uTP endpoint memory budget is exhausted (requested {requested} bytes, {available} available)")]
+    BufferBudgetExceeded { requested: usize, available: usize },
 }

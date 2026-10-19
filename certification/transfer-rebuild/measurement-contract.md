@@ -53,10 +53,15 @@ When network shaping is claimed, `environment.network.control_profile_id`
 names the pinned profile and `control_observation_sha256s` links every apply
 artifact from the manifest. The validator checks each artifact digest, its
 namespace and interface identity, its requested settings, and its `tc -j`
-qdisc readback against that profile. Current profiles shape one egress path
-with fixed delay, rate, and queue limit; they do not establish RTT or inject
-random loss/jitter. Trials must report a measured RTT separately or leave it
-`null`. Reset artifacts remain in the manifest as cleanup evidence and point
+qdisc readback against that profile. Profiles shape each endpoint's egress
+with a fixed delay, optional jitter, loss probability, rate, and queue limit;
+stochastic profiles require an explicit 64-bit `netem` seed that is retained
+in each control artifact and the trial. Paired seeds derive from the randomized
+pair identity, profile, and endpoint role, making reruns reproducible while
+keeping the two directions on independent random streams. `one_way_delay_ms`,
+`jitter_ms`, and `loss_percent` describe configured impairments; they are not
+measured RTT. The runner leaves `rtt_ms` `null` because it does not run an RTT
+probe. Reset artifacts remain in the manifest as cleanup evidence and point
 back to the apply artifact they removed.
 
 Client profiles require an exact version and expected settings. Readback is
@@ -92,6 +97,26 @@ observation window for seed trials, so it is diagnostic and does not replace
 is Linux/v1 only; it does not qualify v2 or hybrid behavior or establish a
 production-engine replacement decision.
 
+Paired runs use a task-owned bridge with separate target and seed network
+namespaces. The measured client's namespace contains only its task veth and
+the recorded connected `/24` route; the independent seed is observed and
+reported separately, outside the measured process tree. Private HTTP tracker
+announces are accepted only from those two recorded addresses and only for
+the fixture's info hashes. The tracker pins the seed's peer ID and listening
+port from its first announce before offering it to the measured client. A
+trial's `task_topology_sha256` is the manifest-file digest for the topology
+record; the topology's internal `artifact_sha256` is a separate self-digest
+used to guard task-local API access. Interface byte counters are attributable
+to one candidate only while the trial records this one-client namespace
+isolation.
+
+Task-specific metainfo is made by replacing only the top-level announce URL in
+the generated fixture copy. The helper checks the canonical fixture and torrent
+records and confirms that the exact encoded `info` dictionary and its v1/v2
+hashes remain unchanged; it rejects alternate tracker, webseed, and DHT-node
+fields. This keeps paired clients on one fixture identity without rebuilding
+or rereading multi-gigabyte payload files for every trial.
+
 Artifacts are referenced from a manifest by relative path and SHA-256. The
 manifest itself is immutable after the trial. Keep observer samples, client
 logs, transfer validation output, and failure diagnostics with the manifest;
@@ -113,10 +138,18 @@ Use monotonic time for durations. Record these intervals separately:
 5. `shutdown_ns`: orderly client shutdown and cleanup.
 
 `useful_payload_bytes` counts unique payload bytes accepted for the fixture.
+It may be `null` for an incomplete or invalid attempt when the harness has no
+source that can measure unique accepted ranges. A complete integrity-checked
+transfer must record the full expected payload size. The runner must not turn
+unknown useful-byte accounting into zero.
 It excludes protocol overhead, duplicate blocks, padding files, and bytes that
 were not accepted by the verifier. Report received, written, read, and duplicate
-bytes separately. Goodput is useful payload bytes divided by `transfer_ns`;
-never infer it from process lifetime or bytes offered by a peer.
+bytes separately when their counters are available. The trial schema records
+unobserved received, written, read, or duplicate counters as `null`; it never
+turns missing instrumentation into zero. Full useful bytes plus verified
+on-disk integrity can still establish completion when a client does not expose
+one of those counters. Goodput is useful payload bytes divided by
+`transfer_ns`; never infer it from process lifetime or bytes offered by a peer.
 
 ### Payload-copy accounting
 

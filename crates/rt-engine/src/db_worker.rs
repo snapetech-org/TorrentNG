@@ -298,6 +298,42 @@ impl DbExecutor {
         }
     }
 
+    /// Execute an authoritative journal change with SQLite `synchronous=FULL`
+    /// for the transaction, then return the worker connection to its normal
+    /// operating mode. The queue serializes this pragma window with every
+    /// other database operation.
+    pub(crate) async fn run_durable<T, F>(
+        &self,
+        operation: &'static str,
+        job: F,
+    ) -> Result<T, String>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut Connection) -> Result<T, String> + Send + 'static,
+    {
+        self.run(operation, move |db| {
+            db.execute_batch("PRAGMA synchronous = FULL;")
+                .map_err(|error| {
+                    format!("{operation}: enabling full SQLite durability failed: {error}")
+                })?;
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(db)));
+            if let Err(error) = db.execute_batch("PRAGMA synchronous = NORMAL;") {
+                warn!(
+                    component = "db",
+                    operation,
+                    result = "durability_mode_restore_failed",
+                    error = %error,
+                    "database worker remains in full-synchronous mode"
+                );
+            }
+            match result {
+                Ok(result) => result,
+                Err(payload) => std::panic::resume_unwind(payload),
+            }
+        })
+        .await
+    }
+
     pub(crate) fn run_blocking<T, F>(&self, operation: &'static str, job: F) -> Result<T, String>
     where
         T: Send + 'static,
@@ -1160,6 +1196,30 @@ mod tests {
         // Keep the test path alive for the worker's lifetime.
         std::mem::forget(file);
         worker
+    }
+
+    #[tokio::test]
+    async fn durable_job_uses_full_sync_and_restores_normal_sync() {
+        let temporary = tempfile::tempdir().unwrap();
+        let executor = DbExecutor::worker(DbWorker::new(temporary.path().join("state.db")));
+        let during = executor
+            .run_durable("test_transfer_cutover_durability", |db| {
+                let synchronous: i64 = db
+                    .pragma_query_value(None, "synchronous", |row| row.get(0))
+                    .map_err(|error| error.to_string())?;
+                Ok(synchronous)
+            })
+            .await
+            .unwrap();
+        assert_eq!(during, 2, "durable journal write runs with FULL sync");
+        let after: i64 = executor
+            .run("test_transfer_cutover_sync_restore", |db| {
+                db.pragma_query_value(None, "synchronous", |row| row.get(0))
+                    .map_err(|error| error.to_string())
+            })
+            .await
+            .unwrap();
+        assert_eq!(after, 1, "ordinary database work returns to NORMAL sync");
     }
 
     #[tokio::test]

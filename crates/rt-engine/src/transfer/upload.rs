@@ -182,6 +182,9 @@ impl UploadService {
         if self.jobs.len() >= self.limits.max_in_flight_jobs {
             return None;
         }
+        // Job IDs are never reused while the service is alive. Refuse new
+        // work before mutating an obligation if the counter is exhausted.
+        let next_job = self.next_job.checked_add(1)?;
         for _ in 0..self.ring.len() {
             let conn = self.ring.pop_front()?;
             let Some(state) = self.conns.get_mut(&conn) else {
@@ -207,7 +210,7 @@ impl UploadService {
                 continue;
             };
             let id = JobId(self.next_job);
-            self.next_job += 1;
+            self.next_job = next_job;
             state.in_flight += 1;
             self.in_flight_bytes += u64::from(block.length);
             let job = ReadJob { id, conn, block };
@@ -350,6 +353,22 @@ mod tests {
             assert_eq!(decision, InboundDecision::Queue, "request {index}");
         }
         assert_eq!(service.queued(conn), 10_000);
+    }
+
+    #[test]
+    fn exhausted_job_identity_does_not_consume_an_upload_obligation() {
+        let mut service = UploadService::new(UploadLimits::default());
+        let conn = ready(&mut service, 1, true);
+        assert_eq!(
+            service.admit(conn, block(0, 0), true),
+            Some(InboundDecision::Queue)
+        );
+        service.next_job = u64::MAX;
+
+        assert!(service.next_job().is_none());
+        assert_eq!(service.queued(conn), 1);
+        assert_eq!(service.in_flight_jobs(), 0);
+        assert!(service.check_invariants().is_ok());
     }
 
     #[test]

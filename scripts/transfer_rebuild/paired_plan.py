@@ -19,6 +19,7 @@ from typing import Any
 
 from adapters import AdapterError, CLIENT_IDS, load_pins_document
 from fixtures import load_fixture_profile_document
+from strict_json import StrictJsonError, loads as strict_json_loads
 
 
 PLAN_SCHEMA_VERSION = "transfer-paired-plan-v1"
@@ -124,8 +125,8 @@ def build_case_catalog(profile_path: Path = DEFAULT_PROFILE_PATH) -> dict[str, A
     profile_path = Path(profile_path)
     try:
         profiles_bytes, profiles_sha256 = _read_regular_file(profile_path, "fixture profile file")
-        profiles_document = json.loads(profiles_bytes)
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as error:
+        profiles_document = strict_json_loads(profiles_bytes, label="fixture profile file")
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, StrictJsonError) as error:
         raise PlanError(f"cannot read fixture profile file: {error}") from error
     if (
         not isinstance(profiles_document, dict)
@@ -433,8 +434,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         pins_bytes, pins_sha256 = _read_regular_file(args.pins, "client pin file")
         try:
-            pins_document = json.loads(pins_bytes)
-        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            pins_document = strict_json_loads(pins_bytes, label="client pin file")
+        except (json.JSONDecodeError, UnicodeDecodeError, StrictJsonError) as error:
             raise PlanError(f"cannot read client pin file: {error}") from error
         pinned_clients = load_pins_document(pins_document)
         catalog = build_case_catalog(args.profiles)

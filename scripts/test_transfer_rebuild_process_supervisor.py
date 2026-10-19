@@ -17,6 +17,7 @@ sys.path.insert(0, str(TOOLS))
 from process_supervisor import (  # noqa: E402
     ManagedProcess,
     ProcessSupervisorError,
+    _validate_network_namespace,
 )
 
 
@@ -101,6 +102,20 @@ class ProcessSupervisorTests(unittest.TestCase):
                 log_path=self.root / "client.log",
                 environment={},
             )
+
+    def test_network_namespace_launch_requires_a_task_name_and_recorded_identity(self) -> None:
+        with self.assertRaisesRegex(ProcessSupervisorError, "task-owned"):
+            _validate_network_namespace("eth0", {"device": 1, "inode": 2})
+        with self.assertRaisesRegex(ProcessSupervisorError, "recorded device and inode"):
+            _validate_network_namespace("tngt-a1b2c3d4", None)
+        with self.assertRaisesRegex(ProcessSupervisorError, "identity is malformed"):
+            _validate_network_namespace("tngt-a1b2c3d4", {"device": True, "inode": 2})
+        self.assertEqual(
+            _validate_network_namespace(
+                "tngt-a1b2c3d4", {"device": 1, "inode": 2}
+            ),
+            (1, 2),
+        )
 
 
 if __name__ == "__main__":

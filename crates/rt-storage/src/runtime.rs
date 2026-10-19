@@ -2,10 +2,9 @@
 //!
 //! Wires the three Storage NG primitives together — the open-handle cache,
 //! the bounded frame pool, and the disk backend — behind one accessor.
-//! The frame-pool byte budget is process-wide. Each storage file cache uses
-//! the RLIMIT-derived local ceiling for cache-plus-in-flight descriptor
-//! admission, and all such caches draw from one shared managed-storage lease
-//! quota. Unrelated process descriptors remain separate.
+//! The frame-pool byte budget and secure path-keyed file catalog are
+//! process-wide. Cached and in-flight descriptors share the RLIMIT-derived
+//! process admission gate; unrelated process descriptors remain separate.
 //!
 //! Configuration is read from the environment at first use (defaults are
 //! sized for a large seedbox):
@@ -25,11 +24,9 @@ use crate::backend::{
     BackendKind, BackendRequest, DiskBackend, FixedBufferStrategy, SelectedDiskBackend,
 };
 use crate::error::StorageError;
-use crate::fd_limit::process_handle_cache_capacity;
 use crate::frame::{global_frame_pool, Frame, FramePool};
 use crate::handle_cache::{HandleCache, OpenFile};
 
-const DEFAULT_HANDLE_IDLE_SECS: u64 = 30;
 /// How often the background sweeper closes idle handles.
 const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -44,10 +41,9 @@ pub struct StorageRuntime {
 
 impl StorageRuntime {
     fn from_env() -> Self {
-        let cap = process_handle_cache_capacity();
-
-        let idle_secs = env_u64("TNG_STORAGE_HANDLE_IDLE_SECS", DEFAULT_HANDLE_IDLE_SECS);
-        let handles = HandleCache::new(cap, Duration::from_secs(idle_secs));
+        let handles = HandleCache::process_global();
+        let cap = handles.capacity();
+        let idle_secs = handles.idle_ttl().as_secs();
         let frames = global_frame_pool().clone();
         let backend_request = std::env::var("TNG_STORAGE_BACKEND")
             .ok()
@@ -266,14 +262,6 @@ fn map_backend_io_error(
     } else {
         StorageError::io(path.display().to_string(), error)
     }
-}
-
-fn env_u64(key: &str, default: u64) -> u64 {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .filter(|&v| v > 0)
-        .unwrap_or(default)
 }
 
 #[cfg(test)]

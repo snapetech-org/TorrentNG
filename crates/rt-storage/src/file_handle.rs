@@ -2,7 +2,7 @@
 
 use std::fs::File;
 use std::ops::Deref;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 use crate::fd_limit::process_handle_cache_capacity;
@@ -18,7 +18,7 @@ static PROCESS_DESCRIPTOR_BUDGET_WAITS: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug)]
 pub(crate) struct DescriptorLimiter {
-    limit: usize,
+    limit: AtomicUsize,
     state: Mutex<DescriptorState>,
     process: Arc<DescriptorGate>,
     signal: Arc<DescriptorSignal>,
@@ -127,7 +127,7 @@ impl DescriptorLimiter {
         signal: Arc<DescriptorSignal>,
     ) -> Arc<Self> {
         Arc::new(Self {
-            limit: limit.max(1),
+            limit: AtomicUsize::new(limit.max(1)),
             state: Mutex::new(DescriptorState::default()),
             process,
             signal,
@@ -153,7 +153,7 @@ impl DescriptorLimiter {
             return None;
         }
         let mut state = self.lock_state();
-        if state.active >= self.limit {
+        if state.active >= self.limit.load(Ordering::Acquire) {
             return None;
         }
         process.active += 1;
@@ -179,6 +179,11 @@ impl DescriptorLimiter {
 
     pub(crate) fn active(&self) -> usize {
         self.lock_state().active
+    }
+
+    pub(crate) fn tighten_limit(&self, limit: usize) {
+        self.limit.fetch_min(limit.max(1), Ordering::AcqRel);
+        self.signal.notify_waiters();
     }
 
     fn notify_waiters(&self) {

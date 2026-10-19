@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:torrentng:schema:transfer-rollout-evidence-v1",
+  "title": "Transfer rebuild rollout evidence index",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source_commit",
+    "manifest_sha256",
+    "scorecard_sha256",
+    "candidate_client_id",
+    "stages"
+  ],
+  "properties": {
+    "schema_version": { "const": "transfer-rollout-evidence-v1" },
+    "source_commit": { "$ref": "#/$defs/git_sha" },
+    "manifest_sha256": { "$ref": "#/$defs/sha256" },
+    "scorecard_sha256": { "$ref": "#/$defs/sha256" },
+    "candidate_client_id": {
+      "enum": ["torrentngd", "qbittorrent", "transmission", "deluge", "rtorrent", "rqbit", "urtorrent"]
+    },
+    "stages": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["IO-016", "NET-116", "PERF-116", "SYS-015"],
+      "properties": {
+        "IO-016": { "$ref": "#/$defs/stage" },
+        "NET-116": { "$ref": "#/$defs/stage" },
+        "PERF-116": { "$ref": "#/$defs/stage" },
+        "SYS-015": { "$ref": "#/$defs/stage" }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "git_sha": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "evidence", "notes"],
+      "properties": {
+        "status": { "enum": ["passed", "blocked"] },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidence" }
+        },
+        "notes": { "type": "string", "maxLength": 4096 }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "sha256"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

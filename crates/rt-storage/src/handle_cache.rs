@@ -13,10 +13,13 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use once_cell::sync::Lazy;
+
+use crate::fd_limit::process_handle_cache_capacity;
 use crate::file_handle::{DescriptorLimiter, DescriptorPermit, LeasedFile, LeasedFileHandle};
 use crate::open::{
     identity_matches_path, normalized_storage_path, open_path_no_follow_current_identity,
@@ -87,6 +90,7 @@ struct Counters {
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct HandleCacheStats {
+    pub catalog_id: u64,
     pub capacity: usize,
     pub open_files: usize,
     pub active_descriptors: usize,
@@ -101,33 +105,95 @@ pub(crate) struct HandleCacheStats {
 #[derive(Debug, Clone)]
 pub struct HandleCache {
     inner: Arc<Mutex<Inner>>,
-    cap: usize,
-    idle_ttl: Duration,
+    cap: Arc<AtomicUsize>,
+    idle_ttl_ns: Arc<AtomicU64>,
     descriptors: Arc<DescriptorLimiter>,
     counters: Arc<Counters>,
     epoch: Instant,
     last_sweep_ns: Arc<AtomicU64>,
+    /// Zero is reserved for isolated or otherwise unidentified catalogs.
+    catalog_id: u64,
+}
+
+const PROCESS_CATALOG_ID: u64 = 1;
+const DEFAULT_PROCESS_HANDLE_IDLE_SECS: u64 = 30;
+
+static PROCESS_HANDLE_CATALOG: Lazy<HandleCache> = Lazy::new(|| {
+    let idle_secs = std::env::var("TNG_STORAGE_HANDLE_IDLE_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_PROCESS_HANDLE_IDLE_SECS);
+    HandleCache::new_with_catalog_id(
+        process_handle_cache_capacity(),
+        Duration::from_secs(idle_secs),
+        PROCESS_CATALOG_ID,
+    )
+});
+
+fn duration_nanos(duration: Duration) -> u64 {
+    duration.as_nanos().min(u128::from(u64::MAX)) as u64
 }
 
 impl HandleCache {
     pub fn new(cap: usize, idle_ttl: Duration) -> Self {
+        Self::new_with_catalog_id(cap, idle_ttl, 0)
+    }
+
+    fn new_with_catalog_id(cap: usize, idle_ttl: Duration, catalog_id: u64) -> Self {
         HandleCache {
             inner: Arc::new(Mutex::new(Inner {
                 map: HashMap::new(),
                 lru: BTreeMap::new(),
                 next_tick: 0,
             })),
-            cap,
-            idle_ttl,
+            cap: Arc::new(AtomicUsize::new(cap)),
+            idle_ttl_ns: Arc::new(AtomicU64::new(duration_nanos(idle_ttl))),
             descriptors: DescriptorLimiter::new(cap),
             counters: Arc::new(Counters::default()),
             epoch: Instant::now(),
             last_sweep_ns: Arc::new(AtomicU64::new(0)),
+            catalog_id,
         }
     }
 
+    /// The single path-keyed descriptor catalog shared by storage schedulers
+    /// and the direct storage runtime in a production process.
+    pub fn process_global() -> Self {
+        PROCESS_HANDLE_CATALOG.clone()
+    }
+
+    pub(crate) fn process_global_with_bounds(capacity: usize, idle_ttl: Duration) -> Self {
+        let cache = Self::process_global();
+        cache.tighten_bounds(capacity, idle_ttl);
+        cache
+    }
+
+    pub(crate) fn catalog_id(&self) -> u64 {
+        self.catalog_id
+    }
+
     pub fn capacity(&self) -> usize {
-        self.cap
+        self.cap.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn idle_ttl(&self) -> Duration {
+        Duration::from_nanos(self.idle_ttl_ns.load(Ordering::Acquire))
+    }
+
+    fn tighten_bounds(&self, capacity: usize, idle_ttl: Duration) {
+        self.cap.fetch_min(capacity, Ordering::AcqRel);
+        self.descriptors.tighten_limit(capacity);
+        let requested_ttl = duration_nanos(idle_ttl);
+        if requested_ttl == 0 {
+            self.idle_ttl_ns.store(0, Ordering::Release);
+        } else {
+            let current_ttl = self.idle_ttl_ns.load(Ordering::Acquire);
+            if current_ttl != 0 {
+                self.idle_ttl_ns.fetch_min(requested_ttl, Ordering::AcqRel);
+            }
+        }
+        let mut inner = self.lock_inner();
+        self.evict_to_cap(&mut inner, self.capacity());
     }
 
     pub(crate) fn active_descriptors(&self) -> usize {
@@ -142,7 +208,8 @@ impl HandleCache {
             .map(|path| path.as_os_str().as_encoded_bytes().len())
             .fold(0usize, usize::saturating_add);
         HandleCacheStats {
-            capacity: self.cap,
+            catalog_id: self.catalog_id,
+            capacity: self.capacity(),
             open_files: inner.map.len(),
             active_descriptors: self.descriptors.active(),
             // The map and LRU each retain an Arc path key, sharing the path
@@ -388,7 +455,7 @@ impl HandleCache {
                 last_used: Instant::now(),
             },
         );
-        self.evict_to_cap(inner, self.cap);
+        self.evict_to_cap(inner, self.capacity());
         file
     }
 
@@ -466,10 +533,11 @@ impl HandleCache {
     }
 
     fn sweep_idle_if_due_locked(&self, inner: &mut Inner, now: Instant) {
-        if self.idle_ttl.is_zero() {
+        let idle_ttl = self.idle_ttl();
+        if idle_ttl.is_zero() {
             return;
         }
-        let interval = (self.idle_ttl / 4).clamp(Duration::from_millis(1), Duration::from_secs(1));
+        let interval = (idle_ttl / 4).clamp(Duration::from_millis(1), Duration::from_secs(1));
         let elapsed_ns = now
             .saturating_duration_since(self.epoch)
             .as_nanos()
@@ -484,7 +552,8 @@ impl HandleCache {
     }
 
     fn sweep_idle_locked(&self, inner: &mut Inner, now: Instant) -> usize {
-        if self.idle_ttl.is_zero() {
+        let idle_ttl = self.idle_ttl();
+        if idle_ttl.is_zero() {
             return 0;
         }
         let mut closed = 0usize;
@@ -492,7 +561,7 @@ impl HandleCache {
             let expired = inner
                 .map
                 .get(key.as_ref())
-                .is_none_or(|entry| now.duration_since(entry.last_used) >= self.idle_ttl);
+                .is_none_or(|entry| now.duration_since(entry.last_used) >= idle_ttl);
             if !expired {
                 break;
             }
@@ -633,6 +702,16 @@ mod tests {
     #[cfg(target_os = "linux")]
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
+
+    #[test]
+    fn process_global_handle_catalog_has_one_identity_and_owner_map() {
+        let first = HandleCache::process_global();
+        let second = HandleCache::process_global();
+        assert_ne!(first.catalog_id(), 0);
+        assert_eq!(first.catalog_id(), second.catalog_id());
+        assert!(Arc::ptr_eq(&first.inner, &second.inner));
+        assert!(Arc::ptr_eq(&first.descriptors, &second.descriptors));
+    }
 
     fn tmp_file(dir: &Path, name: &str, content: &[u8]) -> PathBuf {
         let p = dir.join(name);

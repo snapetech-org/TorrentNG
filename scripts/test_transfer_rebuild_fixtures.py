@@ -93,6 +93,22 @@ class FixtureGenerationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "size mismatch|digest mismatch"):
                 verify_fixture(root)
 
+    def test_fixture_manifest_rejects_duplicate_json_fields(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="transfer-fixture-duplicate-") as temporary:
+            root = Path(temporary) / "fixture"
+            generate_fixture(root, "stable", [FixtureFile("data.bin", 128)])
+            manifest_path = root / "fixture.json"
+            manifest_path.write_text(
+                manifest_path.read_text(encoding="utf-8").replace(
+                    '"format": "transfer-fixture-v1"',
+                    '"format": "transfer-fixture-v1", "format": "transfer-fixture-v1"',
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "duplicate JSON field"):
+                verify_fixture(root)
+
     def test_existing_destination_and_unsafe_names_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory(prefix="transfer-fixtures-") as temporary:
             root = Path(temporary)
@@ -263,6 +279,15 @@ class FixtureGenerationTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "identity digest"):
                 verify_fixture(fixture)
+
+            profile_path.write_text(
+                '{"format":"transfer-fixture-profiles-v1","profiles":{"test/small":'
+                '{"files":[{"name":"data.bin","size_bytes":1e999}],'
+                '"piece_length":16384,"torrent_kind":"v1","torrent_name":"profile-test"}}}',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "outside the finite range"):
+                load_fixture_profile(profile_path, "test/small")
 
     def test_cache_state_record_is_observed_scoped_and_exclusive(self) -> None:
         with tempfile.TemporaryDirectory(prefix="transfer-cache-control-") as temporary:

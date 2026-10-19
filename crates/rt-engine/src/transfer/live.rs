@@ -1,10 +1,11 @@
-//! Actor-facing ownership ledger during the staged hybrid migration.
+//! Actor-facing ownership ledger for v1, pure-v2, and hybrid peer paths.
 //!
 //! Non-hybrid v1 tasks use the plain ledger. Once validated hybrid metadata is
 //! attached, the same actor switches to `HybridLedger` before registering any
-//! peer or restoring partial state. Its current v1 wire path stays source
-//! compatible; plane-aware operations expose canonical ownership to the v2
-//! path while the handshake and scheduling integration is pending.
+//! peer or restoring partial state. Peer adapters bind the negotiated wire
+//! plane at admission and project request/response actions at the socket
+//! boundary. Candidate ranking, peer-local assembly, and verification remain
+//! actor-owned because their geometry and protocol rules differ.
 
 use std::sync::Arc;
 

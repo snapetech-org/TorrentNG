@@ -2,6 +2,7 @@ use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     convert::Infallible,
+    future::Future,
     marker::PhantomData,
     net::SocketAddr,
     path::PathBuf,
@@ -22,11 +23,12 @@ use axum::{
     Json,
 };
 use base64::Engine as _;
+use futures::{stream, StreamExt as _};
 use rt_api_model::{
     api_token_allowed, bearer_token, AddTorrentRequest, AddTorrentResponse, ApiError,
     ApiRuntimeMetricsSnapshot, ApiSseClientGuard, FileInfo, TorrentDetail, TorrentSummary,
 };
-use rt_db::MAX_TORRENT_FILE_PATH_BYTES;
+use rt_db::{TransferOwner, MAX_TORRENT_FILE_PATH_BYTES};
 use rt_engine::{
     EngineDatabaseWorkerStats, EngineGlobalLimits, EngineHandle, EngineJob, EngineNetworkFeatures,
     EngineStorageRoot, EngineSubsystemHealth, EngineTorrentLimits, PeerIngressStats, QueueMove,
@@ -68,6 +70,7 @@ const SETTING_NATIVE_WORKFLOWS: &str = "native.workflows";
 const SETTING_NATIVE_RSS_RULES: &str = "native.rss_rules";
 const SETTING_NATIVE_WORKFLOW_RUNS: &str = "native.workflow_runs";
 const MAX_NATIVE_JSON_BYTES: usize = 1024 * 1024;
+const MAX_NATIVE_BULK_ACTION_CONCURRENCY: usize = 32;
 const MAX_NATIVE_JSON_ENTRIES: usize = 4096;
 const MAX_NATIVE_WORKFLOW_RUNS: usize = 200;
 const MAX_NATIVE_WORKFLOW_MATCHES: usize = 10_000;
@@ -2406,6 +2409,50 @@ pub async fn update_torrent_limits(
         Err(e) => (
             StatusCode::BAD_REQUEST,
             Json(serde_json::to_value(ApiError::bad_request(e)).unwrap()),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetTransferOwnerRequest {
+    owner: TransferOwner,
+}
+
+/// `PUT /api/v1/torrents/{hash}/transfer-owner` — change the journaled actor route.
+pub async fn set_transfer_owner(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(info_hash): Path<String>,
+    Json(request): Json<SetTransferOwnerRequest>,
+) -> impl IntoResponse {
+    if let Some(response) = require_mutation_auth(&state, &headers) {
+        return response;
+    }
+    if let Err(error) = validate_native_info_hash(&info_hash) {
+        return native_payload_too_large(error);
+    }
+    if !torrent_exists(&state, &info_hash).await {
+        return not_found(info_hash);
+    }
+    let Some(engine) = &state.engine else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(
+                serde_json::to_value(ApiError::internal(
+                    "TorrentNG engine is not available".to_owned(),
+                ))
+                .unwrap(),
+            ),
+        )
+            .into_response();
+    };
+    match engine.set_transfer_owner(info_hash, request.owner).await {
+        Ok(owner) => (StatusCode::OK, Json(serde_json::json!({ "owner": owner }))).into_response(),
+        Err(error) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::to_value(ApiError::bad_request(error)).unwrap()),
         )
             .into_response(),
     }
@@ -4767,6 +4814,36 @@ pub async fn delete_tag(
     StatusCode::NO_CONTENT.into_response()
 }
 
+fn bulk_action_concurrency(action: &str) -> usize {
+    if matches!(action, "start" | "reannounce") {
+        1
+    } else {
+        MAX_NATIVE_BULK_ACTION_CONCURRENCY
+    }
+}
+
+async fn run_bounded_bulk_operations<T, F, Fut, O>(
+    items: Vec<T>,
+    max_in_flight: usize,
+    operation: F,
+) -> Vec<(T, O)>
+where
+    T: Clone,
+    F: Fn(T) -> Fut + Clone,
+    Fut: Future<Output = O>,
+{
+    stream::iter(items.into_iter().map(move |item| {
+        let operation = operation.clone();
+        async move {
+            let result = operation(item.clone()).await;
+            (item, result)
+        }
+    }))
+    .buffered(max_in_flight.max(1))
+    .collect()
+    .await
+}
+
 /// `POST /api/v1/bulk/{action}` — apply a TorrentNG bulk operation.
 pub async fn bulk_action(
     State(state): State<AppState>,
@@ -4858,11 +4935,22 @@ pub async fn bulk_action(
         )
             .into_response();
     }
-    let mut applied = Vec::new();
-    for hash in &hashes {
-        let result = run_bulk_action(&state, hash, &action, &req).await;
+
+    // Start and reannounce have multi-step or fallback semantics whose order
+    // is externally visible. Keep those actions serial; independent per-hash
+    // mutations and stop/recheck work use a fixed concurrency bound so large
+    // selections do not turn into either a serial tail or an unbounded burst.
+    let outcomes = run_bounded_bulk_operations(hashes, bulk_action_concurrency(&action), |hash| {
+        let state = &state;
+        let action = &action;
+        let req = &req;
+        async move { run_bulk_action(state, &hash, action, req).await }
+    })
+    .await;
+    let mut applied = Vec::with_capacity(outcomes.len());
+    for (hash, result) in outcomes {
         match result {
-            Ok(()) => applied.push(hash.clone()),
+            Ok(()) => applied.push(hash),
             Err(error) => errors.push(format!("{hash}: {error}")),
         }
     }
@@ -9927,6 +10015,71 @@ mod tests {
             .unwrap();
         }
         (build_router(state), hash)
+    }
+
+    #[test]
+    fn transfer_owner_request_is_strict_and_uses_stable_route_names() {
+        let request: SetTransferOwnerRequest =
+            serde_json::from_str(r#"{"owner":"shared_core"}"#).unwrap();
+        assert_eq!(request.owner, TransferOwner::SharedCore);
+        assert!(serde_json::from_str::<SetTransferOwnerRequest>(
+            r#"{"owner":"shared_core","force":true}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<SetTransferOwnerRequest>(r#"{"owner":"unknown"}"#).is_err());
+    }
+
+    #[tokio::test]
+    async fn transfer_owner_route_is_registered_for_torrents() {
+        let (router, hash) = setup_app_with_torrent().await;
+        let response = router
+            .oneshot(
+                Request::put(format!("/api/v1/torrents/{hash}/transfer-owner"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"owner":"unknown"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn bulk_operation_runner_bounds_concurrency_and_preserves_input_order() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let outcomes = run_bounded_bulk_operations((0..48).collect::<Vec<_>>(), 4, {
+            let active = Arc::clone(&active);
+            let peak = Arc::clone(&peak);
+            move |value| {
+                let active = Arc::clone(&active);
+                let peak = Arc::clone(&peak);
+                async move {
+                    let running = active.fetch_add(1, Ordering::AcqRel) + 1;
+                    peak.fetch_max(running, Ordering::AcqRel);
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                    active.fetch_sub(1, Ordering::AcqRel);
+                    value * 2
+                }
+            }
+        })
+        .await;
+
+        assert_eq!(
+            outcomes,
+            (0..48).map(|value| (value, value * 2)).collect::<Vec<_>>()
+        );
+        assert_eq!(bulk_action_concurrency("start"), 1);
+        assert_eq!(bulk_action_concurrency("reannounce"), 1);
+        assert_eq!(
+            bulk_action_concurrency("stop"),
+            MAX_NATIVE_BULK_ACTION_CONCURRENCY
+        );
+        assert!(peak.load(Ordering::Acquire) > 1);
+        assert!(peak.load(Ordering::Acquire) <= 4);
+        assert_eq!(active.load(Ordering::Acquire), 0);
     }
 
     #[test]

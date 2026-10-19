@@ -124,17 +124,39 @@
           "properties": {
             "link_limit_bps": { "type": ["integer", "null"], "minimum": 0 },
             "rtt_ms": { "type": ["number", "null"], "minimum": 0 },
+            "one_way_delay_ms": { "type": ["integer", "null"], "minimum": 0 },
+            "jitter_ms": { "type": ["integer", "null"], "minimum": 0 },
             "loss_percent": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
             "control_profile_id": {
               "type": ["string", "null"],
-              "enum": [null, "lan-1g-1ms-v1", "metro-100m-10ms-v1", "wan-20m-30ms-v1"]
+              "enum": [
+                null,
+                "lan-1g-1ms-v1",
+                "metro-100m-10ms-v1",
+                "wan-20m-30ms-v1",
+                "metro-100m-10ms-jitter-loss-v1",
+                "wan-20m-30ms-jitter-loss-v1"
+              ]
             },
             "control_observation_sha256s": {
               "type": "array",
               "uniqueItems": true,
               "items": { "$ref": "#/$defs/sha256" }
             },
-            "network_profile_id": { "type": ["string", "null"] }
+            "control_prng_seeds": {
+              "type": ["array", "null"],
+              "maxItems": 2,
+              "uniqueItems": true,
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 18446744073709551615
+              }
+            },
+            "network_profile_id": { "type": ["string", "null"] },
+            "task_topology_sha256": {
+              "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+            }
           }
         },
         "independent_ceiling_sha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
@@ -170,11 +192,12 @@
       "additionalProperties": false,
       "required": ["useful_bytes", "received_bytes", "written_bytes", "read_bytes", "duplicate_bytes"],
       "properties": {
-        "useful_bytes": { "$ref": "#/$defs/nonnegative_integer" },
-        "received_bytes": { "$ref": "#/$defs/nonnegative_integer" },
-        "written_bytes": { "$ref": "#/$defs/nonnegative_integer" },
-        "read_bytes": { "$ref": "#/$defs/nonnegative_integer" },
-        "duplicate_bytes": { "$ref": "#/$defs/nonnegative_integer" },
+        "useful_bytes": { "anyOf": [{ "$ref": "#/$defs/nonnegative_integer" }, { "type": "null" }] },
+        "received_bytes": { "anyOf": [{ "$ref": "#/$defs/nonnegative_integer" }, { "type": "null" }] },
+        "written_bytes": { "anyOf": [{ "$ref": "#/$defs/nonnegative_integer" }, { "type": "null" }] },
+        "read_bytes": { "anyOf": [{ "$ref": "#/$defs/nonnegative_integer" }, { "type": "null" }] },
+        "uploaded_bytes": { "anyOf": [{ "$ref": "#/$defs/nonnegative_integer" }, { "type": "null" }] },
+        "duplicate_bytes": { "anyOf": [{ "$ref": "#/$defs/nonnegative_integer" }, { "type": "null" }] },
         "copy_accounting": {
           "type": "object",
           "additionalProperties": false,

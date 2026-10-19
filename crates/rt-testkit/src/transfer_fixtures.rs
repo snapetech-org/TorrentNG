@@ -56,6 +56,22 @@ pub struct TransferCompatibilityFixture {
 
 /// Build one repeatable, private transfer fixture for a protocol shape.
 pub fn transfer_compatibility_fixture(protocol: TransferProtocol) -> TransferCompatibilityFixture {
+    transfer_compatibility_fixture_with_privacy(protocol, true)
+}
+
+/// Build the same repeatable protocol fixture without the private-torrent
+/// inbound admission rule. Use this for direct-peer transfer tests that are
+/// not specifically testing private peer authorization.
+pub fn public_transfer_compatibility_fixture(
+    protocol: TransferProtocol,
+) -> TransferCompatibilityFixture {
+    transfer_compatibility_fixture_with_privacy(protocol, false)
+}
+
+fn transfer_compatibility_fixture_with_privacy(
+    protocol: TransferProtocol,
+    private: bool,
+) -> TransferCompatibilityFixture {
     let payload_files = vec![
         TransferFixtureFile {
             path: vec!["alpha.bin"],
@@ -70,7 +86,7 @@ pub fn transfer_compatibility_fixture(protocol: TransferProtocol) -> TransferCom
             bytes: deterministic_payload(1, 9_001),
         },
     ];
-    let torrent = build_torrent(protocol, &payload_files);
+    let torrent = build_torrent(protocol, &payload_files, private);
 
     TransferCompatibilityFixture {
         protocol,
@@ -92,6 +108,18 @@ pub fn transfer_compatibility_matrix() -> Vec<TransferCompatibilityFixture> {
     .collect()
 }
 
+/// Public-torrent counterpart for direct-peer protocol and restart tests.
+pub fn public_transfer_compatibility_matrix() -> Vec<TransferCompatibilityFixture> {
+    [
+        TransferProtocol::V1,
+        TransferProtocol::V2,
+        TransferProtocol::Hybrid,
+    ]
+    .into_iter()
+    .map(public_transfer_compatibility_fixture)
+    .collect()
+}
+
 /// Build valid, deterministic one-file v1 metainfo for a dormant production
 /// catalog fixture. The info dictionary contains a unique display name and a
 /// content-derived piece hash, so each result has a distinct real info hash.
@@ -104,7 +132,7 @@ pub fn production_catalog_metainfo(index: usize) -> Vec<u8> {
         path: vec!["payload.bin"],
         bytes: deterministic_payload(index, 1),
     }];
-    build_torrent_named(TransferProtocol::V1, name.as_bytes(), &payload_files)
+    build_torrent_named(TransferProtocol::V1, name.as_bytes(), &payload_files, true)
 }
 
 #[derive(Debug)]
@@ -126,14 +154,19 @@ fn deterministic_payload(file_index: usize, length: usize) -> Vec<u8> {
         .collect()
 }
 
-fn build_torrent(protocol: TransferProtocol, payload_files: &[TransferFixtureFile]) -> Vec<u8> {
-    build_torrent_named(protocol, b"transfer-compatibility", payload_files)
+fn build_torrent(
+    protocol: TransferProtocol,
+    payload_files: &[TransferFixtureFile],
+    private: bool,
+) -> Vec<u8> {
+    build_torrent_named(protocol, b"transfer-compatibility", payload_files, private)
 }
 
 fn build_torrent_named(
     protocol: TransferProtocol,
     torrent_name: &[u8],
     payload_files: &[TransferFixtureFile],
+    private: bool,
 ) -> Vec<u8> {
     let mut info_fields = vec![
         (b"name".as_slice(), BValue::Bytes(torrent_name)),
@@ -141,8 +174,10 @@ fn build_torrent_named(
             b"piece length".as_slice(),
             BValue::Int(TRANSFER_FIXTURE_PIECE_LENGTH as i64),
         ),
-        (b"private".as_slice(), BValue::Int(1)),
     ];
+    if private {
+        info_fields.push((b"private".as_slice(), BValue::Int(1)));
+    }
 
     let (v1_entries, v1_pieces) = if protocol.has_v1() {
         let (entries, stream) = build_v1_view(payload_files, protocol == TransferProtocol::Hybrid);
@@ -365,7 +400,10 @@ mod tests {
                     assert_eq!(v1.files.iter().filter(|file| !file.pad).count(), 3);
                     assert_eq!(v1.files.iter().filter(|file| file.pad).count(), 0);
                     assert_eq!(v1.pieces.len(), 2);
-                    assert_eq!(v1.files[2].path.as_display(), "nested/beta.bin");
+                    assert_eq!(
+                        v1.files[2].path.as_display(),
+                        "transfer-compatibility/nested/beta.bin"
+                    );
                     assert_eq!(v1.files[2].offset, 33_000);
                     assert_info_hashes_match_encoded_info(&fixture, Some(&v1.info_hash), None);
                     assert_v1_hashes_match_payload(&fixture, &v1, false);
@@ -404,7 +442,10 @@ mod tests {
                 (TransferProtocol::Hybrid, TorrentMeta::Hybrid(v1, v2)) => {
                     assert_eq!(v1.pieces.len(), 3);
                     assert_eq!(v1.files.iter().filter(|file| file.pad).count(), 1);
-                    assert_eq!(v1.files[2].path.as_display(), ".pad/32536");
+                    assert_eq!(
+                        v1.files[2].path.as_display(),
+                        "transfer-compatibility/.pad/32536"
+                    );
                     assert!(v1.files[2].pad);
                     assert_eq!(v1.files[2].length, 32_536);
                     assert_eq!(v1.files[3].offset, 65_536);
@@ -448,6 +489,16 @@ mod tests {
                 }
                 (protocol, parsed) => panic!("fixture {protocol:?} parsed as {parsed:?}"),
             }
+        }
+    }
+
+    #[test]
+    fn public_matrix_keeps_protocol_geometry_without_private_admission_flag() {
+        for fixture in public_transfer_compatibility_matrix() {
+            let parsed = parse_torrent(&fixture.torrent).unwrap();
+            assert!(!parsed.is_private());
+            assert_eq!(fixture.payload_files.len(), 3);
+            assert_eq!(fixture.piece_length, TRANSFER_FIXTURE_PIECE_LENGTH);
         }
     }
 

@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:torrentng:schema:transfer-rollout-gate-v1",
+  "title": "Transfer rebuild rollout gate decision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evaluated_at",
+    "source_commit",
+    "manifest_sha256",
+    "scorecard_sha256",
+    "candidate_client_id",
+    "decision",
+    "stages"
+  ],
+  "properties": {
+    "schema_version": { "const": "transfer-rollout-gate-v1" },
+    "evaluated_at": { "type": "string", "format": "date-time" },
+    "source_commit": { "$ref": "#/$defs/git_sha" },
+    "manifest_sha256": { "$ref": "#/$defs/sha256" },
+    "scorecard_sha256": { "$ref": "#/$defs/sha256" },
+    "candidate_client_id": {
+      "enum": ["torrentngd", "qbittorrent", "transmission", "deluge", "rtorrent", "rqbit", "urtorrent"]
+    },
+    "decision": { "enum": ["blocked", "release_eligible"] },
+    "stages": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["IO-016", "NET-116", "PERF-116", "SYS-015"],
+      "properties": {
+        "IO-016": { "$ref": "#/$defs/result" },
+        "NET-116": { "$ref": "#/$defs/result" },
+        "PERF-116": { "$ref": "#/$defs/result" },
+        "SYS-015": { "$ref": "#/$defs/result" }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "git_sha": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "evidence_sha256s", "reasons"],
+      "properties": {
+        "status": { "enum": ["passed", "blocked"] },
+        "evidence_sha256s": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/sha256" }
+        },
+        "reasons": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

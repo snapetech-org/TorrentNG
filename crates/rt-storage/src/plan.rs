@@ -2725,7 +2725,7 @@ mod tests {
             &destination,
             &scheduler_config,
         );
-        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
         let (finish_tx, finish_rx) = std::sync::mpsc::channel();
         let active_scheduler = scheduler.clone();
         let active = tokio::spawn(async move {
@@ -2737,9 +2737,10 @@ mod tests {
                 })
                 .await
         });
-        started_rx
-            .recv_timeout(std::time::Duration::from_secs(2))
-            .expect("device admission holder did not start");
+        tokio::time::timeout(std::time::Duration::from_secs(2), started_rx)
+            .await
+            .expect("device admission holder did not start")
+            .expect("device admission start notification was dropped");
 
         let plan_root = root.path().to_path_buf();
         let plan_scheduler = scheduler.clone();
