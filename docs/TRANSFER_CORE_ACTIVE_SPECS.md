@@ -2851,8 +2851,8 @@ implemented and qualified.
   settings snapshot, the Linux task namespace, private metainfo, discovery
   disabled, an explicit private IPv4 listener and peer, and v1-only geometry;
   unobservable hash-thread count is labeled as a launch input. The runner
-  rejects public peer addresses, existing start-gate files, and v2/hybrid
-  metainfo.
+  rejects public peer addresses, duplicate CLI options, colliding control
+  paths, existing start-gate files, and v2/hybrid metainfo.
 - Regression sources cover auth text responses, credential redaction,
   endpoint/process binding, schema linkage, urtorrent snapshot/process binding,
   IPv4 listener and peer policy, fixture-isolation rejection, and mismatch
@@ -2874,11 +2874,14 @@ implemented and qualified.
 
 - **Regression source added or updated:**
   `scripts/test_transfer_rebuild_adapters.py` (including runner snapshot
-  identity and isolation binding), the runner's local-peer policy unit case,
-  and `scripts/test_transfer_rebuild_validator.py`.
-- **Command or probe to run:** `cargo test --locked --manifest-path
-  scripts/transfer_rebuild/urtorrent_runner/Cargo.toml`, then the adapter and
-  validator regressions during the requested bulk pass.
+  identity and isolation binding), the runner's parser and local-peer policy
+  unit cases, and `scripts/test_transfer_rebuild_validator.py`.
+- **Command or probe to run:** build and test the runner in release mode with
+  `cargo +1.98.1 build --release --locked --manifest-path
+  scripts/transfer_rebuild/urtorrent_runner/Cargo.toml` and the corresponding
+  `cargo +1.98.1 test --release --locked` command; the hosted qualification
+  workflow now runs both plus a CLI help smoke check, followed by the adapter
+  and validator regressions.
 - **Expected result:** only identity-bound, version-matched, settings-matched
   readbacks produce an observation; mismatches are rejected.
 - **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `eb5f3158`. External acceptance remains listed below.

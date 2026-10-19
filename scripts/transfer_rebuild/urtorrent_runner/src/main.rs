@@ -3,6 +3,7 @@
 #[cfg(not(target_os = "linux"))]
 compile_error!("the pinned urtorrent comparator is Linux-only");
 
+use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -59,9 +60,13 @@ fn parse_preflight_args(
     values: impl IntoIterator<Item = String>,
 ) -> anyhow::Result<(PathBuf, PathBuf)> {
     let mut values = values.into_iter();
+    let mut seen = HashSet::new();
     let mut torrent = None;
     let mut save_path = None;
     while let Some(name) = values.next() {
+        if !seen.insert(name.clone()) {
+            bail!("preflight argument {name} may only be supplied once");
+        }
         let value = values
             .next()
             .ok_or_else(|| anyhow::anyhow!("missing value for {name}"))?;
@@ -99,8 +104,9 @@ fn is_help_flag(value: &str) -> bool {
     matches!(value, "--help" | "-h")
 }
 
-fn parse_args() -> anyhow::Result<Args> {
-    let mut values = std::env::args().skip(1);
+fn parse_trial_args(values: impl IntoIterator<Item = String>) -> anyhow::Result<Args> {
+    let mut values = values.into_iter();
+    let mut seen = HashSet::new();
     let mut mode = None;
     let mut namespace = None;
     let mut torrent = None;
@@ -125,6 +131,9 @@ fn parse_args() -> anyhow::Result<Args> {
         if is_help_flag(&name) {
             println!("{}", usage());
             std::process::exit(0);
+        }
+        if !seen.insert(name.clone()) {
+            bail!("argument {name} may only be supplied once");
         }
         let value = values
             .next()
@@ -219,7 +228,7 @@ fn parse_args() -> anyhow::Result<Args> {
         || args.start_gate == args.stop_file
         || args.ready_file == args.stop_file
     {
-        bail!("PID, settings, and start-gate paths must be distinct");
+        bail!("runner control paths must be distinct");
     }
     let namespace_suffix = args.namespace.strip_prefix("tngt-").unwrap_or_default();
     if namespace_suffix.is_empty()
@@ -245,6 +254,10 @@ fn parse_args() -> anyhow::Result<Args> {
         bail!("--seed-seconds cannot exceed --timeout-seconds");
     }
     Ok(args)
+}
+
+fn parse_args() -> anyhow::Result<Args> {
+    parse_trial_args(std::env::args().skip(1))
 }
 
 fn assert_task_namespace(name: &str) -> anyhow::Result<()> {
@@ -727,7 +740,9 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_help_flag, is_task_local_ip, parse_preflight_args};
+    use super::{
+        is_help_flag, is_task_local_ip, parse_preflight_args, parse_trial_args, Mode,
+    };
     use std::net::Ipv4Addr;
     use std::path::PathBuf;
     use std::str::FromStr;
@@ -764,6 +779,100 @@ mod tests {
             ])
             .is_err()
         );
+        assert!(
+            parse_preflight_args([
+                "--torrent".to_owned(),
+                "/tmp/first.torrent".to_owned(),
+                "--torrent".to_owned(),
+                "/tmp/second.torrent".to_owned(),
+                "--save-path".to_owned(),
+                "/tmp/probe-data".to_owned(),
+            ])
+            .is_err()
+        );
+    }
+
+    fn valid_trial_args() -> Vec<String> {
+        [
+            "--mode",
+            "download",
+            "--namespace",
+            "tngt-unit",
+            "--torrent",
+            "/tmp/probe.torrent",
+            "--save-path",
+            "/tmp/probe-data",
+            "--pid-file",
+            "/tmp/probe.pid",
+            "--settings-file",
+            "/tmp/probe.settings",
+            "--start-gate",
+            "/tmp/probe.gate",
+            "--ready-file",
+            "/tmp/probe.ready",
+            "--stop-file",
+            "/tmp/probe.stop",
+            "--listen-v4",
+            "10.0.0.2",
+            "--peer",
+            "10.0.0.3:5000",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+    }
+
+    fn replace_value(args: &mut [String], name: &str, value: &str) {
+        let index = args
+            .iter()
+            .position(|argument| argument == name)
+            .expect("argument exists");
+        args[index + 1] = value.to_owned();
+    }
+
+    #[test]
+    fn trial_parser_accepts_the_isolated_private_v1_profile() {
+        let parsed = parse_trial_args(valid_trial_args()).expect("valid trial profile");
+        assert_eq!(parsed.mode, Mode::Download);
+        assert_eq!(parsed.namespace, "tngt-unit");
+        assert_eq!(parsed.listen_v4, Ipv4Addr::new(10, 0, 0, 2));
+        assert_eq!(parsed.peer.to_string(), "10.0.0.3:5000");
+    }
+
+    #[test]
+    fn trial_parser_rejects_duplicate_options_and_colliding_control_paths() {
+        let mut repeated = valid_trial_args();
+        repeated.extend(["--mode".to_owned(), "seed".to_owned()]);
+        assert!(parse_trial_args(repeated).is_err());
+
+        let mut colliding_paths = valid_trial_args();
+        replace_value(&mut colliding_paths, "--ready-file", "/tmp/probe.pid");
+        assert!(parse_trial_args(colliding_paths).is_err());
+    }
+
+    #[test]
+    fn trial_parser_rejects_public_addresses_invalid_namespace_and_bad_seed_window() {
+        let mut public_listener = valid_trial_args();
+        replace_value(&mut public_listener, "--listen-v4", "8.8.8.8");
+        assert!(parse_trial_args(public_listener).is_err());
+
+        let mut public_peer = valid_trial_args();
+        replace_value(&mut public_peer, "--peer", "8.8.8.8:5000");
+        assert!(parse_trial_args(public_peer).is_err());
+
+        let mut invalid_namespace = valid_trial_args();
+        replace_value(&mut invalid_namespace, "--namespace", "systemd-resolved");
+        assert!(parse_trial_args(invalid_namespace).is_err());
+
+        let mut invalid_seed_window = valid_trial_args();
+        replace_value(&mut invalid_seed_window, "--mode", "seed");
+        invalid_seed_window.extend([
+            "--timeout-seconds".to_owned(),
+            "10".to_owned(),
+            "--seed-seconds".to_owned(),
+            "11".to_owned(),
+        ]);
+        assert!(parse_trial_args(invalid_seed_window).is_err());
     }
 
     #[test]

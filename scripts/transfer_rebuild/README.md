@@ -360,7 +360,7 @@ checkout:
 
 ```sh
 CARGO_TARGET_DIR=/path/to/task-scratch/urtorrent-target \
-  cargo build --release --locked \
+  cargo +1.98.1 build --release --locked \
   --manifest-path scripts/transfer_rebuild/urtorrent_runner/Cargo.toml
 ```
 
@@ -388,8 +388,9 @@ externally measured `transfer_ns`.
 
 Regression sources are in `scripts/test_transfer_rebuild_adapters.py` and the
 runner's `src/main.rs`; adapter and validator regressions passed on the recorded
-source revision. The standalone runner build and pinned-client preflight remain
-open.
+source revision. The hosted qualification workflow now builds and tests the
+standalone release runner with pinned Rust 1.98.1. That new exact-source pass is
+pending. Linux io_uring preflight and pinned-client qualification remain open.
 
 ## Shared trial measurement primitives
 
