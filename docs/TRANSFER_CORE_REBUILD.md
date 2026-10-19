@@ -337,7 +337,7 @@ the template in SYS-001 when picked up.
 | 9 | IO-011 | P1 | Replace unconditional readahead with useful range caching | IO-004, IO-006, IO-008 | wip | per-file sequential demand bootstraps one prefetch; observed cache hits permit gradual growth while misses hold the recommendation; extra queued bytes and read frame are reserved before backend dispatch; bounded stream history evicts only its least-recently-used file; multiple disjoint forward ranges per file are retained under the configured total-entry LRU cap and writes/replacements invalidate all ranges for that path; live-engine and read-amplification evidence remain open |
 | 9 | NET-108 | P1 | Implement adaptive request windows and deadline-driven refill | NET-104, NET-106, NET-107 | wip | shared controller is live in v1/hybrid-v1 (4..128 per-peer window) and pure-v2 (4..32); both use measured accepted-block rate and on-wire response delay, remote BEP 10 `reqq`, PeerBuffer headroom, shared device-queue backlog, current global/torrent download-credit snapshot, and peer-specific fresh-work bounds. V1 includes distinct endgame blocks held by other peers when fresh work is exhausted; pure-v2 counts active-assembly and eligible new-piece blocks after received/on-wire state and admission caps. The window credit snapshot is advisory and may race across peer loops, while each actual v1/hybrid-v1 and pure-v2 request reserves its own exact global/torrent grant before enqueue. A one-block floor lets rate-limited peers attempt admission and wait on the scheduler's first-ready deadline; positive sub-block memory headroom also permits one exact-size lease attempt for short piece tails, and zero headroom arms a bounded retry so the peer resumes when capacity returns. Shared process waits and peer-window wakeups respond to rate changes and use integer token math. Tokio timers have millisecond granularity. Regression sources pass in the exact-main workspace; matched live-window qualification remains open |
 | 9 | NET-110 | P1 | Implement bounded shared upload service and eliminate valid-demand drops | NET-103, NET-105, NET-106, NET-107 | wip | pure `UploadService` remains the deterministic policy reference; live v1/hybrid and pure-v2 register generation-safe BEP 6 obligations and round-robin read/byte admission together through `SharedUploadService`, bounded to configured `network.max_peers`, 64 jobs, 16 MiB, and 8 jobs per connection, with permits retained through Piece writes; actor read jobs now require a capability derived from that peer registration, and closure prevents further admissions while issued permits drain; regression sources pass in the exact-main workspace; real-client Fast behavior and cancellation latency remain open |
-| 9 | PERF-115 | P1 | Integrate hosted correctness and dedicated hardware regression lanes | PERF-110, PERF-111, PERF-112, PERF-113, PERF-114 | wip | Added a manual hosted lane for DB, peer-wire, picker, uTP, storage library, full engine, native API, metrics-scale, and every `test_transfer_rebuild_*.py` regression source; dedicated performance/storage lane remains main-only and protected; hosted exact-main correctness and Windows Smoke passed; two manual hardware-lane runs passed, while the protected hardware artifact remains open |
+| 9 | PERF-115 | P1 | Integrate hosted correctness and dedicated hardware regression lanes | PERF-110, PERF-111, PERF-112, PERF-113, PERF-114 | wip | Added a manual hosted lane for DB, peer-wire, picker, uTP, storage library, full engine, native API, metrics-scale, and every `test_transfer_rebuild_*.py` regression source; Rust 1.98.1 comparator runner build, 6 tests, and CLI smoke pass locally on `354ad504`; hosted correctness/Windows Smoke and two manual hardware runs are prior `eb5f3158` evidence; dispatch on current source and the protected hardware artifact remain open |
 | 10 | IO-010 | P0 | Bind resume persistence and crash recovery to barrier evidence | IO-009, SYS-009 | wip | storage returns opaque evidence only after a successful scheduler-wide barrier and retains write admission in the proof; `FastresumeStore` writes the evidence-bound state in its blocking atomic writer before releasing admission, including caller cancellation; persisted file-count/write-sequence fields default safely for legacy records; `torrent_task.rs` includes a 12-seed, 40-step live/durable-image power-cut model for checkpoint and fast modes plus a negative control. Fastresume owns piece/block trust and SQLite owns runtime projection; startup republishes DB progress from validated resume/recheck state rather than requiring an impossible cross-store transaction. Worker-backed persistence, physical crash-cut qualification, and bulk evidence remain open |
 | 10 | IO-014 | P1 | Schedule secure copies and verify each leaf once | IO-006, IO-009, IO-012 | wip | secure plan steps resolve source/destination device queues once and acquire them in stable order; regular-file and directory-tree copy work plus final per-file hashing run in 64 KiB quanta with per-quantum working-set charges; Unix and Windows walkers stream directory entries and compare names in a bounded final pass without re-hashing file content; cancellation, operation errors, and terminal scheduler rejection remove the staged tree under admission; Unix same-filesystem `ImportExisting` keeps the hard-link fast path; checkpointing stays outside device permits; unknown topology uses a stable dispatcher fallback; Unix deletion batches 256 entries; final sync latency and cross-device qualification remain open |
 | 10 | IO-015 | P1 | Add continuous io_uring with retained safe registrations | IO-006, IO-009 | wip | Linux worker processes ready CQEs independently and refills its bounded 64-operation window; registrations and operation owners remain retained through completion/ring teardown; multi-window regressions pass in the exact-main workspace; Linux kernel and hardware qualification remain open |
@@ -377,16 +377,40 @@ cases were also run explicitly; runtime, filesystem, hosted, hardware-runner,
 soak, and client-comparison gates remain open unless they have their own
 retained evidence.
 
-Exact current `main` (`eb5f31588beb4cf9ec0fb4c3509745c49c16f500`) passed the
-full Rust workspace on Rust 1.94.0 and 1.88.0, the release `rt-engine` library
-suite (733 passed), all 21 transfer-rebuild Python regressions, the hosted
-transfer workflow, and Windows Smoke. The 1k/100k
-catalog report, manifest, and qualification validate against that commit. The
-manual server hardware lane passed twice on this exact source, and all 7
-release-mode real-device storage tests passed on the verified ext4 LVM target.
-See
-[`TRANSFER_CORE_ACTIVE_SPECS.md`](TRANSFER_CORE_ACTIVE_SPECS.md) for exact
-commands, artifact digests, benchmark scope, and the remaining gates.
+The current tested source is `354ad504f75b33c712b5ccd827cfef3eb0cf4414`.
+Both full workspace runs passed on Rust 1.94.0 and 1.88.0 (2,301 passed,
+0 failed, 12 ignored on each toolchain); the release `rt-engine` library
+passed 733 tests, all 21 transfer-rebuild Python regressions passed, formatting
+passed, and workspace Clippy exited 0 with warnings. The standalone comparator
+runner built and passed all 6 tests with Rust 1.98.1, and its help smoke passed.
+Eleven runnable ignored scale/benchmark cases were also exercised explicitly;
+the remaining ignored panic-hook child is invoked by its parent regression.
+
+On the local desktop NVMe/Btrfs filesystem, the release 100k catalog and
+mixed-load cases passed. Sequential admission of the 100k paused fixture took
+220.587 s, restore took 2.143 s, the cold first list took 809 ms, and the
+cached repeat was under 1 ms. Across 16 rounds, the two list routes had
+0.829 s and 0.804 s p95 values because their first samples built cold
+snapshots; transfer info and `/metrics` had 4.384 ms and 0.176 ms p95. These
+are local diagnostics without an acceptance threshold or client comparison.
+The 7-case release storage suite passed on that NVMe/Btrfs device; its HDD-only
+case reported the expected non-HDD skip. The 256 MiB positioned-I/O stream
+reported 1,832 MiB/s writes and 3,639 MiB/s reads, and readahead served 4,096
+reads with 133 backend reads. The 64 MiB move/import/delete check and the
+release peer-wire encode microbenchmark also passed. This is not the dedicated
+ext4 target or a whole-client result.
+
+The exact-source `urtorrent` runner preflight still cannot start the pinned
+client: `io_uring_setup` returns `Cannot allocate memory`. The runner's own
+build, parser tests, and CLI smoke pass, but no paired client trial is qualified.
+Hosted Transfer Rebuild, Windows Smoke, and protected-server hardware evidence
+below were collected on the prior production-source commit `eb5f3158`; the
+engine and storage production paths are unchanged since then. Intervening
+commits adjust two test timeouts and add the standalone comparator runner
+source and workflow.
+The hosted workflow must be dispatched on the current commit after it is
+pushed. See [`TRANSFER_CORE_ACTIVE_SPECS.md`](TRANSFER_CORE_ACTIVE_SPECS.md) for
+commands, logs, prior artifact digests, and open gates.
 
 ### Status snapshot (2026-10-19)
 
@@ -395,24 +419,23 @@ full written acceptance is not yet evidenced; it does not mean its source
 implementation is absent. The implementation audit above found all package
 slices in source, while live, hardware, hosted, paired-client, and final-release
 qualification remain separate gates.
-All 21 Python regressions passed. Each Rust toolchain reported 2,301 passed,
-0 failed, and 12 ignored across 37 test-result summaries. `cargo fmt --all
--- --check` passed; Clippy exited 0 with warnings. GitHub run
+The 2026-10-19 follow-up above records exact-source tests on `354ad504`. The
+prior hosted run
 [39217933388](https://github.com/snapetech-org/TorrentNG/actions/runs/39217933388)
-passed hosted Rust 1.88 and Python checks on this commit. Windows Smoke
+and Windows Smoke run
 [39216147832](https://github.com/snapetech-org/TorrentNG/actions/runs/39216147832)
-also passed on this commit. The hosted hardware job was not selected by the
-dispatch and no runner is registered for its protected label. The same
-hardware script passed twice manually on `kspls0` against the `ext4` LVM
-target; the 7-case real-device storage suite also passed in release mode.
-The release `rt-engine` library suite passed 733 tests, including simulator
-coverage. Evidence is under
-`/tmp/tng-transfer-core-close-20261018/evidence/`.
+passed on `eb5f3158`. The hosted hardware job was not selected and no runner is
+registered for its protected label. The manual hardware script passed twice
+on `kspls0` against the verified `ext4` LVM target, and the 7-case release
+storage suite passed there on `eb5f3158`. Current local follow-up logs are under
+`/tmp/tng-transfer-core-close-20261019/evidence/`; prior host artifacts remain
+under `/tmp/tng-transfer-core-close-20261018/evidence/`.
 
-The clean-source 100k catalog report, artifact-only manifest, and qualification
-passed validation. The list-route p95 includes cold first-snapshot creation;
-these are local diagnostic timings, not a release threshold or client
-comparison. No efficiency or superiority claim is made.
+The prior clean-source 100k catalog report, artifact-only manifest, and
+qualification passed validation on `eb5f3158`. The list-route p95 includes
+cold first-snapshot creation; these are local diagnostic timings, not a
+release threshold or client comparison. No efficiency or superiority claim is
+made.
 
 The implementation branches are already ancestors of `main`; the unrelated
 setup branch is patch-equivalent to its mainline change. No transfer-core
@@ -438,6 +461,7 @@ cross-path correctness evidence.
 ### Progress log
 
 | Date | Change |
+| 2026-10-19 | Exact-source bulk follow-up on `354ad504f75b33c712b5ccd827cfef3eb0cf4414`: full workspace passed on Rust 1.94.0 and 1.88.0 (2,301 passed, 0 failed, 12 ignored each); release `rt-engine` passed 733 tests; all 21 Python suites, formatting, workspace/engine Clippy, and the Rust 1.98.1 comparator runner build, 6 unit tests, and help smoke passed. Eleven runnable ignored tests were executed explicitly. Local release diagnostics passed for the two 100k catalog cases, 7 storage tests, move/import/delete, and peer-wire encode. The standalone `urtorrent` preflight still fails at `io_uring_setup: Cannot allocate memory`; no paired-client claim is made. Logs are under `/tmp/tng-transfer-core-close-20261019/evidence/`. The 100k sequential admission time was 220.587 s; restore took 2.143 s, cold list 809 ms, cached list <1 ms. These local diagnostics have no approved threshold and do not close matched-client, dedicated-hardware, crash-cut, soak/canary, or independent-review gates. |
 | 2026-10-18 | SYS-014/PERF-109 live catalog qualification and test correction: the opt-in production 100k add/persist/shutdown/restore/API-list probe passed on Rust 1.94.0 with all 100,000 paused rows restored; its cold first list was 7,587 ms in debug and the cached repeat 3 ms. The 100k mixed-load test passed in debug and optimized release. The release run was repeated after switching the mixed-load cases to four Tokio workers, matching `torrentngd`'s multi-thread runtime. Across 16 concurrent rounds, release p50s were 0.277 ms (default list), 0.271 ms (name-sorted list), 0.050 ms (transfer info), and 0.057 ms (`/metrics`); nearest-rank p95 includes first-round cold snapshot construction at 0.800 s and 0.773 s for the list routes, while transfer info and metrics were 2.674 ms and 0.222 ms. No timing threshold is asserted. The raw logs are task-scoped under `/tmp/tng-transfer-core-close-20261018/evidence/`; exact-source catalog report assembly, full workspace validation, and process-level/active-transfer/hardware qualification remain pending. |
 | 2026-10-18 | Bulk source validation and v2 projection correction: an earlier full run observed the reference-v2 actor reporting `Seeding` with `amount_left=1` during a held completion after prior completion. Live and reference pure-v2 persistence now downgrade stale seeding projections to `Downloading`, clear `completed_at`, and retain the one-byte `finalizing` signal; a new engine regression covers the case. The targeted regression and workspace runs on Rust 1.94.0 and Rust 1.88.0 each passed 2,298 tests, with 0 failed and 12 ignored across 65 result summaries. After merge, the clean `main` commit `b1f0120855af86f9f9256b5e4f6bdf4bd02d9593` passed both full suites with those same totals. All 20 `scripts/test_transfer_rebuild_*.py` regressions passed again on merged `main`. `cargo clippy --workspace --all-targets` exited 0 with warnings on both branch and merged main; formatting and JSON parsing passed. The transfer-invariant integration test verifies persisted `amount_left=0` before payload damage and the expected pure-v2 startup recheck afterward. PERF-111 probes were rerun on final code before its commit; local results are in `TRANSFER_CORE_PERF111_LOCAL.md` and remain diagnostic only. Transfer commit `166ac506` is merged and pushed; hosted workflow, hardware, crash-cut, and matched-client qualification remain open. |
 | 2026-10-18 | Architecture boundary review: the accepted target keeps the pure decision core under `crates/rt-engine/src/transfer/` and preserves current crate boundaries unless a dependency cycle forces a small extraction. A separate transfer-core crate is not an outstanding architecture requirement. The remaining unclosed gates are exact-revision validation and named runtime, hardware, crash-cut, or client evidence; no rollout or efficiency claim is implied. |

@@ -5,7 +5,62 @@ This file instantiates the template in
 implementation slices currently in progress. A ticket stays `wip` until its
 written acceptance and exact-revision evidence are complete.
 
-## Current closeout — 2026-10-19
+## Current exact-source follow-up — 2026-10-19
+
+The latest tested source is commit
+`354ad504f75b33c712b5ccd827cfef3eb0cf4414`. It passed both full Rust
+workspace runs: 2,301 passed, 0 failed, and 12 ignored on Rust 1.94.0 and
+1.88.0, across 37 result summaries per toolchain. The release `rt-engine`
+library passed 733 tests, all 21 transfer-rebuild Python scripts passed,
+formatting passed, and workspace plus engine Clippy exited 0 with warnings.
+The standalone comparator runner built under Rust 1.98.1, passed all six
+tests, and passed its `--help` smoke. Eleven runnable ignored tests were run
+explicitly; the ignored panic-hook child runs from its parent regression.
+
+Commands used:
+
+- `cargo +1.94.0 test --workspace --all-targets --locked --jobs 1 -- --test-threads=1`
+  and the same command with `+1.88.0`.
+- `cargo +1.94.0 test --locked --release -p rt-engine --lib --jobs 1 -- --test-threads=1`.
+- The 21 `python3 scripts/test_transfer_rebuild_*.py` regression scripts.
+- `cargo +1.98.1 build/test --release --locked --manifest-path scripts/transfer_rebuild/urtorrent_runner/Cargo.toml`, followed by `--help`.
+- Release ignored scale, storage-device, move/import, and peer-wire benchmark targets; exact invocations and output are in the evidence directory below.
+
+The release 100k catalog and mixed-load cases passed on the local desktop.
+Adding 100,000 paused rows sequentially took 220.587 s; restore took 2.143 s,
+the first list took 809 ms, and the cached list took under 1 ms. Across 16
+rounds, default and sorted list p95 were 828.803 ms and 803.711 ms because the
+first sample builds a cold snapshot; transfer info and `/metrics` p95 were
+4.384 ms and 0.176 ms. These timings are local diagnostics without an approved
+threshold or a matched-client comparison.
+
+The seven release storage tests passed on the desktop NVMe/Btrfs filesystem;
+the HDD-only branch correctly reported that this device is not an HDD. The
+256 MiB positioned-I/O stream reported 1,832 MiB/s writes and 3,639 MiB/s
+reads, and readahead served 4,096 reads with 133 backend reads. The 64 MiB
+move/import/delete test and the release peer-wire encode microbenchmark passed.
+These desktop results do not qualify the dedicated ext4 target or whole-client
+efficiency.
+
+The `urtorrent` runner preflight was attempted on the current build (and on an
+earlier build of the same runner source) and failed to start the pinned client
+because `io_uring_setup` returned `Cannot allocate memory`. Runner build, unit
+tests, and CLI smoke pass, but no paired client trial is qualified. Previous
+hosted/Windows and dedicated ext4 LVM results
+below were collected on `eb5f3158`; no hosted or protected-runner result has
+yet been collected for `354ad504`. Since `eb5f3158`, the engine/storage
+production paths are unchanged; later commits adjust two test timeouts and add
+the standalone comparator runner and its workflow.
+
+The source audit found all 63 repository-owned implementation slices and
+ticket contracts present with no remaining architecture boundary. The ledger
+remains 12/63 `done`, 51/63 `wip`, 0 `todo`: the remaining status is for live
+client, platform, crash-cut, matched efficiency, protected-runner, soak/canary,
+independent-review, and release evidence. Ordinary “await bulk” notes below
+are superseded for repository-local tests by this exact-source run. Logs are
+under `/tmp/tng-transfer-core-close-20261019/evidence/`.
+
+## Previous exact-source closeout — 2026-10-19 (`eb5f3158`)
 
 The tested `main` source is commit `eb5f31588beb4cf9ec0fb4c3509745c49c16f500`,
 recorded from a clean worktree. The source audit found every repository-owned implementation slice present and no
@@ -57,7 +112,7 @@ hardware workflow artifact, release-matrix builds, soak/canary, independent
 review, and the final release bundle remain open. No efficiency or
 superiority claim is supported by these local probes.
 
-## Completion audit — 2026-10-18
+## Prior completion audit — 2026-10-19 (`eb5f3158`)
 
 The 63-row package table and all active ticket contracts have now been checked
 against the current source and regression inventory. The implementation slices
@@ -67,7 +122,7 @@ missing owner boundary or placeholder implementation in the reviewed paths.
 `wip` therefore remains an acceptance/evidence status, not a count of code that
 has not been written.
 
-The exact current source passed a fresh bulk validation on 2026-10-19:
+At that point, source `eb5f3158` passed the following bulk validation:
 
 - `cargo +1.94.0 test --workspace --all-targets --locked --no-fail-fast -- --test-threads=1 --format=terse`
   and the same command on Rust 1.88.0: 2,301 passed, 0 failed, 12 ignored
@@ -96,10 +151,11 @@ that stale state to `Downloading` and clear `completed_at`; the new
 `v2_reopens_a_stale_seeding_projection_during_completion_hold` regression
 passes in both final workspace runs.
 
-The test logs are retained under the task-scoped
+The prior test logs are retained under the task-scoped
 `/tmp/tng-transfer-core-close-20261018/evidence/` directory. Ordinary Rust and
 Python regressions described as “await bulk pass” or “authored but unrun” in
-older per-ticket notes are superseded by this exact-main execution record.
+older per-ticket notes are superseded by the current exact-source follow-up at
+the top of this file.
 Ticket acceptance remains `wip` where it requires runtime, platform,
 filesystem fault, crash-cut, live parity, matched whole-client, soak/canary,
 protected-runner artifact, or independent-review evidence.
