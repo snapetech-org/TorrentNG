@@ -140,6 +140,7 @@ class TaskTracker:
         self.seed_peer_id = seed_peer_id
         self.target_port: int | None = None
         self.target_peer_id: bytes | None = None
+        self.bind_address: str | None = None
         self.seed_ready_timeout_seconds = float(seed_ready_timeout_seconds)
         self.info_hashes = frozenset(info_hashes)
         self._hashes_pinned = bool(info_hashes)
@@ -288,6 +289,7 @@ class TaskTracker:
                 "schema_version": "transfer-task-tracker-v1",
                 "topology_sha256": self.topology_sha256,
                 "gateway": str(self.gateway),
+                "bind_address": self.bind_address,
                 "target_address": str(self.target_address),
                 "target_port": self.target_port,
                 "target_peer_id_sha256": (
@@ -359,7 +361,10 @@ def serve_tracker(
         allow_reuse_address = False
 
     try:
-        return Server((str(bind_ip), port), Handler)
+        server = Server((str(bind_ip), port), Handler)
+        with tracker._lock:
+            tracker.bind_address = str(server.server_address[0])
+        return server
     except OSError as error:
         raise TaskTrackerError(f"cannot bind tracker to task network address: {error}") from error
 

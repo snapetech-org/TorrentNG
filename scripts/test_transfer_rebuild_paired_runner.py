@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent / "transfer_rebuild"))
 from client_control import TorrentState  # noqa: E402
@@ -31,6 +32,7 @@ from paired_runner import (  # noqa: E402
     _scheduled_trial_key,
     _sha256_file,
     _seed_payload,
+    _start_urtorrent,
     _stage_input,
     _urtorrent_profile_for_trial,
     _validate_payload,
@@ -145,6 +147,71 @@ class PairedRunnerTests(unittest.TestCase):
             _urtorrent_profile_for_trial(
                 {}, "127.0.0.1", "127.0.0.1:1", "http://127.0.0.1:2/announce", "upload"
             )
+
+    def test_urtorrent_start_reads_nested_settings_pin_and_keeps_task_tracker(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="tng-urtorrent-start-") as directory:
+            root = Path(directory)
+            data = root / "data"
+            state = root / "state"
+            data.mkdir()
+            state.mkdir()
+            tracker_url = "http://198.18.2.2:45555/announce"
+            profile = {
+                "binary_path": "/task/bin/urtorrent-runner",
+                "expected_binary_sha256": "a" * 64,
+                "preflight_timeout_seconds": 30,
+                "expected_settings": {
+                    "settings": {
+                        "session": {"max_connections": 40, "max_peers_per_torrent": 12},
+                        "torrent": {"private": True},
+                        "control": {"pinned_peer": "127.0.0.1:1234"},
+                        "runner_inputs": {"hash_threads": 3},
+                    }
+                },
+            }
+            endpoint = Endpoint(
+                "target",
+                "urtorrent",
+                profile,
+                RuntimePaths(
+                    root=root,
+                    data=data,
+                    state=state,
+                    log=root / "client.log",
+                    pid=state / "launcher.pid",
+                    env=state / "client.env",
+                    tracker_url=tracker_url,
+                    peer_address="198.18.2.2:44444",
+                ),
+            )
+            topology = {
+                "target": {
+                    "address": "198.18.2.3",
+                    "namespace_identity": {"device": 1, "inode": 2},
+                },
+                "target_namespace": "tngt-test-run",
+            }
+            with patch("paired_runner.ManagedProcess.start") as start:
+                _start_urtorrent(
+                    endpoint,
+                    topology,
+                    root / "fixture.torrent",
+                    "198.18.2.2:44444",
+                    "download",
+                    root / "barriers",
+                    120,
+                )
+
+        args = start.call_args.args[0]
+        self.assertIn("--tracker-url", args)
+        self.assertEqual(args[args.index("--tracker-url") + 1], tracker_url)
+        self.assertEqual(args[args.index("--max-connections") + 1], "40")
+        self.assertEqual(args[args.index("--max-peers") + 1], "12")
+        self.assertEqual(args[args.index("--hash-threads") + 1], "3")
+        settings = endpoint.direct_profile["expected_settings"]["settings"]
+        self.assertEqual(settings["control"]["pinned_peer"], "198.18.2.2:44444")
+        self.assertEqual(settings["control"]["tracker_url"], tracker_url)
+        self.assertEqual(settings["control"]["trackers_after_isolation"], 1)
 
     def test_runner_input_json_rejects_overflow_numbers(self) -> None:
         with tempfile.TemporaryDirectory(prefix="tng-paired-json-") as directory:

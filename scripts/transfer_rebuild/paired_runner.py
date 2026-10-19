@@ -934,10 +934,11 @@ def _start_urtorrent(
     binary_path = Path(str(profile.get("binary_path", ""))).expanduser()
     digest = profile.get("expected_binary_sha256")
     expected = profile.get("expected_settings")
-    if not binary_path.is_absolute() or not isinstance(digest, str) or not isinstance(expected, dict):
+    settings = expected.get("settings") if isinstance(expected, dict) else None
+    if not binary_path.is_absolute() or not isinstance(digest, str) or not isinstance(settings, dict):
         raise PairedRunnerError("urtorrent pin is missing its runner binary or settings contract")
-    session = expected.get("session")
-    runner_inputs = expected.get("runner_inputs")
+    session = settings.get("session")
+    runner_inputs = settings.get("runner_inputs")
     if not isinstance(session, dict) or not isinstance(runner_inputs, dict):
         raise PairedRunnerError("urtorrent pin is missing session or runner inputs")
     task = topology.get(endpoint.role)

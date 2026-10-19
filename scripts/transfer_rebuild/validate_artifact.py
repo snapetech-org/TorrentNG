@@ -816,6 +816,19 @@ def _task_tracker_errors(observation: dict[str, Any]) -> list[str]:
             errors.append("tracker addresses must be distinct IPv4 endpoints in one /24")
     except (KeyError, TypeError, ValueError) as error:
         errors.append(f"tracker addresses are malformed: {error}")
+    bind_address = observation.get("bind_address")
+    if bind_address is not None:
+        try:
+            bind_ip = ipaddress.ip_address(bind_address)
+            task_addresses = {
+                ipaddress.ip_address(observation["gateway"]),
+                ipaddress.ip_address(observation["target_address"]),
+                ipaddress.ip_address(observation["seed_address"]),
+            }
+            if not isinstance(bind_ip, ipaddress.IPv4Address) or bind_ip not in task_addresses:
+                errors.append("bind_address must be a recorded task endpoint")
+        except (KeyError, TypeError, ValueError) as error:
+            errors.append(f"tracker bind address is malformed: {error}")
     if observation["info_hashes_sha256"] != sorted(set(observation["info_hashes_sha256"])):
         errors.append("info_hashes_sha256 must be sorted and unique")
     return errors
@@ -835,20 +848,34 @@ def _task_tracker_topology_errors(
     for field, value in expected.items():
         if tracker[field] != value:
             errors.append(f"tracker {field} differs from the task-network topology")
+    bind_address = tracker.get("bind_address")
+    if bind_address is not None and bind_address not in {
+        topology["gateway"],
+        topology["target"]["address"],
+        topology["seed"]["address"],
+    }:
+        errors.append("tracker bind_address is not a recorded task endpoint")
     return errors
 
 
 def _retargeted_topology_errors(
-    retarget: dict[str, Any], topology: dict[str, Any]
+    retarget: dict[str, Any],
+    topology: dict[str, Any],
+    tracker: dict[str, Any] | None = None,
 ) -> list[str]:
     try:
         announce = urlsplit(retarget["announce_url"])
         port = announce.port
     except (KeyError, TypeError, ValueError) as error:
         return [f"retargeted announce URL is malformed: {error}"]
+    tracker_address = (
+        tracker.get("bind_address")
+        if isinstance(tracker, dict) and tracker.get("bind_address") is not None
+        else topology["gateway"]
+    )
     if (
         announce.scheme != "http"
-        or announce.hostname != topology["gateway"]
+        or announce.hostname != tracker_address
         or port is None
         or not 1 <= port <= 65535
         or announce.username is not None
@@ -2029,7 +2056,7 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
                         errors.append(
                             f"{location}.workload.fixture_sha256: retargeted torrent belongs to another fixture"
                         )
-                    for message in _retargeted_topology_errors(retarget, topology):
+                    for message in _retargeted_topology_errors(retarget, topology, tracker):
                         errors.append(
                             f"{location}.environment.network.task_topology_sha256: {message}"
                         )
@@ -2054,6 +2081,7 @@ def _verify_manifest_files(manifest_path: Path, manifest: dict[str, Any]) -> lis
                         or not tracker["target_ready"]
                         or tracker["announce_counts"]["started"] < 2
                         or tracker["request_count"] < 2
+                        or ("bind_address" in tracker and tracker["bind_address"] is None)
                     ):
                         errors.append(
                             f"{location}.environment.network.task_topology_sha256: "

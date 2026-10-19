@@ -115,7 +115,9 @@ the two recorded endpoint addresses and only for the fixture's info hashes.
 The tracker learns the seed and target peer IDs and listening ports from their
 announces, then returns the seed only to the target. Seed announces return an
 empty peer list, keeping one connection initiator. Its snapshot stores hashes
-of both peer IDs. A trial's `task_topology_sha256` is
+of both peer IDs and the actual tracker bind address; validation requires the
+retargeted announce URL host to match that observed address. A trial's
+`task_topology_sha256` is
 the manifest-file digest for the topology record; the topology's internal
 `artifact_sha256` is a separate self-digest used to guard task-local API access.
 Interface byte counters are attributable to one candidate only while the

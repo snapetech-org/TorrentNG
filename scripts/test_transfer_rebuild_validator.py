@@ -146,6 +146,16 @@ class PairedEvidenceLinkTests(unittest.TestCase):
             ["retargeted announce URL does not use the task gateway tracker"],
         )
 
+    def test_retargeted_tracker_url_matches_the_recorded_bound_endpoint(self) -> None:
+        record = {"announce_url": "http://198.18.4.2:51415/announce"}
+        tracker = {"bind_address": "198.18.4.2"}
+        self.assertEqual(_retargeted_topology_errors(record, self.topology, tracker), [])
+        record["announce_url"] = "http://198.18.4.1:51415/announce"
+        self.assertEqual(
+            _retargeted_topology_errors(record, self.topology, tracker),
+            ["retargeted announce URL does not use the task gateway tracker"],
+        )
+
     def test_retargeted_v2_hash_record_checks_truncated_info_hash(self) -> None:
         record = {
             "metainfo_kind": "v2",
@@ -167,6 +177,7 @@ class PairedEvidenceLinkTests(unittest.TestCase):
             "schema_version": "transfer-task-tracker-v1",
             "topology_sha256": "a" * 64,
             "gateway": "198.18.4.1",
+            "bind_address": "198.18.4.2",
             "target_address": "198.18.4.3",
             "target_port": 45678,
             "target_peer_id_sha256": "c" * 64,
@@ -188,6 +199,12 @@ class PairedEvidenceLinkTests(unittest.TestCase):
                 {**tracker, "gateway": "198.18.4.254"}, self.topology
             ),
             ["tracker gateway differs from the task-network topology"],
+        )
+        self.assertEqual(
+            _task_tracker_topology_errors(
+                {**tracker, "bind_address": "198.18.4.9"}, self.topology
+            ),
+            ["tracker bind_address is not a recorded task endpoint"],
         )
 
 

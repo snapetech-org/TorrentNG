@@ -241,11 +241,13 @@ class TaskTrackerTests(unittest.TestCase):
         class FakeServer:
             def __init__(self, address: tuple[str, int], _handler: object) -> None:
                 bound.append(address)
+                self.server_address = (address[0], 45600)
 
         with patch("task_tracker.ThreadingHTTPServer", FakeServer):
             serve_tracker(self.tracker, bind_address="198.18.4.3")
 
         self.assertEqual(bound, [("198.18.4.3", 0)])
+        self.assertEqual(self.tracker.snapshot()["bind_address"], "198.18.4.3")
         with self.assertRaisesRegex(TaskTrackerError, "belong to the task network"):
             serve_tracker(self.tracker, bind_address="198.18.4.9")
 

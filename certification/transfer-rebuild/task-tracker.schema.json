@@ -14,6 +14,7 @@
     "schema_version": { "const": "transfer-task-tracker-v1" },
     "topology_sha256": { "$ref": "#/$defs/sha256" },
     "gateway": { "type": "string", "format": "ipv4" },
+    "bind_address": { "anyOf": [{ "type": "string", "format": "ipv4" }, { "type": "null" }] },
     "target_address": { "type": "string", "format": "ipv4" },
     "target_port": { "anyOf": [{ "$ref": "#/$defs/port" }, { "type": "null" }] },
     "target_peer_id_sha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },

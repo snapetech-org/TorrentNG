@@ -850,7 +850,10 @@ It learns each endpoint's peer ID and listening port from its announce, waits
 for the seed identity before returning that peer to the target, and gives the
 seed an empty peer list so a transfer has one dialer. Later announces must
 retain the same identity. Its snapshot
-contains counts and hashes of both peer IDs, not the peer IDs themselves.
+contains the actual bound task address, counts, and hashes of both peer IDs,
+not the peer IDs themselves. The retargeted announce URL is checked against
+that bound address, which can be the helper endpoint rather than the topology
+gateway.
 Topology and tracker are control-plane
 helpers; they are not part of the measured client's resource totals. Malformed
 percent escapes, unescaped non-ASCII bytes, and unescaped control bytes are
