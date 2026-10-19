@@ -726,7 +726,7 @@ jobs:
             local local_image="$1"
             local ghcr_image="$2"
             local dockerhub_image="$3"
-            for tag in "$RELEASE_TAG" "$version" main latest; do
+            for tag in "$RELEASE_TAG" "$version" main master latest; do
               docker tag "$local_image:$RELEASE_TAG" "$ghcr_image:$tag"
               docker push "$ghcr_image:$tag"
               if [[ -n "${DOCKERHUB_USERNAME:-}" && -n "${DOCKERHUB_TOKEN:-}" ]]; then
