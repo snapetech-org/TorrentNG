@@ -270,6 +270,48 @@ async fn wait_for_state(
     }
 }
 
+// Keep the request-expiry-aligned state timeout for transfer itself. Connection
+// setup and the seed's first unchoke have their own window so they cannot use
+// that entire budget before the receiver gets its first block.
+async fn wait_for_transfer_peer_ready(
+    engine: &EngineHandle,
+    registry: &Arc<RwLock<SessionRegistry>>,
+    info_hash: &str,
+    context: &str,
+) {
+    let mut last_peers = None;
+    let mut last_error = None;
+    let result = tokio::time::timeout(TRANSFER_STATE_TIMEOUT, async {
+        loop {
+            let receiver_complete = {
+                let registry = registry.read().await;
+                registry
+                    .get(info_hash)
+                    .is_some_and(|entry| entry.amount_left == 0)
+            };
+            if receiver_complete {
+                return;
+            }
+            match engine.torrent_peers(info_hash.to_owned()).await {
+                Ok(peers) => {
+                    last_peers = Some(peers.clone());
+                    if peers.iter().any(|peer| !peer.choked) {
+                        return;
+                    }
+                    last_error = None;
+                }
+                Err(error) => last_error = Some(error),
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    })
+    .await;
+    assert!(
+        result.is_ok(),
+        "{context} transfer peer remained choked and incomplete; last peers={last_peers:?}; last query error={last_error:?}"
+    );
+}
+
 fn test_config(root: &Path, listen_port: u16) -> Config {
     let mut config = Config::default();
     config.daemon.session_dir = root.join("session");
@@ -403,6 +445,13 @@ async fn persisted_v2_completion_is_rechecked_after_restart() {
                     case.protocol
                 )
             });
+        wait_for_transfer_peer_ready(
+            &receive_engine,
+            &receive_registry,
+            &case.info_hash,
+            &format!("{:?} transfer", case.protocol),
+        )
+        .await;
         let amount_left = wait_for_state(
             &receive_engine,
             &receive_registry,
@@ -450,6 +499,13 @@ async fn persisted_v2_completion_is_rechecked_after_restart() {
                 .add_peers(case.info_hash.clone(), vec![peer_proxy.addr])
                 .await
                 .expect("connect reference pure-v2 receiver to seed");
+            wait_for_transfer_peer_ready(
+                &receive_engine,
+                &receive_registry,
+                &case.info_hash,
+                "reference pure-v2 transfer",
+            )
+            .await;
             let amount_left = wait_for_state(
                 &receive_engine,
                 &receive_registry,
