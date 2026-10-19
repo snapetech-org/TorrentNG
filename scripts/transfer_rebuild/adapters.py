@@ -230,7 +230,13 @@ def _tcp_listener_addresses(
         except (ValueError, IndexError):
             continue
         if local_port == port:
-            listeners.append((address, fields[11]))
+            # Recent Linux kernels combine tx/rx and timer columns into
+            # colon-delimited fields, moving the socket inode from column 11
+            # to column 9 and appending reference/pointer fields afterward.
+            # Older procfs layouts expose those columns separately.
+            inode_index = 9 if ":" in fields[4] and ":" in fields[5] else 11
+            if len(fields) > inode_index and fields[inode_index].isdecimal():
+                listeners.append((address, fields[inode_index]))
     return listeners
 
 

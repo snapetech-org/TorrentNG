@@ -233,12 +233,21 @@ class TransferClientAdapterTests(unittest.TestCase):
         header = "sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt uid timeout inode"
         row = "0: 0100007F:1F90 00000000:0000 0A 0 0 00:00000000 00000000 0 1000 0 123456"
         closed_row = "1: 0100007F:1F90 00000000:0000 01 0 0 00:00000000 00000000 0 1000 0 999999"
+        compact_row = (
+            "2: 0100007F:1F90 00000000:0000 0A "
+            "00000000:00000000 00:00000000 00000000 1000 0 654321 "
+            "1 00000000d2155586 100 0 0 10 0"
+        )
 
         self.assertEqual(_tcp_listener_inodes(f"{header}\n{row}\n{closed_row}", 8080), {"123456"})
         listeners = _tcp_listener_addresses(f"{header}\n{row}\n{closed_row}", 8080)
         self.assertEqual(
             [(str(address), inode) for address, inode in listeners],
             [("127.0.0.1", "123456")],
+        )
+        self.assertEqual(
+            _tcp_listener_inodes(f"{header}\n{compact_row}", 8080),
+            {"654321"},
         )
 
     def test_container_http_binding_must_publish_only_on_loopback(self) -> None:
