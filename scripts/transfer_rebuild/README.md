@@ -7,24 +7,17 @@ in the measured source checkout.
 ## Validation status
 
 The production transfer-core implementation is unchanged from
-`354ad504f75b33c712b5ccd827cfef3eb0cf4414`; the current main checkout before
-these harness fixes was `9b31f76c1c2c1228ea1065eae7bf43789414229f`. At that
-revision, both Rust 1.94.0 and 1.88.0 workspace runs passed 2,301 tests,
-failed 0, and ignored 12 across 37 summaries. Release `rt-engine` passed 733
-tests, the then-current transfer-rebuild regressions passed, all 11 runnable
-ignored cases passed, and the trusted bubblewrap validation-engine contract
-task passed 67/67 Python tests. Workspace Clippy passed on both toolchains;
-engine Clippy passed on 1.94.0 with warnings and no errors. The runner-policy
-suite passed 4/4 with the protected hardware lane restricted to an explicit
-`main` dispatch.
+`354ad504f75b33c712b5ccd827cfef3eb0cf4414`. The latest local bulk run passed
+the full workspace on Rust 1.94.0 and 1.88.0 with 2,302 passed, 0 failed, and
+12 ignored across 37 summaries on each toolchain. Release `rt-engine` passed
+734 tests; all 22 transfer-rebuild Python scripts and 11 runnable ignored
+cases passed. Strict workspace Clippy passed on both toolchains, formatting
+passed, and the trusted bubblewrap validation-engine contract task passed
+67/67 Python tests. The runner-policy suite passed 4/4.
 
-After the profile-scope and egress-policy changes, all 195 transfer-rebuild
-Python tests passed. Full workspace runs passed on Rust 1.94.0 and 1.88.0 with
-2,301 tests passed, 0 failed, and 12 ignored across 37 summaries. Strict
-workspace Clippy passed on both toolchains, and formatting passed with Rust
-1.94.0. The standalone Rust 1.98.1 urtorrent runner passed all six
-tests; its formatting check passed with Rust 1.94.0 because rustfmt is not
-installed for 1.98.1. Paired-client trials remain pending.
+The standalone Rust 1.98.1 urtorrent runner passed all six tests and its help
+smoke; its format check used Rust 1.94.0 because rustfmt is not installed for
+1.98.1.
 
 The release 100k catalog case admitted paused rows in 213.730 s, restored in
 2.055 s, and listed the first sorted page in 807 ms; the cached page took under
@@ -40,10 +33,26 @@ whole-client efficiency evidence. Full commands and logs are recorded in
 [`TRANSFER_CORE_ACTIVE_SPECS.md`](../../docs/TRANSFER_CORE_ACTIVE_SPECS.md) and
 `/tmp/tng-transfer-core-final-20261019.GSdus5/`.
 
+A follow-up local Btrfs run passed all seven storage probes after the
+shuffled-read benchmark was capped at 256 in-flight requests. The 64-file
+move/import/delete probe passed too. This is local filesystem evidence, not
+ext4 device qualification.
+
+One scoped paired comparison completed: ten randomized cold-cache pairs on a
+128 MiB private v1 fixture, TorrentNG `0.1.0` versus the pinned urtorrent
+`0.14.3` direct library runner, with 1 Gbit/s and 1 ms shaping. All 40 transfer
+records completed with independently verified payload hashes. Median
+download goodput was 83.77 versus 13.07 MB/s (TorrentNG/urtorrent); median
+seed goodput was 12.88 versus 93.08 MB/s. TorrentNG used more CPU and peak RSS
+in both modes. There is no pre-refactor baseline, so this does not measure the
+refactor's change or rank whole clients. Full details, confidence intervals,
+and artifact digests are recorded under PERF-110 in
+[`TRANSFER_CORE_ACTIVE_SPECS.md`](../../docs/TRANSFER_CORE_ACTIVE_SPECS.md).
+
 The direct `urtorrent` preflight now starts with a per-process 64 MiB
 `RLIMIT_MEMLOCK`; the earlier default 8 MiB limit caused `io_uring_setup` to
-fail. The full compatibility preflight and paired-client trials are still
-pending. TorrentNG's pinned paired-run config enables
+fail. One compatibility preflight and the scoped pair passed; broader client
+and profile coverage remains open. TorrentNG's pinned paired-run config enables
 `tracker.allow_private_egress` for the isolated `198.18.0.0/15` tracker and
 peer endpoints; this reserved network remains denied by default. Hosted
 Transfer Rebuild and Windows Smoke passed on
@@ -52,9 +61,10 @@ The protected hardware job was skipped because no runner is registered. The
 current read-only `kspls0` check confirmed the ext4 LVM path and 25 T free,
 but load averages were 89.93/89.71/94.70 with 17 users, so no new hardware
 benchmark was run. Prior dedicated ext4 evidence remains bound to `eb5f3158`.
-Pinned-client trials, active-transfer/process resource qualification,
+Additional pinned-client trials, active-transfer/process resource qualification,
 protected-runner hardware evidence, crash-cut, soak/canary, independent review,
-and release evidence remain open; no efficiency or superiority claim is made.
+and release evidence remain open; no whole-client efficiency or superiority
+claim is made.
 
 The source audit found no missing architecture boundary. The ledger remains
 12/63 `done`, 51/63 `wip`, and 0 `todo`; those WIP rows need the runtime and

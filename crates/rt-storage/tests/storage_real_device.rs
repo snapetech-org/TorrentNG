@@ -10,6 +10,8 @@ use rt_storage::{
 };
 use sha1::{Digest, Sha1};
 
+const MAX_IN_FLIGHT_PEER_READ_BENCHMARKS: usize = 256;
+
 fn bench_size(name: &str, default: u64) -> u64 {
     std::env::var(name)
         .ok()
@@ -229,14 +231,32 @@ async fn run_reads(
                     .unwrap();
             (offset, bytes)
         });
+
+        // Keep offered work within the scheduler's default per-mount queue
+        // depth. Spawning every offset at once makes thousands of benchmark
+        // tasks race on a queue which is deliberately bounded to 256 and can
+        // starve the caller-side QueueFull retry loop.
+        if set.len() >= MAX_IN_FLIGHT_PEER_READ_BENCHMARKS {
+            if let Some(joined) = set.join_next().await {
+                assert_read_matches_fixture(joined, data, block_len);
+            }
+        }
     }
 
     while let Some(joined) = set.join_next().await {
-        let (offset, bytes) = joined.unwrap();
-        let start = offset as usize;
-        assert_eq!(&bytes[..], &data[start..start + block_len]);
+        assert_read_matches_fixture(joined, data, block_len);
     }
     started.elapsed()
+}
+
+fn assert_read_matches_fixture(
+    joined: Result<(u64, bytes::Bytes), tokio::task::JoinError>,
+    data: &[u8],
+    block_len: usize,
+) {
+    let (offset, bytes) = joined.unwrap();
+    let start = offset as usize;
+    assert_eq!(&bytes[..], &data[start..start + block_len]);
 }
 
 async fn run_ordered_reads(
@@ -462,7 +482,7 @@ async fn shuffled_peer_read_baseline_reports_current_scheduler_throughput() {
         dir.path(),
         &SchedulerConfig {
             profile: StorageProfile::Unknown,
-            peer_read_concurrency: blocks as usize,
+            peer_read_concurrency: MAX_IN_FLIGHT_PEER_READ_BENCHMARKS,
             storage_io: StorageIoConfig {
                 peer_read_readahead_bytes: 0,
                 peer_read_elevator_budget_ms: 0,
@@ -521,7 +541,7 @@ async fn hdd_peer_read_elevator_reduces_backend_reads_on_shuffled_adjacent_block
         dir.path(),
         &SchedulerConfig {
             profile: StorageProfile::Unknown,
-            peer_read_concurrency: blocks as usize,
+            peer_read_concurrency: MAX_IN_FLIGHT_PEER_READ_BENCHMARKS,
             storage_io: StorageIoConfig {
                 peer_read_readahead_bytes: 0,
                 peer_read_elevator_budget_ms: bench_u64("TNG_STORAGE_ELEVATOR_BUDGET_MS", 25),

@@ -2,18 +2,19 @@
 
 This matrix separates implemented source from qualification evidence. The
 production implementation remains at
-`354ad504f75b33c712b5ccd827cfef3eb0cf4414`; the validated test tree also
-includes transfer-invariants and runner-policy test changes. The full
-workspace passed on Rust 1.94.0 and 1.88.0
-(2,301 passed, 0 failed, 12 ignored on each toolchain),
-the release `rt-engine` suite passed 733 tests, all 21 transfer-rebuild Python
-regressions passed, and all 11 runnable ignored cases passed. Formatting,
-Clippy, and the standalone Rust 1.98.1 comparator runner's six tests and CLI
-smoke passed. The trusted bubblewrap validation-engine contract task passed
-67/67 Python tests. The release 100k catalog and `/tmp` tmpfs storage diagnostics
-also passed; they do not qualify physical storage or whole-client efficiency.
-The `urtorrent` preflight could not start because `io_uring_setup` returned
-`Cannot allocate memory`. The dated evidence and exact limits are in
+`354ad504f75b33c712b5ccd827cfef3eb0cf4414`. The latest local bulk run passed
+the full workspace on Rust 1.94.0 and 1.88.0 (2,302 passed, 0 failed, 12
+ignored on each toolchain), the release `rt-engine` suite passed 734 tests, all
+22 transfer-rebuild Python scripts passed, and all 11 runnable ignored cases
+passed. Strict workspace Clippy and formatting passed. The standalone Rust
+1.98.1 comparator runner's six tests and CLI smoke passed. The trusted
+bubblewrap validation-engine contract task passed 67/67 Python tests. The
+release 100k catalog and seven-probe `/tmp` tmpfs diagnostics passed. A
+separate local Btrfs run passed all seven storage probes after bounding
+benchmark concurrency; it is not ext4 device qualification. One scoped
+ten-pair TorrentNG/urtorrent comparison is complete, but it does not establish
+a pre-refactor delta or whole-client ranking. The dated evidence and exact
+limits are in
 [`TRANSFER_CORE_ACTIVE_SPECS.md`](TRANSFER_CORE_ACTIVE_SPECS.md).
 
 Hosted Transfer Rebuild and Windows Smoke passed on
@@ -22,9 +23,9 @@ change. The protected hardware lane was skipped because no runner is
 registered. The source audit found all 63 repository-owned implementation
 slices present and no missing architecture boundary. The ledger remains
 12/63 `done`, 51/63 `wip`, and 0 `todo`: WIP denotes uncollected runtime,
-platform, hardware, crash-cut, matched-client, soak/canary, independent-review,
-or release evidence. No release capability or efficiency claim follows from
-repository tests or hosted correctness alone.
+platform, hardware, crash-cut, broader matched-client, soak/canary,
+independent-review, or release evidence. No release capability or broad
+efficiency claim follows from repository tests or this scoped comparison.
 
 | Capability | Current native path | Shared-core path | Current state | Qualification gate |
 | --- | --- | --- | --- | --- |

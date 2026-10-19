@@ -16,9 +16,9 @@ checkpoints do not turn a protocol and restart check into an fsync timing test;
 completion still forces a real payload barrier before publishing `Seeding`.
 
 The current local tree passed the full Rust workspace on Rust 1.94.0 and
-1.88.0: 2,301 passed, 0 failed, 12 ignored across 37 result summaries on each
-toolchain. The release `rt-engine` suite passed 733/733, including the seeded
-simulator. All 21 transfer-rebuild Python regressions passed. The focused
+1.88.0: 2,302 passed, 0 failed, 12 ignored across 37 result summaries on each
+toolchain. The release `rt-engine` suite passed 734/734, including the seeded
+simulator. All 22 transfer-rebuild Python regressions passed. The focused
 `rt-metrics` transfer-invariants binary passed on both toolchains, and the
 workflow runner-policy suite passed 4/4 with the protected hardware exception
 restricted to the explicit `main` dispatch. All 11 runnable ignored cases
@@ -46,7 +46,7 @@ cargo +1.94.0 fmt --all -- --check
 cargo +1.94.0 fmt --manifest-path scripts/transfer_rebuild/urtorrent_runner/Cargo.toml -- --check
 ```
 
-The 21 Python regressions ran from `scripts/test_transfer_rebuild_*.py`.
+The 22 Python regressions ran from `scripts/test_transfer_rebuild_*.py`.
 Detailed logs are under `/tmp/tng-transfer-core-final-20261019.GSdus5/`.
 
 Both 100k production-catalog cases passed. The release catalog admitted
@@ -66,12 +66,16 @@ and 8,840.05 MiB/s reads. Readahead served 4,096 reads with 133 backend reads
 move-import-delete check passed. The 10,000-frame peer-wire probe measured
 1.920 ms for owned encoding and 677 µs for direct reused encoding. These are
 functional diagnostics, not physical-device qualification or whole-client
-efficiency evidence. Logs are under
+efficiency evidence. A follow-up local Btrfs run passed all seven storage
+probes after the shuffled-read benchmark was bounded to 256 in-flight
+requests; the 64-file move/import/delete probe also passed. This is local
+filesystem evidence, not ext4 device qualification. Logs are under
 `/tmp/tng-transfer-core-final-20261019.GSdus5/`.
 
-The Rust 1.98.1 `urtorrent` runner built and passed its tests and help smoke,
-but its pinned-client preflight failed at `io_uring_setup: Cannot allocate
-memory`; no paired-client trial is qualified. Hosted Transfer Rebuild run
+The Rust 1.98.1 `urtorrent` runner built and passed its tests and help smoke.
+Its initial preflight failed at `io_uring_setup: Cannot allocate memory`; a
+later preflight fixed the per-process memlock limit and enabled the scoped
+paired run documented under PERF-110. Hosted Transfer Rebuild run
 [39233029958](https://github.com/snapetech-org/TorrentNG/actions/runs/39233029958)
 and Windows Smoke run
 [39233812206](https://github.com/snapetech-org/TorrentNG/actions/runs/39233812206)
