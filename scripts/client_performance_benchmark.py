@@ -9,8 +9,10 @@ import datetime as dt
 import hashlib
 import http.cookiejar
 import json
+import math
 import os
 import platform
+import random
 import re
 import shutil
 import socket
@@ -24,6 +26,8 @@ import urllib.request
 import xmlrpc.client
 from pathlib import Path
 
+from transfer_rebuild.observe import sample_process_tree
+
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_FILE = ROOT / "deploy/interop/compose.yml"
 ALL_CLIENTS = ("torrentngd", "qbittorrent", "transmission", "deluge", "rtorrent")
@@ -33,6 +37,8 @@ CLIENTS = tuple(
 )
 if not CLIENTS or set(CLIENTS) - set(ALL_CLIENTS):
     raise SystemExit("TNG_CLIENT_BENCH_CLIENTS must list one or more supported client IDs")
+if len(CLIENTS) != len(set(CLIENTS)):
+    raise SystemExit("TNG_CLIENT_BENCH_CLIENTS must not repeat client IDs")
 LABELS = {
     "torrentngd": "TorrentNG",
     "qbittorrent": "qBittorrent",
@@ -52,6 +58,32 @@ SEED_NO_PEER_TIMEOUT = int(os.environ.get("TNG_CLIENT_BENCH_NO_PEER_TIMEOUT_SECS
 INTERVAL = float(os.environ.get("TNG_CLIENT_BENCH_SAMPLE_SECS", "2"))
 ALLOCATOR_METRIC_INTERVAL = float(os.environ.get("TNG_CLIENT_BENCH_ALLOCATOR_SAMPLE_SECS", "5"))
 IDLE_SAMPLE_SECONDS = float(os.environ.get("TNG_CLIENT_BENCH_IDLE_SAMPLE_SECS", "8"))
+IDLE_PROFILE_WARMUP_SECONDS = float(
+    os.environ.get("TNG_CLIENT_BENCH_IDLE_WARMUP_SECS", "30")
+)
+IDLE_PROFILE_MEASURE_SECONDS = float(
+    os.environ.get("TNG_CLIENT_BENCH_IDLE_MEASURE_SECS", "60")
+)
+IDLE_PROCESS_SAMPLE_SECONDS = float(
+    os.environ.get("TNG_CLIENT_BENCH_IDLE_PROCESS_SAMPLE_SECS", "15")
+)
+IDLE_PROFILES = {
+    "isolated": {
+        "label": "network_isolated_idle",
+        "dht_enabled": False,
+        "network_mode": "isolated",
+    },
+    "dht_off": {
+        "label": "dht_disabled_idle",
+        "dht_enabled": False,
+        "network_mode": "attached",
+    },
+    "dht_on": {
+        "label": "dht_enabled_idle",
+        "dht_enabled": True,
+        "network_mode": "attached",
+    },
+}
 TORRENT_INDEX = "https://cdimage.debian.org/debian-cd/current/amd64/bt-cd/"
 SHA256SUMS_URL = "https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/SHA256SUMS"
 
@@ -175,6 +207,30 @@ def parse_cgroup_cpu_usage_usec(text):
     return None
 
 
+def parse_proc_net_dev(text):
+    """Sum RX/TX bytes on non-loopback interfaces in one network namespace."""
+    received = 0
+    transmitted = 0
+    found = False
+    for line in text.splitlines()[2:]:
+        interface, separator, counters = line.partition(":")
+        if not separator or interface.strip() == "lo":
+            continue
+        values = counters.split()
+        if len(values) < 9:
+            continue
+        try:
+            rx_bytes, tx_bytes = int(values[0]), int(values[8])
+        except ValueError:
+            continue
+        if rx_bytes < 0 or tx_bytes < 0:
+            continue
+        received += rx_bytes
+        transmitted += tx_bytes
+        found = True
+    return (received, transmitted) if found else (None, None)
+
+
 def per_gib(value, payload_bytes, unit_divisor=1):
     if value is None or payload_bytes <= 0:
         return None
@@ -235,6 +291,9 @@ class HttpClient:
 
 class Benchmark:
     def __init__(self):
+        self.mode = os.environ.get("TNG_CLIENT_BENCH_MODE", "transfer").strip().lower()
+        if self.mode not in ("transfer", "idle"):
+            raise RuntimeError("TNG_CLIENT_BENCH_MODE must be transfer or idle")
         self.skip_build = env_enabled("TNG_CLIENT_BENCH_SKIP_BUILD")
         allocator = os.environ.get("TNG_CLIENT_BENCH_ALLOCATOR", "system").strip().lower()
         allocator_features = {
@@ -381,6 +440,11 @@ class Benchmark:
         used_ports = set()
         self.sessions = {}
         self.results = []
+        self.idle_results = []
+        self.idle_client_images = {}
+        self.idle_order_seed = int(hashlib.sha256(self.stamp.encode()).hexdigest()[:16], 16)
+        self.network_isolated_clients = set()
+        self.detached_networks = {}
         self.samples = []
         self.container_ids = {}
         self.container_pids = {}
@@ -588,18 +652,31 @@ class Benchmark:
             )
         if self.tokio_worker_threads is not None:
             compose_environment["TOKIO_WORKER_THREADS"] = str(self.tokio_worker_threads)
-        if compose_environment:
+        if compose_environment or self.mode == "idle":
             self.compose_override_path = self.workdir / "compose.memory-profile.yml"
-            env_lines = "".join(
-                f"      {key}: {json.dumps(value)}\n"
-                for key, value in compose_environment.items()
-            )
-            self.compose_override_path.write_text(
-                "services:\n  torrentngd:\n    environment:\n" + env_lines
-            )
+            override_lines = ["services:"]
+            if compose_environment:
+                override_lines.extend(["  torrentngd:", "    environment:"])
+                override_lines.extend(
+                    f"      {key}: {json.dumps(value)}"
+                    for key, value in compose_environment.items()
+                )
+            if self.mode == "idle":
+                for client in CLIENTS:
+                    if client == "torrentngd" and compose_environment:
+                        override_lines.extend(["    healthcheck:", "      disable: true"])
+                    else:
+                        override_lines.extend([
+                            f"  {client}:", "    healthcheck:", "      disable: true",
+                        ])
+            self.compose_override_path.write_text("\n".join(override_lines) + "\n")
         self._prepare_qbit_config()
-        self._prepare_torrentng_config()
-        self._prepare_rtorrent_config()
+        self._prepare_torrentng_config(
+            dht_enabled=False if self.mode == "idle" else None,
+        )
+        self._prepare_rtorrent_config(
+            dht_enabled=False if self.mode == "idle" else None,
+        )
         self.csv_path.parent.mkdir(parents=True, exist_ok=True)
         with self.csv_path.open("w", newline="") as handle:
             csv.writer(handle).writerow([
@@ -617,6 +694,9 @@ class Benchmark:
                 "cgroup_memory_kernel_stack_bytes", "cgroup_memory_pagetables_bytes",
                 "cgroup_cpu_usage_usec", "cgroup_io_read_bytes",
                 "cgroup_io_write_bytes", "cgroup_io_read_ops", "cgroup_io_write_ops",
+                "network_rx_bytes", "network_tx_bytes",
+                "container_process_tree_rss_bytes", "container_process_tree_pss_bytes",
+                "container_process_tree_count", "container_process_tree_threads",
             ])
 
     def _prepare_qbit_config(self):
@@ -649,13 +729,25 @@ class Benchmark:
             "WebUI\\Port=8080\n"
         )
 
-    def _prepare_torrentng_config(self):
+    def _prepare_torrentng_config(self, *, dht_enabled=None):
         text = (ROOT / "deploy/interop/torrentngd.config.toml").read_text()
         text = re.sub(r"(?m)^max_peers\s*=\s*\d+\s*$", f"max_peers = {MAX_PEERS}", text)
         text = re.sub(r"(?m)^upload_rate_limit\s*=\s*\d+\s*$",
                       f"upload_rate_limit = {RATE_BPS}", text)
         text = re.sub(r"(?m)^download_rate_limit\s*=\s*\d+\s*$",
                       f"download_rate_limit = {RATE_BPS}", text)
+        if dht_enabled is not None:
+            section = re.search(r"(?ms)^\[dht\]\s*\n(.*?)(?=^\[|\Z)", text)
+            if section is None:
+                raise RuntimeError("TorrentNG benchmark config has no [dht] section")
+            body, count = re.subn(
+                r"(?m)^enabled\s*=\s*(?:true|false)\s*$",
+                f"enabled = {'true' if dht_enabled else 'false'}",
+                section.group(1), count=1,
+            )
+            if count != 1:
+                raise RuntimeError("TorrentNG benchmark DHT setting is not explicit")
+            text = text[:section.start(1)] + body + text[section.end(1):]
         storage_overrides = []
         if self.storage_io_worker_threads is not None:
             storage_overrides.append(
@@ -716,8 +808,16 @@ class Benchmark:
         path.write_text(text)
         path.chmod(0o600)
 
-    def _prepare_rtorrent_config(self):
+    def _prepare_rtorrent_config(self, *, dht_enabled=None):
         base = (ROOT / "deploy/interop/rtorrent.rc").read_text().rstrip()
+        if dht_enabled is not None:
+            base, count = re.subn(
+                r"(?m)^dht\.mode\.set\s*=\s*\S+\s*$",
+                f"dht.mode.set = {'auto' if dht_enabled else 'off'}",
+                base, count=1,
+            )
+            if count != 1:
+                raise RuntimeError("rTorrent benchmark config has no explicit DHT mode")
         additions = [
             f"throttle.max_peers.normal.set = {MAX_PEERS}",
             f"throttle.max_peers.seed.set = {MAX_PEERS}",
@@ -880,10 +980,12 @@ class Benchmark:
                     print("rTorrent startup log tail:\n" + output.rstrip(), flush=True)
         raise RuntimeError(f"timed out waiting for {LABELS[client]}")
 
-    def _torrentng_request(self, path, *, data=None, headers=None):
+    def _torrentng_request(self, path, *, data=None, headers=None, method=None):
         hdr = {"Authorization": f"Bearer {TOKEN}"}
         hdr.update(headers or {})
-        with self.http("torrentngd", path, data=data, headers=hdr) as response:
+        with self.http(
+            "torrentngd", path, data=data, headers=hdr, method=method,
+        ) as response:
             return response.read()
 
     def _configure(self, client):
@@ -1337,7 +1439,7 @@ class Benchmark:
     def _write_memory_profile(self):
         samples = []
         for row in self.samples:
-            if len(row) < 33:
+            if len(row) < 35:
                 continue
             samples.append({
                 "utc": row[0], "client": row[1], "phase": row[2],
@@ -1364,10 +1466,24 @@ class Benchmark:
                 "cgroup_io_write_bytes": int(row[30]) if row[30] != "" else None,
                 "cgroup_io_read_ops": int(row[31]) if row[31] != "" else None,
                 "cgroup_io_write_ops": int(row[32]) if row[32] != "" else None,
+                "network_rx_bytes": int(row[33]) if row[33] != "" else None,
+                "network_tx_bytes": int(row[34]) if row[34] != "" else None,
+                "container_process_tree_rss_bytes": (
+                    int(row[35]) if len(row) > 35 and row[35] != "" else None
+                ),
+                "container_process_tree_pss_bytes": (
+                    int(row[36]) if len(row) > 36 and row[36] != "" else None
+                ),
+                "container_process_tree_count": (
+                    int(row[37]) if len(row) > 37 and row[37] != "" else None
+                ),
+                "container_process_tree_threads": (
+                    int(row[38]) if len(row) > 38 and row[38] != "" else None
+                ),
             })
         self.memory_profile.parent.mkdir(parents=True, exist_ok=True)
         self.memory_profile.write_text(json.dumps({
-            "schema_version": 2,
+            "schema_version": 4,
             "source_commit": self.source_commit,
             "source_tree": self.source_tree,
             "source_dirty": self.source_dirty,
@@ -1387,6 +1503,10 @@ class Benchmark:
                 "cgroup_memory_anon": "Container anonymous memory from memory.stat.",
                 "cgroup_cpu_usage": "Cgroup v2 cpu.stat usage_usec; phase deltas are normalized by transferred payload bytes.",
                 "cgroup_io": "Cgroup v2 io.stat counters summed across devices. These are block-layer bytes and operations charged to the container; page-cache hits are not block I/O.",
+                "network_bytes": "RX/TX counters from non-loopback interfaces in the container network namespace; they include all namespace traffic, not just BitTorrent DHT packets.",
+                "container_process_tree_rss": "Idle-mode host /proc RSS summed across the container's process tree. Shared pages can be counted in multiple processes.",
+                "container_process_tree_pss": "Idle-mode host /proc PSS summed across the container's process tree. PSS divides shared pages proportionally and is distinct from cgroup memory.",
+                "process_tree_memory_sampling": "Idle process-tree RSS/PSS are sampled at the configured process-sample interval, independent of the regular resource-sample interval. Unavailable readings are null.",
                 "torrentng_process_rss": "Host /proc RSS for torrentngd when available; zero means unavailable.",
                 "process_memory_snapshots": "TorrentNG /proc status, thread names, smaps totals, and the 20 largest resident mappings captured with cgroup samples.",
                 "engine_metrics": "TorrentNG resource-governor leases, estimated peer-buffer capacities, storage-pool gauges, and optional allocator metrics sampled during transfer and at phase boundaries.",
@@ -1421,6 +1541,20 @@ class Benchmark:
         cgroup_path = self.cgroup_paths.get(client)
         cgroup_cpu_usage_usec = self._read_cgroup_cpu(cgroup_path)
         cgroup_io = self._read_cgroup_io(cgroup_path)
+        network_rx_bytes, network_tx_bytes = self._container_network_bytes(client)
+        process_tree_memory = (None, None, None, None)
+        if self.mode == "idle":
+            sample_times = getattr(self, "process_tree_memory_sample_elapsed", None)
+            if sample_times is None:
+                sample_times = {}
+                self.process_tree_memory_sample_elapsed = sample_times
+            sample_key = (client, phase)
+            previous = sample_times.get(sample_key)
+            if (previous is None
+                    or elapsed - previous >= IDLE_PROCESS_SAMPLE_SECONDS
+                    or elapsed >= IDLE_PROFILE_MEASURE_SECONDS):
+                process_tree_memory = self._container_process_tree_memory(client)
+                sample_times[sample_key] = elapsed
         row = [
             dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds"),
             client, phase, f"{elapsed:.3f}", f"{status.get('progress', 0):.6f}",
@@ -1438,6 +1572,9 @@ class Benchmark:
             "" if cgroup_io is None else cgroup_io["write_bytes"],
             "" if cgroup_io is None else cgroup_io["read_ops"],
             "" if cgroup_io is None else cgroup_io["write_ops"],
+            "" if network_rx_bytes is None else network_rx_bytes,
+            "" if network_tx_bytes is None else network_tx_bytes,
+            *("" if value is None else value for value in process_tree_memory),
         ]
         self.samples.append(row)
         if client == "torrentngd":
@@ -1450,10 +1587,124 @@ class Benchmark:
         with self.csv_path.open("a", newline="") as handle:
             csv.writer(handle).writerow(row)
         now = time.monotonic()
-        if (client == "torrentngd"
+        if (self.mode != "idle" and client == "torrentngd"
                 and now - self.last_engine_memory_metrics_at >= ALLOCATOR_METRIC_INTERVAL):
             self._capture_engine_memory_metrics(client, phase)
         return row
+
+    def _container_networks(self, container_id):
+        output, code = run_command(
+            [
+                "docker", "inspect", "--format",
+                "{{json .NetworkSettings.Networks}}", container_id,
+            ],
+            env=self.env, check=False, quiet=True, timeout=15,
+        )
+        if code:
+            raise RuntimeError(f"could not inspect Docker networks for {container_id}")
+        try:
+            networks = json.loads(output.strip() or "null")
+        except json.JSONDecodeError as error:
+            raise RuntimeError(f"Docker returned invalid network data for {container_id}") from error
+        if networks is None:
+            return {}
+        if not isinstance(networks, dict):
+            raise RuntimeError(f"Docker returned an unexpected network map for {container_id}")
+        return networks
+
+    def _disconnect_container_networks(self, client, container_id):
+        original = self._container_networks(container_id)
+        if not original:
+            raise RuntimeError(f"{LABELS[client]} has no Docker network to isolate")
+        detached = getattr(self, "detached_networks", None)
+        if detached is None:
+            detached = {}
+            self.detached_networks = detached
+        detached[client] = (container_id, original)
+        try:
+            for network in original:
+                run_command(
+                    ["docker", "network", "disconnect", network, container_id],
+                    env=self.env, timeout=30,
+                )
+            if self._container_networks(container_id):
+                raise RuntimeError(
+                    f"{LABELS[client]} still has a Docker network after disconnect"
+                )
+        except Exception as error:
+            try:
+                self._reconnect_container_networks(client)
+            except Exception as restore_error:
+                raise RuntimeError(
+                    f"network isolation failed ({error}); restoring the original network "
+                    f"also failed ({restore_error})"
+                ) from error
+            raise
+        isolated = getattr(self, "network_isolated_clients", None)
+        if isolated is None:
+            isolated = set()
+            self.network_isolated_clients = isolated
+        isolated.add(client)
+
+    def _reconnect_container_networks(self, client):
+        detached = getattr(self, "detached_networks", {})
+        record = detached.get(client)
+        if record is None:
+            return
+        container_id, original = record
+        current = self._container_networks(container_id)
+        for network, details in original.items():
+            if network in current:
+                continue
+            args = ["docker", "network", "connect"]
+            aliases = (details.get("Aliases") or []) if isinstance(details, dict) else []
+            for alias in aliases:
+                args.extend(["--alias", alias])
+            args.extend([network, container_id])
+            run_command(args, env=self.env, timeout=30)
+        current = self._container_networks(container_id)
+        if set(current) != set(original):
+            raise RuntimeError(
+                f"Docker network restore for {LABELS[client]} was incomplete: "
+                f"{sorted(current)} != {sorted(original)}"
+            )
+        missing_aliases = {
+            network: sorted(
+                set((details.get("Aliases") or []) if isinstance(details, dict) else [])
+                - set((current[network].get("Aliases") or [])
+                      if isinstance(current[network], dict) else [])
+            )
+            for network, details in original.items()
+        }
+        missing_aliases = {
+            network: aliases for network, aliases in missing_aliases.items() if aliases
+        }
+        if missing_aliases:
+            raise RuntimeError(
+                f"Docker network aliases were not restored for {LABELS[client]}: "
+                f"{missing_aliases}"
+            )
+        detached.pop(client, None)
+        getattr(self, "network_isolated_clients", set()).discard(client)
+
+    def _container_network_bytes(self, client):
+        if client in getattr(self, "network_isolated_clients", set()):
+            return 0, 0
+        pid = getattr(self, "container_pids", {}).get(client)
+        if not pid:
+            return None, None
+        try:
+            return parse_proc_net_dev(Path(f"/proc/{pid}/net/dev").read_text())
+        except OSError:
+            return None, None
+
+    def _container_process_tree_memory(self, client):
+        """Read client process-tree RSS/PSS from host /proc, when permitted."""
+        pid = getattr(self, "container_pids", {}).get(client)
+        if not pid:
+            return None, None, None, None
+        sample = sample_process_tree(pid, time.monotonic_ns())
+        return sample.rss_bytes, sample.pss_bytes, sample.processes, sample.threads
 
     def _sample_idle(self, client):
         started = time.monotonic()
@@ -1811,16 +2062,38 @@ class Benchmark:
             delta = values[-1] - values[0]
             return delta if delta >= 0 else None
 
+        def available_values(index):
+            return [
+                int(row[index]) for row in records
+                if len(row) > index and row[index] != ""
+            ]
+
         if not records:
             return {"mean_cpu": 0.0, "peak_cpu": 0.0, "peak_memory": 0,
                     "peak_cgroup_current": 0, "peak_cgroup_anon": 0,
                     "peak_cgroup_file": 0, "peak_process_rss": 0,
-                    "mean_memory": 0, "mean_cgroup_anon": 0,
+                    "mean_memory": 0, "mean_cgroup_current": 0,
+                    "mean_cgroup_anon": 0,
                     "peak_rate": 0, "peak_peers": 0,
                     "cgroup_cpu_seconds": None, "cgroup_io_read_bytes": None,
                     "cgroup_io_write_bytes": None, "cgroup_io_read_ops": None,
-                    "cgroup_io_write_ops": None}
+                    "cgroup_io_write_ops": None, "network_rx_bytes": None,
+                    "network_tx_bytes": None, "sampled_seconds": None,
+                    "peak_process_tree_rss": None, "mean_process_tree_rss": None,
+                    "peak_process_tree_pss": None, "mean_process_tree_pss": None,
+                    "peak_process_tree_count": None, "peak_process_tree_threads": None,
+                    "process_tree_memory_sample_count": 0}
         cpu_usec = counter_delta(28)
+        try:
+            sampled_seconds = float(records[-1][3]) - float(records[0][3])
+            if sampled_seconds <= 0:
+                sampled_seconds = None
+        except (ValueError, IndexError):
+            sampled_seconds = None
+        process_tree_rss = available_values(35)
+        process_tree_pss = available_values(36)
+        process_tree_counts = available_values(37)
+        process_tree_threads = available_values(38)
         return {
             "mean_cpu": sum(float(row[8]) for row in records) / len(records),
             "peak_cpu": max(float(row[8]) for row in records),
@@ -1830,6 +2103,7 @@ class Benchmark:
             "peak_cgroup_file": max(int(row[14]) for row in records),
             "peak_process_rss": max(int(row[16]) for row in records),
             "mean_memory": sum(int(row[9]) for row in records) / len(records),
+            "mean_cgroup_current": sum(int(row[11]) for row in records) / len(records),
             "mean_cgroup_anon": sum(int(row[13]) for row in records) / len(records),
             "peak_rate": max(int(row[5]) for row in records),
             "peak_peers": max(int(row[7]) for row in records),
@@ -1838,6 +2112,20 @@ class Benchmark:
             "cgroup_io_write_bytes": counter_delta(30),
             "cgroup_io_read_ops": counter_delta(31),
             "cgroup_io_write_ops": counter_delta(32),
+            "network_rx_bytes": counter_delta(33),
+            "network_tx_bytes": counter_delta(34),
+            "peak_process_tree_rss": max(process_tree_rss) if process_tree_rss else None,
+            "mean_process_tree_rss": (
+                sum(process_tree_rss) / len(process_tree_rss) if process_tree_rss else None
+            ),
+            "peak_process_tree_pss": max(process_tree_pss) if process_tree_pss else None,
+            "mean_process_tree_pss": (
+                sum(process_tree_pss) / len(process_tree_pss) if process_tree_pss else None
+            ),
+            "peak_process_tree_count": max(process_tree_counts) if process_tree_counts else None,
+            "peak_process_tree_threads": max(process_tree_threads) if process_tree_threads else None,
+            "process_tree_memory_sample_count": len(process_tree_rss),
+            "sampled_seconds": sampled_seconds,
         }
 
     def _release_client_payloads(self, client, iso_name):
@@ -2321,16 +2609,390 @@ class Benchmark:
             flush=True,
         )
 
+    def _idle_profile_order(self):
+        rng = random.Random(self.idle_order_seed)
+        schedule = [
+            (client, profile)
+            for client in CLIENTS
+            for profile in IDLE_PROFILES
+        ]
+        rng.shuffle(schedule)
+        return schedule
+
+    def _set_idle_dht(self, client, enabled):
+        if client == "torrentngd":
+            self._torrentng_request(
+                "/api/v1/session/features",
+                data=json.dumps({"dht": enabled, "pex": False}).encode(),
+                headers={"Content-Type": "application/json"},
+                method="PUT",
+            )
+            return
+        if client == "qbittorrent":
+            preferences = {
+                "dht": enabled, "pex": False, "lsd": False,
+                "upnp": False, "natpmp": False,
+            }
+            self._qbit_json(
+                client, "/api/v2/app/setPreferences",
+                data=urllib.parse.urlencode({"json": json.dumps(preferences)}).encode(),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+        elif client == "transmission":
+            self._transmission("session-set", {
+                "dht-enabled": enabled, "pex-enabled": False,
+                "lpd-enabled": False, "port-forwarding-enabled": False,
+            })
+        elif client == "deluge":
+            self._deluge("core.set_config", [{
+                "dht": enabled, "utpex": False, "lsd": False,
+            }])
+        else:
+            self._scgi("protocol.pex.set", "", "no")
+
+    def _read_idle_dht(self, client):
+        if client == "torrentngd":
+            return json.loads(self._torrentng_request("/api/v1/session/features")).get("dht")
+        if client == "qbittorrent":
+            return self._qbit_json(client, "/api/v2/app/preferences").get("dht")
+        if client == "transmission":
+            args = self._transmission("session-get").get("arguments", {})
+            return args.get("dht-enabled", args.get("dht_enabled"))
+        if client == "deluge":
+            config = self._deluge("core.get_config", [["dht"]])
+            return config.get("dht") if isinstance(config, dict) else None
+        value = self._scgi("dht.mode")
+        return str(value).strip().lower() not in ("off", "disabled", "0", "false")
+
+    def _read_idle_pex(self, client):
+        if client == "torrentngd":
+            return json.loads(self._torrentng_request("/api/v1/session/features")).get("pex")
+        if client == "qbittorrent":
+            return self._qbit_json(client, "/api/v2/app/preferences").get("pex")
+        if client == "transmission":
+            args = self._transmission("session-get").get("arguments", {})
+            return args.get("pex-enabled", args.get("pex_enabled"))
+        if client == "deluge":
+            config = self._deluge("core.get_config", [["utpex"]])
+            return config.get("utpex") if isinstance(config, dict) else None
+        value = self._scgi("protocol.pex")
+        return str(value).strip().lower() not in ("off", "disabled", "0", "false", "no")
+
+    def _idle_torrent_count(self, client):
+        if client == "torrentngd":
+            rows = json.loads(self._torrentng_request("/api/qb/v2/torrents/info")) or []
+            return len(rows)
+        if client == "qbittorrent":
+            return len(self._qbit_json(client, "/api/v2/torrents/info") or [])
+        if client == "transmission":
+            response = self._transmission("torrent-get", {"fields": ["hashString"]})
+            return len(response.get("arguments", {}).get("torrents", []))
+        if client == "deluge":
+            response = self._deluge("web.update_ui", [["name"], {}]) or {}
+            return len(response.get("torrents") or {})
+        return len(self._scgi("d.multicall2", "", "main", "d.hash=") or [])
+
+    def _idle_profile_summary(self, client, phase):
+        client_samples = [row for row in self.samples if row[1] == client]
+        summary = self._summary(client_samples, phase)
+        duration = summary.get("sampled_seconds")
+        divisor = duration / 60 if duration and duration > 0 else None
+
+        def per_minute(value):
+            return value / divisor if value is not None and divisor else None
+
+        summary.update({
+            "cgroup_cpu_seconds_per_minute": per_minute(summary["cgroup_cpu_seconds"]),
+            "cgroup_cpu_percent_one_core": (
+                summary["cgroup_cpu_seconds"] * 100 / duration
+                if duration and summary["cgroup_cpu_seconds"] is not None else None
+            ),
+            "block_read_mib_per_minute": per_minute(
+                summary["cgroup_io_read_bytes"] / (1024 * 1024)
+                if summary["cgroup_io_read_bytes"] is not None else None
+            ),
+            "block_write_mib_per_minute": per_minute(
+                summary["cgroup_io_write_bytes"] / (1024 * 1024)
+                if summary["cgroup_io_write_bytes"] is not None else None
+            ),
+            "network_rx_mib_per_minute": per_minute(
+                summary["network_rx_bytes"] / (1024 * 1024)
+                if summary["network_rx_bytes"] is not None else None
+            ),
+            "network_tx_mib_per_minute": per_minute(
+                summary["network_tx_bytes"] / (1024 * 1024)
+                if summary["network_tx_bytes"] is not None else None
+            ),
+        })
+        return summary
+
+    def _run_idle_profile(self, client, profile_name):
+        profile_spec = IDLE_PROFILES[profile_name]
+        profile = profile_spec["label"]
+        dht_enabled = profile_spec["dht_enabled"]
+        network_mode = profile_spec["network_mode"]
+        phase = f"idle_{profile_name}"
+        print(f"\n==> {LABELS[client]}: {profile}", flush=True)
+        try:
+            if client == "torrentngd":
+                self._prepare_torrentng_config(dht_enabled=dht_enabled)
+            elif client == "rtorrent":
+                self._prepare_rtorrent_config(dht_enabled=dht_enabled)
+            self.compose("up", "-d", client, quiet=True, timeout=900)
+            self.sessions[client] = HttpClient(self.api_url(client)) if client != "rtorrent" else None
+            self._wait_ready(client)
+            self._configure(client)
+            self._set_idle_dht(client, dht_enabled)
+            container_id = self.service_id(client)
+            if not container_id:
+                raise RuntimeError(f"{LABELS[client]} container was not created")
+            self.container_ids[client] = container_id
+            image, _ = run_command(
+                ["docker", "inspect", "-f", "{{.Config.Image}}", container_id],
+                env=self.env, check=False, quiet=True,
+            )
+            self.idle_client_images[client] = image.strip() or "unknown"
+            self._remember_container(client)
+            actual_dht = self._read_idle_dht(client)
+            if not isinstance(actual_dht, bool) or actual_dht != dht_enabled:
+                raise RuntimeError(
+                    f"{LABELS[client]} DHT readback was {actual_dht!r}; expected {dht_enabled}"
+                )
+            actual_pex = self._read_idle_pex(client)
+            if actual_pex is not False:
+                raise RuntimeError(
+                    f"{LABELS[client]} PEX readback was {actual_pex!r}; expected false"
+                )
+            initial_torrent_count = self._idle_torrent_count(client)
+            if initial_torrent_count != 0:
+                raise RuntimeError(
+                    f"{LABELS[client]} started the idle window with "
+                    f"{initial_torrent_count} torrents"
+                )
+            if network_mode == "isolated":
+                self._disconnect_container_networks(client, container_id)
+            elif not self._container_networks(container_id):
+                raise RuntimeError(f"{LABELS[client]} has no attached Docker network")
+            time.sleep(IDLE_PROFILE_WARMUP_SECONDS)
+            started = time.monotonic()
+            while True:
+                elapsed = time.monotonic() - started
+                self._sample(client, phase, elapsed, {
+                    "progress": 0.0, "down": 0, "up": 0, "peers": 0,
+                })
+                remaining = IDLE_PROFILE_MEASURE_SECONDS - (time.monotonic() - started)
+                if remaining <= 0:
+                    break
+                time.sleep(min(INTERVAL, remaining))
+            self._reconnect_container_networks(client)
+            if not self._container_networks(container_id):
+                raise RuntimeError(f"{LABELS[client]} was not reattached after the idle window")
+            summary = self._idle_profile_summary(client, phase)
+            torrent_count = self._idle_torrent_count(client)
+            final_dht = self._read_idle_dht(client)
+            final_pex = self._read_idle_pex(client)
+            traffic_observed = (
+                None
+                if summary["network_rx_bytes"] is None or summary["network_tx_bytes"] is None
+                else summary["network_rx_bytes"] + summary["network_tx_bytes"] > 0
+            )
+            profile_samples = [
+                row for row in self.samples if row[1] == client and row[2] == phase
+            ]
+            result = {
+                "client": client,
+                "profile": profile,
+                "profile_key": profile_name,
+                "network_mode": network_mode,
+                "network_isolation_verified": network_mode == "isolated",
+                "dht_enabled": dht_enabled,
+                "dht_readback": final_dht,
+                "pex_readback": final_pex,
+                "torrent_count": torrent_count,
+                "network_traffic_observed": traffic_observed,
+                "sample_count": len(profile_samples),
+                "status": "PASS" if (
+                    torrent_count == 0 and final_dht is dht_enabled and final_pex is False
+                    and (network_mode != "isolated"
+                         or client not in getattr(self, "detached_networks", {}))
+                    and summary.get("sampled_seconds") is not None
+                    and len(profile_samples) >= 2
+                ) else "FAIL",
+                **summary,
+            }
+            self.idle_results.append(result)
+            print(
+                f"[{LABELS[client]}] {profile}: "
+                f"{summary['cgroup_cpu_seconds_per_minute']} CPU-s/min, "
+                f"{summary['peak_cgroup_anon'] / 1048576:.2f} MiB cgroup anon peak, "
+                f"{summary['network_rx_bytes']} RX bytes; {result['status']}",
+                flush=True,
+            )
+        finally:
+            try:
+                self._reconnect_container_networks(client)
+            finally:
+                self.compose("stop", client, check=False, quiet=True, timeout=60)
+
+    def _write_idle_report(self, client_images):
+        def metric(value, digits=3):
+            return "n/a" if value is None else f"{value:.{digits}f}"
+
+        def mib(value):
+            return "n/a" if value is None else f"{value / 1048576:.2f}"
+
+        profile_order = " → ".join(
+            f"{LABELS[row['client']]} ({row.get('network_mode')}, "
+            f"{'DHT on' if row.get('dht_enabled') else 'DHT off'})"
+            for row in self.idle_results
+        ) or "no profiles completed"
+
+        lines = [
+            "# TorrentNG and reference client idle resource comparison",
+            "",
+            f"- Started (UTC): {self.started}",
+            f"- Source commit: {self.source_commit}",
+            f"- Source tree: {self.source_tree}",
+            f"- Source worktree dirty: {str(self.source_dirty).lower()}",
+            f"- Source fingerprint SHA-256: {self.source_fingerprint_sha256}",
+            f"- Host: {self.host}; {self.cpu_count} logical CPUs; Linux {self.kernel} ({self.machine})",
+            f"- Scratch filesystem: {self.scratch_device} ({self.scratch_type})",
+            f"- Host load average at start: {self.load_start[0]:.2f}/{self.load_start[1]:.2f}/{self.load_start[2]:.2f}",
+            f"- Host load average at end: {os.getloadavg()[0]:.2f}/{os.getloadavg()[1]:.2f}/{os.getloadavg()[2]:.2f}",
+            f"- Container images: {json.dumps(client_images, sort_keys=True)}",
+            f"- Idle DHT profile order seed: {self.idle_order_seed}",
+            f"- Idle profile execution order: {profile_order}",
+            f"- Warmup per profile: {IDLE_PROFILE_WARMUP_SECONDS:g}s; measured window: {IDLE_PROFILE_MEASURE_SECONDS:g}s; resource sample interval: {INTERVAL:g}s; process-tree RSS/PSS interval: {IDLE_PROCESS_SAMPLE_SECONDS:g}s",
+            "",
+            "## Idle resource samples",
+            "",
+            "Each profile has zero torrents and therefore no connected torrent peers. All profiles disable PEX and read back DHT/PEX state and zero torrents outside measured windows. The isolated profile disables DHT, detaches all Docker network endpoints for the full warmup and measurement window, then reconnects and verifies the original endpoints before post-window API checks. The attached DHT-off profile disables DHT and local discovery where supported; the attached DHT-on profile measures DHT bootstrap and routing maintenance without a torrent, tracker announce, peer search, or payload transfer. Docker healthchecks are disabled during the measured windows, and there are no client API queries during them. Network traffic is recorded for attached profiles; DHT readback does not prove a peer connection and namespace bytes are not attributed specifically to DHT.",
+            "",
+            "| Client | Profile | Network mode | Isolation verified | DHT readback | PEX readback | RX/TX observed | Status | Samples | CPU s/min | CPU % of one core | Mean/peak process-tree RSS (MiB) | Mean/peak process-tree PSS (MiB) | Mean/peak cgroup anon (MiB) | Mean/peak cgroup current (MiB) | Mean/peak container working set (MiB) | Block read/write (MiB/min) | Network RX/TX (MiB/min) |",
+            "|---|---|---|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+        for row in self.idle_results:
+            phase = (
+                "idle_isolated" if row.get("network_mode") == "isolated"
+                else "idle_dht_on" if row.get("dht_enabled") else "idle_dht_off"
+            )
+            phase_rows = [
+                sample for sample in self.samples
+                if sample[1] == row["client"] and sample[2] == phase
+            ]
+            mean_current = (
+                sum(int(sample[11]) for sample in phase_rows) / len(phase_rows)
+                if phase_rows else None
+            )
+            traffic_text = (
+                "n/a" if row.get("network_traffic_observed") is None
+                else str(row["network_traffic_observed"]).lower()
+            )
+            isolation_text = (
+                "n/a" if row.get("network_mode") != "isolated"
+                else str(row.get("network_isolation_verified", False)).lower()
+            )
+            lines.append(
+                f"| {LABELS[row['client']]} | {row['profile']} | {row.get('network_mode')} | {isolation_text} | "
+                f"{str(row.get('dht_readback')).lower()} | {str(row.get('pex_readback')).lower()} | "
+                f"{traffic_text} | {row['status']} | {row.get('sample_count', 0)} | "
+                f"{metric(row.get('cgroup_cpu_seconds_per_minute'))} | {metric(row.get('cgroup_cpu_percent_one_core'))} | "
+                f"{mib(row.get('mean_process_tree_rss'))}/{mib(row.get('peak_process_tree_rss'))} | "
+                f"{mib(row.get('mean_process_tree_pss'))}/{mib(row.get('peak_process_tree_pss'))} | "
+                f"{mib(row.get('mean_cgroup_anon'))}/{mib(row.get('peak_cgroup_anon'))} | "
+                f"{mib(mean_current)}/{mib(row.get('peak_cgroup_current'))} | "
+                f"{mib(row.get('mean_memory'))}/{mib(row.get('peak_memory'))} | "
+                f"{metric(row.get('block_read_mib_per_minute'))}/{metric(row.get('block_write_mib_per_minute'))} | "
+                f"{metric(row.get('network_rx_mib_per_minute'))}/{metric(row.get('network_tx_mib_per_minute'))} |"
+            )
+            if row.get("error"):
+                lines.append(f"\nSetup/measurement failure for {LABELS[row['client']]} {row['profile']}: `{row['error']}`\n")
+        lines.extend([
+            "",
+            "## Interpretation and limits",
+            "",
+            "This is an idle-footprint comparison, separate from transfer CPU-s/GiB, throughput, and transfer I/O. CPU and block/network counters are normalized to elapsed idle minutes. Process-tree RSS sums each host /proc process RSS and can count shared pages more than once; process-tree PSS proportionally accounts for shared pages. Both are sampled less frequently than cgroup counters and are distinct from container working set and cgroup memory. DHT-enabled state and observed namespace bytes do not prove a peer connection, and this workload has no torrent catalog, shares, searches, or user-facing UI activity. Repeat on a quiet, dedicated host before interpreting small differences; results are specific to these image digests, settings, host, and window.",
+            "",
+            "- Raw time-series samples: " + f"[{self.csv_path.name}]({self.csv_path.name})",
+            "- Memory and resource profile: " + f"[{self.memory_profile.name}]({self.memory_profile.name})",
+            f"- Compose cleanup status: **{self.cleanup_status}**",
+            "",
+        ])
+        self.report.parent.mkdir(parents=True, exist_ok=True)
+        self.report.write_text("\n".join(lines))
+
+    def _run_idle_profiles(self):
+        schedule = self._idle_profile_order()
+        self.idle_client_images = {}
+        for client, profile_name in schedule:
+            profile_spec = IDLE_PROFILES[profile_name]
+            dht_enabled = profile_spec["dht_enabled"]
+            profile = profile_spec["label"]
+            phase = f"idle_{profile_name}"
+            try:
+                self._run_idle_profile(client, profile_name)
+            except Exception as error:
+                network_restore_failed = client in getattr(self, "detached_networks", {})
+                phase_count = sum(
+                    row[1] == client and row[2] == phase for row in self.samples
+                )
+                partial = self._idle_profile_summary(client, phase) if phase_count else {}
+                self.idle_results.append({
+                    "client": client,
+                    "profile": profile,
+                    "profile_key": profile_name,
+                    "network_mode": profile_spec["network_mode"],
+                    "network_isolation_verified": (
+                        False if profile_spec["network_mode"] == "isolated" else None
+                    ),
+                    "dht_enabled": dht_enabled,
+                    "dht_readback": None,
+                    "pex_readback": None,
+                    "torrent_count": None,
+                    "network_traffic_observed": None,
+                    "sample_count": phase_count,
+                    "status": "FAIL",
+                    "error": f"{type(error).__name__}: {error}",
+                    **partial,
+                })
+                print(
+                    f"[{LABELS[client]}] idle profile failed: {type(error).__name__}: {error}",
+                    file=sys.stderr, flush=True,
+                )
+                if network_restore_failed:
+                    self.failure = (
+                        f"could not restore Docker network for {LABELS[client]}"
+                    )
+                    break
+        self._write_idle_report(self.idle_client_images)
+        return int(not self.idle_results or any(row["status"] != "PASS" for row in self.idle_results))
+
     def run(self):
-        if RATE_BPS < 1 or SEED_LEECHER_RATE_BPS < 1 or MAX_PEERS < 1 or INTERVAL < 1:
+        if (RATE_BPS < 1 or MAX_PEERS < 1 or INTERVAL < 1
+                or (self.mode == "transfer" and SEED_LEECHER_RATE_BPS < 1)):
             raise RuntimeError("rate ceiling, peer ceiling, and sample interval must be positive")
-        if DOWNLOAD_TIMEOUT < 60 or SEED_TIMEOUT < 60:
+        if self.mode == "transfer" and (DOWNLOAD_TIMEOUT < 60 or SEED_TIMEOUT < 60):
             raise RuntimeError("download and seed timeouts must be at least 60 seconds")
         if IDLE_SAMPLE_SECONDS < 0:
             raise RuntimeError("idle memory sample duration cannot be negative")
-        if SEED_NO_PEER_TIMEOUT < 10:
+        if self.mode == "idle" and (
+            not math.isfinite(IDLE_PROFILE_WARMUP_SECONDS)
+            or not math.isfinite(IDLE_PROFILE_MEASURE_SECONDS)
+            or not math.isfinite(IDLE_PROCESS_SAMPLE_SECONDS)
+            or IDLE_PROFILE_WARMUP_SECONDS < 0
+            or IDLE_PROFILE_MEASURE_SECONDS < 10
+            or IDLE_PROCESS_SAMPLE_SECONDS <= 0
+        ):
+            raise RuntimeError(
+                "idle warmup must be nonnegative, measurement at least 10 seconds, "
+                "and process-tree sample interval positive"
+            )
+        if self.mode == "transfer" and SEED_NO_PEER_TIMEOUT < 10:
             raise RuntimeError("no-peer timeout must be at least 10 seconds")
-        for required in ("docker", "aria2c", "findmnt", "git"):
+        required_commands = ["docker", "findmnt", "git"]
+        if self.mode == "transfer":
+            required_commands.append("aria2c")
+        for required in required_commands:
             if shutil.which(required) is None:
                 raise RuntimeError(f"missing required command: {required}")
         print(f"Scratch: {self.workdir}", flush=True)
@@ -2343,6 +3005,8 @@ class Benchmark:
             else:
                 self.compose("build", "torrentngd", timeout=3600)
                 self._assert_image_labels(self.image)
+        if self.mode == "idle":
+            return self._run_idle_profiles()
         tracker_ip = self._start_tracker()
         meta = self._torrent_metadata()
         if self.seed_source_override is not None:
@@ -2449,14 +3113,16 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
         print("""Usage: scripts/client_performance_benchmark.py
 
-Runs one current Debian amd64 netinst public download and one controlled
-private seed transfer for TorrentNG, qBittorrent, Transmission, Deluge, and
-rTorrent. Docker Compose builds the current TorrentNG checkout unless a
-revision-matched prebuilt image is selected. Reference
-client images, including the qBittorrent seed leecher, are pinned by digest in
+By default, runs one current Debian amd64 netinst public download and one
+controlled private seed transfer for TorrentNG, qBittorrent, Transmission,
+Deluge, and rTorrent. Set TNG_CLIENT_BENCH_MODE=idle to run no-torrent
+network-isolated, attached/DHT-off, and attached/DHT-on profiles. Docker
+Compose builds the current TorrentNG checkout unless a revision-matched
+prebuilt image is selected. Reference client images are pinned by digest in
 deploy/interop/compose.yml.
 
 Environment:
+  TNG_CLIENT_BENCH_MODE=transfer|idle (default: transfer)
   TNG_CLIENT_BENCH_CLIENTS=torrentngd,qbittorrent,... (default: all five)
   TNG_CLIENT_BENCH_ALLOCATOR=system|jemalloc|mimalloc (default: system)
   TNG_CLIENT_BENCH_SKIP_BUILD=1 (use an image with matching commit, source fingerprint, and allocator labels)
@@ -2474,6 +3140,9 @@ Environment:
   TNG_CLIENT_BENCH_NO_PEER_TIMEOUT_SECS=90
   TNG_CLIENT_BENCH_SAMPLE_SECS=2
   TNG_CLIENT_BENCH_IDLE_SAMPLE_SECS=8
+  TNG_CLIENT_BENCH_IDLE_WARMUP_SECS=30 (idle mode only)
+  TNG_CLIENT_BENCH_IDLE_MEASURE_SECS=60 (idle mode only; minimum 10)
+  TNG_CLIENT_BENCH_IDLE_PROCESS_SAMPLE_SECS=15 (idle process-tree RSS/PSS interval)
   TNG_CLIENT_BENCH_PEER_BIND=0.0.0.0
   TNG_CLIENT_BENCH_MIMALLOC_PURGE_DELAY=0
   TNG_CLIENT_BENCH_MIMALLOC_ALLOW_THP=0

@@ -53,9 +53,27 @@ comparison with slskd; its [connected-idle report](https://github.com/snapetech-
 measured about 30x lower CPU. Those runs had no transfers, shares, searches,
 or UI/API traffic. They show an idle-footprint result for the pinned images
 and setups, not the cause of the gap and not active-transfer efficiency.
-TorrentNG's current cross-client table has no matching disconnected- or
-connected-idle run. Add those as separate workloads before drawing an idle
-comparison for TorrentNG.
+TorrentNG's earlier transfer harness sampled an 8-second no-torrent baseline,
+but it did not separate DHT-off from network-enabled idle and queried engine
+metrics during that interval. The harness now has a distinct idle-only mode
+with three longer profiles: no torrents and no Docker network endpoints;
+no torrents with DHT disabled while network-attached; and no torrents with DHT
+enabled while network-attached for bootstrap and routing maintenance. It
+randomizes and records the complete client/network/DHT profile schedule. It
+records cgroup CPU seconds, memory domains, block I/O, network-namespace RX/TX, and
+process-tree RSS/PSS. RSS and PSS come from host `/proc`;
+RSS sums resident pages and can count shared pages more than once, while PSS
+divides shared pages proportionally. They are sampled less often than the
+cgroup counters and are reported separately from cgroup memory and Docker's
+working-set value. The harness makes no API requests during the measurement
+window. DHT being enabled does not prove a peer connection; namespace traffic
+is recorded separately and is not DHT-specific. The isolated profile verifies
+that all Docker network endpoints are detached for the warmup and measurement
+window, then restores them before client API readback. DHT and PEX state and
+zero torrent count are read back outside the measured windows. The profiles
+do not reproduce slskR's Soulseek-server-connected workload, but the isolated
+profile provides a genuine disconnected baseline. They have not yet been run
+on current source.
 
 slskR also measured a share-cache serializer that wrote output directly:
 50,000 entries used 20 allocations versus 408,828 for its prior serializer,
@@ -108,13 +126,30 @@ every client.
 
 ## Run a comparison
 
-The runner needs Python 3, Docker Compose v2, `aria2c`, `findmnt`, and Git. It
-builds TorrentNG from the current checkout and uses reference-client images
-pinned by digest in `deploy/interop/compose.yml`.
+Transfer mode needs Python 3, Docker Compose v2, `aria2c`, `findmnt`, and Git.
+Idle mode needs Python 3, Docker Compose v2, `findmnt`, and Git. Both modes
+build TorrentNG from the current checkout unless a matching image is selected,
+and use reference-client images pinned by digest in
+`deploy/interop/compose.yml`.
 
 ```sh
 python3 scripts/client_performance_benchmark.py
 ```
+
+To run only the idle profiles, without downloading or seeding a payload:
+
+```sh
+TNG_CLIENT_BENCH_MODE=idle python3 scripts/client_performance_benchmark.py
+```
+
+Idle mode uses a 30-second warmup and a 60-second measured window per profile
+by default. Override those with `TNG_CLIENT_BENCH_IDLE_WARMUP_SECS` and
+`TNG_CLIENT_BENCH_IDLE_MEASURE_SECS`. The client/network/DHT profile order is
+seeded and recorded in the report. Process-tree RSS/PSS are sampled
+every 15 seconds by default;
+`TNG_CLIENT_BENCH_IDLE_PROCESS_SAMPLE_SECS` controls that interval. An idle run
+has no payload denominator, so CPU, disk, and network activity are reported
+per minute instead of per GiB.
 
 The default run tests all five clients in sequence. Each public download uses
 the live Debian swarm. Each seed test uses an isolated tracker and one common

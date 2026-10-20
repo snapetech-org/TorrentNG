@@ -6047,3 +6047,31 @@ the presence of a release bundle alone.
 - **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `354ad504`. External acceptance remains listed below.
 - **External evidence still required:** independent reviewer, reproducible
   release artifact, and complete-catalog mixed-load report.
+
+## Client idle-profile harness extension — implementation pending bulk validation
+
+The whole-client comparison script now has `TNG_CLIENT_BENCH_MODE=idle`. It
+runs three no-torrent profiles per pinned client: all Docker network endpoints
+detached with DHT off; network attached with DHT off; and network attached with
+DHT enabled for bootstrap/routing maintenance. The execution order across all
+clients and profiles is seeded and recorded. Each measured window has a fixed warmup,
+disables Docker healthchecks,
+and avoids client API/metrics requests; the harness samples cgroup CPU,
+container working set and memory domains, block I/O, non-loopback network
+namespace RX/TX, and process-tree RSS/PSS through host `/proc`. Process-tree
+sampling runs at a separate, slower interval (15 seconds by default) and
+reports RSS and PSS separately from cgroup and container working-set values.
+The isolated profile verifies that all Docker endpoints are detached through
+the warmup and measured interval, then restores them for post-window API
+readback. The report checks effective DHT/PEX readback and zero torrents. It
+records aggregate network traffic but does not infer DHT peer connectivity from a
+setting or byte count. The isolated profile is a disconnected baseline; the
+attached DHT profile does not reproduce slskR's Soulseek-server-connected
+workload.
+
+Regression sources cover non-loopback network-counter parsing, per-minute idle
+accounting, process-tree RSS/PSS sampling and aggregation, suppression of
+TorrentNG metrics requests during samples, and TorrentNG/rTorrent DHT
+configuration overrides with TorrentNG runtime PEX disable/readback. Bulk
+validation and a clean, current-source run are
+pending; this is not yet an idle efficiency result or closure of PERF-102/PERF-110.

@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -13,6 +14,20 @@ import client_performance_benchmark as benchmark
 
 
 class CgroupCounterTests(unittest.TestCase):
+    def test_idle_profile_schedule_is_seeded_and_balances_all_clients(self) -> None:
+        first = object.__new__(benchmark.Benchmark)
+        first.idle_order_seed = 12345
+        second = object.__new__(benchmark.Benchmark)
+        second.idle_order_seed = 12345
+
+        schedule = first._idle_profile_order()
+
+        self.assertEqual(schedule, second._idle_profile_order())
+        self.assertCountEqual(
+            schedule,
+            [(client, profile) for client in benchmark.CLIENTS for profile in benchmark.IDLE_PROFILES],
+        )
+
     def test_io_stat_sums_device_counters_and_ignores_unknown_fields(self) -> None:
         counters = benchmark.parse_cgroup_io_stat(
             "8:0 rbytes=100 wbytes=200 rios=3 wios=4 dbytes=50\n"
@@ -34,6 +49,66 @@ class CgroupCounterTests(unittest.TestCase):
             123456,
         )
         self.assertIsNone(benchmark.parse_cgroup_cpu_usage_usec("user_usec 10\n"))
+
+    def test_network_namespace_parser_sums_non_loopback_interfaces(self) -> None:
+        received, transmitted = benchmark.parse_proc_net_dev(
+            "Inter-| Receive | Transmit\n"
+            " face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\n"
+            "lo: 900 9 0 0 0 0 0 0 800 8 0 0 0 0 0 0\n"
+            "eth0: 1000 10 0 0 0 0 0 0 2000 20 0 0 0 0 0 0\n"
+            "veth1: 300 3 0 0 0 0 0 0 400 4 0 0 0 0 0 0\n"
+        )
+
+        self.assertEqual((received, transmitted), (1300, 2400))
+
+    def test_network_namespace_parser_returns_none_without_interfaces(self) -> None:
+        self.assertEqual(
+            benchmark.parse_proc_net_dev(
+                "Inter-| Receive | Transmit\n"
+                " face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\n"
+                "lo: 900 9 0 0 0 0 0 0 800 8 0 0 0 0 0 0\n"
+            ),
+            (None, None),
+        )
+
+    def test_network_counters_are_zero_only_after_verified_isolation(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance.network_isolated_clients = {"torrentngd"}
+        instance.container_pids = {}
+
+        self.assertEqual(instance._container_network_bytes("torrentngd"), (0, 0))
+        self.assertEqual(instance._container_network_bytes("qbittorrent"), (None, None))
+
+    def test_idle_network_isolation_detaches_and_restores_original_endpoints(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance.env = {}
+        instance.detached_networks = {}
+        instance.network_isolated_clients = set()
+        original = {
+            "benchmark_interop": {
+                "Aliases": ["torrentngd", "benchmark-torrentngd"],
+            },
+        }
+        instance._container_networks = mock.Mock(side_effect=[original, {}, {}, original])
+
+        with mock.patch.object(benchmark, "run_command") as command:
+            instance._disconnect_container_networks("torrentngd", "container-id")
+            self.assertIn("torrentngd", instance.network_isolated_clients)
+            instance._reconnect_container_networks("torrentngd")
+
+        self.assertNotIn("torrentngd", instance.network_isolated_clients)
+        self.assertNotIn("torrentngd", instance.detached_networks)
+        command.assert_has_calls([
+            mock.call(
+                ["docker", "network", "disconnect", "benchmark_interop", "container-id"],
+                env={}, timeout=30,
+            ),
+            mock.call(
+                ["docker", "network", "connect", "--alias", "torrentngd",
+                 "--alias", "benchmark-torrentngd", "benchmark_interop", "container-id"],
+                env={}, timeout=30,
+            ),
+        ])
 
     def test_resource_deltas_normalize_by_payload_gib(self) -> None:
         first = [0] * 33
@@ -66,6 +141,205 @@ class CgroupCounterTests(unittest.TestCase):
         summary = benchmark.Benchmark._summary([first, second], "public_download")
 
         self.assertIsNone(summary["cgroup_cpu_seconds"])
+
+    def test_idle_profile_summary_reports_absolute_resource_cost_per_minute(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        first = [0] * 35
+        second = [0] * 35
+        for row, elapsed in ((first, "0"), (second, "60")):
+            row[0] = "2026-10-20T00:00:00+00:00"
+            row[1] = "torrentngd"
+            row[2] = "idle_dht_on"
+            row[3] = elapsed
+            row[9] = 10 * 1024 * 1024
+            row[11] = 12 * 1024 * 1024
+            row[13] = 8 * 1024 * 1024
+            row[14] = 2 * 1024 * 1024
+        second[28] = 30_000_000
+        second[29] = 1024 * 1024
+        second[30] = 2 * 1024 * 1024
+        second[31] = 4
+        second[32] = 5
+        second[33] = 30_000
+        second[34] = 60_000
+        for row, rss, pss, processes, threads in (
+            (first, 10 * 1024 * 1024, 8 * 1024 * 1024, 2, 3),
+            (second, 12 * 1024 * 1024, 9 * 1024 * 1024, 3, 4),
+        ):
+            row.extend([rss, pss, processes, threads])
+        other_client = [0] * 39
+        other_client[1] = "qbittorrent"
+        other_client[2] = "idle_dht_on"
+        other_client[3] = "120"
+        other_client[8] = "99"
+        other_client[9] = 99 * 1024 * 1024
+        other_client[11] = 99 * 1024 * 1024
+        other_client[13] = 99 * 1024 * 1024
+        instance.samples = [first, second, other_client]
+
+        summary = instance._idle_profile_summary("torrentngd", "idle_dht_on")
+
+        self.assertEqual(summary["cgroup_cpu_seconds_per_minute"], 30.0)
+        self.assertEqual(summary["cgroup_cpu_percent_one_core"], 50.0)
+        self.assertEqual(summary["block_read_mib_per_minute"], 1.0)
+        self.assertEqual(summary["block_write_mib_per_minute"], 2.0)
+        self.assertAlmostEqual(summary["network_rx_mib_per_minute"], 30_000 / 1048576)
+        self.assertAlmostEqual(summary["network_tx_mib_per_minute"], 60_000 / 1048576)
+        self.assertEqual(summary["mean_process_tree_rss"], 11 * 1024 * 1024)
+        self.assertEqual(summary["peak_process_tree_rss"], 12 * 1024 * 1024)
+        self.assertEqual(summary["mean_process_tree_pss"], 8.5 * 1024 * 1024)
+        self.assertEqual(summary["peak_process_tree_pss"], 9 * 1024 * 1024)
+        self.assertEqual(summary["peak_process_tree_count"], 3)
+        self.assertEqual(summary["peak_process_tree_threads"], 4)
+        self.assertEqual(summary["process_tree_memory_sample_count"], 2)
+
+    def test_container_process_tree_memory_uses_the_shared_proc_observer(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance.container_pids = {"qbittorrent": 4321}
+        observed = SimpleNamespace(
+            rss_bytes=2_000, pss_bytes=1_500, processes=3, threads=8,
+        )
+        with mock.patch.object(benchmark, "sample_process_tree", return_value=observed) as sample:
+            values = instance._container_process_tree_memory("qbittorrent")
+
+        sample.assert_called_once_with(4321, mock.ANY)
+        self.assertEqual(values, (2_000, 1_500, 3, 8))
+
+    def test_idle_process_tree_memory_is_sampled_at_its_own_interval(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            instance = object.__new__(benchmark.Benchmark)
+            instance.mode = "idle"
+            instance._stats = mock.Mock(return_value=(0.0, 1024))
+            instance._memory_components = mock.Mock(return_value=(
+                {
+                    "current": 1024, "peak": 1024, "anon": 512, "file": 256,
+                    "slab": 0, "sock": 0, "kernel_stack": 0, "pagetables": 0,
+                },
+                {
+                    "rss": 512, "hwm": 512, "rss_anon": 256, "rss_file": 128,
+                    "rss_shmem": 0, "vm_data": 256, "vm_stk": 0, "vm_pte": 0,
+                    "threads": 1, "thread_names": {}, "smaps_rollup": {}, "mappings": [],
+                },
+            ))
+            instance._read_cgroup_cpu = mock.Mock(return_value=1000)
+            instance._read_cgroup_io = mock.Mock(return_value=None)
+            instance._container_network_bytes = mock.Mock(return_value=(0, 0))
+            instance._container_process_tree_memory = mock.Mock(
+                return_value=(2_000, 1_500, 3, 8),
+            )
+            instance.cgroup_paths = {}
+            instance.process_memory_snapshots = []
+            instance.samples = []
+            instance.csv_path = Path(directory) / "samples.csv"
+
+            status = {"progress": 0.0, "down": 0, "up": 0, "peers": 0}
+            first = instance._sample("qbittorrent", "idle_dht_on", 0.0, status)
+            middle = instance._sample("qbittorrent", "idle_dht_on", 5.0, status)
+            next_sample = instance._sample("qbittorrent", "idle_dht_on", 15.0, status)
+
+            self.assertEqual(first[35:39], [2_000, 1_500, 3, 8])
+            self.assertEqual(middle[35:39], ["", "", "", ""])
+            self.assertEqual(next_sample[35:39], [2_000, 1_500, 3, 8])
+            self.assertEqual(instance._container_process_tree_memory.call_count, 2)
+
+    def test_idle_report_emits_one_value_per_table_column(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            instance = object.__new__(benchmark.Benchmark)
+            instance.started = "2026-10-20T00:00:00+00:00"
+            instance.source_commit = "abc123"
+            instance.source_tree = "def456"
+            instance.source_dirty = False
+            instance.source_fingerprint_sha256 = "0" * 64
+            instance.host = "benchmark-host"
+            instance.cpu_count = 8
+            instance.kernel = "test-kernel"
+            instance.machine = "x86_64"
+            instance.scratch_device = "/dev/test"
+            instance.scratch_type = "ext4"
+            instance.load_start = (0.1, 0.2, 0.3)
+            instance.idle_order_seed = 123
+            instance.idle_results = [{
+                "client": "torrentngd",
+                "profile": "network_isolated_idle",
+                "profile_key": "isolated",
+                "network_mode": "isolated",
+                "network_isolation_verified": True,
+                "dht_enabled": False,
+                "dht_readback": False,
+                "pex_readback": False,
+                "network_traffic_observed": False,
+                "sample_count": 2,
+                "status": "PASS",
+                "cgroup_cpu_seconds_per_minute": 1.0,
+                "cgroup_cpu_percent_one_core": 1.67,
+                "mean_process_tree_rss": 2 * 1024 * 1024,
+                "peak_process_tree_rss": 3 * 1024 * 1024,
+                "mean_process_tree_pss": 1024 * 1024,
+                "peak_process_tree_pss": 2 * 1024 * 1024,
+                "mean_cgroup_anon": 2 * 1024 * 1024,
+                "peak_cgroup_anon": 3 * 1024 * 1024,
+                "peak_cgroup_current": 4 * 1024 * 1024,
+                "peak_memory": 4 * 1024 * 1024,
+                "block_read_mib_per_minute": 0.1,
+                "block_write_mib_per_minute": 0.2,
+                "network_rx_mib_per_minute": 0.0,
+                "network_tx_mib_per_minute": 0.0,
+            }]
+            sample = [0] * 39
+            sample[1] = "torrentngd"
+            sample[2] = "idle_isolated"
+            sample[11] = 2 * 1024 * 1024
+            instance.samples = [sample]
+            instance.csv_path = Path(directory) / "samples.csv"
+            instance.memory_profile = Path(directory) / "memory.json"
+            instance.report = Path(directory) / "report.md"
+            instance.cleanup_status = "not run"
+
+            instance._write_idle_report({"torrentngd": "image:sha256:test"})
+
+            table = [
+                line for line in instance.report.read_text().splitlines()
+                if line.startswith("|")
+            ]
+            self.assertEqual(len(table), 3)
+            column_counts = [len(line.strip("|").split("|")) for line in table]
+            self.assertEqual(column_counts, [18, 18, 18])
+            self.assertIn("| TorrentNG | network_isolated_idle |", table[2])
+
+    def test_idle_sample_does_not_query_torrentng_metrics_during_the_window(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            instance = object.__new__(benchmark.Benchmark)
+            instance.mode = "idle"
+            instance._stats = mock.Mock(return_value=(0.0, 1024))
+            instance._memory_components = mock.Mock(return_value=(
+                {
+                    "current": 1024, "peak": 1024, "anon": 512, "file": 256,
+                    "slab": 0, "sock": 0, "kernel_stack": 0, "pagetables": 0,
+                },
+                {
+                    "rss": 512, "hwm": 512, "rss_anon": 256, "rss_file": 128,
+                    "rss_shmem": 0, "vm_data": 256, "vm_stk": 0, "vm_pte": 0,
+                    "threads": 1, "thread_names": {}, "smaps_rollup": {}, "mappings": [],
+                },
+            ))
+            instance._read_cgroup_cpu = mock.Mock(return_value=1000)
+            instance._read_cgroup_io = mock.Mock(return_value=None)
+            instance._container_network_bytes = mock.Mock(return_value=(0, 0))
+            instance._capture_engine_memory_metrics = mock.Mock()
+            instance.cgroup_paths = {}
+            instance.container_ids = {"torrentngd": "container"}
+            instance.torrentng_pids = {"torrentngd": 1}
+            instance.process_memory_snapshots = []
+            instance.last_engine_memory_metrics_at = 0.0
+            instance.samples = []
+            instance.csv_path = Path(directory) / "samples.csv"
+
+            instance._sample("torrentngd", "idle_dht_on", 0.0, {
+                "progress": 0.0, "down": 0, "up": 0, "peers": 0,
+            })
+
+            instance._capture_engine_memory_metrics.assert_not_called()
+            self.assertEqual(len(instance.samples), 1)
 
 
 class SeedFixtureTests(unittest.TestCase):
@@ -114,6 +388,70 @@ class SeedFixtureTests(unittest.TestCase):
 
             config = (Path(directory) / "torrentngd.config.toml").read_text()
             self.assertIn("peer_read_cache_bytes = 4194304", config)
+
+    def test_torrentng_idle_profiles_override_startup_dht_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            instance = object.__new__(benchmark.Benchmark)
+            instance.config_dir = Path(directory)
+            instance.storage_io_worker_threads = None
+            instance.storage_hash_worker_threads = None
+            instance.storage_peer_read_readahead_bytes = None
+            instance.storage_peer_read_cache_entries = None
+            instance.storage_peer_read_cache_bytes = None
+            instance.piece_assembly_cap_mb = None
+            instance.peer_buffer_cap_mb = None
+
+            instance._prepare_torrentng_config(dht_enabled=False)
+            disabled = (Path(directory) / "torrentngd.config.toml").read_text()
+            self.assertRegex(disabled, r"(?ms)^\[dht\]\s*\nenabled = false\b")
+
+            instance._prepare_torrentng_config(dht_enabled=True)
+            enabled = (Path(directory) / "torrentngd.config.toml").read_text()
+            self.assertRegex(enabled, r"(?ms)^\[dht\]\s*\nenabled = true\b")
+
+    def test_torrentng_idle_runtime_disables_and_reads_back_pex(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance._torrentng_request = mock.Mock(return_value=b"")
+
+        instance._set_idle_dht("torrentngd", True)
+
+        instance._torrentng_request.assert_called_once_with(
+            "/api/v1/session/features",
+            data=b'{"dht": true, "pex": false}',
+            headers={"Content-Type": "application/json"},
+            method="PUT",
+        )
+        instance._torrentng_request = mock.Mock(
+            return_value=b'{"dht": true, "pex": false}',
+        )
+        self.assertIs(instance._read_idle_dht("torrentngd"), True)
+        self.assertIs(instance._read_idle_pex("torrentngd"), False)
+
+    def test_reference_client_idle_pex_readback_is_normalized(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance._qbit_json = mock.Mock(return_value={"pex": False})
+        instance._transmission = mock.Mock(
+            return_value={"arguments": {"pex-enabled": False}},
+        )
+        instance._deluge = mock.Mock(return_value={"utpex": False})
+        instance._scgi = mock.Mock(return_value="no")
+
+        for client in ("qbittorrent", "transmission", "deluge", "rtorrent"):
+            with self.subTest(client=client):
+                self.assertIs(instance._read_idle_pex(client), False)
+
+    def test_rtorrent_idle_profiles_override_startup_dht_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            instance = object.__new__(benchmark.Benchmark)
+            instance.config_dir = Path(directory)
+
+            instance._prepare_rtorrent_config(dht_enabled=False)
+            disabled = (Path(directory) / "rtorrent-benchmark.rc").read_text()
+            self.assertIn("dht.mode.set = off", disabled)
+
+            instance._prepare_rtorrent_config(dht_enabled=True)
+            enabled = (Path(directory) / "rtorrent-benchmark.rc").read_text()
+            self.assertIn("dht.mode.set = auto", enabled)
 
     def test_file_cache_eviction_requests_dontneed_for_the_whole_fixture(self) -> None:
         if not hasattr(benchmark.os, "posix_fadvise"):
