@@ -17275,7 +17275,7 @@ mod tests {
             .expect("old peer registration should fit the memory budget");
         task.active_peers.remove(&peer_addr);
         drop(old_cmd_rx);
-        let (new_id, _new_cmd_rx) = task
+        let (new_id, mut new_cmd_rx) = task
             .register_peer(peer_addr, permits.acquire_owned().await.unwrap())
             .expect("new peer registration should fit the memory budget");
         assert_ne!(old_id, new_id);
@@ -17305,6 +17305,7 @@ mod tests {
         })
         .await;
         assert!(task.active_peers.get(&peer_addr).unwrap().interested);
+        assert!(matches!(new_cmd_rx.try_recv(), Ok(PeerCommand::Unchoke)));
     }
 
     #[tokio::test]

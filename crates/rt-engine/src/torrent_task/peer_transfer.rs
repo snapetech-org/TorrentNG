@@ -430,13 +430,40 @@ impl TorrentTask {
                 }
             }
             PeerEvent::Interested { peer, .. } => {
-                if let Some(handle) = self.active_peers.get_mut(&peer) {
+                let became_interested = if let Some(handle) = self.active_peers.get_mut(&peer) {
+                    let changed = !handle.interested;
                     handle.interested = true;
+                    changed
+                } else {
+                    false
+                };
+                if became_interested
+                    && self
+                        .active_peers
+                        .values()
+                        .filter(|handle| !handle.upload_choked)
+                        .take(DEFAULT_MAX_UNCHOKED + 1)
+                        .count()
+                        < DEFAULT_MAX_UNCHOKED + 1
+                {
+                    // Fill an available regular or optimistic slot as soon as
+                    // a peer asks for data. The periodic round still handles
+                    // ranking once all slots are occupied.
+                    self.run_choker().await;
                 }
             }
             PeerEvent::NotInterested { peer, .. } => {
-                if let Some(handle) = self.active_peers.get_mut(&peer) {
+                let released_slot = if let Some(handle) = self.active_peers.get_mut(&peer) {
+                    let released_slot = handle.interested && !handle.upload_choked;
                     handle.interested = false;
+                    released_slot
+                } else {
+                    false
+                };
+                if released_slot {
+                    // A newly free slot should go to another waiting peer
+                    // without waiting for the next periodic choke round.
+                    self.run_choker().await;
                 }
             }
             PeerEvent::RequestSent { peer, request, .. } => {
