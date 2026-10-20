@@ -112,7 +112,6 @@ services:
       AUTOBRR__HOST: 0.0.0.0
       AUTOBRR__PORT: "7474"
       AUTOBRR__LOG_LEVEL: debug
-      AUTOBRR__SESSION_SECRET: local-cert-autobrr-session-secret-20260904
     depends_on:
       - torrentng
 
