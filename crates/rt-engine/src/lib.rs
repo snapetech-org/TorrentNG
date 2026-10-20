@@ -25,7 +25,8 @@ pub use command::{
     EngineNetworkFeatures, EnginePeerSnapshot, EnginePieceState, EngineStats, EngineStorageRoot,
     EngineSubsystemHealth, EngineTorrentFile, EngineTorrentLimits, EngineTorrentMetadata,
     EngineTrackerHealth, EngineTrackerSnapshot, EngineWebseedSnapshot, HotTorrentMemoryStats,
-    QueueMove, StorageDeviceLatencyStats, TorrentDiagnostic, TorrentLiveStats, TorrentRuntimeStats,
+    QueueMove, StorageDeviceLatencyStats, TorrentDiagnostic, TorrentLiveStats, TorrentPeerSummary,
+    TorrentRuntimeStats,
 };
 pub use crash_safety::{
     CrashSafetyCounters, CrashSafetyReport, CrashSafetyRuntime, CrashSafetyView, LocationSettings,

@@ -54,6 +54,7 @@ use tokio_util::codec::Framed;
 use tracing::{debug, warn};
 use url::Url;
 
+use crate::command::TorrentPeerStats;
 use crate::crash_safety::CrashSafetyRuntime;
 use crate::db_worker::DbExecutor;
 use crate::egress_policy::{OutboundEgressPolicy, OutboundTargetKind};
@@ -499,6 +500,7 @@ impl PieceAvailability for V2Bitmap {
 #[derive(Debug)]
 struct V2PeerState {
     remote_have: Arc<V2Bitmap>,
+    remote_have_count: usize,
     next_piece_cursor: usize,
     choked: bool,
     upload_choked: bool,
@@ -521,6 +523,7 @@ impl V2PeerState {
     fn new(piece_count: usize) -> Self {
         Self {
             remote_have: Arc::new(V2Bitmap::new(piece_count)),
+            remote_have_count: 0,
             next_piece_cursor: 0,
             choked: true,
             upload_choked: true,
@@ -673,7 +676,9 @@ fn update_v2_peer_bitmap(
     let mut peer = state
         .lock()
         .map_err(|_| anyhow::anyhow!("v2 peer state lock poisoned"))?;
+    let mut have_count = peer.remote_have_count;
     let mut record_change = |piece, have| {
+        record_v2_peer_have_change(&mut have_count, have);
         if let Some(availability) = availability.as_deref_mut() {
             if have {
                 availability.add_have(piece);
@@ -682,7 +687,17 @@ fn update_v2_peer_bitmap(
             }
         }
     };
-    update(Arc::make_mut(&mut peer.remote_have), &mut record_change).map_err(anyhow::Error::msg)
+    let result = update(Arc::make_mut(&mut peer.remote_have), &mut record_change);
+    peer.remote_have_count = have_count;
+    result.map_err(anyhow::Error::msg)
+}
+
+fn record_v2_peer_have_change(have_count: &mut usize, have: bool) {
+    *have_count = if have {
+        have_count.saturating_add(1)
+    } else {
+        have_count.saturating_sub(1)
+    };
 }
 
 fn remove_v2_peer_availability(index: Option<&Arc<Mutex<Availability>>>, remote_have: &V2Bitmap) {
@@ -3545,6 +3560,10 @@ impl V2TorrentTask {
                 let _ = reply.send(self.runtime_stats());
                 false
             }
+            TorrentCmd::GetPeerSummary { reply } => {
+                let _ = reply.send(self.peer_stats());
+                false
+            }
             TorrentCmd::ReloadFilePolicy { reply } => {
                 self.shutdown_webseed().await;
                 let result = self.apply_file_policy_from_db().await;
@@ -4782,10 +4801,12 @@ impl V2TorrentTask {
             let Ok(peer_permit) = self.network_budget.try_acquire_peer() else {
                 break;
             };
-            // V2PeerState retains remote_have and the protocol loop retains
-            // announced_have, so charge both packed maps before spawning it.
+            // V2PeerState retains remote_have and its cached have count, and
+            // the protocol loop retains announced_have. Charge all three
+            // before spawning the peer.
             let bitmap_bytes = V2Bitmap::memory_bytes_for_len(self.piece_map.piece_count as usize)
                 .saturating_mul(2)
+                .saturating_add(saturating_usize_to_u64(std::mem::size_of::<usize>()))
                 .saturating_add(saturating_usize_to_u64(
                     TransferLedger::<Arc<V2PieceMap>>::estimated_connection_state_bytes(),
                 ))
@@ -4947,6 +4968,7 @@ impl V2TorrentTask {
         // announced_have, so charge both packed maps before spawning it.
         let bitmap_bytes = V2Bitmap::memory_bytes_for_len(self.piece_map.piece_count as usize)
             .saturating_mul(2)
+            .saturating_add(saturating_usize_to_u64(std::mem::size_of::<usize>()))
             .saturating_add(saturating_usize_to_u64(
                 TransferLedger::<Arc<V2PieceMap>>::estimated_connection_state_bytes(),
             ))
@@ -5037,6 +5059,7 @@ impl V2TorrentTask {
         // announced_have, so charge both packed maps before spawning it.
         let bitmap_bytes = V2Bitmap::memory_bytes_for_len(self.piece_map.piece_count as usize)
             .saturating_mul(2)
+            .saturating_add(saturating_usize_to_u64(std::mem::size_of::<usize>()))
             .saturating_add(saturating_usize_to_u64(
                 TransferLedger::<Arc<V2PieceMap>>::estimated_connection_state_bytes(),
             ))
@@ -5182,7 +5205,7 @@ impl V2TorrentTask {
             .iter()
             .filter_map(|(addr, peer)| {
                 let state = peer.state.lock().ok()?;
-                let pieces = state.remote_have.count_ones();
+                let pieces = state.remote_have_count;
                 let pieces_total = state.remote_have.len();
                 Some(EnginePeerSnapshot {
                     addr: *addr,
@@ -5238,6 +5261,29 @@ impl V2TorrentTask {
             storage: self.storage.stats(),
             ..TorrentRuntimeStats::default()
         }
+    }
+
+    fn peer_stats(&self) -> TorrentPeerStats {
+        let mut stats = TorrentPeerStats {
+            connected_peers: self.peers.len() as u64,
+            ..TorrentPeerStats::default()
+        };
+        for peer in self.peers.values() {
+            match peer.state.lock() {
+                Ok(state) => {
+                    let pieces_total = state.remote_have.len();
+                    if pieces_total > 0 && state.remote_have_count == pieces_total {
+                        stats.seed_peers = stats.seed_peers.saturating_add(1);
+                    } else {
+                        stats.leecher_peers = stats.leecher_peers.saturating_add(1);
+                    }
+                    stats.download_rate = stats.download_rate.saturating_add(state.rate(false));
+                    stats.upload_rate = stats.upload_rate.saturating_add(state.rate(true));
+                }
+                Err(_) => stats.leecher_peers = stats.leecher_peers.saturating_add(1),
+            }
+        }
+        stats
     }
 
     fn reject_pending_commands(&mut self) {
@@ -5383,6 +5429,9 @@ fn reject_v2_command(command: TorrentCmd) {
         }
         TorrentCmd::GetRuntimeStats { reply } => {
             let _ = reply.send(TorrentRuntimeStats::default());
+        }
+        TorrentCmd::GetPeerSummary { reply } => {
+            let _ = reply.send(TorrentPeerStats::default());
         }
         TorrentCmd::AcceptPeer { .. }
         | TorrentCmd::AcceptUtpPeer { .. }
@@ -8737,29 +8786,42 @@ mod tests {
 
         let mut bitmap = V2Bitmap::new(10);
         let mut availability = Availability::new_bounded(10, 4);
+        let mut have_count = 0;
 
         bitmap
             .copy_from_bitfield_with_updates(&[0b1010_0000, 0b0100_0000], |piece, have| {
+                record_v2_peer_have_change(&mut have_count, have);
                 update(&mut availability, piece, have)
             })
             .unwrap();
+        assert_eq!(have_count, 3);
         assert_eq!(availability.count(0), 1);
         assert_eq!(availability.count(2), 1);
         assert_eq!(availability.count(9), 1);
 
         bitmap
             .copy_from_bitfield_with_updates(&[0b0010_0000, 0b1000_0000], |piece, have| {
+                record_v2_peer_have_change(&mut have_count, have);
                 update(&mut availability, piece, have)
             })
             .unwrap();
+        assert_eq!(have_count, 2);
         assert_eq!(availability.count(0), 0);
         assert_eq!(availability.count(2), 1);
         assert_eq!(availability.count(8), 1);
         assert_eq!(availability.count(9), 0);
 
-        bitmap.fill_with_updates(true, |piece, have| update(&mut availability, piece, have));
+        bitmap.fill_with_updates(true, |piece, have| {
+            record_v2_peer_have_change(&mut have_count, have);
+            update(&mut availability, piece, have);
+        });
+        assert_eq!(have_count, 10);
         assert!((0..10).all(|piece| availability.count(piece) == 1));
-        bitmap.fill_with_updates(false, |piece, have| update(&mut availability, piece, have));
+        bitmap.fill_with_updates(false, |piece, have| {
+            record_v2_peer_have_change(&mut have_count, have);
+            update(&mut availability, piece, have);
+        });
+        assert_eq!(have_count, 0);
         assert!((0..10).all(|piece| availability.count(piece) == 0));
     }
 

@@ -355,7 +355,7 @@ impl TorrentTask {
                         &handle.peer_has,
                         &pieces,
                     );
-                    handle.peer_has = pieces;
+                    handle.replace_peer_have(pieces);
                 }
                 self.refill_peer_requests(peer).await;
             }
@@ -365,8 +365,7 @@ impl TorrentTask {
                     return;
                 }
                 if let Some(handle) = self.active_peers.get_mut(&peer) {
-                    if !handle.peer_has.get(piece as usize).unwrap_or(false) {
-                        handle.peer_has.set(piece as usize, true);
+                    if handle.add_peer_have(piece as usize) {
                         self.picker.availability.add_have(piece as usize);
                     }
                 }

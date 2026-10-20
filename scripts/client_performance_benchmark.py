@@ -129,6 +129,41 @@ def to_bytes(value):
     return int(number * (1024 ** power))
 
 
+def parse_cgroup_io_stat(text):
+    """Sum cgroup v2 io.stat counters across the devices in the cgroup."""
+    counters = {"read_bytes": 0, "write_bytes": 0, "read_ops": 0, "write_ops": 0}
+    names = {"rbytes": "read_bytes", "wbytes": "write_bytes",
+             "rios": "read_ops", "wios": "write_ops"}
+    for line in text.splitlines():
+        fields = line.split()
+        for field in fields[1:]:
+            key, separator, value = field.partition("=")
+            if not separator or key not in names:
+                continue
+            try:
+                counters[names[key]] += int(value)
+            except ValueError:
+                continue
+    return counters
+
+
+def parse_cgroup_cpu_usage_usec(text):
+    for line in text.splitlines():
+        key, separator, value = line.partition(" ")
+        if key == "usage_usec" and separator:
+            try:
+                return int(value.strip())
+            except ValueError:
+                return None
+    return None
+
+
+def per_gib(value, payload_bytes, unit_divisor=1):
+    if value is None or payload_bytes <= 0:
+        return None
+    return value * (1024 ** 3) / payload_bytes / unit_divisor
+
+
 def bencode(value):
     if isinstance(value, int):
         return b"i" + str(value).encode("ascii") + b"e"
@@ -554,6 +589,8 @@ class Benchmark:
                 "torrentng_process_vm_stk_bytes", "torrentng_process_vm_pte_bytes",
                 "torrentng_process_threads", "cgroup_memory_sock_bytes",
                 "cgroup_memory_kernel_stack_bytes", "cgroup_memory_pagetables_bytes",
+                "cgroup_cpu_usage_usec", "cgroup_io_read_bytes",
+                "cgroup_io_write_bytes", "cgroup_io_read_ops", "cgroup_io_write_ops",
             ])
 
     def _prepare_qbit_config(self):
@@ -1049,7 +1086,9 @@ class Benchmark:
             hierarchy, controllers, relative = parts
             if hierarchy == "0" and not controllers:
                 candidate = Path("/sys/fs/cgroup") / relative.lstrip("/")
-                if (candidate / "memory.current").is_file():
+                if any((candidate / name).is_file() for name in (
+                    "memory.current", "cpu.stat", "io.stat",
+                )):
                     self.cgroup_paths[client] = candidate
                     break
             elif "memory" in controllers.split(","):
@@ -1109,6 +1148,24 @@ class Benchmark:
         except (OSError, ValueError):
             pass
         return result
+
+    @staticmethod
+    def _read_cgroup_cpu(path):
+        if path is None:
+            return None
+        try:
+            return parse_cgroup_cpu_usage_usec((path / "cpu.stat").read_text())
+        except OSError:
+            return None
+
+    @staticmethod
+    def _read_cgroup_io(path):
+        if path is None:
+            return None
+        try:
+            return parse_cgroup_io_stat((path / "io.stat").read_text())
+        except OSError:
+            return None
 
     @staticmethod
     def _read_process_memory(pid):
@@ -1239,7 +1296,7 @@ class Benchmark:
     def _write_memory_profile(self):
         samples = []
         for row in self.samples:
-            if len(row) < 28:
+            if len(row) < 33:
                 continue
             samples.append({
                 "utc": row[0], "client": row[1], "phase": row[2],
@@ -1261,10 +1318,15 @@ class Benchmark:
                 "cgroup_memory_sock_bytes": int(row[25]),
                 "cgroup_memory_kernel_stack_bytes": int(row[26]),
                 "cgroup_memory_pagetables_bytes": int(row[27]),
+                "cgroup_cpu_usage_usec": int(row[28]) if row[28] != "" else None,
+                "cgroup_io_read_bytes": int(row[29]) if row[29] != "" else None,
+                "cgroup_io_write_bytes": int(row[30]) if row[30] != "" else None,
+                "cgroup_io_read_ops": int(row[31]) if row[31] != "" else None,
+                "cgroup_io_write_ops": int(row[32]) if row[32] != "" else None,
             })
         self.memory_profile.parent.mkdir(parents=True, exist_ok=True)
         self.memory_profile.write_text(json.dumps({
-            "schema_version": 1,
+            "schema_version": 2,
             "source_commit": self.source_commit,
             "source_tree": self.source_tree,
             "source_dirty": self.source_dirty,
@@ -1282,12 +1344,15 @@ class Benchmark:
                 "docker_stats": "Docker-reported container working set, sampled at the configured interval.",
                 "cgroup_memory_current": "Container cgroup total, including anon and file cache.",
                 "cgroup_memory_anon": "Container anonymous memory from memory.stat.",
+                "cgroup_cpu_usage": "Cgroup v2 cpu.stat usage_usec; phase deltas are normalized by transferred payload bytes.",
+                "cgroup_io": "Cgroup v2 io.stat counters summed across devices. These are block-layer bytes and operations charged to the container; page-cache hits are not block I/O.",
                 "torrentng_process_rss": "Host /proc RSS for torrentngd when available; zero means unavailable.",
                 "process_memory_snapshots": "TorrentNG /proc status, thread names, smaps totals, and the 20 largest resident mappings captured with cgroup samples.",
                 "engine_metrics": "TorrentNG resource-governor leases, estimated peer-buffer capacities, storage-pool gauges, and optional allocator metrics sampled during transfer and at phase boundaries.",
                 "jemalloc_metrics": "Jemalloc allocator gauges are present only when the jemalloc-allocator feature is selected. They describe Jemalloc's allocator state, not total process allocations or RSS.",
                 "source_fingerprint": "SHA-256 derived from commit/tree, a normalized full-index Git diff, and all non-ignored untracked file paths and contents at benchmark start.",
                 "process_memory": "Linux /proc RSS, anonymous RSS, file RSS, thread count, and smaps samples are process-level readings; allocator gauges do not replace them.",
+                "unavailable_cgroup_counters": "An empty CSV cell and null profile value mean the host/container runtime did not expose that counter.",
             },
         }, indent=2) + "\n")
 
@@ -1312,6 +1377,9 @@ class Benchmark:
     def _sample(self, client, phase, elapsed, status, down_override=None):
         cpu, memory = self._stats(client)
         cgroup, process = self._memory_components(client)
+        cgroup_path = self.cgroup_paths.get(client)
+        cgroup_cpu_usage_usec = self._read_cgroup_cpu(cgroup_path)
+        cgroup_io = self._read_cgroup_io(cgroup_path)
         row = [
             dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds"),
             client, phase, f"{elapsed:.3f}", f"{status.get('progress', 0):.6f}",
@@ -1324,6 +1392,11 @@ class Benchmark:
             process["vm_data"], process["vm_stk"], process["vm_pte"],
             process["threads"], cgroup["sock"], cgroup["kernel_stack"],
             cgroup["pagetables"],
+            "" if cgroup_cpu_usage_usec is None else cgroup_cpu_usage_usec,
+            "" if cgroup_io is None else cgroup_io["read_bytes"],
+            "" if cgroup_io is None else cgroup_io["write_bytes"],
+            "" if cgroup_io is None else cgroup_io["read_ops"],
+            "" if cgroup_io is None else cgroup_io["write_ops"],
         ]
         self.samples.append(row)
         if client == "torrentngd":
@@ -1689,12 +1762,23 @@ class Benchmark:
     @staticmethod
     def _summary(rows, phase):
         records = [row for row in rows if row[2] == phase]
+        def counter_delta(index):
+            values = [int(row[index]) for row in records if len(row) > index and row[index] != ""]
+            if len(values) < 2:
+                return None
+            delta = values[-1] - values[0]
+            return delta if delta >= 0 else None
+
         if not records:
             return {"mean_cpu": 0.0, "peak_cpu": 0.0, "peak_memory": 0,
                     "peak_cgroup_current": 0, "peak_cgroup_anon": 0,
                     "peak_cgroup_file": 0, "peak_process_rss": 0,
                     "mean_memory": 0, "mean_cgroup_anon": 0,
-                    "peak_rate": 0, "peak_peers": 0}
+                    "peak_rate": 0, "peak_peers": 0,
+                    "cgroup_cpu_seconds": None, "cgroup_io_read_bytes": None,
+                    "cgroup_io_write_bytes": None, "cgroup_io_read_ops": None,
+                    "cgroup_io_write_ops": None}
+        cpu_usec = counter_delta(28)
         return {
             "mean_cpu": sum(float(row[8]) for row in records) / len(records),
             "peak_cpu": max(float(row[8]) for row in records),
@@ -1707,6 +1791,11 @@ class Benchmark:
             "mean_cgroup_anon": sum(int(row[13]) for row in records) / len(records),
             "peak_rate": max(int(row[5]) for row in records),
             "peak_peers": max(int(row[7]) for row in records),
+            "cgroup_cpu_seconds": cpu_usec / 1_000_000 if cpu_usec is not None else None,
+            "cgroup_io_read_bytes": counter_delta(29),
+            "cgroup_io_write_bytes": counter_delta(30),
+            "cgroup_io_read_ops": counter_delta(31),
+            "cgroup_io_write_ops": counter_delta(32),
         }
 
     def _release_client_payloads(self, client, iso_name):
@@ -1844,6 +1933,18 @@ class Benchmark:
             "download_peak_cgroup_anon": down["peak_cgroup_anon"],
             "download_peak_cgroup_file": down["peak_cgroup_file"],
             "download_peak_process_rss": down["peak_process_rss"],
+            "download_cgroup_cpu_seconds": down["cgroup_cpu_seconds"],
+            "download_cpu_seconds_per_gib": per_gib(
+                down["cgroup_cpu_seconds"], download_bytes,
+            ),
+            "download_cgroup_io_read_bytes": down["cgroup_io_read_bytes"],
+            "download_cgroup_io_write_bytes": down["cgroup_io_write_bytes"],
+            "download_io_read_mib_per_gib": per_gib(
+                down["cgroup_io_read_bytes"], download_bytes, 1024 ** 2,
+            ),
+            "download_io_write_mib_per_gib": per_gib(
+                down["cgroup_io_write_bytes"], download_bytes, 1024 ** 2,
+            ),
             "idle_mean_memory": idle["mean_memory"],
             "idle_mean_cgroup_anon": idle["mean_cgroup_anon"],
             "download_peak_peers": down["peak_peers"],
@@ -1859,6 +1960,16 @@ class Benchmark:
             "seed_peak_cgroup_anon": seed["peak_cgroup_anon"],
             "seed_peak_cgroup_file": seed["peak_cgroup_file"],
             "seed_peak_process_rss": seed["peak_process_rss"],
+            "seed_cgroup_cpu_seconds": seed["cgroup_cpu_seconds"],
+            "seed_cpu_seconds_per_gib": per_gib(seed["cgroup_cpu_seconds"], seed_bytes),
+            "seed_cgroup_io_read_bytes": seed["cgroup_io_read_bytes"],
+            "seed_cgroup_io_write_bytes": seed["cgroup_io_write_bytes"],
+            "seed_io_read_mib_per_gib": per_gib(
+                seed["cgroup_io_read_bytes"], seed_bytes, 1024 ** 2,
+            ),
+            "seed_io_write_mib_per_gib": per_gib(
+                seed["cgroup_io_write_bytes"], seed_bytes, 1024 ** 2,
+            ),
             "seed_peak_peers": seed["peak_peers"],
             "seed_sha": seed_sha, "seed_error": seed_error,
         })
@@ -1884,6 +1995,9 @@ class Benchmark:
 
         def mib(value):
             return f"{value / 1048576:.1f}" if value else "n/a"
+
+        def metric(value, digits=2):
+            return f"{value:.{digits}f}" if value is not None else "n/a"
 
         runtime_overrides = [
             f"Tokio={self.tokio_worker_threads}" if self.tokio_worker_threads else "",
@@ -2039,6 +2153,26 @@ class Benchmark:
             )
         lines.extend([
             "",
+            "## CPU and block I/O",
+            "",
+            "Cgroup v2 CPU time and block I/O counters are reported per GiB of observed payload transfer. Public rows use completed-byte progress unless the payload passed its SHA-256 check; seed rows use the leecher's completed-byte progress and count as successful only after its final SHA-256 passes. Block bytes are summed across devices from `io.stat`, so this measures host block traffic charged to the client cgroup, not logical filesystem reads/writes. A page-cache hit does not count as block I/O. `n/a` means fewer than two samples or unavailable cgroup counters.",
+            "",
+            "| Client | Public CPU (s/GiB) | Public block read (MiB/GiB) | Public block write (MiB/GiB) | Seed CPU (s/GiB) | Seed block read (MiB/GiB) | Seed block write (MiB/GiB) |",
+            "|---|---:|---:|---:|---:|---:|---:|",
+        ])
+        for client in CLIENTS:
+            row = by_client.get(client, {})
+            lines.append(
+                f"| {LABELS[client]} | "
+                f"{metric(row.get('download_cpu_seconds_per_gib'))} | "
+                f"{metric(row.get('download_io_read_mib_per_gib'))} | "
+                f"{metric(row.get('download_io_write_mib_per_gib'))} | "
+                f"{metric(row.get('seed_cpu_seconds_per_gib'))} | "
+                f"{metric(row.get('seed_io_read_mib_per_gib'))} | "
+                f"{metric(row.get('seed_io_write_mib_per_gib'))} |"
+            )
+        lines.extend([
+            "",
             "The tracker is restarted between clients to discard stale peer records.",
             "",
             "## Method and scope",
@@ -2057,8 +2191,9 @@ class Benchmark:
             "transfer timer starts after both clients are ready, the leecher is "
             "registered, and the seeder has reannounced; leecher setup time is listed "
             "separately. Peak rates come "
-            "from client payload counters. CPU is Docker CPU percent, where "
-            "100% represents one logical core. Each client has an idle baseline "
+            "from client payload counters. Mean/peak CPU is Docker CPU percent, "
+            "where 100% represents one logical core; cgroup CPU seconds per GiB "
+            "and block read/write bytes per GiB are listed separately. Each client has an idle baseline "
             f"sampled for {IDLE_SAMPLE_SECONDS:g} seconds before adding a torrent. "
             "Cgroup anonymous/file memory and TorrentNG process/engine metrics help "
             "attribute the sampled container footprint. Jemalloc counters appear only "
@@ -2084,7 +2219,7 @@ class Benchmark:
             "## Artifacts and cleanup",
             "",
             f"- Raw time-series samples: [{self.csv_path.name}]({self.csv_path.name})",
-            f"- Cgroup and TorrentNG allocator profile: [{self.memory_profile.name}]({self.memory_profile.name})",
+            f"- Cgroup resource and TorrentNG allocator profile: [{self.memory_profile.name}]({self.memory_profile.name})",
             f"- Preserved source artifacts: {self.artifact_status}",
             f"- Temporary benchmark directory: {self.workdir}",
             f"- Compose cleanup status: **{self.cleanup_status}**",

@@ -17,7 +17,14 @@ pub type JsonMap = serde_json::Map<String, serde_json::Value>;
 
 const TORRENT_SNAPSHOT_CACHE_SIZE: usize = 4;
 const TORRENT_SNAPSHOT_MAX_AGE: Duration = Duration::from_millis(750);
+pub(crate) const ACTIVE_RECHECK_CACHE_TTL: Duration = Duration::from_millis(500);
 type TorrentOrderCache = StdMutex<HashMap<String, Arc<Vec<usize>>>>;
+
+#[derive(Clone)]
+pub(crate) struct CachedActiveRechecks {
+    pub(crate) generated_at: Instant,
+    pub(crate) hashes: Arc<HashSet<String>>,
+}
 
 fn lock_order_cache(cache: &TorrentOrderCache) -> MutexGuard<'_, HashMap<String, Arc<Vec<usize>>>> {
     match cache.lock() {
@@ -382,6 +389,8 @@ pub struct AppState {
     pub rss_rules: Arc<RwLock<JsonMap>>,
     torrent_snapshot_cache: Arc<RwLock<VecDeque<CachedTorrentSnapshot>>>,
     torrent_snapshot_refresh: Arc<Mutex<()>>,
+    pub(crate) active_recheck_cache: Arc<RwLock<Option<CachedActiveRechecks>>>,
+    pub(crate) active_recheck_refresh: Arc<Mutex<()>>,
 }
 
 impl AppState {
@@ -411,6 +420,8 @@ impl AppState {
             rss_rules: Arc::new(RwLock::new(serde_json::Map::new())),
             torrent_snapshot_cache: Arc::new(RwLock::new(VecDeque::new())),
             torrent_snapshot_refresh: Arc::new(Mutex::new(())),
+            active_recheck_cache: Arc::new(RwLock::new(None)),
+            active_recheck_refresh: Arc::new(Mutex::new(())),
         }
     }
 
@@ -440,6 +451,8 @@ impl AppState {
             rss_rules: Arc::new(RwLock::new(serde_json::Map::new())),
             torrent_snapshot_cache: Arc::new(RwLock::new(VecDeque::new())),
             torrent_snapshot_refresh: Arc::new(Mutex::new(())),
+            active_recheck_cache: Arc::new(RwLock::new(None)),
+            active_recheck_refresh: Arc::new(Mutex::new(())),
         }
     }
 
@@ -477,6 +490,8 @@ impl AppState {
             rss_rules: Arc::new(RwLock::new(serde_json::Map::new())),
             torrent_snapshot_cache: Arc::new(RwLock::new(VecDeque::new())),
             torrent_snapshot_refresh: Arc::new(Mutex::new(())),
+            active_recheck_cache: Arc::new(RwLock::new(None)),
+            active_recheck_refresh: Arc::new(Mutex::new(())),
         }
     }
 

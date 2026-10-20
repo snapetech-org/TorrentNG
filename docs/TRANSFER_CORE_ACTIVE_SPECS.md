@@ -5,7 +5,7 @@ This file instantiates the template in
 implementation slices currently in progress. A ticket stays `wip` until its
 written acceptance and exact-revision evidence are complete.
 
-## Current-source resource comparison — 2026-10-20 UTC
+## Worker-count profile comparison — 2026-10-20 UTC
 
 Two valid PERF-110 runs used the same release binary built from exact source
 `01a3464d5a6b1f3496dde2f91ab35dcc931089a3` (binary SHA-256
@@ -48,10 +48,54 @@ under `/home/keith/.cache/torrentng-perf110-current-source-20261019/`:
 - Four-worker manifest SHA-256: `f4bee45a3be96b9b8466a9b9680d19db43989fe91ff53a5542b35290f7339ecc`; scorecard SHA-256: `632558fbc9d233a4f9280199cbe1c662e5e67ece84cdf1a1a48f6dfec12a98e0`.
 - Two-worker manifest SHA-256: `f004ea7caf26e7623d351415720fe74ea4ec37a82c6cff216e7a06d3e1eb8600`; scorecard SHA-256: `018b3a491459e4bf814d797208ae06985d5b8eee166fad53529d8f827eb6bff2`.
 
-The source edits now in progress are not included in these scorecards. They
-reduce the upload accounting path from two registry lock acquisitions per
-uploaded block to one and change the default worker cap to two. They still
-require exact-source bulk validation and a fresh paired run.
+These are historical profiles of `01a3464`, not the latest measured source.
+The two-worker profile motivated the default cap but does not isolate a causal
+CPU change because it used a different fixture plan and payload hash.
+
+## Latest measured source candidate — `7a944072` (2026-10-20)
+
+The 7a944072 direct engine-runner PERF-110 run used a 128 MiB private-v1
+fixture, cold cache, N1/lan_1g, and 1 Gbit/s shaping with 1 ms latency. It
+completed 15 download pairs and 14 seed pairs against urtorrent 0.14.3; qBittorrent
+5.2.4 was the helper, not a scored client.
+
+| Mode | Measure | TorrentNG | urtorrent |
+|---|---|---:|---:|
+| Download | Goodput (MB/s) | 76.48 | 82.32 |
+| Download | CPU (CPU-s/GiB) | 8.40 | 3.60 |
+| Download | Peak RSS / PSS (MiB) | 31.75 / 28.94 | 15.29 / 12.84 |
+| Download | Block writes (MiB/GiB) | 1042.03 | 1025.22 |
+| Seed | Goodput (MB/s) | 51.20 | 31.23 |
+| Seed | CPU (CPU-s/GiB) | 5.16 | 5.64 |
+| Seed | Peak RSS / PSS (MiB) | 33.42 / 30.71 | 18.34 / 15.91 |
+| Seed | Block writes (MiB/GiB) | 13.25 | 1.09 |
+
+Download goodput had no clear paired difference (urtorrent/TorrentNG ratio CI
+0.978–1.088). urtorrent's seed goodput ratio was 0.580 (95% CI 0.465–0.638),
+so TorrentNG seeded faster in this run. TorrentNG used about 2.3x download
+CPU and 0.91x seed CPU; peak RSS was about 2x in both modes. These are
+single-profile engine-runner observations, not whole-client rankings.
+
+The source-bound five-client run did not qualify TorrentNG: its public download
+returned HTTP 503 at 13.11% after 151 seconds (0.66 MiB/s observed), and no
+verified TorrentNG seed result was produced in the initial all-client pass.
+The focused follow-up supplied an ISO verified against Debian's published
+SHA-256, but TorrentNG's controlled seed request also returned HTTP 503.
+qBittorrent, Transmission, and Deluge completed both public and controlled
+seed transfers; rTorrent failed its XML-RPC preflight. Because TorrentNG did
+not complete useful work and cgroup block I/O was not captured, that run cannot
+rank CPU, memory, or disk use across clients. The report is
+[`client-performance-benchmark-7a944072-20261020.md`](../certification/reports/client-performance-benchmark-7a944072-20261020.md).
+
+Follow-up diagnostics found `/api/qb/v2/torrents/info` returning 503 after a
+peer snapshot query timed out, with additional engine-command timeouts on the
+same hot path. The current worktree replaces list-page peer snapshots with a
+compact peer-summary command. V1 and v2 actors keep each peer's piece count
+current as availability messages arrive, so the summary avoids both snapshot
+allocation and repeated full-bitmap counts; active-recheck job reads use a
+500 ms shared cache. The whole-client harness now records cgroup CPU and block
+I/O counters. These code and documentation changes are pending bulk testing
+and a source-bound rerun; no improvement is claimed yet.
 
 ## Resource-first source follow-up after the `7bc43bf` run — 2026-10-19
 

@@ -873,6 +873,22 @@ impl EngineHandle {
         await_engine_reply(rx).await
     }
 
+    pub async fn torrent_peer_summaries(
+        &self,
+        info_hashes: Vec<String>,
+    ) -> CmdResult<Vec<TorrentPeerSummary>> {
+        validate_command_item_len(
+            info_hashes.len(),
+            MAX_ENGINE_LIVE_STATS,
+            "peer summary hash list",
+        )?;
+        let info_hashes = canonical_info_hash_list(info_hashes)?;
+        let (reply, rx) = tokio::sync::oneshot::channel();
+        self.send_command(EngineCmd::GetTorrentPeerSummaries { info_hashes, reply })
+            .await?;
+        await_engine_reply(rx).await
+    }
+
     pub async fn torrent_webseeds(
         &self,
         info_hash: String,

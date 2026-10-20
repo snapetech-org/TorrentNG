@@ -15,7 +15,7 @@ from the same Docker network and writes a markdown report under
 ## Run
 
 ```sh
-cp deploy/certification/.env.example deploy/certification/.env
+install -m 0600 deploy/certification/.env.example deploy/certification/.env
 docker compose --env-file deploy/certification/.env -f deploy/certification/compose.yml up -d --build
 ./scripts/live_certification.sh
 ```

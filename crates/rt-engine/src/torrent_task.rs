@@ -73,6 +73,7 @@ mod peer_session;
 #[path = "torrent_task/peer_transfer.rs"]
 mod peer_transfer;
 
+use crate::command::TorrentPeerStats;
 use crate::crash_safety::{self, CrashSafetyRuntime};
 use crate::db_worker::DbExecutor;
 use crate::egress_policy::{OutboundEgressPolicy, OutboundTargetKind};
@@ -731,6 +732,9 @@ pub enum TorrentCmd {
     GetRuntimeStats {
         reply: oneshot::Sender<TorrentRuntimeStats>,
     },
+    GetPeerSummary {
+        reply: oneshot::Sender<TorrentPeerStats>,
+    },
     /// An inbound TCP peer whose handshake already matched this torrent.
     AcceptPeer {
         stream: TcpStream,
@@ -838,6 +842,9 @@ fn reject_torrent_command_during_shutdown(command: TorrentCmd) {
         }
         TorrentCmd::GetRuntimeStats { reply } => {
             let _ = reply.send(Default::default());
+        }
+        TorrentCmd::GetPeerSummary { reply } => {
+            let _ = reply.send(TorrentPeerStats::default());
         }
         TorrentCmd::AcceptPeer { .. }
         | TorrentCmd::AcceptUtpPeer { .. }
@@ -1881,6 +1888,7 @@ struct PeerHandle {
     /// draining a bounded command queue.
     abort: Option<tokio::task::AbortHandle>,
     peer_has: PieceBitmap,
+    peer_have_count: usize,
     choked: bool,
     upload_choked: bool,
     interested: bool,
@@ -1912,6 +1920,22 @@ struct PeerHandle {
     /// bitmap keeps this retry state bounded by the torrent's piece map and
     /// avoids losing a protocol update when a peer is briefly backlogged.
     pending_have: PieceBitmap,
+}
+
+impl PeerHandle {
+    fn replace_peer_have(&mut self, pieces: PieceBitmap) {
+        self.peer_have_count = pieces.count_ones();
+        self.peer_has = pieces;
+    }
+
+    fn add_peer_have(&mut self, piece: usize) -> bool {
+        if self.peer_has.get(piece) != Some(false) {
+            return false;
+        }
+        self.peer_has.set(piece, true);
+        self.peer_have_count = self.peer_have_count.saturating_add(1);
+        true
+    }
 }
 
 #[derive(Debug)]
@@ -3600,6 +3624,9 @@ impl TorrentTask {
                         }
                         TorrentCmd::GetRuntimeStats { reply } => {
                             let _ = reply.send(self.runtime_stats());
+                        }
+                        TorrentCmd::GetPeerSummary { reply } => {
+                            let _ = reply.send(self.peer_stats());
                         }
                         TorrentCmd::AcceptPeer {
                             stream,
@@ -5337,6 +5364,9 @@ impl TorrentTask {
                 }
                 Ok(TorrentCmd::GetRuntimeStats { reply }) => {
                     let _ = reply.send(self.runtime_stats());
+                }
+                Ok(TorrentCmd::GetPeerSummary { reply }) => {
+                    let _ = reply.send(self.peer_stats());
                 }
                 Ok(TorrentCmd::AcceptPeer { .. }) => {}
                 Ok(TorrentCmd::AcceptUtpPeer { .. }) => {}
@@ -9153,7 +9183,7 @@ async fn run_peer_loop(
                 let block_extent = request.canonical_block();
                 match result {
                     Ok(_block) if rate_interrupted => {
-                        // Rate admission runs with the bounded read task, so
+                        // Rate admission runs within the bounded read future, so
                         // a slow limit cannot stop this loop from consuming
                         // peer input or control messages. If the peer remains
                         // unchoked, retry valid demand after the control wake;
@@ -15240,7 +15270,7 @@ mod tests {
         {
             let handle = task.active_peers.get_mut(&peer).unwrap();
             handle.choked = false;
-            handle.peer_has.set(0, true);
+            handle.add_peer_have(0);
         }
         task.picker.availability.add_bitfield(&[0x80]);
 
@@ -15316,6 +15346,7 @@ mod tests {
         };
         let peer_state_bytes = PieceBitmap::memory_bytes_for_len(1)
             .saturating_mul(2)
+            .saturating_add(u64::try_from(std::mem::size_of::<usize>()).unwrap_or(u64::MAX))
             .saturating_add(
                 u64::try_from(TransferLedger::<Arc<PieceMap>>::estimated_connection_state_bytes())
                     .unwrap_or(u64::MAX),
@@ -15362,7 +15393,7 @@ mod tests {
         {
             let handle = task.active_peers.get_mut(&peer).unwrap();
             handle.choked = false;
-            handle.peer_has.set(0, true);
+            handle.add_peer_have(0);
         }
         task.picker.availability.add_bitfield(&[0x80]);
 
@@ -17481,6 +17512,7 @@ mod tests {
         task.picker.availability.add_bitfield(&[0x80]);
         task.picker.pick_from_seed().unwrap();
         let peer_has = PieceBitmap::from_bools(&[true]);
+        let peer_have_count = peer_has.count_ones();
         let pending_have = PieceBitmap::new(1);
         let bitmap_memory_lease = task
             .resources
@@ -17488,7 +17520,8 @@ mod tests {
                 MemoryClass::PeerBuffer,
                 peer_has
                     .memory_bytes()
-                    .saturating_add(pending_have.memory_bytes()),
+                    .saturating_add(pending_have.memory_bytes())
+                    .saturating_add(u64::try_from(std::mem::size_of::<usize>()).unwrap()),
             )
             .expect("test peer state should fit the memory budget");
         task.active_peers.insert(
@@ -17505,6 +17538,7 @@ mod tests {
                 shutdown_control: RateLimitCancellation::default(),
                 abort: None,
                 peer_has,
+                peer_have_count,
                 choked: true,
                 upload_choked: true,
                 interested: false,
@@ -17533,6 +17567,18 @@ mod tests {
                 pending_have,
             },
         );
+
+        let peer = task.active_peers.get_mut(&peer_addr).unwrap();
+        assert_eq!(peer.peer_have_count, 1);
+        peer.replace_peer_have(PieceBitmap::new(1));
+        assert_eq!(peer.peer_have_count, 0);
+        assert!(peer.add_peer_have(0));
+        assert!(
+            !peer.add_peer_have(0),
+            "duplicate HAVE must not inflate the count"
+        );
+        assert!(!peer.add_peer_have(1), "out-of-range HAVE must be ignored");
+        assert_eq!(peer.peer_have_count, 1);
 
         assert_eq!(task.picker.availability.count(0), 1);
         task.shutdown_peers().await;

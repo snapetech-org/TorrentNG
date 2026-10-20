@@ -628,6 +628,9 @@ pub async fn run_metadata_task(
                     TorrentCmd::GetRuntimeStats { reply } => {
                         let _ = reply.send(Default::default());
                     }
+                    TorrentCmd::GetPeerSummary { reply } => {
+                        let _ = reply.send(crate::command::TorrentPeerStats::default());
+                    }
                     TorrentCmd::QuiesceForStorageMove { reply } => {
                         // No metadata (and therefore no files) exist yet for
                         // a torrent still in this pre-metadata state, so
@@ -890,6 +893,9 @@ fn reject_metadata_command_during_shutdown(command: TorrentCmd) {
         TorrentCmd::GetRuntimeStats { reply } => {
             let _ = reply.send(Default::default());
         }
+        TorrentCmd::GetPeerSummary { reply } => {
+            let _ = reply.send(crate::command::TorrentPeerStats::default());
+        }
         TorrentCmd::AcceptPeer { .. }
         | TorrentCmd::AcceptUtpPeer { .. }
         | TorrentCmd::Shutdown
@@ -967,6 +973,9 @@ async fn wait_for_metadata_completion(cmd_rx: &mut mpsc::Receiver<TorrentCmd>, m
             }
             TorrentCmd::GetRuntimeStats { reply } => {
                 let _ = reply.send(Default::default());
+            }
+            TorrentCmd::GetPeerSummary { reply } => {
+                let _ = reply.send(crate::command::TorrentPeerStats::default());
             }
             TorrentCmd::AcceptPeer { .. } | TorrentCmd::AcceptUtpPeer { .. } => {}
             TorrentCmd::Recheck { .. }

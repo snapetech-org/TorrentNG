@@ -50,6 +50,7 @@ use tokio::time::{interval, sleep, timeout};
 use tokio_util::codec::Framed;
 use tracing::{debug, warn};
 
+use crate::command::TorrentPeerStats;
 use crate::crash_safety::CrashSafetyRuntime;
 use crate::db_worker::DbExecutor;
 use crate::egress_policy::OutboundEgressPolicy;
@@ -362,6 +363,7 @@ impl V2Bitmap {
 #[derive(Debug)]
 struct V2PeerState {
     remote_have: Arc<V2Bitmap>,
+    remote_have_count: usize,
     choked: bool,
     upload_choked: bool,
     interested: bool,
@@ -381,6 +383,7 @@ impl V2PeerState {
     fn new(piece_count: usize) -> Self {
         Self {
             remote_have: Arc::new(V2Bitmap::new(piece_count)),
+            remote_have_count: 0,
             choked: true,
             upload_choked: true,
             interested: false,
@@ -395,6 +398,27 @@ impl V2PeerState {
             assembly_buffers: 0,
             assembly_bytes: 0,
         }
+    }
+
+    fn replace_remote_have_from_bitfield(&mut self, bits: &[u8]) -> Result<(), String> {
+        Arc::make_mut(&mut self.remote_have).copy_from_bitfield(bits)?;
+        self.remote_have_count = self.remote_have.count_ones();
+        Ok(())
+    }
+
+    fn add_remote_have(&mut self, piece: usize) -> bool {
+        let remote_have = Arc::make_mut(&mut self.remote_have);
+        if piece >= remote_have.len() || remote_have.get(piece) {
+            return false;
+        }
+        remote_have.set(piece, true);
+        self.remote_have_count = self.remote_have_count.saturating_add(1);
+        true
+    }
+
+    fn fill_remote_have(&mut self, have: bool) {
+        Arc::make_mut(&mut self.remote_have).fill(have);
+        self.remote_have_count = if have { self.remote_have.len() } else { 0 };
     }
 
     fn record_transfer(&mut self, upload: bool, bytes: u64) {
@@ -1652,6 +1676,10 @@ impl V2TorrentTask {
                 let _ = reply.send(self.runtime_stats());
                 false
             }
+            TorrentCmd::GetPeerSummary { reply } => {
+                let _ = reply.send(self.peer_stats());
+                false
+            }
             TorrentCmd::ReloadFilePolicy { reply } => {
                 let result = self.apply_file_policy_from_db().await;
                 if result.is_ok() {
@@ -2699,10 +2727,12 @@ impl V2TorrentTask {
             let Ok(peer_permit) = self.network_budget.try_acquire_peer() else {
                 break;
             };
-            // V2PeerState retains remote_have and the protocol loop retains
-            // announced_have, so charge both packed maps before spawning it.
+            // V2PeerState retains remote_have and its cached have count, and
+            // the protocol loop retains announced_have. Charge all three
+            // before spawning the peer.
             let bitmap_bytes = V2Bitmap::memory_bytes_for_len(self.piece_map.piece_count as usize)
-                .saturating_mul(2);
+                .saturating_mul(2)
+                .saturating_add(u64::try_from(std::mem::size_of::<usize>()).unwrap_or(u64::MAX));
             let Some(bitmap_memory_lease) = self
                 .resources
                 .try_acquire(MemoryClass::PeerBuffer, bitmap_bytes)
@@ -2836,10 +2866,12 @@ impl V2TorrentTask {
             drop(peer_permit);
             return;
         }
-        // V2PeerState retains remote_have and the protocol loop retains
-        // announced_have, so charge both packed maps before spawning it.
-        let bitmap_bytes =
-            V2Bitmap::memory_bytes_for_len(self.piece_map.piece_count as usize).saturating_mul(2);
+        // V2PeerState retains remote_have and its cached have count, and the
+        // protocol loop retains announced_have. Charge all three before
+        // spawning the peer.
+        let bitmap_bytes = V2Bitmap::memory_bytes_for_len(self.piece_map.piece_count as usize)
+            .saturating_mul(2)
+            .saturating_add(u64::try_from(std::mem::size_of::<usize>()).unwrap_or(u64::MAX));
         let Some(bitmap_memory_lease) = self
             .resources
             .try_acquire(MemoryClass::PeerBuffer, bitmap_bytes)
@@ -2903,10 +2935,12 @@ impl V2TorrentTask {
             drop(peer_permit);
             return;
         }
-        // V2PeerState retains remote_have and the protocol loop retains
-        // announced_have, so charge both packed maps before spawning it.
-        let bitmap_bytes =
-            V2Bitmap::memory_bytes_for_len(self.piece_map.piece_count as usize).saturating_mul(2);
+        // V2PeerState retains remote_have and its cached have count, and the
+        // protocol loop retains announced_have. Charge all three before
+        // spawning the peer.
+        let bitmap_bytes = V2Bitmap::memory_bytes_for_len(self.piece_map.piece_count as usize)
+            .saturating_mul(2)
+            .saturating_add(u64::try_from(std::mem::size_of::<usize>()).unwrap_or(u64::MAX));
         let Some(bitmap_memory_lease) = self
             .resources
             .try_acquire(MemoryClass::PeerBuffer, bitmap_bytes)
@@ -3003,7 +3037,7 @@ impl V2TorrentTask {
             .iter()
             .filter_map(|(addr, peer)| {
                 let state = peer.state.lock().ok()?;
-                let pieces = state.remote_have.count_ones();
+                let pieces = state.remote_have_count;
                 let pieces_total = state.remote_have.len();
                 Some(EnginePeerSnapshot {
                     addr: *addr,
@@ -3059,6 +3093,29 @@ impl V2TorrentTask {
             storage: self.storage.stats(),
             ..TorrentRuntimeStats::default()
         }
+    }
+
+    fn peer_stats(&self) -> TorrentPeerStats {
+        let mut stats = TorrentPeerStats {
+            connected_peers: self.peers.len() as u64,
+            ..TorrentPeerStats::default()
+        };
+        for peer in self.peers.values() {
+            match peer.state.lock() {
+                Ok(state) => {
+                    let pieces_total = state.remote_have.len();
+                    if pieces_total > 0 && state.remote_have_count == pieces_total {
+                        stats.seed_peers = stats.seed_peers.saturating_add(1);
+                    } else {
+                        stats.leecher_peers = stats.leecher_peers.saturating_add(1);
+                    }
+                    stats.download_rate = stats.download_rate.saturating_add(state.rate(false));
+                    stats.upload_rate = stats.upload_rate.saturating_add(state.rate(true));
+                }
+                Err(_) => stats.leecher_peers = stats.leecher_peers.saturating_add(1),
+            }
+        }
+        stats
     }
 
     fn reject_pending_commands(&mut self) {
@@ -3204,6 +3261,9 @@ fn reject_v2_command(command: TorrentCmd) {
         }
         TorrentCmd::GetRuntimeStats { reply } => {
             let _ = reply.send(TorrentRuntimeStats::default());
+        }
+        TorrentCmd::GetPeerSummary { reply } => {
+            let _ = reply.send(TorrentPeerStats::default());
         }
         TorrentCmd::AcceptPeer { .. }
         | TorrentCmd::AcceptUtpPeer { .. }
@@ -3564,8 +3624,7 @@ async fn run_v2_peer_protocol(
                 match message {
                     Message::Bitfield(bits) => {
                         if let Ok(mut peer) = state.lock() {
-                            Arc::make_mut(&mut peer.remote_have)
-                                .copy_from_bitfield(&bits)
+                            peer.replace_remote_have_from_bitfield(&bits)
                                 .map_err(anyhow::Error::msg)?;
                         }
                         remote_availability_known = true;
@@ -3594,7 +3653,7 @@ async fn run_v2_peer_protocol(
                             continue;
                         }
                         if let Ok(mut peer) = state.lock() {
-                            Arc::make_mut(&mut peer.remote_have).set(piece as usize, true);
+                            peer.add_remote_have(piece as usize);
                         }
                         remote_availability_known = true;
                         update_v2_interest(
@@ -3619,7 +3678,7 @@ async fn run_v2_peer_protocol(
                     }
                     Message::HaveAll => {
                         if let Ok(mut peer) = state.lock() {
-                            Arc::make_mut(&mut peer.remote_have).fill(true);
+                            peer.fill_remote_have(true);
                         }
                         remote_availability_known = true;
                         update_v2_interest(
@@ -3644,7 +3703,7 @@ async fn run_v2_peer_protocol(
                     }
                     Message::HaveNone => {
                         if let Ok(mut peer) = state.lock() {
-                            Arc::make_mut(&mut peer.remote_have).fill(false);
+                            peer.fill_remote_have(false);
                         }
                         remote_availability_known = true;
                         update_v2_interest(
@@ -5480,4 +5539,32 @@ fn expected_v2_piece_hash(
         .get(&root)
         .and_then(|hashes| hashes.get(index))
         .copied())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::V2PeerState;
+
+    #[test]
+    fn reference_peer_have_count_tracks_bitfield_and_incremental_updates() {
+        let mut peer = V2PeerState::new(10);
+        assert_eq!(peer.remote_have_count, 0);
+
+        peer.replace_remote_have_from_bitfield(&[0b1010_0000, 0b0100_0000])
+            .unwrap();
+        assert_eq!(peer.remote_have_count, 3);
+
+        peer.replace_remote_have_from_bitfield(&[0b0010_0000, 0b1000_0000])
+            .unwrap();
+        assert_eq!(peer.remote_have_count, 2);
+        assert!(peer.add_remote_have(3));
+        assert!(!peer.add_remote_have(3));
+        assert!(!peer.add_remote_have(10));
+        assert_eq!(peer.remote_have_count, 3);
+
+        peer.fill_remote_have(true);
+        assert_eq!(peer.remote_have_count, 10);
+        peer.fill_remote_have(false);
+        assert_eq!(peer.remote_have_count, 0);
+    }
 }

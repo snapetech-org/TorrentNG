@@ -432,12 +432,35 @@ pub struct EngineStats {
     pub resources: Option<ResourceSnapshot>,
 }
 
-/// A bounded, per-torrent runtime sample requested by the visible-row API.
-/// This deliberately stays separate from `EngineStats`, whose collection is
-/// an aggregate observability path and may inspect every promoted task.
+/// A bounded, per-torrent rate sample requested by the visible-row API. This
+/// deliberately stays separate from `EngineStats`, whose collection is an
+/// aggregate observability path and may inspect every promoted task.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TorrentLiveStats {
     pub info_hash: String,
+    pub download_rate: i64,
+    pub upload_rate: i64,
+}
+
+/// Compact peer data for compatibility views that need swarm counts as well
+/// as rates, without materializing per-peer snapshots or client labels.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TorrentPeerSummary {
+    pub info_hash: String,
+    pub connected_peers: u64,
+    pub seed_peers: u64,
+    pub leecher_peers: u64,
+    pub download_rate: i64,
+    pub upload_rate: i64,
+}
+
+/// Small peer summary for compatibility read models that need counts and
+/// rates but do not need per-peer snapshots or client labels.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TorrentPeerStats {
+    pub connected_peers: u64,
+    pub seed_peers: u64,
+    pub leecher_peers: u64,
     pub download_rate: i64,
     pub upload_rate: i64,
 }
@@ -1683,12 +1706,18 @@ pub(crate) enum EngineCmd {
     GetActiveTorrentPeers {
         reply: oneshot::Sender<CmdResult<ActiveTorrentPeers>>,
     },
-    /// Read runtime rates only for the explicitly requested promoted tasks.
+    /// Read transfer rates only for explicitly requested promoted tasks.
     /// Dormant or unknown torrents are omitted instead of causing a registry
     /// or global stats traversal.
     GetTorrentLiveStats {
         info_hashes: Vec<String>,
         reply: oneshot::Sender<CmdResult<Vec<TorrentLiveStats>>>,
+    },
+    /// Read compact peer counts and rates without materializing per-peer
+    /// snapshots.
+    GetTorrentPeerSummaries {
+        info_hashes: Vec<String>,
+        reply: oneshot::Sender<CmdResult<Vec<TorrentPeerSummary>>>,
     },
     GetTorrentWebseeds {
         info_hash: String,

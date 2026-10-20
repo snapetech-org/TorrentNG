@@ -5,11 +5,13 @@ Transmission, Deluge, and rTorrent using an official Debian amd64 netinst
 torrent. It records public download behavior and a separate controlled seed
 transfer for each client. The latest comparison and memory investigation are in
 [`certification/reports/native-memory-optimization-20261014-agentvm.md`](../certification/reports/native-memory-optimization-20261014-agentvm.md),
-with raw time-series and allocator/process profiles beside the report. It
-includes public download and controlled seed results, client versions, fixed
-test limits, measured memory, and confidence limits. The previous
-[unoptimized baseline](../certification/reports/client-performance-benchmark-20261013.md)
-is retained to show the before measurements.
+with raw time-series and allocator/process profiles beside the report. The
+latest source-bound whole-client attempt is
+[`client-performance-benchmark-7a944072-20261020.md`](../certification/reports/client-performance-benchmark-7a944072-20261020.md).
+TorrentNG hit an HTTP 503 during that run, so it is diagnostic evidence rather
+than a current client ranking. The October 14 report and the
+[October 13 baseline](../certification/reports/client-performance-benchmark-20261013.md)
+are historical measurements, not current-source comparisons.
 
 The native daemon defaults to the system allocator; jemalloc and mimalloc are
 opt-in build features. It also defaults to direct block writes with
@@ -116,9 +118,21 @@ records configured ceilings so capped runs are clear.
 - **Controlled seeding:** verified bytes delivered to the common leecher,
   transfer time, average and sampled peak upload, peers, container CPU and
   memory, and the leecher's SHA-256.
+- **Resource cost per payload GiB:** cgroup v2 CPU time from `cpu.stat` and
+  block read/write bytes and operations from `io.stat`, plus process RSS,
+  cgroup memory, and TorrentNG engine/allocator observations. The report
+  normalizes CPU seconds and block bytes by observed payload bytes; unavailable
+  cgroup counters are recorded as `n/a`.
 - **Run context:** client and image versions, TorrentNG source commit, host and
   filesystem, load averages, configured limits, raw samples, and cleanup
   status.
+
+The cgroup block counters measure device traffic attributed to the client
+container. They do not count page-cache hits or represent logical filesystem
+bytes. Compare those values only when every client uses the same filesystem,
+cache state, payload, and phase. CPU seconds per GiB are cgroup usage deltas
+normalized by bytes transferred; CPU percentages remain available for
+diagnosing the time series.
 
 One sequential pass gives **low confidence** for this host, ISO,
 swarm window, and configuration. Public swarm availability changes over time;
@@ -126,3 +140,39 @@ repeat runs in different orders before drawing a general ranking. A successful
 hash check is high-confidence evidence that the completed client received the
 same ISO, but it does not establish performance on other networks, disks, or
 loads.
+
+## Upload-read scheduling experiment (October 20, 2026)
+
+A candidate moved each upload block read from its own Tokio task into a boxed
+future polled by the peer loop. Two controlled seed passes delivered and
+verified the same Debian ISO through one qBittorrent leecher capped at 4 MiB/s.
+The first pass ran TorrentNG first; the second ran Transmission before
+TorrentNG. Both were on `kspld0`, where the sampled one-minute host load peaked
+at 29.21 and 27.54 respectively.
+
+| Measurement | Previous three-pass TorrentNG range | Candidate pass 1 | Candidate pass 2 |
+|---|---:|---:|---:|
+| Seed goodput (MiB/s) | 3.80–3.82 | 3.81 | 3.81 |
+| CPU (s/GiB) | 3.99–5.07; median 4.87 | 5.05 | 4.28 |
+| Peak cgroup anonymous memory (MiB) | 11.8–15.3 | 23.9 | 27.7 |
+| TorrentNG process RSS high-water mark (MiB) | 30.1–32.8 | 41.9 | 45.8 |
+| Block read (MiB/GiB) | 165.57–165.80 | 166.11 | 215.21 |
+| Block write (MiB/GiB) | 0.39–0.63 | 0.46 | 0.39 |
+
+The candidate CPU readings average 4.67 CPU-s/GiB, a small change from the
+previous median that stays within the previous run range. Anonymous memory and
+process RSS were consistently higher, while the second block-read result
+varied substantially. This does not establish a CPU or I/O improvement, and it
+shows a memory regression in this one-peer workload. The direct-future change
+was reverted; the peer-owned Tokio tasks remain. The one-peer test does not
+attribute the separate high-peer request-bookkeeping risk.
+
+The raw reports, CSV samples, and memory profiles for pass 1 and pass 2 are
+retained locally under `certification/reports/` as ignored benchmark artifacts.
+Both public-swarm probes timed out in the short diagnostic window; the
+controlled seed rows passed hash verification. Pass 2 has a different overall
+worktree fingerprint because `deploy/certification/README.md` changed one
+documentation line between runs. The Rust crate inputs were unchanged and the
+container build reused the cached Rust build layer. These results apply only
+to the recorded source and fixture; they are not a whole-client resource
+ranking.

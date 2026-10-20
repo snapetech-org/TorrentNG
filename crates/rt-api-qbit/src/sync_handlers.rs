@@ -115,12 +115,9 @@ pub async fn handle_sync_maindata(
         None
     };
     let active_rechecks = if entries.is_empty() {
-        HashSet::new()
+        Arc::new(HashSet::new())
     } else {
-        match active_recheck_hashes(&state).await {
-            Ok(active_rechecks) => active_rechecks,
-            Err(error) => return qbit_backend_unavailable(&error),
-        }
+        active_recheck_hashes(&state).await
     };
     let mut infos = Vec::with_capacity(entries.len());
     if include_live {
@@ -131,7 +128,7 @@ pub async fn handle_sync_maindata(
         };
     } else {
         for entry in entries.iter() {
-            let info = match qbit_torrent_info(&state, entry, &active_rechecks, false).await {
+            let info = match qbit_torrent_info(&state, entry, &active_rechecks, false, None).await {
                 Ok(info) => info,
                 Err(error) => return qbit_backend_unavailable(&error),
             };

@@ -2,6 +2,7 @@
 //! This module owns transport setup while the torrent task owns session state.
 
 use super::*;
+use crate::command::TorrentPeerStats;
 
 impl TorrentTask {
     pub(super) async fn accept_peer(
@@ -282,8 +283,9 @@ impl TorrentTask {
         // Both dense availability maps are retained for the peer lifetime.
         // Acquire their combined budget before allocating either map so a
         // rejected peer never creates a large temporary bitmap.
-        let bitmap_bytes =
-            PieceBitmap::memory_bytes_for_len(self.meta.pieces.len()).saturating_mul(2);
+        let bitmap_bytes = PieceBitmap::memory_bytes_for_len(self.meta.pieces.len())
+            .saturating_mul(2)
+            .saturating_add(u64::try_from(std::mem::size_of::<usize>()).unwrap_or(u64::MAX));
         let bitmap_memory_lease = self
             .resources
             .try_acquire(MemoryClass::PeerBuffer, bitmap_bytes)?;
@@ -298,6 +300,7 @@ impl TorrentTask {
                 shutdown_control: RateLimitCancellation::default(),
                 abort: None,
                 peer_has,
+                peer_have_count: 0,
                 choked: true,
                 upload_choked: true,
                 interested: false,
@@ -352,7 +355,7 @@ impl TorrentTask {
         self.active_peers
             .iter()
             .map(|(addr, peer)| {
-                let pieces = peer.peer_has.count_ones();
+                let pieces = peer.peer_have_count;
                 let pieces_total = peer.peer_has.len();
                 let progress = if pieces_total == 0 {
                     0.0
@@ -405,70 +408,45 @@ impl TorrentTask {
     }
 
     pub(super) fn runtime_stats(&self) -> TorrentRuntimeStats {
-        let outstanding_requests = self
-            .active_peers
-            .values()
-            .map(|peer| peer.outstanding as u64)
-            .sum::<u64>();
-        let peer_command_queue_capacity = self
-            .active_peers
-            .values()
-            .map(|peer| peer.cmd_tx.max_capacity() as u64)
-            .sum::<u64>();
-        let peer_command_queue_depth = self
-            .active_peers
-            .values()
-            .map(|peer| {
-                peer.cmd_tx
-                    .max_capacity()
-                    .saturating_sub(peer.cmd_tx.capacity()) as u64
-            })
-            .sum::<u64>();
-        let peer_command_queue_bytes = self
-            .active_peers
-            .values()
-            .map(|peer| {
-                (peer.cmd_tx.max_capacity() as u64)
-                    .saturating_mul(std::mem::size_of::<PeerCommand>() as u64)
-                    // This gauge also includes the per-peer packed
-                    // availability/control maps. They are retained for the
-                    // lifetime of the command mailbox and are charged to
-                    // the same peer-buffer memory class at registration.
-                    .saturating_add(peer.peer_has.memory_bytes())
-                    .saturating_add(peer.pending_have.memory_bytes())
-                    // The peer task retains its upload-side map for the same
-                    // lifetime; it is charged when upload_context is built.
-                    .saturating_add(peer.peer_has.memory_bytes())
-                    .saturating_add(
-                        peer.requested
-                            .capacity()
-                            .saturating_mul(std::mem::size_of::<BlockRequest>())
-                            as u64,
-                    )
-            })
-            .sum::<u64>();
+        let mut outstanding_requests = 0u64;
+        let mut peer_command_queue_capacity = 0u64;
+        let mut peer_command_queue_depth = 0u64;
+        let mut peer_command_queue_bytes = 0u64;
+        let mut download_rate = 0i64;
+        let mut upload_rate = 0i64;
+        for peer in self.active_peers.values() {
+            outstanding_requests = outstanding_requests.saturating_add(peer.outstanding as u64);
+            let queue_capacity = peer.cmd_tx.max_capacity();
+            peer_command_queue_capacity =
+                peer_command_queue_capacity.saturating_add(queue_capacity as u64);
+            peer_command_queue_depth = peer_command_queue_depth
+                .saturating_add(queue_capacity.saturating_sub(peer.cmd_tx.capacity()) as u64);
+            // The estimate includes packed availability/control maps and the
+            // upload-side map retained for the mailbox lifetime.
+            let queue_bytes = (queue_capacity as u64)
+                .saturating_mul(std::mem::size_of::<PeerCommand>() as u64)
+                .saturating_add(peer.peer_has.memory_bytes())
+                .saturating_add(peer.pending_have.memory_bytes())
+                .saturating_add(peer.peer_has.memory_bytes())
+                .saturating_add(std::mem::size_of::<usize>() as u64)
+                .saturating_add(
+                    peer.requested
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<BlockRequest>())
+                        as u64,
+                );
+            peer_command_queue_bytes = peer_command_queue_bytes.saturating_add(queue_bytes);
+            download_rate = download_rate.saturating_add(peer_rate(
+                peer.download_rate,
+                peer.download_rate_window_started,
+            ));
+            upload_rate = upload_rate
+                .saturating_add(peer_rate(peer.upload_rate, peer.upload_rate_window_started));
+        }
         let tracker_peer_cache_bytes = self
             ._tracker_peer_cache_memory_lease
             .as_ref()
             .map_or(0, MemoryLease::bytes);
-        let (download_rate, upload_rate) = self
-            .active_peers
-            .values()
-            .map(|peer| {
-                (
-                    peer_rate(peer.download_rate, peer.download_rate_window_started),
-                    peer_rate(peer.upload_rate, peer.upload_rate_window_started),
-                )
-            })
-            .fold(
-                (0_i64, 0_i64),
-                |(download, upload), (peer_download, peer_upload)| {
-                    (
-                        download.saturating_add(peer_download),
-                        upload.saturating_add(peer_upload),
-                    )
-                },
-            );
         TorrentRuntimeStats {
             connected_peers: self.active_peers.len() as u64,
             outstanding_requests,
@@ -492,6 +470,29 @@ impl TorrentTask {
             peer_command_queue_bytes,
             storage: self.storage.stats(),
         }
+    }
+
+    pub(super) fn peer_stats(&self) -> TorrentPeerStats {
+        let mut stats = TorrentPeerStats {
+            connected_peers: self.active_peers.len() as u64,
+            ..TorrentPeerStats::default()
+        };
+        for peer in self.active_peers.values() {
+            let pieces_total = peer.peer_has.len();
+            if pieces_total > 0 && peer.peer_have_count == pieces_total {
+                stats.seed_peers = stats.seed_peers.saturating_add(1);
+            } else {
+                stats.leecher_peers = stats.leecher_peers.saturating_add(1);
+            }
+            stats.download_rate = stats.download_rate.saturating_add(peer_rate(
+                peer.download_rate,
+                peer.download_rate_window_started,
+            ));
+            stats.upload_rate = stats
+                .upload_rate
+                .saturating_add(peer_rate(peer.upload_rate, peer.upload_rate_window_started));
+        }
+        stats
     }
 
     pub(super) fn remember_tracker_peers(&mut self, peers: &[SocketAddr]) {

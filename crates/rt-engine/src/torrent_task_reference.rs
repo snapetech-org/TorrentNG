@@ -650,6 +650,9 @@ fn reject_torrent_command_during_shutdown(command: TorrentCmd) {
         TorrentCmd::GetRuntimeStats { reply } => {
             let _ = reply.send(Default::default());
         }
+        TorrentCmd::GetPeerSummary { reply } => {
+            let _ = reply.send(crate::command::TorrentPeerStats::default());
+        }
         TorrentCmd::AcceptPeer { .. }
         | TorrentCmd::AcceptUtpPeer { .. }
         | TorrentCmd::Shutdown
@@ -1625,6 +1628,7 @@ struct PeerHandle {
     /// draining a bounded command queue.
     abort: Option<tokio::task::AbortHandle>,
     peer_has: PieceBitmap,
+    peer_have_count: usize,
     choked: bool,
     upload_choked: bool,
     interested: bool,
@@ -1655,6 +1659,22 @@ struct PeerHandle {
     /// bitmap keeps this retry state bounded by the torrent's piece map and
     /// avoids losing a protocol update when a peer is briefly backlogged.
     pending_have: PieceBitmap,
+}
+
+impl PeerHandle {
+    fn replace_peer_have(&mut self, pieces: PieceBitmap) {
+        self.peer_have_count = pieces.count_ones();
+        self.peer_has = pieces;
+    }
+
+    fn add_peer_have(&mut self, piece: usize) -> bool {
+        if self.peer_has.get(piece) != Some(false) {
+            return false;
+        }
+        self.peer_has.set(piece, true);
+        self.peer_have_count = self.peer_have_count.saturating_add(1);
+        true
+    }
 }
 
 #[derive(Debug)]
@@ -3067,6 +3087,9 @@ impl TorrentTask {
                         }
                         TorrentCmd::GetRuntimeStats { reply } => {
                             let _ = reply.send(self.runtime_stats());
+                        }
+                        TorrentCmd::GetPeerSummary { reply } => {
+                            let _ = reply.send(self.peer_stats());
                         }
                         TorrentCmd::AcceptPeer {
                             stream,
@@ -4750,6 +4773,9 @@ impl TorrentTask {
                 }
                 Ok(TorrentCmd::GetRuntimeStats { reply }) => {
                     let _ = reply.send(self.runtime_stats());
+                }
+                Ok(TorrentCmd::GetPeerSummary { reply }) => {
+                    let _ = reply.send(self.peer_stats());
                 }
                 Ok(TorrentCmd::AcceptPeer { .. }) => {}
                 Ok(TorrentCmd::AcceptUtpPeer { .. }) => {}

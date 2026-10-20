@@ -55,7 +55,7 @@ use crate::command::{
     EngineNetworkFeatures, EnginePeerSnapshot, EnginePieceState, EngineStats, EngineStorageRoot,
     EngineSubsystemHealth, EngineTorrentFile, EngineTorrentLimits, EngineTorrentMetadata,
     EngineTrackerHealth, EngineTrackerSnapshot, EngineWebseedSnapshot, PreparedTorrentTaskData,
-    QueueMove, TorrentDiagnostic, TorrentLiveStats, TorrentPromotionAction,
+    QueueMove, TorrentDiagnostic, TorrentLiveStats, TorrentPeerSummary, TorrentPromotionAction,
 };
 use crate::db_worker::DbExecutor;
 #[cfg(not(test))]
@@ -4254,7 +4254,7 @@ impl Engine {
                             let (task_reply, task_result) = oneshot::channel();
                             let stats = match timeout(
                                 ENGINE_COMMAND_SEND_TIMEOUT,
-                                tx.send(TorrentCmd::GetRuntimeStats { reply: task_reply }),
+                                tx.send(TorrentCmd::GetPeerSummary { reply: task_reply }),
                             )
                             .await
                             {
@@ -4268,6 +4268,50 @@ impl Engine {
                             };
                             stats.map(|stats| TorrentLiveStats {
                                 info_hash,
+                                download_rate: stats.download_rate,
+                                upload_rate: stats.upload_rate,
+                            })
+                        })
+                        .buffer_unordered(64)
+                        .collect::<Vec<_>>()
+                        .await;
+                    Ok(results.into_iter().flatten().collect())
+                });
+            }
+            EngineCmd::GetTorrentPeerSummaries { info_hashes, reply } => {
+                let tasks = info_hashes
+                    .into_iter()
+                    .filter_map(|info_hash| {
+                        self.runtime
+                            .torrent_chans
+                            .get(&info_hash)
+                            .cloned()
+                            .map(|tx| (info_hash, tx))
+                    })
+                    .collect::<Vec<_>>();
+                spawn_engine_query(reply, async move {
+                    let results = stream::iter(tasks)
+                        .map(|(info_hash, tx)| async move {
+                            let (task_reply, task_result) = oneshot::channel();
+                            let stats = match timeout(
+                                ENGINE_COMMAND_SEND_TIMEOUT,
+                                tx.send(TorrentCmd::GetPeerSummary { reply: task_reply }),
+                            )
+                            .await
+                            {
+                                Ok(Ok(())) => {
+                                    timeout(ENGINE_STATS_TASK_QUERY_DEADLINE, task_result)
+                                        .await
+                                        .ok()
+                                        .and_then(Result::ok)
+                                }
+                                _ => None,
+                            };
+                            stats.map(|stats| TorrentPeerSummary {
+                                info_hash,
+                                connected_peers: stats.connected_peers,
+                                seed_peers: stats.seed_peers,
+                                leecher_peers: stats.leecher_peers,
                                 download_rate: stats.download_rate,
                                 upload_rate: stats.upload_rate,
                             })

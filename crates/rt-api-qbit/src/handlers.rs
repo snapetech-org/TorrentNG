@@ -25,7 +25,7 @@ pub use sync_handlers::{
 use rt_engine::{
     EngineGlobalLimits, EnginePeerSnapshot, EnginePieceState, EngineTorrentFile,
     EngineTorrentLimits, EngineTorrentMetadata, EngineTrackerSnapshot, OutboundTargetKind,
-    QueueMove, MAX_MANUAL_PEER_ADDRESSES,
+    QueueMove, TorrentPeerSummary, MAX_MANUAL_PEER_ADDRESSES,
 };
 use rt_metrics::{MemoryClass, MemoryLease};
 use rt_session::MAX_BANNED_PEERS;
@@ -35,7 +35,10 @@ use crate::{
         to_qbit_state_with_completion, QbCategoryInfo, QbFileInfo, QbTorrentInfo,
         QbTorrentProperties, QbTrackerInfo,
     },
-    state::{canonical_sort_key, torrent_is_complete, AppState, JsonMap, TorrentSnapshotError},
+    state::{
+        canonical_sort_key, torrent_is_complete, AppState, JsonMap, TorrentSnapshotError,
+        ACTIVE_RECHECK_CACHE_TTL,
+    },
 };
 
 // Live qBittorrent compatibility fields are backed by per-torrent engine
@@ -51,6 +54,8 @@ const MAX_TORRENT_LIST_OFFSET: usize = 1_000_000;
 const QBIT_LIST_INITIAL_CAPACITY: usize = 256;
 const QBIT_LIMIT_PROJECTION_CONCURRENCY: usize = 64;
 const QBIT_LIVE_PROJECTION_CONCURRENCY: usize = 64;
+const QBIT_PEER_SUMMARY_DEADLINE: Duration = Duration::from_millis(400);
+const QBIT_PEER_SUMMARY_BATCH_SIZE: usize = 128;
 const MAX_QBIT_MUTATION_ITEMS: usize = 16_384;
 const MAX_QBIT_HASH_BYTES: usize = 128;
 const MAX_QBIT_TORRENT_BYTES: usize = 16 * 1024 * 1024;
@@ -1203,10 +1208,7 @@ pub async fn torrents_info(
     // the registry entry itself advances to `checking`. Load that projection
     // before filtering and sorting so the response uses one state view from
     // candidate selection through serialization.
-    let active_rechecks = match active_recheck_hashes(&state).await {
-        Ok(active_rechecks) => active_rechecks,
-        Err(error) => return qbit_backend_unavailable(&error),
-    };
+    let active_rechecks = active_recheck_hashes(&state).await;
     let sort = canonical_sort_key(q.sort.as_deref());
     let order = snapshot.ordered_indices(Some(sort), |left, right| match sort {
         "hash" => left.info_hash.cmp(&right.info_hash),
@@ -1329,6 +1331,7 @@ pub async fn torrents_info(
                     .expect("snapshot index is valid"),
                 &active_rechecks,
                 false,
+                None,
             )
             .await
             {
@@ -2684,19 +2687,7 @@ pub async fn torrents_properties(
             )
         }
     };
-    let swarm = if let Some(engine) = &state.engine {
-        match engine.torrent_peers(hash.clone()).await {
-            Ok(peers) => qbit_swarm_from_peers(&peers),
-            Err(_) => {
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    Json(default_torrent_properties(String::new())),
-                )
-            }
-        }
-    } else {
-        QbitSwarmProjection::default()
-    };
+    let swarm = qbit_swarm_projection(&state, &hash).await;
     let now = unix_now();
     let time_elapsed = now.saturating_sub(qbit_i64(entry.added_at));
     let seeding_time = entry
@@ -5515,27 +5506,66 @@ fn parse_qbit_bool(value: &str) -> Option<bool> {
     }
 }
 
-async fn active_recheck_hashes(state: &AppState) -> Result<HashSet<String>, String> {
-    let Some(engine) = &state.engine else {
-        return Ok(HashSet::new());
-    };
-    let jobs = engine.list_jobs().await?;
-    let hashes = jobs
-        .into_iter()
-        .filter(|job| {
-            job.kind == "recheck_torrent"
-                && !matches!(
-                    job.state.as_str(),
-                    "completed" | "failed" | "cancelled" | "canceled"
-                )
-        })
-        .flat_map(|job| job.affected_torrents)
-        .collect::<Vec<_>>();
-    let registry = state.registry.read().await;
-    Ok(hashes
-        .into_iter()
-        .filter_map(|hash| registry.get(&hash).map(|entry| entry.info_hash.clone()))
-        .collect())
+async fn active_recheck_hashes(state: &AppState) -> Arc<HashSet<String>> {
+    let cached = state.active_recheck_cache.read().await.clone();
+    if cached
+        .as_ref()
+        .is_some_and(|entry| entry.generated_at.elapsed() <= ACTIVE_RECHECK_CACHE_TTL)
+    {
+        return cached.map_or_else(|| Arc::new(HashSet::new()), |entry| entry.hashes);
+    }
+    if state.engine.is_none() {
+        return cached.map_or_else(|| Arc::new(HashSet::new()), |entry| entry.hashes);
+    }
+
+    // qBittorrent info is polled frequently. Serve the last complete job view
+    // immediately, and coalesce refresh work so a slow database read cannot
+    // turn every page request into another engine command.
+    let refresh_lock = Arc::clone(&state.active_recheck_refresh);
+    if let Ok(refresh_guard) = refresh_lock.try_lock_owned() {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let _refresh_guard = refresh_guard;
+            let Some(engine) = state.engine.as_ref() else {
+                return;
+            };
+            let jobs = match engine.list_jobs().await {
+                Ok(jobs) => jobs,
+                Err(error) => {
+                    tracing::warn!(
+                        component = "api",
+                        operation = "qbit_active_recheck_refresh",
+                        result = "stale_or_unavailable",
+                        error = %error,
+                        "retaining the last complete active-recheck view"
+                    );
+                    return;
+                }
+            };
+            let hashes = jobs
+                .into_iter()
+                .filter(|job| {
+                    job.kind == "recheck_torrent"
+                        && !matches!(
+                            job.state.as_str(),
+                            "completed" | "failed" | "cancelled" | "canceled"
+                        )
+                })
+                .flat_map(|job| job.affected_torrents)
+                .collect::<Vec<_>>();
+            let registry = state.registry.read().await;
+            let hashes = hashes
+                .into_iter()
+                .filter_map(|hash| registry.get(&hash).map(|entry| entry.info_hash.clone()))
+                .collect();
+            drop(registry);
+            *state.active_recheck_cache.write().await = Some(crate::state::CachedActiveRechecks {
+                generated_at: std::time::Instant::now(),
+                hashes: Arc::new(hashes),
+            });
+        });
+    }
+    cached.map_or_else(|| Arc::new(HashSet::new()), |entry| entry.hashes)
 }
 
 fn qbit_state_with_recheck(entry_state: &str, complete: bool, active_recheck: bool) -> String {
@@ -5553,10 +5583,55 @@ fn qbit_state_with_recheck(entry_state: &str, complete: bool, active_recheck: bo
 async fn load_qbit_live_projections(
     state: &AppState,
     entries: Vec<rt_session::TorrentEntry>,
-    active_rechecks: HashSet<String>,
+    active_rechecks: Arc<HashSet<String>>,
 ) -> Result<Vec<QbTorrentInfo>, String> {
+    let peer_summaries = if let Some(engine) = &state.engine {
+        let hashes: Vec<String> = entries
+            .iter()
+            .map(|entry| entry.info_hash.clone())
+            .collect();
+        let mut summaries = Vec::new();
+        for batch in hashes.chunks(QBIT_PEER_SUMMARY_BATCH_SIZE) {
+            match tokio::time::timeout(
+                QBIT_PEER_SUMMARY_DEADLINE,
+                engine.torrent_peer_summaries(batch.to_vec()),
+            )
+            .await
+            {
+                Ok(Ok(stats)) => summaries.extend(stats),
+                Ok(Err(error)) => {
+                    tracing::warn!(
+                        component = "api",
+                        operation = "qbit_torrent_peer_summary",
+                        result = "stale_or_unavailable",
+                        error = %error,
+                        "serving qBittorrent torrent info without current peer statistics"
+                    );
+                    break;
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        component = "api",
+                        operation = "qbit_torrent_peer_summary",
+                        result = "timeout",
+                        deadline_ms = QBIT_PEER_SUMMARY_DEADLINE.as_millis(),
+                        "serving qBittorrent torrent info without current peer statistics"
+                    );
+                    break;
+                }
+            }
+        }
+        summaries
+    } else {
+        Vec::new()
+    };
+    let peer_summaries = Arc::new(
+        peer_summaries
+            .into_iter()
+            .map(|stats| (stats.info_hash.clone(), stats))
+            .collect::<HashMap<_, _>>(),
+    );
     let entries = Arc::new(entries);
-    let active_rechecks = Arc::new(active_rechecks);
     let mut infos = std::iter::repeat_with(|| None)
         .take(entries.len())
         .collect::<Vec<Option<QbTorrentInfo>>>();
@@ -5568,10 +5643,17 @@ async fn load_qbit_live_projections(
             let state = state.clone();
             let entries = Arc::clone(&entries);
             let active_rechecks = Arc::clone(&active_rechecks);
+            let peer_summaries = Arc::clone(&peer_summaries);
             tasks.spawn(async move {
-                let info =
-                    qbit_torrent_info(&state, &entries[index], active_rechecks.as_ref(), true)
-                        .await?;
+                let entry = &entries[index];
+                let info = qbit_torrent_info(
+                    &state,
+                    entry,
+                    active_rechecks.as_ref(),
+                    true,
+                    peer_summaries.get(&entry.info_hash),
+                )
+                .await?;
                 Ok::<_, String>((index, info))
             });
         }
@@ -5597,6 +5679,7 @@ async fn qbit_torrent_info(
     e: &rt_session::TorrentEntry,
     active_rechecks: &HashSet<String>,
     include_live: bool,
+    peer_summary: Option<&TorrentPeerSummary>,
 ) -> Result<QbTorrentInfo, String> {
     let complete = torrent_is_complete(e);
     let progress = torrent_progress(e.total_length, e.amount_left, complete);
@@ -5606,7 +5689,9 @@ async fn qbit_torrent_info(
         (String::new(), 0)
     };
     let swarm = if include_live {
-        qbit_swarm_projection(state, &e.info_hash).await?
+        peer_summary
+            .map(qbit_swarm_from_peer_summary)
+            .unwrap_or_default()
     } else {
         QbitSwarmProjection::default()
     };
@@ -5705,20 +5790,64 @@ fn qbit_session_rates_from_infos(infos: &[QbTorrentInfo]) -> QbitSwarmProjection
         })
 }
 
-async fn qbit_swarm_projection(
-    state: &AppState,
-    info_hash: &str,
-) -> Result<QbitSwarmProjection, String> {
+async fn qbit_swarm_projection(state: &AppState, info_hash: &str) -> QbitSwarmProjection {
     let Some(engine) = &state.engine else {
-        return Ok(QbitSwarmProjection::default());
+        return QbitSwarmProjection::default();
     };
-    engine
-        .torrent_peers(info_hash.to_owned())
-        .await
-        .map(|peers| qbit_swarm_from_peers(&peers))
-        .map_err(|error| error.to_string())
+    match tokio::time::timeout(
+        QBIT_PEER_SUMMARY_DEADLINE,
+        engine.torrent_peer_summaries(vec![info_hash.to_owned()]),
+    )
+    .await
+    {
+        Ok(Ok(stats)) => stats
+            .iter()
+            .find(|stats| stats.info_hash == info_hash)
+            .map(qbit_swarm_from_peer_summary)
+            .unwrap_or_default(),
+        Ok(Err(error)) => {
+            tracing::warn!(
+                component = "api",
+                operation = "qbit_torrent_peer_summary",
+                result = "stale_or_unavailable",
+                torrent = %info_hash,
+                error = %error,
+                "serving qBittorrent torrent info without current peer statistics"
+            );
+            QbitSwarmProjection::default()
+        }
+        Err(_) => {
+            tracing::warn!(
+                component = "api",
+                operation = "qbit_torrent_peer_summary",
+                result = "timeout",
+                torrent = %info_hash,
+                deadline_ms = QBIT_PEER_SUMMARY_DEADLINE.as_millis(),
+                "serving qBittorrent torrent info without current peer statistics"
+            );
+            QbitSwarmProjection::default()
+        }
+    }
 }
 
+fn qbit_swarm_from_peer_summary(stats: &TorrentPeerSummary) -> QbitSwarmProjection {
+    let seeds = stats.seed_peers.min(stats.connected_peers);
+    let available_leechers = stats.connected_peers.saturating_sub(seeds);
+    let leechers = if stats.seed_peers.saturating_add(stats.leecher_peers) == stats.connected_peers
+    {
+        stats.leecher_peers
+    } else {
+        available_leechers
+    };
+    QbitSwarmProjection {
+        seeds: seeds.min(u32::MAX as u64) as u32,
+        leechers: leechers.min(u32::MAX as u64) as u32,
+        download_rate: stats.download_rate,
+        upload_rate: stats.upload_rate,
+    }
+}
+
+#[cfg(test)]
 fn qbit_swarm_from_peers(peers: &[EnginePeerSnapshot]) -> QbitSwarmProjection {
     let mut projection = QbitSwarmProjection::default();
     for peer in peers {
@@ -9825,6 +9954,39 @@ mod tests {
                 upload_rate: 3_000,
             }
         );
+    }
+
+    #[test]
+    fn qbit_swarm_projection_uses_compact_peer_summary() {
+        let stats = TorrentPeerSummary {
+            info_hash: "a".repeat(40),
+            connected_peers: 3,
+            seed_peers: 1,
+            leecher_peers: 2,
+            download_rate: 300,
+            upload_rate: 3_000,
+        };
+        assert_eq!(
+            qbit_swarm_from_peer_summary(&stats),
+            QbitSwarmProjection {
+                seeds: 1,
+                leechers: 2,
+                download_rate: 300,
+                upload_rate: 3_000,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn active_recheck_cache_serves_the_last_complete_snapshot() {
+        let state = AppState::new();
+        let hashes = ["a".repeat(40)].into_iter().collect::<HashSet<_>>();
+        *state.active_recheck_cache.write().await = Some(crate::state::CachedActiveRechecks {
+            generated_at: std::time::Instant::now(),
+            hashes: Arc::new(hashes.clone()),
+        });
+
+        assert_eq!(active_recheck_hashes(&state).await.as_ref(), &hashes);
     }
 
     #[test]

@@ -259,6 +259,16 @@ full compatibility responses still charge for and materialize the requested
 output. Snapshot caching avoids repeated registry clones, and `sync/maindata`
 uses the registry mutation journal for retained revisions.
 
+For a live page of up to 200 rows, the qBittorrent facade requests one bounded
+batch of compact runtime peer counts and rates. It does not materialize each
+peer's full snapshot or rescan its availability bitmap for the torrent list;
+peer piece counts are maintained as Bitfield, Have, HaveAll, and HaveNone
+messages arrive. Detailed peer endpoints continue to use peer snapshots. If a peer summary is delayed,
+that row's peer counts and rates are zeroed while its other fields use the
+existing projectors. The active recheck overlay is refreshed in the background
+and reused for up to 500 ms, so each `torrents/info` or `sync/maindata` poll does
+not read the jobs table again.
+
 The compatible-client qBittorrent `sync/maindata` response is capped at
 10,000 changed torrents because that upstream method has no page or snapshot
 parameter. It returns `413 Payload Too Large` rather than claiming a complete
