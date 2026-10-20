@@ -62,6 +62,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PROFILE_PATH = Path(__file__).with_name("fixture_profiles.json")
 RUNNER_SCHEMA_VERSION = "transfer-paired-runner-v1"
 DEFAULT_TIMEOUT_SECONDS = 1800
+SEED_QUEUE_GRACE_SECONDS = 15.0
 POLL_SECONDS = 0.1
 MAX_JSON_BYTES = 16 * 1024 * 1024
 SCHEDULED_TRIAL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./:-]{0,180}$")
@@ -1180,12 +1181,44 @@ def _wait_for_observer_sample(
     raise PairedRunnerError("independent observer did not record a live-client sample")
 
 
+def _seed_is_ready(state: TorrentState) -> bool:
+    """A complete torrent must also be eligible to serve its paired peer."""
+    if not state.complete:
+        return False
+    normalized = state.state.strip().lower().replace("_", "-")
+    return not (
+        normalized.startswith(("queued", "paused", "stopped", "checking"))
+        or normalized
+        in {
+            "check-wait",
+            "seed-wait",
+            "download-wait",
+            "downloading",
+            "error",
+            "stopped-on-error",
+            "missingfiles",
+            "missing-files",
+        }
+    )
+
+
 def _wait_seed_complete(controller: ClientController, info_hash: str, timeout_seconds: float) -> TorrentState:
     deadline = time.monotonic() + timeout_seconds
+    queued_since: float | None = None
     while time.monotonic() < deadline:
         state = controller.status(info_hash)
-        if state is not None and state.complete:
-            return state
+        if state is not None:
+            if _seed_is_ready(state):
+                return state
+            if state.complete:
+                now = time.monotonic()
+                queued_since = now if queued_since is None else queued_since
+                if now - queued_since >= SEED_QUEUE_GRACE_SECONDS:
+                    raise PairedRunnerError(
+                        f"preloaded seed is complete but not eligible to serve peers ({state.state})"
+                    )
+            else:
+                queued_since = None
         time.sleep(POLL_SECONDS)
     raise PairedRunnerError("preloaded seed was not verified before the barrier timeout")
 

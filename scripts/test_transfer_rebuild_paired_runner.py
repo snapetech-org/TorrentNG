@@ -8,6 +8,7 @@ import os
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -32,6 +33,7 @@ from paired_runner import (  # noqa: E402
     _remove_added_trial_torrents,
     _resolve_helper_id,
     _scheduled_trial_key,
+    _seed_is_ready,
     _sha256_file,
     _seed_payload,
     _start_urtorrent,
@@ -159,6 +161,14 @@ class PairedRunnerTests(unittest.TestCase):
                 completion_observed_ns=1_800,
             )
         )
+
+    def test_complete_queued_seed_is_not_reported_ready_for_peer_service(self) -> None:
+        complete = _state(received=200, complete=True)
+        self.assertFalse(_seed_is_ready(replace(complete, state="queuedUP")))
+        self.assertFalse(_seed_is_ready(replace(complete, state="pausedUP")))
+        self.assertFalse(_seed_is_ready(replace(complete, state="checkingUP")))
+        self.assertTrue(_seed_is_ready(replace(complete, state="stalledUP")))
+        self.assertTrue(_seed_is_ready(replace(complete, state="seeding")))
 
     def test_failure_cleanup_retires_only_added_api_torrents_and_keeps_going(self) -> None:
         info_hash = "a" * 40
