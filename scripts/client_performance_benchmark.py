@@ -26,7 +26,7 @@ import urllib.request
 import xmlrpc.client
 from pathlib import Path
 
-from transfer_rebuild.observe import sample_process_tree
+from transfer_rebuild.observe import process_tree, sample_process_tree
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_FILE = ROOT / "deploy/interop/compose.yml"
@@ -64,9 +64,10 @@ IDLE_PROFILE_WARMUP_SECONDS = float(
 IDLE_PROFILE_MEASURE_SECONDS = float(
     os.environ.get("TNG_CLIENT_BENCH_IDLE_MEASURE_SECS", "60")
 )
-IDLE_PROCESS_SAMPLE_SECONDS = float(
-    os.environ.get("TNG_CLIENT_BENCH_IDLE_PROCESS_SAMPLE_SECS", "15")
-)
+PROCESS_TREE_SAMPLE_SECONDS = float(os.environ.get(
+    "TNG_CLIENT_BENCH_PROCESS_TREE_SAMPLE_SECS",
+    os.environ.get("TNG_CLIENT_BENCH_IDLE_PROCESS_SAMPLE_SECS", "15"),
+))
 IDLE_PROFILES = {
     "isolated": {
         "label": "network_isolated_idle",
@@ -148,6 +149,20 @@ def optional_nonnegative_int(name):
 
 def env_enabled(name):
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def render_benchmark_compose_override(compose_environment):
+    lines = ["services:"]
+    for client in CLIENTS:
+        lines.append(f"  {client}:")
+        if client == "torrentngd" and compose_environment:
+            lines.append("    environment:")
+            lines.extend(
+                f"      {key}: {json.dumps(value)}"
+                for key, value in compose_environment.items()
+            )
+        lines.extend(["    healthcheck:", "      disable: true"])
+    return "\n".join(lines) + "\n"
 
 
 def to_bytes(value):
@@ -294,6 +309,7 @@ class Benchmark:
         self.mode = os.environ.get("TNG_CLIENT_BENCH_MODE", "transfer").strip().lower()
         if self.mode not in ("transfer", "idle"):
             raise RuntimeError("TNG_CLIENT_BENCH_MODE must be transfer or idle")
+        self.diagnostics = env_enabled("TNG_CLIENT_BENCH_DIAGNOSTICS")
         self.skip_build = env_enabled("TNG_CLIENT_BENCH_SKIP_BUILD")
         allocator = os.environ.get("TNG_CLIENT_BENCH_ALLOCATOR", "system").strip().lower()
         allocator_features = {
@@ -453,6 +469,8 @@ class Benchmark:
         self.cgroup_paths = {}
         self.engine_memory_metrics = []
         self.process_memory_snapshots = []
+        self.process_identity_snapshots = []
+        self.process_gap_open = set()
         self.last_engine_memory_metrics_at = 0.0
         self.partial_download_rows = {}
         self.partial_seed_rows = {}
@@ -653,24 +671,10 @@ class Benchmark:
             )
         if self.tokio_worker_threads is not None:
             compose_environment["TOKIO_WORKER_THREADS"] = str(self.tokio_worker_threads)
-        if compose_environment or self.mode == "idle":
-            self.compose_override_path = self.workdir / "compose.memory-profile.yml"
-            override_lines = ["services:"]
-            if compose_environment:
-                override_lines.extend(["  torrentngd:", "    environment:"])
-                override_lines.extend(
-                    f"      {key}: {json.dumps(value)}"
-                    for key, value in compose_environment.items()
-                )
-            if self.mode == "idle":
-                for client in CLIENTS:
-                    if client == "torrentngd" and compose_environment:
-                        override_lines.extend(["    healthcheck:", "      disable: true"])
-                    else:
-                        override_lines.extend([
-                            f"  {client}:", "    healthcheck:", "      disable: true",
-                        ])
-            self.compose_override_path.write_text("\n".join(override_lines) + "\n")
+        self.compose_override_path = self.workdir / "compose.benchmark.yml"
+        self.compose_override_path.write_text(
+            render_benchmark_compose_override(compose_environment),
+        )
         self._prepare_qbit_config()
         self._prepare_torrentng_config(
             dht_enabled=False if self.mode == "idle" else None,
@@ -1302,7 +1306,7 @@ class Benchmark:
             return None
 
     @staticmethod
-    def _read_process_memory(pid):
+    def _read_process_memory(pid, *, detailed=False):
         byte_fields = {
             "VmRSS": "rss", "VmHWM": "hwm", "RssAnon": "rss_anon",
             "RssFile": "rss_file", "RssShmem": "rss_shmem",
@@ -1324,6 +1328,9 @@ class Benchmark:
                     result["threads"] = int(fields[1])
         except (OSError, ValueError):
             pass
+
+        if not detailed:
+            return result
 
         try:
             task_root = Path(f"/proc/{pid}/task")
@@ -1390,11 +1397,40 @@ class Benchmark:
 
     def _memory_components(self, client):
         cgroup = self._read_cgroup_memory(self.cgroup_paths.get(client))
-        process = self._read_process_memory(self.torrentng_pids.get(client))
+        process = self._read_process_memory(
+            self.torrentng_pids.get(client), detailed=getattr(self, "diagnostics", False),
+        )
         return cgroup, process
 
+    def _container_process_tree_identities(self, client):
+        """Identify resident processes without recording command-line arguments."""
+        root_pid = getattr(self, "container_pids", {}).get(client)
+        if not root_pid:
+            return []
+        identities = []
+        for pid in process_tree(root_pid):
+            try:
+                name = Path(f"/proc/{pid}/comm").read_text().strip() or "unknown"
+                fields = {}
+                for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+                    key, _, value = line.partition(":")
+                    if key in {"VmRSS", "RssAnon", "Threads"}:
+                        parts = value.split()
+                        if parts:
+                            fields[key] = int(parts[0]) * 1024 if len(parts) > 1 else int(parts[0])
+                identities.append({
+                    "pid": pid,
+                    "name": name,
+                    "rss_bytes": fields.get("VmRSS"),
+                    "anonymous_bytes": fields.get("RssAnon"),
+                    "threads": fields.get("Threads"),
+                })
+            except (OSError, ValueError, ProcessLookupError):
+                continue
+        return identities
+
     def _capture_engine_memory_metrics(self, client, phase):
-        if client != "torrentngd":
+        if client != "torrentngd" or not getattr(self, "diagnostics", False):
             return
         profile = {"utc": dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds"),
                    "client": client, "phase": phase, "metrics": {}}
@@ -1484,7 +1520,7 @@ class Benchmark:
             })
         self.memory_profile.parent.mkdir(parents=True, exist_ok=True)
         self.memory_profile.write_text(json.dumps({
-            "schema_version": 4,
+            "schema_version": 5,
             "source_commit": self.source_commit,
             "source_tree": self.source_tree,
             "source_dirty": self.source_dirty,
@@ -1494,9 +1530,15 @@ class Benchmark:
             "source_fingerprint_sha256": self.source_fingerprint_sha256,
             "cargo_features": self.cargo_features,
             "allocator": self.allocator,
+            "measurement_settings": {
+                "diagnostics_enabled": getattr(self, "diagnostics", False),
+                "healthchecks_disabled_for_all_measured_clients": True,
+                "process_tree_sample_interval_seconds": PROCESS_TREE_SAMPLE_SECONDS,
+            },
             "host": self.host,
             "memory_samples": samples,
             "process_memory_snapshots": self.process_memory_snapshots,
+            "process_identity_snapshots": self.process_identity_snapshots,
             "engine_metrics_snapshots": self.engine_memory_metrics,
             "notes": {
                 "docker_stats": "Docker-reported container working set, sampled at the configured interval.",
@@ -1505,15 +1547,16 @@ class Benchmark:
                 "cgroup_cpu_usage": "Cgroup v2 cpu.stat usage_usec; phase deltas are normalized by transferred payload bytes.",
                 "cgroup_io": "Cgroup v2 io.stat counters summed across devices. These are block-layer bytes and operations charged to the container; page-cache hits are not block I/O.",
                 "network_bytes": "RX/TX counters from non-loopback interfaces in the container network namespace; they include all namespace traffic, not just BitTorrent DHT packets.",
-                "container_process_tree_rss": "Idle-mode host /proc RSS summed across the container's process tree. Shared pages can be counted in multiple processes.",
-                "container_process_tree_pss": "Idle-mode host /proc PSS summed across the container's process tree. PSS divides shared pages proportionally and is distinct from cgroup memory.",
-                "process_tree_memory_sampling": "Idle process-tree RSS/PSS are sampled at the configured process-sample interval, independent of the regular resource-sample interval. Unavailable readings are null.",
-                "torrentng_process_rss": "Host /proc RSS for torrentngd when available; zero means unavailable.",
-                "process_memory_snapshots": "TorrentNG /proc status, thread names, smaps totals, and the 20 largest resident mappings captured with cgroup samples.",
-                "engine_metrics": "TorrentNG resource-governor leases, estimated peer-buffer capacities, storage-pool gauges, and optional allocator metrics sampled during transfer and at phase boundaries.",
+                "container_process_tree_rss": "Host /proc RSS summed across each measured container's process tree. Shared pages can be counted in multiple processes.",
+                "container_process_tree_pss": "Host /proc PSS summed across each measured container's process tree. PSS divides shared pages proportionally and is distinct from cgroup memory.",
+                "process_tree_memory_sampling": "Process-tree RSS/PSS are sampled for every measured client at the configured interval, independent of the regular resource-sample interval. Unavailable readings are null.",
+                "torrentng_process_rss": "Host /proc status for torrentngd when available; detailed smaps and thread-name reads are enabled only in diagnostic runs.",
+                "process_memory_snapshots": "Diagnostic-only TorrentNG /proc status, thread names, smaps totals, and the 20 largest resident mappings captured with cgroup samples.",
+                "process_identity_snapshots": "Diagnostic-only process IDs, names, RSS, and anonymous RSS captured when TorrentNG cgroup anonymous memory exceeds its process anonymous RSS by more than 1 MiB. Command-line arguments are not recorded.",
+                "engine_metrics": "Diagnostic-only TorrentNG resource-governor leases, estimated peer-buffer capacities, storage-pool gauges, and optional allocator metrics sampled during transfer and at phase boundaries.",
                 "jemalloc_metrics": "Jemalloc allocator gauges are present only when the jemalloc-allocator feature is selected. They describe Jemalloc's allocator state, not total process allocations or RSS.",
                 "source_fingerprint": "SHA-256 derived from commit/tree, a normalized full-index Git diff, and all non-ignored untracked file paths and contents at benchmark start.",
-                "process_memory": "Linux /proc RSS, anonymous RSS, file RSS, thread count, and smaps samples are process-level readings; allocator gauges do not replace them.",
+                "process_memory": "Linux /proc status RSS and anonymous RSS are process-level readings; detailed smaps samples are diagnostic-only and allocator gauges do not replace process RSS.",
                 "unavailable_cgroup_counters": "An empty CSV cell and null profile value mean the host/container runtime did not expose that counter.",
             },
         }, indent=2) + "\n")
@@ -1539,23 +1582,43 @@ class Benchmark:
     def _sample(self, client, phase, elapsed, status, down_override=None):
         cpu, memory = self._stats(client)
         cgroup, process = self._memory_components(client)
+        if client == "torrentngd" and getattr(self, "diagnostics", False):
+            gap_key = (client, phase)
+            gap_bytes = cgroup["anon"] - process["rss_anon"]
+            gap_open = getattr(self, "process_gap_open", set())
+            if gap_bytes > 1024 * 1024 and gap_key not in gap_open:
+                snapshots = getattr(self, "process_identity_snapshots", None)
+                if snapshots is None:
+                    snapshots = []
+                    self.process_identity_snapshots = snapshots
+                snapshots.append({
+                    "utc": dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds"),
+                    "phase": phase,
+                    "cgroup_anon_bytes": cgroup["anon"],
+                    "torrentng_process_anon_bytes": process["rss_anon"],
+                    "gap_bytes": gap_bytes,
+                    "processes": self._container_process_tree_identities(client),
+                })
+                gap_open.add(gap_key)
+                self.process_gap_open = gap_open
+            elif gap_bytes <= 1024 * 1024:
+                gap_open.discard(gap_key)
         cgroup_path = self.cgroup_paths.get(client)
         cgroup_cpu_usage_usec = self._read_cgroup_cpu(cgroup_path)
         cgroup_io = self._read_cgroup_io(cgroup_path)
         network_rx_bytes, network_tx_bytes = self._container_network_bytes(client)
         process_tree_memory = (None, None, None, None)
-        if self.mode == "idle":
-            sample_times = getattr(self, "process_tree_memory_sample_elapsed", None)
-            if sample_times is None:
-                sample_times = {}
-                self.process_tree_memory_sample_elapsed = sample_times
-            sample_key = (client, phase)
-            previous = sample_times.get(sample_key)
-            if (previous is None
-                    or elapsed - previous >= IDLE_PROCESS_SAMPLE_SECONDS
-                    or elapsed >= IDLE_PROFILE_MEASURE_SECONDS):
-                process_tree_memory = self._container_process_tree_memory(client)
-                sample_times[sample_key] = elapsed
+        sample_times = getattr(self, "process_tree_memory_sample_elapsed", None)
+        if sample_times is None:
+            sample_times = {}
+            self.process_tree_memory_sample_elapsed = sample_times
+        sample_key = (client, phase)
+        previous = sample_times.get(sample_key)
+        if (previous is None
+                or elapsed - previous >= PROCESS_TREE_SAMPLE_SECONDS
+                or (self.mode == "idle" and elapsed >= IDLE_PROFILE_MEASURE_SECONDS)):
+            process_tree_memory = self._container_process_tree_memory(client)
+            sample_times[sample_key] = elapsed
         row = [
             dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds"),
             client, phase, f"{elapsed:.3f}", f"{status.get('progress', 0):.6f}",
@@ -1578,7 +1641,7 @@ class Benchmark:
             *("" if value is None else value for value in process_tree_memory),
         ]
         self.samples.append(row)
-        if client == "torrentngd":
+        if client == "torrentngd" and getattr(self, "diagnostics", False):
             self.process_memory_snapshots.append({
                 "utc": row[0], "phase": phase, "threads": process["threads"],
                 "thread_names": process["thread_names"],
@@ -1588,7 +1651,7 @@ class Benchmark:
         with self.csv_path.open("a", newline="") as handle:
             csv.writer(handle).writerow(row)
         now = time.monotonic()
-        if (self.mode != "idle" and client == "torrentngd"
+        if (getattr(self, "diagnostics", False) and client == "torrentngd"
                 and now - self.last_engine_memory_metrics_at >= ALLOCATOR_METRIC_INTERVAL):
             self._capture_engine_memory_metrics(client, phase)
         return row
@@ -2269,6 +2332,8 @@ class Benchmark:
             "download_peak_cgroup_anon": down["peak_cgroup_anon"],
             "download_peak_cgroup_file": down["peak_cgroup_file"],
             "download_peak_process_rss": down["peak_process_rss"],
+            "download_peak_process_tree_rss": down["peak_process_tree_rss"],
+            "download_peak_process_tree_pss": down["peak_process_tree_pss"],
             "download_cgroup_cpu_seconds": down["cgroup_cpu_seconds"],
             "download_cpu_seconds_per_gib": per_gib(
                 down["cgroup_cpu_seconds"], download_bytes,
@@ -2296,6 +2361,8 @@ class Benchmark:
             "seed_peak_cgroup_anon": seed["peak_cgroup_anon"],
             "seed_peak_cgroup_file": seed["peak_cgroup_file"],
             "seed_peak_process_rss": seed["peak_process_rss"],
+            "seed_peak_process_tree_rss": seed["peak_process_tree_rss"],
+            "seed_peak_process_tree_pss": seed["peak_process_tree_pss"],
             "seed_peer_read_cache_peak_bytes": seed_peer_read_cache_peak_bytes,
             "seed_cgroup_cpu_seconds": seed["cgroup_cpu_seconds"],
             "seed_cpu_seconds_per_gib": per_gib(seed["cgroup_cpu_seconds"], seed_bytes),
@@ -2368,7 +2435,7 @@ class Benchmark:
         observed_thread_summary = ", ".join(
             f"{phase}={count}"
             for phase, count in sorted(observed_tokio_named_threads.items())
-        ) or "no TorrentNG process snapshots"
+        ) or ("diagnostics disabled" if not self.diagnostics else "no TorrentNG process snapshots")
         image_description = (
             "- The TorrentNG image was built from the recorded checkout. Reference "
             "images are pinned by digest in deploy/interop/compose.yml."
@@ -2400,6 +2467,9 @@ class Benchmark:
             f"- TorrentNG build mode: {'prebuilt ' + self.prebuilt_image + ' (source, fingerprint, and allocator verified)' if self.skip_build else 'built from this checkout; image labels verified'}",
             f"- Requested TorrentNG runtime/storage worker overrides: {runtime_overrides}",
             f"- Requested TorrentNG memory-cap overrides: {memory_cap_overrides}",
+            "- Measurement instrumentation: healthchecks disabled for all measured clients; "
+            f"process-tree RSS/PSS sampled every {PROCESS_TREE_SAMPLE_SECONDS:g}s; "
+            f"diagnostic metrics and detailed TorrentNG smaps {'enabled' if self.diagnostics else 'disabled'}.",
             "- Peak `tokio-rt-worker`-named threads by phase (async + blocking): "
             f"{observed_thread_summary}",
             f"- Host load average (1/5/15m): "
@@ -2420,8 +2490,7 @@ class Benchmark:
             f"({RATE_BPS / 1048576:.1f} MiB/s); max peers {MAX_PEERS}",
             f"- Controlled seed leecher receive limit: {SEED_LEECHER_RATE_BPS:,} B/s "
             f"({SEED_LEECHER_RATE_BPS / 1048576:.1f} MiB/s), shared across all seeders. "
-            "This stays below TorrentNG's peer-upload guard of 4,096 16 KiB requests "
-            "per 10 seconds (about 6.4 MiB/s), with 37.5% headroom. Seed rates are "
+            "This is 12.5% of the configured per-client upload ceiling. Seed rates are "
             "therefore measured under a controlled receiver load, not as maximum upload capacity.",
             "- Each public download ran alone, in this order: " +
             ", ".join(LABELS[c] for c in CLIENTS),
@@ -2457,8 +2526,9 @@ class Benchmark:
             "container with BitTorrent encryption disabled and TCP enabled "
             "downloaded and checked Debian's published SHA-256. This measures a "
             "controlled one-seeder/one-leecher transfer, not public swarm demand. "
-            "Seed tests use a separate per-client copy of the first SHA-256-verified "
-            "public download or the explicitly verified seed-source file, and can run "
+            "Seed tests use a separate per-client copy of the same SHA-256-verified "
+            "ISO source, either the first completed public download or the explicitly "
+            "verified seed-source file, and can run "
             "even if that client's public-swarm download stalls.",
             "",
             "| Client | Result | Leecher setup (s) | Transfer (s) | Average upload (MiB/s) | Peak sampled (MiB/s) | Mean CPU (%) | Peak CPU (%) | Peak peers | Leecher SHA-256 / failure |",
@@ -2479,10 +2549,10 @@ class Benchmark:
             "",
             "## Memory profile",
             "",
-            "Memory uses the container cgroup and Docker working-set counter, sampled at the transfer interval. Anonymous memory excludes charged file cache, so these columns help separate process/runtime growth from data caching. TorrentNG process RSS, engine resource-governor leases, peer-buffer estimates, sampled peer-read cache bytes, and (for Jemalloc builds only) allocator metrics are in the linked profile. Allocator counters do not replace process RSS. `n/a` means the runtime did not expose that counter.",
+            "Memory uses the container cgroup and Docker working-set counter, sampled at the transfer interval. Anonymous memory excludes charged file cache. Process-tree RSS and PSS are sampled for every client at the configured process-tree interval; RSS can count shared pages more than once, while PSS apportions them. TorrentNG process RSS, engine resource-governor leases, peer-buffer estimates, sampled peer-read cache bytes, and (for Jemalloc builds only) allocator metrics are in the linked profile. Allocator counters do not replace process RSS. `n/a` means the runtime did not expose that counter.",
             "",
-            "| Client | Idle container mean (MiB) | Idle anonymous mean (MiB) | Download peak container (MiB) | Download peak anonymous (MiB) | Seed peak container (MiB) | Seed peak anonymous (MiB) | Peer-read cache sampled peak (MiB) |",
-            "|---|---:|---:|---:|---:|---:|---:|---:|",
+            "| Client | Idle container mean (MiB) | Idle anonymous mean (MiB) | Download peak container (MiB) | Download peak anonymous (MiB) | Seed peak container (MiB) | Seed peak anonymous (MiB) | Seed process-tree RSS peak (MiB) | Seed process-tree PSS peak (MiB) | Peer-read cache sampled peak (MiB) |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
         ])
         for client in CLIENTS:
             row = by_client.get(client, {})
@@ -2497,6 +2567,8 @@ class Benchmark:
                 f"{mib(row.get('download_peak_cgroup_anon', 0))} | "
                 f"{mib(row.get('seed_peak_memory', 0))} | "
                 f"{mib(row.get('seed_peak_cgroup_anon', 0))} | "
+                f"{mib(row.get('seed_peak_process_tree_rss'))} | "
+                f"{mib(row.get('seed_peak_process_tree_pss'))} | "
                 f"{cache_peak} |"
             )
         lines.extend([
@@ -2532,7 +2604,8 @@ class Benchmark:
             "- One current official Debian amd64 netinst v1 torrent per client; clients "
             "ran sequentially on the same host and local scratch filesystem.",
             "- Public downloads used the live Debian swarm. All seed tests used the same "
-            "first SHA-256-verified public download, copied into a separate seed path for each client, so "
+            "SHA-256-verified ISO source (the first completed public download or an explicitly "
+            "supplied verified seed file), copied into a separate seed path for each client, so "
             "seed performance is measured independently of public-swarm completion.",
             f"- Each client was configured for a {RATE_BPS / 1048576:.1f} MiB/s global "
             f"download and upload ceiling and {MAX_PEERS} global/per-torrent peer ceiling.",
@@ -2547,8 +2620,10 @@ class Benchmark:
             "where 100% represents one logical core; cgroup CPU seconds per GiB "
             "and block read/write bytes per GiB are listed separately. Each client has an idle baseline "
             f"sampled for {IDLE_SAMPLE_SECONDS:g} seconds before adding a torrent. "
-            "Cgroup anonymous/file memory and TorrentNG process/engine metrics help "
-            "attribute the sampled container footprint. Jemalloc counters appear only "
+            "Cgroup anonymous/file memory and process-tree RSS/PSS are collected for every client. "
+            "TorrentNG engine metrics and detailed smaps are captured only when "
+            "TNG_CLIENT_BENCH_DIAGNOSTICS=1; diagnostic runs include additional measurement work "
+            "and must not be compared as clean resource trials. Jemalloc counters appear only "
             "when that allocator is selected and do not represent total process allocations.",
             f"- Public download uses the current public Debian swarm with a {DOWNLOAD_TIMEOUT}s "
             "completion timeout. Controlled seeding "
@@ -2904,11 +2979,11 @@ class Benchmark:
             f"- Container images: {json.dumps(client_images, sort_keys=True)}",
             f"- Idle DHT profile order seed: {self.idle_order_seed}",
             f"- Idle profile execution order: {profile_order}",
-            f"- Warmup per profile: {IDLE_PROFILE_WARMUP_SECONDS:g}s; measured window: {IDLE_PROFILE_MEASURE_SECONDS:g}s; resource sample interval: {INTERVAL:g}s; process-tree RSS/PSS interval: {IDLE_PROCESS_SAMPLE_SECONDS:g}s",
+            f"- Warmup per profile: {IDLE_PROFILE_WARMUP_SECONDS:g}s; measured window: {IDLE_PROFILE_MEASURE_SECONDS:g}s; resource sample interval: {INTERVAL:g}s; process-tree RSS/PSS interval: {PROCESS_TREE_SAMPLE_SECONDS:g}s",
             "",
             "## Idle resource samples",
             "",
-            "Each profile has zero torrents and therefore no connected torrent peers. All profiles disable PEX and read back DHT/PEX state and zero torrents outside measured windows. The isolated profile disables DHT, detaches all Docker network endpoints for the full warmup and measurement window, then reconnects and verifies the original endpoints before post-window API checks. The attached DHT-off profile disables DHT and local discovery where supported; the attached DHT-on profile measures DHT bootstrap and routing maintenance without a torrent, tracker announce, peer search, or payload transfer. Docker healthchecks are disabled during the measured windows, and there are no client API queries during them. Network traffic is recorded for attached profiles; DHT readback does not prove a peer connection and namespace bytes are not attributed specifically to DHT.",
+            "Each profile has zero torrents and therefore no connected torrent peers. All profiles disable PEX and read back DHT/PEX state and zero torrents outside measured windows. The isolated profile disables DHT, detaches all Docker network endpoints for the full warmup and measurement window, then reconnects and verifies the original endpoints before post-window API checks. The attached DHT-off profile disables DHT and local discovery where supported; the attached DHT-on profile measures DHT bootstrap and routing maintenance without a torrent, tracker announce, peer search, or payload transfer. Docker healthchecks are disabled during the measured windows. No client API status requests run in those windows; TorrentNG `/metrics` scrapes run only when diagnostic mode is explicitly enabled. Network traffic is recorded for attached profiles; DHT readback does not prove a peer connection and namespace bytes are not attributed specifically to DHT.",
             "",
             "| Client | Profile | Network mode | Isolation verified | DHT readback | PEX readback | RX/TX observed | Status | Samples | CPU s/min | CPU % of one core | Mean/peak process-tree RSS (MiB) | Mean/peak process-tree PSS (MiB) | Mean/peak cgroup anon (MiB) | Mean/peak cgroup current (MiB) | Mean/peak container working set (MiB) | Block read/write (MiB/min) | Network RX/TX (MiB/min) |",
             "|---|---|---|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
@@ -3017,17 +3092,17 @@ class Benchmark:
             raise RuntimeError("download and seed timeouts must be at least 60 seconds")
         if IDLE_SAMPLE_SECONDS < 0:
             raise RuntimeError("idle memory sample duration cannot be negative")
+        if (not math.isfinite(PROCESS_TREE_SAMPLE_SECONDS)
+                or PROCESS_TREE_SAMPLE_SECONDS <= 0):
+            raise RuntimeError("process-tree sample interval must be finite and positive")
         if self.mode == "idle" and (
             not math.isfinite(IDLE_PROFILE_WARMUP_SECONDS)
             or not math.isfinite(IDLE_PROFILE_MEASURE_SECONDS)
-            or not math.isfinite(IDLE_PROCESS_SAMPLE_SECONDS)
             or IDLE_PROFILE_WARMUP_SECONDS < 0
             or IDLE_PROFILE_MEASURE_SECONDS < 10
-            or IDLE_PROCESS_SAMPLE_SECONDS <= 0
         ):
             raise RuntimeError(
-                "idle warmup must be nonnegative, measurement at least 10 seconds, "
-                "and process-tree sample interval positive"
+                "idle warmup must be nonnegative and measurement at least 10 seconds"
             )
         if self.mode == "transfer" and SEED_NO_PEER_TIMEOUT < 10:
             raise RuntimeError("no-peer timeout must be at least 10 seconds")
@@ -3196,7 +3271,8 @@ Environment:
   TNG_CLIENT_BENCH_IDLE_SAMPLE_SECS=8
   TNG_CLIENT_BENCH_IDLE_WARMUP_SECS=30 (idle mode only)
   TNG_CLIENT_BENCH_IDLE_MEASURE_SECS=60 (idle mode only; minimum 10)
-  TNG_CLIENT_BENCH_IDLE_PROCESS_SAMPLE_SECS=15 (idle process-tree RSS/PSS interval)
+  TNG_CLIENT_BENCH_PROCESS_TREE_SAMPLE_SECS=15 (all clients; also accepts the legacy idle variable)
+  TNG_CLIENT_BENCH_DIAGNOSTICS=1 (enable TorrentNG /metrics, detailed smaps, and spike attribution; diagnostic runs are not clean comparisons)
   TNG_CLIENT_BENCH_PEER_BIND=0.0.0.0
   TNG_CLIENT_BENCH_MIMALLOC_PURGE_DELAY=0
   TNG_CLIENT_BENCH_MIMALLOC_ALLOW_THP=0

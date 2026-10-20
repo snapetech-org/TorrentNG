@@ -11,6 +11,7 @@
 //! so disk I/O can neither starve nor be starved by unrelated
 //! `spawn_blocking` work.
 
+use std::any::Any;
 #[cfg(target_os = "linux")]
 use std::collections::HashMap;
 use std::fmt;
@@ -80,6 +81,47 @@ const URING_FILE_SLOTS: u32 = URING_ENTRIES;
 const URING_FIXED_BUFFER_SLOTS: usize = 4;
 #[cfg(target_os = "linux")]
 const URING_FIXED_BUFFER_LEN: usize = 256 * 1024;
+
+/// Ownership that must outlive a submitted backend operation. The scheduler
+/// keeps a typed handle to the same state so a successful completion can
+/// return its guards without a forwarding Tokio task or a second channel.
+pub(crate) struct BackendJobOwnership {
+    _keepalive: Option<Arc<dyn Any + Send + Sync>>,
+    on_completion: Option<Box<dyn FnOnce() + Send>>,
+}
+
+impl BackendJobOwnership {
+    pub(crate) fn new<T: Any + Send + Sync>(keepalive: Arc<T>) -> Self {
+        Self {
+            _keepalive: Some(keepalive),
+            on_completion: None,
+        }
+    }
+
+    pub(crate) fn untracked() -> Self {
+        Self {
+            _keepalive: None,
+            on_completion: None,
+        }
+    }
+
+    pub(crate) fn after_completion(mut self, action: impl FnOnce() + Send + 'static) -> Self {
+        self.on_completion = Some(Box::new(action));
+        self
+    }
+
+    pub(crate) fn complete(&mut self) {
+        if let Some(action) = self.on_completion.take() {
+            action();
+        }
+    }
+}
+
+impl Drop for BackendJobOwnership {
+    fn drop(&mut self) {
+        self.complete();
+    }
+}
 
 /// Backend requested by configuration or environment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -263,15 +305,26 @@ impl SelectedDiskBackend {
         file: Arc<LeasedFileHandle>,
         frame: Frame,
         offset: u64,
+        ownership: BackendJobOwnership,
     ) -> oneshot::Receiver<io::Result<Frame>> {
         match &self.inner {
-            SelectedDiskBackendInner::Pread(backend) => backend.pread_leased(file, frame, offset),
+            SelectedDiskBackendInner::Pread(backend) => {
+                backend.pread_leased(file, frame, offset, ownership)
+            }
             #[cfg(target_os = "linux")]
-            SelectedDiskBackendInner::Uring(backend) => backend.pread_leased(file, frame, offset),
+            SelectedDiskBackendInner::Uring(backend) => {
+                backend.pread_leased(file, frame, offset, ownership)
+            }
             #[cfg(test)]
             SelectedDiskBackendInner::Injected(backend) => match test_file_clone(&file) {
-                Ok(file) => backend.pread(file, frame, offset),
-                Err(error) => completed_error(error),
+                Ok(file) => {
+                    retain_test_read_ownership(backend.pread(file, frame, offset), ownership)
+                }
+                Err(error) => {
+                    let mut ownership = ownership;
+                    ownership.complete();
+                    completed_error(error)
+                }
             },
         }
     }
@@ -281,15 +334,26 @@ impl SelectedDiskBackend {
         file: Arc<LeasedFileHandle>,
         data: bytes::Bytes,
         offset: u64,
+        ownership: BackendJobOwnership,
     ) -> oneshot::Receiver<io::Result<()>> {
         match &self.inner {
-            SelectedDiskBackendInner::Pread(backend) => backend.pwrite_leased(file, data, offset),
+            SelectedDiskBackendInner::Pread(backend) => {
+                backend.pwrite_leased(file, data, offset, ownership)
+            }
             #[cfg(target_os = "linux")]
-            SelectedDiskBackendInner::Uring(backend) => backend.pwrite_leased(file, data, offset),
+            SelectedDiskBackendInner::Uring(backend) => {
+                backend.pwrite_leased(file, data, offset, ownership)
+            }
             #[cfg(test)]
             SelectedDiskBackendInner::Injected(backend) => match test_file_clone(&file) {
-                Ok(file) => backend.pwrite(file, data, offset),
-                Err(error) => completed_error(error),
+                Ok(file) => {
+                    retain_test_backend_ownership(backend.pwrite(file, data, offset), ownership)
+                }
+                Err(error) => {
+                    let mut ownership = ownership;
+                    ownership.complete();
+                    completed_error(error)
+                }
             },
         }
     }
@@ -297,15 +361,20 @@ impl SelectedDiskBackend {
     pub(crate) fn fdatasync_leased(
         &self,
         file: Arc<LeasedFileHandle>,
+        ownership: BackendJobOwnership,
     ) -> oneshot::Receiver<io::Result<()>> {
         match &self.inner {
-            SelectedDiskBackendInner::Pread(backend) => backend.fdatasync_leased(file),
+            SelectedDiskBackendInner::Pread(backend) => backend.fdatasync_leased(file, ownership),
             #[cfg(target_os = "linux")]
-            SelectedDiskBackendInner::Uring(backend) => backend.fdatasync_leased(file),
+            SelectedDiskBackendInner::Uring(backend) => backend.fdatasync_leased(file, ownership),
             #[cfg(test)]
             SelectedDiskBackendInner::Injected(backend) => match test_file_clone(&file) {
-                Ok(file) => backend.fdatasync(file),
-                Err(error) => completed_error(error),
+                Ok(file) => retain_test_backend_ownership(backend.fdatasync(file), ownership),
+                Err(error) => {
+                    let mut ownership = ownership;
+                    ownership.complete();
+                    completed_error(error)
+                }
             },
         }
     }
@@ -412,6 +481,50 @@ fn completed_error<T>(error: io::Error) -> oneshot::Receiver<io::Result<T>> {
     let (sender, receiver) = oneshot::channel();
     let _ = sender.send(Err(error));
     receiver
+}
+
+#[cfg(test)]
+fn retain_test_backend_ownership<T: Send + 'static>(
+    receiver: oneshot::Receiver<io::Result<T>>,
+    mut ownership: BackendJobOwnership,
+) -> oneshot::Receiver<io::Result<T>> {
+    let (sender, result) = oneshot::channel();
+    tokio::spawn(async move {
+        let result = receiver.await.unwrap_or_else(|_| {
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "test storage backend completion channel closed",
+            ))
+        });
+        ownership.complete();
+        let _ = sender.send(result);
+    });
+    result
+}
+
+#[cfg(test)]
+fn retain_test_read_ownership(
+    receiver: oneshot::Receiver<io::Result<Frame>>,
+    mut ownership: BackendJobOwnership,
+) -> oneshot::Receiver<io::Result<Frame>> {
+    let (sender, result) = oneshot::channel();
+    tokio::spawn(async move {
+        let result = receiver
+            .await
+            .unwrap_or_else(|_| {
+                Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "test storage backend completion channel closed",
+                ))
+            })
+            .map(|mut frame| {
+                frame.mark_initialized();
+                frame
+            });
+        ownership.complete();
+        let _ = sender.send(result);
+    });
+    result
 }
 
 impl DiskBackend for SelectedDiskBackend {
@@ -609,6 +722,7 @@ impl UringBackend {
         file: Arc<LeasedFileHandle>,
         frame: Frame,
         offset: u64,
+        owner: BackendJobOwnership,
     ) -> oneshot::Receiver<io::Result<Frame>> {
         let (reply, rx) = oneshot::channel();
         fail_job_on_full(self.tx.try_send(Job::Read {
@@ -616,6 +730,7 @@ impl UringBackend {
             frame,
             offset,
             reply,
+            owner: Some(owner),
         }));
         rx
     }
@@ -625,6 +740,7 @@ impl UringBackend {
         file: Arc<LeasedFileHandle>,
         data: bytes::Bytes,
         offset: u64,
+        owner: BackendJobOwnership,
     ) -> oneshot::Receiver<io::Result<()>> {
         let (reply, rx) = oneshot::channel();
         fail_job_on_full(self.tx.try_send(Job::Write {
@@ -632,15 +748,21 @@ impl UringBackend {
             data,
             offset,
             reply,
+            owner: Some(owner),
         }));
         rx
     }
 
-    fn fdatasync_leased(&self, file: Arc<LeasedFileHandle>) -> oneshot::Receiver<io::Result<()>> {
+    fn fdatasync_leased(
+        &self,
+        file: Arc<LeasedFileHandle>,
+        owner: BackendJobOwnership,
+    ) -> oneshot::Receiver<io::Result<()>> {
         let (reply, rx) = oneshot::channel();
         fail_job_on_full(self.tx.try_send(Job::Sync {
             file: BackendFile::Leased(file),
             reply,
+            owner: Some(owner),
         }));
         rx
     }
@@ -746,6 +868,7 @@ impl DiskBackend for UringBackend {
             frame,
             offset,
             reply,
+            owner: None,
         }));
         rx
     }
@@ -762,6 +885,7 @@ impl DiskBackend for UringBackend {
             data,
             offset,
             reply,
+            owner: None,
         }));
         rx
     }
@@ -771,6 +895,7 @@ impl DiskBackend for UringBackend {
         fail_job_on_full(self.tx.try_send(Job::Sync {
             file: BackendFile::Unleased(file),
             reply,
+            owner: None,
         }));
         rx
     }
@@ -852,6 +977,7 @@ enum PendingUring {
         fixed_slot: Option<RegisteredFrameSlot>,
         file_slot: Option<RegisteredFileSlot>,
         reply: Option<oneshot::Sender<io::Result<Frame>>>,
+        owner: Option<BackendJobOwnership>,
     },
     Write {
         file: BackendFile,
@@ -859,11 +985,13 @@ enum PendingUring {
         expected: usize,
         file_slot: Option<RegisteredFileSlot>,
         reply: Option<oneshot::Sender<io::Result<()>>>,
+        owner: Option<BackendJobOwnership>,
     },
     Sync {
         file: BackendFile,
         file_slot: Option<RegisteredFileSlot>,
         reply: Option<oneshot::Sender<io::Result<()>>>,
+        owner: Option<BackendJobOwnership>,
     },
 }
 
@@ -1029,6 +1157,7 @@ impl UringWorker {
                 mut frame,
                 offset,
                 reply,
+                mut owner,
             } => {
                 let len = frame.len();
                 let file_slot = self.register_file_slot(file.as_file());
@@ -1066,6 +1195,9 @@ impl UringWorker {
                 };
                 if let Err(e) = self.push_entry(entry) {
                     self.release_submission_resources(file_slot, fixed_slot);
+                    if let Some(owner) = owner.as_mut() {
+                        owner.complete();
+                    }
                     let _ = reply.send(Err(io::Error::new(e.kind(), e.to_string())));
                     return Err(e);
                 }
@@ -1078,6 +1210,7 @@ impl UringWorker {
                         fixed_slot,
                         file_slot,
                         reply: Some(reply),
+                        owner,
                     },
                 );
             }
@@ -1086,6 +1219,7 @@ impl UringWorker {
                 data,
                 offset,
                 reply,
+                mut owner,
             } => {
                 let len = data.len();
                 let file_slot = self.register_file_slot(file.as_file());
@@ -1101,6 +1235,9 @@ impl UringWorker {
                 .user_data(id);
                 if let Err(e) = self.push_entry(entry) {
                     self.release_submission_resources(file_slot, None);
+                    if let Some(owner) = owner.as_mut() {
+                        owner.complete();
+                    }
                     let _ = reply.send(Err(io::Error::new(e.kind(), e.to_string())));
                     return Err(e);
                 }
@@ -1112,10 +1249,15 @@ impl UringWorker {
                         expected: len,
                         file_slot,
                         reply: Some(reply),
+                        owner,
                     },
                 );
             }
-            Job::Sync { file, reply } => {
+            Job::Sync {
+                file,
+                reply,
+                mut owner,
+            } => {
                 let file_slot = self.register_file_slot(file.as_file());
                 let entry = match file_slot.as_ref().map(|slot| slot.index) {
                     Some(slot) => opcode::Fsync::new(types::Fixed(slot)),
@@ -1126,6 +1268,9 @@ impl UringWorker {
                 .user_data(id);
                 if let Err(e) = self.push_entry(entry) {
                     self.release_submission_resources(file_slot, None);
+                    if let Some(owner) = owner.as_mut() {
+                        owner.complete();
+                    }
                     let _ = reply.send(Err(io::Error::new(e.kind(), e.to_string())));
                     return Err(e);
                 }
@@ -1135,6 +1280,7 @@ impl UringWorker {
                         file,
                         file_slot,
                         reply: Some(reply),
+                        owner,
                     },
                 );
             }
@@ -1250,16 +1396,21 @@ impl UringWorker {
             match pending {
                 PendingUring::Read {
                     file,
-                    frame,
+                    mut frame,
                     expected,
                     fixed_slot,
                     file_slot,
                     reply,
+                    mut owner,
                 } => {
                     let _keepalive = file;
+                    if let Some(owner) = owner.as_mut() {
+                        owner.complete();
+                    }
                     if let Some(reply) = reply {
                         let _ = reply.send(match uring_result(result) {
                             Ok(n) if n == expected => {
+                                frame.mark_initialized();
                                 if let Some(slot) = fixed_slot {
                                     Ok(frame.into_registered_slot(slot))
                                 } else {
@@ -1281,9 +1432,13 @@ impl UringWorker {
                     expected,
                     file_slot,
                     reply,
+                    mut owner,
                 } => {
                     let _keepalive_file = file;
                     let _keepalive = data;
+                    if let Some(owner) = owner.as_mut() {
+                        owner.complete();
+                    }
                     if let Some(reply) = reply {
                         let _ = reply.send(match uring_result(result) {
                             Ok(n) if n == expected => Ok(()),
@@ -1300,8 +1455,12 @@ impl UringWorker {
                     file,
                     file_slot,
                     reply,
+                    mut owner,
                 } => {
                     let _keepalive = file;
+                    if let Some(owner) = owner.as_mut() {
+                        owner.complete();
+                    }
                     if let Some(reply) = reply {
                         let _ = reply.send(uring_result(result).map(|_| ()));
                     }
@@ -1420,16 +1579,19 @@ enum Job {
         frame: Frame,
         offset: u64,
         reply: oneshot::Sender<io::Result<Frame>>,
+        owner: Option<BackendJobOwnership>,
     },
     Write {
         file: BackendFile,
         data: bytes::Bytes,
         offset: u64,
         reply: oneshot::Sender<io::Result<()>>,
+        owner: Option<BackendJobOwnership>,
     },
     Sync {
         file: BackendFile,
         reply: oneshot::Sender<io::Result<()>>,
+        owner: Option<BackendJobOwnership>,
     },
 }
 
@@ -1601,6 +1763,7 @@ impl PreadBackend {
         file: Arc<LeasedFileHandle>,
         frame: Frame,
         offset: u64,
+        owner: BackendJobOwnership,
     ) -> oneshot::Receiver<io::Result<Frame>> {
         let (reply, rx) = oneshot::channel();
         fail_job_on_full(self.tx.try_send(Job::Read {
@@ -1608,6 +1771,7 @@ impl PreadBackend {
             frame,
             offset,
             reply,
+            owner: Some(owner),
         }));
         rx
     }
@@ -1617,6 +1781,7 @@ impl PreadBackend {
         file: Arc<LeasedFileHandle>,
         data: bytes::Bytes,
         offset: u64,
+        owner: BackendJobOwnership,
     ) -> oneshot::Receiver<io::Result<()>> {
         let (reply, rx) = oneshot::channel();
         fail_job_on_full(self.tx.try_send(Job::Write {
@@ -1624,15 +1789,21 @@ impl PreadBackend {
             data,
             offset,
             reply,
+            owner: Some(owner),
         }));
         rx
     }
 
-    fn fdatasync_leased(&self, file: Arc<LeasedFileHandle>) -> oneshot::Receiver<io::Result<()>> {
+    fn fdatasync_leased(
+        &self,
+        file: Arc<LeasedFileHandle>,
+        owner: BackendJobOwnership,
+    ) -> oneshot::Receiver<io::Result<()>> {
         let (reply, rx) = oneshot::channel();
         fail_job_on_full(self.tx.try_send(Job::Sync {
             file: BackendFile::Leased(file),
             reply,
+            owner: Some(owner),
         }));
         rx
     }
@@ -1654,9 +1825,16 @@ impl PreadBackend {
                     mut frame,
                     offset,
                     reply,
+                    mut owner,
                 } => {
                     let res =
-                        read_exact_at(file.as_file(), frame.as_mut_slice(), offset).map(|()| frame);
+                        read_exact_at(file.as_file(), frame.as_mut_slice(), offset).map(|()| {
+                            frame.mark_initialized();
+                            frame
+                        });
+                    if let Some(owner) = owner.as_mut() {
+                        owner.complete();
+                    }
                     let _ = reply.send(res);
                 }
                 Job::Write {
@@ -1664,12 +1842,23 @@ impl PreadBackend {
                     data,
                     offset,
                     reply,
+                    mut owner,
                 } => {
                     let res = write_all_at(file.as_file(), &data, offset);
+                    if let Some(owner) = owner.as_mut() {
+                        owner.complete();
+                    }
                     let _ = reply.send(res);
                 }
-                Job::Sync { file, reply } => {
+                Job::Sync {
+                    file,
+                    reply,
+                    mut owner,
+                } => {
                     let res = file.as_file().sync_data();
+                    if let Some(owner) = owner.as_mut() {
+                        owner.complete();
+                    }
                     let _ = reply.send(res);
                 }
             }
@@ -1697,6 +1886,7 @@ impl DiskBackend for PreadBackend {
             frame,
             offset,
             reply,
+            owner: None,
         }));
         rx
     }
@@ -1713,6 +1903,7 @@ impl DiskBackend for PreadBackend {
             data,
             offset,
             reply,
+            owner: None,
         }));
         rx
     }
@@ -1722,6 +1913,7 @@ impl DiskBackend for PreadBackend {
         fail_job_on_full(self.tx.try_send(Job::Sync {
             file: BackendFile::Unleased(file),
             reply,
+            owner: None,
         }));
         rx
     }
@@ -1744,10 +1936,23 @@ fn fail_job_on_full(result: Result<(), mpsc::TrySendError<Job>>) {
 fn fail_job(job: Job, kind: io::ErrorKind, message: &'static str) {
     let error = || io::Error::new(kind, message);
     match job {
-        Job::Read { reply, .. } => {
+        Job::Read {
+            reply, mut owner, ..
+        } => {
+            if let Some(owner) = owner.as_mut() {
+                owner.complete();
+            }
             let _ = reply.send(Err(error()));
         }
-        Job::Write { reply, .. } | Job::Sync { reply, .. } => {
+        Job::Write {
+            reply, mut owner, ..
+        }
+        | Job::Sync {
+            reply, mut owner, ..
+        } => {
+            if let Some(owner) = owner.as_mut() {
+                owner.complete();
+            }
             let _ = reply.send(Err(error()));
         }
     }
@@ -1774,7 +1979,8 @@ mod tests {
             _workers: Vec::new(),
         };
 
-        let completion = backend.fdatasync_leased(Arc::clone(&handle));
+        let completion =
+            backend.fdatasync_leased(Arc::clone(&handle), BackendJobOwnership::untracked());
         drop(completion); // Simulate a caller cancelling after queue admission.
         drop(handle);
         drop(operation);
@@ -1799,6 +2005,7 @@ mod tests {
             file: BackendFile::Leased(Arc::clone(&handle)),
             file_slot: None,
             reply: None,
+            owner: None,
         };
 
         drop(handle);
@@ -2231,6 +2438,7 @@ mod tests {
         let result = worker.submit_job(Job::Sync {
             file: BackendFile::Unleased(file),
             reply,
+            owner: None,
         });
         assert_eq!(
             result.unwrap_err().kind(),
@@ -2278,12 +2486,14 @@ mod tests {
             .submit_job(Job::Sync {
                 file: BackendFile::Unleased(file.clone()),
                 reply: reply_a,
+                owner: None,
             })
             .unwrap();
         worker
             .submit_job(Job::Sync {
                 file: BackendFile::Unleased(file),
                 reply: reply_b,
+                owner: None,
             })
             .unwrap();
         assert_eq!(worker.file_slots.len(), 1);
@@ -2329,6 +2539,7 @@ mod tests {
                 frame,
                 offset: 0,
                 reply,
+                owner: None,
             })
             .unwrap();
         assert_eq!(worker.pending.len(), 1);

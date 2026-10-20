@@ -4,6 +4,7 @@
 /// management, piece picker, and storage writes.
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+use std::io::IoSlice;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -8179,6 +8180,37 @@ impl PeerIo {
         .map_err(|_| anyhow::anyhow!("peer socket write timed out"))?
     }
 
+    async fn send_piece(
+        &mut self,
+        piece: u32,
+        begin: u32,
+        data: bytes::Bytes,
+    ) -> anyhow::Result<()> {
+        timeout(PEER_SOCKET_WRITE_TIMEOUT, async {
+            match self {
+                PeerIo::Tcp(framed) => {
+                    // Preserve wire order with any control frame still held
+                    // in Framed before bypassing its copying encoder.
+                    framed.flush().await?;
+                    let message_len = 9usize
+                        .checked_add(data.len())
+                        .and_then(|len| u32::try_from(len).ok())
+                        .ok_or_else(|| anyhow::anyhow!("piece frame length exceeds u32"))?;
+                    let mut header = [0u8; 13];
+                    header[..4].copy_from_slice(&message_len.to_be_bytes());
+                    header[4] = 7;
+                    header[5..9].copy_from_slice(&piece.to_be_bytes());
+                    header[9..13].copy_from_slice(&begin.to_be_bytes());
+                    write_piece_vectored(framed.get_mut(), &header, &data).await?;
+                    Ok(())
+                }
+                PeerIo::Utp(io) => io.send(Message::Piece { piece, begin, data }).await,
+            }
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("peer socket write timed out"))?
+    }
+
     pub(crate) async fn next(&mut self) -> anyhow::Result<Option<Message>> {
         match self {
             PeerIo::Tcp(framed) => match framed.next().await {
@@ -8188,6 +8220,36 @@ impl PeerIo {
             PeerIo::Utp(io) => io.next().await,
         }
     }
+}
+
+async fn write_piece_vectored<W>(
+    stream: &mut W,
+    header: &[u8; 13],
+    payload: &[u8],
+) -> std::io::Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::AsyncWriteExt;
+
+    let mut header_offset = 0;
+    let mut payload_offset = 0;
+    while header_offset < header.len() || payload_offset < payload.len() {
+        let header_slice = &header[header_offset..];
+        let payload_slice = &payload[payload_offset..];
+        let buffers = [IoSlice::new(header_slice), IoSlice::new(payload_slice)];
+        let written = stream.write_vectored(&buffers).await?;
+        if written == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::WriteZero,
+                "failed to write peer piece frame",
+            ));
+        }
+        let header_written = written.min(header_slice.len());
+        header_offset += header_written;
+        payload_offset += written - header_written;
+    }
+    Ok(())
 }
 
 impl UtpPeerIo {
@@ -9299,11 +9361,7 @@ async fn run_peer_loop(
                         } = upload_block;
                         let bytes = data.len() as u64;
                         peer_io
-                            .send(Message::Piece {
-                                piece: request.wire_piece,
-                                begin: request.wire_begin,
-                                data,
-                            })
+                            .send_piece(request.wire_piece, request.wire_begin, data)
                             .await?;
                         if let Some(grant) = rate_grant {
                             grant.settle(bytes);
@@ -9618,12 +9676,8 @@ async fn read_upload_block(
     } else {
         IoRequestPriority::deadline(deadline)
     };
-    let mut data = Vec::with_capacity(length as usize);
-    for region in regions {
-        if region.pad {
-            data.resize(data.len() + region.length as usize, 0);
-            continue;
-        }
+    let canonical_data = if regions.len() == 1 && !regions[0].pad {
+        let region = &regions[0];
         let path = region.path.resolve(&upload.save_root);
         let read = upload
             .storage
@@ -9635,16 +9689,42 @@ async fn read_upload_block(
                 priority,
             )
             .await?;
-        data.extend_from_slice(read.as_slice());
-    }
-    if data.len() != length as usize {
-        anyhow::bail!(
-            "upload block read assembled {} bytes, expected {}",
-            data.len(),
+        anyhow::ensure!(
+            read.len() == length as usize,
+            "upload block read returned {} bytes, expected {}",
+            read.len(),
             length
         );
-    }
-    let canonical_data = bytes::Bytes::from(data);
+        read.into_bytes()
+    } else {
+        let mut data = Vec::with_capacity(length as usize);
+        for region in regions {
+            if region.pad {
+                data.resize(data.len() + region.length as usize, 0);
+                continue;
+            }
+            let path = region.path.resolve(&upload.save_root);
+            let read = upload
+                .storage
+                .read_owned_at_with_priority(
+                    IoClass::PeerRead,
+                    &path,
+                    region.file_offset,
+                    region.length as usize,
+                    priority,
+                )
+                .await?;
+            data.extend_from_slice(read.as_slice());
+        }
+        if data.len() != length as usize {
+            anyhow::bail!(
+                "upload block read assembled {} bytes, expected {}",
+                data.len(),
+                length
+            );
+        }
+        bytes::Bytes::from(data)
+    };
     let (wire, data) = match upload.plane {
         Plane::V1 => (canonical, canonical_data),
         Plane::V2 => {
@@ -9941,6 +10021,25 @@ mod tests {
     use sha1::{Digest, Sha1};
 
     use super::*;
+
+    #[tokio::test]
+    async fn vectored_piece_write_handles_partial_socket_writes() {
+        use tokio::io::AsyncReadExt;
+
+        let (mut writer, mut reader) = tokio::io::duplex(5);
+        let header = [0, 0, 0, 12, 7, 0, 0, 0, 3, 0, 0, 0, 4];
+        let payload = b"payload";
+        let mut received = vec![0; header.len() + payload.len()];
+        let (write_result, read_result) = tokio::join!(
+            write_piece_vectored(&mut writer, &header, payload),
+            reader.read_exact(&mut received),
+        );
+
+        write_result.unwrap();
+        read_result.unwrap();
+        assert_eq!(&received[..header.len()], &header);
+        assert_eq!(&received[header.len()..], payload);
+    }
 
     async fn test_upload_rate_admission(
         torrent_limit: Option<u64>,

@@ -84,6 +84,17 @@ class CgroupCounterTests(unittest.TestCase):
         self.assertIn("cleanup failed", status)
         self.assertEqual(instance.buildx_builder, "tngbench-build-1234")
 
+    def test_transfer_compose_override_disables_healthchecks_symmetrically(self) -> None:
+        rendered = benchmark.render_benchmark_compose_override({
+            "TOKIO_WORKER_THREADS": "2",
+        })
+
+        for client in benchmark.CLIENTS:
+            with self.subTest(client=client):
+                self.assertIn(f"  {client}:\n", rendered)
+        self.assertIn('      TOKIO_WORKER_THREADS: "2"', rendered)
+        self.assertEqual(rendered.count("    healthcheck:"), len(benchmark.CLIENTS))
+
     def test_idle_profile_schedule_is_seeded_and_balances_all_clients(self) -> None:
         first = object.__new__(benchmark.Benchmark)
         first.idle_order_seed = 12345
@@ -181,13 +192,15 @@ class CgroupCounterTests(unittest.TestCase):
         ])
 
     def test_resource_deltas_normalize_by_payload_gib(self) -> None:
-        first = [0] * 33
-        second = [0] * 33
+        first = [0] * 39
+        second = [0] * 39
         for row in (first, second):
             row[1] = "torrentngd"
             row[2] = "public_download"
         first[28:33] = [1_000_000, 10_000, 20_000, 10, 20]
         second[28:33] = [3_000_000, 110_000, 220_000, 110, 220]
+        first[35:37] = [2 * 1024 * 1024, 1024 * 1024]
+        second[35:37] = [3 * 1024 * 1024, 2 * 1024 * 1024]
 
         summary = benchmark.Benchmark._summary([first, second], "public_download")
 
@@ -196,6 +209,8 @@ class CgroupCounterTests(unittest.TestCase):
         self.assertEqual(summary["cgroup_io_write_bytes"], 200_000)
         self.assertEqual(summary["cgroup_io_read_ops"], 100)
         self.assertEqual(summary["cgroup_io_write_ops"], 200)
+        self.assertEqual(summary["peak_process_tree_rss"], 3 * 1024 * 1024)
+        self.assertEqual(summary["peak_process_tree_pss"], 2 * 1024 * 1024)
         self.assertEqual(benchmark.per_gib(2.0, 1024 ** 3), 2.0)
         self.assertEqual(benchmark.per_gib(1024 ** 2, 1024 ** 3, 1024 ** 2), 1.0)
         self.assertIsNone(benchmark.per_gib(None, 1024 ** 3))
@@ -275,10 +290,10 @@ class CgroupCounterTests(unittest.TestCase):
         sample.assert_called_once_with(4321, mock.ANY)
         self.assertEqual(values, (2_000, 1_500, 3, 8))
 
-    def test_idle_process_tree_memory_is_sampled_at_its_own_interval(self) -> None:
+    def test_transfer_process_tree_memory_is_sampled_at_its_own_interval(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             instance = object.__new__(benchmark.Benchmark)
-            instance.mode = "idle"
+            instance.mode = "transfer"
             instance._stats = mock.Mock(return_value=(0.0, 1024))
             instance._memory_components = mock.Mock(return_value=(
                 {
@@ -303,9 +318,9 @@ class CgroupCounterTests(unittest.TestCase):
             instance.csv_path = Path(directory) / "samples.csv"
 
             status = {"progress": 0.0, "down": 0, "up": 0, "peers": 0}
-            first = instance._sample("qbittorrent", "idle_dht_on", 0.0, status)
-            middle = instance._sample("qbittorrent", "idle_dht_on", 5.0, status)
-            next_sample = instance._sample("qbittorrent", "idle_dht_on", 15.0, status)
+            first = instance._sample("qbittorrent", "controlled_seed", 0.0, status)
+            middle = instance._sample("qbittorrent", "controlled_seed", 5.0, status)
+            next_sample = instance._sample("qbittorrent", "controlled_seed", 15.0, status)
 
             self.assertEqual(first[35:39], [2_000, 1_500, 3, 8])
             self.assertEqual(middle[35:39], ["", "", "", ""])

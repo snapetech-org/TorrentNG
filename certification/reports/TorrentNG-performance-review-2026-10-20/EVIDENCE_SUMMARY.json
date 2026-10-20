@@ -1,0 +1,49 @@
+{
+  "reviewed_commit": "8bd30a474b72309a4b95327f32bbd89caeb590dc",
+  "new_transfer_benchmarks_executed": false,
+  "candidate_cpu_seconds_per_gib": [
+    3.84,
+    3.72,
+    4.53
+  ],
+  "baseline_cpu_seconds_per_gib": [
+    3.74,
+    3.98,
+    4.52
+  ],
+  "memory_gap_samples": [
+    {
+      "source": "client-performance-benchmark-3191f56e-20261020-upload-accounting-cache-disabled-memory-profile.json",
+      "seed_sample_count": 66,
+      "gap_over_1mib": [
+        {
+          "utc": "2026-10-20T17:01:38.987+00:00",
+          "cgroup_anon_bytes": 13676544,
+          "process_anon_bytes": 6729728
+        }
+      ]
+    },
+    {
+      "source": "client-performance-benchmark-3191f56e-20261020-upload-accounting-repeat-1-cache-disabled-memory-profile.json",
+      "seed_sample_count": 66,
+      "gap_over_1mib": [
+        {
+          "utc": "2026-10-20T17:26:45.804+00:00",
+          "cgroup_anon_bytes": 13533184,
+          "process_anon_bytes": 6586368
+        }
+      ]
+    },
+    {
+      "source": "client-performance-benchmark-3191f56e-20261020-upload-accounting-repeat-2-cache-disabled-memory-profile.json",
+      "seed_sample_count": 65,
+      "gap_over_1mib": [
+        {
+          "utc": "2026-10-20T17:32:31.600+00:00",
+          "cgroup_anon_bytes": 13504512,
+          "process_anon_bytes": 7016448
+        }
+      ]
+    }
+  ]
+}

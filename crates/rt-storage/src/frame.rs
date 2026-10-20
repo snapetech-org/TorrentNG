@@ -1,10 +1,10 @@
 //! Global bounded frame pool.
 //!
 //! Every read buffer and write-aggregation buffer in Storage NG is drawn
-//! from one process-wide pool with a hard byte cap. RAM is therefore
-//! `O(in-flight bytes)`, not `O(torrents)`: 100k idle torrents allocate
-//! zero frames. When the cap is reached, acquisition fails and the caller
-//! applies backpressure (the peer layer defers `unchoke`/`request`)
+//! from one process-wide pool with a hard active-byte cap and a separate
+//! bounded idle reuse cache. RAM is therefore `O(in-flight bytes) + 16 MiB`,
+//! not `O(torrents)`: 100k idle torrents allocate zero frames. When the active
+//! cap is reached, acquisition fails and the caller applies backpressure
 //! instead of growing memory unbounded.
 
 use std::sync::{
@@ -26,6 +26,10 @@ const SIZE_CLASSES: [usize; 3] = [16 * 1024, 64 * 1024, 256 * 1024];
 /// Per-class cap on retained (idle) buffers, to bound resident memory when
 /// load drops. Excess freed buffers are dropped rather than retained.
 const MAX_RETAINED_PER_CLASS: usize = 256;
+/// Total idle frame retention budget per pool. The per-class limits alone
+/// permit 84 MiB of free buffers; keep the high-water reuse cache bounded
+/// independently of the active-I/O budget.
+const MAX_RETAINED_BYTES: u64 = 16 * 1024 * 1024;
 
 static GLOBAL_FRAME_POOL: OnceCell<FramePool> = OnceCell::new();
 
@@ -33,6 +37,7 @@ static GLOBAL_FRAME_POOL: OnceCell<FramePool> = OnceCell::new();
 struct PoolInner {
     /// Free lists, one per size class, parallel to `SIZE_CLASSES`.
     free: [Vec<Vec<u8>>; SIZE_CLASSES.len()],
+    retained_bytes: u64,
 }
 
 /// Process-wide bounded buffer pool. Cheap to clone (`Arc` inside).
@@ -50,6 +55,7 @@ impl FramePool {
         FramePool {
             inner: Arc::new(Mutex::new(PoolInner {
                 free: Default::default(),
+                retained_bytes: 0,
             })),
             in_use: Arc::new(AtomicU64::new(0)),
             denied: Arc::new(AtomicU64::new(0)),
@@ -81,12 +87,7 @@ impl FramePool {
 
     /// Bytes held in idle size-class buffers for reuse.
     pub fn retained_bytes(&self) -> u64 {
-        self.lock_inner()
-            .free
-            .iter()
-            .flatten()
-            .map(|buffer| buffer.capacity() as u64)
-            .sum()
+        self.lock_inner().retained_bytes
     }
 
     pub fn denied_allocations(&self) -> u64 {
@@ -107,6 +108,18 @@ impl FramePool {
     /// would exceed the cap. The returned frame's usable length is exactly
     /// `len`; backing capacity may be larger (a size class).
     pub fn try_acquire(&self, len: usize) -> Option<Frame> {
+        self.try_acquire_inner(len, false)
+    }
+
+    /// Acquire a frame that will be completely overwritten by a successful
+    /// positioned read before its contents are observed. Reused buffers are
+    /// returned without clearing; the backend marks the frame initialized only
+    /// after the complete read succeeds.
+    pub(crate) fn try_acquire_for_overwrite(&self, len: usize) -> Option<Frame> {
+        self.try_acquire_inner(len, true)
+    }
+
+    fn try_acquire_inner(&self, len: usize, overwrite: bool) -> Option<Frame> {
         let charge = Self::charge_for(len);
         // Reserve against the cap first (CAS loop) so concurrent callers
         // cannot collectively overshoot.
@@ -127,16 +140,24 @@ impl FramePool {
         }
 
         let class = Self::class_for(len);
-        let mut buf = match class {
+        let (mut buf, reused) = match class {
             Some(ci) => {
                 let mut guard = self.lock_inner();
-                guard.free[ci]
-                    .pop()
-                    .unwrap_or_else(|| vec![0u8; SIZE_CLASSES[ci]])
+                match guard.free[ci].pop() {
+                    Some(buf) => {
+                        guard.retained_bytes =
+                            guard.retained_bytes.saturating_sub(buf.capacity() as u64);
+                        (buf, true)
+                    }
+                    None => (vec![0u8; SIZE_CLASSES[ci]], false),
+                }
             }
             // Oversize: exact allocation, not pooled on release.
-            None => vec![0u8; len],
+            None => (vec![0u8; len], false),
         };
+        if reused && !overwrite {
+            buf.fill(0);
+        }
         // Present exactly `len` usable bytes regardless of class capacity.
         if buf.len() < len {
             buf.resize(len, 0);
@@ -145,18 +166,24 @@ impl FramePool {
             len,
             charge,
             backing: FrameBacking::Vec { buf, class },
+            initialized: !overwrite,
             pool: self.clone(),
         })
     }
 
-    fn release(&self, mut buf: Vec<u8>, charge: u64, class: Option<usize>) {
+    fn release(&self, buf: Vec<u8>, charge: u64, class: Option<usize>) {
         self.in_use.fetch_sub(charge, Ordering::AcqRel);
         if let Some(ci) = class {
-            // Restore full class capacity and retain for reuse, bounded.
-            buf.clear();
-            buf.resize(SIZE_CLASSES[ci], 0);
+            // Retain the full size class without clearing. Generic acquisitions
+            // sanitize before exposing bytes; read acquisitions overwrite the
+            // complete requested range before they become observable.
+            debug_assert!(buf.len() >= SIZE_CLASSES[ci]);
             let mut guard = self.lock_inner();
-            if guard.free[ci].len() < MAX_RETAINED_PER_CLASS {
+            let retained = buf.capacity() as u64;
+            if guard.free[ci].len() < MAX_RETAINED_PER_CLASS
+                && guard.retained_bytes.saturating_add(retained) <= MAX_RETAINED_BYTES
+            {
+                guard.retained_bytes = guard.retained_bytes.saturating_add(retained);
                 guard.free[ci].push(buf);
             }
         }
@@ -229,6 +256,7 @@ pub struct Frame {
     len: usize,
     charge: u64,
     backing: FrameBacking,
+    initialized: bool,
     pool: FramePool,
 }
 
@@ -247,6 +275,7 @@ impl Frame {
     }
 
     pub fn as_slice(&self) -> &[u8] {
+        assert!(self.initialized, "read frame observed before completion");
         match &self.backing {
             FrameBacking::Vec { buf, .. } => &buf[..self.len],
             FrameBacking::Registered { slot } => slot.as_slice(self.len),
@@ -262,12 +291,17 @@ impl Frame {
         }
     }
 
+    pub(crate) fn mark_initialized(&mut self) {
+        self.initialized = true;
+    }
+
     /// Consume this frame as immutable bytes without copying the payload.
     ///
     /// The backing allocation is not returned to the idle frame cache because
     /// ownership moves to [`bytes::Bytes`], but the in-use frame-pool charge is
     /// released before returning.
     pub fn into_bytes(mut self) -> bytes::Bytes {
+        assert!(self.initialized, "read frame consumed before completion");
         let len = self.len;
         let charge = self.charge;
         self.len = 0;
@@ -290,6 +324,7 @@ impl Frame {
 
     /// Move this frame-pool charge onto a registered fixed-buffer slot.
     pub fn into_registered_slot(mut self, slot: RegisteredFrameSlot) -> Self {
+        assert!(self.initialized, "read frame registered before completion");
         let len = self.len;
         let charge = self.charge;
         self.len = 0;
@@ -299,6 +334,7 @@ impl Frame {
             len,
             charge,
             backing: FrameBacking::Registered { slot },
+            initialized: true,
             pool: self.pool.clone(),
         }
     }
@@ -476,6 +512,19 @@ mod tests {
     }
 
     #[test]
+    fn total_retention_budget_caps_large_idle_buffers() {
+        let pool = FramePool::new(32 * 1024 * 1024);
+        let frames = (0..65)
+            .map(|_| pool.try_acquire(256 * 1024).unwrap())
+            .collect::<Vec<_>>();
+        drop(frames);
+
+        assert_eq!(pool.retained_bytes(), MAX_RETAINED_BYTES);
+        assert_eq!(pool.lock_inner().free[2].len(), 64);
+        assert_eq!(pool.in_use_bytes(), 0);
+    }
+
+    #[test]
     fn cap_accounts_for_pooled_backing_capacity() {
         let pool = FramePool::new(16 * 1024);
         let frame = pool.try_acquire(1).unwrap();
@@ -508,6 +557,23 @@ mod tests {
         let f2 = pool.try_acquire(1000).unwrap();
         assert_eq!(f2.len(), 1000);
         assert_eq!(f2.as_slice()[0], 0);
+    }
+
+    #[test]
+    fn read_overwrite_reuse_skips_clear_and_generic_reuse_sanitizes() {
+        let pool = FramePool::new(1024 * 1024);
+        let mut first = pool.try_acquire_for_overwrite(16 * 1024).unwrap();
+        first.as_mut_slice()[0] = 0xAB;
+        drop(first);
+
+        let mut reused = pool.try_acquire_for_overwrite(16 * 1024).unwrap();
+        assert_eq!(reused.as_mut_slice()[0], 0xAB);
+        reused.as_mut_slice()[0] = 0xCD;
+        reused.mark_initialized();
+        drop(reused);
+
+        let sanitized = pool.try_acquire(16 * 1024).unwrap();
+        assert_eq!(sanitized.as_slice()[0], 0);
     }
 
     #[test]

@@ -22,7 +22,7 @@ use sha1::{Digest, Sha1};
 #[cfg(any(unix, windows))]
 use crate::open::identity_matches_path;
 use crate::{
-    backend::{BackendRequest, SelectedDiskBackend},
+    backend::{BackendJobOwnership, BackendRequest, SelectedDiskBackend},
     device::{detect_storage_topology, StorageTopology},
     elevator::elevator_class_weight,
     error::StorageError,
@@ -1365,7 +1365,7 @@ struct PeerReadRequest {
     path: PathBuf,
     offset: u64,
     len: usize,
-    _queued_bytes: QueuedDiskBytes,
+    _queued_bytes: Option<QueuedDiskBytes>,
     tx: oneshot::Sender<Result<bytes::Bytes, StorageError>>,
 }
 
@@ -2025,59 +2025,31 @@ fn validate_hybrid_piece_hash_geometry(
     Ok(())
 }
 
-/// Keep cache invalidation attached to the backend operation rather than to
-/// the caller waiting for it. A cancelled writer can drop its receive future
-/// while the dedicated disk worker is still completing the syscall; without
-/// this watcher a concurrent peer read may publish pre-write bytes back into
-/// the cache after the writer's initial invalidation.
-fn backend_write_completion_with_cache_invalidation<G: Send + 'static, O: Send + 'static>(
-    rx: oneshot::Receiver<io::Result<()>>,
-    cache: Arc<Mutex<PeerReadCache>>,
-    epoch: Arc<AtomicU64>,
-    key: PathBuf,
-    fence_guard: G,
-    operation_owner: O,
-) -> oneshot::Receiver<(io::Result<()>, G, O)> {
-    let (completion_tx, completion_rx) = oneshot::channel();
-    tokio::spawn(async move {
-        let result = rx.await.unwrap_or_else(|_| {
-            Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "storage backend completion channel closed",
-            ))
-        });
-        peer_read_cache_invalidate(&cache, &epoch, &key);
-        let _ = completion_tx.send((result, fence_guard, operation_owner));
-    });
-    completion_rx
-}
+type BackendOperationOwnership<G, O> = Arc<Mutex<Option<(G, O)>>>;
 
-fn backend_completion_with_fence<T: Send + 'static, G: Send + 'static, O: Send + 'static>(
-    rx: oneshot::Receiver<io::Result<T>>,
+fn backend_operation_ownership<G: Send + 'static, O: Send + 'static>(
     fence_guard: G,
     operation_owner: O,
-) -> oneshot::Receiver<(io::Result<T>, G, O)> {
-    let (completion_tx, completion_rx) = oneshot::channel();
-    tokio::spawn(async move {
-        let result = rx.await.unwrap_or_else(|_| {
-            Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "storage backend completion channel closed",
-            ))
-        });
-        let _ = completion_tx.send((result, fence_guard, operation_owner));
-    });
-    completion_rx
+) -> (BackendOperationOwnership<G, O>, BackendJobOwnership) {
+    let ownership = Arc::new(Mutex::new(Some((fence_guard, operation_owner))));
+    let backend_owner = BackendJobOwnership::new(Arc::clone(&ownership));
+    (ownership, backend_owner)
 }
 
 async fn await_backend_io_with_fence<T, G, O>(
     path: &Path,
-    rx: oneshot::Receiver<(io::Result<T>, G, O)>,
+    rx: oneshot::Receiver<io::Result<T>>,
+    ownership: BackendOperationOwnership<G, O>,
     expected_len: Option<usize>,
 ) -> Result<(T, G, O), StorageError> {
-    let (result, fence_guard, operation_owner) = rx.await.map_err(|_| StorageError::Cancelled)?;
+    let result = rx.await.map_err(|_| StorageError::Cancelled)?;
     match result {
-        Ok(value) => Ok((value, fence_guard, operation_owner)),
+        Ok(value) => {
+            let (fence_guard, operation_owner) = lock_recover(&ownership)
+                .take()
+                .ok_or(StorageError::Cancelled)?;
+            Ok((value, fence_guard, operation_owner))
+        }
         Err(error) if error.kind() == io::ErrorKind::WouldBlock => Err(StorageError::QueueFull {
             mount: "storage-backend".to_string(),
         }),
@@ -2094,35 +2066,6 @@ async fn await_backend_io_with_fence<T, G, O>(
             })
         }
         Err(error) => Err(StorageError::io(path.display().to_string(), error)),
-    }
-}
-
-async fn await_backend_io_with_expected<T>(
-    path: &Path,
-    rx: oneshot::Receiver<io::Result<T>>,
-    expected_len: Option<usize>,
-) -> Result<T, StorageError> {
-    match rx.await {
-        Ok(Ok(value)) => Ok(value),
-        Ok(Err(error)) if error.kind() == io::ErrorKind::WouldBlock => {
-            Err(StorageError::QueueFull {
-                mount: "storage-backend".to_string(),
-            })
-        }
-        Ok(Err(error))
-            if matches!(
-                error.kind(),
-                io::ErrorKind::UnexpectedEof | io::ErrorKind::WriteZero
-            ) =>
-        {
-            Err(StorageError::ShortIo {
-                path: path.display().to_string(),
-                expected: expected_len.unwrap_or(0),
-                actual: 0,
-            })
-        }
-        Ok(Err(error)) => Err(StorageError::io(path.display().to_string(), error)),
-        Err(_) => Err(StorageError::Cancelled),
     }
 }
 
@@ -2254,8 +2197,7 @@ impl DeviceQueue {
         mount: String,
         priority: IoRequestPriority,
     ) -> Result<DeviceOperationPermit, StorageError> {
-        let (sender, receiver) = oneshot::channel();
-        let (waiter_id, immediate, grant) = {
+        let (waiter_id, immediate, grant, receiver) = {
             let mut state = lock_recover(&self.state);
             let grant = collect_device_grant(self, &mut state);
 
@@ -2271,6 +2213,7 @@ impl DeviceQueue {
                         armed: true,
                     }),
                     grant,
+                    None,
                 )
             } else {
                 let pending_limit = self.capacity.saturating_sub(self.active_limit);
@@ -2280,6 +2223,7 @@ impl DeviceQueue {
                     return Err(StorageError::QueueFull { mount });
                 }
 
+                let (sender, receiver) = oneshot::channel();
                 let id = take_device_sequence(&mut state.next_waiter_id);
                 enqueue_device_waiter(
                     &mut state,
@@ -2291,7 +2235,7 @@ impl DeviceQueue {
                         sender,
                     },
                 );
-                (Some(id), None, grant)
+                (Some(id), None, grant, Some(receiver))
             }
         };
         dispatch_device_grant(grant);
@@ -2306,7 +2250,10 @@ impl DeviceQueue {
             id: waiter_id,
             armed: true,
         };
-        let permit = receiver.await.map_err(|_| StorageError::Cancelled)?;
+        let permit = receiver
+            .expect("queued device admission has a reply channel")
+            .await
+            .map_err(|_| StorageError::Cancelled)?;
         waiter_guard.armed = false;
         Ok(permit)
     }
@@ -2688,7 +2635,7 @@ impl PeerReadElevator {
                 path,
                 offset,
                 len,
-                _queued_bytes: queued_bytes,
+                _queued_bytes: Some(queued_bytes),
                 tx,
             })
             .map_err(|err| match err {
@@ -2925,11 +2872,15 @@ async fn dispatch_peer_read_batch(
             operation_record.bind_file_identity(file.identity());
             operation_record.bind_byte_range(offset, len as u64);
             for request in &batch.requests {
-                operation_record
-                    .resource_credit
-                    .include(request._queued_bytes.resource_credit());
+                operation_record.resource_credit.include(
+                    request
+                        ._queued_bytes
+                        .as_ref()
+                        .expect("queued read owns its credit until backend submission")
+                        .resource_credit(),
+                );
             }
-            let frame = match global_frame_pool().try_acquire(len) {
+            let frame = match global_frame_pool().try_acquire_for_overwrite(len) {
                 Some(frame) => frame,
                 None => {
                     counters.queue_full.fetch_add(1, Ordering::Relaxed);
@@ -2983,18 +2934,27 @@ async fn dispatch_peer_read_batch(
                 device_queue_permits = 1,
                 "dispatching coalesced peer read"
             );
-            match await_backend_io_with_expected(
-                &key,
-                disk_backend.pread_leased(file.clone(), frame, offset),
-                Some(len),
-            )
-            .await
-            {
-                Ok(frame) => {
+            let queued_byte_owners = batch
+                .requests
+                .iter_mut()
+                .filter_map(|request| request._queued_bytes.take())
+                .collect::<Vec<_>>();
+            let (ownership, backend_owner) =
+                backend_operation_ownership((_queue, _device_queue), queued_byte_owners);
+            let completion = disk_backend.pread_leased(file.clone(), frame, offset, backend_owner);
+            match await_backend_io_with_fence(&key, completion, ownership, Some(len)).await {
+                Ok((frame, (queue_permit, device_permit), queued_byte_owners)) => {
+                    let bytes = frame.into_bytes();
                     advise_after_read_class(&file, IoClass::PeerRead, offset, len, &counters);
-                    Ok(frame.into_bytes())
+                    drop((queue_permit, device_permit, queued_byte_owners));
+                    Ok(bytes)
                 }
-                Err(error) => Err(error),
+                Err(error) => {
+                    if matches!(error, StorageError::QueueFull { .. }) {
+                        counters.queue_full.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(error)
+                }
             }
         }
         Err(error) => Err(error),
@@ -3915,35 +3875,32 @@ impl MountScheduler {
                     self.acquire_device_operation_with_priority(class, priority)
                         .await?,
                 );
-                let frame = global_frame_pool().try_acquire(read_len).ok_or_else(|| {
-                    StorageError::QueueFull {
+                let frame = global_frame_pool()
+                    .try_acquire_for_overwrite(read_len)
+                    .ok_or_else(|| StorageError::QueueFull {
                         mount: "scheduler-read-frame".to_string(),
-                    }
-                })?;
+                    })?;
                 submission.record_frame_pool_charge(&frame);
                 submission.trace_dispatch("positioned_read", class, 1);
-                let frame = match await_backend_io_with_fence(
-                    &key,
-                    backend_completion_with_fence(
-                        disk_backend.pread_leased(file.clone(), frame, offset),
-                        (),
-                        (submission, read_buffer_queued_bytes),
-                    ),
-                    Some(read_len),
-                )
-                .await
-                {
-                    Ok((frame, (), operation_owner)) => {
-                        drop(operation_owner);
-                        frame
-                    }
-                    Err(error) => {
-                        if matches!(error, StorageError::QueueFull { .. }) {
-                            counters.queue_full.fetch_add(1, Ordering::Relaxed);
+                let (ownership, backend_owner) =
+                    backend_operation_ownership((), (submission, read_buffer_queued_bytes));
+                let completion =
+                    disk_backend.pread_leased(file.clone(), frame, offset, backend_owner);
+                let frame =
+                    match await_backend_io_with_fence(&key, completion, ownership, Some(read_len))
+                        .await
+                    {
+                        Ok((frame, (), operation_owner)) => {
+                            drop(operation_owner);
+                            frame
                         }
-                        return Err(error);
-                    }
-                };
+                        Err(error) => {
+                            if matches!(error, StorageError::QueueFull { .. }) {
+                                counters.queue_full.fetch_add(1, Ordering::Relaxed);
+                            }
+                            return Err(error);
+                        }
+                    };
                 // A path can be atomically replaced while the backend read
                 // is in flight. The submitted descriptor remains valid, but
                 // its bytes must not be returned or cached as the current
@@ -4140,32 +4097,28 @@ impl MountScheduler {
             write_sequence,
         );
         submission.bind_dirty_path(dirty_state);
-        let (file_write_guard, admission_guard, mut submission) = match await_backend_io_with_fence(
-            &key,
-            backend_write_completion_with_cache_invalidation(
-                disk_backend.pwrite_leased(file.clone(), data, offset),
-                peer_read_cache.clone(),
-                peer_read_cache_epoch.clone(),
-                key.clone(),
-                (file_write_guard, write_admission_guard),
-                submission,
-            ),
-            Some(written),
-        )
-        .await
-        {
-            Ok(((), (fence_guard, admission_guard), submission)) => {
-                (fence_guard, admission_guard, submission)
-            }
-            Err(error) => {
-                if matches!(error, StorageError::QueueFull { .. }) {
-                    counters.queue_full.fetch_add(1, Ordering::Relaxed);
+        let (ownership, backend_owner) =
+            backend_operation_ownership((file_write_guard, write_admission_guard), submission);
+        let completion_cache = peer_read_cache.clone();
+        let completion_epoch = peer_read_cache_epoch.clone();
+        let completion_key = key.clone();
+        let backend_owner = backend_owner.after_completion(move || {
+            peer_read_cache_invalidate(&completion_cache, &completion_epoch, &completion_key);
+        });
+        let completion = disk_backend.pwrite_leased(file.clone(), data, offset, backend_owner);
+        let (file_write_guard, admission_guard, mut submission) =
+            match await_backend_io_with_fence(&key, completion, ownership, Some(written)).await {
+                Ok(((), (fence_guard, admission_guard), submission)) => {
+                    (fence_guard, admission_guard, submission)
                 }
-                return Err(error);
-            }
-        };
+                Err(error) => {
+                    if matches!(error, StorageError::QueueFull { .. }) {
+                        counters.queue_full.fetch_add(1, Ordering::Relaxed);
+                    }
+                    return Err(error);
+                }
+            };
         current_file_identity(&key, file.as_ref(), "payload_write")?;
-        peer_read_cache_invalidate(&peer_read_cache, &peer_read_cache_epoch, &key);
         submission.release_payload();
         let submission = if strict {
             let sync_started = Instant::now();
@@ -4175,16 +4128,11 @@ impl MountScheduler {
                     unreachable!("strict writes hold the exclusive per-file fence")
                 }
             };
-            let sync_completion = await_backend_io_with_fence(
-                &key,
-                backend_completion_with_fence(
-                    disk_backend.fdatasync_leased(file.clone()),
-                    (strict_sync_guard, admission_guard),
-                    submission,
-                ),
-                None,
-            )
-            .await;
+            let (ownership, backend_owner) =
+                backend_operation_ownership((strict_sync_guard, admission_guard), submission);
+            let completion = disk_backend.fdatasync_leased(file.clone(), backend_owner);
+            let sync_completion =
+                await_backend_io_with_fence(&key, completion, ownership, None).await;
             let (strict_sync_guard, admission_guard, submission) = match sync_completion {
                 Ok(((), (fence_guard, admission_guard), submission)) => {
                     (fence_guard, admission_guard, submission)
@@ -4359,27 +4307,21 @@ impl MountScheduler {
         submission
             .start_device_operation(self.acquire_device_operation(IoClass::Foreground).await?);
         submission.trace_dispatch("file_data_sync", IoClass::Foreground, 1);
-        let (fence_guard, admission_guard, submission) = match await_backend_io_with_fence(
-            &key,
-            backend_completion_with_fence(
-                disk_backend.fdatasync_leased(file.clone()),
-                (fence_guard, write_admission_guard),
-                submission,
-            ),
-            None,
-        )
-        .await
-        {
-            Ok(((), (fence_guard, admission_guard), submission)) => {
-                (fence_guard, admission_guard, submission)
-            }
-            Err(error) => {
-                if matches!(error, StorageError::QueueFull { .. }) {
-                    counters.queue_full.fetch_add(1, Ordering::Relaxed);
+        let (ownership, backend_owner) =
+            backend_operation_ownership((fence_guard, write_admission_guard), submission);
+        let completion = disk_backend.fdatasync_leased(file.clone(), backend_owner);
+        let (fence_guard, admission_guard, submission) =
+            match await_backend_io_with_fence(&key, completion, ownership, None).await {
+                Ok(((), (fence_guard, admission_guard), submission)) => {
+                    (fence_guard, admission_guard, submission)
                 }
-                return Err(error);
-            }
-        };
+                Err(error) => {
+                    if matches!(error, StorageError::QueueFull { .. }) {
+                        counters.queue_full.fetch_add(1, Ordering::Relaxed);
+                    }
+                    return Err(error);
+                }
+            };
         let completed_identity = current_file_identity(&key, file.as_ref(), "data_sync")?;
         ensure_dirty_identity(&key, "data_sync", expected_state, completed_identity)?;
         record_sync_completion(&counters, started);
@@ -4591,25 +4533,20 @@ impl MountScheduler {
         };
         submission.start_device_operation(device_operation);
         submission.trace_dispatch("checkpoint_file_sync", IoClass::Foreground, 1);
-        let (fence_guard, mut submission) = match await_backend_io_with_fence(
-            &key,
-            backend_completion_with_fence(
-                self.disk_backend.fdatasync_leased(file.clone()),
-                fence_guard,
-                submission,
-            ),
-            None,
-        )
-        .await
-        {
-            Ok(((), fence_guard, submission)) => (fence_guard, submission),
-            Err(error) => {
-                if matches!(error, StorageError::QueueFull { .. }) {
-                    self.counters.queue_full.fetch_add(1, Ordering::Relaxed);
+        let (ownership, backend_owner) = backend_operation_ownership(fence_guard, submission);
+        let completion = self
+            .disk_backend
+            .fdatasync_leased(file.clone(), backend_owner);
+        let (fence_guard, mut submission) =
+            match await_backend_io_with_fence(&key, completion, ownership, None).await {
+                Ok(((), fence_guard, submission)) => (fence_guard, submission),
+                Err(error) => {
+                    if matches!(error, StorageError::QueueFull { .. }) {
+                        self.counters.queue_full.fetch_add(1, Ordering::Relaxed);
+                    }
+                    return Err(error);
                 }
-                return Err(error);
-            }
-        };
+            };
         let completed_identity = current_file_identity(&key, file.as_ref(), "checkpoint_sync")?;
         ensure_dirty_identity(&key, "checkpoint_sync", expected_state, completed_identity)?;
         file_sync_fence.mark_synced(watermark);
@@ -8525,8 +8462,8 @@ mod tests {
         assert_eq!(sched.stats().peer_read_cache_hits, 0);
     }
 
-    #[tokio::test]
-    async fn dropped_write_waiter_invalidates_cache_after_backend_completion() {
+    #[test]
+    fn dropped_write_waiter_invalidates_cache_after_backend_completion() {
         struct CompletionOwner(Arc<AtomicBool>);
 
         impl Drop for CompletionOwner {
@@ -8555,35 +8492,31 @@ mod tests {
         );
         let epoch = Arc::new(AtomicU64::new(0));
         let owner_dropped = Arc::new(AtomicBool::new(false));
-        let (backend_tx, backend_rx) = oneshot::channel();
-
-        let completion = backend_write_completion_with_cache_invalidation(
-            backend_rx,
-            Arc::clone(&cache),
-            Arc::clone(&epoch),
-            key.clone(),
-            (),
-            CompletionOwner(Arc::clone(&owner_dropped)),
-        );
-        // Simulate the writer task being cancelled while the backend still
-        // owns and completes its syscall. Queue and byte reservations stay
-        // with the completion watcher until that operation finishes.
-        drop(completion);
+        let (caller_ownership, backend_owner) =
+            backend_operation_ownership((), CompletionOwner(Arc::clone(&owner_dropped)));
+        let cache_for_completion = Arc::clone(&cache);
+        let epoch_for_completion = Arc::clone(&epoch);
+        let key_for_completion = key.clone();
+        let mut backend_owner = backend_owner.after_completion(move || {
+            peer_read_cache_invalidate(
+                &cache_for_completion,
+                &epoch_for_completion,
+                &key_for_completion,
+            );
+        });
+        // Simulate the writer future being cancelled while the submitted
+        // backend job still owns its syscall guards and invalidation callback.
+        drop(caller_ownership);
         assert!(!owner_dropped.load(Ordering::Acquire));
-        backend_tx.send(Ok(())).unwrap();
-
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while epoch.load(Ordering::Acquire) == 0 || !owner_dropped.load(Ordering::Acquire) {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("backend completion watcher did not invalidate the cache");
+        backend_owner.complete();
+        drop(backend_owner);
+        assert_eq!(epoch.load(Ordering::Acquire), 1);
+        assert!(owner_dropped.load(Ordering::Acquire));
         assert!(!cache.lock().unwrap().contains_file(&key));
     }
 
-    #[tokio::test]
-    async fn dropped_backend_waiter_keeps_operation_owner_until_completion() {
+    #[test]
+    fn dropped_backend_waiter_keeps_operation_owner_until_completion() {
         struct CompletionOwner(Arc<AtomicBool>);
 
         impl Drop for CompletionOwner {
@@ -8593,24 +8526,12 @@ mod tests {
         }
 
         let owner_dropped = Arc::new(AtomicBool::new(false));
-        let (backend_tx, backend_rx) = oneshot::channel();
-        let completion = backend_completion_with_fence(
-            backend_rx,
-            (),
-            CompletionOwner(Arc::clone(&owner_dropped)),
-        );
-
-        drop(completion);
+        let (caller_ownership, backend_owner) =
+            backend_operation_ownership((), CompletionOwner(Arc::clone(&owner_dropped)));
+        drop(caller_ownership);
         assert!(!owner_dropped.load(Ordering::Acquire));
-        backend_tx.send(Ok(7_u8)).unwrap();
-
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while !owner_dropped.load(Ordering::Acquire) {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("operation owner was not released after backend completion");
+        drop(backend_owner);
+        assert!(owner_dropped.load(Ordering::Acquire));
     }
 
     #[cfg(unix)]
@@ -8864,13 +8785,10 @@ mod tests {
             path: PathBuf::from("canceled-peer-read.bin"),
             offset: 0,
             len: 1024,
-            _queued_bytes: QueuedDiskBytes::reserve(
-                sched.counters.clone(),
-                None,
-                1024,
-                "peer-read-elevator",
-            )
-            .unwrap(),
+            _queued_bytes: Some(
+                QueuedDiskBytes::reserve(sched.counters.clone(), None, 1024, "peer-read-elevator")
+                    .unwrap(),
+            ),
             tx,
         };
         let batch = PeerReadBatch {
@@ -8907,13 +8825,10 @@ mod tests {
             path: path.clone(),
             offset: 8,
             len: 4,
-            _queued_bytes: QueuedDiskBytes::reserve(
-                sched.counters.clone(),
-                None,
-                4,
-                "peer-read-elevator",
-            )
-            .unwrap(),
+            _queued_bytes: Some(
+                QueuedDiskBytes::reserve(sched.counters.clone(), None, 4, "peer-read-elevator")
+                    .unwrap(),
+            ),
             tx,
         };
         let batch = PeerReadBatch {

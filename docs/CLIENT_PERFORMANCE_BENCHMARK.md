@@ -3,8 +3,8 @@
 This benchmark compares TorrentNG's native engine with qBittorrent,
 Transmission, Deluge, and rTorrent using an official Debian amd64 netinst
 torrent. It records public download behavior and a separate controlled seed
-transfer for each client. The latest five-client resource run uses commit
-`3191f56e` and is recorded in
+transfer for each client. The previous upload-accounting comparison used
+commit `3191f56e` and is recorded in
 [`client-performance-benchmark-3191f56e-20261020-upload-accounting-cache-disabled.md`](../certification/reports/client-performance-benchmark-3191f56e-20261020-upload-accounting-cache-disabled.md).
 All five controlled seeds passed SHA-256 checks. At a shared 4 MiB/s receiver
 cap, TorrentNG used 3.84 CPU-s/GiB, above qBittorrent (2.33), Transmission
@@ -17,6 +17,89 @@ Block reads were 1,031.77 MiB/GiB and writes 0.67 MiB/GiB. This is one
 sequential pass on a loaded host. TorrentNG, Transmission, and Deluge did not
 finish the 60-second public-swarm phase, so those rows are not download
 rankings.
+
+## 2026-10-20 hot-path follow-up
+
+The uploaded source review and verified evidence archive are preserved at
+[`certification/reports/TorrentNG-performance-review-2026-10-20/`](../certification/reports/TorrentNG-performance-review-2026-10-20/),
+with the original ZIP alongside it. The review identified instrumentation
+contamination and repeated work around storage completion, upload admission,
+and TCP piece transmission. The code changes have passed the affected crate
+tests and Clippy, and a corrected five-client comparison plus a TorrentNG-only
+cache-disabled probe have completed. The results are exploratory; they do not
+yet show that this candidate improves whole-client efficiency.
+
+An exact clean-source five-client baseline was completed at `f5272e3c` before
+these hot-path changes. All five controlled seed transfers passed SHA-256.
+TorrentNG measured 5.10 CPU-s/GiB, compared with 2.96 for qBittorrent, 1.62 for
+Transmission, 3.18 for Deluge, and 0.71 for rTorrent. The host load averaged
+14.04 at the start. That run still used the old measurement path: healthchecks
+were active, `/metrics` was sampled during transfer, and process-tree memory
+was not recorded. It is a useful baseline, not evidence of change impact or a
+general client ranking. The [report](../certification/reports/client-performance-benchmark-f5272e3c-20261020-current-source-60s.md),
+[samples](../certification/reports/client-performance-benchmark-f5272e3c-20261020-current-source-60s-samples.csv),
+and [memory profile](../certification/reports/client-performance-benchmark-f5272e3c-20261020-current-source-60s-memory-profile.json)
+record the full workload and environment.
+
+The implementation disables container healthchecks symmetrically, samples
+process-tree RSS/PSS for every client, and keeps detailed TorrentNG `/metrics`,
+`smaps`, and process-spike attribution behind
+`TNG_CLIENT_BENCH_DIAGNOSTICS=1`. Storage completion ownership is carried by
+the actual Pread or io_uring job, removing the forwarding Tokio task and
+second completion channel while retaining operation guards through completion
+and invalidating the peer-read cache after writes. Upload admission grants
+uncontended reads under one lock and rotates only peers with queued work; the
+device scheduler now allocates its waiter channel only when it must queue.
+
+The TCP upload path now moves a single-region storage buffer into immutable
+payload bytes and writes the piece header plus payload with partial-write-safe
+vectored I/O. Cross-file and padding assembly and the uTP encoder keep their
+existing paths. The frame pool now caps idle retention at 16 MiB per pool,
+down from an 84 MiB possible total under the former per-class limits. Read
+acquisitions can reuse a buffer without clearing it because the backend marks
+it readable only after a complete overwrite; generic acquisitions clear reused
+buffers before exposing them. Multi-block socket batching and the registered-
+buffer copy path remain unimplemented. The existing bounded piece-assembly
+configuration remains disabled by default; compare a small global assembly
+budget as a separate download experiment before changing that default.
+
+The corrected five-client pass used source fingerprint
+`435a6d705876e9c02d22d9ce7bfd3475b477034c24d5bfa9adca0d74cb973d8e` from a
+dirty worktree based on `8bd30a47`. All five controlled seeds passed final
+SHA-256 verification. At the shared 4 MiB/s receiver cap, TorrentNG measured
+3.97 CPU-s/GiB, 1,255.56 MiB/GiB block reads, and 0.54 MiB/GiB writes. The
+comparators measured 2.29/984.59/0 for qBittorrent, 1.41/1,067.06/0 for
+Transmission, 2.78/992.28/0.10 for Deluge, and 0.76/982.84/0 for rTorrent.
+TorrentNG therefore used more CPU and read more block data in this one pass.
+The result began at host load 10.25/14.45/14.44 and peaked at 26.18, so it is
+not a qualification score or a causal A/B result.
+
+TorrentNG's controlled-seed cgroup anonymous peak was 16.3 MiB, process-tree
+RSS was 33.44 MiB, and PSS was 33.10 MiB. The corresponding anonymous peaks
+were 17.6 MiB for qBittorrent, 24.9 MiB for Transmission, 83.7 MiB for Deluge,
+and 1.7 MiB for rTorrent. Process-tree RSS/PSS were 782.75 MiB/unavailable,
+39.05 MiB/unavailable, 884.62 MiB/unavailable, and 6.73/6.72 MiB respectively.
+RSS/PSS includes each container process tree and is distinct from cgroup
+anonymous memory; the very large qBittorrent and Deluge RSS values do not
+reconcile with their cgroup anonymous values. TorrentNG's anonymous memory is
+competitive with qBittorrent and Transmission in this run, while rTorrent is
+lower. No single memory number establishes a general ranking.
+
+The public phase did not finish for TorrentNG (5.87%), Transmission (99.81%),
+or qBittorrent (99.46%) before its 60-second cap; those rows are not download
+rankings. rTorrent and Deluge finished. A TorrentNG-only cache-disabled probe
+measured 3.65 CPU-s/GiB, 1,016.32 MiB/GiB reads, 7.4 MiB cgroup anonymous
+peak, and 25.91/25.58 MiB process-tree RSS/PSS. That looks lower than the
+full-pass default-cache sample, but the runs had different host loads and only
+one observation each. Keep the cache default unchanged until an alternating,
+matched repeat measures the effect. The [corrected five-client report](../certification/reports/client-performance-benchmark-hotpath-candidate-full-20261020.md),
+[samples](../certification/reports/client-performance-benchmark-hotpath-candidate-full-20261020-samples.csv),
+and [memory profile](../certification/reports/client-performance-benchmark-hotpath-candidate-full-20261020-memory-profile.json)
+are retained with the [incomplete first attempt](../certification/reports/client-performance-benchmark-hotpath-candidate-20261020.md),
+[default-cache TorrentNG repeat](../certification/reports/client-performance-benchmark-hotpath-candidate-torrentng-20261020.md),
+and [cache-disabled probe](../certification/reports/client-performance-benchmark-hotpath-cache-disabled-torrentng-20261020.md)
+and their raw data. The first attempt is kept as failure evidence; TorrentNG
+had no verified ISO seed source in that run, so its seed phase did not execute.
 
 The `3191f56e` accounting-batching candidate then had two TorrentNG-only
 cache-disabled repeats:

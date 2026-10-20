@@ -58,6 +58,8 @@ struct Inner {
 #[derive(Default)]
 struct State {
     connections: HashMap<RatePeerId, ConnectionState>,
+    next_connection_order: u64,
+    last_served_order: Option<u64>,
     round_robin: VecDeque<RatePeerId>,
     next_waiter: u64,
     in_flight_jobs: usize,
@@ -66,10 +68,12 @@ struct State {
 
 #[derive(Default)]
 struct ConnectionState {
+    order: u64,
     queue: VecDeque<Waiter>,
     in_flight_jobs: usize,
     in_flight_bytes: u64,
     closed: bool,
+    queued_in_round_robin: bool,
 }
 
 struct Waiter {
@@ -123,8 +127,15 @@ impl UploadReadScheduler {
         {
             return Err(UploadReadAdmissionError::ConnectionLimit);
         }
-        state.connections.insert(peer, ConnectionState::default());
-        state.round_robin.push_back(peer);
+        let order = state.next_connection_order;
+        state.next_connection_order = order.saturating_add(1);
+        state.connections.insert(
+            peer,
+            ConnectionState {
+                order,
+                ..ConnectionState::default()
+            },
+        );
         Ok(())
     }
 
@@ -143,14 +154,15 @@ impl UploadReadScheduler {
     /// permit. Running jobs keep their global charge until their permit drops.
     pub(crate) fn unregister(&self, peer: RatePeerId) {
         let mut state = lock_state(&self.inner);
-        state.round_robin.retain(|candidate| *candidate != peer);
         let remove = if let Some(connection) = state.connections.get_mut(&peer) {
             connection.closed = true;
             connection.queue.clear();
+            connection.queued_in_round_robin = false;
             connection.in_flight_jobs == 0
         } else {
             false
         };
+        state.round_robin.retain(|candidate| *candidate != peer);
         if remove {
             state.connections.remove(&peer);
         }
@@ -168,20 +180,24 @@ impl UploadReadScheduler {
             return Err(UploadReadAdmissionError::InvalidBlock);
         }
         let bytes = u64::from(block.length);
-        let (reply, receive) = oneshot::channel();
-        let waiter_id = {
+        let (waiter_id, receive) = {
             let mut state = lock_state(&self.inner);
-            let connection = state
+            let (closed, queue_len, in_flight_jobs, connection_order) = state
                 .connections
                 .get(&peer)
+                .map(|connection| {
+                    (
+                        connection.closed,
+                        connection.queue.len(),
+                        connection.in_flight_jobs,
+                        connection.order,
+                    )
+                })
                 .ok_or(UploadReadAdmissionError::NotRegistered)?;
-            if connection.closed {
+            if closed {
                 return Err(UploadReadAdmissionError::NotRegistered);
             }
-            if connection
-                .queue
-                .len()
-                .saturating_add(connection.in_flight_jobs)
+            if queue_len.saturating_add(in_flight_jobs)
                 >= self
                     .inner
                     .limits
@@ -190,17 +206,50 @@ impl UploadReadScheduler {
             {
                 return Err(UploadReadAdmissionError::QueueFull);
             }
+
+            // The common uncontended case needs only this mutex acquisition:
+            // no waiter ID, oneshot channel, or scheduler pump is created.
+            // Any already-pending peer gets a turn before a new immediate grant.
+            if state.round_robin.is_empty()
+                && queue_len == 0
+                && state.in_flight_jobs < self.inner.limits.max_in_flight_jobs
+                && state.in_flight_bytes.saturating_add(bytes)
+                    <= self.inner.limits.max_in_flight_bytes
+                && in_flight_jobs < self.inner.limits.max_in_flight_per_connection
+            {
+                state.in_flight_jobs += 1;
+                state.in_flight_bytes = state.in_flight_bytes.saturating_add(bytes);
+                state.last_served_order = Some(connection_order);
+                let connection = state
+                    .connections
+                    .get_mut(&peer)
+                    .expect("connection checked above");
+                connection.in_flight_jobs += 1;
+                connection.in_flight_bytes = connection.in_flight_bytes.saturating_add(bytes);
+                return Ok(UploadReadPermit {
+                    inner: Arc::downgrade(&self.inner),
+                    peer,
+                    bytes,
+                });
+            }
+
             let id = state.next_waiter;
             state.next_waiter = id
                 .checked_add(1)
                 .ok_or(UploadReadAdmissionError::IdentityExhausted)?;
-            state
+            let (reply, receive) = oneshot::channel();
+            let connection = state
                 .connections
                 .get_mut(&peer)
-                .expect("connection checked above")
-                .queue
-                .push_back(Waiter { id, bytes, reply });
-            id
+                .expect("connection checked above");
+            let add_to_round_robin =
+                connection.queue.is_empty() && !connection.queued_in_round_robin;
+            connection.queue.push_back(Waiter { id, bytes, reply });
+            if add_to_round_robin {
+                connection.queued_in_round_robin = true;
+                queue_pending_peer(&mut state, peer);
+            }
+            (id, receive)
         };
         let mut waiter_guard = WaiterGuard {
             inner: Arc::downgrade(&self.inner),
@@ -228,6 +277,11 @@ impl UploadReadScheduler {
             .values()
             .map(|connection| connection.queue.len())
             .sum()
+    }
+
+    #[cfg(test)]
+    fn pending_connection_count(&self) -> usize {
+        lock_state(&self.inner).round_robin.len()
     }
 }
 
@@ -272,8 +326,18 @@ impl Drop for WaiterGuard {
             return;
         };
         let mut state = lock_state(&inner);
+        let mut remove_from_round_robin = false;
         if let Some(connection) = state.connections.get_mut(&self.peer) {
             connection.queue.retain(|waiter| waiter.id != id);
+            if connection.queue.is_empty() && connection.queued_in_round_robin {
+                connection.queued_in_round_robin = false;
+                remove_from_round_robin = true;
+            }
+        }
+        if remove_from_round_robin {
+            state
+                .round_robin
+                .retain(|candidate| *candidate != self.peer);
         }
         drop(state);
         pump(&inner);
@@ -293,24 +357,31 @@ fn pump(inner: &Arc<Inner>) {
                 break;
             };
             let global_bytes = state.in_flight_bytes;
-            let (closed, eligible) = {
-                let Some(connection) = state.connections.get(&peer) else {
+            let (closed, has_waiters, eligible, connection_order) = {
+                let Some(connection) = state.connections.get_mut(&peer) else {
                     continue;
                 };
+                connection.queued_in_round_robin = false;
                 (
                     connection.closed,
+                    !connection.queue.is_empty(),
                     !connection.closed
                         && connection.in_flight_jobs < inner.limits.max_in_flight_per_connection
                         && connection.queue.front().is_some_and(|waiter| {
                             global_bytes.saturating_add(waiter.bytes)
                                 <= inner.limits.max_in_flight_bytes
                         }),
+                    connection.order,
                 )
             };
-            if !closed {
-                state.round_robin.push_back(peer);
+            if closed || !has_waiters {
+                continue;
             }
             if !eligible {
+                if let Some(connection) = state.connections.get_mut(&peer) {
+                    connection.queued_in_round_robin = true;
+                }
+                state.round_robin.push_back(peer);
                 idle_turns += 1;
                 if idle_turns >= ring_len {
                     break;
@@ -329,10 +400,21 @@ fn pump(inner: &Arc<Inner>) {
                 connection.in_flight_jobs += 1;
                 connection.in_flight_bytes =
                     connection.in_flight_bytes.saturating_add(waiter.bytes);
+                if !connection.queue.is_empty() {
+                    connection.queued_in_round_robin = true;
+                }
                 waiter
             };
+            if state
+                .connections
+                .get(&peer)
+                .is_some_and(|connection| connection.queued_in_round_robin)
+            {
+                state.round_robin.push_back(peer);
+            }
             state.in_flight_jobs += 1;
             state.in_flight_bytes = state.in_flight_bytes.saturating_add(waiter.bytes);
+            state.last_served_order = Some(connection_order);
             idle_turns = 0;
             let permit = UploadReadPermit {
                 inner: Arc::downgrade(inner),
@@ -348,6 +430,35 @@ fn pump(inner: &Arc<Inner>) {
     // A failed oneshot send returns an RAII permit. Drop it after unlocking so
     // its accounting callback cannot recursively lock the scheduler.
     drop(failed_permits);
+}
+
+fn queue_pending_peer(state: &mut State, peer: RatePeerId) {
+    let order = state
+        .connections
+        .get(&peer)
+        .expect("queued peer remains registered")
+        .order;
+    let rank = pending_rank(order, state.last_served_order);
+    let insert_at = state.round_robin.iter().position(|queued_peer| {
+        let queued_order = state
+            .connections
+            .get(queued_peer)
+            .map(|connection| connection.order)
+            .unwrap_or(u64::MAX);
+        pending_rank(queued_order, state.last_served_order) > rank
+    });
+    match insert_at {
+        Some(index) => state.round_robin.insert(index, peer),
+        None => state.round_robin.push_back(peer),
+    }
+}
+
+fn pending_rank(order: u64, last_served_order: Option<u64>) -> u128 {
+    match last_served_order {
+        Some(last) if order > last => u128::from(order - last),
+        Some(last) => u128::from(u64::MAX - last) + u128::from(order) + 1,
+        None => u128::from(order),
+    }
 }
 
 fn lock_state(inner: &Inner) -> std::sync::MutexGuard<'_, State> {
@@ -374,6 +485,29 @@ mod tests {
 
     fn block(length: u32) -> BlockExtent {
         BlockExtent::new(0, 0, length)
+    }
+
+    #[tokio::test]
+    async fn uncontended_admission_ignores_registered_idle_peers() {
+        let scheduler = UploadReadScheduler::new(UploadReadLimits {
+            max_connections: 4,
+            max_in_flight_jobs: 1,
+            max_in_flight_bytes: 16 * 1024,
+            max_in_flight_per_connection: 1,
+            max_queued_per_connection: 1,
+        });
+        let first = peer(1, 0);
+        let second = peer(2, 0);
+        let third = peer(3, 0);
+        let _first_connection = scheduler.register_guard(first).unwrap();
+        let _second_connection = scheduler.register_guard(second).unwrap();
+        let _third_connection = scheduler.register_guard(third).unwrap();
+        assert_eq!(scheduler.pending_connection_count(), 0);
+
+        let permit = scheduler.acquire(first, block(16 * 1024)).await.unwrap();
+        assert_eq!(scheduler.queued(), 0);
+        assert_eq!(scheduler.pending_connection_count(), 0);
+        drop(permit);
     }
 
     #[tokio::test]

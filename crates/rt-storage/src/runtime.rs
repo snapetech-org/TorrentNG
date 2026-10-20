@@ -21,7 +21,8 @@ use std::time::Duration;
 use once_cell::sync::Lazy;
 
 use crate::backend::{
-    BackendKind, BackendRequest, DiskBackend, FixedBufferStrategy, SelectedDiskBackend,
+    BackendJobOwnership, BackendKind, BackendRequest, DiskBackend, FixedBufferStrategy,
+    SelectedDiskBackend,
 };
 use crate::error::StorageError;
 use crate::frame::{global_frame_pool, Frame, FramePool};
@@ -201,15 +202,20 @@ impl StorageRuntime {
         len: usize,
     ) -> Result<Frame, StorageError> {
         let file = self.open_read(path).await?;
-        let frame = self
-            .frames
-            .try_acquire(len)
-            .ok_or_else(|| StorageError::QueueFull {
-                mount: "frame-pool".to_string(),
-            })?;
+        let frame =
+            self.frames
+                .try_acquire_for_overwrite(len)
+                .ok_or_else(|| StorageError::QueueFull {
+                    mount: "frame-pool".to_string(),
+                })?;
         match self
             .backend
-            .pread_leased(file.leased_handle(), frame, offset)
+            .pread_leased(
+                file.leased_handle(),
+                frame,
+                offset,
+                BackendJobOwnership::untracked(),
+            )
             .await
         {
             Ok(Ok(frame)) => Ok(frame),
@@ -231,7 +237,12 @@ impl StorageRuntime {
         let len = data.len();
         match self
             .backend
-            .pwrite_leased(file.leased_handle(), data, offset)
+            .pwrite_leased(
+                file.leased_handle(),
+                data,
+                offset,
+                BackendJobOwnership::untracked(),
+            )
             .await
         {
             Ok(Ok(())) => Ok(()),
