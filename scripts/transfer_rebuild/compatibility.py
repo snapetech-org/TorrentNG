@@ -143,8 +143,13 @@ def _multipart(fields: list[tuple[str, str | None, bytes, str]]) -> tuple[bytes,
     return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
 
 
-def _poll(read: Callable[[], Any], ready: Callable[[Any], bool], label: str) -> Any:
-    deadline = time.monotonic() + POLL_TIMEOUT_SECONDS
+def _poll(
+    read: Callable[[], Any],
+    ready: Callable[[Any], bool],
+    label: str,
+    timeout_seconds: float = POLL_TIMEOUT_SECONDS,
+) -> Any:
+    deadline = time.monotonic() + timeout_seconds
     last: Any = None
     last_transient_error: AdapterError | None = None
     while time.monotonic() < deadline:
@@ -167,6 +172,43 @@ def _poll(read: Callable[[], Any], ready: Callable[[Any], bool], label: str) -> 
             f"timed out waiting for {label}; last transient response: {last_transient_error}"
         )
     raise PreflightError(f"timed out waiting for {label}")
+
+
+def _qbit_add_pending(response: str, expected_info_hash: str) -> bool:
+    """Validate legacy and current qBittorrent add responses.
+
+    qBittorrent 5.2 / WebAPI 2.14 returns a JSON acceptance summary instead
+    of the legacy ``Ok.`` body. A pending add is accepted by the API but may
+    take longer to appear in ``torrents/info`` than a synchronous add.
+    """
+    stripped = response.strip()
+    if stripped.lower() in {"ok", "ok."}:
+        return False
+    try:
+        payload = _strict_json(stripped.encode("utf-8"), "qBittorrent add response")
+    except PreflightError as error:
+        raise PreflightError(f"qBittorrent-compatible add returned {stripped[:100]!r}") from error
+    if not isinstance(payload, dict):
+        raise PreflightError("qBittorrent-compatible add returned an invalid response object")
+
+    counts = [payload.get(name) for name in ("success_count", "pending_count", "failure_count")]
+    if any(type(value) is not int or value < 0 for value in counts):
+        raise PreflightError("qBittorrent-compatible add returned invalid acceptance counts")
+    success_count, pending_count, failure_count = counts
+    added_ids = payload.get("added_torrent_ids")
+    if (
+        failure_count != 0
+        or success_count + pending_count != 1
+        or not isinstance(added_ids, list)
+        or len(added_ids) != 1
+        or not isinstance(added_ids[0], str)
+        or added_ids[0].lower() != expected_info_hash.lower()
+    ):
+        raise PreflightError(
+            "qBittorrent-compatible add did not accept the expected probe torrent "
+            f"(success={success_count}, pending={pending_count}, failed={failure_count})"
+        )
+    return pending_count == 1
 
 
 def _run_mutation(
@@ -251,6 +293,7 @@ def _qbit_like_preflight(
     info_hash: str,
 ) -> dict[str, Any]:
     info_path = f"{api_prefix}/torrents/info?{urllib.parse.urlencode({'hashes': info_hash})}"
+    pending_add = False
 
     def row() -> dict[str, Any] | None:
         values = client.json(info_path)
@@ -269,6 +312,7 @@ def _qbit_like_preflight(
         raise PreflightError("probe info hash already exists; refusing to alter a pre-existing torrent")
 
     def add() -> str:
+        nonlocal pending_add
         body, content_type = _multipart(
             [
                 ("torrents", f"{torrent_name}.torrent", metainfo, "application/x-bittorrent"),
@@ -283,8 +327,7 @@ def _qbit_like_preflight(
             raw_body=body,
             content_type=content_type,
         ).decode("utf-8", "replace").strip()
-        if response.lower() not in {"ok", "ok."}:
-            raise PreflightError(f"qBittorrent-compatible add returned {response[:100]!r}")
+        pending_add = _qbit_add_pending(response, info_hash)
         return info_hash
 
     def verify(_handle: str) -> bool:
@@ -293,6 +336,7 @@ def _qbit_like_preflight(
             lambda value: value is not None
             and str(value.get("state", "")).lower().startswith(("paused", "stopped")),
             "probe torrent to be added paused",
+            timeout_seconds=POLL_TIMEOUT_SECONDS * (3 if pending_add else 1),
         )
         return current is not None
 

@@ -12,12 +12,73 @@ TOOLS = Path(__file__).parent / "transfer_rebuild"
 sys.path.insert(0, str(TOOLS))
 
 from adapters import AdapterError  # noqa: E402
-from compatibility import _poll, _probe_files, _probe_payload_bytes, _run_mutation  # noqa: E402
+from compatibility import (  # noqa: E402
+    PreflightError,
+    _poll,
+    _probe_files,
+    _probe_payload_bytes,
+    _qbit_add_pending,
+    _run_mutation,
+)
 from fixtures import load_fixture_profile_document  # noqa: E402
 from validate_artifact import _settings_digest, validate  # noqa: E402
 
 
 class CompatibilityPreflightTests(unittest.TestCase):
+    def test_qbittorrent_add_accepts_legacy_and_json_acceptance_responses(self) -> None:
+        info_hash = "a" * 40
+        self.assertFalse(_qbit_add_pending("Ok.", info_hash))
+        self.assertFalse(
+            _qbit_add_pending(
+                json.dumps(
+                    {
+                        "success_count": 1,
+                        "pending_count": 0,
+                        "failure_count": 0,
+                        "added_torrent_ids": [info_hash],
+                    }
+                ),
+                info_hash,
+            )
+        )
+        self.assertTrue(
+            _qbit_add_pending(
+                json.dumps(
+                    {
+                        "success_count": 0,
+                        "pending_count": 1,
+                        "failure_count": 0,
+                        "added_torrent_ids": [info_hash.upper()],
+                    }
+                ),
+                info_hash,
+            )
+        )
+
+    def test_qbittorrent_add_rejects_unaccepted_or_mismatched_json_response(self) -> None:
+        info_hash = "a" * 40
+        for response in (
+            "not-json",
+            json.dumps(
+                {
+                    "success_count": 0,
+                    "pending_count": 0,
+                    "failure_count": 1,
+                    "added_torrent_ids": [],
+                }
+            ),
+            json.dumps(
+                {
+                    "success_count": 1,
+                    "pending_count": 0,
+                    "failure_count": 0,
+                    "added_torrent_ids": ["b" * 40],
+                }
+            ),
+        ):
+            with self.subTest(response=response), self.assertRaises(PreflightError):
+                _qbit_add_pending(response, info_hash)
+
     def test_poll_retries_transient_http_503_until_state_converges(self) -> None:
         calls = 0
 
