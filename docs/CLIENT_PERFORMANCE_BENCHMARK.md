@@ -3,26 +3,49 @@
 This benchmark compares TorrentNG's native engine with qBittorrent,
 Transmission, Deluge, and rTorrent using an official Debian amd64 netinst
 torrent. It records public download behavior and a separate controlled seed
-transfer for each client. The latest source-bound five-client resource run is
-[`client-performance-benchmark-7545fc0-20261020-cache-disabled.md`](../certification/reports/client-performance-benchmark-7545fc0-20261020-cache-disabled.md),
-built from commit `7545fc0`. All five controlled seeds passed SHA-256 checks.
-At a shared 4 MiB/s receiver cap, TorrentNG used 3.74 CPU-s/GiB, above
-qBittorrent (2.30), Transmission (1.47), Deluge (2.40), and rTorrent (0.66).
-Its 7.7 MiB anonymous peak was lower than qBittorrent (15.6), Transmission
-(24.4), and Deluge (85.9), but higher than rTorrent (1.9). Block reads were
-close at 1,016 MiB/GiB; TorrentNG writes were 0.61 MiB/GiB, versus 0 for
-qBittorrent, Transmission, and rTorrent and 0.30 for Deluge. This one
-sequential pass is exploratory. TorrentNG and Transmission did not finish the
-60-second public-swarm phase, so those rows are not download rankings.
+transfer for each client. The latest five-client resource run uses commit
+`3191f56e` and is recorded in
+[`client-performance-benchmark-3191f56e-20261020-upload-accounting-cache-disabled.md`](../certification/reports/client-performance-benchmark-3191f56e-20261020-upload-accounting-cache-disabled.md).
+All five controlled seeds passed SHA-256 checks. At a shared 4 MiB/s receiver
+cap, TorrentNG used 3.84 CPU-s/GiB, above qBittorrent (2.33), Transmission
+(1.47), Deluge (2.54), and rTorrent (0.72). Its cgroup anonymous peak was
+13.0 MiB; the same profile's TorrentNG process anonymous peak was 6.8 MiB,
+which does not reconcile with the cgroup reading. The other clients' cgroup
+anonymous peaks were 20.6, 23.3, 91.1, and 1.7 MiB, respectively, so the
+TorrentNG memory row needs attribution before using it to rank memory use.
+Block reads were 1,031.77 MiB/GiB and writes 0.67 MiB/GiB. This is one
+sequential pass on a loaded host. TorrentNG, Transmission, and Deluge did not
+finish the 60-second public-swarm phase, so those rows are not download
+rankings.
 
-The same source was then run twice more with the peer-read cache set to zero.
-TorrentNG's CPU readings were 3.98 and 4.52 CPU-s/GiB and anonymous peaks were
-7.6 and 8.4 MiB; block reads were 1,016.66 and 2,092.75 MiB/GiB. The doubled
-read result is unexplained and keeps this cache setting from being accepted as
-the default. Two earlier 8 MiB-cache runs measured 4.46 and 4.75 CPU-s/GiB,
-17.4 MiB anonymous peaks, and 1,016.66 and 1,016.20 MiB/GiB reads. Those are
-cross-run comparisons on a shared desktop, not a causal cache benchmark. The
-raw reports, samples, and memory profiles are checked in beside each report.
+The `3191f56e` accounting-batching candidate then had two TorrentNG-only
+cache-disabled repeats:
+[`repeat 1`](../certification/reports/client-performance-benchmark-3191f56e-20261020-upload-accounting-repeat-1-cache-disabled.md)
+and
+[`repeat 2`](../certification/reports/client-performance-benchmark-3191f56e-20261020-upload-accounting-repeat-2-cache-disabled.md).
+All three candidate seed transfers passed hash verification. Their CPU
+readings were 3.84, 3.72, and 4.53 CPU-s/GiB (median 3.84), versus 3.74,
+3.98, and 4.52 (median 3.98) for the three `7545fc0` cache-disabled runs.
+The ranges overlap, so the 3.5% median difference is not a demonstrated CPU
+gain. Median seed goodput was effectively unchanged at 3.82 versus 3.81
+MiB/s. Median block reads changed from 1,016.66 to 1,031.77 MiB/GiB (+1.5%),
+and writes from 0.54 to 0.52 MiB/GiB; this is no clear I/O improvement.
+Process anonymous peak medians were 6.84 MiB for the candidate and 7.73 MiB
+for the baseline, while cgroup anonymous peak medians moved from 7.73 to
+12.91 MiB. The cgroup/process gap is unresolved, so there is no supported
+memory-efficiency claim. The candidate five-client pass also began under
+higher host load than the baseline pass. These results keep batching as an
+exploratory candidate rather than a proven efficiency win.
+
+The prior `7545fc0` five-client report and its two cache-disabled repeats
+remain the baseline. That source measured 3.74 CPU-s/GiB in the full pass,
+then 3.98 and 4.52 in the TNG-only repeats; the second repeat also recorded
+2,092.75 MiB/GiB block reads, an unexplained outlier. The zero-byte cache is
+not accepted as a default based on these trials. Two earlier 8 MiB-cache runs
+measured 4.46 and 4.75 CPU-s/GiB, 17.4 MiB anonymous peaks, and 1,016.66 and
+1,016.20 MiB/GiB reads. All these runs are exploratory cross-run comparisons
+on a shared desktop, not a randomized qualification scorecard. Reports,
+samples, and memory profiles are checked in beside each report.
 
 The [slskR idle reports](https://github.com/snapetech-org/slskR/blob/2207a92/benchmarks/artifacts/20261012-idle-container-slskr-slskd.md)
 and [connected-idle report](https://github.com/snapetech-org/slskR/blob/2207a92/benchmarks/artifacts/20261012-live-soulseek-idle.md)
@@ -35,16 +58,18 @@ they are not direct optimizations for TorrentNG's piece-send loop. The
 is a useful model for keeping each workload and claim explicit.
 
 TorrentNG's 2026-10-20 seed profile attributed 13.7% of sampled cycles to
-SHA-1 compression and 8.9% to `SyncWaker` notification/registration. We are
-testing a transfer-path reduction in accounting work: successful piece sends
-add their exact byte count to a peer-shared counter, then notify the torrent
-actor at 64 KiB or after 25 ms. With a seed-ratio or idle limit active, the
-notification threshold falls to one block so limit checks remain per-block.
-The pending total and threshold share one per-peer allocation, and the flush
-timer stays on the peer task's stack. Peer removal and shutdown wait for the
-sender to stop, then drain any remaining bytes. This is a candidate, not a
-demonstrated speedup; the next report will compare matched hash-verified seeds
-on the same fixture and host before making any efficiency claim.
+SHA-1 compression and 8.9% to `SyncWaker` notification/registration. The
+accounting-batching candidate reduces actor notifications: successful piece
+sends add their exact byte count to a peer-shared counter, then notify the
+torrent actor at 64 KiB or after 25 ms. With a seed-ratio or idle limit active,
+the threshold falls to one block so limit checks remain per-block. The pending
+total and threshold share one per-peer allocation, and the flush timer stays
+on the peer task's stack. Peer removal and shutdown wait for the sender to
+stop, then drain any remaining bytes. The three candidate seed runs show no
+clear CPU or I/O improvement over the three cache-disabled baseline runs.
+Process anonymous memory is lower, but cgroup anonymous memory rises and is
+not reconciled with process samples. Keep this as an exploratory candidate;
+the reports do not establish an efficiency gain.
 
 Earlier evidence remains useful with its scope. The
 [October 14 comparison](../certification/reports/native-memory-optimization-20261014-agentvm.md)

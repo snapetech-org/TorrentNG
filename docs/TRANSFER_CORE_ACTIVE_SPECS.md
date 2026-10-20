@@ -4788,8 +4788,8 @@ the production default policy.
   a few percent in the download sample. These are two diagnostic transfers,
   not comparative or acceptance results; no code optimization has been
   credited from them yet.
-- **Upload-accounting batching candidate (2026-10-20; bulk validation and
-  matched measurement pending):** each successful piece send now records bytes
+- **Upload-accounting batching candidate (2026-10-20; measured, exploratory):**
+  each successful piece send now records bytes
   into a peer-shared atomic counter. The peer loop notifies the torrent actor
   after 64 KiB or 25 ms, reducing ordinary seed accounting from one event and
   registry update per block to bounded batches. A configured seed-ratio or
@@ -4804,8 +4804,20 @@ the production default policy.
   covers batched totals, disconnect draining, and ratio enforcement. These
   regressions pass in `cargo test --workspace --all-targets --locked` on Rust
   1.88 and 1.94, with strict workspace Clippy on both toolchains. All 329
-  Python tests and 157 subtests also pass. The matched seed A/B is still
-  pending; no CPU, memory, or I/O improvement is claimed until it measures one.
+  Python tests and 157 subtests also pass. The five-client cache-disabled run
+  and two TorrentNG-only repeats all passed the controlled seed hash. Candidate
+  CPU readings were 3.84, 3.72, and 4.53 CPU-s/GiB (median 3.84), compared with
+  3.74, 3.98, and 4.52 (median 3.98) across the three `7545fc0` baseline runs.
+  Their ranges overlap; the small median difference does not establish a CPU
+  gain. Median seed goodput was 3.82 versus 3.81 MiB/s. Median block reads were
+  1,031.77 versus 1,016.66 MiB/GiB, and writes 0.52 versus 0.54 MiB/GiB, with
+  no clear I/O change. Process anonymous peak medians were 6.84 versus 7.73 MiB,
+  while cgroup anonymous peak medians were 12.91 versus 7.73 MiB; the
+  candidate cgroup reading does not reconcile with the process profile, so no
+  memory-efficiency gain is claimed. TorrentNG's public phase timed out in all
+  three candidate runs and is excluded. Full reports, samples, and profiles
+  are `certification/reports/client-performance-benchmark-3191f56e-20261020-upload-accounting-cache-disabled.*`
+  and the adjacent `client-performance-benchmark-3191f56e-20261020-upload-accounting-repeat-{1,2}-cache-disabled.*` files.
 - **Five-client resource pass (2026-10-20; exploratory):** exact TorrentNG
   source `588cfd760388ea9bea6b068de7dd99410c6eb7d6` was run against pinned
   qBittorrent, Transmission, Deluge, and rTorrent containers on `kspld0`, using
