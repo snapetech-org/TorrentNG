@@ -126,11 +126,15 @@ every client.
 
 ## Run a comparison
 
-Transfer mode needs Python 3, Docker Compose v2, `aria2c`, `findmnt`, and Git.
-Idle mode needs Python 3, Docker Compose v2, `findmnt`, and Git. Both modes
-build TorrentNG from the current checkout unless a matching image is selected,
-and use reference-client images pinned by digest in
-`deploy/interop/compose.yml`.
+Transfer mode needs Python 3, Docker Compose v2, Docker Buildx, `aria2c`,
+`findmnt`, and Git. Idle mode needs Python 3, Docker Compose v2, Docker Buildx,
+`findmnt`, and Git. Both modes build TorrentNG from the current checkout
+unless a matching image is selected, and use reference-client images pinned
+by digest in `deploy/interop/compose.yml`.
+
+The runner builds with a per-run Docker Buildx builder and removes that builder
+and its cache during cleanup. It does not prune or modify the shared builder's
+cache.
 
 ```sh
 python3 scripts/client_performance_benchmark.py
@@ -154,8 +158,9 @@ per minute instead of per GiB.
 The default run tests all five clients in sequence. Each public download uses
 the live Debian swarm. Each seed test uses an isolated tracker and one common
 qBittorrent leecher. The report and CSV are written under
-`certification/reports/`; Docker containers, volumes, benchmark images, and
-the task's scratch directory are removed when the run exits.
+`certification/reports/`; Docker containers, volumes, the benchmark image and
+its task-scoped BuildKit cache, and the task's scratch directory are removed
+when the run exits.
 
 ## Storage options
 

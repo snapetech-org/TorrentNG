@@ -6048,7 +6048,7 @@ the presence of a release bundle alone.
 - **External evidence still required:** independent reviewer, reproducible
   release artifact, and complete-catalog mixed-load report.
 
-## Client idle-profile harness extension — implementation pending bulk validation
+## Client idle-profile harness extension — implementation; host qualification pending
 
 The whole-client comparison script now has `TNG_CLIENT_BENCH_MODE=idle`. It
 runs three no-torrent profiles per pinned client: all Docker network endpoints
@@ -6069,9 +6069,15 @@ setting or byte count. The isolated profile is a disconnected baseline; the
 attached DHT profile does not reproduce slskR's Soulseek-server-connected
 workload.
 
+When the benchmark builds TorrentNG, it uses a per-run Docker Buildx
+`docker-container` builder. Cleanup removes that builder and its cache without
+pruning the host's shared builder cache.
+
 Regression sources cover non-loopback network-counter parsing, per-minute idle
 accounting, process-tree RSS/PSS sampling and aggregation, suppression of
 TorrentNG metrics requests during samples, and TorrentNG/rTorrent DHT
-configuration overrides with TorrentNG runtime PEX disable/readback. Bulk
-validation and a clean, current-source run are
-pending; this is not yet an idle efficiency result or closure of PERF-102/PERF-110.
+configuration overrides with TorrentNG runtime PEX disable/readback. All 348
+discovered Python tests, Docker Compose configuration and builder-option checks,
+and formatting passed on the current worktree. A clean current-source idle run
+and repeated host qualification remain pending; this is not yet an idle
+efficiency result or closure of PERF-102/PERF-110.

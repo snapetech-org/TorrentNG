@@ -14,6 +14,76 @@ import client_performance_benchmark as benchmark
 
 
 class CgroupCounterTests(unittest.TestCase):
+    def test_benchmark_build_uses_a_task_scoped_buildkit_builder(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance.project = "tngbench20261020t000000z"
+        instance.env = {}
+        instance.buildx_builder = None
+
+        with mock.patch.object(benchmark, "run_command", return_value=("", 0)) as command:
+            builder = instance._create_task_buildx_builder()
+
+        self.assertEqual(instance.buildx_builder, builder)
+        self.assertIn("-build-", builder)
+        command.assert_called_once_with(
+            ["docker", "buildx", "create", "--driver", "docker-container",
+             "--name", builder],
+            env={}, quiet=True, timeout=120,
+        )
+
+    def test_failed_task_builder_creation_does_not_claim_existing_builder(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance.project = "tngbench20261020t000000z"
+        instance.env = {}
+        instance.buildx_builder = None
+
+        with mock.patch.object(
+            benchmark, "run_command", side_effect=RuntimeError("name already exists"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "name already exists"):
+                instance._create_task_buildx_builder()
+
+        self.assertIsNone(instance.buildx_builder)
+
+    def test_torrentng_build_selects_the_task_scoped_builder(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance.image = "torrentng/torrentngd:benchmark-test"
+        instance._create_task_buildx_builder = mock.Mock(return_value="task-builder")
+        instance.compose = mock.Mock()
+        instance._assert_image_labels = mock.Mock()
+
+        instance._build_torrentng_image()
+
+        instance.compose.assert_called_once_with(
+            "build", "--builder", "task-builder", "torrentngd", timeout=3600,
+        )
+        instance._assert_image_labels.assert_called_once_with(instance.image)
+
+    def test_task_builder_cleanup_removes_only_its_builder_and_cache(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance.env = {}
+        instance.buildx_builder = "tngbench-build-1234"
+
+        with mock.patch.object(benchmark, "run_command", return_value=("", 0)) as command:
+            status = instance._remove_task_buildx_builder()
+
+        self.assertEqual(status, "task-scoped BuildKit builder and cache removed")
+        self.assertIsNone(instance.buildx_builder)
+        command.assert_called_once_with(
+            ["docker", "buildx", "rm", "--force", "tngbench-build-1234"],
+            env={}, check=False, quiet=True, timeout=120,
+        )
+
+    def test_task_builder_cleanup_failure_remains_visible(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance.env = {}
+        instance.buildx_builder = "tngbench-build-1234"
+        with mock.patch.object(benchmark, "run_command", return_value=("error", 1)):
+            status = instance._remove_task_buildx_builder()
+
+        self.assertIn("cleanup failed", status)
+        self.assertEqual(instance.buildx_builder, "tngbench-build-1234")
+
     def test_idle_profile_schedule_is_seeded_and_balances_all_clients(self) -> None:
         first = object.__new__(benchmark.Benchmark)
         first.idle_order_seed = 12345

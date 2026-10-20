@@ -435,6 +435,7 @@ class Benchmark:
                 )
             self.malloc_conf = None
         self.compose_override_path = None
+        self.buildx_builder = None
         self.env = os.environ.copy()
         self.ports = {}
         used_ports = set()
@@ -2601,6 +2602,40 @@ class Benchmark:
                 f"{actual!r} != {expected!r}"
             )
 
+    def _create_task_buildx_builder(self):
+        """Keep benchmark build cache inside a removable task-scoped builder."""
+        if self.buildx_builder is not None:
+            raise RuntimeError("benchmark BuildKit builder already exists")
+        builder = f"{self.project}-build-{os.getpid()}"
+        run_command(
+            [
+                "docker", "buildx", "create", "--driver", "docker-container",
+                "--name", builder,
+            ],
+            env=self.env, quiet=True, timeout=120,
+        )
+        self.buildx_builder = builder
+        return builder
+
+    def _remove_task_buildx_builder(self):
+        """Remove the task builder and its BuildKit cache without pruning shared state."""
+        if self.buildx_builder is None:
+            return None
+        builder = self.buildx_builder
+        _, code = run_command(
+            ["docker", "buildx", "rm", "--force", builder],
+            env=self.env, check=False, quiet=True, timeout=120,
+        )
+        if code:
+            return f"task-scoped BuildKit builder/cache cleanup failed for {builder}"
+        self.buildx_builder = None
+        return "task-scoped BuildKit builder and cache removed"
+
+    def _build_torrentng_image(self):
+        builder = self._create_task_buildx_builder()
+        self.compose("build", "--builder", builder, "torrentngd", timeout=3600)
+        self._assert_image_labels(self.image)
+
     def _use_prebuilt_image(self):
         self._assert_image_labels(self.prebuilt_image)
         run_command(["docker", "image", "tag", self.prebuilt_image, self.image], env=self.env)
@@ -3003,8 +3038,7 @@ class Benchmark:
             if self.skip_build:
                 self._use_prebuilt_image()
             else:
-                self.compose("build", "torrentngd", timeout=3600)
-                self._assert_image_labels(self.image)
+                self._build_torrentng_image()
         if self.mode == "idle":
             return self._run_idle_profiles()
         tracker_ip = self._start_tracker()
@@ -3066,10 +3100,22 @@ class Benchmark:
             self.compose("down", "--volumes", "--remove-orphans",
                          check=False, quiet=True, timeout=180)
             self.cleanup_status = "isolated Compose project, containers, and named volumes removed"
-            run_command(["docker", "image", "rm", self.image], env=self.env,
-                        check=False, quiet=True, timeout=60)
+            _, image_code = run_command(
+                ["docker", "image", "rm", self.image], env=self.env,
+                check=False, quiet=True, timeout=60,
+            )
+            if image_code:
+                self.cleanup_status += "; benchmark image removal failed"
         except Exception as error:
             self.cleanup_status = f"cleanup error: {type(error).__name__}: {error}"
+        try:
+            builder_status = self._remove_task_buildx_builder()
+            if builder_status:
+                self.cleanup_status += f"; {builder_status}"
+        except Exception as error:
+            self.cleanup_status += (
+                f"; task-scoped BuildKit cleanup error: {type(error).__name__}: {error}"
+            )
         try:
             if self.workdir.exists() and not self.workdir.is_symlink():
                 shutil.rmtree(self.workdir)
@@ -3118,7 +3164,8 @@ controlled private seed transfer for TorrentNG, qBittorrent, Transmission,
 Deluge, and rTorrent. Set TNG_CLIENT_BENCH_MODE=idle to run no-torrent
 network-isolated, attached/DHT-off, and attached/DHT-on profiles. Docker
 Compose builds the current TorrentNG checkout unless a revision-matched
-prebuilt image is selected. Reference client images are pinned by digest in
+prebuilt image is selected, using a per-run Buildx builder whose cache is
+removed during cleanup. Reference client images are pinned by digest in
 deploy/interop/compose.yml.
 
 Environment:
@@ -3155,7 +3202,8 @@ Environment:
   TNG_CLIENT_BENCH_PEER_BUFFER_CAP_MB=16
 
 The report and raw CSV remain in the repository; task scratch, the isolated
-Compose project, its volumes, and benchmark-tagged images are removed on exit.""")
+Compose project, its volumes, benchmark-tagged images, and task-scoped
+BuildKit cache are removed on exit.""")
         return 0
     bench = Benchmark()
     status = 1
