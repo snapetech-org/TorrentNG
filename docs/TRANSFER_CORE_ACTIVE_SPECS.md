@@ -4848,6 +4848,14 @@ the production default policy.
   three candidate runs and is excluded. Full reports, samples, and profiles
   are `certification/reports/client-performance-benchmark-3191f56e-20261020-upload-accounting-cache-disabled.*`
   and the adjacent `client-performance-benchmark-3191f56e-20261020-upload-accounting-repeat-{1,2}-cache-disabled.*` files.
+  On runtime `af99733fd462532488a0eda208743fdb1b807cb6`, the pending-byte update uses a saturating compare-
+  exchange loop instead of deprecated `AtomicU64::fetch_update`; a regression
+  checks concurrent additions and saturation at `u64::MAX`. The exact-source
+  workspace passed 2,314/0/12 on Rust 1.94.0 and 1.88.0, strict workspace
+  Clippy passed on stable 1.99.1 and both supported toolchains, Python passed
+  329 tests and 157 subtests, formatting passed, and release `rt-engine`
+  passed 743/743. This implementation-only correction has no new performance
+  measurement; the exploratory results above remain attached to `3191f56e`.
 - **Five-client resource pass (2026-10-20; exploratory):** exact TorrentNG
   source `588cfd760388ea9bea6b068de7dd99410c6eb7d6` was run against pinned
   qBittorrent, Transmission, Deluge, and rTorrent containers on `kspld0`, using

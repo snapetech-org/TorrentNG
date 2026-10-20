@@ -42,13 +42,14 @@ runnable ignored cases passed. Strict Clippy, formatting, the trusted
 bubblewrap contract task (67/67), and runner-policy suite (4/4) passed.
 
 The `354ad504` run predates later production changes. On runtime source
-`3191f56e`, the fresh post-reconciliation bulk pass had 2,314 passed, 0 failed,
+`af99733fd462532488a0eda208743fdb1b807cb6`, the fresh post-reconciliation bulk pass had 2,314 passed, 0 failed,
 and 12 ignored results across 37 workspace groups on both Rust 1.94.0 and
-1.88.0. Strict Clippy passed on both; Python passed 329 tests plus 157
-subtests; release `rt-engine` passed 742 tests; all 11 runnable ignored
-diagnostics passed. The PERF-110 paired scorecards still use source `01a3464`
-and do not qualify that newer runtime for matched performance. The exact test
-and scale outputs are summarized in
+1.88.0. Strict Clippy passed on stable 1.99.1 and both supported toolchains;
+Python passed 329 tests plus 157 subtests; formatting passed; release
+`rt-engine` passed 743 tests. The 11 runnable ignored diagnostics passed on
+the parent source before the atomic-only compatibility fix. The PERF-110
+paired scorecards still use source `01a3464` and do not qualify this newer
+runtime for matched performance. The exact test and scale outputs are summarized in
 [`TRANSFER_CORE_ACTIVE_SPECS.md`](../../docs/TRANSFER_CORE_ACTIVE_SPECS.md).
 
 The standalone Rust 1.98.1 urtorrent runner passed all six tests and its help

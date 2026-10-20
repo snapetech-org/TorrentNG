@@ -48,13 +48,30 @@ on a shared desktop, not a randomized qualification scorecard. Reports,
 samples, and memory profiles are checked in beside each report.
 
 The [slskR idle reports](https://github.com/snapetech-org/slskR/blob/2207a92/benchmarks/artifacts/20261012-idle-container-slskr-slskd.md)
-and [connected-idle report](https://github.com/snapetech-org/slskR/blob/2207a92/benchmarks/artifacts/20261012-live-soulseek-idle.md)
-are useful examples of scoped measurement, but they cover idle sessions and
-do not predict active-transfer CPU, memory, or I/O. Its [share-cache allocation
-benchmark](https://github.com/snapetech-org/slskR/blob/2207a92/benchmarks/artifacts/20260929-rf038-share-cache-allocations.md)
-and incremental database updates target serialization and persistence paths;
-they are not direct optimizations for TorrentNG's piece-send loop. The
-[slskR performance analysis](https://github.com/snapetech-org/slskR/blob/2207a92/docs/performance-analysis.md)
+measured about 16x lower CPU and 85–89% lower process RSS in a disconnected
+comparison with slskd; its [connected-idle report](https://github.com/snapetech-org/slskR/blob/2207a92/benchmarks/artifacts/20261012-live-soulseek-idle.md)
+measured about 30x lower CPU. Those runs had no transfers, shares, searches,
+or UI/API traffic. They show an idle-footprint result for the pinned images
+and setups, not the cause of the gap and not active-transfer efficiency.
+TorrentNG's current cross-client table has no matching disconnected- or
+connected-idle run. Add those as separate workloads before drawing an idle
+comparison for TorrentNG.
+
+slskR also measured a share-cache serializer that wrote output directly:
+50,000 entries used 20 allocations versus 408,828 for its prior serializer,
+with identical output. That allocation count is a path-specific diagnostic,
+not a general throughput claim. Its incremental database updates avoid
+rewriting a full projection for each search result, and query-plan checks
+found indexes that helped particular pages plus one redundant index to remove.
+These are useful techniques for persistence and serialization paths, not
+direct replacements for TorrentNG's piece-send loop. TorrentNG already has
+incremental registry deltas, copy-on-write API projection chunks, and native
+snapshot probes from 1k to 100k rows; future work should compare allocation
+counts and query plans on the corresponding TorrentNG paths before changing
+them. The current transfer candidate applies the same measurement discipline:
+upload-accounting batching was retained as an exploratory code change, but its
+matched cache-disabled seed runs do not establish CPU, memory, or I/O gains.
+The [slskR performance analysis](https://github.com/snapetech-org/slskR/blob/2207a92/docs/performance-analysis.md)
 is a useful model for keeping each workload and claim explicit.
 
 TorrentNG's 2026-10-20 seed profile attributed 13.7% of sampled cycles to

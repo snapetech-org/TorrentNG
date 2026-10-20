@@ -491,14 +491,16 @@ and validated 40/40 transfers. The workspace, Python, ignored-scale, and
 Clippy bulk pass had not yet been rerun then. Later bulk results are recorded
 in the current checkpoint below; results at `354ad504` remain historical.
 
-### Current implementation checkpoint (runtime `3191f56e`, 2026-10-20)
+### Current implementation checkpoint (runtime `af99733f`, 2026-10-20)
 
-The current runtime source is `3191f56e43300003e969541be4b2db01f6b13161`.
-The prior main revision `95d9bde602fa2ba50439cb3aaa3bf8167f3f816c` added
-benchmark reports and documentation only; no runtime source changed after
-`3191f56e`. This checkpoint reconciles its stale status docs against all 63
-package rows, active ticket contracts, current actors, storage scheduler, rollback
-route, and performance harness. All 51 `wip` tickets have written active
+The current runtime source is
+`af99733fd462532488a0eda208743fdb1b807cb6`.
+Its parent runtime `3191f56e` introduced upload-accounting batches. The current
+commit replaces the deprecated `AtomicU64::fetch_update` call in that path
+with a saturating compare-exchange loop; batching thresholds and accounting
+semantics are unchanged. This checkpoint reconciles its stale status docs
+against all 63 package rows, active ticket contracts, current actors, storage
+scheduler, rollback route, and performance harness. All 51 `wip` tickets have written active
 specs. The audited runtime and harness paths contain no `TODO`, `FIXME`,
 `todo!()`, or `unimplemented!()` placeholders, and the review found no missing
 repository-owned architecture boundary.
@@ -511,17 +513,18 @@ and protected-hardware runs, long soak and reversible canary, independent
 review, and release evidence. Source coverage and local regression passes do
 not close those gates.
 
-On exact runtime source `3191f56e`, the full locked workspace suite and strict
-workspace Clippy passed on Rust 1.94.0 and 1.88.0. The repository Python
-suite also passed (329 tests and 157 subtests). The seeded transfer simulator
-was included in the Rust engine suite. These results and the source-bound
-resource measurements are summarized in
-[`TRANSFER_CORE_ACTIVE_SPECS.md`](TRANSFER_CORE_ACTIVE_SPECS.md). After this
-documentation reconciliation, both locked workspace suites passed with
-2,314/0/12 results; strict Clippy, Python tests, the release engine suite, and
-all 11 runnable ignored diagnostics passed. This closes the local bulk
-validation step, while the listed external and device qualification gates
-remain open.
+On exact runtime source `af99733f`, the full locked workspace suites passed
+with 2,314 passed, 0 failed, and 12 ignored on both Rust 1.94.0 and 1.88.0.
+Strict workspace Clippy passed on current stable Rust 1.99.1 and on 1.94.0 and
+1.88.0; the 1.99.1 run covers the hosted deprecation that prompted the
+compare-exchange fix. Python passed 329 tests and 157 subtests, formatting
+passed, and release `rt-engine` passed all 743 tests, including the seeded
+simulator and the new concurrent/saturating atomic regression. The 11 runnable
+ignored diagnostics also passed before this atomic-only compatibility fix.
+These results and the source-bound resource measurements are summarized in
+[`TRANSFER_CORE_ACTIVE_SPECS.md`](TRANSFER_CORE_ACTIVE_SPECS.md). They close
+local bulk validation, while the listed external and device qualification
+gates remain open.
 
 The upload-accounting batch applies a transferable slskR lesson: measure a
 specific hot path and retain the change only when its workload supports it.
@@ -530,12 +533,15 @@ byte totals and per-block seed-limit checks. In the three exploratory candidate
 seed runs, CPU and I/O ranges overlap the cache-disabled baseline; the result
 does not establish a resource win. The broader slskR idle comparison remains
 useful for idle-footprint questions and says nothing about active-transfer
-efficiency.
+efficiency. Those resource measurements were collected on parent runtime
+`3191f56e`; `af99733f` changes only the atomic update primitive, and has no new
+performance measurement.
 
 ### Remaining acceptance sequence
 
-1. Qualify exact pinned clients and run matched download/seed workloads with
-   independent process and network observations.
+1. Qualify exact pinned clients with matched download/seed workloads and
+   separate disconnected/connected-idle runs, using independent process and
+   network observations.
 2. Complete live protocol parity, target-storage fault and crash-cut recovery,
    and exercise the reversible owner switch under real activity.
 3. Register the protected hardware runner, complete the release matrix, then
@@ -865,3 +871,4 @@ efficiency.
 | 2026-10-20 | Bounded peer-read cache repeat: a second five-client source-bound pass sampled 7.76 MiB retained cache and 17.4 MiB TorrentNG anonymous peak; qBittorrent was also 17.4 MiB and Transmission 18.7 MiB. TorrentNG seed CPU was 4.75 CPU-s/GiB, versus 2.40 qBittorrent, 1.63 Transmission, 2.69 Deluge, and 0.67 rTorrent. Reads/writes were 1,016.20/0.42 MiB/GiB, and every controlled seed hash matched. The host load peaked at 11.48 and ended at 3.96. The repeat supports the cache bound and memory result, but confirms a large CPU-efficiency gap; it does not qualify an overall ranking. TorrentNG and Transmission public phases timed out. Full test/clippy and 30 Python-module validation remain passed for this source. The report and raw artifacts are `certification/reports/client-performance-benchmark-588cfd76-20261020-cache-cap-8m-repeat-2.*`. A cache-disabled diagnostic followed; its results are recorded against exact source `7545fc0` below. |
 | 2026-10-20 | Cache-disabled resource comparison: exact source `7545fc0` was run against all four references with `peer_read_cache_bytes=0` at runtime. All five controlled seed hashes passed. TorrentNG used 3.74 CPU-s/GiB and 7.7 MiB anonymous peak, versus CPU 2.30/1.47/2.40/0.66 and anonymous peak 15.6/24.4/85.9/1.9 MiB for qBittorrent/Transmission/Deluge/rTorrent. Block reads/writes were 1,016.31/0.61 MiB/GiB. Two additional TorrentNG-only repeats measured CPU 3.98 and 4.52, anonymous peak 7.6 and 8.4 MiB, and reads 1,016.66 and 2,092.75 MiB/GiB. The doubled read result is unexplained; the median reads match the 8 MiB runs but one outlier prevents adopting zero as default. Keep the 8 MiB default pending an I/O explanation and multi-peer evidence. The cross-client report and two repeats, with samples and memory profiles, are checked in as `certification/reports/client-performance-benchmark-7545fc0-20261020-cache-disabled*.md` and adjacent artifacts. |
 | 2026-10-20 | Upload-accounting batching resource follow-up on exact source `3191f56e`: the five-client run and two TorrentNG-only cache-disabled repeats all passed controlled seed SHA-256 checks. Candidate CPU was 3.84/3.72/4.53 CPU-s/GiB (median 3.84) versus 3.74/3.98/4.52 (median 3.98) for the three `7545fc0` baseline runs; overlapping ranges do not establish a CPU gain. Median seed goodput was 3.82 versus 3.81 MiB/s. Median reads/writes were 1,031.77/0.52 versus 1,016.66/0.54 MiB/GiB. Process anonymous peak median fell from 7.73 to 6.84 MiB, but cgroup anonymous peak median rose from 7.73 to 12.91 MiB and is not explained by the process profile, so memory efficiency remains unresolved. The full cross-client pass started under higher load than the baseline and remains exploratory. Candidate reports, CSVs, and memory profiles are `certification/reports/client-performance-benchmark-3191f56e-20261020-upload-accounting-*.md` and adjacent artifacts. |
+| 2026-10-20 | Stable Clippy on Rust 1.99.1 exposed the deprecated `AtomicU64::fetch_update` call in upload accounting. Replaced it with a saturating compare-exchange loop and added concurrent-increment and `u64::MAX` saturation coverage. Exact-source workspace suites passed 2,314/0/12 on Rust 1.94.0 and 1.88.0; strict Clippy passed on stable 1.99.1 and both supported toolchains; Python passed 329 tests plus 157 subtests; formatting passed; release `rt-engine` passed 743/743 including the simulator. The exploratory upload-batching benchmark remains attached to parent source `3191f56e`; this atomic API correction has no new performance measurement. The current cross-client benchmark still lacks disconnected- and connected-idle profiles, which are now explicit in the acceptance sequence. |

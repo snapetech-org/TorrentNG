@@ -2,16 +2,18 @@
 
 This matrix separates implemented source from qualification evidence. The
 current runtime implementation is exact source
-`3191f56e43300003e969541be4b2db01f6b13161`; the newer `95d9bde6` main tip
-adds benchmark artifacts and documentation only. The full locked workspace
-suite and strict workspace Clippy passed on Rust 1.94.0 and 1.88.0 for the
-current runtime source. The repository Python suite passed 329 tests and 157
-subtests. The seeded transfer simulator ran in the engine suite. The
-separate 354ad504, 3758d021, and 7545fc0 records below are historical and
-remain useful for their exact diagnostic and qualification results. After
-reconciling the status docs, the workspace, Clippy, Python, release-engine,
-and 11 runnable ignored diagnostics passed on the current runtime source.
-The dated evidence and exact limits are in
+`af99733fd462532488a0eda208743fdb1b807cb6`. Its parent
+`3191f56e` introduced upload-accounting batches; this revision replaces the
+deprecated atomic update primitive without changing batching behavior. The
+full locked workspace passed with 2,314 passed, 0 failed, and 12 ignored on
+Rust 1.94.0 and 1.88.0. Strict workspace Clippy passed on stable 1.99.1,
+1.94.0, and 1.88.0. Python passed 329 tests and 157 subtests, formatting
+passed, and release `rt-engine` passed 743 tests, including the seeded
+transfer simulator. The 11 runnable ignored diagnostics passed on the parent
+source before this atomic-only fix. The separate 354ad504, 3758d021, and
+7545fc0 records below are historical and remain useful for their exact
+diagnostic and qualification results. The dated evidence and exact limits
+are in
 [`TRANSFER_CORE_ACTIVE_SPECS.md`](TRANSFER_CORE_ACTIVE_SPECS.md).
 
 Hosted Transfer Rebuild and Windows Smoke passed on
