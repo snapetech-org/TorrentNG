@@ -5,6 +5,16 @@ This file instantiates the template in
 implementation slices currently in progress. A ticket stays `wip` until its
 written acceptance and exact-revision evidence are complete.
 
+## Current-source bulk validation — implementation source `3758d021` (2026-10-20)
+
+The Rust implementation under test is exact commit `3758d0217dea665fefdfcd6775a3f72d935cf058`; the only working-tree edits during this pass were documentation. The full workspace passed on Rust 1.94.0 and 1.88.0: each run had 2,309 passed, 0 failed, and 12 ignored across 37 result summaries. Release `rt-engine` passed 738/738, including the seeded ownership simulator. All 11 runnable ignored cases passed explicitly: the two release 100k live-catalog cases, seven storage diagnostics, the real-root move/import/delete fixture, and the peer-wire encode probe. The remaining ignored panic-hook child is exercised through its passing parent regression.
+
+All 323 Python test scripts passed, including transfer-rebuild harnesses, client-resource parsing, workflow security, and runner policy. The pinned Rust 1.98.1 urtorrent helper passed 6/6 tests and its help smoke. Workspace Clippy passed on Rust 1.94.0 and 1.88.0; workspace and helper formatting checks passed.
+
+The ignored storage checks ran on the desktop's Btrfs/NVMe filesystem, not the server LVM or a dedicated hardware lane. They passed backend selection, a 256 MiB positioned-I/O round trip (1,772 MiB/s write and 3,689 MiB/s read in this run), adjacent-read readahead (4,096 requests serviced by 133 backend reads, 30.8x), a 64 MiB recheck (375 MiB/s), 10,000 reads with one file open, and 4,096 shuffled reads. The HDD-only elevator case correctly skipped on the NVMe profile. The move/import/delete fixture passed with 64 files and root confinement; the peer-wire probe measured 1.719 ms owned encoding versus 0.898 ms reused direct encoding over 10,000 frames. These are local diagnostics on a shared host and do not establish cross-client resource rankings.
+
+The current-source whole-client CPU, memory, and block-I/O comparison is still pending. Existing scorecards below remain tied to their stated older commits until a new source-bound run completes.
+
 ## Worker-count profile comparison — 2026-10-20 UTC
 
 Two valid PERF-110 runs used the same release binary built from exact source
@@ -96,6 +106,18 @@ allocation and repeated full-bitmap counts; active-recheck job reads use a
 500 ms shared cache. The whole-client harness now records cgroup CPU and block
 I/O counters. These code and documentation changes are pending bulk testing
 and a source-bound rerun; no improvement is claimed yet.
+
+Review note (2026-10-20): the two code gaps reported against `2e3d2ad` are
+already closed on current `main`. Commit `9c2acfad` reruns the choker when an
+unchoked peer disconnects, with the
+`disconnecting_an_unchoked_peer_immediately_fills_the_upload_slot`
+regression. Refill no longer scans peer request lists or rebuilds and sorts
+their coordinates: it reads outstanding totals from the transfer ledger and
+counts endgame work from picker-owned block state. The picker probe and exact
+workspace evidence for these changes are recorded below against `01a3464`.
+The measured single-peer RSS gap remains unattributed; the bounded inbound
+request-metadata accounting addresses high-peer-count growth, not that
+single-peer result.
 
 ## Resource-first source follow-up after the `7bc43bf` run — 2026-10-19
 
