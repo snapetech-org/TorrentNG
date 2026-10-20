@@ -29,6 +29,7 @@ from paired_runner import (  # noqa: E402
     _load_json,
     _network_seed,
     _profile_listener_ports,
+    _remove_added_trial_torrents,
     _resolve_helper_id,
     _scheduled_trial_key,
     _sha256_file,
@@ -136,6 +137,70 @@ class PairedRunnerTests(unittest.TestCase):
                 last_useful_ns=1_100,
                 completion_observed_ns=1_200,
             )
+
+    def test_verified_direct_completion_uses_barrier_to_completion_when_no_poll_catches_bytes(
+        self,
+    ) -> None:
+        self.assertEqual(
+            _transfer_duration_ns(
+                barrier_released_ns=1_000,
+                first_useful_ns=None,
+                last_useful_ns=None,
+                completion_observed_ns=1_800,
+                completion_only=True,
+            ),
+            800,
+        )
+        self.assertIsNone(
+            _transfer_duration_ns(
+                barrier_released_ns=1_000,
+                first_useful_ns=None,
+                last_useful_ns=None,
+                completion_observed_ns=1_800,
+            )
+        )
+
+    def test_failure_cleanup_retires_only_added_api_torrents_and_keeps_going(self) -> None:
+        info_hash = "a" * 40
+        calls: list[tuple[str, str, bool]] = []
+
+        class RecordingController:
+            def __init__(self, client_id: str, *, fail: bool = False):
+                self.client_id = client_id
+                self.fail = fail
+
+            def remove(self, observed_hash: str, *, delete_data: bool) -> None:
+                calls.append((self.client_id, observed_hash, delete_data))
+                if self.fail:
+                    raise ClientControlError("client became unreachable")
+
+        paths = RuntimePaths(
+            root=Path("/tmp/endpoint"),
+            data=Path("/tmp/endpoint/data"),
+            state=Path("/tmp/endpoint/state"),
+            log=Path("/tmp/endpoint/client.log"),
+            pid=Path("/tmp/endpoint/state/client.pid"),
+            env=Path("/tmp/endpoint/state/client.env"),
+        )
+        torrentng = Endpoint(
+            "target", "torrentngd", {}, paths,
+            controller=RecordingController("torrentngd"),  # type: ignore[arg-type]
+        )
+        qbittorrent = Endpoint(
+            "seed", "qbittorrent", {}, paths,
+            controller=RecordingController("qbittorrent", fail=True),  # type: ignore[arg-type]
+        )
+
+        errors = _remove_added_trial_torrents([torrentng, qbittorrent], info_hash)
+
+        self.assertEqual(
+            calls,
+            [
+                ("qbittorrent", info_hash, False),
+                ("torrentngd", info_hash, False),
+            ],
+        )
+        self.assertEqual(errors, ["seed qbittorrent: client became unreachable"])
 
     def test_scheduled_trial_key_accepts_catalog_profile_and_repetition_ids(self) -> None:
         trial_id = "c5a1e354ae46fc313dc8:N1/lan_1g:rep-001:torrentngd:attempt-001"

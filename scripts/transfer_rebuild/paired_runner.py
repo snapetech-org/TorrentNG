@@ -1321,21 +1321,46 @@ def _wait_for_transfer(
     return first_ns, last_ns, candidate_bytes
 
 
+def _remove_added_trial_torrents(
+    endpoints: list[Endpoint], info_hash: str
+) -> list[str]:
+    """Best-effort cleanup for API torrents whose setup completed this trial."""
+    if not info_hash:
+        return []
+    errors: list[str] = []
+    for endpoint in reversed(endpoints):
+        if endpoint.controller is None:
+            continue
+        try:
+            endpoint.controller.remove(info_hash, delete_data=False)
+        except Exception as error:
+            errors.append(f"{endpoint.role} {endpoint.client_id}: {error}")
+    return errors
+
+
 def _transfer_duration_ns(
     *,
     barrier_released_ns: int,
     first_useful_ns: int | None,
     last_useful_ns: int | None,
     completion_observed_ns: int,
+    completion_only: bool = False,
 ) -> int | None:
     """Measure from the common release through the last useful-byte sample.
 
     Starting at the first polled byte counter can omit a large initial part of
     a fast transfer. When all progress lands in one poll, use the completion
-    observation as the conservative end bound.
+    observation as the conservative end bound. A direct receiver that reports
+    verified completion can also use that same parent-clock boundary when the
+    peer counter changes entirely between polls; its diagnostic trial duration
+    is never used as the transfer clock.
     """
     if first_useful_ns is None and last_useful_ns is None:
-        return None
+        if not completion_only:
+            return None
+        if barrier_released_ns < 0 or completion_observed_ns < barrier_released_ns:
+            raise ValueError("transfer timing bounds are invalid")
+        return max(1, completion_observed_ns - barrier_released_ns)
     if first_useful_ns is None or last_useful_ns is None:
         raise ValueError("useful-byte progress bounds must be recorded together")
     if barrier_released_ns < 0 or completion_observed_ns < barrier_released_ns:
@@ -1513,6 +1538,7 @@ def _run_trial(
     fixture_identities.update(_fixture_file_identities(fixture_dir, fixture_manifest))
 
     prelaunched: dict[str, ManagedClient | None] = {}
+    added_endpoints: list[Endpoint] = []
 
     topology = None
     topology_record: dict[str, Any] | None = None
@@ -1702,6 +1728,7 @@ def _run_trial(
                     else "/data",
                     info_hash,
                 )
+                added_endpoints.append(endpoint)
                 continue
             if endpoint.client_id != "urtorrent":
                 raise PairedRunnerError(f"{participant} endpoint has no pinned transfer controller")
@@ -1885,6 +1912,11 @@ def _run_trial(
             first_useful_ns=first_payload_ns,
             last_useful_ns=last_payload_ns,
             completion_observed_ns=transfer_finished_ns,
+            completion_only=(
+                target_endpoint.direct_process is not None
+                and target_endpoint.direct_result is not None
+                and target_endpoint.direct_result.get("complete") is True
+            ),
         )
         if measured_transfer_ns is not None:
             durations["transfer"] = measured_transfer_ns
@@ -1992,14 +2024,11 @@ def _run_trial(
 
         # Retire only the exact trial torrent, then stop the pinned processes.
         shutdown_started_ns = time.perf_counter_ns()
-        for endpoint in (candidate_endpoint, helper_endpoint):
-            if endpoint.controller is not None:
-                try:
-                    endpoint.controller.remove(info_hash, delete_data=False)
-                except ClientControlError as error:
-                    if status == "complete":
-                        status = "failed"
-                    reason = f"client refused exact-hash torrent cleanup: {error}"
+        for cleanup_error in _remove_added_trial_torrents(added_endpoints, info_hash):
+            if status == "complete":
+                status = "failed"
+            reason = f"client refused exact-hash torrent cleanup: {cleanup_error}"
+        added_endpoints.clear()
         for endpoint in (candidate_endpoint, helper_endpoint):
             if endpoint.managed is not None:
                 endpoint.managed.stop()
@@ -2055,6 +2084,8 @@ def _run_trial(
         # when cleanup itself fails so its exact state remains inspectable.
         if shutdown_started_ns is None:
             shutdown_started_ns = time.perf_counter_ns()
+        for cleanup_error in _remove_added_trial_torrents(added_endpoints, info_hash):
+            reason += f"; failed-trial torrent cleanup failed ({cleanup_error})"
         for managed in prelaunched.values():
             if (
                 managed is not None
