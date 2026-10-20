@@ -13,7 +13,7 @@ All 323 Python test scripts passed, including transfer-rebuild harnesses, client
 
 The ignored storage checks ran on the desktop's Btrfs/NVMe filesystem, not the server LVM or a dedicated hardware lane. They passed backend selection, a 256 MiB positioned-I/O round trip (1,772 MiB/s write and 3,689 MiB/s read in this run), adjacent-read readahead (4,096 requests serviced by 133 backend reads, 30.8x), a 64 MiB recheck (375 MiB/s), 10,000 reads with one file open, and 4,096 shuffled reads. The HDD-only elevator case correctly skipped on the NVMe profile. The move/import/delete fixture passed with 64 files and root confinement; the peer-wire probe measured 1.719 ms owned encoding versus 0.898 ms reused direct encoding over 10,000 frames. These are local diagnostics on a shared host and do not establish cross-client resource rankings.
 
-## Current all-target validation — implementation source `7545fc0` (2026-10-20)
+## Previous all-target validation — implementation source `7545fc0` (2026-10-20)
 
 The transfer and storage changes in exact source `7545fc0dc925758820a0540c673e6e77922ef941` passed `cargo +1.94.0 test --workspace --all-targets --locked --quiet` and the same command on Rust 1.88.0. One lifecycle test timed out once in the first Rust 1.94 run; it passed alone and in the complete rerun. Workspace Clippy passed on both toolchains with warnings denied, and `cargo fmt --all -- --check` plus `git diff --check` passed. All 30 repository Python test modules passed. The cache-disabled benchmark repeats below were run after this validation and do not change code.
 
@@ -79,6 +79,32 @@ The full cross-client report and raw artifacts are
 `certification/reports/client-performance-benchmark-7545fc0-20261020-cache-disabled.*`;
 the two repeats use the `-repeat-1` and `-repeat-2` suffixes. Public swarm
 results remain incomplete for TorrentNG and Transmission.
+
+## Current local bulk validation — runtime source `3191f56e` (2026-10-20)
+
+The full locked workspace suite passed on Rust 1.94.0 and 1.88.0 at runtime
+source `3191f56e43300003e969541be4b2db01f6b13161`: 2,314 passed, 0 failed,
+and 12 ignored across 37 result groups on each toolchain. Strict workspace
+Clippy passed with warnings denied on both toolchains; formatting passed.
+The Python suite passed 329 tests and 157 subtests. The release `rt-engine`
+suite passed 742/742, including the seeded transfer simulator.
+
+All 11 runnable ignored diagnostics passed: both 100k live-catalog probes,
+seven storage probes, the 64 MiB move/import/delete fixture, and the peer-wire
+encode probe. The 100k restore run admitted 100,000 paused rows with valid
+metainfo in 286.16 s, restored in 2.93 s, and listed its first sorted page in
+1.209 s; the cached page took under 1 ms. In the mixed-load run, 16 rounds
+produced list p95 values of 1.02–1.05 s (including cold snapshot creation),
+transfer-info p95 of 3.34 ms, and metrics p95 of 0.56 ms.
+
+Storage diagnostics ran on task-scoped tmpfs (`profile=Unknown`, `fs=None`),
+not a physical device. Auto backend selection fell back to `pread` after
+io_uring worker startup returned `ENOMEM`; the HDD-only case skipped on the
+unknown profile. Readahead served 4,096 logical reads with 133 backend reads,
+and the recheck processed 64 MiB at 122.32 MiB/s. The move/import/delete and
+peer-wire probes passed. These are local diagnostics, not device or client
+qualification. Hosted, live-client, crash-cut, hardware, soak/canary, and
+release gates remain open.
 
 ## Worker-count profile comparison — 2026-10-20 UTC
 
@@ -303,10 +329,11 @@ The source audit at that snapshot found all 63 repository-owned implementation
 slices and ticket contracts present, with no missing architecture boundary. The ledger
 remains 12/63 `done`, 51/63 `wip`, and 0 `todo`; those WIP rows require live
 client, platform, crash-cut, matched-efficiency, protected-runner,
-soak/canary, independent-review, or release evidence. This run supersedes
-older “await bulk” notes only for its exact source revision. It does not
-validate production changes through current candidate `7bc43bf`; current-source
-bulk validation remains pending. Local tests do not replace hosted
+soak/canary, independent-review, or release evidence. At that checkpoint,
+this run superseded older “await bulk” notes only for its
+exact source revision. It did not validate the later `7bc43bf` candidate, so
+current-source bulk validation was pending then. The newer `3191f56e` result is
+recorded near the top of this file. Local tests do not replace hosted
 qualification or close the remaining acceptance gates.
 
 ## Previous exact-source closeout — 2026-10-19 (`eb5f3158`)

@@ -1,20 +1,17 @@
 # Transfer Core Capability Matrix
 
 This matrix separates implemented source from qualification evidence. The
-production implementation remains at
-`354ad504f75b33c712b5ccd827cfef3eb0cf4414`. The latest local bulk run passed
-the full workspace on Rust 1.94.0 and 1.88.0 (2,302 passed, 0 failed, 12
-ignored on each toolchain), the release `rt-engine` suite passed 734 tests, all
-22 transfer-rebuild Python scripts passed, and all 11 runnable ignored cases
-passed. Strict workspace Clippy and formatting passed. The standalone Rust
-1.98.1 comparator runner's six tests and CLI smoke passed. The trusted
-bubblewrap validation-engine contract task passed 67/67 Python tests. The
-release 100k catalog and seven-probe `/tmp` tmpfs diagnostics passed. A
-separate local Btrfs run passed all seven storage probes after bounding
-benchmark concurrency; it is not ext4 device qualification. One scoped
-ten-pair TorrentNG/urtorrent comparison is complete, but it does not establish
-a pre-refactor delta or whole-client ranking. The dated evidence and exact
-limits are in
+current runtime implementation is exact source
+`3191f56e43300003e969541be4b2db01f6b13161`; the newer `95d9bde6` main tip
+adds benchmark artifacts and documentation only. The full locked workspace
+suite and strict workspace Clippy passed on Rust 1.94.0 and 1.88.0 for the
+current runtime source. The repository Python suite passed 329 tests and 157
+subtests. The seeded transfer simulator ran in the engine suite. The
+separate 354ad504, 3758d021, and 7545fc0 records below are historical and
+remain useful for their exact diagnostic and qualification results. After
+reconciling the status docs, the workspace, Clippy, Python, release-engine,
+and 11 runnable ignored diagnostics passed on the current runtime source.
+The dated evidence and exact limits are in
 [`TRANSFER_CORE_ACTIVE_SPECS.md`](TRANSFER_CORE_ACTIVE_SPECS.md).
 
 Hosted Transfer Rebuild and Windows Smoke passed on
@@ -53,12 +50,24 @@ efficiency claim follows from repository tests or this scoped comparison.
 | Performance evidence | Existing certification and benchmark scripts | Immutable manifests, independent observer, pinned client adapters, paired-run scorecard | Measurement contract, trial/manifest/client-observation schemas, process/cgroup observer, timing/accounting primitives, deterministic payload generator, seven client adapters, source-bound manifest writer, raw-evidence-bound ceilings, strict randomized paired-plan and compatibility-preflight sources, isolated task topology/tracker, seeded loss/jitter network controls with endpoint-specific trial seeds and exact `tc -j` readback, fixture retargeting, picker/API changed-snapshot probes, live native catalog mixed-load probes, strict source/host-bound catalog report and raw-log linkage, hosted workflow, and strict rollout qualification records are authored; local picker/API/catalog diagnostics passed on 2026-10-19 without approved thresholds; two source-bound 10-pair TorrentNG/urtorrent runs and validated manifest/scorecard pairs now compare the 8-read baseline with the tested 16-read candidate for `N1/lan_1g`; the candidate did not improve seeding and was reverted; additional clients/profiles, independent calibration, pre-refactor comparison, and dedicated-host qualification remain open; hosted correctness and Windows Smoke passed at `94c8c1b3`, while the protected hardware dispatch was skipped for lack of a registered runner | PERF-101–116, SYS-014 |
 | Migration and rollback | Existing offline migration plus storage journals | One writer, durable publication, reversible cutover | Schema v12 journals per-torrent owner generations and startup rolls interrupted transitions back to the reference owner; native API route selection, strict actor drain/start/ready/commit/rollback, and startup recovery are wired under SYS-013. Failure injection, crash-cut and live parity qualification remain open | SYS-013, SYS-015 |
 
+## Upload accounting and benchmark interpretation
+
+The v1 and hybrid peer path batches ordinary upload-accounting notifications
+at 64 KiB or 25 ms, while preserving per-block accounting when a seed-ratio or
+seed-idle limit is active. Pending totals drain on peer removal and shutdown.
+This is a targeted hot-path experiment informed by slskR measurement
+practice. The three 3191f56e candidate seed runs did not establish CPU or I/O
+improvement, and process/cgroup memory readings did not reconcile. slskR idle
+comparisons inform idle-footprint work only, not active-transfer efficiency.
+See the source-bound reports in
+[`CLIENT_PERFORMANCE_BENCHMARK.md`](CLIENT_PERFORMANCE_BENCHMARK.md).
+
 ## Evidence labels
 
 - **Integrated and tested**: the production route uses the capability and the
   required repository tests or probes passed on the exact revision.
 - **Present, unqualified**: source and local regressions are present and the
-  exact-source bulk pass passed at `354ad504`; separate qualification gates
+  exact-source bulk pass passed at `3191f56e`; separate qualification gates
   remain open.
 - **Integration pending**: the pure module exists, but production actors still
   use the reference implementation.
@@ -76,9 +85,9 @@ turn implementation into qualification evidence.
 The implementation audit found the described native/shared paths and their
 ownership boundaries present in source. No new crate boundary is required by
 the current design review. Remaining WIP is the named qualification evidence
-for those paths, not an unimplemented subsystem. The fresh local bulk pass
-passed; hosted execution, pinned client profiles, target-device storage and
-crash testing, and whole-client comparison remain separate.
+for those paths, not an unimplemented subsystem. Hosted execution, pinned
+client profiles, target-device storage and crash testing, and whole-client
+comparison remain separate.
 
 The final rollout evaluator is available as
 `scripts/transfer_rebuild/rollout_gate.py`. Qualification wrappers are created

@@ -476,23 +476,61 @@ and reversible canary, independent review, and final release bundle. `G0`
 remains open pending a valid pinned baseline controller and the remaining
 cross-path correctness evidence.
 
-### Current implementation and documentation checkpoint (`7bc43bf`, 2026-10-19)
+### Historical implementation checkpoint (`7bc43bf`, 2026-10-19)
 
-The current source candidate is `7bc43bf6957a4b4b0054ba1229afb8cfd829efcb`.
-The transfer-core close and performance-runner branches are ancestors of this
-`main`; there are no unmerged transfer-core source commits. All 63 ticket rows
-remain in the plan, and every one of the 51 `wip` rows has an active-spec
-section. The `wip` state tracks exact-revision, live-client, platform,
-crash-cut, hosted, hardware, soak/canary, independent-review, or release
-evidence; it does not identify missing source slices.
+At that checkpoint, the source candidate was `7bc43bf6957a4b4b0054ba1229afb8cfd829efcb`.
+The transfer-core close and performance-runner branches were ancestors of
+`main`; all 63 ticket rows remained in the plan, and each of the 51 `wip`
+rows had an active-spec section. The `wip` state tracked exact-revision,
+live-client, platform, crash-cut, hosted, hardware, soak/canary, independent-
+review, or release evidence; it did not identify missing source slices.
 
-The current candidate includes the choker-slot fix and reconnect regression.
-The `rt-engine` suite passed 734/734, and the source-bound PERF-110 run
-completed and validated 40/40 transfers. The complete Rust workspace suite,
-the current 22-script transfer-rebuild regression batch, ignored scale cases,
-and current-source Clippy have not yet been rerun on `7bc43bf`. The requested
-bulk pass is the next validation after this documentation correction; results
-from `354ad504` remain historical and do not qualify this candidate.
+That candidate included the choker-slot fix and reconnect regression. The
+`rt-engine` suite passed 734/734, and the source-bound PERF-110 run completed
+and validated 40/40 transfers. The workspace, Python, ignored-scale, and
+Clippy bulk pass had not yet been rerun then. Later bulk results are recorded
+in the current checkpoint below; results at `354ad504` remain historical.
+
+### Current implementation checkpoint (runtime `3191f56e`, 2026-10-20)
+
+The current runtime source is `3191f56e43300003e969541be4b2db01f6b13161`.
+The prior main revision `95d9bde602fa2ba50439cb3aaa3bf8167f3f816c` added
+benchmark reports and documentation only; no runtime source changed after
+`3191f56e`. This checkpoint reconciles its stale status docs against all 63
+package rows, active ticket contracts, current actors, storage scheduler, rollback
+route, and performance harness. All 51 `wip` tickets have written active
+specs. The audited runtime and harness paths contain no `TODO`, `FIXME`,
+`todo!()`, or `unimplemented!()` placeholders, and the review found no missing
+repository-owned architecture boundary.
+
+The ledger remains 12 `done`, 51 `wip`, and 0 `todo`. `wip` means the full
+acceptance contract lacks evidence; it does not mean the source slice is
+missing. Remaining acceptance is concentrated in live-client parity and
+matched comparisons, target-filesystem and crash-cut qualification, hosted
+and protected-hardware runs, long soak and reversible canary, independent
+review, and release evidence. Source coverage and local regression passes do
+not close those gates.
+
+On exact runtime source `3191f56e`, the full locked workspace suite and strict
+workspace Clippy passed on Rust 1.94.0 and 1.88.0. The repository Python
+suite also passed (329 tests and 157 subtests). The seeded transfer simulator
+was included in the Rust engine suite. These results and the source-bound
+resource measurements are summarized in
+[`TRANSFER_CORE_ACTIVE_SPECS.md`](TRANSFER_CORE_ACTIVE_SPECS.md). After this
+documentation reconciliation, both locked workspace suites passed with
+2,314/0/12 results; strict Clippy, Python tests, the release engine suite, and
+all 11 runnable ignored diagnostics passed. This closes the local bulk
+validation step, while the listed external and device qualification gates
+remain open.
+
+The upload-accounting batch applies a transferable slskR lesson: measure a
+specific hot path and retain the change only when its workload supports it.
+It coalesces ordinary per-block actor notifications while preserving exact
+byte totals and per-block seed-limit checks. In the three exploratory candidate
+seed runs, CPU and I/O ranges overlap the cache-disabled baseline; the result
+does not establish a resource win. The broader slskR idle comparison remains
+useful for idle-footprint questions and says nothing about active-transfer
+efficiency.
 
 ### Remaining acceptance sequence
 

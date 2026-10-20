@@ -14,13 +14,17 @@ of `docs/TRANSFER_CORE_ACTIVE_SPECS.md`. These are engine-runner results, not
 whole-client rankings, and the two worker profiles use different randomized
 fixture hashes.
 
-The source measured in those runs capped the Tokio pool at four workers unless
-`TOKIO_WORKER_THREADS` was set. The two-worker profile kept download goodput
-near 76 MB/s and had about 13–16% lower TorrentNG RSS/PSS than the four-worker
-profile. A follow-up source edit now makes two the default cap and removes a
-second registry lock acquisition from each upload-accounting event. That
-candidate still needs exact-source tests and a fresh paired run before the
-change is qualified.
+Those profile runs used a four-worker default. The two-worker profile kept
+download goodput near 76 MB/s and had about 13–16% lower TorrentNG RSS/PSS
+than the four-worker profile. Runtime source `3191f56e` now defaults to two
+workers and batches ordinary upload-accounting notifications at 64 KiB or
+25 ms; seed-ratio and seed-idle limits retain per-block accounting. The
+exact-source workspace tests and strict Clippy passed on Rust 1.94.0 and
+1.88.0, and the repository Python suite passed 329 tests plus 157
+subtests. The candidate has also had three hash-verified resource runs. Those
+runs showed no clear CPU or I/O change from the cache-disabled baseline, and
+the process/cgroup memory readings remain unreconciled. They do not qualify a
+resource-efficiency gain.
 
 In the two-worker scorecard TorrentNG still used about twice urtorrent's RSS
 and wrote 13.38 MiB/GiB while seeding versus 0.97 MiB/GiB. Its download CPU
@@ -30,19 +34,22 @@ qBittorrent was only a helper in these runs. The pre-cutover reference is
 `354ad504f75b33c712b5ccd827cfef3eb0cf4414`, built with one isolated
 benchmark-egress backport in baseline commit
 `8023ce77b6bea4d237b4a7e329b56901fab94ba1`; no transfer or picker code
-changed in that backport. The last full local bulk run, tied to exact source
-`354ad504`, passed the workspace on Rust 1.94.0 and 1.88.0 with 2,302 passed,
-0 failed, and 12 ignored across 37 summaries on each toolchain. Release `rt-engine` passed
-734 tests; all 22 transfer-rebuild Python scripts and 11 runnable ignored
-cases passed. Strict workspace Clippy passed on both toolchains, formatting
-passed, and the trusted bubblewrap validation-engine contract task passed
-67/67 Python tests. The runner-policy suite passed 4/4.
+changed in that backport. The earlier full bulk run on exact source
+`354ad504` passed the workspace on Rust 1.94.0 and 1.88.0 with 2,302 passed,
+0 failed, and 12 ignored across 37 summaries on each toolchain. Release
+`rt-engine` passed 734 tests; 22 transfer-rebuild Python scripts and 11
+runnable ignored cases passed. Strict Clippy, formatting, the trusted
+bubblewrap contract task (67/67), and runner-policy suite (4/4) passed.
 
-That full bulk run predates production changes through `01a3464` and does not
-qualify the current source edits. The latest current-source PERF-110 runs
-validated their manifests and scorecards, but full workspace, transfer-rebuild
-Python, ignored scale, and current-source Clippy validation remains pending
-after implementation and documentation closure.
+The `354ad504` run predates later production changes. On runtime source
+`3191f56e`, the fresh post-reconciliation bulk pass had 2,314 passed, 0 failed,
+and 12 ignored results across 37 workspace groups on both Rust 1.94.0 and
+1.88.0. Strict Clippy passed on both; Python passed 329 tests plus 157
+subtests; release `rt-engine` passed 742 tests; all 11 runnable ignored
+diagnostics passed. The PERF-110 paired scorecards still use source `01a3464`
+and do not qualify that newer runtime for matched performance. The exact test
+and scale outputs are summarized in
+[`TRANSFER_CORE_ACTIVE_SPECS.md`](../../docs/TRANSFER_CORE_ACTIVE_SPECS.md).
 
 The standalone Rust 1.98.1 urtorrent runner passed all six tests and its help
 smoke; its format check used Rust 1.94.0 because rustfmt is not installed for
@@ -134,13 +141,13 @@ and release evidence remain open; no whole-client efficiency or superiority
 claim is made.
 
 The disconnect-triggered choker refill, picker-owned endgame counts, and
-governor-backed inbound request accounting are present in the measured
-`01a3464` source. The current untested edits make two Tokio workers the default
-cap and remove one registry lock from each uploaded-block accounting event;
-their bulk validation and fresh paired run remain pending. Multi-peer memory
-attribution is also open. The ledger remains 12/63 `done`, 51/63 `wip`, and 0
-`todo`; those WIP rows need the runtime and external acceptance evidence listed
-above. See
+governor-backed inbound request accounting are in earlier measured source.
+The two-worker default and upload-accounting batches are in runtime source
+`3191f56e`, whose full local test and Clippy pass is recorded above. Its
+three-run resource comparison did not show a clear CPU or I/O gain, and
+multi-peer memory attribution remains open. The ledger remains 12/63 `done`,
+51/63 `wip`, and 0 `todo`; those WIP rows need the runtime and external
+acceptance evidence listed above. See
 [`TRANSFER_CORE_ACTIVE_SPECS.md`](../../docs/TRANSFER_CORE_ACTIVE_SPECS.md)
 for the full run record.
 
