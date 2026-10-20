@@ -433,6 +433,13 @@ class ClientController:
                         timeout_seconds=60.0 if pending_add else 20.0,
                     )
                     self._pause_unchecked(info_hash)
+                    self._wait(
+                        lambda: (
+                            (state := self.status(info_hash)) is not None
+                            and _paused_state(state.state)
+                        ),
+                        "qBittorrent fixture to stop",
+                    )
                 elif response.lower() not in {"ok", "ok."}:
                     raise ClientControlError(f"client rejected fixture add: {response[:100]!r}")
             elif self.client_id == "transmission":
@@ -484,16 +491,20 @@ class ClientController:
             if state is None or not _paused_state(state.state):
                 raise ClientControlError(f"{self.client_id} fixture was not paused before the start barrier")
         except Exception as error:
-            # Reconcile uncertain API responses by the unique info hash. If the
-            # add landed, the caller owns cleanup and must not retry blindly.
+            # The initial exact-hash check proved this fixture absent. If an
+            # add landed but setup failed, retire only that trial-owned torrent
+            # so a later slot cannot inherit it from the persistent client.
+            cleanup_note = ""
             try:
                 present = self.status(info_hash) is not None
+                if present:
+                    self._remove_unchecked(info_hash, delete_data=False)
+                    cleanup_note = "; removed admitted fixture after setup failure"
             except Exception:
-                present = None
-            qualifier = "; fixture may have been admitted" if present else ""
+                cleanup_note = "; fixture cleanup failed after setup error"
             if isinstance(error, ClientControlError):
-                raise ClientControlError(f"{error}{qualifier}") from error
-            raise ClientControlError(f"{self.client_id} fixture add failed{qualifier}: {error}") from error
+                raise ClientControlError(f"{error}{cleanup_note}") from error
+            raise ClientControlError(f"{self.client_id} fixture add failed{cleanup_note}: {error}") from error
         self._assert_identity(force=True)
 
     def _wait(self, predicate: Callable[[], bool], label: str, timeout_seconds: float = 20.0) -> None:

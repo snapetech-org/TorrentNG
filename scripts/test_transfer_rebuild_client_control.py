@@ -65,8 +65,11 @@ class ClientControlRegressions(unittest.TestCase):
         state: dict[str, object] = {"row": None}
 
         class QbTrialHttp(_Http):
-            def __init__(self):
+            def __init__(self, *, converge_stop=True):
                 super().__init__()
+                self.converge_stop = converge_stop
+                self.stop_requested = False
+                self.stop_polls = 0
 
             def json(self, path, **_kwargs):
                 self.json_paths.append(path)
@@ -74,6 +77,10 @@ class ClientControlRegressions(unittest.TestCase):
                 requested_hash = query.get("hashes", [""])[0]
                 row = state["row"]
                 if isinstance(row, dict) and row.get("hash") == requested_hash:
+                    if self.stop_requested and self.converge_stop:
+                        self.stop_polls += 1
+                        if self.stop_polls >= 3:
+                            row["state"] = "stoppedDL"
                     return [dict(row)]
                 return []
 
@@ -102,7 +109,7 @@ class ClientControlRegressions(unittest.TestCase):
                     ).encode()
                 if path == "/api/v2/torrents/stop":
                     self.assert_stop_hash(kwargs, client_hash)
-                    state["row"]["state"] = "stoppedDL"
+                    self.stop_requested = True
                 elif path == "/api/v2/torrents/delete":
                     self.assert_stop_hash(kwargs, client_hash)
                     state["row"] = None
@@ -125,6 +132,32 @@ class ClientControlRegressions(unittest.TestCase):
                 self.assertEqual(status.state, "stoppedDL")
                 self.assertEqual(status.info_hash, info_hash)
                 controller.remove(info_hash, delete_data=False)
+            self.assertGreaterEqual(http.stop_polls, 3)
+
+            # A setup error after qBittorrent accepts the torrent must retire
+            # that trial-owned row so the next scheduled slot can add it.
+            failing_http = QbTrialHttp(converge_stop=False)
+            failing_controller = _controller("qbittorrent", failing_http)
+            original_wait = failing_controller._wait
+
+            def fail_pause_convergence(predicate, label, timeout_seconds=20.0):
+                if label == "qBittorrent fixture to stop":
+                    raise client_control.ClientControlError("timed out waiting for qB stop")
+                return original_wait(predicate, label, timeout_seconds)
+
+            with patch.object(failing_controller, "_assert_identity"):
+                with patch.object(failing_controller, "_wait", side_effect=fail_pause_convergence):
+                    with self.assertRaisesRegex(
+                        client_control.ClientControlError,
+                        "removed admitted fixture after setup failure",
+                    ):
+                        failing_controller.add_paused(
+                            torrent_path, "/tmp/qbittorrent-trial", info_hash
+                        )
+            self.assertIsNone(state["row"])
+            self.assertTrue(
+                any(path == "/api/v2/torrents/delete" for path, _kwargs in failing_http.requests)
+            )
         self.assertTrue(
             any(path == "/api/v2/torrents/stop" for path, _kwargs in http.requests)
         )
