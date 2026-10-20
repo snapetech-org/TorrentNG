@@ -31,7 +31,7 @@ from adapters import (
     _env_value,
     probe_client,
 )
-from compatibility import _connect_deluge, _multipart
+from compatibility import _connect_deluge, _multipart, _qbit_add_result
 
 
 POLL_INTERVAL_SECONDS = 0.2
@@ -240,6 +240,20 @@ def _validate_metainfo_hash(data: bytes, info_hash: str) -> None:
         raise ClientControlError("torrent metainfo does not match the scheduled info hash")
 
 
+def _qbit_hash_candidates(data: bytes, info_hash: str) -> list[str]:
+    """Return the qBittorrent API IDs for this fixture's v1/v2 identities."""
+    start, end = _torrent_info_span(data)
+    info = data[start:end]
+    v2 = hashlib.sha256(info).hexdigest()
+    if len(info_hash) == 64:
+        candidates = [v2[:40], v2]
+    else:
+        candidates = [hashlib.sha1(info, usedforsecurity=False).hexdigest()]
+        if b"12:meta versioni2e" in info:
+            candidates.extend((v2[:40], v2))
+    return list(dict.fromkeys(value.lower() for value in candidates))
+
+
 def _torrent_bytes(path: Path) -> bytes:
     if not path.is_absolute() or ".." in path.parts or len(path.parts) < 3:
         raise ClientControlError("torrent metainfo path must be absolute and normalized")
@@ -322,6 +336,8 @@ class ClientController:
         self.client_id = client_id
         self.profile = profile
         self.observation = observation or probe_client(client_id, profile)
+        self._qbit_hash_candidates: dict[str, list[str]] = {}
+        self._qbit_hash_by_info_hash: dict[str, str] = {}
         if self.observation.get("client_id") != client_id:
             raise ClientControlError("client observation belongs to a different adapter")
         self.runtime_identity = self.observation.get("runtime_identity")
@@ -371,6 +387,11 @@ class ClientController:
         self._assert_identity(force=True)
         return result
 
+    def _client_info_hash(self, info_hash: str) -> str:
+        if self.client_id == "qbittorrent":
+            return self._qbit_hash_by_info_hash.get(info_hash, info_hash)
+        return info_hash
+
     def add_paused(self, torrent_path: Path, save_path: str, info_hash: str) -> None:
         """Add exactly one private fixture and leave it stopped before the barrier."""
         info_hash = _canonical_info_hash(info_hash)
@@ -379,6 +400,9 @@ class ClientController:
             raise ClientControlError("torrent metainfo filename must be a safe single component")
         metainfo = _torrent_bytes(torrent_path)
         _validate_metainfo_hash(metainfo, info_hash)
+        if self.client_id == "qbittorrent":
+            self._qbit_hash_candidates[info_hash] = _qbit_hash_candidates(metainfo, info_hash)
+            self._qbit_hash_by_info_hash.pop(info_hash, None)
         self._assert_identity(force=True)
         current = self.status(info_hash)
         if current is not None:
@@ -396,7 +420,20 @@ class ClientController:
                     f"{prefix}/torrents/add", method="POST", raw_body=body,
                     content_type=content_type,
                 ).decode("utf-8", "replace").strip()
-                if response.lower() not in {"ok", "ok."}:
+                if self.client_id == "qbittorrent":
+                    added_id, pending_add = _qbit_add_result(
+                        response,
+                        self._qbit_hash_candidates[info_hash],
+                    )
+                    if added_id is not None:
+                        self._qbit_hash_by_info_hash[info_hash] = added_id.lower()
+                    self._wait(
+                        lambda: self.status(info_hash) is not None,
+                        "qBittorrent fixture admission",
+                        timeout_seconds=60.0 if pending_add else 20.0,
+                    )
+                    self._pause_unchecked(info_hash)
+                elif response.lower() not in {"ok", "ok."}:
                     raise ClientControlError(f"client rejected fixture add: {response[:100]!r}")
             elif self.client_id == "transmission":
                 response = _transmission_call(self.http, "torrent-add", {
@@ -493,8 +530,27 @@ class ClientController:
         try:
             if self.client_id in {"torrentngd", "qbittorrent"}:
                 prefix = "/api/qb/v2" if self.client_id == "torrentngd" else "/api/v2"
-                rows = self.http.json(f"{prefix}/torrents/info?hashes={urllib.parse.quote(info_hash)}")
-                row = _row_by_hash(rows, info_hash, ("hash",))
+                query_hashes = [info_hash]
+                if self.client_id == "qbittorrent":
+                    candidates = self._qbit_hash_candidates.get(info_hash, [info_hash])
+                    preferred = self._qbit_hash_by_info_hash.get(info_hash)
+                    query_hashes = list(
+                        dict.fromkeys(([preferred] if preferred else []) + candidates)
+                    )
+                row = None
+                for query_hash in query_hashes:
+                    rows = self.http.json(
+                        f"{prefix}/torrents/info?hashes={urllib.parse.quote(query_hash)}"
+                    )
+                    row = _row_by_hash(rows, query_hash, ("hash",))
+                    if row is not None:
+                        if self.client_id == "qbittorrent":
+                            observed_hash = row.get("hash")
+                            if isinstance(observed_hash, str) and observed_hash.lower() in {
+                                value.lower() for value in query_hashes
+                            }:
+                                self._qbit_hash_by_info_hash[info_hash] = observed_hash.lower()
+                        break
                 if row is None:
                     return None
                 size = _number(row, ("size",), "total size")
@@ -620,7 +676,11 @@ class ClientController:
     def _resume_unchecked(self, info_hash: str) -> None:
         if self.client_id in {"torrentngd", "qbittorrent"}:
             prefix = "/api/qb/v2" if self.client_id == "torrentngd" else "/api/v2"
-            self.http.request(f"{prefix}/torrents/start", method="POST", form={"hashes": info_hash})
+            self.http.request(
+                f"{prefix}/torrents/start",
+                method="POST",
+                form={"hashes": self._client_info_hash(info_hash)},
+            )
         elif self.client_id == "transmission":
             _transmission_call(self.http, "torrent-start", {"ids": [info_hash]})
         elif self.client_id == "deluge":
@@ -637,7 +697,11 @@ class ClientController:
     def _pause_unchecked(self, info_hash: str) -> None:
         if self.client_id in {"torrentngd", "qbittorrent"}:
             prefix = "/api/qb/v2" if self.client_id == "torrentngd" else "/api/v2"
-            self.http.request(f"{prefix}/torrents/stop", method="POST", form={"hashes": info_hash})
+            self.http.request(
+                f"{prefix}/torrents/stop",
+                method="POST",
+                form={"hashes": self._client_info_hash(info_hash)},
+            )
         elif self.client_id == "transmission":
             _transmission_call(self.http, "torrent-stop", {"ids": [info_hash]})
         elif self.client_id == "deluge":
@@ -662,7 +726,10 @@ class ClientController:
             prefix = "/api/qb/v2" if self.client_id == "torrentngd" else "/api/v2"
             self.http.request(
                 f"{prefix}/torrents/delete", method="POST",
-                form={"hashes": info_hash, "deleteFiles": "true" if delete_data else "false"},
+                form={
+                    "hashes": self._client_info_hash(info_hash),
+                    "deleteFiles": "true" if delete_data else "false",
+                },
             )
         elif self.client_id == "transmission":
             _transmission_call(self.http, "torrent-remove", {
@@ -683,3 +750,6 @@ class ClientController:
 
         self._wait(lambda: self.status(info_hash) is None, f"{self.client_id} trial torrent removal")
         self._assert_identity()
+        if self.client_id == "qbittorrent":
+            self._qbit_hash_candidates.pop(info_hash, None)
+            self._qbit_hash_by_info_hash.pop(info_hash, None)

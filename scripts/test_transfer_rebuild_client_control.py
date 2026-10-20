@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 import tempfile
 import unittest
+import urllib.parse
 from pathlib import Path
 from unittest.mock import patch
 
@@ -49,10 +51,85 @@ def _controller(client_id: str, http: _Http) -> client_control.ClientController:
     controller.runtime_identity = observation["runtime_identity"]
     controller.http = http
     controller.socket_path = None
+    controller._qbit_hash_candidates = {}
+    controller._qbit_hash_by_info_hash = {}
     return controller
 
 
 class ClientControlRegressions(unittest.TestCase):
+    def test_qbittorrent_v2_add_uses_returned_id_and_stops_before_barrier(self) -> None:
+        info = b"d12:meta versioni2ee"
+        metainfo = b"d4:infod12:meta versioni2eee"
+        info_hash = hashlib.sha256(info).hexdigest()
+        client_hash = info_hash[:40]
+        state: dict[str, object] = {"row": None}
+
+        class QbTrialHttp(_Http):
+            def __init__(self):
+                super().__init__()
+
+            def json(self, path, **_kwargs):
+                self.json_paths.append(path)
+                query = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
+                requested_hash = query.get("hashes", [""])[0]
+                row = state["row"]
+                if isinstance(row, dict) and row.get("hash") == requested_hash:
+                    return [dict(row)]
+                return []
+
+            def request(self, path, **kwargs):
+                self.requests.append((path, kwargs))
+                if path == "/api/v2/torrents/add":
+                    state["row"] = {
+                        "hash": client_hash,
+                        "state": "checkingResumeData",
+                        "progress": 0.0,
+                        "size": 1,
+                        "downloaded": 0,
+                        "uploaded": 0,
+                        "dlspeed": 0,
+                        "upspeed": 0,
+                        "num_seeds": 0,
+                        "num_leechs": 0,
+                    }
+                    return json.dumps(
+                        {
+                            "added_torrent_ids": [client_hash],
+                            "failure_count": 0,
+                            "pending_count": 0,
+                            "success_count": 1,
+                        }
+                    ).encode()
+                if path == "/api/v2/torrents/stop":
+                    self.assert_stop_hash(kwargs, client_hash)
+                    state["row"]["state"] = "stoppedDL"
+                elif path == "/api/v2/torrents/delete":
+                    self.assert_stop_hash(kwargs, client_hash)
+                    state["row"] = None
+                return b""
+
+            @staticmethod
+            def assert_stop_hash(kwargs, expected_hash):
+                if kwargs.get("form", {}).get("hashes") != expected_hash:
+                    raise AssertionError("qBittorrent control did not use its returned client hash")
+
+        http = QbTrialHttp()
+        controller = _controller("qbittorrent", http)
+        with tempfile.TemporaryDirectory() as temporary:
+            torrent_path = Path(temporary) / "fixture.torrent"
+            torrent_path.write_bytes(metainfo)
+            with patch.object(controller, "_assert_identity"):
+                controller.add_paused(torrent_path, "/tmp/qbittorrent-trial", info_hash)
+                status = controller.status(info_hash)
+                self.assertIsNotNone(status)
+                self.assertEqual(status.state, "stoppedDL")
+                self.assertEqual(status.info_hash, info_hash)
+                controller.remove(info_hash, delete_data=False)
+        self.assertTrue(
+            any(path == "/api/v2/torrents/stop" for path, _kwargs in http.requests)
+        )
+        self.assertEqual(state["row"], None)
+
     def test_state_convergence_retries_a_transient_http_503(self) -> None:
         controller = _controller("qbittorrent", _Http())
         attempts = 0
