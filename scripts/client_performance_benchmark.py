@@ -814,7 +814,7 @@ class Benchmark:
         if dht_enabled is not None:
             base, count = re.subn(
                 r"(?m)^dht\.mode\.set\s*=\s*\S+\s*$",
-                f"dht.mode.set = {'auto' if dht_enabled else 'off'}",
+                f"dht.mode.set = {'on' if dht_enabled else 'disable'}",
                 base, count=1,
             )
             if count != 1:
@@ -2696,8 +2696,15 @@ class Benchmark:
         if client == "deluge":
             config = self._deluge("core.get_config_values", [["dht"]])
             return config.get("dht") if isinstance(config, dict) else None
-        value = self._scgi("dht.mode")
-        return str(value).strip().lower() not in ("off", "disabled", "0", "false")
+        statistics = self._scgi("dht.statistics")
+        if not isinstance(statistics, dict) or statistics.get("dht") is None:
+            return None
+        mode = str(statistics["dht"]).strip().lower()
+        if mode in ("disable", "disabled", "off", "auto", "0", "false"):
+            return False
+        if mode in ("on", "1", "true"):
+            return True
+        return None
 
     def _read_idle_pex(self, client):
         if client == "torrentngd":

@@ -532,11 +532,29 @@ class SeedFixtureTests(unittest.TestCase):
 
             instance._prepare_rtorrent_config(dht_enabled=False)
             disabled = (Path(directory) / "rtorrent-benchmark.rc").read_text()
-            self.assertIn("dht.mode.set = off", disabled)
+            self.assertIn("dht.mode.set = disable", disabled)
 
             instance._prepare_rtorrent_config(dht_enabled=True)
             enabled = (Path(directory) / "rtorrent-benchmark.rc").read_text()
-            self.assertIn("dht.mode.set = auto", enabled)
+            self.assertIn("dht.mode.set = on", enabled)
+
+    def test_rtorrent_idle_dht_readback_uses_reported_mode(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance._scgi = mock.Mock(return_value={"dht": "disable"})
+
+        self.assertIs(instance._read_idle_dht("rtorrent"), False)
+        instance._scgi.assert_called_once_with("dht.statistics")
+
+        for mode in ("off", "auto"):
+            with self.subTest(mode=mode):
+                instance._scgi.return_value = {"dht": mode}
+                self.assertIs(instance._read_idle_dht("rtorrent"), False)
+
+        instance._scgi.return_value = {"dht": "on"}
+        self.assertIs(instance._read_idle_dht("rtorrent"), True)
+
+        instance._scgi.return_value = {}
+        self.assertIsNone(instance._read_idle_dht("rtorrent"))
 
     def test_file_cache_eviction_requests_dontneed_for_the_whole_fixture(self) -> None:
         if not hasattr(benchmark.os, "posix_fadvise"):
