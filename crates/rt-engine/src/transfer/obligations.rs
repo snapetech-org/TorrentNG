@@ -12,7 +12,7 @@
 //! and hybrid peer loops use this owner after translating v2 requests to the
 //! actor's canonical v1 coordinates and projecting replies back to the wire.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::coords::{BlockExtent, BLOCK_SIZE};
 
@@ -65,9 +65,18 @@ pub struct InboundObligations {
     choked: bool,
     allowed_fast: HashSet<u32>,
     queue: VecDeque<BlockExtent>,
-    queued: HashSet<BlockExtent>,
-    in_service: HashSet<BlockExtent>,
+    /// One index for both queued and in-service requests. Keeping separate
+    /// queued and in-service sets retained two hash tables for one bounded
+    /// obligation set, while the FIFO already stores queued coordinates.
+    outstanding: HashMap<BlockExtent, RequestState>,
+    in_service_len: usize,
     max_outstanding: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RequestState {
+    Queued,
+    InService,
 }
 
 impl InboundObligations {
@@ -77,8 +86,8 @@ impl InboundObligations {
             choked: true,
             allowed_fast: HashSet::new(),
             queue: VecDeque::new(),
-            queued: HashSet::new(),
-            in_service: HashSet::new(),
+            outstanding: HashMap::new(),
+            in_service_len: 0,
             max_outstanding,
         }
     }
@@ -96,7 +105,12 @@ impl InboundObligations {
     }
 
     pub fn in_service_len(&self) -> usize {
-        self.in_service.len()
+        self.in_service_len
+    }
+
+    /// Number of unique queued and in-service request obligations.
+    pub fn outstanding_len(&self) -> usize {
+        self.outstanding.len()
     }
 
     pub fn allow_fast(&mut self, piece: u32) {
@@ -115,9 +129,8 @@ impl InboundObligations {
         }
     }
 
-    /// A request arrived. `have_piece` is whether we can serve its piece.
-    pub fn on_request(&mut self, block: BlockExtent, have_piece: bool) -> InboundDecision {
-        if self.queued.contains(&block) || self.in_service.contains(&block) {
+    fn request_decision(&self, block: BlockExtent, have_piece: bool) -> InboundDecision {
+        if self.outstanding.contains_key(&block) {
             return InboundDecision::Duplicate;
         }
         if block.length == 0 || block.length > BLOCK_SIZE {
@@ -129,11 +142,49 @@ impl InboundObligations {
         if !have_piece {
             return self.refuse(RejectReason::PieceNotHeld);
         }
-        if self.queue.len() + self.in_service.len() >= self.max_outstanding {
+        if self.outstanding.len() >= self.max_outstanding {
+            return self.refuse(RejectReason::QueueFull);
+        }
+        InboundDecision::Queue
+    }
+
+    /// Whether this request would add a new queued obligation. Runtime
+    /// adapters use this to reserve metadata memory before mutating the FIFO
+    /// and request index.
+    pub fn would_queue(&self, block: BlockExtent, have_piece: bool) -> bool {
+        self.request_decision(block, have_piece) == InboundDecision::Queue
+    }
+
+    /// A request arrived. `have_piece` is whether we can serve its piece.
+    pub fn on_request(&mut self, block: BlockExtent, have_piece: bool) -> InboundDecision {
+        self.on_request_with_memory_admission(block, have_piece, true)
+    }
+
+    /// Runtime adapters can refuse a logically valid request when its bounded
+    /// bookkeeping allocation could not be admitted. The protocol response
+    /// matches the ordinary queue-full path for Fast and legacy peers.
+    pub fn on_request_with_memory_admission(
+        &mut self,
+        block: BlockExtent,
+        have_piece: bool,
+        memory_admitted: bool,
+    ) -> InboundDecision {
+        let decision = self.request_decision(block, have_piece);
+        if decision != InboundDecision::Queue {
+            return decision;
+        }
+        if !memory_admitted {
+            return self.refuse(RejectReason::QueueFull);
+        }
+        // Reserve both bounded containers before mutating either. Runtime
+        // adapters lease the expected bytes first; these fallible reserves
+        // also turn allocator failure into the protocol's bounded queue-full
+        // outcome instead of aborting the peer task.
+        if self.queue.try_reserve(1).is_err() || self.outstanding.try_reserve(1).is_err() {
             return self.refuse(RejectReason::QueueFull);
         }
         self.queue.push_back(block);
-        self.queued.insert(block);
+        self.outstanding.insert(block, RequestState::Queued);
         InboundDecision::Queue
     }
 
@@ -142,9 +193,10 @@ impl InboundObligations {
     /// it keeps the one-answer-per-request rule unconditional). A request
     /// already being served finishes normally.
     pub fn on_cancel(&mut self, block: BlockExtent) -> Option<Reject> {
-        if !self.queued.remove(&block) {
+        if self.outstanding.get(&block) != Some(&RequestState::Queued) {
             return None;
         }
+        self.outstanding.remove(&block);
         self.queue.retain(|queued| *queued != block);
         self.fast.then_some(Reject {
             block,
@@ -158,13 +210,19 @@ impl InboundObligations {
     pub fn on_local_choke(&mut self) -> Vec<Reject> {
         self.choked = true;
         let mut rejects = Vec::new();
-        let mut kept = VecDeque::new();
-        while let Some(block) = self.queue.pop_front() {
+        let queued_before_choke = self.queue.len();
+        for _ in 0..queued_before_choke {
+            let block = self
+                .queue
+                .pop_front()
+                .expect("the queue length was captured before draining");
             if self.is_allowed_fast(block.piece) {
-                kept.push_back(block);
+                // Rotate surviving requests through the existing allocation
+                // instead of building a second FIFO during the choke pass.
+                self.queue.push_back(block);
                 continue;
             }
-            self.queued.remove(&block);
+            self.outstanding.remove(&block);
             if self.fast {
                 rejects.push(Reject {
                     block,
@@ -172,12 +230,13 @@ impl InboundObligations {
                 });
             }
         }
-        self.queue = kept;
         if !self.fast {
             // Legacy Choke implicitly ends even reads that have started. The
             // actor cancels those jobs; a late completion then finds no live
             // obligation and cannot produce a response.
-            self.in_service.clear();
+            self.outstanding
+                .retain(|_, state| *state != RequestState::InService);
+            self.in_service_len = 0;
         }
         rejects
     }
@@ -198,8 +257,9 @@ impl InboundObligations {
             return None;
         }
         let block = self.queue.pop_front()?;
-        self.queued.remove(&block);
-        self.in_service.insert(block);
+        let state = self.outstanding.get_mut(&block)?;
+        *state = RequestState::InService;
+        self.in_service_len = self.in_service_len.saturating_add(1);
         Some(block)
     }
 
@@ -208,11 +268,15 @@ impl InboundObligations {
     /// obligation stays live and it keeps its original priority relative to
     /// requests accepted later.
     pub fn requeue_front(&mut self, block: BlockExtent) -> bool {
-        if !self.in_service.contains(&block) || self.queue.len() >= self.max_outstanding {
+        if self.outstanding.get(&block) != Some(&RequestState::InService)
+            || self.queue.len() >= self.max_outstanding
+        {
             return false;
         }
-        self.in_service.remove(&block);
-        self.queued.insert(block);
+        if let Some(state) = self.outstanding.get_mut(&block) {
+            *state = RequestState::Queued;
+        }
+        self.in_service_len = self.in_service_len.saturating_sub(1);
         self.queue.push_front(block);
         true
     }
@@ -220,15 +284,18 @@ impl InboundObligations {
     /// Whether the data for an in-service request may still be sent: we must
     /// not send a Piece to a peer we have since choked (except allowed-fast).
     pub fn may_send(&self, block: &BlockExtent) -> bool {
-        self.in_service.contains(block) && (!self.choked || self.is_allowed_fast(block.piece))
+        self.outstanding.get(block) == Some(&RequestState::InService)
+            && (!self.choked || self.is_allowed_fast(block.piece))
     }
 
     /// Resolve an in-service request. A Fast peer gets a Reject for anything
     /// that did not end in a Piece.
     pub fn finish(&mut self, block: BlockExtent, served: Served) -> Option<Reject> {
-        if !self.in_service.remove(&block) {
+        if self.outstanding.get(&block) != Some(&RequestState::InService) {
             return None;
         }
+        self.outstanding.remove(&block);
+        self.in_service_len = self.in_service_len.saturating_sub(1);
         match (served, self.fast) {
             (Served::Sent, _) => None,
             (Served::Failed, true) => Some(Reject {
@@ -245,31 +312,43 @@ impl InboundObligations {
 
     /// Connection closed: every outstanding obligation ends with it.
     pub fn close(&mut self) -> usize {
-        let outstanding = self.queue.len() + self.in_service.len();
+        let outstanding = self.outstanding.len();
         self.queue.clear();
-        self.queued.clear();
-        self.in_service.clear();
+        self.outstanding.clear();
+        self.in_service_len = 0;
         outstanding
     }
 
     /// Every admitted request is in exactly one of queued / in service.
     pub fn check_invariants(&self) -> Result<(), String> {
-        if self.queue.len() != self.queued.len() {
-            return Err("queue and index disagree".into());
+        let queued_count = self
+            .outstanding
+            .values()
+            .filter(|state| **state == RequestState::Queued)
+            .count();
+        if self.queue.len() != queued_count {
+            return Err("queue and request index disagree".into());
         }
-        if self.queue.iter().any(|block| !self.queued.contains(block))
-            || self.queued.iter().any(|block| !self.queue.contains(block))
-        {
-            return Err("queue contents and index disagree".into());
-        }
-        if self
-            .queue
+        let mut queued_index = HashSet::with_capacity(self.queue.len());
+        if self.queue.iter().any(|block| {
+            self.outstanding.get(block) != Some(&RequestState::Queued)
+                || !queued_index.insert(*block)
+        }) || self
+            .outstanding
             .iter()
-            .any(|block| self.in_service.contains(block))
+            .any(|(block, state)| *state == RequestState::Queued && !queued_index.contains(block))
         {
-            return Err("a request is both queued and in service".into());
+            return Err("queue contents and request index disagree".into());
         }
-        if self.queue.len() + self.in_service.len() > self.max_outstanding {
+        let indexed_in_service = self
+            .outstanding
+            .values()
+            .filter(|state| **state == RequestState::InService)
+            .count();
+        if indexed_in_service != self.in_service_len {
+            return Err("in-service count and request index disagree".into());
+        }
+        if self.outstanding.len() > self.max_outstanding {
             return Err("outstanding request limit exceeded".into());
         }
         Ok(())

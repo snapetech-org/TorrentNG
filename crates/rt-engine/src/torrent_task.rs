@@ -17309,6 +17309,115 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn disconnecting_an_unchoked_peer_immediately_fills_the_upload_slot() {
+        let temp = tempfile::tempdir().unwrap();
+        let conn = Connection::open_in_memory().unwrap();
+        rt_db::migrate(&conn).unwrap();
+        let meta = TorrentMetaV1 {
+            info_hash: [37; 20],
+            announce: None,
+            announce_list: Vec::new(),
+            webseeds: Vec::new(),
+            comment: None,
+            created_by: None,
+            creation_date: None,
+            name: "choker-disconnect.bin".into(),
+            piece_length: 4,
+            pieces: vec![[0; 20]],
+            files: vec![rt_metainfo::TorrentFileV1 {
+                index: 0,
+                length: 4,
+                path: rt_path::SafeRelPath::from_name("choker-disconnect.bin", false).unwrap(),
+                offset: 0,
+                pad: false,
+            }],
+            private: false,
+            raw: Vec::new(),
+        };
+        let db = Arc::new(Mutex::new(conn));
+        let (_cmd_tx, cmd_rx) = mpsc::channel(1);
+        let mut task = TorrentTask::new(
+            meta,
+            temp.path().to_path_buf(),
+            false,
+            TorrentState::Downloading,
+            Arc::new(RwLock::new(SessionRegistry::new())),
+            DbExecutor::direct(Arc::clone(&db)),
+            ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default()),
+            cmd_rx,
+            temp.path().join("fastresume"),
+            8,
+            6881,
+            10,
+            10,
+            60,
+            1024 * 1024,
+            StorageIoConfig::default(),
+            false,
+            OutboundEgressPolicy::default(),
+            GlobalNetworkBudget::unlimited(),
+            10_000,
+            None,
+        )
+        .await;
+
+        let peer_count = DEFAULT_MAX_UNCHOKED + 2;
+        let permits = Arc::new(tokio::sync::Semaphore::new(peer_count));
+        let mut peer_ids = HashMap::new();
+        let mut command_receivers = HashMap::new();
+        for index in 0..peer_count {
+            let peer_addr = format!("127.0.0.1:{}", 6881 + index as u16)
+                .parse()
+                .unwrap();
+            let (peer_id, command_rx) = task
+                .register_peer(
+                    peer_addr,
+                    Arc::clone(&permits)
+                        .acquire_owned()
+                        .await
+                        .expect("peer permit"),
+                )
+                .expect("peer registration should fit the memory budget");
+            peer_ids.insert(peer_addr, peer_id);
+            command_receivers.insert(peer_addr, command_rx);
+        }
+
+        for (peer_addr, peer_id) in &peer_ids {
+            task.handle_peer_event(PeerEvent::Interested {
+                peer: *peer_addr,
+                id: *peer_id,
+            })
+            .await;
+        }
+
+        let released_peer = task
+            .active_peers
+            .iter()
+            .find(|(_, handle)| !handle.upload_choked)
+            .map(|(addr, handle)| (*addr, handle.id))
+            .expect("an interested peer should occupy an upload slot");
+        let waiting_peer = task
+            .active_peers
+            .iter()
+            .find(|(_, handle)| handle.interested && handle.upload_choked)
+            .map(|(addr, _)| *addr)
+            .expect("the extra interested peer should be waiting for a slot");
+
+        task.handle_peer_event(PeerEvent::Disconnected {
+            peer: released_peer.0,
+            id: released_peer.1,
+            outstanding: Vec::new(),
+        })
+        .await;
+
+        assert!(!task.active_peers[&waiting_peer].upload_choked);
+        assert!(matches!(
+            command_receivers.get_mut(&waiting_peer).unwrap().try_recv(),
+            Ok(PeerCommand::Unchoke)
+        ));
+    }
+
+    #[tokio::test]
     async fn shutdown_peers_clears_picker_peer_state() {
         let temp = tempfile::tempdir().unwrap();
         let conn = Connection::open_in_memory().unwrap();

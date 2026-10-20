@@ -5,7 +5,26 @@ This file instantiates the template in
 implementation slices currently in progress. A ticket stays `wip` until its
 written acceptance and exact-revision evidence are complete.
 
-## Current source candidate — `7bc43bf` (2026-10-19)
+## Latest resource-first follow-up validation — 2026-10-19
+
+After the `7bc43bf` PERF-110 scorecard, the resource-first follow-up added
+immediate choker refill after disconnect, picker-owned endgame work counting,
+and governor-backed accounting for retained inbound request metadata. The
+exact-source Rust workspace run passed 2,306 tests (0 failed, 12 ignored) on
+Rust 1.94.0; `rt-engine` and `rt-piece-picker` Clippy passed with warnings
+denied. `cargo fmt --all -- --check` and `git diff --check` also passed.
+
+Three process repetitions of the synthetic endgame refill probe measured
+collect/sort/deduplicate versus picker-owned counting at 1/4/16/64 peers. Median
+costs were 4/4,311/8,065/18,259 versus below 1/668/664/373 ns per call; the
+old candidate-vector capacities were 0/3,072/7,680/26,112 bytes, while the new
+path allocated no candidate vector. This is a picker diagnostic, not a
+whole-client CPU, RSS, or I/O result. The new code is not part of the
+`7bc43bf` paired scorecard; a current-source whole-client run and a multi-peer
+process-memory comparison remain open. The measured one-peer seed RSS gap is
+still unattributed.
+
+## Scored source candidate — `7bc43bf` (2026-10-19)
 
 The current candidate is exact source commit
 `7bc43bf6957a4b4b0054ba1229afb8cfd829efcb`. It includes the choker-slot fix
@@ -509,9 +528,10 @@ bounded by the number of fresh blocks this peer can supply, in addition to
 rate credit, response buffers, device backlog, and negotiated `reqq`. V1 and
 hybrid-v1 count picker-owned fresh blocks through packed peer availability;
 the bitmap walk stops once the local 128-block ceiling is met. When fresh
-work is exhausted, v1 endgame counts distinct outstanding coordinates held by
-other peers so duplicate requests remain possible without reopening ordinary
-work. Pure-v2 counts fresh blocks in active assemblies and eligible remote
+work is exhausted, v1 endgame counts distinct unreceived requests directly
+from picker state and excludes the current peer's requests. This avoids
+collecting, sorting, and deduplicating every other peer's coordinates during
+refill. Pure-v2 counts fresh blocks in active assemblies and eligible remote
 pieces, excluding received and on-wire blocks, local completion, padding,
 unwanted files, pending completion, foreign piece ownership, and per-peer
 assembly/completion limits. Its count stops at the 32-block ceiling.
@@ -540,7 +560,7 @@ protocol event.
   restore, and outstanding-request reset; peer availability traversal stops at
   the configured local ceiling.
 - Endgame counts distinct unreceived blocks available to the peer and excludes
-  its own requests.
+  its own requests without rebuilding a cross-peer request list.
 - Pure-v2 counts only eligible blocks, subtracts received and on-wire work,
   and respects assembly and completion caps.
 - Window limits remain 4–128 for v1/hybrid-v1 and 4–32 for pure-v2. The
@@ -563,6 +583,14 @@ protocol event.
 - **Command or probe:** run with the owner-requested bulk pass.
 - **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `354ad504`. External acceptance remains listed below.
 - **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261019/evidence/`; external acceptance remains listed below.
+- **Current worktree follow-up:** endgame refill now counts picker-owned
+  requests directly, subtracts the refilling peer's own requests, and gets the
+  shared peer-work total from the ledger's O(1) in-flight count. The query
+  avoids active-peer enumeration, sorting, and a temporary request vector. A
+  regression source covers the picker query and passed in the current full
+  workspace run. PERF-111 compares equivalent work against the previous
+  collect/sort/deduplicate path at 1, 4, 16, and 64 peers; its three-repeat
+  diagnostic results are recorded below.
 - **External evidence still required:** live-window parity and matched
   whole-client measurements; the local correctness suite passed at
   `354ad504`.
@@ -2049,6 +2077,9 @@ replay fixture now covers downloading/seeding mode changes, stale rates,
 interest changes, peer joins/departures, optimistic-slot fairness, and
 transition-only outputs. Its regression passed in both exact-main workspace
 runs.
+The live v1 actor also reruns the policy immediately when an unchoked peer
+disconnects so waiting peers can take the released slot without the 10-second
+periodic round.
 
 ### Ownership and invariant
 
@@ -2077,6 +2108,8 @@ runs.
 - v1 and pure-v2 actors send only actual choke-state transitions.
 - A pure-v2 upload that finishes after its slot is revoked is discarded and
   resolved according to the negotiated Fast behavior.
+- Disconnecting an unchoked v1 peer immediately fills its released slot when
+  another interested peer is waiting.
 - Reconnecting at the same socket address does not inherit the prior
   connection's selected slot.
 - A deterministic swarm trace covers mode changes, stale rates, interest
@@ -2101,12 +2134,18 @@ runs.
   history, seeded tie replay on virtual monotonic time, interest transitions,
   v2 wire-state changes, connection identity across reconnect, and
   `seeded_swarm_trace_replays_mode_stale_interest_join_leave_and_fair_rotation`.
+- **Current worktree regression source:**
+  `disconnecting_an_unchoked_peer_immediately_fills_the_upload_slot`; it has
+  passed in the current full workspace run.
 - **Command or probe to run:** peer-manager and v2 peer-policy tests during the
   requested bulk pass.
 - **Expected result:** mode changes select the matching feedback rate, seeded
   traces replay identically, and v2 emits no duplicate choke transitions.
 - **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `354ad504`. External acceptance remains listed below.
 - **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261019/evidence/`; external acceptance remains listed below.
+- **Current worktree follow-up:** disconnecting an unchoked peer now reruns the
+  choker immediately, with a regression source for filling the released slot.
+  That regression passed in the current full workspace run.
 - **External evidence still required:** real-client seed and download swarm
   behavior under mixed peer speeds.
 
@@ -2126,6 +2165,16 @@ The pure `UploadService` remains the deterministic policy reference. The live
 process-wide round-robin job/byte admission together for v1/hybrid and pure-v2.
 The peer loop retains socket ownership and ordered responses. Composite
 torrent/connection identities prevent collisions between torrent-local slots.
+Inbound request state uses one queued/in-service phase map plus the FIFO and
+charges a modeled 256-byte per-connection base plus 64 bytes per high-water
+request slot to the shared PeerBuffer governor. Obligation and budget state
+share one connection lock. The charge remains held until disconnect because
+the collections retain capacity after cancellation or completion; memory
+denial uses the protocol's ordinary queue-full outcome. Both collections are
+fallibly reserved before request state is mutated. Choking rotates allowed-fast
+requests through the existing FIFO allocation instead of building a second
+temporary queue. The rollback pure-v2 actor uses the same runtime admission
+helper.
 Requests with zero or greater-than-one-block lengths are refused. The configured byte ceiling has a
 one-wire-block minimum, then acts as a hard cap. A disconnect ends protocol
 obligations but does not release capacity for reads already dispatched to
@@ -2161,6 +2210,9 @@ storage/rate jobs progress, with one ordered socket writer per peer.
   dispatches.
 - Job and byte budgets bound dispatched reads, including after disconnect;
   one valid block is admitted even when configuration is below one block.
+- Retained request bookkeeping is bounded by the per-peer request cap and
+  process-wide PeerBuffer budget; a failed charge adds no request state and
+  yields Fast Reject or a silent legacy drop as negotiated.
 - Read-job identities are monotonic and never reused; exhaustion refuses
   dispatch before removing an obligation from its per-peer queue.
 - The process-wide live read-registration table never exceeds configured
@@ -2203,6 +2255,13 @@ storage/rate jobs progress, with one ordered socket writer per peer.
   remain accounted until completion.
 - **Executed on exact revision:** yes; repository Rust regressions passed on Rust 1.88.0 and 1.94.0 and all 21 transfer-rebuild Python regressions passed at `354ad504`. External acceptance remains listed below.
 - **Artifact or report path:** repository-local Rust and Python bulk logs are under `/tmp/tng-transfer-core-close-20261019/evidence/`; external acceptance remains listed below.
+- **Current worktree follow-up:** request-coordinate containers now use one
+  phase map and a FIFO, with a modeled 256-byte per-connection base plus
+  64 bytes per high-water slot charged to the engine's shared PeerBuffer
+  governor. Obligation and budget state share one connection lock, and choke
+  processing reuses the FIFO allocation. The v2 rollback actor uses the same
+  admission helper. Regression sources cover Fast/legacy memory denial and
+  lease release; they passed in the current full workspace run.
 - **External evidence still required:** real-client Fast behavior and disk
   cancellation latency under load.
 
@@ -4483,15 +4542,43 @@ the production default policy.
   timing sample missed the receiver counter interval; that scheduled pair was
   rerun, and the final source-bound manifest contains its complete replacement.
 
-  TNG seed goodput increased from the pre-choker median of 12.10 MB/s to
-  68.39 MB/s (5.65x). In the post-fix run, urtorrent's median was 99.85 MB/s;
-  its paired goodput ratio to TNG was 1.557 (95% CI 1.425–1.831), so urtorrent
-  remains faster in this profile. The pre/post ratio change is descriptive:
-  generated fixture bytes differ across plan IDs. Download medians were
-  77.19 MB/s for TNG and 74.14 MB/s for urtorrent; the paired urtorrent/TNG
-  ratio was 0.964 (95% CI 0.936–1.035), which does not show a clear difference.
-  TNG seed CPU use was 3.84 CPU-s/GiB versus 4.00 for urtorrent; median peak
-  RSS was 36.69 MiB versus 18.42 MiB.
+  Results below are medians; paired ratios are urtorrent/TorrentNG with 95% CIs.
+  Download goodput was 77.19/74.14 MB/s (ratio 0.964, CI 0.936–1.035,
+  n=10), so there is no clear speed difference. TorrentNG/urtorrent CPU use
+  was 5.56/2.08 CPU-s/GiB (ratio 0.372, CI 0.352–0.397). Peak RSS/PSS was
+  36.57/32.72 versus 14.92/12.47 MiB, but only eight pairs had memory samples,
+  below the scorecard minimum. Download block writes were 1041.41/1025.23
+  MiB/GiB (ratio 0.984, CI 0.983–0.986); both clients reported zero block reads.
+
+  Seed goodput was 68.39/99.85 MB/s (ratio 1.557, CI 1.425–1.831, n=10), so
+  urtorrent was about 46% faster by median. CPU use was 3.84/4.00 CPU-s/GiB
+  (ratio 1.031, CI 0.982–1.104), which is effectively even. Peak RSS/PSS was
+  36.69/33.99 versus 18.42/16.03 MiB; paired RSS/PSS ratios were 0.502
+  (CI 0.494–0.504) and 0.471 (CI 0.463–0.473). Both clients read 1024 MiB/GiB;
+  block writes were 13.56/0.97 MiB/GiB (ratio 0.073, CI 0.070–0.076).
+  These I/O values are process `/proc/<pid>/io` counters, not whole-device
+  measurements; cgroup memory and energy readings were unavailable. TorrentNG
+  seed goodput rose from the pre-choker median of 12.10 MB/s to 68.39 MB/s
+  (5.65x), but that pre/post ratio is descriptive because fixture bytes differ
+  across plan IDs.
+
+  This was an N1 engine-runner comparison. qBittorrent was the helper, not a
+  scored client; the run does not rank TorrentNG against qBittorrent,
+  Transmission, or Deluge as whole clients. The seeded RSS gap is measured but
+  still unattributed, and a one-peer run cannot explain multi-peer request
+  bookkeeping. Follow-up source review found three unmeasured code gaps:
+  disconnects did not rerun the choker, endgame refill rebuilt/sorted peer
+  request snapshots, and inbound request metadata had no byte lease. The
+  the follow-up source adds disconnect refill, picker-owned endgame counting,
+  and high-water request-metadata accounting. The exact-source workspace run
+  passed 2,306 tests (0 failed, 12 ignored), and engine/picker Clippy passed
+  with warnings denied. A synthetic 1/4/16/64-peer endgame probe found the
+  picker-owned count faster than collect/sort/deduplicate by about 6.5x,
+  12x, and 49x at 4, 16, and 64 peers, with no candidate-vector allocation;
+  PERF-111 records the measurements. These changes are not part of the
+  `7bc43bf` scorecard. A matched current-source whole-client run and a
+  multi-peer process-memory comparison remain outstanding, so the measured
+  one-peer seed RSS gap remains unattributed.
 
   Manifest
   `/home/keith/.cache/torrentng-perf110-matched-urtorrent-20261019/qbt-comparison/measurement-choker-fix-20261019-rerun2/run-128m-retry1/perf110-manifest-final.json`
@@ -4502,6 +4589,22 @@ the production default policy.
   validate. This verifies a substantial seed improvement from the choker fix,
   not whole-client superiority; other peers, profiles, and dedicated-host
   qualification remain open.
+
+- **Diagnostic CPU profile (2026-10-20; not a scorecard):** one verified
+  128 MiB download and one verified seed by the pinned TorrentNG candidate,
+  with pinned qBittorrent as its helper, were sampled with Linux `perf`. The
+  sampled candidate cycles put SHA-1 compression at 9.6% of download samples
+  and 13.7% of seed samples. Async wake/channel synchronization appeared as
+  another repeated cost (7.0% in the download sample; `SyncWaker` notify and
+  register totaled 8.9% in the seed sample). Storage scheduling/write work was
+  a few percent in the download sample. These are two diagnostic transfers,
+  not comparative or acceptance results; no code optimization has been
+  credited from them yet.
+- **qBittorrent candidate status:** a partial candidate run produced incomplete
+  receiver-counter observations and stopped when a received-byte counter fell
+  below the independently verified useful payload. That run is invalid and
+  supplies no qBittorrent performance result; qBittorrent was only the helper
+  in the valid TorrentNG/urtorrent scorecard above.
 
 - **External evidence still required:** successful pinned compatibility
   preflights and paired trials across the other pinned clients and fixture
@@ -4557,6 +4660,15 @@ threshold tests or whole-client performance evidence.
   snapshot operation. Those numbers mean cumulative allocation traffic.
 - Both probes emit stable CSV headings, have no pass/fail thresholds, and
   document the need to retain commit, toolchain, and host identity with output.
+- **Current worktree endgame refill probe (2026-10-19, `kspld0`, Rust 1.94.0):**
+  three process repetitions of 5,000 calls compared the previous
+  collect/sort/deduplicate path with the picker-owned query. Median per-call
+  times in nanoseconds at 1/4/16/64 peers were 4/4311/8065/18259 for the old
+  path and below 1/668/664/373 for the new path. The old path's temporary
+  candidate-vector capacities were 0/3072/7680/26112 bytes; the picker path
+  allocated no candidate vector. The one-peer case takes the O(1) no-other-
+  source gate. This synthetic picker probe is diagnostic only; it does not
+  measure end-to-end client CPU, process RSS, or disk I/O.
 - Regression source records the intended probe workloads. The local commands
   and two exact-source dedicated-host repeats have run; independent process
   RSS and whole-client evidence remain separate.

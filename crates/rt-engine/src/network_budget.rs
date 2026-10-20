@@ -9,6 +9,7 @@ use tokio::sync::{mpsc, oneshot, Notify, Semaphore};
 // Using std::time::Instant here would make the refill calculation below see
 // real wall-clock time regardless of virtual time advances, which live-locks
 // a paused-clock test into an infinite near-zero-wait retry loop.
+use rt_metrics::{ResourceGovernor, ResourceGovernorConfig};
 use rt_utp::{UtpEndpoint, UtpRuntime};
 use tokio::time::Instant;
 
@@ -67,6 +68,20 @@ impl GlobalNetworkBudget {
         download_limit_bytes_per_sec: Option<u64>,
         upload_limit_bytes_per_sec: Option<u64>,
     ) -> Self {
+        Self::new_with_resources(
+            max_peers,
+            download_limit_bytes_per_sec,
+            upload_limit_bytes_per_sec,
+            ResourceGovernor::new(ResourceGovernorConfig::default()),
+        )
+    }
+
+    pub(crate) fn new_with_resources(
+        max_peers: usize,
+        download_limit_bytes_per_sec: Option<u64>,
+        upload_limit_bytes_per_sec: Option<u64>,
+        resources: ResourceGovernor,
+    ) -> Self {
         let (listener_rebind_tx, listener_rebind_rx) = mpsc::channel(4);
         let upload_origin = Instant::now();
         let global_source_requests = max_peers
@@ -103,6 +118,7 @@ impl GlobalNetworkBudget {
                     max_connections: max_peers.max(1),
                     ..UploadReadLimits::default()
                 },
+                resources,
             ),
             download_tree: Arc::clone(&download_tree),
             upload_tree: Arc::clone(&upload_tree),

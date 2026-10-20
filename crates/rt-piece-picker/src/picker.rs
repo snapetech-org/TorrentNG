@@ -848,6 +848,73 @@ impl PiecePicker {
         useful
     }
 
+    /// Count useful endgame blocks directly from the picker's per-block
+    /// request counts. This avoids rebuilding and sorting the same request
+    /// coordinates from every peer on each refill. Blocks already requested
+    /// by this peer are excluded even when other peers also own duplicates;
+    /// this peer already has that work in its request window.
+    pub fn useful_endgame_duplicate_work_for_peer<A: PieceAvailability + ?Sized>(
+        &self,
+        peer_has: &A,
+        requested_by_peer: &[BlockRequest],
+        maximum: usize,
+    ) -> usize {
+        if maximum == 0 || !self.endgame_active() {
+            return 0;
+        }
+
+        // Count picker-owned blocks first, then subtract the current peer's
+        // outstanding blocks. A peer's request list is unique by
+        // coordinate, so this is linear in picker state plus this peer's
+        // bounded request window instead of comparing every block against
+        // every request on every refill.
+        let scan_limit = maximum.saturating_add(requested_by_peer.len());
+        let mut useful = 0usize;
+        peer_has.for_each_set_piece_while(self.piece_count, &mut |piece| {
+            if !self.wanted.get(piece) || !self.enabled.get(piece) {
+                return true;
+            }
+            let Some(state) = self.in_progress.get(&piece) else {
+                return true;
+            };
+
+            for (block_idx, &requested) in state.requested.iter().enumerate() {
+                if requested == 0 || state.block_received(block_idx) {
+                    continue;
+                }
+                useful = useful.saturating_add(1);
+                if useful >= scan_limit {
+                    return false;
+                }
+            }
+            true
+        });
+        if useful >= scan_limit {
+            return maximum;
+        }
+
+        let own_outstanding = requested_by_peer
+            .iter()
+            .filter(|request| {
+                let piece = request.piece as usize;
+                if piece >= self.piece_count
+                    || !peer_has.has_piece(piece)
+                    || !self.wanted.get(piece)
+                    || !self.enabled.get(piece)
+                {
+                    return false;
+                }
+                let Some(state) = self.in_progress.get(&piece) else {
+                    return false;
+                };
+                let block = (request.begin / MAX_BLOCK_SIZE) as usize;
+                state.requested.get(block).is_some_and(|count| *count > 0)
+                    && !state.block_received(block)
+            })
+            .count();
+        useful.saturating_sub(own_outstanding).min(maximum)
+    }
+
     /// Return whether a block has already been accepted for an in-progress
     /// piece. Endgame requests may be sent to multiple peers; a late duplicate
     /// must not overwrite the first response or turn a conflicting duplicate
@@ -1080,6 +1147,43 @@ mod tests {
         assert_eq!(
             picker.endgame_duplicate_work_for_peer(&peer_has, &[], &other_peer_requests, 4,),
             1
+        );
+    }
+
+    #[test]
+    fn endgame_refill_counts_picker_owned_requests_without_a_peer_scan() {
+        let mut picker = picker_1piece(MAX_BLOCK_SIZE * 3);
+        picker.availability.add_have(0);
+        let peer_has = peer_has_all(1);
+        let requests: Vec<_> = (0..3).map(|_| picker.pick(&peer_has).unwrap()).collect();
+
+        assert!(picker.endgame_active());
+        assert_eq!(
+            picker.useful_endgame_duplicate_work_for_peer(&peer_has, &[], 2),
+            2
+        );
+        assert_eq!(
+            picker.useful_endgame_duplicate_work_for_peer(&peer_has, &requests[..1], 4),
+            2,
+            "the candidate's own block is skipped without collecting other peers' requests"
+        );
+
+        picker.block_received_pending(0, requests[1].begin);
+        assert_eq!(
+            picker.useful_endgame_duplicate_work_for_peer(&peer_has, &requests[..1], 4),
+            1,
+            "received blocks stop counting as useful duplicate work"
+        );
+
+        let duplicate = picker.pick_endgame(&peer_has, &[]).unwrap();
+        assert_eq!(
+            picker.useful_endgame_duplicate_work_for_peer(
+                &peer_has,
+                std::slice::from_ref(&duplicate),
+                4
+            ),
+            1,
+            "a block already requested by this peer is excluded even when it has another owner"
         );
     }
 

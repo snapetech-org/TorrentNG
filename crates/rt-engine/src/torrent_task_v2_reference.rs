@@ -71,6 +71,7 @@ use crate::transfer::obligations::{
     InboundDecision, InboundObligations, Reject as InboundReject,
     RejectReason as InboundRejectReason, Served as InboundServed,
 };
+use crate::transfer::shared_upload::InboundBookkeepingBudget;
 use crate::{EnginePeerSnapshot, EngineTorrentLimits, EngineWebseedSnapshot, TorrentRuntimeStats};
 
 const V2_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -3471,6 +3472,7 @@ async fn run_v2_peer_protocol(
     let mut pending_piece_completions = HashMap::<u32, V2PendingCompletion>::new();
     let mut upload_reads = futures::stream::FuturesUnordered::<V2UploadReadTask>::new();
     let mut upload_obligations = InboundObligations::new(remote_supports_fast, V2_MAX_UPLOAD_WORK);
+    let mut upload_bookkeeping = InboundBookkeepingBudget::new(context.resources.clone());
     if v2_upload_can_serve(&context, &state) {
         upload_obligations.on_local_unchoke();
     }
@@ -3729,7 +3731,11 @@ async fn run_v2_peer_protocol(
                             .read()
                             .await
                             .get(piece as usize);
-                        let decision = upload_obligations.on_request(block, have_piece);
+                        let decision = upload_bookkeeping.admit(
+                            &mut upload_obligations,
+                            block,
+                            have_piece,
+                        );
                         match decision {
                             InboundDecision::Queue => start_v2_upload_reads(
                                 &mut upload_reads,

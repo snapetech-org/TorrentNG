@@ -72,11 +72,35 @@ fell from 5.96 to 4.60 CPU-s/GiB; median peak RSS/PSS fell from 36.24/33.37 to
 whole-client ranking or paired-bootstrap comparison: plan-specific fixture
 payload hashes differ even though the profile and environment inputs match.
 
-The older reciprocal run reported 83.77/13.07 MB/s downloading and
-12.88/93.08 MB/s seeding (TorrentNG/urtorrent), but changed both endpoints
-between client rows. Those figures remain historical and cannot isolate which
-endpoint caused the difference. Full artifacts and digests are recorded under
+The latest direct paired comparison is the post-choker-fix run on pinned source
+`7bc43bf`. TorrentNG/urtorrent median goodput was 77.19/74.14 MB/s downloading
+(no clear difference) and 68.39/99.85 MB/s seeding (urtorrent about 46% faster).
+TorrentNG used more CPU per GiB downloading (5.56 versus 2.08 CPU-s/GiB), while
+seed CPU was close (3.84 versus 4.00). Seed peak RSS/PSS was 36.69/33.99 MiB
+for TorrentNG and 18.42/16.03 MiB for urtorrent. Download memory missed the
+minimum sample count. Process block-write counters were close downloading
+(1041 versus 1025 MiB/GiB) and lower for urtorrent seeding (13.56 versus
+0.97 MiB/GiB); these are not whole-device I/O measurements. Full paired
+intervals, source pins, sample gates, and artifact digests are recorded under
 PERF-110 in [Transfer Core Active Specs](../../docs/TRANSFER_CORE_ACTIVE_SPECS.md).
+This N1 engine-runner result does not rank TorrentNG against qBittorrent,
+Transmission, or Deluge as whole clients; qBittorrent was only the helper. The
+measured seed RSS gap remains unattributed. The current worktree adds an
+immediate choker refill on disconnect, removes peer-list collection and sorting
+from endgame refill, and charges retained upload-request bookkeeping to the
+shared PeerBuffer budget using a 256-byte connection base plus 64 bytes per
+high-water request slot. The exact-source workspace suite passed 2,306 tests
+(0 failed, 12 ignored), and engine/picker Clippy passed with warnings denied.
+A synthetic 1/4/16/64-peer endgame probe measured about 6.5x, 12x, and 49x less
+time at 4, 16, and 64 peers for the picker-owned count, with no candidate
+vector allocation. The change is not in the `7bc43bf` scorecard, and a matched
+current-source whole-client run plus a multi-peer process-memory comparison
+remain outstanding.
+
+An older reciprocal run reported 83.77/13.07 MB/s downloading and 12.88/93.08
+MB/s seeding (TorrentNG/urtorrent), but changed both endpoints between client
+rows. Those figures remain historical and cannot isolate which endpoint caused
+the difference.
 
 The 16-read upload-window candidate was tested in a second source-bound
 10-pair run on the same local-NVMe Btrfs host profile. All 40 records completed
@@ -104,9 +128,11 @@ protected-runner hardware evidence, crash-cut, soak/canary, independent review,
 and release evidence remain open; no whole-client efficiency or superiority
 claim is made.
 
-The source audit found no missing architecture boundary. The ledger remains
-12/63 `done`, 51/63 `wip`, and 0 `todo`; those WIP rows need the runtime and
-external acceptance evidence listed above. See
+The latest source review found three code gaps after the benchmark. Their
+fixes and regression sources are in the current worktree; the bulk tests and
+peer-count benchmark remain pending. The RSS gap is still unexplained. The
+ledger remains 12/63 `done`, 51/63 `wip`, and 0 `todo`; those WIP rows need the
+runtime and external acceptance evidence listed above. See
 [`TRANSFER_CORE_ACTIVE_SPECS.md`](../../docs/TRANSFER_CORE_ACTIVE_SPECS.md)
 for the full run record.
 
@@ -844,6 +870,14 @@ The probes were run locally and are recorded in
 Their results are diagnostic samples, not adopted thresholds or whole-client
 qualification. Both probes ran twice on clean exact main `eb5f3158` on `kspls0`;
 the retained evidence is summarized in the active ticket spec.
+The current picker probe also compares the previous endgame peer-request
+collect/sort/deduplicate path with direct picker-state counting at 1, 4, 16,
+and 64 peers. Three process repetitions of 5,000 calls measured medians of
+4/4,311/8,065/18,259 ns per call for the old path and below 1/668/664/373 ns
+for the new path. The old candidate-vector capacities were
+0/3,072/7,680/26,112 bytes; the new path allocated no candidate vector. The
+one-peer case uses the production no-other-source fast path. These are
+diagnostic picker measurements, not process CPU, RSS, or disk-I/O results.
 
 ## PERF-115 hosted and dedicated hardware lanes
 

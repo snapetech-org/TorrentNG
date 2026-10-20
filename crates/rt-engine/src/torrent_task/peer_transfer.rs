@@ -552,7 +552,8 @@ impl TorrentTask {
                 } else {
                     outstanding
                 };
-                if let Some(handle) = self.active_peers.remove(&peer) {
+                let freed_upload_slot = if let Some(handle) = self.active_peers.remove(&peer) {
+                    let freed_upload_slot = !handle.upload_choked;
                     remove_peer_availability(&mut self.picker.availability, &handle.peer_has);
                     self.network_budget
                         .remove_transfer_peer(TransferPeerId::new(
@@ -560,9 +561,18 @@ impl TorrentTask {
                             handle.transfer_conn,
                         ));
                     self.transfer_ledger.disconnect_peer(handle.transfer_conn);
-                }
+                    freed_upload_slot
+                } else {
+                    false
+                };
                 for req in outstanding {
                     self.picker.cancel_request(req.piece as usize, req.begin);
+                }
+                if freed_upload_slot {
+                    // A disconnected unchoked peer leaves an upload slot
+                    // available. Refill it now instead of waiting for the
+                    // periodic choke round.
+                    self.run_choker().await;
                 }
             }
             PeerEvent::RequestTimedOut {
@@ -714,12 +724,6 @@ impl TorrentTask {
     }
 
     pub(super) async fn refill_peer_requests(&mut self, peer: SocketAddr) {
-        let other_peers_outstanding: usize = self
-            .active_peers
-            .iter()
-            .filter(|(addr, _)| **addr != peer)
-            .map(|(_, other)| other.outstanding)
-            .sum();
         let Some(handle) = self.active_peers.get(&peer) else {
             return;
         };
@@ -727,6 +731,18 @@ impl TorrentTask {
             return;
         }
         let transfer_conn = handle.transfer_conn;
+        // The ledger already maintains this torrent-wide count. Subtract the
+        // serial webseed request and this peer's requests to avoid scanning
+        // every active peer on every refill.
+        let webseed_outstanding = self
+            .webseed_transfer_conn
+            .map_or(0, |conn| self.transfer_ledger.outstanding(conn));
+        let own_outstanding = self.transfer_ledger.outstanding(transfer_conn);
+        let other_sources_outstanding = self
+            .transfer_ledger
+            .in_flight()
+            .saturating_sub(own_outstanding);
+        let other_peers_outstanding = other_sources_outstanding.saturating_sub(webseed_outstanding);
         let plane = handle.plane;
         let download_rate = handle.download_rate;
         let download_rate_started = handle.download_rate_window_started;
@@ -735,21 +751,13 @@ impl TorrentTask {
             .useful_missing_for_peer(&handle.peer_has, PEER_REQUEST_PIPELINE_ADAPTIVE_MAX);
         let useful_missing = if useful_fresh >= PEER_REQUEST_PIPELINE_ADAPTIVE_MAX
             || !self.picker.endgame_active()
+            || other_sources_outstanding == 0
         {
             useful_fresh
         } else {
-            let mut duplicate_candidates = self
-                .active_peers
-                .iter()
-                .filter(|(addr, _)| **addr != peer)
-                .flat_map(|(_, other)| other.requested.iter().copied())
-                .collect::<Vec<_>>();
-            duplicate_candidates.sort_unstable_by_key(|request| (request.piece, request.begin));
-            duplicate_candidates.dedup_by_key(|request| (request.piece, request.begin));
-            useful_fresh.saturating_add(self.picker.endgame_duplicate_work_for_peer(
+            useful_fresh.saturating_add(self.picker.useful_endgame_duplicate_work_for_peer(
                 &handle.peer_has,
                 &handle.requested,
-                &duplicate_candidates,
                 PEER_REQUEST_PIPELINE_ADAPTIVE_MAX.saturating_sub(useful_fresh),
             ))
         };

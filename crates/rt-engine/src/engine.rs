@@ -2103,10 +2103,11 @@ impl Engine {
         let session_event_writer =
             SessionEventWriter::new(Arc::clone(&db), config.logging.event_retention);
 
-        let network_budget = GlobalNetworkBudget::new(
+        let network_budget = GlobalNetworkBudget::new_with_resources(
             config.network.max_peers,
             (config.network.download_rate_limit > 0).then_some(config.network.download_rate_limit),
             (config.network.upload_rate_limit > 0).then_some(config.network.upload_rate_limit),
+            resources.clone(),
         );
         network_budget.set_listen_port(config.network.listen_port);
         let mut engine = Engine {
