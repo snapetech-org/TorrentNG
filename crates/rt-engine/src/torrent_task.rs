@@ -2013,6 +2013,17 @@ impl UploadAccountingState {
     }
 }
 
+fn atomic_saturating_add(counter: &AtomicU64, addend: u64) {
+    let mut current = counter.load(Ordering::Relaxed);
+    loop {
+        let next = current.saturating_add(addend);
+        match counter.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return,
+            Err(observed) => current = observed,
+        }
+    }
+}
+
 #[derive(Default)]
 struct UploadAccountingBatch {
     bytes_since_notification: u64,
@@ -9298,10 +9309,9 @@ async fn run_peer_loop(
                             grant.settle(bytes);
                         }
                         let first_unreported_block = upload_accounting_batch.is_empty();
-                        let _ = upload.upload_accounting.pending_uploaded_bytes.fetch_update(
-                            Ordering::Relaxed,
-                            Ordering::Relaxed,
-                            |pending| Some(pending.saturating_add(bytes)),
+                        atomic_saturating_add(
+                            &upload.upload_accounting.pending_uploaded_bytes,
+                            bytes,
                         );
                         let batch_ready = upload_accounting_batch.add(
                             bytes,
@@ -11647,6 +11657,30 @@ mod tests {
         assert!(!batch.add(16 * 1024, UPLOAD_ACCOUNTING_BATCH_BYTES));
         let mut seed_limited_batch = UploadAccountingBatch::default();
         assert!(seed_limited_batch.add(1, 1));
+    }
+
+    #[test]
+    fn upload_accounting_atomic_add_is_saturating_and_concurrent() {
+        let pending = Arc::new(AtomicU64::new(0));
+        let workers = (0..8)
+            .map(|_| {
+                let pending = Arc::clone(&pending);
+                std::thread::spawn(move || {
+                    for _ in 0..1_000 {
+                        atomic_saturating_add(&pending, 1);
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        assert_eq!(pending.load(Ordering::Relaxed), 8_000);
+
+        pending.store(u64::MAX - 1, Ordering::Relaxed);
+        atomic_saturating_add(&pending, 2);
+        atomic_saturating_add(&pending, 1);
+        assert_eq!(pending.load(Ordering::Relaxed), u64::MAX);
     }
 
     #[tokio::test]
