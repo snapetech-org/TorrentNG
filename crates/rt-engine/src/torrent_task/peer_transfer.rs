@@ -1946,14 +1946,14 @@ impl TorrentTask {
 
     pub(super) async fn record_upload(&mut self, bytes: u64) {
         self.last_upload_at = Instant::now();
-        self.update_transfer(bytes, true).await;
-        self.enforce_seed_limits().await;
+        let transfer_totals = self.update_transfer(bytes, true).await;
+        self.enforce_seed_limits_with_totals(transfer_totals).await;
     }
 
-    pub(super) async fn update_transfer(&mut self, bytes: u64, upload: bool) {
+    pub(super) async fn update_transfer(&mut self, bytes: u64, upload: bool) -> (u64, u64) {
         let mut reg = self.registry.write().await;
         let Some(mut entry) = reg.get_mut(&self.info_hash_hex) else {
-            return;
+            return (0, 0);
         };
         if upload {
             entry.stats.add_upload(bytes);
@@ -1961,6 +1961,7 @@ impl TorrentTask {
             entry.stats.add_download(bytes);
         }
         self.transfer_stats_dirty = true;
+        (entry.stats.uploaded, entry.stats.downloaded)
     }
 
     pub(super) async fn enforce_seed_limits(&mut self) {
@@ -1968,6 +1969,14 @@ impl TorrentTask {
             return;
         }
         let (uploaded, downloaded) = self.transfer_snapshot().await;
+        self.enforce_seed_limits_with_totals((uploaded, downloaded))
+            .await;
+    }
+
+    async fn enforce_seed_limits_with_totals(&mut self, (uploaded, downloaded): (u64, u64)) {
+        if self.paused || !self.picker.is_complete() {
+            return;
+        }
         let ratio_reached = self
             .seed_ratio_limit
             .is_some_and(|limit| downloaded > 0 && (uploaded as f64 / downloaded as f64) >= limit);

@@ -95,7 +95,7 @@ Useful environment variables:
 | `TNG_CLIENT_BENCH_MIMALLOC_ALLOW_THP` | mimalloc default | Override mimalloc's transparent huge-page policy; requires the mimalloc allocator. |
 | `TNG_CLIENT_BENCH_PIECE_ASSEMBLY_CAP_MB` | config default | Override the incomplete-piece assembly cap; `0` tests direct block writes without whole-piece assembly buffers. |
 | `TNG_CLIENT_BENCH_PEER_BUFFER_CAP_MB` | config default | Override the process-wide peer buffer cap. |
-| `TNG_CLIENT_BENCH_TOKIO_WORKER_THREADS` | Tokio default | Set Tokio worker count for a measured TorrentNG run. |
+| `TNG_CLIENT_BENCH_TOKIO_WORKER_THREADS` | daemon default (maximum 2) | Set Tokio worker count for a measured TorrentNG run; the daemon default scales down with available parallelism, and `TOKIO_WORKER_THREADS` overrides it. |
 | `TNG_CLIENT_BENCH_STORAGE_IO_WORKER_THREADS` | config default | Override TorrentNG storage I/O workers for the measured run. |
 | `TNG_CLIENT_BENCH_STORAGE_HASH_WORKER_THREADS` | config default | Override TorrentNG storage hash workers for the measured run. |
 | `TNG_CLIENT_BENCH_STORAGE_PEER_READ_READAHEAD_BYTES` | config default | Override the peer-upload read-ahead size in bytes for a measured run. |

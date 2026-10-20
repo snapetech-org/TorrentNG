@@ -6,10 +6,27 @@ in the measured source checkout.
 
 ## Validation status
 
-The latest measured candidate is pinned to source commit
-`7bc43bf6957a4b4b0054ba1229afb8cfd829efcb`; its 128 MiB private-v1 PERF-110
-run against urtorrent `0.14.3` is recorded under PERF-110 in
-`docs/TRANSFER_CORE_ACTIVE_SPECS.md`. The pre-cutover reference is
+The latest valid source-bound PERF-110 runs use release source
+`01a3464d5a6b1f3496dde2f91ab35dcc931089a3`; they compare a 128 MiB private-v1
+`N1/lan_1g` transfer against urtorrent `0.14.3`. The detailed four-worker and
+two-worker results, pair counts, artifact hashes, and limits are in PERF-110
+of `docs/TRANSFER_CORE_ACTIVE_SPECS.md`. These are engine-runner results, not
+whole-client rankings, and the two worker profiles use different randomized
+fixture hashes.
+
+The source measured in those runs capped the Tokio pool at four workers unless
+`TOKIO_WORKER_THREADS` was set. The two-worker profile kept download goodput
+near 76 MB/s and had about 13–16% lower TorrentNG RSS/PSS than the four-worker
+profile. A follow-up source edit now makes two the default cap and removes a
+second registry lock acquisition from each upload-accounting event. That
+candidate still needs exact-source tests and a fresh paired run before the
+change is qualified.
+
+In the two-worker scorecard TorrentNG still used about twice urtorrent's RSS
+and wrote 13.38 MiB/GiB while seeding versus 0.97 MiB/GiB. Its download CPU
+cost also remained higher. These are the main resource gaps for the next
+measurement and profiling pass; cgroup memory and energy were unavailable.
+qBittorrent was only a helper in these runs. The pre-cutover reference is
 `354ad504f75b33c712b5ccd827cfef3eb0cf4414`, built with one isolated
 benchmark-egress backport in baseline commit
 `8023ce77b6bea4d237b4a7e329b56901fab94ba1`; no transfer or picker code
@@ -21,11 +38,11 @@ cases passed. Strict workspace Clippy passed on both toolchains, formatting
 passed, and the trusted bubblewrap validation-engine contract task passed
 67/67 Python tests. The runner-policy suite passed 4/4.
 
-That full bulk run predates production changes through `7bc43bf` and does not
-qualify the current candidate. The current commit's `rt-engine` suite passed
-734/734 and its matched PERF-110 run validated 40/40 transfers; the full
-workspace, transfer-rebuild Python, ignored scale, and current-source Clippy
-batch remains pending after implementation and documentation closure.
+That full bulk run predates production changes through `01a3464` and does not
+qualify the current source edits. The latest current-source PERF-110 runs
+validated their manifests and scorecards, but full workspace, transfer-rebuild
+Python, ignored scale, and current-source Clippy validation remains pending
+after implementation and documentation closure.
 
 The standalone Rust 1.98.1 urtorrent runner passed all six tests and its help
 smoke; its format check used Rust 1.94.0 because rustfmt is not installed for
@@ -72,30 +89,18 @@ fell from 5.96 to 4.60 CPU-s/GiB; median peak RSS/PSS fell from 36.24/33.37 to
 whole-client ranking or paired-bootstrap comparison: plan-specific fixture
 payload hashes differ even though the profile and environment inputs match.
 
-The latest direct paired comparison is the post-choker-fix run on pinned source
-`7bc43bf`. TorrentNG/urtorrent median goodput was 77.19/74.14 MB/s downloading
-(no clear difference) and 68.39/99.85 MB/s seeding (urtorrent about 46% faster).
-TorrentNG used more CPU per GiB downloading (5.56 versus 2.08 CPU-s/GiB), while
-seed CPU was close (3.84 versus 4.00). Seed peak RSS/PSS was 36.69/33.99 MiB
-for TorrentNG and 18.42/16.03 MiB for urtorrent. Download memory missed the
-minimum sample count. Process block-write counters were close downloading
-(1041 versus 1025 MiB/GiB) and lower for urtorrent seeding (13.56 versus
-0.97 MiB/GiB); these are not whole-device I/O measurements. Full paired
-intervals, source pins, sample gates, and artifact digests are recorded under
-PERF-110 in [Transfer Core Active Specs](../../docs/TRANSFER_CORE_ACTIVE_SPECS.md).
-This N1 engine-runner result does not rank TorrentNG against qBittorrent,
-Transmission, or Deluge as whole clients; qBittorrent was only the helper. The
-measured seed RSS gap remains unattributed. The current worktree adds an
-immediate choker refill on disconnect, removes peer-list collection and sorting
-from endgame refill, and charges retained upload-request bookkeeping to the
-shared PeerBuffer budget using a 256-byte connection base plus 64 bytes per
-high-water request slot. The exact-source workspace suite passed 2,306 tests
-(0 failed, 12 ignored), and engine/picker Clippy passed with warnings denied.
-A synthetic 1/4/16/64-peer endgame probe measured about 6.5x, 12x, and 49x less
-time at 4, 16, and 64 peers for the picker-owned count, with no candidate
-vector allocation. The change is not in the `7bc43bf` scorecard, and a matched
-current-source whole-client run plus a multi-peer process-memory comparison
-remain outstanding.
+The earlier post-choker-fix scorecard on source `7bc43bf` remains historical.
+The latest N1 engine-runner scorecards on source `01a3464` compare TorrentNG
+with urtorrent. Exact medians, confidence intervals, source pins, sample gates,
+and artifact hashes are recorded under PERF-110 in
+[Transfer Core Active Specs](../../docs/TRANSFER_CORE_ACTIVE_SPECS.md). The
+current source also fixes disconnect-triggered choker refill, replaces peer
+scans and sorted snapshots with picker-owned endgame counts, and charges
+retained upload-request bookkeeping to the shared PeerBuffer budget. A
+synthetic 1/4/16/64-peer endgame probe measured lower picker-query cost and no
+candidate-vector allocation. Multi-peer process-memory attribution and
+whole-client comparisons against qBittorrent, Transmission, and Deluge remain
+open.
 
 An older reciprocal run reported 83.77/13.07 MB/s downloading and 12.88/93.08
 MB/s seeding (TorrentNG/urtorrent), but changed both endpoints between client
@@ -128,11 +133,14 @@ protected-runner hardware evidence, crash-cut, soak/canary, independent review,
 and release evidence remain open; no whole-client efficiency or superiority
 claim is made.
 
-The latest source review found three code gaps after the benchmark. Their
-fixes and regression sources are in the current worktree; the bulk tests and
-peer-count benchmark remain pending. The RSS gap is still unexplained. The
-ledger remains 12/63 `done`, 51/63 `wip`, and 0 `todo`; those WIP rows need the
-runtime and external acceptance evidence listed above. See
+The disconnect-triggered choker refill, picker-owned endgame counts, and
+governor-backed inbound request accounting are present in the measured
+`01a3464` source. The current untested edits make two Tokio workers the default
+cap and remove one registry lock from each uploaded-block accounting event;
+their bulk validation and fresh paired run remain pending. Multi-peer memory
+attribution is also open. The ledger remains 12/63 `done`, 51/63 `wip`, and 0
+`todo`; those WIP rows need the runtime and external acceptance evidence listed
+above. See
 [`TRANSFER_CORE_ACTIVE_SPECS.md`](../../docs/TRANSFER_CORE_ACTIVE_SPECS.md)
 for the full run record.
 

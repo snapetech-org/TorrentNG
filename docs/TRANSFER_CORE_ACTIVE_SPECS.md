@@ -5,7 +5,55 @@ This file instantiates the template in
 implementation slices currently in progress. A ticket stays `wip` until its
 written acceptance and exact-revision evidence are complete.
 
-## Latest resource-first follow-up validation — 2026-10-19
+## Current-source resource comparison — 2026-10-20 UTC
+
+Two valid PERF-110 runs used the same release binary built from exact source
+`01a3464d5a6b1f3496dde2f91ab35dcc931089a3` (binary SHA-256
+`e3c9e9624bfe0a873e14e34bea1db4137c0fdddedbc87604d227bf50c73f90a1`), the 128 MiB private-v1 `N1/lan_1g` profile, cold cache,
+1 Gbit/s shaping, and 1 ms latency. The first used TorrentNG's then-default
+four Tokio workers; the second set `TOKIO_WORKER_THREADS=2`. The plan-specific
+fixture hashes differ, so the between-run comparison below is descriptive,
+not an exact-fixture paired estimate.
+
+| Workers | Mode | Matched pairs | Client | Goodput MB/s | CPU s/GiB | Peak RSS MiB | Peak PSS MiB | Process block writes MiB/GiB | Peak threads |
+|---:|---|---:|---|---:|---:|---:|---:|---:|---:|
+| 4 | Download | 16 | TorrentNG | 76.60 | 10.12 | 35.53 | 33.12 | 1041.66 | 17 |
+| 4 | Download | 16 | urtorrent | 75.68 | 4.16 | 15.72 | 13.36 | 1025.22 | 7 |
+| 4 | Seed | 15 | TorrentNG | 71.98 | 6.64 | 37.48 | 34.79 | 13.94 | 13 |
+| 4 | Seed | 15 | urtorrent | 19.02 | 6.16 | 18.33 | 15.88 | 0.97 | 7 |
+| 2 | Download | 16 | TorrentNG | 76.46 | 5.68 | 30.73 | 27.95 | 1042.03 | 13 |
+| 2 | Download | 16 | urtorrent | 86.79 | 2.28 | 14.93 | 12.49 | 950.41 | 7 |
+| 2 | Seed | 14 | TorrentNG | 65.75 | 3.52 | 31.88 | 29.19 | 13.38 | 11 |
+| 2 | Seed | 14 | urtorrent | 98.98 | 4.40 | 18.48 | 16.02 | 0.97 | 7 |
+
+The two-worker run kept the TorrentNG download median effectively unchanged
+and had about 13–16% lower TorrentNG RSS/PSS than the four-worker run. This is
+consistent with adopting a two-worker default cap, while leaving
+`TOKIO_WORKER_THREADS` available for higher-concurrency deployments. The
+worker-count runs do not establish a causal CPU reduction: the payload hashes
+and randomized plans differ, and the urtorrent CPU median also changed. Within
+the two-worker paired run, urtorrent's CPU/GiB ratio versus TorrentNG was
+0.377–0.426 for downloads and 1.204–1.279 for seeding (95% bootstrap
+intervals). TorrentNG still used about twice the RSS, while seeding wrote
+13.38 MiB/GiB versus urtorrent's 0.97 MiB/GiB. The two-worker seed run had two
+incomplete progress-observer trials; the remaining 14 pairs clear the
+scorecard's ten-pair minimum.
+
+These are engine-runner measurements, not whole-client rankings. qBittorrent
+was a helper, not a scored client. Cgroup memory and energy observations were
+unavailable. Process block writes are not device-wide I/O. This run does not
+identify the RSS or seed-write source. Manifests and scorecards are retained
+under `/home/keith/.cache/torrentng-perf110-current-source-20261019/`:
+
+- Four-worker manifest SHA-256: `f4bee45a3be96b9b8466a9b9680d19db43989fe91ff53a5542b35290f7339ecc`; scorecard SHA-256: `632558fbc9d233a4f9280199cbe1c662e5e67ece84cdf1a1a48f6dfec12a98e0`.
+- Two-worker manifest SHA-256: `f004ea7caf26e7623d351415720fe74ea4ec37a82c6cff216e7a06d3e1eb8600`; scorecard SHA-256: `018b3a491459e4bf814d797208ae06985d5b8eee166fad53529d8f827eb6bff2`.
+
+The source edits now in progress are not included in these scorecards. They
+reduce the upload accounting path from two registry lock acquisitions per
+uploaded block to one and change the default worker cap to two. They still
+require exact-source bulk validation and a fresh paired run.
+
+## Resource-first source follow-up after the `7bc43bf` run — 2026-10-19
 
 After the `7bc43bf` PERF-110 scorecard, the resource-first follow-up added
 immediate choker refill after disconnect, picker-owned endgame work counting,
@@ -19,14 +67,14 @@ collect/sort/deduplicate versus picker-owned counting at 1/4/16/64 peers. Median
 costs were 4/4,311/8,065/18,259 versus below 1/668/664/373 ns per call; the
 old candidate-vector capacities were 0/3,072/7,680/26,112 bytes, while the new
 path allocated no candidate vector. This is a picker diagnostic, not a
-whole-client CPU, RSS, or I/O result. The new code is not part of the
-`7bc43bf` paired scorecard; a current-source whole-client run and a multi-peer
-process-memory comparison remain open. The measured one-peer seed RSS gap is
-still unattributed.
+whole-client CPU, RSS, or I/O result. These source fixes are present in
+`01a3464`; the current-source runs above now measure that source. A multi-peer
+process-memory comparison remains open, and the one-peer seed RSS gap is still
+unattributed.
 
-## Scored source candidate — `7bc43bf` (2026-10-19)
+## Prior scored source candidate — `7bc43bf` (2026-10-19)
 
-The current candidate is exact source commit
+That historical candidate was exact source commit
 `7bc43bf6957a4b4b0054ba1229afb8cfd829efcb`. It includes the choker-slot fix
 and its reconnect regression. The `rt-engine` crate suite passed 734/734 on
 this commit, and `cargo fmt --package rt-engine` plus `git diff --check`
@@ -4576,9 +4624,10 @@ the production default policy.
   picker-owned count faster than collect/sort/deduplicate by about 6.5x,
   12x, and 49x at 4, 16, and 64 peers, with no candidate-vector allocation;
   PERF-111 records the measurements. These changes are not part of the
-  `7bc43bf` scorecard. A matched current-source whole-client run and a
-  multi-peer process-memory comparison remain outstanding, so the measured
-  one-peer seed RSS gap remains unattributed.
+  `7bc43bf` scorecard. Later exact-source 01a3464 PERF-110 runs are recorded
+  above, including a two-worker profile. Multi-peer process-memory and
+  whole-client comparisons remain outstanding, so the one-peer RSS gap remains
+  unattributed.
 
   Manifest
   `/home/keith/.cache/torrentng-perf110-matched-urtorrent-20261019/qbt-comparison/measurement-choker-fix-20261019-rerun2/run-128m-retry1/perf110-manifest-final.json`

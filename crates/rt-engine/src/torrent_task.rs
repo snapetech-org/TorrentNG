@@ -11569,7 +11569,6 @@ mod tests {
         task.picker.mark_have(0);
         task.seed_ratio_limit = Some(0.5);
         task.update_transfer(4, false).await;
-        task.update_transfer(2, true).await;
         task.set_state_checked(TorrentState::Seeding).await.unwrap();
         let events = rt_db::list_session_events(&db.lock().unwrap(), Some(&info_hash), 10).unwrap();
         assert!(events.iter().any(|event| {
@@ -11577,7 +11576,10 @@ mod tests {
                 && event.payload.contains("downloading")
                 && event.payload.contains("seeding")
         }));
-        task.enforce_seed_limits().await;
+        // A completed torrent enforces its ratio immediately from the totals
+        // returned by the upload accounting lock, without a second registry
+        // read on the upload hot path.
+        task.record_upload(2).await;
 
         assert!(task.paused);
         assert_eq!(

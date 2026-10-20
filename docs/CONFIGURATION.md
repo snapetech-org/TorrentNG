@@ -50,6 +50,12 @@ TORRENTNGD_CONFIG=/config/config.toml torrentngd
 | `log_level` | `info` | Tracing filter, for example `info` or `rt_engine=trace` |
 | `shutdown_timeout_secs` | `10` | Max seconds to wait for torrent tasks to send stopped announces during shutdown |
 
+The daemon's Tokio worker pool defaults to at most two threads, scaled down
+when the host reports fewer available CPUs. Set `TOKIO_WORKER_THREADS` to a
+positive integer to override the cap for a workload with higher runtime
+concurrency. This setting affects async task scheduling; storage I/O and hash
+workers have separate limits.
+
 ### `[network]`
 
 | Key | Default | Description |

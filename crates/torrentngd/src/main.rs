@@ -149,7 +149,10 @@ fn disable_transparent_huge_pages() {
     }
 }
 
-const DEFAULT_MAX_TOKIO_WORKER_THREADS: usize = 4;
+// The workload-matched resource profile kept download goodput near the
+// four-worker result and measured lower RSS with two. Keep the default cap
+// conservative, with TOKIO_WORKER_THREADS available for higher-concurrency hosts.
+const DEFAULT_MAX_TOKIO_WORKER_THREADS: usize = 2;
 
 fn tokio_worker_threads_for(
     override_value: Option<&str>,
@@ -999,7 +1002,7 @@ mod tests {
 
     #[test]
     fn tokio_worker_default_is_capped_but_scales_down_for_small_hosts() {
-        assert_eq!(tokio_worker_threads_for(None, Some(64)).unwrap(), 4);
+        assert_eq!(tokio_worker_threads_for(None, Some(64)).unwrap(), 2);
         assert_eq!(tokio_worker_threads_for(None, Some(2)).unwrap(), 2);
         assert_eq!(tokio_worker_threads_for(None, None).unwrap(), 1);
     }
@@ -1007,6 +1010,7 @@ mod tests {
     #[test]
     fn tokio_worker_environment_override_is_respected_and_validated() {
         assert_eq!(tokio_worker_threads_for(Some("2"), Some(64)).unwrap(), 2);
+        assert_eq!(tokio_worker_threads_for(Some("4"), Some(64)).unwrap(), 4);
         assert!(tokio_worker_threads_for(Some("0"), Some(64)).is_err());
         assert!(tokio_worker_threads_for(Some("many"), Some(64)).is_err());
     }
