@@ -353,33 +353,35 @@ the template in SYS-001 when picked up.
 | 13 | PERF-116 | P1 | Run candidate soak recovery and reversible canary qualification | PERF-112, PERF-114, PERF-115, SYS-013, SYS-014 | wip | Added required soak, recovery and reversible-canary qualification records with source-bound evidence digests; no soak or canary has been run |
 | 14 | SYS-015 | P0 | Integrate final gates, independent review and reproducible release | SYS-013, SYS-014, NET-116, IO-016, PERF-116 | wip | Added independent-review, release-bundle, and complete-catalog mixed-load evidence types plus one final four-stage decision artifact; catalog checks require the report artifact kind, whose retained log digest and source revision are verified by manifest validation; every unresolved stage remains blocked until qualified evidence is present |
 
-### Implementation completion audit (2026-10-19)
+### Implementation completion audit at exact source `354ad504` (2026-10-19)
 
-The source audit now covers all 63 packages, their ticket specs, the capability
-matrix, and the production ownership boundaries in section 2. All repository-
-owned implementation slices described in the package table are present,
+At this audit snapshot, the source review covered all 63 packages, their ticket
+specs, the capability matrix, and the production ownership boundaries in
+section 2. All repository-owned implementation slices described in the package
+table are present,
 including the live shared-core routes, the reversible owner switch, storage
 contracts, and the measurement and rollout tooling. The reviewed transfer,
 storage, and harness sources contain no `TODO`, `FIXME`, `todo!()`, or
 `unimplemented!()` placeholders. The audit found no unowned production path or
 missing crate boundary that requires another architectural layer.
 
-The `wip` rows are still ticket-level open because their acceptance includes
-exact-revision, live-workload, storage, hosted, hardware, or release evidence.
+At that snapshot, the `wip` rows were still ticket-level open because their
+acceptance includes exact-revision, live-workload, storage, hosted, hardware,
+or release evidence.
 They do not indicate that those implementation slices have no source. A source
 review is not independent signoff, a passing workspace suite is not a live
 client comparison, and a local storage result is not target-device
 qualification.
 
 Several finding rows and older progress-log entries preserve the state at the
-time each regression was authored. Any “unrun” wording for an ordinary test in
-the Rust workspace or the 21-script transfer-rebuild suite is superseded by the
-dated bulk-validation record below. The workspace-ignored scale and hardware
-cases were also run explicitly; runtime, filesystem, hosted, hardware-runner,
-soak, and client-comparison gates remain open unless they have their own
-retained evidence.
+time each regression was authored. The bulk-validation record below supersedes
+“unrun” notes only for its exact source revision; ordinary tests changed or
+added later require validation on the later source. The workspace-ignored
+scale and hardware cases were also run explicitly at that snapshot; runtime,
+filesystem, hosted, hardware-runner, soak, and client-comparison gates remain
+open unless they have their own retained evidence.
 
-The production implementation remains at
+The production implementation audited here was
 `354ad504f75b33c712b5ccd827cfef3eb0cf4414`. The validated tree includes
 test-only transfer-invariants and runner-policy regression updates, plus
 documentation and release-note repairs; production code is unchanged. The full
@@ -442,7 +444,7 @@ tied to `eb5f3158`. See
 [`TRANSFER_CORE_ACTIVE_SPECS.md`](TRANSFER_CORE_ACTIVE_SPECS.md) for commands,
 logs, artifact digests, and open gates.
 
-### Status snapshot (2026-10-19)
+### Status snapshot at exact source `354ad504` (2026-10-19)
 
 12 of 63 tickets are `done`, 51 `wip`, and 0 `todo`. `wip` means the ticket's
 full written acceptance is not yet evidenced; it does not mean that its source
@@ -463,16 +465,34 @@ cold first-snapshot creation; these are local diagnostic timings, not a
 release threshold or client comparison. No efficiency or superiority claim is
 made.
 
-The implementation branches are already ancestors of `main`; the unrelated
-setup branch is patch-equivalent to its mainline change. No transfer-core
-source commit remains to merge. The source and repository-local regressions
-are complete, but no rollout gate has passed. Still-open acceptance includes
-the pinned seven-client paired workload, process-level active-catalog
+The transfer implementation branches are already ancestors of `main`; the
+unrelated setup branch is patch-equivalent to its mainline change. No
+transfer-core source commit remains to merge. At this snapshot, repository-
+local regressions were complete, but no rollout gate had passed. Still-open
+acceptance includes the pinned seven-client paired workload, process-level active-catalog
 resource/transfer evidence, live v1/v2/hybrid parity, target-filesystem and
 crash-cut recovery, protected-runner hardware artifact, release matrix, soak
 and reversible canary, independent review, and final release bundle. `G0`
 remains open pending a valid pinned baseline controller and the remaining
 cross-path correctness evidence.
+
+### Current implementation and documentation checkpoint (`7bc43bf`, 2026-10-19)
+
+The current source candidate is `7bc43bf6957a4b4b0054ba1229afb8cfd829efcb`.
+The transfer-core close and performance-runner branches are ancestors of this
+`main`; there are no unmerged transfer-core source commits. All 63 ticket rows
+remain in the plan, and every one of the 51 `wip` rows has an active-spec
+section. The `wip` state tracks exact-revision, live-client, platform,
+crash-cut, hosted, hardware, soak/canary, independent-review, or release
+evidence; it does not identify missing source slices.
+
+The current candidate includes the choker-slot fix and reconnect regression.
+The `rt-engine` suite passed 734/734, and the source-bound PERF-110 run
+completed and validated 40/40 transfers. The complete Rust workspace suite,
+the current 22-script transfer-rebuild regression batch, ignored scale cases,
+and current-source Clippy have not yet been rerun on `7bc43bf`. The requested
+bulk pass is the next validation after this documentation correction; results
+from `354ad504` remain historical and do not qualify this candidate.
 
 ### Remaining acceptance sequence
 
@@ -793,3 +813,5 @@ cross-path correctness evidence.
 | 2026-10-19 | PERF-110/113 paired-comparison closure source: `--helper-client auto` now resolves the other of exactly two pinned clients per scheduled candidate; the pinned urtorrent process can occupy candidate or helper and joins the role-matched barrier in the opposite transfer mode. Direct receivers use their API-controlled seed's upload counter for useful-progress timing, and direct seeders stop after receiver verification. The scorecard strips the exact client-ID prefix from workload case IDs for comparison and pair signatures. Added runner and scorecard regressions plus active-spec/README updates; bulk regression batch and matched client trials remain pending. |
 | 2026-10-19 | PERF-110 smoke diagnosis: both-client preflight passes, but the first four-transfer smoke exposed direct-helper integration gaps before scoring: urtorrent requires the tracker on its pinned peer address, and runtime timeout inputs must match the settings pin. The runner now places the tracker in that peer's namespace and binds timeout/seed-stop values into the direct runner observation; regressions and the fresh smoke are pending. Failed smoke artifacts and the initial port-conflict preflight attempts are preserved under task-scoped scratch. |
 | 2026-10-19 | PERF-110 exact-source paired benchmark on `1ebb320ebdad3747c8be3cbaf3db95cd7c932d58`: the 230-test transfer-rebuild Python batch passed; a 10-pair cold-cache study compared TorrentNG `0.1.0` with the pinned urtorrent `0.14.3` direct v1 library runner on a 128 MiB private v1 fixture and verified 1 Gbit/s, 1 ms shaping. All 40 trials completed with payload hashes passed and no excluded pairs; maximum observed goodput was 873.51 Mbit/s. Median download goodput was 83.77 versus 13.07 MB/s (TorrentNG/urtorrent; urtorrent-to-TorrentNG ratio 0.162, 95% CI 0.120–0.197); median seed goodput was 12.88 versus 93.08 MB/s (ratio 7.220, 95% CI 7.177–7.252). CPU use was 5.92 versus 2.24 CPU-s/GiB downloading and 4.56 versus 2.04 seeding. Median peak RSS was 33.05 versus 14.96 MiB downloading and 34.99 versus 16.70 MiB seeding. The manifest and scorecard validate; their SHA-256 digests and paths are recorded under PERF-110 in `TRANSFER_CORE_ACTIVE_SPECS.md`. This covers one v1 profile and a direct library runner only; no pre-refactor matched baseline exists, so it does not isolate the refactor's effect or establish a whole-client ranking. Other profiles, adapters, cgroup-memory/energy observations, and dedicated-host qualification remain open. |
+| 2026-10-19 | PERF-110 fixed-counterpart pre-cutover comparison: current source 717a8e04 completed 10/10 128 MiB private-v1 downloads at 66.63 MB/s median and 10/10 seeds at 12.95 MB/s. A pre-cutover build from 354ad504 with only the isolated benchmark-egress opt-in backport 8023ce77 completed 0/10 downloads and 10/10 seeds at 12.92 MB/s median. Seed CPU fell from 5.96 to 4.60 CPU-s/GiB; no numeric download speedup is claimed because the baseline never completed a payload. Both manifests and scorecards validate, but each scorecard has zero candidate-to-candidate pairs, and plan-specific fixture hashes differ. Artifact digests, environment/profile identities, and limits are documented in docs/TRANSFER_CORE_ACTIVE_SPECS.md. Broader client/profile and dedicated-host qualification remain open. |
+| 2026-10-19 | PERF-110 choker-slot fix: when an interested peer arrives or an unchoked peer leaves, the engine now fills an available regular/optimistic slot immediately; periodic rounds still rank peers when slots are full. The stale-reconnect regression now verifies the new peer is unchoked, and all 734 `rt-engine` tests pass. In a 10-pair, cold-cache, 128 MiB private-v1 comparison against urtorrent 0.14.3 (qBittorrent 5.2.4 helper), TNG seed goodput rose from 12.10 to 68.39 MB/s median (5.65x); urtorrent measured 99.85 MB/s and retained a 1.557x paired advantage (95% CI 1.425–1.831). Download medians were 77.19 vs 74.14 MB/s, with no clear difference. The final 40-trial manifest and scorecard validate; their paths and SHA-256 digests are in `TRANSFER_CORE_ACTIVE_SPECS.md`. This is one v1 profile and one measured comparator, not a whole-client ranking; other profiles, peers, and dedicated-host qualification remain open. |

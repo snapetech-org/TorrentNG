@@ -6,18 +6,26 @@ in the measured source checkout.
 
 ## Validation status
 
-The current measured candidate is pinned to source commit
-`717a8e04753c4e2c179bad01cc457201f0a551ca`. The pre-cutover reference is
+The latest measured candidate is pinned to source commit
+`7bc43bf6957a4b4b0054ba1229afb8cfd829efcb`; its 128 MiB private-v1 PERF-110
+run against urtorrent `0.14.3` is recorded under PERF-110 in
+`docs/TRANSFER_CORE_ACTIVE_SPECS.md`. The pre-cutover reference is
 `354ad504f75b33c712b5ccd827cfef3eb0cf4414`, built with one isolated
 benchmark-egress backport in baseline commit
 `8023ce77b6bea4d237b4a7e329b56901fab94ba1`; no transfer or picker code
-changed in that backport. The latest local bulk run passed
-the full workspace on Rust 1.94.0 and 1.88.0 with 2,302 passed, 0 failed, and
-12 ignored across 37 summaries on each toolchain. Release `rt-engine` passed
+changed in that backport. The last full local bulk run, tied to exact source
+`354ad504`, passed the workspace on Rust 1.94.0 and 1.88.0 with 2,302 passed,
+0 failed, and 12 ignored across 37 summaries on each toolchain. Release `rt-engine` passed
 734 tests; all 22 transfer-rebuild Python scripts and 11 runnable ignored
 cases passed. Strict workspace Clippy passed on both toolchains, formatting
 passed, and the trusted bubblewrap validation-engine contract task passed
 67/67 Python tests. The runner-policy suite passed 4/4.
+
+That full bulk run predates production changes through `7bc43bf` and does not
+qualify the current candidate. The current commit's `rt-engine` suite passed
+734/734 and its matched PERF-110 run validated 40/40 transfers; the full
+workspace, transfer-rebuild Python, ignored scale, and current-source Clippy
+batch remains pending after implementation and documentation closure.
 
 The standalone Rust 1.98.1 urtorrent runner passed all six tests and its help
 smoke; its format check used Rust 1.94.0 because rustfmt is not installed for

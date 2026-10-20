@@ -5,17 +5,32 @@ This file instantiates the template in
 implementation slices currently in progress. A ticket stays `wip` until its
 written acceptance and exact-revision evidence are complete.
 
-## Current bulk validation — 2026-10-19
+## Current source candidate — `7bc43bf` (2026-10-19)
 
-The production implementation remains at
-`354ad504f75b33c712b5ccd827cfef3eb0cf4414`. The validated tree includes
+The current candidate is exact source commit
+`7bc43bf6957a4b4b0054ba1229afb8cfd829efcb`. It includes the choker-slot fix
+and its reconnect regression. The `rt-engine` crate suite passed 734/734 on
+this commit, and `cargo fmt --package rt-engine` plus `git diff --check`
+passed. The matched PERF-110 run below completed and validated 40/40 transfer
+records on this exact source.
+
+The full workspace bulk pass has **not** run on `7bc43bf`. In particular, the
+Rust 1.94/1.88 workspace suites, all transfer-rebuild Python regressions,
+ignored scale cases, and current-source Clippy remain to be rerun after source
+and documentation closure. The repository-wide run below is the last full
+bulk result and is tied to its older exact source.
+
+## Last full bulk validation — exact source `354ad504` (2026-10-19)
+
+That bulk result is tied to production source
+`354ad504f75b33c712b5ccd827cfef3eb0cf4414`. Its validated tree includes
 test-only changes to the transfer-invariants harness and runner-policy tests,
 plus documentation and release-note repairs; production code is unchanged.
 The loopback test uses fast durability for partial-piece progress so incidental
 checkpoints do not turn a protocol and restart check into an fsync timing test;
 completion still forces a real payload barrier before publishing `Seeding`.
 
-The current local tree passed the full Rust workspace on Rust 1.94.0 and
+At that snapshot, the full Rust workspace passed on Rust 1.94.0 and
 1.88.0: 2,302 passed, 0 failed, 12 ignored across 37 result summaries on each
 toolchain. The release `rt-engine` suite passed 734/734, including the seeded
 simulator. All 22 transfer-rebuild Python regressions passed. The focused
@@ -86,13 +101,15 @@ but its load averages were 89.93, 89.71, and 94.70 with 17 users; no new
 storage benchmark was run under that load. Prior dedicated ext4 evidence is
 recorded separately against `eb5f3158`.
 
-The source audit found all 63 repository-owned implementation slices and
-ticket contracts present, with no missing architecture boundary. The ledger
+The source audit at that snapshot found all 63 repository-owned implementation
+slices and ticket contracts present, with no missing architecture boundary. The ledger
 remains 12/63 `done`, 51/63 `wip`, and 0 `todo`; those WIP rows require live
 client, platform, crash-cut, matched-efficiency, protected-runner,
-soak/canary, independent-review, or release evidence. Ordinary “await bulk”
-notes below are superseded for repository-local tests by this run. Local tests do not replace hosted qualification or close the remaining
-acceptance gates.
+soak/canary, independent-review, or release evidence. This run supersedes
+older “await bulk” notes only for its exact source revision. It does not
+validate production changes through current candidate `7bc43bf`; current-source
+bulk validation remains pending. Local tests do not replace hosted
+qualification or close the remaining acceptance gates.
 
 ## Previous exact-source closeout — 2026-10-19 (`eb5f3158`)
 
@@ -4313,9 +4330,10 @@ the production default policy.
   reciprocal TorrentNG/urtorrent run found the TorrentNG-to-urtorrent
   direction slow but changed both endpoints between client rows, so it could
   not isolate sender from receiver. Fixed-counterpart execution now supports
-  a matched sender comparison; the 10-pair result and its scope are recorded
-  below. Other catalog profiles, adapters, dedicated-host qualification, and a
-  pre-refactor baseline remain open.
+  a matched sender comparison. A pre-cutover run is recorded below: the
+  baseline seeds successfully but fails all ten downloads, so it is a
+  diagnostic baseline rather than a download-speed sample. Broader profiles,
+  adapters, and dedicated-host qualification remain open.
 
 ### Evidence
 
@@ -4386,8 +4404,8 @@ the production default policy.
   15.00 MiB on downloads and 35.04 versus 16.68 MiB on seeding. The relative
   seeding result is effectively unchanged from the 8-read run. The lower
   candidate download median is recorded, but this upload-window experiment
-  does not isolate its cause. Neither run supplies a pre-refactor build, so
-  the broader refactor's effect remains unmeasured.
+  does not isolate its cause. Neither reciprocal run isolates the refactor;
+  the fixed-counterpart pre-cutover result is recorded below.
 
   The candidate manifest is
   `/home/keith/.cache/torrentng-perf110-daded066-20261019/full-run/manifest.json`
@@ -4395,10 +4413,100 @@ the production default policy.
   and its scorecard is
   `/home/keith/.cache/torrentng-perf110-daded066-20261019/full-run/scorecard.json`
   (SHA-256 `0c6032ee411785a588a414bc9d308391f29ae04b2ac21f81812a7100eeb223d3`).
+- **Pre-choker current vs pre-cutover fixed-counterpart run (2026-10-19):** ten randomized
+  pairs per build, TorrentNG 0.1.0 against pinned urtorrent 0.14.3, a 128 MiB
+  private v1 fixture profile, cold cache, N1/lan_1g, and the lan-1g-1ms-v1
+  network profile. Both runs used the same environment-template digest
+  a8d5293b9137f48da986ac069820a4cfd2146729a95c65e3d14422019922801c and
+  fixture-profile digest
+  31459e99351a959eb68b0f133d36f81995df0dd0430c06183e568bd02ce17624.
+  Generated payload SHA values differ across the two plan IDs, so this is a
+  controlled, descriptive comparison rather than an exact-fixture paired
+  bootstrap study. Each single-candidate scorecard correctly reports zero
+  candidate-to-candidate pairs; values below are calculated from validated
+  TorrentNG trial records.
+
+  The pre-choker candidate was built from clean source commit
+  717a8e04753c4e2c179bad01cc457201f0a551ca (binary SHA-256
+  6b4372939c7018b42539aaecbed9aa889d98a34fa43b508c1e5b000ed7d212d6).
+  It completed all 10 downloads and 10 seeds with payload verification.
+  Download goodput was 66.63 MB/s median (65.96–102.39); seed goodput was
+  12.95 MB/s median (12.84–13.24). Seed CPU was 4.60 CPU-s/GiB; median peak
+  RSS/PSS was 35.65/32.77 MiB.
+
+  The baseline client was built from pre-cutover source
+  354ad504f75b33c712b5ccd827cfef3eb0cf4414, plus only the isolated RFC2544
+  benchmark-egress opt-in patch, pinned as clean task-local commit
+  8023ce77b6bea4d237b4a7e329b56901fab94ba1 (binary SHA-256
+  c438e769794874290e336c4408e8b62cf0e1eaa0f4de65f462daefa6a3d78083).
+  The patch changed only egress_policy.rs; no transfer or picker code changed.
+  It was needed because the isolated harness subnet is 198.18.0.0/15, which
+  the pre-cutover policy rejects by default. The baseline completed all 10
+  seeds at 12.92 MB/s median (12.63–13.24), with 5.96 CPU-s/GiB and median
+  peak RSS/PSS of 36.24/33.37 MiB. Its 10 downloads were incomplete: the
+  direct seeder exited before receiver verification, with median
+  task-interface RX of 621,868 bytes and no verified useful-byte measurement.
+  Therefore the receive-path result is a 10/10 completion difference, not a
+  numeric download speedup. Seed goodput is effectively unchanged; measured
+  seed CPU fell about 23% after cutover.
+
+  Current manifest
+  /home/keith/.cache/torrentng-perf110-fixed-tng-20261019/full-run4/perf110-manifest.json
+  (SHA-256 86639f2068c52a3271198a28139247d9eb6d7af306acf9bed1f22a3cb1b2276d)
+  and scorecard
+  /home/keith/.cache/torrentng-perf110-fixed-tng-20261019/full-run4/scorecard.json
+  (SHA-256 4e5f2b2cd9a9ac88f5445e391b0ab68d069375a9bd319ef1a94885608b29f42d)
+  validate. Baseline manifest
+  /home/keith/.cache/torrentng-perf110-fixed-tng-20261019/precore-baseline/full-run-fixed/perf110-manifest.json
+  (SHA-256 e06b0b076a655da292d83555c5aa0c90d27755e0fae315c991b063754a9923ba)
+  and scorecard
+  /home/keith/.cache/torrentng-perf110-fixed-tng-20261019/precore-baseline/full-run-fixed/scorecard.json
+  (SHA-256 f35b4289d4f00f1f1969dd8930e312d319536da2baf6a6ead62e49f026f379cf)
+  also validate. This result does not establish a whole-client ranking or a
+  broad performance claim. A baseline that completes downloads and more
+  pinned client/profile runs remain open.
+
+- **Post-choker-fix fixed-counterpart run (2026-10-19):** ten randomized
+  matched pairs per mode, TorrentNG `0.1.0` versus pinned urtorrent `0.14.3`,
+  with pinned qBittorrent `5.2.4` as the helper, using the same 128 MiB private
+  v1 profile, cold cache, N1/lan_1g, and lan-1g-1ms-v1 network profile. The
+  environment-template digest is
+  `a8d5293b9137f48da986ac069820a4cfd2146729a95c65e3d14422019922801c`; the
+  fixture-profile digest is
+  `31459e99351a959eb68b0f133d36f81995df0dd0430c06183e568bd02ce17624`.
+  The candidate uses clean source commit
+  `7bc43bf6957a4b4b0054ba1229afb8cfd829efcb` and binary SHA-256
+  `efeb6765f9a9fc2ba073e72d659aa256042990f8eeaac1f7d69af51ab4400f0c`;
+  the clean benchmark harness is commit
+  `b2c6508b5389e6620b69e6c5995e673b0997a549`. All 40 final trial records
+  completed with payload integrity passed and no excluded pairs. One TNG seed
+  timing sample missed the receiver counter interval; that scheduled pair was
+  rerun, and the final source-bound manifest contains its complete replacement.
+
+  TNG seed goodput increased from the pre-choker median of 12.10 MB/s to
+  68.39 MB/s (5.65x). In the post-fix run, urtorrent's median was 99.85 MB/s;
+  its paired goodput ratio to TNG was 1.557 (95% CI 1.425–1.831), so urtorrent
+  remains faster in this profile. The pre/post ratio change is descriptive:
+  generated fixture bytes differ across plan IDs. Download medians were
+  77.19 MB/s for TNG and 74.14 MB/s for urtorrent; the paired urtorrent/TNG
+  ratio was 0.964 (95% CI 0.936–1.035), which does not show a clear difference.
+  TNG seed CPU use was 3.84 CPU-s/GiB versus 4.00 for urtorrent; median peak
+  RSS was 36.69 MiB versus 18.42 MiB.
+
+  Manifest
+  `/home/keith/.cache/torrentng-perf110-matched-urtorrent-20261019/qbt-comparison/measurement-choker-fix-20261019-rerun2/run-128m-retry1/perf110-manifest-final.json`
+  (SHA-256 `836cef5504da79fa5654d0c4c354506e39e6ba101019cf2a0a8c44b9a165f734`)
+  and scorecard
+  `/home/keith/.cache/torrentng-perf110-matched-urtorrent-20261019/qbt-comparison/measurement-choker-fix-20261019-rerun2/run-128m-retry1/scorecard.json`
+  (SHA-256 `ffa0b538d754c95c2c6d9392183aa36d68bda3750526bfd76ae2d6381933d149`)
+  validate. This verifies a substantial seed improvement from the choker fix,
+  not whole-client superiority; other peers, profiles, and dedicated-host
+  qualification remain open.
+
 - **External evidence still required:** successful pinned compatibility
   preflights and paired trials across the other pinned clients and fixture
-  profiles, plus dedicated-host qualification and a genuine pre-refactor
-  comparison.
+  profiles, a download-capable pre-cutover baseline, and dedicated-host
+  qualification.
 
 ## PERF-111 — Picker and changed-snapshot probes
 
@@ -4734,7 +4842,8 @@ outcomes; it never reduces a run to a text summary.
 - **Artifact or report path:** the scoped run's manifest and scorecard are
   listed under PERF-110; additional client/profile artifacts remain pending.
 - **External evidence still required:** additional pinned-client/profile
-  trials, dedicated-host qualification, and the pre-refactor baseline.
+  trials, a download-capable pre-cutover baseline, and dedicated-host
+  qualification.
 - **Migration / rollback:** none; scorecards can be regenerated from retained
   manifests and the pinned analysis revision.
 - **Feature flag or rollout boundary:** no broad superiority or release claim
