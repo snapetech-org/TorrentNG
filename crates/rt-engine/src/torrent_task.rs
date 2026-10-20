@@ -11,7 +11,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bytes::BytesMut;
-use futures::{SinkExt, StreamExt};
+use futures::{FutureExt, SinkExt, StreamExt};
 use reqwest::header::{CONTENT_RANGE, RANGE};
 use reqwest::StatusCode;
 use rt_bencode::{BValue, Decoder};
@@ -2124,19 +2124,43 @@ impl UploadRequest {
     }
 }
 
-type UploadReadResult = (UploadRequest, anyhow::Result<LeasedUploadBlock>, bool);
+enum UploadReadCompletion {
+    Completed {
+        request: UploadRequest,
+        result: anyhow::Result<LeasedUploadBlock>,
+        rate_interrupted: bool,
+    },
+    Panicked {
+        request: UploadRequest,
+    },
+}
 
-/// Own the join handles for detached upload reads and abort them if the peer
-/// loop is cancelled. Dropping a `JoinHandle` detaches its child task, so a
-/// peer eviction or torrent shutdown could otherwise leave a read holding a
-/// `MemoryLease` and scheduler work until its timeout.
+type UploadReadFuture =
+    Pin<Box<dyn std::future::Future<Output = UploadReadCompletion> + Send + 'static>>;
+
+fn catch_upload_read(
+    request: UploadRequest,
+    read: impl std::future::Future<Output = (anyhow::Result<LeasedUploadBlock>, bool)> + Send + 'static,
+) -> UploadReadFuture {
+    Box::pin(async move {
+        match std::panic::AssertUnwindSafe(read).catch_unwind().await {
+            Ok((result, rate_interrupted)) => UploadReadCompletion::Completed {
+                request,
+                result,
+                rate_interrupted,
+            },
+            Err(_) => UploadReadCompletion::Panicked { request },
+        }
+    })
+}
+
+/// Own in-flight upload-read futures in the peer loop so dropping the owner
+/// immediately drops pending I/O and releases its leases.
 #[derive(Default)]
-struct UploadReadTasks(
-    futures::stream::FuturesUnordered<tokio::task::JoinHandle<UploadReadResult>>,
-);
+struct UploadReadTasks(futures::stream::FuturesUnordered<UploadReadFuture>);
 
 impl std::ops::Deref for UploadReadTasks {
-    type Target = futures::stream::FuturesUnordered<tokio::task::JoinHandle<UploadReadResult>>;
+    type Target = futures::stream::FuturesUnordered<UploadReadFuture>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -2146,12 +2170,6 @@ impl std::ops::Deref for UploadReadTasks {
 impl std::ops::DerefMut for UploadReadTasks {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
-    }
-}
-
-impl Drop for UploadReadTasks {
-    fn drop(&mut self) {
-        abort_upload_reads(&self.0);
     }
 }
 
@@ -8424,11 +8442,11 @@ async fn run_peer_loop(
     let mut last_activity = Instant::now();
     // Disk reads are scheduled through the bounded mount scheduler, but the
     // peer loop must not await one read inline: a slow device otherwise
-    // prevents it from processing choke/shutdown/input messages. The loop
-    // owns the socket; detached read futures only return a leased block.
+    // prevents it from processing choke/shutdown/input messages. Keep their
+    // futures in the select loop instead of spawning a Tokio task per block.
     let mut upload_reads = UploadReadTasks::default();
     // Protocol obligations are process-owned by generation-safe connection
-    // identity. The socket loop retains the only writer and read-task handles.
+    // identity. The socket loop retains the only writer and upload-read futures.
     let mut upload_request_drops = 0u64;
     let mut download_generation = 0u64;
 
@@ -8586,10 +8604,10 @@ async fn run_peer_loop(
                         start_upload_reads(&mut upload_reads, &upload_obligations, &upload)?;
                         if !upload.fast_negotiated {
                             // A local choke invalidates reads that were
-                            // admitted under the previous upload state. Abort
+                            // admitted under the previous upload state. Drop
                             // them now so a slow disk cannot retain peer
                             // memory until the per-read timeout.
-                            abort_upload_reads(&upload_reads);
+                            abort_upload_reads(&mut upload_reads);
                         }
                     }
                     PeerCommand::Unchoke => {
@@ -9151,31 +9169,27 @@ async fn run_peer_loop(
                 }
             }
             upload_result = upload_reads.next(), if !upload_reads.is_empty() => {
-                let Some(upload_result) = upload_result else {
+                let Some(upload_completion) = upload_result else {
                     continue;
                 };
-                let (request, result, rate_interrupted) = match upload_result {
-                    Ok(result) => result,
-                    Err(error) => {
-                        if error.is_cancelled() && upload_choked && !upload.fast_negotiated {
-                            // Legacy Choke explicitly ended these in-service
-                            // obligations and aborted their reads.
-                            continue;
-                        }
+                let (request, result, rate_interrupted) = match upload_completion {
+                    UploadReadCompletion::Completed {
+                        request,
+                        result,
+                        rate_interrupted,
+                    } => (request, result, rate_interrupted),
+                    UploadReadCompletion::Panicked { request } => {
                         warn!(
                             component = "peer",
                             operation = "read_upload_block",
                             peer = %addr,
-                            result = "worker_join_error",
-                            error = %crate::task_join_error_summary(
-                                "upload block read task",
-                                &error
-                            ),
-                            "upload block worker failed"
+                            piece = request.piece,
+                            begin = request.begin,
+                            result = "future_panicked",
+                            "upload block read future panicked; closing peer"
                         );
-                        // The JoinError no longer carries the request
-                        // coordinate. End this connection so an accepted
-                        // obligation cannot remain stranded in the owner.
+                        // End this connection so the accepted obligation and
+                        // every sibling read are released together.
                         upload_obligations.close();
                         break;
                     }
@@ -9316,10 +9330,10 @@ async fn run_peer_loop(
 
     // Keep this outside the result-producing block: socket, framing, and
     // event-delivery errors can leave that block through `?`, bypassing the
-    // normal loop break. Dropping a JoinHandle detaches its task, so every
-    // in-flight upload read must be explicitly aborted on every exit path.
+    // normal loop break. Drop in-flight reads immediately so their permits,
+    // memory leases, and scheduler work do not survive peer exit.
     upload_obligations.close();
-    abort_upload_reads(&upload_reads);
+    abort_upload_reads(&mut upload_reads);
 
     let outstanding = drain_outstanding(&mut outstanding);
     if send_terminal_event_on_peer_channel {
@@ -9606,7 +9620,7 @@ async fn finish_upload_obligation(
 }
 
 fn start_upload_reads(
-    upload_reads: &mut futures::stream::FuturesUnordered<tokio::task::JoinHandle<UploadReadResult>>,
+    upload_reads: &mut UploadReadTasks,
     obligations: &SharedUploadPeer,
     upload: &UploadContext,
 ) -> anyhow::Result<()> {
@@ -9631,11 +9645,11 @@ fn start_upload_reads(
             anyhow::bail!("accepted upload obligation has no matching wire extent");
         };
         let request = UploadRequest::new(block, wire_block);
-        let read_context_for_task = read_context.clone();
-        upload_reads.push(tokio::spawn(async move {
+        let read_context_for_future = read_context.clone();
+        let read = async move {
             let result = match timeout(
                 PEER_UPLOAD_READ_TIMEOUT,
-                read_upload_block(&read_context_for_task, request, choke_critical),
+                read_upload_block(&read_context_for_future, request, choke_critical),
             )
             .await
             {
@@ -9648,14 +9662,14 @@ fn start_upload_reads(
             let (result, rate_interrupted) = match result {
                 Ok(mut block) => {
                     let bytes = block.data.len() as u64;
-                    let control_generation = read_context_for_task.upload_control.generation();
-                    match read_context_for_task
+                    let control_generation = read_context_for_future.upload_control.generation();
+                    match read_context_for_future
                         .upload_rate
                         .network_budget
                         .acquire_upload(
-                            read_context_for_task.upload_rate.peer,
+                            read_context_for_future.upload_rate.peer,
                             bytes,
-                            &read_context_for_task.upload_control,
+                            &read_context_for_future.upload_control,
                             control_generation,
                         )
                         .await
@@ -9670,18 +9684,15 @@ fn start_upload_reads(
                 }
                 Err(error) => (Err(error), false),
             };
-            (request, result, rate_interrupted)
-        }));
+            (result, rate_interrupted)
+        };
+        upload_reads.push(catch_upload_read(request, read));
     }
     Ok(())
 }
 
-fn abort_upload_reads(
-    upload_reads: &futures::stream::FuturesUnordered<tokio::task::JoinHandle<UploadReadResult>>,
-) {
-    for read in upload_reads.iter() {
-        read.abort();
-    }
+fn abort_upload_reads(upload_reads: &mut UploadReadTasks) {
+    *upload_reads = UploadReadTasks::default();
 }
 
 fn validate_bitfield_shape(bits: &[u8], piece_count: usize) -> anyhow::Result<()> {
@@ -15987,6 +15998,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn upload_read_panic_keeps_its_request_for_peer_cleanup() {
+        let request = UploadRequest::from_wire(BlockExtent::new(7, 16 * 1024, 16 * 1024));
+        let read = std::future::poll_fn(|_| -> std::task::Poll<_> {
+            panic!("simulated upload read panic");
+        });
+
+        let completion = catch_upload_read(request, read).await;
+
+        assert!(matches!(
+            completion,
+            UploadReadCompletion::Panicked { request: actual } if actual == request
+        ));
+    }
+
+    #[tokio::test]
     async fn upload_reads_are_aborted_after_peer_loop_exit() {
         use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -16002,31 +16028,18 @@ mod tests {
         let started = Arc::new(AtomicBool::new(false));
         let marker = Arc::clone(&dropped);
         let task_started = Arc::clone(&started);
-        let read = tokio::spawn(async move {
+        let read = Box::pin(async move {
             task_started.store(true, Ordering::SeqCst);
             let _marker = DropMarker(marker);
-            std::future::pending::<UploadReadResult>().await
+            std::future::pending::<UploadReadCompletion>().await
         });
-        timeout(Duration::from_secs(1), async {
-            while !started.load(Ordering::SeqCst) {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("upload read task did not start");
-
-        let upload_reads = futures::stream::FuturesUnordered::new();
+        let mut upload_reads = UploadReadTasks::default();
         upload_reads.push(read);
+        assert!(upload_reads.next().now_or_never().is_none());
+        assert!(started.load(Ordering::SeqCst));
 
-        abort_upload_reads(&upload_reads);
-
-        timeout(Duration::from_secs(1), async {
-            while !dropped.load(Ordering::SeqCst) {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("aborting an upload read must cancel its task");
+        abort_upload_reads(&mut upload_reads);
+        assert!(dropped.load(Ordering::SeqCst));
     }
 
     #[tokio::test]
@@ -16042,27 +16055,22 @@ mod tests {
         }
 
         let dropped = Arc::new(AtomicBool::new(false));
-        let started = Arc::new(AtomicBool::new(false));
         let owner_started = Arc::new(AtomicBool::new(false));
         let marker = Arc::clone(&dropped);
-        let task_started = Arc::clone(&started);
-        let read = tokio::spawn(async move {
-            task_started.store(true, Ordering::SeqCst);
+        let (read_started_tx, read_started_rx) = oneshot::channel();
+        let read = Box::pin(async move {
+            let _ = read_started_tx.send(());
             let _marker = DropMarker(marker);
-            std::future::pending::<UploadReadResult>().await
+            std::future::pending::<UploadReadCompletion>().await
         });
-        timeout(Duration::from_secs(1), async {
-            while !started.load(Ordering::SeqCst) {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("upload read task did not start");
-
         let task_owner_started = Arc::clone(&owner_started);
         let peer_loop = tokio::spawn(async move {
-            let upload_reads = UploadReadTasks::default();
+            let mut upload_reads = UploadReadTasks::default();
             upload_reads.push(read);
+            tokio::select! {
+                _ = upload_reads.next() => panic!("pending upload read unexpectedly completed"),
+                _ = read_started_rx => {}
+            }
             task_owner_started.store(true, Ordering::SeqCst);
             std::future::pending::<()>().await;
         });
@@ -16076,13 +16084,7 @@ mod tests {
         peer_loop.abort();
         assert!(peer_loop.await.unwrap_err().is_cancelled());
 
-        timeout(Duration::from_secs(1), async {
-            while !dropped.load(Ordering::SeqCst) {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("cancelling the peer loop must cancel its upload read tasks");
+        assert!(dropped.load(Ordering::SeqCst));
     }
 
     #[tokio::test]

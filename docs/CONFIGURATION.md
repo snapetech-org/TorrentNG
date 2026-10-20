@@ -102,6 +102,7 @@ peer sockets and restarts DHT on its corresponding port; an explicit
 | `peer_read_readahead_bytes` | `524288` | Peer-read readahead size used before returning the exact requested slice |
 | `peer_read_readahead_sequential_only` | `true` | Expand readahead only when a read continues the previous read of the same file; isolated block reads stay exact. `false` expands every miss |
 | `peer_read_cache_entries` | `64` | Maximum cached forward ranges per scheduler across all files; a file can retain several useful disjoint ranges, with least-recently-used range eviction. Set to `0` to disable cached readahead reuse |
+| `peer_read_cache_bytes` | `8388608` | Maximum payload bytes retained by each scheduler's peer-read cache; least-recently-used ranges are evicted to stay within the byte budget. Maximum `67108864`; set to `0` to disable cached readahead reuse |
 | `peer_read_elevator_budget_ms` | `25` | HDD/network peer-read elevator batching window; ignored when `device_elevator_enabled = false` |
 
 ### `[crash_safety]`
@@ -316,6 +317,7 @@ download_dir = "/data"
 preallocation_mode = "auto"
 durability_mode = "checkpoint"
 peer_read_cache_entries = 64
+peer_read_cache_bytes = 8388608
 
 [crash_safety]
 # Defaults shown; see docs/CRASH_SAFETY.md.

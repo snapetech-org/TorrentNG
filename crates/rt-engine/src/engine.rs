@@ -1291,6 +1291,7 @@ fn storage_io_config_from_config(config: &Config) -> StorageIoConfig {
         peer_read_readahead_bytes: config.storage.peer_read_readahead_bytes,
         peer_read_readahead_sequential_only: config.storage.peer_read_readahead_sequential_only,
         peer_read_cache_entries: config.storage.peer_read_cache_entries,
+        peer_read_cache_bytes: config.storage.peer_read_cache_bytes,
         peer_read_elevator_budget_ms: if config.storage.device_elevator_enabled {
             config.storage.peer_read_elevator_budget_ms
         } else {
@@ -14285,6 +14286,7 @@ mod tests {
         config.storage.durability_mode = rt_config::StorageDurabilityMode::Strict;
         config.storage.peer_read_readahead_bytes = 128 * 1024;
         config.storage.peer_read_cache_entries = 17;
+        config.storage.peer_read_cache_bytes = 4 * 1024 * 1024;
         config.storage.peer_read_elevator_budget_ms = 9;
 
         let io = storage_io_config_from_config(&config);
@@ -14299,6 +14301,7 @@ mod tests {
         assert_eq!(io.durability_mode, DurabilityMode::Strict);
         assert_eq!(io.peer_read_readahead_bytes, 128 * 1024);
         assert_eq!(io.peer_read_cache_entries, 17);
+        assert_eq!(io.peer_read_cache_bytes, 4 * 1024 * 1024);
         assert_eq!(io.peer_read_elevator_budget_ms, 9);
 
         config.storage.device_elevator_enabled = false;

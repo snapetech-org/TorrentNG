@@ -215,6 +215,8 @@ pub struct StorageIoConfig {
     pub peer_read_readahead_sequential_only: bool,
     /// Maximum cached forward ranges across this scheduler's peer-read cache.
     pub peer_read_cache_entries: usize,
+    /// Maximum payload bytes retained by this scheduler's peer-read cache.
+    pub peer_read_cache_bytes: usize,
     pub peer_read_elevator_budget_ms: u64,
 }
 
@@ -232,6 +234,7 @@ impl Default for StorageIoConfig {
             peer_read_readahead_bytes: 512 * 1024,
             peer_read_readahead_sequential_only: true,
             peer_read_cache_entries: 64,
+            peer_read_cache_bytes: 8 * 1024 * 1024,
             peer_read_elevator_budget_ms: 25,
         }
     }
@@ -341,6 +344,8 @@ pub struct StorageIoStats {
     pub preallocation_shrink_refused: u64,
     /// Number of forward ranges currently retained across all files.
     pub peer_read_cache_entries: usize,
+    /// Payload bytes currently retained across all peer-read cache ranges.
+    pub peer_read_cache_bytes: u64,
     pub peer_read_cache_hits: u64,
     pub peer_read_cache_misses: u64,
     pub peer_read_cache_evictions: u64,
@@ -433,6 +438,7 @@ impl Default for StorageIoStats {
             preallocation_fallbacks: 0,
             preallocation_shrink_refused: 0,
             peer_read_cache_entries: 0,
+            peer_read_cache_bytes: 0,
             peer_read_cache_hits: 0,
             peer_read_cache_misses: 0,
             peer_read_cache_evictions: 0,
@@ -1217,11 +1223,16 @@ struct PeerReadCacheEntry {
 struct PeerReadCache {
     files: HashMap<PathBuf, Vec<PeerReadCacheEntry>>,
     entries: usize,
+    cached_bytes: usize,
 }
 
 impl PeerReadCache {
     fn entry_count(&self) -> usize {
         self.entries
+    }
+
+    fn cached_bytes(&self) -> usize {
+        self.cached_bytes
     }
 
     #[cfg(test)]
@@ -1230,8 +1241,13 @@ impl PeerReadCache {
     }
 
     fn remove_file(&mut self, path: &Path) -> usize {
-        let removed = self.files.remove(path).map_or(0, |entries| entries.len());
+        let Some(entries) = self.files.remove(path) else {
+            return 0;
+        };
+        let removed = entries.len();
+        let removed_bytes = entries.iter().map(|entry| entry.data.len()).sum::<usize>();
         self.entries = self.entries.saturating_sub(removed);
+        self.cached_bytes = self.cached_bytes.saturating_sub(removed_bytes);
         removed
     }
 
@@ -1266,54 +1282,73 @@ impl PeerReadCache {
         Some(entry.data.slice(relative..relative + len))
     }
 
-    /// Insert one useful range, evicting the globally least-recently-used
-    /// range only when the configured total entry cap is full.
-    fn insert(&mut self, path: PathBuf, entry: PeerReadCacheEntry, max_entries: usize) -> bool {
-        if max_entries == 0 {
-            return false;
-        }
-        if let Some(entries) = self.files.get_mut(&path) {
-            if let Some(existing) = entries
-                .iter_mut()
-                .find(|value| value.offset == entry.offset)
-            {
-                *existing = entry;
+    fn remove_entry(&mut self, path: &Path, index: usize) -> bool {
+        let remove_path = {
+            let Some(entries) = self.files.get_mut(path) else {
+                return false;
+            };
+            if index >= entries.len() {
                 return false;
             }
+            let removed = entries.remove(index);
+            self.entries = self.entries.saturating_sub(1);
+            self.cached_bytes = self.cached_bytes.saturating_sub(removed.data.len());
+            entries.is_empty()
+        };
+        if remove_path {
+            self.files.remove(path);
+        }
+        true
+    }
+
+    fn evict_oldest(&mut self) -> bool {
+        let oldest = self
+            .files
+            .iter()
+            .flat_map(|(path, entries)| {
+                entries
+                    .iter()
+                    .enumerate()
+                    .map(move |(index, entry)| (path, index, entry.last_used))
+            })
+            .min_by_key(|(_, _, last_used)| *last_used)
+            .map(|(path, index, _)| (path.clone(), index));
+        oldest.is_some_and(|(path, index)| self.remove_entry(&path, index))
+    }
+
+    /// Insert one useful range while keeping both entry count and payload
+    /// bytes within their configured limits.
+    fn insert(
+        &mut self,
+        path: PathBuf,
+        entry: PeerReadCacheEntry,
+        max_entries: usize,
+        max_bytes: usize,
+    ) -> bool {
+        let entry_bytes = entry.data.len();
+        if max_entries == 0 || max_bytes == 0 || entry_bytes > max_bytes {
+            return false;
+        }
+        if let Some(index) = self.files.get(&path).and_then(|entries| {
+            entries
+                .iter()
+                .position(|value| value.offset == entry.offset)
+        }) {
+            self.remove_entry(&path, index);
         }
 
-        let evicted = if self.entries >= max_entries {
-            let oldest = self
-                .files
-                .iter()
-                .flat_map(|(path, entries)| {
-                    entries
-                        .iter()
-                        .enumerate()
-                        .map(move |(index, entry)| (path, index, entry.last_used))
-                })
-                .min_by_key(|(_, _, last_used)| *last_used)
-                .map(|(path, index, _)| (path.clone(), index));
-            if let Some((oldest_path, index)) = oldest {
-                let remove_path = if let Some(entries) = self.files.get_mut(&oldest_path) {
-                    entries.remove(index);
-                    self.entries = self.entries.saturating_sub(1);
-                    entries.is_empty()
-                } else {
-                    false
-                };
-                if remove_path {
-                    self.files.remove(&oldest_path);
-                }
-                true
-            } else {
-                false
+        let mut evicted = false;
+        while self.entries >= max_entries
+            || self.cached_bytes.saturating_add(entry_bytes) > max_bytes
+        {
+            if !self.evict_oldest() {
+                return false;
             }
-        } else {
-            false
-        };
+            evicted = true;
+        }
         self.files.entry(path).or_default().push(entry);
         self.entries = self.entries.saturating_add(1);
+        self.cached_bytes = self.cached_bytes.saturating_add(entry_bytes);
         evicted
     }
 }
@@ -3227,7 +3262,10 @@ impl MountScheduler {
 
     pub fn stats(&self) -> StorageIoStats {
         let dirty_files = lock_recover(&self.dirty_paths).len();
-        let peer_read_cache_entries = lock_reset_derived_cache(&self.peer_read_cache).entry_count();
+        let peer_read_cache = lock_reset_derived_cache(&self.peer_read_cache);
+        let peer_read_cache_entries = peer_read_cache.entry_count();
+        let peer_read_cache_bytes = peer_read_cache.cached_bytes() as u64;
+        drop(peer_read_cache);
         let peer_read_elevator_queued = lock_recover(&self.peer_read_elevator)
             .as_ref()
             .map(PeerReadElevator::queued_len)
@@ -3273,6 +3311,7 @@ impl MountScheduler {
                 .preallocation_shrink_refused
                 .load(Ordering::Relaxed),
             peer_read_cache_entries,
+            peer_read_cache_bytes,
             peer_read_cache_hits: self.counters.peer_read_cache_hits.load(Ordering::Relaxed),
             peer_read_cache_misses: self.counters.peer_read_cache_misses.load(Ordering::Relaxed),
             peer_read_cache_evictions: self
@@ -3718,13 +3757,19 @@ impl MountScheduler {
         let peer_read_streams = self.peer_read_streams.clone();
         let peer_read_elevator = self.peer_read_elevator();
         let path = path.to_path_buf();
-        let readahead_bytes = self.io_config.peer_read_readahead_bytes;
+        let configured_readahead_bytes = self.io_config.peer_read_readahead_bytes;
         let sequential_only = self.io_config.peer_read_readahead_sequential_only;
         let readahead_cache_entries = self.io_config.peer_read_cache_entries;
+        let readahead_cache_bytes = self.io_config.peer_read_cache_bytes;
+        let readahead_enabled = readahead_cache_entries > 0 && readahead_cache_bytes > 0;
+        let readahead_bytes = if readahead_enabled {
+            configured_readahead_bytes.min(readahead_cache_bytes)
+        } else {
+            0
+        };
         let started = Instant::now();
-        let cache_generation =
-            (class == IoClass::PeerRead && readahead_bytes > len && readahead_cache_entries > 0)
-                .then(|| peer_read_cache_epoch.load(Ordering::Acquire));
+        let cache_generation = (class == IoClass::PeerRead && readahead_bytes > len)
+            .then(|| peer_read_cache_epoch.load(Ordering::Acquire));
         if class == IoClass::PeerRead && readahead_bytes <= len && !priority.is_urgent() {
             if let Some(elevator) = peer_read_elevator {
                 let bytes = elevator.read(path.to_path_buf(), offset, len).await?;
@@ -3748,10 +3793,7 @@ impl MountScheduler {
                     let key = normalized_key(&path);
                     let path_str = key.display().to_string();
                     let file = pool.get_or_open(&key, OpenMode::Read, false)?;
-                    if class == IoClass::PeerRead
-                        && readahead_bytes > len
-                        && readahead_cache_entries > 0
-                    {
+                    if class == IoClass::PeerRead && readahead_bytes > len {
                         if let Some(bytes) = peer_read_cache_hit(
                             &preparation_peer_read_cache,
                             &key,
@@ -3790,10 +3832,7 @@ impl MountScheduler {
                             .peer_read_cache_misses
                             .fetch_add(1, Ordering::Relaxed);
                     }
-                    let read_len = if class == IoClass::PeerRead
-                        && readahead_bytes > len
-                        && readahead_cache_entries > 0
-                    {
+                    let read_len = if class == IoClass::PeerRead && readahead_bytes > len {
                         let file_len = file
                             .metadata()
                             .map_err(|e| StorageError::io(&path_str, e))?
@@ -3922,7 +3961,7 @@ impl MountScheduler {
                 counters.read_latency_ns_by_class[class_index(class)]
                     .fetch_add(latency_ns, Ordering::Relaxed);
                 record_latency_bucket(&counters.read_latency_buckets, latency_ns);
-                if class == IoClass::PeerRead && read_len > len && readahead_cache_entries > 0 {
+                if class == IoClass::PeerRead && read_len > len {
                     let bytes = frame.into_bytes();
                     let exact = bytes.slice(..len);
                     let identity = file.identity();
@@ -3950,7 +3989,8 @@ impl MountScheduler {
         data: bytes::Bytes,
     ) {
         let max_entries = self.io_config.peer_read_cache_entries;
-        if max_entries == 0 {
+        let max_bytes = self.io_config.peer_read_cache_bytes;
+        if max_entries == 0 || max_bytes == 0 || data.len() > max_bytes {
             return;
         }
         let lease = if let Some(resources) = self.resources.as_ref() {
@@ -3980,6 +4020,7 @@ impl MountScheduler {
                 _lease: lease,
             },
             max_entries,
+            max_bytes,
         ) {
             self.counters
                 .peer_read_cache_evictions
@@ -8133,6 +8174,7 @@ mod tests {
                 _lease: None,
             },
             1,
+            1024,
         );
 
         let poisoner = Arc::clone(&cache);
@@ -8313,6 +8355,7 @@ mod tests {
         assert_eq!(stats.peer_read_cache_misses, 1);
         assert_eq!(stats.peer_read_cache_hits, 1);
         assert_eq!(stats.peer_read_cache_entries, 1);
+        assert_eq!(stats.peer_read_cache_bytes, 16);
         assert_eq!(stats.bytes_read_by_class[class_index(IoClass::PeerRead)], 8);
         assert_eq!(
             stats.backend_read_ops_by_class[class_index(IoClass::PeerRead)],
@@ -8358,12 +8401,48 @@ mod tests {
         assert_eq!(&reused[..], b"efgh");
         let stats = scheduler.stats();
         assert_eq!(stats.peer_read_cache_entries, 2);
+        assert_eq!(stats.peer_read_cache_bytes, 16);
         assert_eq!(stats.peer_read_cache_misses, 2);
         assert_eq!(stats.peer_read_cache_hits, 1);
         assert_eq!(
             stats.backend_read_ops_by_class[class_index(IoClass::PeerRead)],
             2
         );
+    }
+
+    #[tokio::test]
+    async fn peer_read_readahead_cache_evicts_to_its_byte_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("readahead-byte-budget.bin");
+        std::fs::write(&path, vec![0xABu8; 64]).unwrap();
+        let scheduler = MountScheduler::new(
+            StorageRootId::new(),
+            &SchedulerConfig {
+                profile: StorageProfile::Hdd,
+                storage_io: StorageIoConfig {
+                    peer_read_readahead_bytes: 16,
+                    peer_read_readahead_sequential_only: false,
+                    peer_read_cache_entries: 64,
+                    peer_read_cache_bytes: 24,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        for offset in [0, 32, 0] {
+            let read = scheduled_read(&scheduler, IoClass::PeerRead, &path, offset, 4)
+                .await
+                .unwrap();
+            assert_eq!(read.len(), 4);
+        }
+
+        let stats = scheduler.stats();
+        assert_eq!(stats.peer_read_cache_entries, 1);
+        assert_eq!(stats.peer_read_cache_bytes, 16);
+        assert_eq!(stats.peer_read_cache_misses, 3);
+        assert_eq!(stats.peer_read_cache_hits, 0);
+        assert_eq!(stats.peer_read_cache_evictions, 2);
     }
 
     #[tokio::test]
@@ -8472,6 +8551,7 @@ mod tests {
                 _lease: None,
             },
             1,
+            1024,
         );
         let epoch = Arc::new(AtomicU64::new(0));
         let owner_dropped = Arc::new(AtomicBool::new(false));
@@ -8615,38 +8695,42 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("disabled-readahead.bin");
         std::fs::write(&path, b"abcdefghijklmnopqrstuvwxyz").unwrap();
-        let sched = MountScheduler::new(
-            StorageRootId::new(),
-            &SchedulerConfig {
-                profile: StorageProfile::Hdd,
-                storage_io: StorageIoConfig {
-                    peer_read_readahead_bytes: 16,
-                    peer_read_readahead_sequential_only: false,
-                    peer_read_cache_entries: 0,
+        for (entries, cache_bytes) in [(0, 8 * 1024 * 1024), (64, 0)] {
+            let sched = MountScheduler::new(
+                StorageRootId::new(),
+                &SchedulerConfig {
+                    profile: StorageProfile::Hdd,
+                    storage_io: StorageIoConfig {
+                        peer_read_readahead_bytes: 16,
+                        peer_read_readahead_sequential_only: false,
+                        peer_read_cache_entries: entries,
+                        peer_read_cache_bytes: cache_bytes,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
-                ..Default::default()
-            },
-        );
+            );
 
-        let first = scheduled_read(&sched, IoClass::PeerRead, &path, 0, 4)
-            .await
-            .unwrap();
-        let second = scheduled_read(&sched, IoClass::PeerRead, &path, 4, 4)
-            .await
-            .unwrap();
+            let first = scheduled_read(&sched, IoClass::PeerRead, &path, 0, 4)
+                .await
+                .unwrap();
+            let second = scheduled_read(&sched, IoClass::PeerRead, &path, 4, 4)
+                .await
+                .unwrap();
 
-        assert_eq!(&first[..], b"abcd");
-        assert_eq!(&second[..], b"efgh");
-        let stats = sched.stats();
-        assert_eq!(stats.peer_read_cache_entries, 0);
-        assert_eq!(stats.peer_read_cache_evictions, 0);
-        assert_eq!(stats.peer_read_cache_hits, 0);
-        assert_eq!(stats.peer_read_cache_misses, 0);
-        assert_eq!(
-            stats.backend_read_ops_by_class[class_index(IoClass::PeerRead)],
-            2
-        );
+            assert_eq!(&first[..], b"abcd");
+            assert_eq!(&second[..], b"efgh");
+            let stats = sched.stats();
+            assert_eq!(stats.peer_read_cache_entries, 0);
+            assert_eq!(stats.peer_read_cache_bytes, 0);
+            assert_eq!(stats.peer_read_cache_evictions, 0);
+            assert_eq!(stats.peer_read_cache_hits, 0);
+            assert_eq!(stats.peer_read_cache_misses, 0);
+            assert_eq!(
+                stats.backend_read_ops_by_class[class_index(IoClass::PeerRead)],
+                2
+            );
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

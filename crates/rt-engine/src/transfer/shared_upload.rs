@@ -68,13 +68,9 @@ impl InboundBookkeepingBudget {
         block: BlockExtent,
         have_piece: bool,
     ) -> InboundDecision {
-        if !obligations.would_queue(block, have_piece) {
-            return obligations.on_request(block, have_piece);
-        }
-
-        let required_slots = obligations.outstanding_len().saturating_add(1);
-        let memory_admitted = self.reserve_slots(required_slots);
-        obligations.on_request_with_memory_admission(block, have_piece, memory_admitted)
+        obligations.on_request_with_admission(block, have_piece, |required_slots| {
+            self.reserve_slots(required_slots)
+        })
     }
 
     fn reserve_slots(&mut self, required_slots: usize) -> bool {

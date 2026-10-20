@@ -54,6 +54,8 @@ const MAX_STORAGE_FILE_POOL_SIZE: usize = 65_536;
 /// disables the shared memory governor. The cache stores one path-keyed entry
 /// per file and is instantiated for every active storage scheduler.
 const MAX_STORAGE_PEER_READ_CACHE_ENTRIES: usize = 65_536;
+/// Bound retained peer-read cache payload bytes independently of entry count.
+const MAX_STORAGE_PEER_READ_CACHE_BYTES: usize = 64 * 1024 * 1024;
 /// The elevator budget is a batching window, not a timeout. A very large
 /// operator value can hold HDD peer reads for hours and make the scheduler
 /// appear hung, so reject values beyond one minute at the config boundary.
@@ -129,6 +131,8 @@ pub struct StorageConfig {
     pub peer_read_readahead_sequential_only: bool,
     /// Bounded peer-read readahead cache entries per torrent scheduler.
     pub peer_read_cache_entries: usize,
+    /// Maximum peer-read readahead payload bytes retained per scheduler.
+    pub peer_read_cache_bytes: usize,
     pub peer_read_elevator_budget_ms: u64,
 }
 
@@ -576,6 +580,7 @@ impl Default for StorageConfig {
             peer_read_readahead_bytes: 512 * 1024,
             peer_read_readahead_sequential_only: true,
             peer_read_cache_entries: 64,
+            peer_read_cache_bytes: 8 * 1024 * 1024,
             peer_read_elevator_budget_ms: 25,
         }
     }
@@ -789,6 +794,10 @@ impl Config {
             format!(
                 "storage.peer_read_cache_entries must be <= {MAX_STORAGE_PEER_READ_CACHE_ENTRIES}"
             ),
+        )?;
+        require(
+            self.storage.peer_read_cache_bytes <= MAX_STORAGE_PEER_READ_CACHE_BYTES,
+            "storage.peer_read_cache_bytes must be <= 64MiB",
         )?;
         require(
             self.storage.peer_read_elevator_budget_ms
@@ -1117,6 +1126,7 @@ mod tests {
         assert_eq!(c.storage.durability_mode, StorageDurabilityMode::Checkpoint);
         assert_eq!(c.storage.peer_read_readahead_bytes, 512 * 1024);
         assert_eq!(c.storage.peer_read_cache_entries, 64);
+        assert_eq!(c.storage.peer_read_cache_bytes, 8 * 1024 * 1024);
         assert_eq!(c.storage.peer_read_elevator_budget_ms, 25);
         assert_eq!(c.logging, rt_logging::LoggingConfig::default());
     }
@@ -1557,6 +1567,10 @@ host_crash_recovry = "full"
         assert!(matches!(c.validate(), Err(ConfigError::Validation(_))));
 
         let mut c = Config::default();
+        c.storage.peer_read_cache_bytes = MAX_STORAGE_PEER_READ_CACHE_BYTES + 1;
+        assert!(matches!(c.validate(), Err(ConfigError::Validation(_))));
+
+        let mut c = Config::default();
         c.storage.peer_read_elevator_budget_ms = MAX_STORAGE_PEER_READ_ELEVATOR_BUDGET_MS + 1;
         assert!(matches!(c.validate(), Err(ConfigError::Validation(_))));
 
@@ -1633,6 +1647,7 @@ preallocation_mode = "sparse"
 durability_mode = "strict"
 peer_read_readahead_bytes = 131072
 peer_read_cache_entries = 17
+peer_read_cache_bytes = 262144
 peer_read_elevator_budget_ms = 9
 "#;
         let c: Config = toml::from_str(toml).unwrap();
@@ -1663,6 +1678,7 @@ peer_read_elevator_budget_ms = 9
         assert_eq!(c.storage.durability_mode, StorageDurabilityMode::Strict);
         assert_eq!(c.storage.peer_read_readahead_bytes, 131072);
         assert_eq!(c.storage.peer_read_cache_entries, 17);
+        assert_eq!(c.storage.peer_read_cache_bytes, 262144);
         assert_eq!(c.storage.peer_read_elevator_budget_ms, 9);
         assert_eq!(c.daemon.shutdown_timeout_secs, 10);
         assert_eq!(c.logging, rt_logging::LoggingConfig::default());

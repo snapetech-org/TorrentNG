@@ -147,6 +147,23 @@ def parse_cgroup_io_stat(text):
     return counters
 
 
+def evict_file_cache(path):
+    """Best-effort eviction of clean fixture pages before a client reads them."""
+    fadvise = getattr(os, "posix_fadvise", None)
+    advice = getattr(os, "POSIX_FADV_DONTNEED", None)
+    if fadvise is None or advice is None:
+        return False
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+        fadvise(descriptor, 0, 0, advice)
+    except OSError:
+        return False
+    finally:
+        os.close(descriptor)
+    return True
+
+
 def parse_cgroup_cpu_usage_usec(text):
     for line in text.splitlines():
         key, separator, value = line.partition(" ")
@@ -265,6 +282,9 @@ class Benchmark:
         self.storage_peer_read_cache_entries = optional_nonnegative_int(
             "TNG_CLIENT_BENCH_STORAGE_PEER_READ_CACHE_ENTRIES",
         )
+        self.storage_peer_read_cache_bytes = optional_nonnegative_int(
+            "TNG_CLIENT_BENCH_STORAGE_PEER_READ_CACHE_BYTES",
+        )
         self.piece_assembly_cap_mb = optional_nonnegative_int(
             "TNG_CLIENT_BENCH_PIECE_ASSEMBLY_CAP_MB",
         )
@@ -292,6 +312,11 @@ class Benchmark:
                 and self.storage_peer_read_cache_entries > 65_536):
             raise RuntimeError(
                 "TNG_CLIENT_BENCH_STORAGE_PEER_READ_CACHE_ENTRIES must be <= 65536"
+            )
+        if (self.storage_peer_read_cache_bytes is not None
+                and self.storage_peer_read_cache_bytes > 64 * 1024 * 1024):
+            raise RuntimeError(
+                "TNG_CLIENT_BENCH_STORAGE_PEER_READ_CACHE_BYTES must be <= 67108864"
             )
         now = dt.datetime.now(dt.timezone.utc)
         self.stamp = now.strftime("%Y%m%dT%H%M%SZ")
@@ -369,6 +394,7 @@ class Benchmark:
         self.partial_seed_elapsed = {}
         self.partial_seed_setup = {}
         self.seed_source = None
+        self.seed_cache_eviction = {}
         seed_source = os.environ.get("TNG_CLIENT_BENCH_SEED_SOURCE")
         self.seed_source_override = Path(seed_source).expanduser().resolve() if seed_source else None
         self.seed_leecher_version = "unknown"
@@ -649,6 +675,11 @@ class Benchmark:
                 "peer_read_cache_entries = "
                 f"{self.storage_peer_read_cache_entries}"
             )
+        if self.storage_peer_read_cache_bytes is not None:
+            storage_overrides.append(
+                "peer_read_cache_bytes = "
+                f"{self.storage_peer_read_cache_bytes}"
+            )
         if storage_overrides:
             text = re.sub(
                 r'(?m)^(download_dir\s*=\s*"[^"]+"\s*)$',
@@ -889,10 +920,10 @@ class Benchmark:
                 "max_upload_speed": RATE_BPS / 1024,
             }])
         else:
-            self._scgi("throttle.max_peers.normal.set", MAX_PEERS)
-            self._scgi("throttle.max_peers.seed.set", MAX_PEERS)
-            self._scgi("throttle.global_down.max_rate.set_kb", RATE_BPS // 1024)
-            self._scgi("throttle.global_up.max_rate.set_kb", RATE_BPS // 1024)
+            self._scgi("throttle.max_peers.normal.set", "", MAX_PEERS)
+            self._scgi("throttle.max_peers.seed.set", "", MAX_PEERS)
+            self._scgi("throttle.global_down.max_rate.set_kb", "", RATE_BPS // 1024)
+            self._scgi("throttle.global_up.max_rate.set_kb", "", RATE_BPS // 1024)
 
     def _status(self, client, info_hash, name, *, allow_name_fallback=True):
         if client == "torrentngd":
@@ -956,7 +987,7 @@ class Benchmark:
                 "total": int(row.get("total_size", 0)) if row else 0,
             }
         rows = self._scgi(
-            "d.multicall2", "", "d.hash=", "d.name=", "d.complete=",
+            "d.multicall2", "", "main", "d.hash=", "d.name=", "d.complete=",
             "d.size_bytes=", "d.completed_bytes=", "d.down.rate=", "d.up.rate=",
             "d.peers_connected=",
         ) or []
@@ -1292,6 +1323,16 @@ class Benchmark:
             profile["error"] = f"{type(error).__name__}: {error}"
         self.engine_memory_metrics.append(profile)
         self.last_engine_memory_metrics_at = time.monotonic()
+
+    def _peak_engine_metric(self, client, metric_name, phases):
+        values = [
+            value
+            for profile in self.engine_memory_metrics
+            if profile.get("client") == client and profile.get("phase") in phases
+            for name, value in profile.get("metrics", {}).items()
+            if name.split("{", 1)[0] == metric_name
+        ]
+        return max(values) if values else None
 
     def _write_memory_profile(self):
         samples = []
@@ -1716,6 +1757,7 @@ class Benchmark:
             self._start_seed_leecher(torrent_path, client)
             self._wait_seed_leecher_tracker(info_hash)
             self._reannounce(client, info_hash)
+            self.seed_cache_eviction[client] = evict_file_cache(payload)
             started = time.monotonic()
             deadline = started + SEED_TIMEOUT
             last_peer = started
@@ -1920,6 +1962,11 @@ class Benchmark:
         down = self._summary(public_rows, "public_download")
         seed = self._summary(seed_rows, "controlled_seed")
         seed_bytes = int(meta["size"] * float(seed_rows[-1][4])) if seed_rows else 0
+        seed_peer_read_cache_peak_bytes = self._peak_engine_metric(
+            client,
+            "torrentng_storage_peer_read_cache_bytes",
+            {"controlled_seed", "after_controlled_seed"},
+        )
         self.results.append({
             "client": client, "version": version, "public": public_result, "seed": seed_result,
             "download_progress": download_progress,
@@ -1960,6 +2007,7 @@ class Benchmark:
             "seed_peak_cgroup_anon": seed["peak_cgroup_anon"],
             "seed_peak_cgroup_file": seed["peak_cgroup_file"],
             "seed_peak_process_rss": seed["peak_process_rss"],
+            "seed_peer_read_cache_peak_bytes": seed_peer_read_cache_peak_bytes,
             "seed_cgroup_cpu_seconds": seed["cgroup_cpu_seconds"],
             "seed_cpu_seconds_per_gib": per_gib(seed["cgroup_cpu_seconds"], seed_bytes),
             "seed_cgroup_io_read_bytes": seed["cgroup_io_read_bytes"],
@@ -2009,6 +2057,8 @@ class Benchmark:
             if self.storage_peer_read_readahead_bytes is not None else "",
             f"peer-read cache={self.storage_peer_read_cache_entries} entries"
             if self.storage_peer_read_cache_entries is not None else "",
+            f"peer-read cache budget={self.storage_peer_read_cache_bytes}B"
+            if self.storage_peer_read_cache_bytes is not None else "",
         ]
         runtime_overrides = ", ".join(value for value in runtime_overrides if value) or "defaults"
         memory_cap_overrides = ", ".join(
@@ -2071,6 +2121,10 @@ class Benchmark:
             f"resolved torrent {meta['torrent_url']}",
             f"- ISO: {meta['iso_name']}; {meta['size']:,} bytes; "
             f"torrent infohash {meta['info_hash']}",
+            "- Seed fixture page-cache eviction: "
+            f"POSIX_FADV_DONTNEED succeeded for "
+            f"{sum(self.seed_cache_eviction.values())}/{len(self.seed_cache_eviction)} "
+            "seed phases (best-effort kernel hint).",
             f"- Official SHA-256: {meta['sha256']}",
             "- Clients selected for this run: " + ", ".join(LABELS[c] for c in CLIENTS),
             f"- Client download and upload limits: {RATE_BPS:,} B/s "
@@ -2136,20 +2190,25 @@ class Benchmark:
             "",
             "## Memory profile",
             "",
-            "Memory uses the container cgroup and Docker working-set counter, sampled at the transfer interval. Anonymous memory excludes charged file cache, so these columns help separate process/runtime growth from data caching. TorrentNG process RSS, engine resource-governor leases, peer-buffer estimates, and (for Jemalloc builds only) allocator metrics are in the linked profile. Allocator counters do not replace process RSS. `n/a` means the runtime did not expose that counter.",
+            "Memory uses the container cgroup and Docker working-set counter, sampled at the transfer interval. Anonymous memory excludes charged file cache, so these columns help separate process/runtime growth from data caching. TorrentNG process RSS, engine resource-governor leases, peer-buffer estimates, sampled peer-read cache bytes, and (for Jemalloc builds only) allocator metrics are in the linked profile. Allocator counters do not replace process RSS. `n/a` means the runtime did not expose that counter.",
             "",
-            "| Client | Idle container mean (MiB) | Idle anonymous mean (MiB) | Download peak container (MiB) | Download peak anonymous (MiB) | Seed peak container (MiB) | Seed peak anonymous (MiB) |",
-            "|---|---:|---:|---:|---:|---:|---:|",
+            "| Client | Idle container mean (MiB) | Idle anonymous mean (MiB) | Download peak container (MiB) | Download peak anonymous (MiB) | Seed peak container (MiB) | Seed peak anonymous (MiB) | Peer-read cache sampled peak (MiB) |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|",
         ])
         for client in CLIENTS:
             row = by_client.get(client, {})
+            cache_bytes = row.get("seed_peer_read_cache_peak_bytes")
+            cache_peak = (
+                metric(cache_bytes / 1048576, 2) if cache_bytes is not None else "n/a"
+            )
             lines.append(
                 f"| {LABELS[client]} | {mib(row.get('idle_mean_memory', 0))} | "
                 f"{mib(row.get('idle_mean_cgroup_anon', 0))} | "
                 f"{mib(row.get('download_peak_memory', 0))} | "
                 f"{mib(row.get('download_peak_cgroup_anon', 0))} | "
                 f"{mib(row.get('seed_peak_memory', 0))} | "
-                f"{mib(row.get('seed_peak_cgroup_anon', 0))} |"
+                f"{mib(row.get('seed_peak_cgroup_anon', 0))} | "
+                f"{cache_peak} |"
             )
         lines.extend([
             "",
@@ -2174,6 +2233,10 @@ class Benchmark:
         lines.extend([
             "",
             "The tracker is restarted between clients to discard stale peer records.",
+            "- After the seeder recognizes the complete fixture and just before each "
+            "timed transfer, its cached file pages are advised out so the cgroup "
+            "block-read counters are not determined by which client seeded first. "
+            "This is a best-effort Linux page-cache hint.",
             "",
             "## Method and scope",
             "",

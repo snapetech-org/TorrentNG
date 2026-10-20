@@ -169,11 +169,24 @@ impl InboundObligations {
         have_piece: bool,
         memory_admitted: bool,
     ) -> InboundDecision {
+        self.on_request_with_admission(block, have_piece, |_| memory_admitted)
+    }
+
+    /// Admit a request while allowing the runtime adapter to lease its
+    /// bookkeeping capacity. The callback runs only for a valid new request,
+    /// after protocol checks and duplicate detection have completed.
+    pub(crate) fn on_request_with_admission(
+        &mut self,
+        block: BlockExtent,
+        have_piece: bool,
+        admit_memory: impl FnOnce(usize) -> bool,
+    ) -> InboundDecision {
         let decision = self.request_decision(block, have_piece);
         if decision != InboundDecision::Queue {
             return decision;
         }
-        if !memory_admitted {
+        let required_slots = self.outstanding.len().saturating_add(1);
+        if !admit_memory(required_slots) {
             return self.refuse(RejectReason::QueueFull);
         }
         // Reserve both bounded containers before mutating either. Runtime
@@ -435,6 +448,43 @@ mod tests {
         assert_eq!(ob.finish(block, Served::Sent), None);
         // Once served, the same coordinates are a fresh request.
         assert_eq!(ob.on_request(block, true), InboundDecision::Queue);
+    }
+
+    #[test]
+    fn admission_leases_memory_once_after_protocol_and_duplicate_checks() {
+        let mut ob = InboundObligations::new(true, 2);
+        ob.on_local_unchoke();
+
+        let mut reservations = Vec::new();
+        assert_eq!(
+            ob.on_request_with_admission(b(1), true, |slots| {
+                reservations.push(slots);
+                true
+            }),
+            InboundDecision::Queue
+        );
+        assert_eq!(reservations, [1]);
+
+        let mut duplicate_requested_memory = false;
+        assert_eq!(
+            ob.on_request_with_admission(b(1), true, |_| {
+                duplicate_requested_memory = true;
+                true
+            }),
+            InboundDecision::Duplicate
+        );
+        assert!(!duplicate_requested_memory);
+
+        let mut rejected_requested_memory = false;
+        assert_eq!(
+            ob.on_request_with_admission(b(3), false, |_| {
+                rejected_requested_memory = true;
+                true
+            }),
+            InboundDecision::Reject(RejectReason::PieceNotHeld)
+        );
+        assert!(!rejected_requested_memory);
+        ob.check_invariants().unwrap();
     }
 
     #[test]

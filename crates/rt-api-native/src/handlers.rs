@@ -8129,6 +8129,13 @@ fn render_metrics_with_health(
     );
     metric(
         &mut out,
+        "torrentng_storage_peer_read_cache_bytes",
+        "gauge",
+        "Peer-read readahead payload bytes across running torrent schedulers",
+        stats.storage_peer_read_cache_bytes,
+    );
+    metric(
+        &mut out,
         "torrentng_storage_peer_read_cache_hits_total",
         "counter",
         "Peer-read readahead cache hits across running torrent schedulers",
@@ -10845,6 +10852,7 @@ mod tests {
             storage_hash_ops: 7,
             storage_queued_disk_bytes: 54,
             storage_queue_full: 56,
+            storage_peer_read_cache_bytes: 4096,
             storage_peer_read_cache_hits: 8,
             storage_peer_read_cache_evictions: 58,
             piece_assembly_evictions: 9,
@@ -10976,6 +10984,7 @@ mod tests {
         assert!(rendered.contains("torrentng_storage_device_queue_available 63"));
         assert!(rendered.contains("torrentng_storage_queued_disk_bytes 54"));
         assert!(rendered.contains("torrentng_storage_queue_full_total 56"));
+        assert!(rendered.contains("torrentng_storage_peer_read_cache_bytes 4096"));
         assert!(rendered.contains("torrentng_storage_peer_read_cache_hits_total 8"));
         assert!(rendered.contains("torrentng_storage_peer_read_cache_evictions_total 58"));
         assert!(rendered.contains("torrentng_piece_assembly_evictions_total 9"));

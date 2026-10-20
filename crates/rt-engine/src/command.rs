@@ -399,6 +399,7 @@ pub struct EngineStats {
     pub storage_preallocation_failures: u64,
     pub storage_preallocation_fallbacks: u64,
     pub storage_peer_read_cache_entries: u64,
+    pub storage_peer_read_cache_bytes: u64,
     pub storage_peer_read_cache_hits: u64,
     pub storage_peer_read_cache_misses: u64,
     pub storage_peer_read_cache_evictions: u64,
@@ -906,6 +907,9 @@ impl EngineStats {
         self.storage_peer_read_cache_entries = self
             .storage_peer_read_cache_entries
             .saturating_add(storage.peer_read_cache_entries as u64);
+        self.storage_peer_read_cache_bytes = self
+            .storage_peer_read_cache_bytes
+            .saturating_add(storage.peer_read_cache_bytes);
         self.storage_peer_read_cache_hits = self
             .storage_peer_read_cache_hits
             .saturating_add(storage.peer_read_cache_hits);
@@ -1883,6 +1887,7 @@ mod tests {
             preallocation_failures: 9,
             preallocation_fallbacks: 10,
             peer_read_cache_entries: 11,
+            peer_read_cache_bytes: 12 * 1024,
             peer_read_cache_hits: 12,
             peer_read_cache_misses: 13,
             peer_read_cache_evictions: 29,
@@ -2009,6 +2014,7 @@ mod tests {
                 },
             }]
         );
+        assert_eq!(stats.storage_peer_read_cache_bytes, 12 * 1024);
         assert_eq!(stats.storage_peer_read_cache_hits, 12);
         assert_eq!(stats.storage_peer_read_cache_evictions, 29);
         assert_eq!(stats.storage_peer_read_elevator_enabled, 1);

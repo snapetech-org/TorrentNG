@@ -13,7 +13,48 @@ All 323 Python test scripts passed, including transfer-rebuild harnesses, client
 
 The ignored storage checks ran on the desktop's Btrfs/NVMe filesystem, not the server LVM or a dedicated hardware lane. They passed backend selection, a 256 MiB positioned-I/O round trip (1,772 MiB/s write and 3,689 MiB/s read in this run), adjacent-read readahead (4,096 requests serviced by 133 backend reads, 30.8x), a 64 MiB recheck (375 MiB/s), 10,000 reads with one file open, and 4,096 shuffled reads. The HDD-only elevator case correctly skipped on the NVMe profile. The move/import/delete fixture passed with 64 files and root confinement; the peer-wire probe measured 1.719 ms owned encoding versus 0.898 ms reused direct encoding over 10,000 frames. These are local diagnostics on a shared host and do not establish cross-client resource rankings.
 
-The current-source whole-client CPU, memory, and block-I/O comparison is still pending. Existing scorecards below remain tied to their stated older commits until a new source-bound run completes.
+An exploratory five-client resource run on the current worktree is recorded in
+`certification/reports/client-performance-benchmark-588cfd76-20261020-async-futures-opt.md`.
+It measured TorrentNG seeding at **4.19 CPU-s/GiB**, versus 2.45 for
+qBittorrent, 1.59 for Transmission, 2.51 for Deluge, and 0.71 for rTorrent;
+that is 10% below the immediately preceding 4.67 CPU-s/GiB pass, but remains
+above every reference client. TorrentNG anonymous peak memory reached
+**28.5 MiB**, versus 15.2 MiB for qBittorrent, 20.4 MiB for Transmission,
+88.3 MiB for Deluge, and 1.8 MiB for rTorrent. Its peer-buffer governor gauge
+peaked at 22.15 MiB while the 64-range read-ahead cache was full. Seed block
+reads measured 1,016 MiB/GiB and writes 0.38 MiB/GiB. All five controlled
+leecher hashes matched the official ISO. This was one sequential pass on a
+loaded desktop, so the resource deltas are exploratory rather than a client
+ranking. It motivated the explicit cache byte budget described under IO-011.
+
+The 8 MiB cache-budget candidate then passed the full all-target workspace
+suites and strict Clippy on Rust 1.94 and 1.88, plus all 30 Python test
+modules. In one sequential repeat, its sampled peer-read cache peaked at
+**8.00 MiB** and TorrentNG's anonymous-memory peak fell to **17.4 MiB** (from
+28.5 MiB in the prior run), just below qBittorrent's 18.5 MiB and Transmission's
+24.0 MiB. The peer-buffer governor peaked at 10.3 MiB. Seeding CPU was
+**4.46 s/GiB**, still above qBittorrent (2.54), Transmission (1.74), Deluge
+(2.72), and rTorrent (0.73). Block reads were 1,016.66 MiB/GiB and writes
+0.44 MiB/GiB, so read traffic stayed close to the references while write
+traffic remained higher. All controlled seed hashes matched. The host load
+peaked at 16.39 and ended at 13.74; this one-pass run is low-confidence for
+small CPU differences and does not qualify an overall ranking. The source-
+bound report and raw artifacts are
+`certification/reports/client-performance-benchmark-588cfd76-20261020-cache-cap-8m.md`
+and its adjacent CSV and memory-profile JSON. Its 60-second public-swarm
+phase remained incomplete for TorrentNG and Transmission and is not a
+comparable download result.
+
+A second sequential repeat sampled the cache at **7.76 MiB** and measured
+17.4 MiB anonymous peak, 4.75 CPU-s/GiB, 1,016.20 MiB/GiB reads, and
+0.42 MiB/GiB writes. qBittorrent measured 17.4 MiB anonymous peak and
+2.40 CPU-s/GiB; Transmission measured 18.7 MiB and 1.63 CPU-s/GiB. All five
+seed hashes matched. The host's one-minute load peaked at 11.48 and ended at
+3.96. Across these two low-confidence sequential passes, the byte cap held and
+TorrentNG's anonymous peak stayed near qBittorrent, while seed CPU remained
+substantially higher than all reference clients. This supports the memory
+reduction but not an overall resource-efficiency win. The repeat report and
+raw artifacts are `certification/reports/client-performance-benchmark-588cfd76-20261020-cache-cap-8m-repeat-2.*`.
 
 ## Worker-count profile comparison — 2026-10-20 UTC
 
@@ -2585,8 +2626,10 @@ speculative I/O. Recommendations remain bounded by the configured maximum, and
 a discontinuity resets to the requested range. Stream history is bounded with
 single-entry least-recently-used eviction, so admitting a new file does not
 clear every warm stream. The cache also retains multiple independently useful
-forward ranges per file up to the configured total entry cap, evicting the
-least-recently reused range. Live-engine qualification remains open.
+forward ranges per file within both a configured total entry cap and an 8 MiB
+default payload-byte cap, evicting least-recently-used ranges when either
+limit is reached. The cache reports retained payload bytes directly.
+Live-engine qualification remains open.
 
 ### Ownership and invariant
 
@@ -2596,8 +2639,9 @@ least-recently reused range. Live-engine qualification remains open.
 - **Target owner:** IO-006 device service owns speculative capacity and IO-008
   actor progress consumes completed reads without waiting on unrelated work.
 - **Invariant preserved:** readahead never exceeds the configured cap or file
-  extent, and its additional queued-byte charge plus frame reservation are
-  acquired before the backend read is submitted.
+  extent, its additional queued-byte charge plus frame reservation are
+  acquired before the backend read is submitted, and retained cache data stays
+  within both cache limits.
 - **Must not:** expand an isolated seek or discard a requested range when
   speculative admission is denied.
 
@@ -2611,6 +2655,8 @@ least-recently reused range. Live-engine qualification remains open.
   speculative range.
 - A file may retain multiple disjoint useful ranges; total range entries stay
   within the configured cap and least-recently-used ranges are evicted first.
+- Retained payload bytes stay within `peer_read_cache_bytes`, with an 8 MiB
+  default per scheduler; a zero-byte budget disables cached readahead.
 - Replacing a path or completing a write invalidates every cached range for
   that path.
 - Added buffer bytes are charged before allocation/submission and released only
@@ -2636,8 +2682,11 @@ least-recently reused range. Live-engine qualification remains open.
   covers bounded per-file growth and discontinuity reset;
   `readahead_stops_growing_when_prefetch_is_not_reused` covers hit/miss
   feedback; `peer_read_readahead_cache_retains_disjoint_ranges_for_one_file`
-  covers multi-range reuse; scheduler cache regressions remain in the bulk
-  pass.
+  covers multi-range reuse; `peer_read_readahead_cache_evicts_to_its_byte_budget`
+  covers byte-limited eviction and the cache-disable regression covers both
+  zero-entry and zero-byte limits. The full all-target workspace suites and
+  strict Clippy passed on Rust 1.88.0 and 1.94.0; all 30 Python test modules
+  passed.
 - **Command or probe:** exact-main workspace tests on Rust 1.88.0 and 1.94.0;
   release `rt-storage::storage_real_device` suite on `kspls0` ext4 LVM.
 - **Expected result:** exact reads for isolated requests, bounded growth for
@@ -4715,6 +4764,49 @@ the production default policy.
   a few percent in the download sample. These are two diagnostic transfers,
   not comparative or acceptance results; no code optimization has been
   credited from them yet.
+- **Five-client resource pass (2026-10-20; exploratory):** exact TorrentNG
+  source `588cfd760388ea9bea6b068de7dd99410c6eb7d6` was run against pinned
+  qBittorrent, Transmission, Deluge, and rTorrent containers on `kspld0`, using
+  the same SHA-256-verified Debian 13.7 netinst ISO. In the single controlled
+  seed pass, TorrentNG used 4.60 CPU-s/GiB, compared with 2.33 for qBittorrent,
+  1.57 for Transmission, 2.60 for Deluge, and 0.69 for rTorrent. Its 15.1 MiB
+  anonymous peak was below qBittorrent, Transmission, and Deluge, but above
+  rTorrent. Cold block reads were 1,016 MiB/GiB for TorrentNG and
+  978–1,016 MiB/GiB for the references; block writes were 0.44 MiB/GiB for
+  TorrentNG and 0–0.16 MiB/GiB for the references. Seed goodput was capped by
+  the shared receiver at 4 MiB/s. One pass on a shared, loaded host is low
+  confidence and does not qualify a ranking or maximum upload capacity. The
+  public-swarm phase was incomplete for TorrentNG and is not a comparable
+  download result. The source-bound report and raw observations are
+  `certification/reports/client-performance-benchmark-588cfd76-20261020-resource-final.md`
+  and its adjacent CSV and memory-profile JSON.
+- **CPU admission candidate (2026-10-20; tested, no measured win):** every
+  admitted inbound upload block previously underwent a full `would_queue`
+  protocol classification before bookkeeping memory was leased, followed by
+  the same classification again before insertion. The adapter now passes its
+  memory reservation callback into the obligation state machine, so each
+  request is classified once and the callback runs only for a valid, unique
+  request. `admission_leases_memory_once_after_protocol_and_duplicate_checks`
+  covers callback ordering and rejected/duplicate requests. Both Rust 1.94 and
+  1.88 workspace suites and Clippy passed with this candidate. A fresh five-
+  client pass measured TorrentNG at 4.67 CPU-s/GiB while seeding, versus 4.60
+  in the prior one-pass run; this is no demonstrated CPU reduction. Seed
+  goodput stayed at 3.82 MiB/s, while cgroup block reads/writes moved from
+  1,016/0.44 to 1,166/0.54 MiB/GiB. The single sequential pass and varying
+  reference read counters are too noisy to attribute those changes. Its report
+  is `certification/reports/client-performance-benchmark-588cfd76-20261020-admission-opt.md`.
+- **Async wake optimization candidate (2026-10-20; source changed, bulk
+  effect not isolated):** the earlier Linux `perf` sample attributed 8.9% of
+  seed samples to `SyncWaker` notify/register activity. Upload reads now remain
+  in a peer-loop-owned `FuturesUnordered` instead of starting one Tokio task
+  per block. Dropping the owner drops its in-flight futures and their leases;
+  a caught read panic retains the request coordinate so the peer can close
+  without stranding its BEP 6 obligation. Regression sources cover panic
+  reporting and cancellation on peer exit. The later full workspace, strict
+  Clippy, and Python passes passed with these changes present. The bounded-cache
+  resource run below measures 4.46 CPU-s/GiB, still above every reference; the
+  async-wake change cannot be credited with a gain from cross-run measurements
+  because the cache policy and host load differ.
 - **qBittorrent candidate status:** a partial candidate run produced incomplete
   receiver-counter observations and stopped when a received-byte counter fell
   below the independently verified useful payload. That run is invalid and
