@@ -2694,7 +2694,7 @@ class Benchmark:
             args = self._transmission("session-get").get("arguments", {})
             return args.get("dht-enabled", args.get("dht_enabled"))
         if client == "deluge":
-            config = self._deluge("core.get_config", [["dht"]])
+            config = self._deluge("core.get_config_values", [["dht"]])
             return config.get("dht") if isinstance(config, dict) else None
         value = self._scgi("dht.mode")
         return str(value).strip().lower() not in ("off", "disabled", "0", "false")
@@ -2708,7 +2708,7 @@ class Benchmark:
             args = self._transmission("session-get").get("arguments", {})
             return args.get("pex-enabled", args.get("pex_enabled"))
         if client == "deluge":
-            config = self._deluge("core.get_config", [["utpex"]])
+            config = self._deluge("core.get_config_values", [["utpex"]])
             return config.get("utpex") if isinstance(config, dict) else None
         value = self._scgi("protocol.pex")
         return str(value).strip().lower() not in ("off", "disabled", "0", "false", "no")

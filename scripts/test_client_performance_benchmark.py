@@ -510,6 +510,21 @@ class SeedFixtureTests(unittest.TestCase):
             with self.subTest(client=client):
                 self.assertIs(instance._read_idle_pex(client), False)
 
+    def test_deluge_idle_readback_requests_only_the_selected_config_keys(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance._deluge = mock.Mock(side_effect=[{"dht": True}, {"utpex": False}])
+
+        self.assertIs(instance._read_idle_dht("deluge"), True)
+        self.assertIs(instance._read_idle_pex("deluge"), False)
+
+        self.assertEqual(
+            instance._deluge.call_args_list,
+            [
+                mock.call("core.get_config_values", [["dht"]]),
+                mock.call("core.get_config_values", [["utpex"]]),
+            ],
+        )
+
     def test_rtorrent_idle_profiles_override_startup_dht_mode(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             instance = object.__new__(benchmark.Benchmark)
