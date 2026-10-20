@@ -176,3 +176,32 @@ documentation line between runs. The Rust crate inputs were unchanged and the
 container build reused the cached Rust build layer. These results apply only
 to the recorded source and fixture; they are not a whole-client resource
 ranking.
+
+## Single-region upload path experiment (October 20, 2026)
+
+A candidate avoided the per-request region vector and cloned file path for
+single-file peer requests, and moved ordinary owned storage frames directly
+into the upload payload. Multi-file requests and cached `Bytes` retained their
+existing copy path to preserve bounded memory ownership.
+
+One qBittorrent/TorrentNG pass used the same hash-verified Debian ISO and one
+qBittorrent leecher capped at 4 MiB/s. TorrentNG's controlled seed completed at
+3.81 MiB/s and verified the leecher hash. It measured 5.32 CPU-s/GiB, 13.3 MiB
+peak cgroup anonymous memory, 31.4 MiB process RSS high-water mark, and 0.38
+MiB/GiB block writes. The previous three baseline passes measured 3.99–5.07
+CPU-s/GiB (4.87 median), 11.8–15.3 MiB anonymous memory, 30.1–32.8 MiB RSS,
+and 0.39–0.63 MiB/GiB block writes. The candidate did not show lower CPU use;
+its memory values stayed within the earlier range.
+
+TorrentNG recorded 1,016.25 MiB/GiB of block reads, versus 165.57–165.80 in the
+baseline passes. This I/O result is inconclusive: TorrentNG ran second, the
+host had substantial concurrent file activity and a sampled 1-minute load
+peak of 25.56, and host-wide cache pressure can change which reads reach the
+block device. The run had one pass and does not establish that the code caused
+the difference. Its public-swarm probe timed out at 3.79%; only the controlled
+seed result passed.
+
+The code candidate was reverted because it showed no measured CPU or memory
+improvement. Its report, samples, and memory profile remain locally under
+`certification/reports/` as ignored artifacts. They are one-peer diagnostic
+evidence, not a whole-client comparison.
