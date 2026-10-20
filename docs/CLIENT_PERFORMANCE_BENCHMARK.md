@@ -73,9 +73,10 @@ window, then restores them before client API readback. DHT and PEX state and
 zero torrent count are read back outside the measured windows; Deluge's DHT
 and PEX readback requests only those keys through `core.get_config_values`.
 The profiles do not reproduce slskR's Soulseek-server-connected workload,
-but the isolated profile provides a genuine disconnected baseline. They have not yet been run
-to completion on current source: the first attempt exposed an incompatible
-Deluge config-readback call and was stopped before accepting any results.
+but the isolated profile provides a genuine disconnected baseline. An earlier
+partial attempt was stopped after the pinned Deluge client rejected the
+incompatible `core.get_config` call; observations from that attempt are not
+valid benchmark results.
 
 slskR also measured a share-cache serializer that wrote output directly:
 50,000 entries used 20 allocations versus 408,828 for its prior serializer,
