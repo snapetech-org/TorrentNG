@@ -30,6 +30,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Verify Docker stable tag policy
+        run: sh scripts/check_docker_tag_sync.sh
+
       - name: Validate tag and provenance
         id: tag
         env:
@@ -519,6 +522,9 @@ jobs:
 
   linux-release-assets:
     name: Linux containers and shared assets
+    concurrency:
+      group: dockerhub-stable-aliases
+      cancel-in-progress: false
     needs: [validate-release-tag, native-quality, msrv-check, msrv-check-sidecar, security-audit, native-release-smoke]
     env:
       RELEASE_TAG: ${{ needs.validate-release-tag.outputs.tag }}
@@ -713,6 +719,26 @@ jobs:
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#main-}"
+          stable_tag_pattern='^main-[0-9]{8}-[0-9]+$'
+          latest_stable_tag="$(
+            git ls-remote --tags origin 'refs/tags/main-*' |
+              awk -v stable_tag_pattern="$stable_tag_pattern" '
+                $2 !~ /\^\{\}$/ {
+                  sub(/^refs\/tags\//, "", $2)
+                  if ($2 ~ stable_tag_pattern) print $2
+                }
+              ' |
+              sort -V |
+              tail -n 1
+          )"
+          is_latest_stable=false
+          if [[ "$RELEASE_TAG" =~ $stable_tag_pattern && "$RELEASE_TAG" == "$latest_stable_tag" ]]; then
+            is_latest_stable=true
+            echo "Publishing stable aliases from latest stable release $RELEASE_TAG."
+          else
+            echo "Publishing immutable image tags for $RELEASE_TAG; latest stable release is $latest_stable_tag."
+          fi
+
           if [[ -z "${DOCKERHUB_USERNAME:-}" || -z "${DOCKERHUB_TOKEN:-}" ]]; then
             echo 'Docker Hub publisher credentials are required for stable releases.' >&2
             exit 1
@@ -725,19 +751,31 @@ jobs:
           publish_image() {
             local local_image="$1"
             local ghcr_image="$2"
-            local dockerhub_image="$3"
-            for tag in "$RELEASE_TAG" "$version" main master latest; do
+            shift 2
+            local dockerhub_images=("$@")
+            for tag in "$RELEASE_TAG" "$version"; do
               docker tag "$local_image:$RELEASE_TAG" "$ghcr_image:$tag"
               docker push "$ghcr_image:$tag"
-              if [[ -n "${DOCKERHUB_USERNAME:-}" && -n "${DOCKERHUB_TOKEN:-}" ]]; then
+              for dockerhub_image in "${dockerhub_images[@]}"; do
                 docker tag "$local_image:$RELEASE_TAG" "$dockerhub_image:$tag"
                 docker push "$dockerhub_image:$tag"
-              fi
+              done
             done
+
+            if [[ "$is_latest_stable" == true ]]; then
+              for stable_alias in latest main master stable; do
+                docker tag "$local_image:$RELEASE_TAG" "$ghcr_image:$stable_alias"
+                docker push "$ghcr_image:$stable_alias"
+                for dockerhub_image in "${dockerhub_images[@]}"; do
+                  docker tag "$local_image:$RELEASE_TAG" "$dockerhub_image:$stable_alias"
+                  docker push "$dockerhub_image:$stable_alias"
+                done
+              done
+            fi
           }
 
           publish_image torrentng-native ghcr.io/snapetech/torrentng/native snapetech/torrentng-native
-          publish_image torrentng ghcr.io/snapetech/torrentng/sidecar snapetech/torrentng-sidecar
+          publish_image torrentng ghcr.io/snapetech/torrentng/sidecar snapetech/torrentng-sidecar snapetech/torrentng
           publish_image torrentng-phase1 ghcr.io/snapetech/torrentng/phase1 snapetech/torrentng-phase1
 
       - name: Package shared assets
