@@ -3,15 +3,33 @@
 This benchmark compares TorrentNG's native engine with qBittorrent,
 Transmission, Deluge, and rTorrent using an official Debian amd64 netinst
 torrent. It records public download behavior and a separate controlled seed
-transfer for each client. The latest comparison and memory investigation are in
-[`certification/reports/native-memory-optimization-20261014-agentvm.md`](../certification/reports/native-memory-optimization-20261014-agentvm.md),
-with raw time-series and allocator/process profiles beside the report. The
-latest source-bound whole-client attempt is
-[`client-performance-benchmark-7a944072-20261020.md`](../certification/reports/client-performance-benchmark-7a944072-20261020.md).
-TorrentNG hit an HTTP 503 during that run, so it is diagnostic evidence rather
-than a current client ranking. The October 14 report and the
-[October 13 baseline](../certification/reports/client-performance-benchmark-20261013.md)
-are historical measurements, not current-source comparisons.
+transfer for each client. The latest source-bound five-client resource run is
+[`client-performance-benchmark-7545fc0-20261020-cache-disabled.md`](../certification/reports/client-performance-benchmark-7545fc0-20261020-cache-disabled.md),
+built from commit `7545fc0`. All five controlled seeds passed SHA-256 checks.
+At a shared 4 MiB/s receiver cap, TorrentNG used 3.74 CPU-s/GiB, above
+qBittorrent (2.30), Transmission (1.47), Deluge (2.40), and rTorrent (0.66).
+Its 7.7 MiB anonymous peak was lower than qBittorrent (15.6), Transmission
+(24.4), and Deluge (85.9), but higher than rTorrent (1.9). Block reads were
+close at 1,016 MiB/GiB; TorrentNG writes were 0.61 MiB/GiB, versus 0 for
+qBittorrent, Transmission, and rTorrent and 0.30 for Deluge. This one
+sequential pass is exploratory. TorrentNG and Transmission did not finish the
+60-second public-swarm phase, so those rows are not download rankings.
+
+The same source was then run twice more with the peer-read cache set to zero.
+TorrentNG's CPU readings were 3.98 and 4.52 CPU-s/GiB and anonymous peaks were
+7.6 and 8.4 MiB; block reads were 1,016.66 and 2,092.75 MiB/GiB. The doubled
+read result is unexplained and keeps this cache setting from being accepted as
+the default. Two earlier 8 MiB-cache runs measured 4.46 and 4.75 CPU-s/GiB,
+17.4 MiB anonymous peaks, and 1,016.66 and 1,016.20 MiB/GiB reads. Those are
+cross-run comparisons on a shared desktop, not a causal cache benchmark. The
+raw reports, samples, and memory profiles are checked in beside each report.
+
+Earlier evidence remains useful with its scope. The
+[October 14 comparison](../certification/reports/native-memory-optimization-20261014-agentvm.md)
+and [October 13 baseline](../certification/reports/client-performance-benchmark-20261013.md)
+are historical whole-client measurements. The 2026-10-20 direct-engine
+comparison against urtorrent covers a different fixture and answers a
+different question.
 
 The native daemon defaults to the system allocator; jemalloc and mimalloc are
 opt-in build features. It also defaults to direct block writes with
@@ -102,6 +120,7 @@ Useful environment variables:
 | `TNG_CLIENT_BENCH_STORAGE_HASH_WORKER_THREADS` | config default | Override TorrentNG storage hash workers for the measured run. |
 | `TNG_CLIENT_BENCH_STORAGE_PEER_READ_READAHEAD_BYTES` | config default | Override the peer-upload read-ahead size in bytes for a measured run. |
 | `TNG_CLIENT_BENCH_STORAGE_PEER_READ_CACHE_ENTRIES` | config default | Override the peer-upload read-ahead cache entry limit; set `0` to disable the cache. |
+| `TNG_CLIENT_BENCH_STORAGE_PEER_READ_CACHE_BYTES` | config default | Override the retained peer-read cache byte budget; set `0` to disable cached readahead reuse. |
 
 The common leecher limit applies to the receiver, not the client being tested.
 The default is below TorrentNG's per-peer request-window guard; seed results
@@ -162,13 +181,14 @@ at 29.21 and 27.54 respectively.
 The candidate CPU readings average 4.67 CPU-s/GiB, a small change from the
 previous median that stays within the previous run range. Anonymous memory and
 process RSS were consistently higher, while the second block-read result
-varied substantially. This does not establish a CPU or I/O improvement, and it
-shows a memory regression in this one-peer workload. The direct-future change
-was reverted; the peer-owned Tokio tasks remain. The one-peer test does not
-attribute the separate high-peer request-bookkeeping risk.
+varied substantially. This does not establish a CPU or I/O improvement. The
+peer-loop future implementation is present in current source `7545fc0`; its
+earlier benchmark does not isolate a CPU gain, and the later cache-budget runs
+do not separate its effect from the other changed code. The one-peer test does
+not attribute the separate high-peer request-bookkeeping risk.
 
 The raw reports, CSV samples, and memory profiles for pass 1 and pass 2 are
-retained locally under `certification/reports/` as ignored benchmark artifacts.
+checked in under `certification/reports/`.
 Both public-swarm probes timed out in the short diagnostic window; the
 controlled seed rows passed hash verification. Pass 2 has a different overall
 worktree fingerprint because `deploy/certification/README.md` changed one
@@ -209,5 +229,5 @@ seed result passed.
 
 The code candidate was reverted because it showed no measured CPU improvement
 and no attributable memory improvement. Its report, samples, and memory profile
-remain locally under `certification/reports/` as ignored artifacts. They are
-one-peer diagnostic evidence, not a whole-client comparison.
+remain under `certification/reports/` as one-peer diagnostic evidence, not a
+whole-client comparison.

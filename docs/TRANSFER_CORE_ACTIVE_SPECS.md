@@ -5,13 +5,17 @@ This file instantiates the template in
 implementation slices currently in progress. A ticket stays `wip` until its
 written acceptance and exact-revision evidence are complete.
 
-## Current-source bulk validation — implementation source `3758d021` (2026-10-20)
+## Earlier bulk validation — implementation source `3758d021` (2026-10-20)
 
 The Rust implementation under test is exact commit `3758d0217dea665fefdfcd6775a3f72d935cf058`; the only working-tree edits during this pass were documentation. The full workspace passed on Rust 1.94.0 and 1.88.0: each run had 2,309 passed, 0 failed, and 12 ignored across 37 result summaries. Release `rt-engine` passed 738/738, including the seeded ownership simulator. All 11 runnable ignored cases passed explicitly: the two release 100k live-catalog cases, seven storage diagnostics, the real-root move/import/delete fixture, and the peer-wire encode probe. The remaining ignored panic-hook child is exercised through its passing parent regression.
 
 All 323 Python test scripts passed, including transfer-rebuild harnesses, client-resource parsing, workflow security, and runner policy. The pinned Rust 1.98.1 urtorrent helper passed 6/6 tests and its help smoke. Workspace Clippy passed on Rust 1.94.0 and 1.88.0; workspace and helper formatting checks passed.
 
 The ignored storage checks ran on the desktop's Btrfs/NVMe filesystem, not the server LVM or a dedicated hardware lane. They passed backend selection, a 256 MiB positioned-I/O round trip (1,772 MiB/s write and 3,689 MiB/s read in this run), adjacent-read readahead (4,096 requests serviced by 133 backend reads, 30.8x), a 64 MiB recheck (375 MiB/s), 10,000 reads with one file open, and 4,096 shuffled reads. The HDD-only elevator case correctly skipped on the NVMe profile. The move/import/delete fixture passed with 64 files and root confinement; the peer-wire probe measured 1.719 ms owned encoding versus 0.898 ms reused direct encoding over 10,000 frames. These are local diagnostics on a shared host and do not establish cross-client resource rankings.
+
+## Current all-target validation — implementation source `7545fc0` (2026-10-20)
+
+The transfer and storage changes in exact source `7545fc0dc925758820a0540c673e6e77922ef941` passed `cargo +1.94.0 test --workspace --all-targets --locked --quiet` and the same command on Rust 1.88.0. One lifecycle test timed out once in the first Rust 1.94 run; it passed alone and in the complete rerun. Workspace Clippy passed on both toolchains with warnings denied, and `cargo fmt --all -- --check` plus `git diff --check` passed. All 30 repository Python test modules passed. The cache-disabled benchmark repeats below were run after this validation and do not change code.
 
 An exploratory five-client resource run on the current worktree is recorded in
 `certification/reports/client-performance-benchmark-588cfd76-20261020-async-futures-opt.md`.
@@ -55,6 +59,26 @@ TorrentNG's anonymous peak stayed near qBittorrent, while seed CPU remained
 substantially higher than all reference clients. This supports the memory
 reduction but not an overall resource-efficiency win. The repeat report and
 raw artifacts are `certification/reports/client-performance-benchmark-588cfd76-20261020-cache-cap-8m-repeat-2.*`.
+
+The cache-disabled diagnostic used exact source `7545fc0` with a runtime
+`peer_read_cache_bytes=0` override. A five-client sequential pass verified all
+seed hashes: TorrentNG used **3.74 CPU-s/GiB**, versus 2.30 qBittorrent, 1.47
+Transmission, 2.40 Deluge, and 0.66 rTorrent. Its anonymous peak was **7.7
+MiB** (qBittorrent 15.6, Transmission 24.4, Deluge 85.9, rTorrent 1.9); block
+reads were 1,016 MiB/GiB and writes 0.61 MiB/GiB. Two TorrentNG-only repeats
+measured 3.98 and 4.52 CPU-s/GiB and 7.6 and 8.4 MiB anonymous peaks. Their
+read values were 1,016.66 and **2,092.75 MiB/GiB**; the doubled read result is
+unexplained. Across the three cache-disabled seed passes the median CPU cost
+was 3.98 CPU-s/GiB and median reads 1,016.66 MiB/GiB, but one read outlier
+keeps the policy inconclusive. The 8 MiB runs used more anonymous memory
+(17.4 MiB) and CPU (4.46 and 4.75 s/GiB), with reads near 1,016 MiB/GiB.
+These are sequential runs under different host loads, so they do not establish
+that disabling the cache causes the CPU or memory reduction. Keep the current
+8 MiB default until the I/O outlier and multi-peer behavior are understood.
+The full cross-client report and raw artifacts are
+`certification/reports/client-performance-benchmark-7545fc0-20261020-cache-disabled.*`;
+the two repeats use the `-repeat-1` and `-repeat-2` suffixes. Public swarm
+results remain incomplete for TorrentNG and Transmission.
 
 ## Worker-count profile comparison — 2026-10-20 UTC
 
