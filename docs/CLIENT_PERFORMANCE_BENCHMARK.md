@@ -188,10 +188,16 @@ One qBittorrent/TorrentNG pass used the same hash-verified Debian ISO and one
 qBittorrent leecher capped at 4 MiB/s. TorrentNG's controlled seed completed at
 3.81 MiB/s and verified the leecher hash. It measured 5.32 CPU-s/GiB, 13.3 MiB
 peak cgroup anonymous memory, 31.4 MiB process RSS high-water mark, and 0.38
-MiB/GiB block writes. The previous three baseline passes measured 3.99–5.07
+MiB/GiB block writes. In the same pass, qBittorrent measured 1.94 CPU-s/GiB
+and 18.6 MiB peak cgroup anonymous memory. The previous three reference passes
+measured 3.99–5.07
 CPU-s/GiB (4.87 median), 11.8–15.3 MiB anonymous memory, 30.1–32.8 MiB RSS,
-and 0.39–0.63 MiB/GiB block writes. The candidate did not show lower CPU use;
-its memory values stayed within the earlier range.
+and 0.39–0.63 MiB/GiB block writes. Those passes used source revision
+`7a944072`; `78eff536` contains later engine changes, so these values are
+historical context rather than a source-matched before/after baseline. The
+candidate did not show lower CPU use. Its anonymous memory was lower than the
+same-pass qBittorrent result, but that is one run and falls within the earlier
+TorrentNG range; it does not show that this code change caused a memory win.
 
 TorrentNG recorded 1,016.25 MiB/GiB of block reads, versus 165.57–165.80 in the
 baseline passes. This I/O result is inconclusive: TorrentNG ran second, the
@@ -201,7 +207,7 @@ block device. The run had one pass and does not establish that the code caused
 the difference. Its public-swarm probe timed out at 3.79%; only the controlled
 seed result passed.
 
-The code candidate was reverted because it showed no measured CPU or memory
-improvement. Its report, samples, and memory profile remain locally under
-`certification/reports/` as ignored artifacts. They are one-peer diagnostic
-evidence, not a whole-client comparison.
+The code candidate was reverted because it showed no measured CPU improvement
+and no attributable memory improvement. Its report, samples, and memory profile
+remain locally under `certification/reports/` as ignored artifacts. They are
+one-peer diagnostic evidence, not a whole-client comparison.
