@@ -129,7 +129,7 @@ impl TorrentTask {
             )
             .await;
         });
-        self.attach_peer_abort(peer_addr, peer_task.abort_handle());
+        self.attach_peer_task(peer_addr, peer_task);
     }
 
     pub(super) async fn accept_utp_peer(
@@ -257,7 +257,7 @@ impl TorrentTask {
             )
             .await;
         });
-        self.attach_peer_abort(peer_addr, peer_task.abort_handle());
+        self.attach_peer_task(peer_addr, peer_task);
     }
 
     pub(super) fn upload_context(&self, peer_addr: SocketAddr) -> Option<UploadContext> {
@@ -320,6 +320,7 @@ impl TorrentTask {
                 network_budget: self.network_budget.clone(),
                 peer: rate_peer,
             },
+            upload_accounting: Arc::clone(&peer.upload_accounting),
         })
     }
 
@@ -375,6 +376,12 @@ impl TorrentTask {
             ));
         let peer_has = PieceBitmap::new(self.meta.pieces.len());
         let pending_have = PieceBitmap::new(self.meta.pieces.len());
+        let upload_accounting_batch_bytes =
+            if self.seed_ratio_limit.is_some() || self.seed_idle_limit.is_some() {
+                1
+            } else {
+                UPLOAD_ACCOUNTING_BATCH_BYTES
+            };
         self.active_peers.insert(
             addr,
             PeerHandle {
@@ -384,7 +391,7 @@ impl TorrentTask {
                 cmd_tx,
                 upload_control: RateLimitCancellation::default(),
                 shutdown_control: RateLimitCancellation::default(),
-                abort: None,
+                peer_task: None,
                 peer_has,
                 peer_have_count: 0,
                 choked: true,
@@ -392,6 +399,9 @@ impl TorrentTask {
                 interested: false,
                 downloaded: 0,
                 uploaded: 0,
+                upload_accounting: Arc::new(UploadAccountingState::new(
+                    upload_accounting_batch_bytes,
+                )),
                 download_rate: 0.0,
                 upload_rate: 0.0,
                 download_rate_window: 0,
@@ -418,13 +428,13 @@ impl TorrentTask {
         Some((id, cmd_rx))
     }
 
-    pub(super) fn attach_peer_abort(&mut self, addr: SocketAddr, abort: tokio::task::AbortHandle) {
+    pub(super) fn attach_peer_task(&mut self, addr: SocketAddr, peer_task: JoinHandle<()>) {
         if let Some(peer) = self.active_peers.get_mut(&addr) {
-            peer.abort = Some(abort);
+            peer.peer_task = Some(peer_task);
         } else {
             // The peer can finish before the engine processes its first
             // event. Do not leave the just-created task alive in that race.
-            abort.abort();
+            peer_task.abort();
         }
     }
 

@@ -24,6 +24,28 @@ the default. Two earlier 8 MiB-cache runs measured 4.46 and 4.75 CPU-s/GiB,
 cross-run comparisons on a shared desktop, not a causal cache benchmark. The
 raw reports, samples, and memory profiles are checked in beside each report.
 
+The [slskR idle reports](https://github.com/snapetech-org/slskR/blob/2207a92/benchmarks/artifacts/20261012-idle-container-slskr-slskd.md)
+and [connected-idle report](https://github.com/snapetech-org/slskR/blob/2207a92/benchmarks/artifacts/20261012-live-soulseek-idle.md)
+are useful examples of scoped measurement, but they cover idle sessions and
+do not predict active-transfer CPU, memory, or I/O. Its [share-cache allocation
+benchmark](https://github.com/snapetech-org/slskR/blob/2207a92/benchmarks/artifacts/20260929-rf038-share-cache-allocations.md)
+and incremental database updates target serialization and persistence paths;
+they are not direct optimizations for TorrentNG's piece-send loop. The
+[slskR performance analysis](https://github.com/snapetech-org/slskR/blob/2207a92/docs/performance-analysis.md)
+is a useful model for keeping each workload and claim explicit.
+
+TorrentNG's 2026-10-20 seed profile attributed 13.7% of sampled cycles to
+SHA-1 compression and 8.9% to `SyncWaker` notification/registration. We are
+testing a transfer-path reduction in accounting work: successful piece sends
+add their exact byte count to a peer-shared counter, then notify the torrent
+actor at 64 KiB or after 25 ms. With a seed-ratio or idle limit active, the
+notification threshold falls to one block so limit checks remain per-block.
+The pending total and threshold share one per-peer allocation, and the flush
+timer stays on the peer task's stack. Peer removal and shutdown wait for the
+sender to stop, then drain any remaining bytes. This is a candidate, not a
+demonstrated speedup; the next report will compare matched hash-verified seeds
+on the same fixture and host before making any efficiency claim.
+
 Earlier evidence remains useful with its scope. The
 [October 14 comparison](../certification/reports/native-memory-optimization-20261014-agentvm.md)
 and [October 13 baseline](../certification/reports/client-performance-benchmark-20261013.md)

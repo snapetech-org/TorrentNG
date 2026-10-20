@@ -7,10 +7,11 @@ use super::*;
 
 type PeerShutdownHandle = (
     mpsc::Sender<PeerCommand>,
-    Option<tokio::task::AbortHandle>,
+    Option<JoinHandle<()>>,
     RateLimitCancellation,
     RateLimitCancellation,
     ConnectionId,
+    Arc<UploadAccountingState>,
 );
 
 impl TorrentTask {
@@ -320,12 +321,12 @@ impl TorrentTask {
                         reason = "ledger_connection_not_idle_or_hybrid",
                         "closing peer whose negotiated plane cannot be bound to its ledger"
                     );
-                    if let Some(abort) = self
+                    if let Some(peer_task) = self
                         .active_peers
                         .get(&peer)
-                        .and_then(|handle| handle.abort.as_ref())
+                        .and_then(|handle| handle.peer_task.as_ref())
                     {
-                        abort.abort();
+                        peer_task.abort();
                     }
                     return;
                 }
@@ -532,11 +533,22 @@ impl TorrentTask {
                     .cancel_request(rejected.piece as usize, rejected.begin);
                 self.refill_peer_requests(peer).await;
             }
-            PeerEvent::Uploaded { peer, bytes, .. } => {
-                if let Some(handle) = self.active_peers.get_mut(&peer) {
-                    record_peer_transfer(handle, true, bytes);
+            PeerEvent::Uploaded { peer, .. } => {
+                let bytes = if let Some(handle) = self.active_peers.get_mut(&peer) {
+                    let bytes = handle
+                        .upload_accounting
+                        .pending_uploaded_bytes
+                        .swap(0, Ordering::Relaxed);
+                    if bytes != 0 {
+                        record_peer_transfer(handle, true, bytes);
+                    }
+                    bytes
+                } else {
+                    0
+                };
+                if bytes != 0 {
+                    self.record_upload(bytes).await;
                 }
-                self.record_upload(bytes).await;
             }
             PeerEvent::Disconnected {
                 peer, outstanding, ..
@@ -545,25 +557,32 @@ impl TorrentTask {
                 // mailbox. Union it with the engine's view so a disconnect
                 // cannot strand picker reservations, while deduplicating the
                 // same coordinate reported by both sides.
-                let outstanding = if let Some(handle) = self.active_peers.get_mut(&peer) {
-                    let requested = std::mem::take(&mut handle.requested);
-                    Self::merge_unique_block_requests(requested, outstanding)
-                } else {
-                    outstanding
-                };
-                let freed_upload_slot = if let Some(handle) = self.active_peers.remove(&peer) {
-                    let freed_upload_slot = !handle.upload_choked;
-                    remove_peer_availability(&mut self.picker.availability, &handle.peer_has);
-                    self.network_budget
-                        .remove_transfer_peer(TransferPeerId::new(
-                            self.transfer_rate_torrent,
-                            handle.transfer_conn,
-                        ));
-                    self.transfer_ledger.disconnect_peer(handle.transfer_conn);
-                    freed_upload_slot
-                } else {
-                    false
-                };
+                let (outstanding, freed_upload_slot, pending_upload) =
+                    if let Some(mut handle) = self.active_peers.remove(&peer) {
+                        let pending_upload = handle
+                            .upload_accounting
+                            .pending_uploaded_bytes
+                            .swap(0, Ordering::Relaxed);
+                        if pending_upload != 0 {
+                            record_peer_transfer(&mut handle, true, pending_upload);
+                        }
+                        let requested = std::mem::take(&mut handle.requested);
+                        let outstanding = Self::merge_unique_block_requests(requested, outstanding);
+                        let freed_upload_slot = !handle.upload_choked;
+                        remove_peer_availability(&mut self.picker.availability, &handle.peer_has);
+                        self.network_budget
+                            .remove_transfer_peer(TransferPeerId::new(
+                                self.transfer_rate_torrent,
+                                handle.transfer_conn,
+                            ));
+                        self.transfer_ledger.disconnect_peer(handle.transfer_conn);
+                        (outstanding, freed_upload_slot, pending_upload)
+                    } else {
+                        (outstanding, false, 0)
+                    };
+                if pending_upload != 0 {
+                    self.record_upload(pending_upload).await;
+                }
                 for req in outstanding {
                     self.picker.cancel_request(req.piece as usize, req.begin);
                 }
@@ -1880,14 +1899,15 @@ impl TorrentTask {
         self.drain_transfer_jobs().await;
         let handles: Vec<PeerShutdownHandle> = self
             .active_peers
-            .values()
+            .values_mut()
             .map(|peer| {
                 (
                     peer.cmd_tx.clone(),
-                    peer.abort.clone(),
+                    peer.peer_task.take(),
                     peer.upload_control.clone(),
                     peer.shutdown_control.clone(),
                     peer.transfer_conn,
+                    Arc::clone(&peer.upload_accounting),
                 )
             })
             .collect();
@@ -1895,19 +1915,34 @@ impl TorrentTask {
         for peer in self.active_peers.values() {
             remove_peer_availability(&mut self.picker.availability, &peer.peer_has);
         }
-        for (tx, abort, upload_control, shutdown_control, transfer_conn) in handles {
+        for (tx, peer_task, upload_control, shutdown_control, transfer_conn, _) in &handles {
             upload_control.cancel();
             shutdown_control.cancel();
             self.network_budget
                 .remove_transfer_peer(TransferPeerId::new(
                     self.transfer_rate_torrent,
-                    transfer_conn,
+                    *transfer_conn,
                 ));
-            self.transfer_ledger.disconnect_peer(transfer_conn);
+            self.transfer_ledger.disconnect_peer(*transfer_conn);
             let _ = tx.try_send(PeerCommand::Shutdown);
-            if let Some(abort) = abort {
-                abort.abort();
+            if let Some(peer_task) = peer_task {
+                peer_task.abort();
             }
+        }
+        let mut uploaded = 0u64;
+        for (_, peer_task, _, _, _, pending_uploaded_bytes) in handles {
+            if let Some(peer_task) = peer_task {
+                let _ = peer_task.await;
+            }
+            uploaded = uploaded.saturating_add(
+                pending_uploaded_bytes
+                    .pending_uploaded_bytes
+                    .swap(0, Ordering::Relaxed),
+            );
+        }
+        if uploaded != 0 {
+            self.last_upload_at = Instant::now();
+            self.update_transfer(uploaded, true).await;
         }
         self.active_peers.clear();
         self.picker.reset_outstanding_requests();
@@ -1935,12 +1970,29 @@ impl TorrentTask {
             .collect::<Vec<_>>();
         drop(registry);
         for peer in victims {
-            self.evict_peer(peer);
+            self.evict_peer(peer).await;
         }
     }
 
     pub(super) async fn record_download(&mut self, bytes: u64) {
         self.update_transfer(bytes, false).await;
+    }
+
+    pub(super) async fn flush_pending_upload_accounting(&mut self) {
+        let mut uploaded = 0u64;
+        for handle in self.active_peers.values_mut() {
+            let bytes = handle
+                .upload_accounting
+                .pending_uploaded_bytes
+                .swap(0, Ordering::Relaxed);
+            if bytes != 0 {
+                record_peer_transfer(handle, true, bytes);
+                uploaded = uploaded.saturating_add(bytes);
+            }
+        }
+        if uploaded != 0 {
+            self.record_upload(uploaded).await;
+        }
     }
 
     pub(super) async fn record_upload(&mut self, bytes: u64) {

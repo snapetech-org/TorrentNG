@@ -4788,6 +4788,24 @@ the production default policy.
   a few percent in the download sample. These are two diagnostic transfers,
   not comparative or acceptance results; no code optimization has been
   credited from them yet.
+- **Upload-accounting batching candidate (2026-10-20; bulk validation and
+  matched measurement pending):** each successful piece send now records bytes
+  into a peer-shared atomic counter. The peer loop notifies the torrent actor
+  after 64 KiB or 25 ms, reducing ordinary seed accounting from one event and
+  registry update per block to bounded batches. A configured seed-ratio or
+  seed-idle limit switches the threshold to one block, retaining the previous
+  limit-check cadence. The pending counter and threshold share one per-peer
+  allocation, and the flush timer is stack-pinned. Disconnect, eviction, limit
+  reconfiguration, and actor shutdown drain pending bytes; eviction and
+  shutdown wait for peer-task exit
+  before their final drain. `UploadAccountingBatch` and
+  `peer_loop_flushes_small_upload_batches_after_the_short_deadline` cover the
+  threshold and time paths; `seed_ratio_limit_pauses_a_completed_torrent`
+  covers batched totals, disconnect draining, and ratio enforcement. These
+  regressions pass in `cargo test --workspace --all-targets --locked` on Rust
+  1.88 and 1.94, with strict workspace Clippy on both toolchains. All 329
+  Python tests and 157 subtests also pass. The matched seed A/B is still
+  pending; no CPU, memory, or I/O improvement is claimed until it measures one.
 - **Five-client resource pass (2026-10-20; exploratory):** exact TorrentNG
   source `588cfd760388ea9bea6b068de7dd99410c6eb7d6` was run against pinned
   qBittorrent, Transmission, Deluge, and rTorrent containers on `kspld0`, using

@@ -7,6 +7,7 @@ use std::hash::{Hash, Hasher};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -110,6 +111,8 @@ const LOCAL_UT_PEX_ID: u8 = 2;
 const METADATA_PIECE_SIZE: usize = 16 * 1024;
 const PEER_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 pub(crate) const UTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+const UPLOAD_ACCOUNTING_BATCH_BYTES: u64 = 64 * 1024;
+const UPLOAD_ACCOUNTING_MAX_DELAY: Duration = Duration::from_millis(25);
 
 pub(crate) async fn connect_utp_with_deadline(
     network_budget: &GlobalNetworkBudget,
@@ -1824,7 +1827,6 @@ enum PeerEvent {
     Uploaded {
         peer: SocketAddr,
         id: PeerId,
-        bytes: u64,
     },
     Disconnected {
         peer: SocketAddr,
@@ -1886,7 +1888,7 @@ struct PeerHandle {
     /// Out-of-band cancellation for a peer whose command queue may be full.
     /// Control messages such as a ban must not depend on an untrusted peer
     /// draining a bounded command queue.
-    abort: Option<tokio::task::AbortHandle>,
+    peer_task: Option<JoinHandle<()>>,
     peer_has: PieceBitmap,
     peer_have_count: usize,
     choked: bool,
@@ -1894,6 +1896,7 @@ struct PeerHandle {
     interested: bool,
     downloaded: u64,
     uploaded: u64,
+    upload_accounting: Arc<UploadAccountingState>,
     download_rate: f64,
     upload_rate: f64,
     download_rate_window: u64,
@@ -1989,6 +1992,45 @@ struct UploadContext {
     upload_control: RateLimitCancellation,
     shutdown_control: RateLimitCancellation,
     upload_rate: UploadRateAdmission,
+    /// Bytes already sent on the socket but not yet folded into actor-owned
+    /// transfer totals. The actor drains this on each batch notification or
+    /// peer removal, including task cancellation.
+    upload_accounting: Arc<UploadAccountingState>,
+}
+
+#[derive(Debug)]
+struct UploadAccountingState {
+    pending_uploaded_bytes: AtomicU64,
+    batch_bytes: AtomicU64,
+}
+
+impl UploadAccountingState {
+    fn new(batch_bytes: u64) -> Self {
+        Self {
+            pending_uploaded_bytes: AtomicU64::new(0),
+            batch_bytes: AtomicU64::new(batch_bytes.max(1)),
+        }
+    }
+}
+
+#[derive(Default)]
+struct UploadAccountingBatch {
+    bytes_since_notification: u64,
+}
+
+impl UploadAccountingBatch {
+    fn is_empty(&self) -> bool {
+        self.bytes_since_notification == 0
+    }
+
+    fn add(&mut self, bytes: u64, batch_bytes: u64) -> bool {
+        self.bytes_since_notification = self.bytes_since_notification.saturating_add(bytes);
+        self.bytes_since_notification >= batch_bytes.max(1)
+    }
+
+    fn clear(&mut self) {
+        self.bytes_since_notification = 0;
+    }
 }
 
 impl UploadContext {
@@ -2849,15 +2891,15 @@ pub struct TorrentTask {
 impl Drop for TorrentTask {
     fn drop(&mut self) {
         // The engine may have to abort this actor after a full mailbox or a
-        // stuck storage/tracker operation. Dropping a Tokio AbortHandle does
-        // not cancel the peer task it refers to, so explicitly abort every
-        // peer here as the final lifecycle fallback. Otherwise handshakes
+        // stuck storage/tracker operation. Dropping a Tokio JoinHandle detaches
+        // its task, so explicitly abort every peer here as the final lifecycle
+        // fallback. Otherwise handshakes
         // can keep sockets alive after the torrent actor has disappeared.
         for peer in self.active_peers.values() {
             peer.upload_control.cancel();
             peer.shutdown_control.cancel();
-            if let Some(abort) = &peer.abort {
-                abort.abort();
+            if let Some(peer_task) = &peer.peer_task {
+                peer_task.abort();
             }
         }
         self.network_budget
@@ -3620,7 +3662,7 @@ impl TorrentTask {
                             }
                         }
                         TorrentCmd::BanPeer(peer) => {
-                            self.evict_peer(peer);
+                            self.evict_peer(peer).await;
                         }
                         TorrentCmd::EvictBannedPeers => {
                             self.evict_banned_peers().await;
@@ -4053,7 +4095,8 @@ impl TorrentTask {
         }
         if self.meta.private {
             if failed {
-                self.advance_private_tracker_after_failure((tier_idx, tracker_idx));
+                self.advance_private_tracker_after_failure((tier_idx, tracker_idx))
+                    .await;
             }
         } else {
             self.maybe_advance_tracker_tier(tier_idx);
@@ -4092,7 +4135,7 @@ impl TorrentTask {
         }
     }
 
-    fn advance_private_tracker_after_failure(&mut self, failed: TrackerKey) {
+    async fn advance_private_tracker_after_failure(&mut self, failed: TrackerKey) {
         if self.private_tracker_key != Some(failed) {
             return;
         }
@@ -4104,7 +4147,7 @@ impl TorrentTask {
         }
 
         self.cancel_tracker_announces();
-        self.disconnect_private_tracker_peers();
+        self.disconnect_private_tracker_peers().await;
         self.private_tracker_key = Some(next);
         self.active_tracker_tier = next.0;
         if let Some(tracker) = self
@@ -4125,11 +4168,11 @@ impl TorrentTask {
         );
     }
 
-    fn disconnect_private_tracker_peers(&mut self) {
+    async fn disconnect_private_tracker_peers(&mut self) {
         self.known_tracker_peers.clear();
         let peers = self.active_peers.keys().copied().collect::<Vec<_>>();
         for peer in peers {
-            self.evict_peer(peer);
+            self.evict_peer(peer).await;
         }
     }
 
@@ -4403,7 +4446,7 @@ impl TorrentTask {
         self.refresh_tracker_state_memory(&tracker_tiers, tracker_tiers.capacity())?;
         self.cancel_tracker_announces();
         if self.meta.private {
-            self.disconnect_private_tracker_peers();
+            self.disconnect_private_tracker_peers().await;
         }
         self.tracker_tiers = tracker_tiers;
         self.private_tracker_key = if self.meta.private {
@@ -4676,6 +4719,18 @@ impl TorrentTask {
             .and_then(|minutes| u64::try_from(minutes).ok())
             .filter(|minutes| *minutes > 0)
             .map(|minutes| Duration::from_secs(minutes.saturating_mul(60)));
+        let upload_accounting_batch_bytes =
+            if self.seed_ratio_limit.is_some() || self.seed_idle_limit.is_some() {
+                1
+            } else {
+                UPLOAD_ACCOUNTING_BATCH_BYTES
+            };
+        for peer in self.active_peers.values() {
+            peer.upload_accounting
+                .batch_bytes
+                .store(upload_accounting_batch_bytes, Ordering::Relaxed);
+        }
+        self.flush_pending_upload_accounting().await;
         self.torrent_max_peers = limits.max_connections.and_then(|value| {
             usize::try_from(value)
                 .ok()
@@ -5363,7 +5418,7 @@ impl TorrentTask {
                 Ok(TorrentCmd::NewPeers(_)) => {}
                 Ok(TorrentCmd::PriorityPeers(_)) => {}
                 Ok(TorrentCmd::BanPeer(peer)) => {
-                    self.evict_peer(peer);
+                    self.evict_peer(peer).await;
                 }
                 Ok(TorrentCmd::EvictBannedPeers) => {
                     self.evict_banned_peers().await;
@@ -8449,6 +8504,9 @@ async fn run_peer_loop(
     // identity. The socket loop retains the only writer and upload-read futures.
     let mut upload_request_drops = 0u64;
     let mut download_generation = 0u64;
+    let mut upload_accounting_batch = UploadAccountingBatch::default();
+    let upload_accounting_flush = sleep(UPLOAD_ACCOUNTING_MAX_DELAY);
+    tokio::pin!(upload_accounting_flush);
 
     let result: anyhow::Result<()> = async {
         loop {
@@ -9239,17 +9297,37 @@ async fn run_peer_loop(
                         if let Some(grant) = rate_grant {
                             grant.settle(bytes);
                         }
-                        if !send_peer_event(
-                            &peer_event_tx,
-                            PeerEvent::Uploaded {
-                                peer: addr,
-                                id: peer_id,
-                                bytes,
-                            },
-                        )
-                        .await
-                        {
-                            break;
+                        let first_unreported_block = upload_accounting_batch.is_empty();
+                        let _ = upload.upload_accounting.pending_uploaded_bytes.fetch_update(
+                            Ordering::Relaxed,
+                            Ordering::Relaxed,
+                            |pending| Some(pending.saturating_add(bytes)),
+                        );
+                        let batch_ready = upload_accounting_batch.add(
+                            bytes,
+                            upload
+                                .upload_accounting
+                                .batch_bytes
+                                .load(Ordering::Relaxed),
+                        );
+                        if first_unreported_block {
+                            upload_accounting_flush.as_mut().reset(
+                                TokioInstant::now() + UPLOAD_ACCOUNTING_MAX_DELAY,
+                            );
+                        }
+                        if batch_ready {
+                            if !send_peer_event(
+                                &peer_event_tx,
+                                PeerEvent::Uploaded {
+                                    peer: addr,
+                                    id: peer_id,
+                                },
+                            )
+                            .await
+                            {
+                                break;
+                            }
+                            upload_accounting_batch.clear();
                         }
                         finish_upload_obligation(
                             &mut peer_io,
@@ -9321,6 +9399,20 @@ async fn run_peer_loop(
                     );
                     break;
                 }
+            }
+            _ = upload_accounting_flush.as_mut(), if !upload_accounting_batch.is_empty() => {
+                if !send_peer_event(
+                    &peer_event_tx,
+                    PeerEvent::Uploaded {
+                        peer: addr,
+                        id: peer_id,
+                    },
+                )
+                .await
+                {
+                    break;
+                }
+                upload_accounting_batch.clear();
             }
         }
         }
@@ -10297,6 +10389,7 @@ mod tests {
             upload_control: RateLimitCancellation::default(),
             shutdown_control: RateLimitCancellation::default(),
             upload_rate: upload_rate.clone(),
+            upload_accounting: Arc::new(UploadAccountingState::new(UPLOAD_ACCOUNTING_BATCH_BYTES)),
         };
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -11542,6 +11635,20 @@ mod tests {
             .is_some_and(|entry| entry.state == TorrentState::Paused)
     }
 
+    #[test]
+    fn upload_accounting_batch_notifies_after_four_maximum_blocks() {
+        let mut batch = UploadAccountingBatch::default();
+        for _ in 0..3 {
+            assert!(!batch.add(16 * 1024, UPLOAD_ACCOUNTING_BATCH_BYTES));
+        }
+        assert!(batch.add(16 * 1024, UPLOAD_ACCOUNTING_BATCH_BYTES));
+        batch.clear();
+        assert!(batch.is_empty());
+        assert!(!batch.add(16 * 1024, UPLOAD_ACCOUNTING_BATCH_BYTES));
+        let mut seed_limited_batch = UploadAccountingBatch::default();
+        assert!(seed_limited_batch.add(1, 1));
+    }
+
     #[tokio::test]
     async fn seed_ratio_limit_pauses_a_completed_torrent() {
         let temp = tempfile::tempdir().unwrap();
@@ -11620,12 +11727,67 @@ mod tests {
         // A completed torrent enforces its ratio immediately from the totals
         // returned by the upload accounting lock, without a second registry
         // read on the upload hot path.
-        task.record_upload(2).await;
+        let peer_addr = "127.0.0.1:6881".parse().unwrap();
+        let peer_permits = Arc::new(tokio::sync::Semaphore::new(1));
+        let (peer_id, _peer_commands) = task
+            .register_peer(peer_addr, peer_permits.acquire_owned().await.unwrap())
+            .expect("peer registration should fit the memory budget");
+        assert_eq!(
+            task.active_peers[&peer_addr]
+                .upload_accounting
+                .batch_bytes
+                .load(Ordering::Relaxed),
+            1
+        );
+        task.active_peers[&peer_addr]
+            .upload_accounting
+            .pending_uploaded_bytes
+            .store(1, Ordering::Relaxed);
+        task.handle_peer_event(PeerEvent::Uploaded {
+            peer: peer_addr,
+            id: peer_id,
+        })
+        .await;
+        assert_eq!(task.active_peers[&peer_addr].uploaded, 1);
+        assert_eq!(
+            registry
+                .read()
+                .await
+                .get(&info_hash)
+                .unwrap()
+                .stats
+                .uploaded,
+            1
+        );
+
+        // The peer disconnects before its next batch notification. The
+        // terminal handler must drain the remaining bytes exactly once and
+        // enforce the same configured ratio threshold.
+        task.active_peers[&peer_addr]
+            .upload_accounting
+            .pending_uploaded_bytes
+            .store(1, Ordering::Relaxed);
+        task.handle_peer_event(PeerEvent::Disconnected {
+            peer: peer_addr,
+            id: peer_id,
+            outstanding: Vec::new(),
+        })
+        .await;
 
         assert!(task.paused);
         assert_eq!(
             registry.read().await.get(&info_hash).unwrap().state,
             TorrentState::Paused
+        );
+        assert_eq!(
+            registry
+                .read()
+                .await
+                .get(&info_hash)
+                .unwrap()
+                .stats
+                .uploaded,
+            2
         );
     }
 
@@ -15065,7 +15227,7 @@ mod tests {
             .expect("peer registration should fit the memory budget");
         task.known_tracker_peers.insert(peer);
 
-        task.advance_private_tracker_after_failure((0, 0));
+        task.advance_private_tracker_after_failure((0, 0)).await;
 
         assert_eq!(task.private_tracker_key, Some((0, 1)));
         assert!(task.active_peers.is_empty());
@@ -15486,6 +15648,7 @@ mod tests {
             upload_control: control.clone(),
             shutdown_control: shutdown_control.clone(),
             upload_rate: test_upload_rate_admission(Some(1), 32 * 1024).await,
+            upload_accounting: Arc::new(UploadAccountingState::new(UPLOAD_ACCOUNTING_BATCH_BYTES)),
         };
         let (peer_event_tx, peer_event_rx) = mpsc::channel(4);
         let (peer_cmd_tx, peer_cmd_rx) = mpsc::channel(4);
@@ -15742,6 +15905,7 @@ mod tests {
             upload_control: RateLimitCancellation::default(),
             shutdown_control: RateLimitCancellation::default(),
             upload_rate: upload_rate.clone(),
+            upload_accounting: Arc::new(UploadAccountingState::new(UPLOAD_ACCOUNTING_BATCH_BYTES)),
         };
 
         let read_context = UploadReadContext {
@@ -16207,8 +16371,86 @@ mod tests {
             upload_control,
             shutdown_control,
             upload_rate,
+            upload_accounting: Arc::new(UploadAccountingState::new(UPLOAD_ACCOUNTING_BATCH_BYTES)),
         };
         (upload, storage)
+    }
+
+    #[tokio::test]
+    async fn peer_loop_flushes_small_upload_batches_after_the_short_deadline() {
+        let temp = tempfile::tempdir().unwrap();
+        let payload = vec![0x5a; 16 * 1024];
+        std::fs::write(temp.path().join("peer.bin"), &payload).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = listener.local_addr().unwrap();
+        let remote = TcpStream::connect(peer_addr).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let (upload, _) = peer_loop_upload_context(
+            temp.path(),
+            payload.len() as u64,
+            true,
+            false,
+            RateLimitCancellation::default(),
+            RateLimitCancellation::default(),
+        )
+        .await;
+        let pending_uploaded_bytes = Arc::clone(&upload.upload_accounting);
+        let (peer_event_tx, mut peer_event_rx) = mpsc::channel(8);
+        let (peer_cmd_tx, peer_cmd_rx) = mpsc::channel(4);
+        let peer_loop = tokio::spawn(run_peer_loop(
+            peer_addr,
+            PeerId::new(),
+            PeerIo::Tcp(Framed::new(server, PeerCodec::default())),
+            peer_event_tx,
+            peer_cmd_rx,
+            upload,
+            false,
+        ));
+        let mut remote = Framed::new(remote, PeerCodec::default());
+
+        peer_cmd_tx.send(PeerCommand::Unchoke).await.unwrap();
+        assert!(matches!(
+            remote.next().await.unwrap().unwrap(),
+            Message::Unchoke
+        ));
+        remote
+            .send(Message::Request {
+                piece: 0,
+                begin: 0,
+                length: payload.len() as u32,
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            timeout(Duration::from_secs(1), remote.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap(),
+            Message::Piece { ref data, .. } if data.as_ref() == payload.as_slice()
+        ));
+        assert!(matches!(
+            timeout(Duration::from_secs(1), peer_event_rx.recv())
+                .await
+                .unwrap(),
+            Some(PeerEvent::Uploaded { peer, .. }) if peer == peer_addr
+        ));
+        assert_eq!(
+            pending_uploaded_bytes
+                .pending_uploaded_bytes
+                .load(Ordering::Relaxed),
+            payload.len() as u64
+        );
+
+        assert!(timeout(Duration::from_millis(50), peer_event_rx.recv())
+            .await
+            .is_err());
+        peer_cmd_tx.send(PeerCommand::Shutdown).await.unwrap();
+        let exit = timeout(Duration::from_secs(1), peer_loop)
+            .await
+            .expect("peer loop did not stop")
+            .unwrap();
+        assert!(exit.result.is_ok());
     }
 
     #[tokio::test]
@@ -16549,6 +16791,7 @@ mod tests {
             upload_control: control.clone(),
             shutdown_control: shutdown_control.clone(),
             upload_rate: test_upload_rate_admission(Some(1), 32 * 1024).await,
+            upload_accounting: Arc::new(UploadAccountingState::new(UPLOAD_ACCOUNTING_BATCH_BYTES)),
         };
         let (peer_event_tx, mut peer_event_rx) = mpsc::channel(4);
         let (peer_cmd_tx, peer_cmd_rx) = mpsc::channel(4);
@@ -16642,6 +16885,7 @@ mod tests {
             upload_control: control.clone(),
             shutdown_control: shutdown_control.clone(),
             upload_rate: test_upload_rate_admission(Some(1), 32 * 1024).await,
+            upload_accounting: Arc::new(UploadAccountingState::new(UPLOAD_ACCOUNTING_BATCH_BYTES)),
         };
         let (peer_event_tx, mut peer_event_rx) = mpsc::channel(4);
         let (peer_cmd_tx, peer_cmd_rx) = mpsc::channel(4);
@@ -16748,6 +16992,7 @@ mod tests {
             upload_control: RateLimitCancellation::default(),
             shutdown_control: RateLimitCancellation::default(),
             upload_rate: test_upload_rate_admission(None, 0).await,
+            upload_accounting: Arc::new(UploadAccountingState::new(UPLOAD_ACCOUNTING_BATCH_BYTES)),
         };
         let (peer_event_tx, mut peer_event_rx) = mpsc::channel(2);
         let (peer_cmd_tx, peer_cmd_rx) = mpsc::channel(1);
@@ -16819,6 +17064,7 @@ mod tests {
             upload_control: RateLimitCancellation::default(),
             shutdown_control: RateLimitCancellation::default(),
             upload_rate: test_upload_rate_admission(None, 0).await,
+            upload_accounting: Arc::new(UploadAccountingState::new(UPLOAD_ACCOUNTING_BATCH_BYTES)),
         };
         let (peer_event_tx, mut peer_event_rx) = mpsc::channel(4);
         let (peer_cmd_tx, peer_cmd_rx) = mpsc::channel(1);
@@ -16942,6 +17188,7 @@ mod tests {
             upload_control: RateLimitCancellation::default(),
             shutdown_control: RateLimitCancellation::default(),
             upload_rate,
+            upload_accounting: Arc::new(UploadAccountingState::new(UPLOAD_ACCOUNTING_BATCH_BYTES)),
         };
         let (peer_event_tx, mut peer_event_rx) = mpsc::channel(4);
         let (peer_cmd_tx, peer_cmd_rx) = mpsc::channel(4);
@@ -17031,6 +17278,7 @@ mod tests {
             upload_control: RateLimitCancellation::default(),
             shutdown_control: RateLimitCancellation::default(),
             upload_rate,
+            upload_accounting: Arc::new(UploadAccountingState::new(UPLOAD_ACCOUNTING_BATCH_BYTES)),
         };
         let (peer_event_tx, mut peer_event_rx) = mpsc::channel(4);
         let (peer_cmd_tx, peer_cmd_rx) = mpsc::channel(4);
@@ -17478,6 +17726,18 @@ mod tests {
             private: false,
             raw: Vec::new(),
         };
+        let info_hash = hex::encode(meta.info_hash);
+        let registry = Arc::new(RwLock::new(SessionRegistry::new()));
+        let mut entry = TorrentEntry::new(
+            info_hash.clone(),
+            meta.name.clone(),
+            temp.path().to_string_lossy().into_owned(),
+        );
+        entry.total_length = 4;
+        entry.amount_left = 4;
+        entry.transition(TorrentState::Downloading).unwrap();
+        persist_task_row(&conn, &entry, &meta);
+        registry.write().await.add(entry).unwrap();
         let db = Arc::new(Mutex::new(conn));
         let (_cmd_tx, cmd_rx) = mpsc::channel(1);
         let mut task = TorrentTask::new(
@@ -17485,7 +17745,7 @@ mod tests {
             temp.path().to_path_buf(),
             false,
             TorrentState::Downloading,
-            Arc::new(RwLock::new(SessionRegistry::new())),
+            Arc::clone(&registry),
             DbExecutor::direct(Arc::clone(&db)),
             ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default()),
             cmd_rx,
@@ -17538,7 +17798,7 @@ mod tests {
                 cmd_tx: peer_cmd_tx,
                 upload_control: RateLimitCancellation::default(),
                 shutdown_control: RateLimitCancellation::default(),
-                abort: None,
+                peer_task: None,
                 peer_has,
                 peer_have_count,
                 choked: true,
@@ -17546,6 +17806,9 @@ mod tests {
                 interested: false,
                 downloaded: 0,
                 uploaded: 0,
+                upload_accounting: Arc::new(UploadAccountingState::new(
+                    UPLOAD_ACCOUNTING_BATCH_BYTES,
+                )),
                 download_rate: 0.0,
                 upload_rate: 0.0,
                 download_rate_window: 0,
@@ -17583,9 +17846,29 @@ mod tests {
         assert_eq!(peer.peer_have_count, 1);
 
         assert_eq!(task.picker.availability.count(0), 1);
+        let upload_accounting = Arc::clone(&task.active_peers[&peer_addr].upload_accounting);
+        upload_accounting
+            .pending_uploaded_bytes
+            .store(17, Ordering::Relaxed);
         task.shutdown_peers().await;
 
         assert!(task.active_peers.is_empty());
+        assert_eq!(
+            upload_accounting
+                .pending_uploaded_bytes
+                .load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            registry
+                .read()
+                .await
+                .get(&info_hash)
+                .unwrap()
+                .stats
+                .uploaded,
+            17
+        );
         assert_eq!(task.picker.availability.count(0), 0);
         assert!(task.picker.pick_from_seed().is_some());
     }

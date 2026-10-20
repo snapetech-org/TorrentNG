@@ -121,7 +121,7 @@ impl TorrentTask {
                 )
                 .await;
             });
-            self.attach_peer_abort(addr, peer_task.abort_handle());
+            self.attach_peer_task(addr, peer_task);
         }
     }
 
@@ -180,7 +180,7 @@ impl TorrentTask {
         let Some(victim) = victim else {
             return;
         };
-        if self.evict_peer(victim) {
+        if self.evict_peer(victim).await {
             debug!(
                 torrent = %self.info_hash_hex,
                 peer = %victim,
@@ -189,16 +189,15 @@ impl TorrentTask {
         }
     }
 
-    /// Remove a live peer and all scheduler state associated with it. This is
-    /// synchronous because callers already own the torrent actor; the peer
-    /// task receives a best-effort shutdown command and its permit is released
-    /// when the handle is dropped.
-    pub(super) fn evict_peer(&mut self, peer: SocketAddr) -> bool {
-        let Some(handle) = self.active_peers.remove(&peer) else {
+    /// Remove a live peer and all scheduler state associated with it. Stop the
+    /// peer task before draining its upload counter so a final successful
+    /// socket write cannot race the accounting snapshot.
+    pub(super) async fn evict_peer(&mut self, peer: SocketAddr) -> bool {
+        let Some(mut handle) = self.active_peers.remove(&peer) else {
             return false;
         };
         remove_peer_availability(&mut self.picker.availability, &handle.peer_has);
-        for req in handle.requested {
+        for req in &handle.requested {
             self.picker.cancel_request(req.piece as usize, req.begin);
         }
         handle.upload_control.cancel();
@@ -210,8 +209,17 @@ impl TorrentTask {
             ));
         self.transfer_ledger.disconnect_peer(handle.transfer_conn);
         let _ = handle.cmd_tx.try_send(PeerCommand::Shutdown);
-        if let Some(abort) = handle.abort {
-            abort.abort();
+        if let Some(peer_task) = handle.peer_task.take() {
+            peer_task.abort();
+            let _ = peer_task.await;
+        }
+        let uploaded = handle
+            .upload_accounting
+            .pending_uploaded_bytes
+            .swap(0, Ordering::Relaxed);
+        if uploaded != 0 {
+            record_peer_transfer(&mut handle, true, uploaded);
+            self.record_upload(uploaded).await;
         }
         true
     }
