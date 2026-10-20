@@ -100,11 +100,14 @@ transfer-info p95 of 3.34 ms, and metrics p95 of 0.56 ms.
 Storage diagnostics ran on task-scoped tmpfs (`profile=Unknown`, `fs=None`),
 not a physical device. Auto backend selection fell back to `pread` after
 io_uring worker startup returned `ENOMEM`; the HDD-only case skipped on the
-unknown profile. Readahead served 4,096 logical reads with 133 backend reads,
-and the recheck processed 64 MiB at 122.32 MiB/s. The move/import/delete and
-peer-wire probes passed. These are local diagnostics, not device or client
-qualification. Hosted, live-client, crash-cut, hardware, soak/canary, and
-release gates remain open.
+unknown profile. Readahead served 4,096 logical reads with 133 backend reads.
+Forced-`pread` throughput was 4,840.64 MiB/s write and 6,897.81 MiB/s read
+for a 256 MiB round trip on tmpfs. The file pool reused one open across 10,000
+reads, and the shuffled 64 MiB read probe measured 1,955.25 MiB/s. The 64 MiB
+recheck measured 122.32 MiB/s. The move/import/delete and peer-wire probes
+passed. These are local diagnostics, not device or client qualification.
+Hosted, live-client, crash-cut, hardware, soak/canary, and release gates remain
+open.
 
 ## Worker-count profile comparison — 2026-10-20 UTC
 
