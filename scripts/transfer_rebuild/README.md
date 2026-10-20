@@ -6,8 +6,12 @@ in the measured source checkout.
 
 ## Validation status
 
-The production transfer-core implementation is unchanged from
-`354ad504f75b33c712b5ccd827cfef3eb0cf4414`. The latest local bulk run passed
+The current measured candidate is pinned to source commit
+`717a8e04753c4e2c179bad01cc457201f0a551ca`. The pre-cutover reference is
+`354ad504f75b33c712b5ccd827cfef3eb0cf4414`, built with one isolated
+benchmark-egress backport in baseline commit
+`8023ce77b6bea4d237b4a7e329b56901fab94ba1`; no transfer or picker code
+changed in that backport. The latest local bulk run passed
 the full workspace on Rust 1.94.0 and 1.88.0 with 2,302 passed, 0 failed, and
 12 ignored across 37 summaries on each toolchain. Release `rt-engine` passed
 734 tests; all 22 transfer-rebuild Python scripts and 11 runnable ignored
@@ -38,25 +42,33 @@ shuffled-read benchmark was capped at 256 in-flight requests. The 64-file
 move/import/delete probe passed too. This is local filesystem evidence, not
 ext4 device qualification.
 
-One scoped paired comparison completed: ten randomized cold-cache pairs on a
-128 MiB private v1 fixture, TorrentNG `0.1.0` versus the pinned urtorrent
-`0.14.3` direct library runner, with 1 Gbit/s and 1 ms shaping. All 40 transfer
-records completed with independently verified payload hashes. Median
-download goodput was 83.77 versus 13.07 MB/s (TorrentNG/urtorrent); median
-seed goodput was 12.88 versus 93.08 MB/s. TorrentNG used more CPU and peak RSS
-in both modes. There is no pre-refactor baseline, so this does not measure the
-refactor's change or rank whole clients. Full details, confidence intervals,
-and artifact digests are recorded under PERF-110 in
-[`TRANSFER_CORE_ACTIVE_SPECS.md`](../../docs/TRANSFER_CORE_ACTIVE_SPECS.md).
+The fixed-counterpart PERF-110 comparison ran ten randomized cold-cache
+pairs for each build on the same 128 MiB private v1 profile, against the pinned
+TorrentNG-compatible urtorrent 0.14.3 direct library runner, with 1 Gbit/s and
+1 ms shaping. The environment-template and fixture-profile digests match. Each
+run contains only TorrentNG as a measured candidate, so its validated
+scorecard correctly emits zero candidate-to-candidate pairs; the table below
+summarizes TorrentNG trial records directly.
 
-Both slow rows are the TorrentNG-to-urtorrent direction. The seed trial uses
-TorrentNG's uploaded-byte counter, independently of urtorrent's completion
-counter. The initial plan paired each client with the other, however, so its
-client rows changed both sender and receiver. It established that the
-TorrentNG-to-urtorrent direction was slow, but could not isolate which
-endpoint caused it. New trials bind the counterpart client into the workload
-and the scorecard will only compare candidates measured against the same
-counterpart.
+| Mode | Pre-cutover baseline | Current candidate |
+|---|---:|---:|
+| Download | 0/10 completed; no valid goodput | 66.63 MB/s median (65.96–102.39), 10/10 complete |
+| Seed | 12.92 MB/s median (12.63–13.24), 10/10 complete | 12.95 MB/s median (12.84–13.24), 10/10 complete |
+
+The pre-cutover build failed every download attempt before the helper verified
+the payload; median task-interface receive was about 0.59 MiB, not verified
+useful data. It has no download goodput sample, so there is no numeric download
+speedup to report. Seeding goodput is effectively unchanged. Median seed CPU
+fell from 5.96 to 4.60 CPU-s/GiB; median peak RSS/PSS fell from 36.24/33.37 to
+35.65/32.77 MiB. This is a controlled pre-cutover/current result, not a
+whole-client ranking or paired-bootstrap comparison: plan-specific fixture
+payload hashes differ even though the profile and environment inputs match.
+
+The older reciprocal run reported 83.77/13.07 MB/s downloading and
+12.88/93.08 MB/s seeding (TorrentNG/urtorrent), but changed both endpoints
+between client rows. Those figures remain historical and cannot isolate which
+endpoint caused the difference. Full artifacts and digests are recorded under
+PERF-110 in [Transfer Core Active Specs](../../docs/TRANSFER_CORE_ACTIVE_SPECS.md).
 
 The 16-read upload-window candidate was tested in a second source-bound
 10-pair run on the same local-NVMe Btrfs host profile. All 40 records completed
@@ -670,21 +682,24 @@ compatibility preflight must qualify every candidate before the runner starts
 measurements. Each pinned profile must provide an absolute, client-side
 `preflight_save_path` reserved for disposable qualification files. Run the
 preflight against disposable client instances. It adds a unique private probe,
-checks that pause-on-add clients first report the torrent paused/stopped,
-removes the exact info hash and local data where the API supports it, and
-records the pinned client identity/settings and exact result. rqbit has no
-pause-on-add option in this adapter, so it is added and immediately paused; the
-artifact records that as `pause_mode: after_add`. Failed add responses are
-reconciled by querying the unique info hash and attempting cleanup if the
-server accepted the mutation. An unreadable add outcome or failed cleanup
-blocks readiness.
+verifies its paused/stopped state, removes the exact client hash and local data
+where the API supports it, and records the pinned client identity/settings and
+exact result. qBittorrent 5.2 returns JSON add summaries with the client-facing
+torrent ID; for v2 and hybrid torrents that can be the truncated v2 hash. The
+preflight follows that ID, explicitly stops the probe after add, and records
+`pause_mode: after_add`. rqbit also has no pause-on-add option in this adapter,
+so it is added and immediately paused. Failed add responses are reconciled by
+querying the unique fixture hash and attempting cleanup if the server accepted
+the mutation. An unreadable add outcome or failed cleanup blocks readiness.
 
 Probes retain each profile's protocol shape, including a v2 piece layer and
 hybrid padding, while keeping payloads below 3 MiB. Their only tracker is
 `127.0.0.1:9`, and the pinned private-torrent settings keep them isolated.
-TorrentNG, qBittorrent, Transmission, Deluge and rTorrent are checked in their
-paused/stopped-on-add state. Deluge also has automatic management disabled.
-rqbit is paused immediately after add and remains labeled `after_add`.
+TorrentNG, Transmission, Deluge and rTorrent are checked in their
+paused/stopped-on-add state. qBittorrent is explicitly stopped after add and
+read back as paused/stopped because its queue-aware API can report `queuedDL`
+while a paused add is being initialized. Deluge also has automatic management
+disabled. qBittorrent and rqbit are labeled `after_add`.
 urtorrent uses its pinned native runner for v1 probes and remains explicitly
 unsupported for v2 and hybrid.
 

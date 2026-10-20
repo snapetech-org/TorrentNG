@@ -379,7 +379,7 @@ def _compatibility_preflight_errors(artifact: dict[str, Any]) -> list[str]:
         if status == "passed":
             if not all(result[field] is True for field in ("added", "paused_verified", "removed")):
                 errors.append(f"{location} passed without add, paused-state, and removal evidence")
-            expected_pause_mode = "after_add" if client == "rqbit" else "on_add"
+            expected_pause_mode = "after_add" if client in {"qbittorrent", "rqbit"} else "on_add"
             if result["pause_mode"] != expected_pause_mode:
                 errors.append(f"{location}.pause_mode does not match the client admission behavior")
             if not result["observed_version"] or not result["client_identity_sha256"]:

@@ -174,7 +174,10 @@ def _poll(
     raise PreflightError(f"timed out waiting for {label}")
 
 
-def _qbit_add_pending(response: str, expected_info_hash: str) -> bool:
+def _qbit_add_result(
+    response: str,
+    expected_info_hashes: list[str],
+) -> tuple[str | None, bool]:
     """Validate legacy and current qBittorrent add responses.
 
     qBittorrent 5.2 / WebAPI 2.14 returns a JSON acceptance summary instead
@@ -183,7 +186,7 @@ def _qbit_add_pending(response: str, expected_info_hash: str) -> bool:
     """
     stripped = response.strip()
     if stripped.lower() in {"ok", "ok."}:
-        return False
+        return None, False
     try:
         payload = _strict_json(stripped.encode("utf-8"), "qBittorrent add response")
     except PreflightError as error:
@@ -202,13 +205,13 @@ def _qbit_add_pending(response: str, expected_info_hash: str) -> bool:
         or not isinstance(added_ids, list)
         or len(added_ids) != 1
         or not isinstance(added_ids[0], str)
-        or added_ids[0].lower() != expected_info_hash.lower()
+        or added_ids[0].lower() not in {value.lower() for value in expected_info_hashes}
     ):
         raise PreflightError(
             "qBittorrent-compatible add did not accept the expected probe torrent "
             f"(success={success_count}, pending={pending_count}, failed={failure_count})"
         )
-    return pending_count == 1
+    return added_ids[0], pending_count == 1
 
 
 def _run_mutation(
@@ -290,12 +293,18 @@ def _qbit_like_preflight(
     metainfo: bytes,
     torrent_name: str,
     save_path: str,
-    info_hash: str,
+    expected_info_hashes: list[str],
+    *,
+    pause_after_add: bool = False,
 ) -> dict[str, Any]:
-    info_path = f"{api_prefix}/torrents/info?{urllib.parse.urlencode({'hashes': info_hash})}"
+    expected_info_hashes = list(dict.fromkeys(expected_info_hashes))
+    if not expected_info_hashes:
+        raise PreflightError("qBittorrent-compatible probe has no expected info hash")
     pending_add = False
+    probe_hash: str | None = None
 
-    def row() -> dict[str, Any] | None:
+    def row_for_hash(info_hash: str) -> dict[str, Any] | None:
+        info_path = f"{api_prefix}/torrents/info?{urllib.parse.urlencode({'hashes': info_hash})}"
         values = client.json(info_path)
         if not isinstance(values, list):
             raise PreflightError("qBittorrent-compatible info endpoint did not return a list")
@@ -308,11 +317,18 @@ def _qbit_like_preflight(
             None,
         )
 
+    def row() -> dict[str, Any] | None:
+        for info_hash in expected_info_hashes:
+            current = row_for_hash(info_hash)
+            if current is not None:
+                return current
+        return None
+
     if row() is not None:
         raise PreflightError("probe info hash already exists; refusing to alter a pre-existing torrent")
 
     def add() -> str:
-        nonlocal pending_add
+        nonlocal pending_add, probe_hash
         body, content_type = _multipart(
             [
                 ("torrents", f"{torrent_name}.torrent", metainfo, "application/x-bittorrent"),
@@ -327,32 +343,65 @@ def _qbit_like_preflight(
             raw_body=body,
             content_type=content_type,
         ).decode("utf-8", "replace").strip()
-        pending_add = _qbit_add_pending(response, info_hash)
-        return info_hash
+        added_id, pending_add = _qbit_add_result(response, expected_info_hashes)
+        probe_hash = added_id or expected_info_hashes[0]
+        return probe_hash
 
-    def verify(_handle: str) -> bool:
+    def verify(handle: str) -> bool:
+        nonlocal probe_hash
         current = _poll(
             row,
+            lambda value: value is not None,
+            "probe torrent to be added",
+            timeout_seconds=POLL_TIMEOUT_SECONDS * (3 if pending_add else 1),
+        )
+        observed_hash = current.get("hash")
+        if isinstance(observed_hash, str) and observed_hash:
+            probe_hash = observed_hash
+        else:
+            probe_hash = handle
+        if pause_after_add:
+            client.request(
+                f"{api_prefix}/torrents/stop",
+                method="POST",
+                form={"hashes": probe_hash},
+            )
+        current = _poll(
+            lambda: row_for_hash(probe_hash or handle),
             lambda value: value is not None
             and str(value.get("state", "")).lower().startswith(("paused", "stopped")),
             "probe torrent to be added paused",
-            timeout_seconds=POLL_TIMEOUT_SECONDS * (3 if pending_add else 1),
+            timeout_seconds=POLL_TIMEOUT_SECONDS * (3 if pending_add or pause_after_add else 1),
         )
         return current is not None
 
-    def remove(_handle: str) -> None:
+    def remove(handle: str) -> None:
+        info_hash = probe_hash or handle
         client.request(
             f"{api_prefix}/torrents/delete",
             method="POST",
             form={"hashes": info_hash, "deleteFiles": "true"},
         )
-        _poll(row, lambda value: value is None, "probe torrent removal")
+        _poll(
+            lambda: row_for_hash(info_hash),
+            lambda value: value is None,
+            "probe torrent removal",
+        )
+
+    def recover() -> str | None:
+        current = row()
+        if current is None:
+            return None
+        observed_hash = current.get("hash")
+        if isinstance(observed_hash, str) and observed_hash:
+            return observed_hash
+        return expected_info_hashes[0]
 
     return _run_mutation(
         add,
         verify,
         remove,
-        lambda: info_hash if row() is not None else None,
+        recover,
     )
 
 
@@ -753,7 +802,7 @@ def _client_probe(
         "status": "failed",
         "added": False,
         "paused_verified": False,
-        "pause_mode": "after_add" if client_id == "rqbit" else "on_add",
+        "pause_mode": "after_add" if client_id in {"qbittorrent", "rqbit"} else "on_add",
         "removed": False,
         "reason": None,
     }
@@ -796,13 +845,22 @@ def _client_probe(
             assert observation is not None
             client = _prepare_http_client(client_id, profile, observation)
             if client_id in {"torrentngd", "qbittorrent"}:
+                expected_info_hashes = [info_hash]
+                if client_id == "qbittorrent":
+                    truncated_v2_hash = info_hashes.get("sha256_truncated_20")
+                    if (
+                        isinstance(truncated_v2_hash, str)
+                        and truncated_v2_hash not in expected_info_hashes
+                    ):
+                        expected_info_hashes.append(truncated_v2_hash)
                 result = _qbit_like_preflight(
                     client,
                     "/api/qb/v2" if client_id == "torrentngd" else "/api/v2",
                     metainfo,
                     torrent_name,
                     save_path,
-                    info_hash,
+                    expected_info_hashes,
+                    pause_after_add=client_id == "qbittorrent",
                 )
             elif client_id == "transmission":
                 result = _transmission_preflight(client, metainfo, save_path, info_hash)
@@ -995,7 +1053,11 @@ def build_preflight(
                             "status": "cleanup_failed",
                             "added": None,
                             "paused_verified": False,
-                            "pause_mode": "on_add",
+                            "pause_mode": (
+                                "after_add"
+                                if client_id in {"qbittorrent", "rqbit"}
+                                else "on_add"
+                            ),
                             "removed": False,
                             "reason": str(error)[:500],
                         }

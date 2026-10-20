@@ -17,7 +17,7 @@ from compatibility import (  # noqa: E402
     _poll,
     _probe_files,
     _probe_payload_bytes,
-    _qbit_add_pending,
+    _qbit_add_result,
     _run_mutation,
 )
 from fixtures import load_fixture_profile_document  # noqa: E402
@@ -27,9 +27,9 @@ from validate_artifact import _settings_digest, validate  # noqa: E402
 class CompatibilityPreflightTests(unittest.TestCase):
     def test_qbittorrent_add_accepts_legacy_and_json_acceptance_responses(self) -> None:
         info_hash = "a" * 40
-        self.assertFalse(_qbit_add_pending("Ok.", info_hash))
-        self.assertFalse(
-            _qbit_add_pending(
+        self.assertEqual(_qbit_add_result("Ok.", [info_hash]), (None, False))
+        self.assertEqual(
+            _qbit_add_result(
                 json.dumps(
                     {
                         "success_count": 1,
@@ -38,11 +38,12 @@ class CompatibilityPreflightTests(unittest.TestCase):
                         "added_torrent_ids": [info_hash],
                     }
                 ),
-                info_hash,
-            )
+                [info_hash],
+            ),
+            (info_hash, False),
         )
-        self.assertTrue(
-            _qbit_add_pending(
+        self.assertEqual(
+            _qbit_add_result(
                 json.dumps(
                     {
                         "success_count": 0,
@@ -51,8 +52,23 @@ class CompatibilityPreflightTests(unittest.TestCase):
                         "added_torrent_ids": [info_hash.upper()],
                     }
                 ),
-                info_hash,
-            )
+                [info_hash],
+            ),
+            (info_hash.upper(), True),
+        )
+        self.assertEqual(
+            _qbit_add_result(
+                json.dumps(
+                    {
+                        "success_count": 1,
+                        "pending_count": 0,
+                        "failure_count": 0,
+                        "added_torrent_ids": ["b" * 40],
+                    }
+                ),
+                [info_hash, "b" * 40],
+            ),
+            ("b" * 40, False),
         )
 
     def test_qbittorrent_add_rejects_unaccepted_or_mismatched_json_response(self) -> None:
@@ -77,7 +93,7 @@ class CompatibilityPreflightTests(unittest.TestCase):
             ),
         ):
             with self.subTest(response=response), self.assertRaises(PreflightError):
-                _qbit_add_pending(response, info_hash)
+                _qbit_add_result(response, [info_hash])
 
     def test_poll_retries_transient_http_503_until_state_converges(self) -> None:
         calls = 0
@@ -214,7 +230,7 @@ class CompatibilityPreflightTests(unittest.TestCase):
                         "added": True if status == "passed" else None,
                         "paused_verified": True if status == "passed" else None,
                         "pause_mode": (
-                            "after_add" if client_id == "rqbit" else "on_add"
+                            "after_add" if client_id in {"qbittorrent", "rqbit"} else "on_add"
                         ) if status == "passed" else None,
                         "removed": True if status == "passed" else None,
                         "reason": reason,
@@ -266,6 +282,11 @@ class CompatibilityPreflightTests(unittest.TestCase):
                 if result["case_id"] == "rqbit:G3/hybrid-padding"
             )
             self.assertEqual(rqbit_case["pause_mode"], "after_add")
+            qbittorrent_case = next(
+                result for result in artifact["results"]
+                if result["case_id"] == "qbittorrent:G3/hybrid-padding"
+            )
+            self.assertEqual(qbittorrent_case["pause_mode"], "after_add")
 
             passed_case = next(
                 result for result in artifact["results"]
