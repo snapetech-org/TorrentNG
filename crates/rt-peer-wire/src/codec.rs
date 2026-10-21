@@ -55,9 +55,6 @@ pub struct PeerCodec {
 struct PeerCodecMemory {
     read_memory_lease: Option<MemoryLease>,
     write_memory_lease: Option<MemoryLease>,
-    /// Keep one high-water allowance for a parsed message that the caller may
-    /// still own after the framed read buffer has been trimmed.
-    read_copy_high_water_bytes: u64,
     read_reserved_bytes: u64,
     write_reserved_bytes: u64,
 }
@@ -72,10 +69,8 @@ impl PeerCodec {
 
     fn reserve_capacity(&mut self, src: &mut BytesMut, required: usize) -> Result<(), WireError> {
         // Charge for the larger of the current capacity and requested frame
-        // size, plus a same-sized allowance for Message::parse's owned
-        // Bitfield/Extended payload copy. The copy allowance stays at its
-        // high-water mark because the emitted Message may outlive this codec
-        // call; only the actual empty read buffer is trimmed later.
+        // size. Any owned payload copy is charged separately and its lease
+        // travels with the emitted Message instead of staying on the codec.
         let accounted_capacity = src.capacity().max(required);
         self.read_buffer_high_water_bytes =
             self.read_buffer_high_water_bytes.max(accounted_capacity);
@@ -88,17 +83,12 @@ impl PeerCodec {
             capacity_bytes = u64::try_from(accounted_capacity)
                 .ok()
                 .ok_or(WireError::PeerBufferLengthOverflow)?;
-            let copy_high_water = memory.read_copy_high_water_bytes.max(capacity_bytes);
-            let required_bytes = copy_high_water
-                .checked_add(capacity_bytes)
-                .ok_or(WireError::PeerBufferLengthOverflow)?;
             ensure_peer_buffer_reservation(
                 resources,
                 &mut memory.read_memory_lease,
                 &mut memory.read_reserved_bytes,
-                required_bytes,
+                capacity_bytes,
             )?;
-            memory.read_copy_high_water_bytes = copy_high_water;
         }
 
         if required > src.capacity() {
@@ -115,17 +105,12 @@ impl PeerCodec {
                 let memory = self
                     .memory
                     .get_or_insert_with(|| Box::new(PeerCodecMemory::default()));
-                let copy_high_water = memory.read_copy_high_water_bytes.max(actual_capacity);
-                let required_bytes = copy_high_water
-                    .checked_add(actual_capacity)
-                    .ok_or(WireError::PeerBufferLengthOverflow)?;
                 ensure_peer_buffer_reservation(
                     resources,
                     &mut memory.read_memory_lease,
                     &mut memory.read_reserved_bytes,
-                    required_bytes,
+                    actual_capacity,
                 )?;
-                memory.read_copy_high_water_bytes = copy_high_water;
             }
         }
         Ok(())
@@ -175,14 +160,10 @@ impl PeerCodec {
         let Some(memory) = self.memory.as_mut() else {
             return;
         };
-        let Some(required_bytes) = memory.read_copy_high_water_bytes.checked_add(buffer_bytes)
-        else {
-            return;
-        };
-        if required_bytes < memory.read_reserved_bytes {
+        if buffer_bytes < memory.read_reserved_bytes {
             if let Some(lease) = memory.read_memory_lease.as_mut() {
-                lease.shrink_to(required_bytes);
-                memory.read_reserved_bytes = required_bytes;
+                lease.shrink_to(buffer_bytes);
+                memory.read_reserved_bytes = buffer_bytes;
             }
         }
     }
@@ -231,9 +212,26 @@ impl Decoder for PeerCodec {
             self.reserve_capacity(src, total)?;
             return Ok(None);
         }
+        let copied_payload_bytes = Message::copied_payload_bytes(&src[4..total]);
+        let message_memory_lease = if copied_payload_bytes == 0 {
+            None
+        } else if let Some(resources) = self.resources.as_ref() {
+            let bytes = u64::try_from(copied_payload_bytes)
+                .map_err(|_| WireError::PeerBufferLengthOverflow)?;
+            Some(
+                resources
+                    .try_acquire(MemoryClass::PeerBuffer, bytes)
+                    .ok_or(WireError::PeerBufferAllocationDenied(bytes))?,
+            )
+        } else {
+            None
+        };
         src.advance(4);
         let payload = src.split_to(len as usize).freeze();
-        let msg = Message::parse_owned(payload)?;
+        let mut msg = Message::parse_owned(payload)?;
+        if let Some(memory_lease) = message_memory_lease {
+            msg = msg.with_memory_lease(memory_lease);
+        }
         Ok(Some(msg))
     }
 }
@@ -492,8 +490,9 @@ mod tests {
     }
 
     #[test]
-    fn empty_read_buffer_shrinks_but_keeps_live_message_copy_credit() {
+    fn empty_read_buffer_shrinks_and_payload_charge_follows_message_clones() {
         let payload = vec![0x5a; RETAINED_BUFFER_CAPACITY * 8];
+        let payload_len = payload.len();
         let mut wire = BytesMut::with_capacity(RETAINED_BUFFER_CAPACITY * 16);
         PeerCodec::default()
             .encode(
@@ -528,14 +527,28 @@ mod tests {
             input.capacity()
         );
         let used_after_trim = governor.snapshot().total_used_bytes;
-        assert!(used_after_trim < used_before_trim);
         let memory = codec.memory.as_ref().expect("read lease state");
-        assert_eq!(used_after_trim, memory.read_reserved_bytes);
-        assert!(used_after_trim >= memory.read_copy_high_water_bytes);
+        assert_eq!(
+            used_after_trim,
+            memory.read_reserved_bytes + payload_len as u64
+        );
+        assert!(used_after_trim < used_before_trim);
+
+        let retained_clone = decoded.clone();
+        let (decoded, payload_lease) = decoded.into_accounted_parts();
         assert_eq!(
             decoded,
             Message::Extended { ext_id: 7, payload },
             "the parsed message owns its bytes after the read buffer is replaced"
+        );
+        assert_eq!(payload_lease.as_ref().unwrap().bytes(), payload_len as u64);
+        drop(payload_lease);
+        assert_eq!(governor.snapshot().total_used_bytes, used_after_trim);
+        drop(retained_clone);
+        assert_eq!(
+            governor.snapshot().total_used_bytes,
+            memory.read_reserved_bytes,
+            "the payload copy charge should be released with the final message clone"
         );
     }
 
