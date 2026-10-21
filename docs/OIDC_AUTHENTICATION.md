@@ -61,12 +61,18 @@ endpoints are intentionally hosted on a private network. The callback still
 must use HTTPS.
 
 The flow stores a one-time state and nonce (plus a PKCE verifier for ordinary
-providers) on the server for ten minutes, binds state to a Secure, HttpOnly,
-SameSite=Lax callback cookie for ordinary providers,
-validates the provider signature and required ID-token claims, and restricts
-the post-login return path to a local path. Pending state is process-local, so
-a service restart invalidates in-flight sign-ins. OIDC sessions use the
-existing 24-hour app-session lifetime.
+providers) on the server for ten minutes. Each attempt has its own Secure,
+HttpOnly, SameSite=Lax state cookie so concurrent sign-ins in one browser do
+not overwrite each other. Up to 16 attempts can be pending; additional starts
+are rejected until one completes or expires. The callback validates the
+provider signature and required ID-token claims, and restricts the post-login
+return path to a local path. Pending state is process-local, so a service
+restart invalidates in-flight sign-ins. OIDC sessions use the existing
+24-hour app-session lifetime.
+
+The callback accepts the ordinary provider GET response and Apple's required
+URL-encoded POST response. Reverse proxies must preserve the callback method
+and form body.
 
 ## Sign in with Apple
 
