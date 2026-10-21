@@ -780,7 +780,7 @@ def execute_plan(
     }
     evidence = run_root or Path(tempfile.mkdtemp(prefix=f"{REPOSITORY}-validation-"))
     evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
-    os.chmod(evidence, 0o700)
+    os.chmod(evidence, 0o700)  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions -- Explicitly makes the validation evidence directory private to its owner.
     started_at = utc_now()
     missing = [item for item in plan["prerequisites"] if not item["available"]]
     missing.extend({"command": f"test inventory: {lane} is empty", "available": False}

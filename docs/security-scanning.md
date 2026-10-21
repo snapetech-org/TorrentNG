@@ -15,3 +15,11 @@ Scans report findings without failing by default so existing findings can be tri
 Run `./scripts/update-security-tools.sh` to refresh the local Semgrep package cache, pull the current Semgrep fallback image, and refresh Trivy's database. Public scan workflows use weekly schedules to exercise current scanner releases and rules. Existing private runner workflows retain their current version and runner policy.
 
 Semgrep uses the POSIX I/O backend by default for compatibility with restricted Linux runners. Set `SEMGREP_EIO_BACKEND` only if your runner needs a different backend.
+
+## Reviewed Semgrep exceptions
+
+`.semgrepignore` excludes only archived source snapshots under
+`certification/reports/TorrentNG-deep-audit-*/source/`; the live files remain
+in the scan. Inline `nosemgrep` annotations document protocol-required
+BitTorrent v1 SHA-1 hashes, owner-only directory modes, runtime entrypoints
+that drop privileges, and a GPG marker string that contains no key material.

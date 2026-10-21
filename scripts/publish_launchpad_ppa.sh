@@ -281,8 +281,10 @@ actual_fingerprint="$(awk -F: '$1 == "fpr" { print $10; exit }' <<< "$secret_lis
 [[ "$actual_fingerprint" == "$EXPECTED_FINGERPRINT" ]] ||
   fail "The local GPG keyring must contain Launchpad's upload key $EXPECTED_FINGERPRINT."
 
+# The following literal validates GPG output; it contains no key material.
 key_header="$(gpg --batch --armor --export-secret-keys "$EXPECTED_FINGERPRINT" | sed -n '1p')" ||
   fail "Could not export the Launchpad private key from GPG."
+# nosemgrep: generic.secrets.security.detected-pgp-private-key-block.detected-pgp-private-key-block
 [[ "$key_header" == "-----BEGIN PGP PRIVATE KEY BLOCK-----" ]] ||
   fail "GPG did not export a private key block. Import the matching exportable key and try again."
 

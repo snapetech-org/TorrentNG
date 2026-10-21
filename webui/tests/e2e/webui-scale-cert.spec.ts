@@ -281,9 +281,9 @@ test('Ctrl+A selects the loaded page without opening add-torrent', async ({ page
 
 test('mouse and keyboard selection support additive and range selection', async ({ page, isMobile }) => {
   const row = (number: number) => page.getByRole('row', {
-    name: new RegExp(`TorrentNG scale fixture ${number.toString().padStart(5, '0')}`),
+    name: `TorrentNG scale fixture ${number.toString().padStart(5, '0')}`,
   })
-  const checkbox = (number: number) => page.getByLabel(new RegExp(`(?:Select|Deselect) TorrentNG scale fixture ${number.toString().padStart(5, '0')}`)).first()
+  const checkbox = (number: number) => page.getByLabel(`TorrentNG scale fixture ${number.toString().padStart(5, '0')}`).first()
   const target = (number: number) => isMobile ? checkbox(number) : row(number)
   const selectedStatus = (count: number) => page.getByRole('status', { name: `${count} selected` }).first()
 

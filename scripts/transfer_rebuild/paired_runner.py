@@ -431,7 +431,7 @@ def _mkdir_private(path: Path) -> None:
     if path.exists() or path.is_symlink():
         raise PairedRunnerError(f"runner output directory already exists: {path}")
     path.mkdir(mode=0o700)
-    os.chmod(path, 0o700)
+    os.chmod(path, 0o700)  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions -- Explicitly sets owner-only access on a task-owned directory.
 
 
 def _ensure_private_root(path: Path) -> Path:
@@ -444,7 +444,7 @@ def _ensure_private_root(path: Path) -> Path:
         pass
     else:
         raise PairedRunnerError("benchmark evidence must be outside the measured source worktree")
-    os.chmod(path, 0o700)
+    os.chmod(path, 0o700)  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions -- Explicitly sets owner-only access on a validated scratch directory.
     return path
 
 

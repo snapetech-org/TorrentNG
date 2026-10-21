@@ -313,7 +313,7 @@ test('every settings section has no serious automated accessibility violations',
   test.skip(isMobile, 'desktop settings surfaces provide the complete certification viewport')
 
   await page.getByRole('button', { name: 'Settings' }).click()
-  const settingsTab = (name: string) => page.getByRole('tab', { name: new RegExp(name, 'i') })
+  const settingsTab = (name: string) => page.getByRole('tab', { name, exact: false })
   const sections = [
     ['Library', 'Storage'],
     ['Backend', 'Operator Logs'],

@@ -120,7 +120,11 @@ fi
 if [[ "$corpus_missing" -eq 0 ]]; then
   mark "migration corpus coverage" "PASS" "all source-family directories contain migration evidence files"
 else
-  missing_csv="$(IFS=,; printf '%s' "${missing_families[*]}")"
+  missing_csv=""
+  for family in "${missing_families[@]}"; do
+    if [[ -n "$missing_csv" ]]; then missing_csv+=","; fi
+    missing_csv+="$family"
+  done
   mark "migration corpus coverage" "WARN" "$corpus_missing source-family directories are missing evidence files: $missing_csv"
 fi
 
