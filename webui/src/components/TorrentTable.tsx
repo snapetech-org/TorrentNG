@@ -13,7 +13,7 @@ interface Props {
   total: number
   selected: Set<string>
   params: ListParams
-  onSelect: (hash: string, mode?: SelectionMode) => void
+  onSelect: (hash: string, mode?: SelectionMode, fromCheckbox?: boolean) => void
   onSelectAll: (hashes: string[]) => void
   onSelectAllMatching?: () => void
   isSelectingAllMatching?: boolean
@@ -962,7 +962,7 @@ export function TorrentTable({
                   tabIndex={-1}
                   onClick={event => {
                     event.stopPropagation()
-                    onSelect(t.hash, selectionMode(event, false))
+                    onSelect(t.hash, selectionMode(event, false), true)
                   }}
                   onChange={() => undefined}
                   style={{ accentColor: 'var(--accent)', cursor: 'pointer' }}

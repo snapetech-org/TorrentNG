@@ -1,0 +1,24 @@
+{
+  "commit": "db9e65ac5807d7b3e3d80842d9e447b331fa81c5",
+  "tree": "080ef904c33f57b12ed94062859f745b1e33ecfe",
+  "clean": true,
+  "uname": {
+    "system": "Linux",
+    "node": "8b68ec06a876",
+    "release": "6.18.55",
+    "version": "#1 SMP Wed Oct 14 19:45:18 UTC 2026",
+    "machine": "x86_64",
+    "processor": "x86_64"
+  },
+  "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+  "full_daemon_benchmark_run_here": false,
+  "dependency_versions_match_repo_lock": true,
+  "probe_target": "x86_64-unknown-linux-gnu",
+  "probe_profile": "release opt-level 3, LTO disabled, codegen-units 8",
+  "backend": "pread forced",
+  "payload": "warm 16 MiB file, repeated 16 KiB storage calls, sequential single caller, no network",
+  "resource_governor": "ResourceGovernorConfig::default(); no tracing subscriber",
+  "timing_scope": "steady read loop only; CLOCK_PROCESS_CPUTIME_ID including workers; allocator counting enabled",
+  "strace": "blocked: PTRACE_TRACEME operation not permitted",
+  "validation": "22 current RateTree tests and 3 focused candidate frame-pool tests passed; codec credit repro executed; not a full workspace test run"
+}

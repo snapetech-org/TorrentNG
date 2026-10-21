@@ -1,0 +1,27 @@
+
+running 22 tests
+test rate::tests::a_grant_is_all_or_nothing_across_levels ... ok
+test rate::tests::a_limit_update_never_mints_a_burst ... ok
+test rate::tests::a_denial_names_the_exact_instant_to_retry ... ok
+test rate::tests::an_unlimited_grant_cannot_refund_into_a_new_limited_epoch ... ok
+test rate::tests::a_new_peer_does_not_get_a_head_start_or_penalty ... ok
+test rate::tests::a_rate_below_one_block_per_second_still_progresses ... ok
+test rate::tests::a_timer_wait_does_not_hide_a_sibling_event_only_demand ... ok
+test rate::tests::due_peer_batches_respect_the_bound_and_keep_unprocessed_waiters ... ok
+test rate::tests::fairness_wait_uses_the_laggards_deadline_and_indexes_cleanup ... ok
+test rate::tests::parked_peers_can_be_reconsidered_in_bounded_batches_after_limit_change ... ok
+test rate::tests::readding_a_torrent_limit_does_not_reset_existing_debt ... ok
+test rate::tests::refund_returns_credit_without_exceeding_capacity ... ok
+test rate::tests::removing_peer_does_not_refund_old_grants_into_a_new_limit_epoch ... ok
+test rate::tests::retiring_one_demand_keeps_another_demand_for_the_same_peer ... ok
+test rate::tests::reused_ledger_connections_are_isolated_between_torrents ... ok
+test rate::tests::settled_payload_bytes_cannot_be_refunded ... ok
+test rate::tests::unknown_and_removed_peers_are_reported ... ok
+test rate::tests::updating_a_peer_weight_preserves_unsettled_grants_and_progress ... ok
+test rate::tests::retiring_a_live_sync_demand_unblocks_funded_peers_without_disconnect ... ok
+test rate::tests::long_run_rate_matches_the_limit_exactly ... ok
+test rate::tests::peers_share_one_torrent_allowance_instead_of_each_getting_it ... ok
+test rate::tests::weighted_peers_split_a_saturated_bucket_by_weight ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+

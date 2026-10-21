@@ -210,12 +210,16 @@ test('desktop renders torrent workspace and table rows', async ({ page }) => {
 })
 
 test('single-torrent detail panel exposes the dock position selector', async ({ page, isMobile }) => {
-  await page.getByLabel(/Select TorrentNG fixture 001/i).first().click()
+  if (isMobile) {
+    await page.getByRole('row', { name: /TorrentNG fixture 001/i }).click()
+  } else {
+    await page.getByLabel(/Select TorrentNG fixture 001/i).first().click()
+  }
 
   const panel = page.getByRole('complementary', { name: 'TorrentNG fixture 001' })
   const position = panel.getByLabel('Details panel position')
   await expect(panel).toBeVisible()
-  await expect(position).toHaveValue(isMobile ? 'bottom' : 'right')
+  await expect(position).toHaveValue('right')
 
   for (const value of ['left', 'bottom', 'top'] as const) {
     await position.selectOption(value)
@@ -249,6 +253,9 @@ test('mobile multi-select keeps the dock usable in side and bottom modes', async
 
   await page.getByLabel(/Select TorrentNG fixture 001/i).first().click()
   await page.getByLabel(/Select TorrentNG fixture 002/i).first().click()
+
+  await page.getByRole('row', { name: /TorrentNG fixture 001/i }).focus()
+  await page.keyboard.press('Enter')
 
   const panel = page.getByRole('complementary', { name: 'Selection workspace' })
   const position = page.getByLabel('Details panel position')
