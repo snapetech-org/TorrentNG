@@ -510,12 +510,16 @@ pub(crate) async fn run_dht(
                 task.search_torrents().await;
             }
             _ = outstanding_sweep_tick.tick() => {
+                // Reconcile a removal command that was lost after the
+                // bounded retry budget. This scan is intentionally on the
+                // existing slower sweep, not on the 100ms forward-retry
+                // cadence.
+                task.prune_closed_torrents();
                 for info_hash in task.prune_stale_outstanding() {
                     task.continue_lookup(info_hash).await;
                 }
             }
-            _ = pending_forward_tick.tick() => {
-                task.prune_closed_torrents();
+            _ = pending_forward_tick.tick(), if !task.pending_peer_forwards.is_empty() => {
                 task.flush_pending_peer_forwards();
             }
             recv = task.socket.recv_from(&mut buf) => {
@@ -1836,12 +1840,12 @@ async fn run_ipv6_dht(
             }
             _ = search_tick.tick() => task.search_torrents().await,
             _ = outstanding_sweep_tick.tick() => {
+                task.prune_closed_torrents();
                 for info_hash in task.prune_stale_outstanding() {
                     task.continue_lookup(info_hash).await;
                 }
             }
-            _ = pending_forward_tick.tick() => {
-                task.prune_closed_torrents();
+            _ = pending_forward_tick.tick(), if !task.pending_peer_forwards.is_empty() => {
                 task.flush_pending_peer_forwards();
             }
             recv = task.socket.recv_from(&mut buf) => {

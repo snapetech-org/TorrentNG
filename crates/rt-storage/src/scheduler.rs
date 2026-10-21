@@ -36,8 +36,9 @@ use crate::{
 
 /// Optional urgency carried by a disk operation while it waits for shared
 /// device admission. Expired deadlines are promoted ahead of weighted normal
-/// traffic; choke-critical obligations are promoted immediately. Once a
-/// backend operation is dispatched, its completion ownership is unchanged.
+/// traffic; choke-critical obligations are promoted immediately. A future
+/// deadline remains ordinary work so it can use batching and readahead paths.
+/// Once a backend operation is dispatched, its completion ownership is unchanged.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct IoRequestPriority {
     deadline: Option<Instant>,
@@ -66,8 +67,11 @@ impl IoRequestPriority {
         }
     }
 
-    pub const fn is_urgent(self) -> bool {
-        self.choke_critical || self.deadline.is_some()
+    pub fn is_urgent(self) -> bool {
+        self.choke_critical
+            || self
+                .deadline
+                .is_some_and(|deadline| deadline <= Instant::now())
     }
 }
 
@@ -6563,6 +6567,16 @@ mod tests {
         assert_eq!(normal.id, 1);
         assert_eq!(state.pending_count, 0);
         drop(receivers);
+    }
+
+    #[test]
+    fn future_io_deadline_stays_eligible_for_batching() {
+        let now = Instant::now();
+
+        assert!(!IoRequestPriority::normal().is_urgent());
+        assert!(!IoRequestPriority::deadline(now + Duration::from_secs(5)).is_urgent());
+        assert!(IoRequestPriority::deadline(now - Duration::from_secs(1)).is_urgent());
+        assert!(IoRequestPriority::choke_critical(now + Duration::from_secs(5)).is_urgent());
     }
 
     #[tokio::test]

@@ -74,6 +74,8 @@ enum DbRequest {
     Shutdown {
         reply: oneshot::Sender<()>,
     },
+    /// Wake a worker blocked in `recv` after an out-of-band forced stop.
+    ForceStop,
 }
 
 impl DbRequest {
@@ -86,7 +88,7 @@ impl DbRequest {
             Self::Execute { enqueued_at, .. } | Self::ExecuteBatched { enqueued_at, .. } => {
                 Some(*enqueued_at)
             }
-            Self::Shutdown { .. } => None,
+            Self::Shutdown { .. } | Self::ForceStop => None,
         }
     }
 
@@ -95,7 +97,7 @@ impl DbRequest {
             Self::Execute { enqueued_at, .. } | Self::ExecuteBatched { enqueued_at, .. } => {
                 *enqueued_at = instant;
             }
-            Self::Shutdown { .. } => {}
+            Self::Shutdown { .. } | Self::ForceStop => {}
         }
     }
 }
@@ -140,12 +142,14 @@ impl DbWorkerMetrics {
     }
 
     fn request_dequeued(&self, request: &DbRequest) {
-        atomic_saturating_sub(&self.queue_depth, 1);
-        if let Some(enqueued_at) = request.enqueued_at() {
-            atomic_saturating_add(
-                &self.queue_wait_nanoseconds_total,
-                duration_nanoseconds(enqueued_at.elapsed()),
-            );
+        if !matches!(request, DbRequest::ForceStop) {
+            atomic_saturating_sub(&self.queue_depth, 1);
+            if let Some(enqueued_at) = request.enqueued_at() {
+                atomic_saturating_add(
+                    &self.queue_wait_nanoseconds_total,
+                    duration_nanoseconds(enqueued_at.elapsed()),
+                );
+            }
         }
     }
 
@@ -444,18 +448,12 @@ impl DbWorker {
             loop {
                 let request = match pending_request.take() {
                     Some(request) => request,
-                    None => match rx.recv_timeout(Duration::from_millis(50)) {
+                    None => match rx.recv() {
                         Ok(request) => {
                             worker_metrics.request_dequeued(&request);
                             request
                         }
-                        Err(mpsc::RecvTimeoutError::Timeout) => {
-                            if worker_force_stop.load(Ordering::Acquire) {
-                                break;
-                            }
-                            continue;
-                        }
-                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                        Err(_) => break,
                     },
                 };
                 if worker_force_stop.load(Ordering::Acquire) {
@@ -694,6 +692,7 @@ impl DbWorker {
                         let _ = reply.send(());
                         break;
                     }
+                    DbRequest::ForceStop => break,
                 }
             }
             // Drop the receiver before publishing the terminal queue gauge so
@@ -717,6 +716,7 @@ impl DbWorker {
                 Err(error) => {
                     healthy.store(false, Ordering::Release);
                     force_stop.store(true, Ordering::Release);
+                    let _ = tx.try_send(DbRequest::ForceStop);
                     warn!(
                         component = "db",
                         operation = "start_worker",
@@ -805,7 +805,12 @@ impl DbWorker {
     }
 
     fn force_stop(&self) {
-        self.force_stop.store(true, Ordering::Release);
+        if !self.force_stop.swap(true, Ordering::AcqRel) {
+            // A full queue means the receiver already has work to wake it;
+            // otherwise this control message interrupts its blocking recv.
+            // It is deliberately excluded from command and queue-depth stats.
+            let _ = self.tx.try_send(DbRequest::ForceStop);
+        }
     }
 
     async fn enqueue(&self, mut request: DbRequest, operation: &'static str) -> Result<(), String> {
@@ -1236,6 +1241,22 @@ mod tests {
             "engine database worker is unavailable"
         );
         worker.shutdown(Duration::from_secs(1)).await;
+    }
+
+    #[tokio::test]
+    async fn force_stop_wakes_worker_blocked_on_an_empty_queue() {
+        let worker = worker();
+
+        worker.force_stop();
+        timeout(
+            Duration::from_secs(1),
+            worker.join_thread(Duration::from_secs(1)),
+        )
+        .await
+        .expect("forced stop should wake and join the idle worker");
+
+        assert!(!worker.is_healthy());
+        assert_eq!(worker.stats().queue_depth, 0);
     }
 
     #[tokio::test]

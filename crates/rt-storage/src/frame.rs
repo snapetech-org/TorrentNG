@@ -297,9 +297,9 @@ impl Frame {
 
     /// Consume this frame as immutable bytes without copying the payload.
     ///
-    /// The backing allocation is not returned to the idle frame cache because
-    /// ownership moves to [`bytes::Bytes`], but the in-use frame-pool charge is
-    /// released before returning.
+    /// The frame-pool charge stays with the backing allocation until the last
+    /// `Bytes` clone or slice is dropped. Vector-backed and registered buffers
+    /// return to their respective pools at that point.
     pub fn into_bytes(mut self) -> bytes::Bytes {
         assert!(self.initialized, "read frame consumed before completion");
         let len = self.len;
@@ -307,18 +307,23 @@ impl Frame {
         self.len = 0;
         self.charge = 0;
         match std::mem::replace(&mut self.backing, FrameBacking::Empty) {
-            FrameBacking::Vec { mut buf, .. } => {
+            FrameBacking::Vec { buf, class } => bytes::Bytes::from_owner(PooledBytesOwner {
+                bytes: Some(buf),
+                len,
+                charge,
+                class,
+                pool: self.pool.clone(),
+            }),
+            FrameBacking::Registered { slot } => bytes::Bytes::from_owner(RegisteredBytesOwner {
+                slot: Some(slot),
+                len,
+                charge,
+                pool: self.pool.clone(),
+            }),
+            FrameBacking::Empty => {
                 self.pool.release_charge(charge);
-                buf.truncate(len);
-                bytes::Bytes::from(buf)
+                bytes::Bytes::new()
             }
-            FrameBacking::Registered { slot } => {
-                let bytes = bytes::Bytes::copy_from_slice(slot.as_slice(len));
-                self.pool.release_charge(charge);
-                drop(slot);
-                bytes
-            }
-            FrameBacking::Empty => bytes::Bytes::new(),
         }
     }
 
@@ -368,6 +373,57 @@ impl Drop for Frame {
             }
             FrameBacking::Empty => {}
         }
+    }
+}
+
+/// Keeps a vector-backed frame charged and unavailable for reuse while any
+/// `Bytes` clone or slice still references its memory.
+#[derive(Debug)]
+struct PooledBytesOwner {
+    bytes: Option<Vec<u8>>,
+    len: usize,
+    charge: u64,
+    class: Option<usize>,
+    pool: FramePool,
+}
+
+impl AsRef<[u8]> for PooledBytesOwner {
+    fn as_ref(&self) -> &[u8] {
+        &self.bytes.as_deref().expect("live pooled byte owner")[..self.len]
+    }
+}
+
+impl Drop for PooledBytesOwner {
+    fn drop(&mut self) {
+        if let Some(bytes) = self.bytes.take() {
+            self.pool.release(bytes, self.charge, self.class);
+        }
+    }
+}
+
+/// Retains a fixed buffer slot and its frame-pool charge through `Bytes`
+/// clones and slices without copying from the registered region.
+#[derive(Debug)]
+struct RegisteredBytesOwner {
+    slot: Option<RegisteredFrameSlot>,
+    len: usize,
+    charge: u64,
+    pool: FramePool,
+}
+
+impl AsRef<[u8]> for RegisteredBytesOwner {
+    fn as_ref(&self) -> &[u8] {
+        self.slot
+            .as_ref()
+            .expect("live registered byte owner")
+            .as_slice(self.len)
+    }
+}
+
+impl Drop for RegisteredBytesOwner {
+    fn drop(&mut self) {
+        drop(self.slot.take());
+        self.pool.release_charge(self.charge);
     }
 }
 
@@ -588,18 +644,56 @@ mod tests {
     }
 
     #[test]
-    fn into_bytes_releases_charge_without_copying_payload() {
-        let pool = FramePool::new(1024 * 1024);
+    fn into_bytes_keeps_charge_until_last_clone_and_reuses_allocation() {
+        let pool = FramePool::new(16 * 1024);
         let mut frame = pool.try_acquire(4096).unwrap();
         frame.as_mut_slice()[..5].copy_from_slice(b"hello");
         assert_eq!(frame.charged_bytes(), 16 * 1024);
         assert_eq!(pool.in_use_bytes(), 16 * 1024);
+        let backing = frame.as_mut_slice().as_ptr();
 
         let bytes = frame.into_bytes();
 
         assert_eq!(&bytes[..5], b"hello");
         assert_eq!(bytes.len(), 4096);
+        assert_eq!(bytes.as_ptr(), backing);
+        assert_eq!(pool.in_use_bytes(), 16 * 1024);
+        assert!(pool.try_acquire(1).is_none());
+
+        let slice = bytes.slice(0..5);
+        drop(bytes);
+        assert_eq!(pool.in_use_bytes(), 16 * 1024);
+        drop(slice);
+
         assert_eq!(pool.in_use_bytes(), 0);
+        assert_eq!(pool.retained_bytes(), 16 * 1024);
+        let mut reused = pool.try_acquire_for_overwrite(4096).unwrap();
+        assert_eq!(reused.as_mut_slice().as_ptr(), backing);
+    }
+
+    #[test]
+    fn into_bytes_keeps_registered_slot_until_last_clone() {
+        let pool = FramePool::new(1024 * 1024);
+        let slots = RegisteredFrameSlots::new(1, 4096);
+        let slot = slots.acquire(4096).unwrap();
+        unsafe {
+            std::slice::from_raw_parts_mut(slot.ptr_mut(), 5).copy_from_slice(b"slot!");
+        }
+        let frame = pool.try_acquire(4096).unwrap().into_registered_slot(slot);
+
+        let bytes = frame.into_bytes();
+        assert_eq!(&bytes[..5], b"slot!");
+        assert_eq!(pool.in_use_bytes(), 16 * 1024);
+        assert!(slots.acquire(1).is_none());
+
+        let slice = bytes.slice(0..5);
+        drop(bytes);
+        assert_eq!(pool.in_use_bytes(), 16 * 1024);
+        assert!(slots.acquire(1).is_none());
+        drop(slice);
+
+        assert_eq!(pool.in_use_bytes(), 0);
+        assert!(slots.acquire(1).is_some());
     }
 
     #[test]
