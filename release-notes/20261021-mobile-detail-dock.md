@@ -5,4 +5,4 @@ area: webui
 action: none
 breaking: false
 ---
-On narrow screens, the torrent detail panel now defaults to a bottom dock so selecting a torrent does not cover rows needed for multi-selection.
+On narrow screens, checking torrents for bulk actions keeps the detail panel out of the way so more rows remain available; click a row or press Enter to open details.
