@@ -216,6 +216,29 @@ global runtime gauge; the peer scheduler backend was not exported by that
 source. See its [samples](../certification/reports/client-performance-backend-confirm-1a748ba3-20261021-samples.csv)
 and [memory profile](../certification/reports/client-performance-backend-confirm-1a748ba3-20261021-memory-profile.json).
 
+### Current-main CPU/RAM remeasurement (`f6cce154`, 2026-10-21)
+
+A clean current-main image completed a controlled seed with all five clients;
+each leecher passed the same ISO SHA-256 check. TorrentNG measured **2.46
+CPU-s/GiB** and **25.2 MiB** peak cgroup anonymous memory. The corresponding
+CPU/RAM figures were qBittorrent 2.04/18.0, Transmission 1.31/25.8, Deluge
+2.27/89.1, and rTorrent 0.56/1.7. This keeps the audit's CPU concern open:
+TorrentNG remained above every comparator. Its RAM result is mixed: below
+Transmission and Deluge, above qBittorrent and rTorrent. The run was one
+sequential pass on a shared host, so it does not establish a general ranking
+or a change beyond run variation.
+
+The live transfer used the portable `pread` backend. The fused portable read
+path was exercised; the audit's conditional io_uring findings were not. The
+process-wide cache budget and frame-pool trimming are present, but this
+single-torrent run does not qualify cross-torrent memory reclamation. Public
+swarm probes timed out for TorrentNG and Transmission and are excluded from
+the comparison. Randomized repeats, stack-attributed profiling, and
+multi-torrent memory-pressure measurements remain open. See the [full
+report](../certification/reports/client-performance-benchmark-f6cce154-20261021-cpu-ram.md),
+[samples](../certification/reports/client-performance-benchmark-f6cce154-20261021-cpu-ram-samples.csv),
+and [memory profile](../certification/reports/client-performance-benchmark-f6cce154-20261021-cpu-ram-memory-profile.json).
+
 ### Download assembly and parsing
 
 The handoff proposes a bounded global incomplete-piece budget and parsing that
