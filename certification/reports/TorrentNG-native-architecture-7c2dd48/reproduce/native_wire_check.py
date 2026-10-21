@@ -58,11 +58,11 @@ def check(binary, output, window):
         for index in range(8):
             data = hashlib.shake_256(b"native-architecture-wire-v1" + struct.pack(">I", index)).digest(PIECE)
             stream.write(data)
-            piece_hashes.append(hashlib.sha1(data).digest())
+            piece_hashes.append(hashlib.sha1(data, usedforsecurity=False).digest())  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- BitTorrent v1 piece hashes require SHA-1.
             digest.update(data)
     info = {b"length": payload.stat().st_size, b"name": payload.name.encode(),
             b"piece length": PIECE, b"pieces": b"".join(piece_hashes), b"private": 1}
-    info_hash = hashlib.sha1(bencode(info)).digest()
+    info_hash = hashlib.sha1(bencode(info), usedforsecurity=False).digest()  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- BitTorrent v1 info hashes require SHA-1.
     api_port, peer_port = port(), port()
     config = output / "config.toml"
     config.write_text(f'''[daemon]
@@ -98,7 +98,7 @@ filter = "warn"
             f"http://127.0.0.1:{api_port}" + path,
             data=json.dumps(body).encode() if body is not None else None,
             headers={"Authorization": "Bearer " + TOKEN, "Content-Type": "application/json"})
-        with urllib.request.urlopen(request, timeout=5) as response:
+        with urllib.request.urlopen(request, timeout=5) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- The URL is fixed to the test daemon on loopback.
             payload = response.read()
             return json.loads(payload) if payload else None
 

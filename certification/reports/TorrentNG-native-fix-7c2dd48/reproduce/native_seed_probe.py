@@ -25,10 +25,11 @@ def fixture(root,mib):
         with payload.open('xb') as f:
             for i in range(mib):
                 data=hashlib.shake_256(b'TorrentNG-native-followup-v1'+struct.pack('>I',i)).digest(PIECE)
-                f.write(data);hashes.append(hashlib.sha1(data).digest());sha.update(data)
+                f.write(data);hashes.append(hashlib.sha1(data, usedforsecurity=False).digest());sha.update(data)  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- BitTorrent v1 piece hashes require SHA-1.
         info={b'length':mib*PIECE,b'name':payload.name.encode(),b'piece length':PIECE,b'pieces':b''.join(hashes),b'private':1}
         torrent.write_bytes(bencode({b'info':info}))
-        manifest.write_text(json.dumps({'size':mib*PIECE,'sha256':sha.hexdigest(),'info_hash':hashlib.sha1(bencode(info)).hexdigest()}))
+        info_hash=hashlib.sha1(bencode(info), usedforsecurity=False).hexdigest()  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- BitTorrent v1 info hashes require SHA-1.
+        manifest.write_text(json.dumps({'size':mib*PIECE,'sha256':sha.hexdigest(),'info_hash':info_hash}))
     m=json.loads(manifest.read_text())
     assert payload.stat().st_size==m['size']
     with payload.open('rb') as f:assert hashlib.file_digest(f,'sha256').hexdigest()==m['sha256']
@@ -123,7 +124,7 @@ filter = "{'warn,torrentng::upload_batches=debug' if a.diagnostics else 'warn'}"
     log=(out/'daemon.log').open('w');proc=subprocess.Popen([str(a.binary.resolve())],env=env,stdout=log,stderr=log)
     def api_call(path,body=None):
         request=urllib.request.Request(f'http://127.0.0.1:{api}'+path,data=json.dumps(body).encode() if body is not None else None,headers={'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json'})
-        with urllib.request.urlopen(request,timeout=5) as r:return r.read()
+        with urllib.request.urlopen(request,timeout=5) as r:return r.read()  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- The URL is fixed to the test daemon on loopback.
     stop=threading.Event(); samples=[]; receiver=out/'received.bin'
     try:
         procfs_pid=procfs_child_pid(proc.pid)
