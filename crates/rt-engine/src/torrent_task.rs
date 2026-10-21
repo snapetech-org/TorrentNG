@@ -2812,6 +2812,9 @@ pub struct TorrentTask {
     choker: Choker,
     /// active peer addresses
     active_peers: HashMap<SocketAddr, PeerHandle>,
+    /// Peers whose next request is parked on rate admission. Keeping this
+    /// sparse set lets requestability changes retry only affected peers.
+    rate_waiting_peers: HashSet<SocketAddr>,
     shutting_down_peers: bool,
     known_tracker_peers: HashSet<SocketAddr>,
     /// The cache is pre-sized and its reservation covers the hash table's
@@ -3228,6 +3231,7 @@ impl TorrentTask {
             transfer_started_at: Instant::now(),
             choker: Choker::new(DEFAULT_MAX_UNCHOKED),
             active_peers: HashMap::new(),
+            rate_waiting_peers: HashSet::new(),
             shutting_down_peers: false,
             known_tracker_peers,
             _tracker_peer_cache_memory_lease: tracker_peer_cache_memory_lease,
@@ -3415,6 +3419,10 @@ impl TorrentTask {
         reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
         let global_download_limit_changes = self.network_budget.download_limit_changes();
         let mut global_download_limit_generation = global_download_limit_changes.generation();
+        let download_demand_changes = self
+            .network_budget
+            .download_demand_changes(self.transfer_rate_torrent);
+        let mut download_demand_generation = download_demand_changes.generation();
 
         loop {
             tokio::select! {
@@ -3812,6 +3820,17 @@ impl TorrentTask {
 
                 Some(event) = self.peer_event_rx.recv() => {
                     let had_fresh_requestable = self.picker.has_fresh_requestable();
+                    let requestability_changed = matches!(
+                        &event,
+                        PeerEvent::Bitfield { .. }
+                            | PeerEvent::Have { .. }
+                            | PeerEvent::RequestSent { .. }
+                            | PeerEvent::Piece { .. }
+                            | PeerEvent::Choked { .. }
+                            | PeerEvent::RequestRejected { .. }
+                            | PeerEvent::RequestTimedOut { .. }
+                            | PeerEvent::Disconnected { .. }
+                    );
                     let released_request = matches!(
                         &event,
                         PeerEvent::Choked { .. }
@@ -3821,6 +3840,9 @@ impl TorrentTask {
                     );
                     if let Some(event) = peer_event_if_active(self.paused, event) {
                         self.handle_peer_event(event).await;
+                        if requestability_changed {
+                            self.retry_rate_waiting_peers().await;
+                        }
                         if released_request
                             && !had_fresh_requestable
                             && self.webseed_fetch.is_none()
@@ -3839,8 +3861,22 @@ impl TorrentTask {
 
                 Some(event) = self.peer_disconnect_rx.recv() => {
                     let had_fresh_requestable = self.picker.has_fresh_requestable();
+                    let requestability_changed = matches!(
+                        &event,
+                        PeerEvent::Bitfield { .. }
+                            | PeerEvent::Have { .. }
+                            | PeerEvent::RequestSent { .. }
+                            | PeerEvent::Piece { .. }
+                            | PeerEvent::Choked { .. }
+                            | PeerEvent::RequestRejected { .. }
+                            | PeerEvent::RequestTimedOut { .. }
+                            | PeerEvent::Disconnected { .. }
+                    );
                     if let Some(event) = peer_event_if_active(self.paused, event) {
                         self.handle_peer_event(event).await;
+                        if requestability_changed {
+                            self.retry_rate_waiting_peers().await;
+                        }
                         if (!had_fresh_requestable
                             && self.webseed_fetch.is_none()
                             && self.picker.has_fresh_requestable())
@@ -3862,6 +3898,7 @@ impl TorrentTask {
                     let fetch = self.webseed_fetch.take().expect("completed webseed fetch");
                     if let Some(fetched) = self.finish_webseed_fetch(fetch, result) {
                         self.handle_webseed_block(fetched.event).await;
+                        self.retry_rate_waiting_peers().await;
                     }
                     reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
                 }
@@ -3870,6 +3907,7 @@ impl TorrentTask {
                     if let Some(completion) = completion {
                         let had_fresh_requestable = self.picker.has_fresh_requestable();
                         self.handle_transfer_completion(completion).await;
+                        self.retry_rate_waiting_peers().await;
                         if !had_fresh_requestable
                             && self.webseed_fetch.is_none()
                             && self.picker.has_fresh_requestable()
@@ -3942,6 +3980,16 @@ impl TorrentTask {
                         for peer in peers {
                             self.refill_peer_requests(peer).await;
                         }
+                        if self.webseed_fetch.is_none() && self.picker.has_fresh_requestable() {
+                            reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
+                        }
+                    }
+                }
+
+                _ = download_demand_changes.wait_for_change(download_demand_generation) => {
+                    download_demand_generation = download_demand_changes.generation();
+                    if !self.paused {
+                        self.retry_rate_waiting_peers().await;
                         if self.webseed_fetch.is_none() && self.picker.has_fresh_requestable() {
                             reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
                         }
@@ -4686,6 +4734,9 @@ impl TorrentTask {
             }
         }
         self.apply_piece_policy(&enabled, priority);
+        // File priorities can make a previously denied peer's only useful
+        // piece disappear. Reconcile those parked rate demands immediately.
+        self.retry_rate_waiting_peers().await;
         Ok(())
     }
 
@@ -10087,6 +10138,9 @@ mod tests {
             RateAdmissionAttempt::Wait(delay) => {
                 panic!("unlimited test download peer unexpectedly waited {delay:?}")
             }
+            RateAdmissionAttempt::WaitForChange => {
+                panic!("unlimited test download peer unexpectedly waited for fairness progress")
+            }
         }
     }
 
@@ -13555,6 +13609,9 @@ mod tests {
             RateAdmissionAttempt::Wait(delay) => {
                 panic!("startup burst should admit block: {delay:?}")
             }
+            RateAdmissionAttempt::WaitForChange => {
+                panic!("startup burst unexpectedly waited for fairness progress")
+            }
         };
         assert_eq!(
             budget.download_available_credit_bytes_for(peer),
@@ -15622,6 +15679,85 @@ mod tests {
         };
         assert_eq!(memory_lease.bytes(), u64::from(request.length));
         assert!(task.download_rate_wake.is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stale_rate_waiter_retires_after_another_peer_consumes_its_only_piece() {
+        let fx = crash_fixture(vec![7; 4], 4, 206).await;
+        rt_db::upsert_torrent_limits(
+            &fx.db.lock().unwrap(),
+            &rt_db::TorrentLimitRow {
+                info_hash: fx.info_hash.clone(),
+                download_limit: Some(32 * 1024 * 1024),
+                upload_limit: None,
+                max_connections: None,
+                seed_ratio_limit: None,
+                seed_idle_limit: None,
+                sequential_download: false,
+                sequential_download_from_piece: None,
+                first_last_piece_prio: false,
+                force_start: false,
+                super_seeding: false,
+                auto_tmm: false,
+                auto_management: false,
+            },
+        )
+        .unwrap();
+        let (mut task, _cmd_tx) =
+            crash_task_with_mailbox(&fx, quiet_runtime(), StorageIoConfig::default()).await;
+
+        let permits = Arc::new(tokio::sync::Semaphore::new(2));
+        let parked_addr: SocketAddr = "127.0.0.1:6881".parse().unwrap();
+        let active_addr: SocketAddr = "127.0.0.1:6882".parse().unwrap();
+        for peer in [parked_addr, active_addr] {
+            task.register_peer(peer, permits.clone().acquire_owned().await.unwrap())
+                .expect("peer registration should fit the memory budget");
+            if task.active_peers.get_mut(&peer).unwrap().add_peer_have(0) {
+                task.picker.availability.add_have(0);
+            }
+            task.active_peers.get_mut(&peer).unwrap().choked = false;
+        }
+
+        let active_conn = task.active_peers[&active_addr].transfer_conn;
+        let active_rate_peer = TransferPeerId::new(task.transfer_rate_torrent, active_conn);
+        while let RateAdmissionAttempt::Granted(grant) = task
+            .network_budget
+            .try_acquire_download(active_rate_peer, 16 * 1024)
+            .unwrap()
+        {
+            grant.settle(16 * 1024);
+        }
+
+        task.refill_peer_requests(parked_addr).await;
+        assert!(
+            task.rate_waiting_peers.contains(&parked_addr),
+            "the denied peer must be recorded as a live rate waiter"
+        );
+        assert_eq!(task.active_peers.len(), 2);
+
+        let completed = task.picker.pick_from_seed().expect("one available piece");
+        assert!(task
+            .picker
+            .block_received_pending(completed.piece as usize, completed.begin));
+        task.network_budget
+            .set_download_torrent_limit(task.transfer_rate_torrent, None);
+        task.network_budget.set_download_limit(None);
+        assert!(matches!(
+            task.network_budget
+                .try_acquire_download(active_rate_peer, 1)
+                .unwrap(),
+            RateAdmissionAttempt::Wait(_) | RateAdmissionAttempt::WaitForChange
+        ));
+
+        task.retry_rate_waiting_peers().await;
+        assert!(!task.rate_waiting_peers.contains(&parked_addr));
+        assert_eq!(task.active_peers.len(), 2, "neither live peer is removed");
+        assert!(matches!(
+            task.network_budget
+                .try_acquire_download(active_rate_peer, 1)
+                .unwrap(),
+            RateAdmissionAttempt::Granted(_)
+        ));
     }
 
     #[tokio::test]

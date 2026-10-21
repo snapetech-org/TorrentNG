@@ -1,0 +1,141 @@
+# TorrentNG deep performance audit: 0f726a89
+
+The original audit package is retained at
+[`certification/reports/TorrentNG-deep-audit-0f726a89.zip`](../certification/reports/TorrentNG-deep-audit-0f726a89.zip)
+and unpacked beside it. The review, implementation handoff, source manifest,
+reproducer, mechanism benchmark, raw results, and reviewed source copies are in
+[`certification/reports/TorrentNG-deep-audit-0f726a89/`](../certification/reports/TorrentNG-deep-audit-0f726a89/).
+The copied code and measurements describe the reviewed `0f726a89` source; they
+are evidence for the finding, not evidence for later code.
+
+## Findings and disposition
+
+### P0: stale rate demand can block live peers
+
+The audit compiled its reproduction against the production `RateTree` and
+observed zero grants in 1,000 attempts while an inactive peer remained
+registered. Removing that peer restored the grants, but would also discard
+live identity and outstanding-grant accounting, so it is not a valid repair.
+The archived run also passed the 19 then-existing `RateTree` tests. This is a
+confirmed scheduler liveness defect; its contribution to any particular
+benchmark remains unmeasured.
+
+The current fix gives pending demand an owner separate from peer registration
+and granted bytes. Synchronous peer refills have one retireable demand per
+peer; asynchronous admissions have distinct demand IDs, so cancellation of
+one request preserves its siblings. V1, pure-v2, and webseed paths retire
+demand on choke, unavailable work, completion, cancellation, or teardown.
+Timer waits retain real refill deadlines. Fairness-only waits use a
+per-torrent progress signal and do not schedule a 1 ns retry. A live peer and
+its unsettled grants remain registered when its demand is retired.
+
+Requestability changes also retry parked demand. The v1 actor keeps a sparse
+set of rate-waiting peers and revisits only those peers when availability,
+request ownership, or piece completion changes. Pure-v2 peers have individual
+retry signals; a requestability epoch check closes the race where a picker or
+ledger change lands just before a peer registers as waiting. The v2 webseed
+actor uses the same event-driven wake path, so it does not wait for its
+60-second idle retry after a useful block becomes unavailable.
+
+Regression sources cover the reported live-peer case, demand retirement after
+another peer consumes the last available piece, targeted v2 wakeups,
+event-only waits, independent asynchronous demands, and mixed timer/event wait
+indexing. They pass in the 753-test `rt-engine` suite and in the full workspace
+test pass. The archived standalone reproduction also still reports zero
+grants in 1,000 attempts while demand is stale and 1,000 grants after removing
+the peer. The targeted private two-seeder download fixture from the handoff
+remains required before attributing the public-download plateau to this defect.
+
+### Prior CPU and RAM evidence in the archive
+
+The archived five-client controlled seed run used a dirty candidate tree based
+on `8bd30a474b72309a4b95327f32bbd89caeb590dc`, not current `main`. It measured
+TorrentNG at **3.97 CPU-s/GiB**, compared with qBittorrent 2.29, Transmission
+1.41, Deluge 2.78, and rTorrent 0.76. TorrentNG used about **2.8×
+Transmission's CPU per GiB**. Seed goodput was receiver-capped at about 3.8
+MiB/s for all clients, so the result compares CPU under equal delivered work.
+
+The same one-pass report measured cgroup anonymous peak RAM during seeding at
+**16.3 MiB for TorrentNG**, 17.6 MiB for qBittorrent, 24.9 MiB for
+Transmission, 83.7 MiB for Deluge, and 1.7 MiB for rTorrent. That is
+encouraging against three clients and substantially above rTorrent. The
+TorrentNG cache-disabled probe reported 3.65 CPU-s/GiB and 7.4 MiB anonymous
+peak in a separate run; it is not a matched cross-client comparison. The
+candidate's public download phase timed out at 5.87%, so it does not rank
+download performance.
+
+All clients passed controlled seed hash checks. The runs were one pass each on
+a shared host with a sampled one-minute load peak of 26.18. These are useful
+diagnostic results, not repeated or current-source rankings. See the archived
+[five-client report](../certification/reports/TorrentNG-deep-audit-0f726a89/evidence/client-performance-benchmark-hotpath-candidate-full-20261020.md)
+and [cache-disabled probe](../certification/reports/TorrentNG-deep-audit-0f726a89/evidence/client-performance-benchmark-hotpath-cache-disabled-torrentng-20261020.md)
+for the trial setup, source-tree identity, time series, and limits.
+
+### P1: storage dispatch has repeated handoffs
+
+The audit measured 2.02 CPU-s/GiB for its synthetic two-round-trip mechanism
+and 0.124 CPU-s/GiB for inline execution. These numbers are mechanism costs,
+not TorrentNG application scores. Source review confirms the ordinary read
+miss path still prepares a descriptor/cache decision, returns to the caller,
+then dispatches positioned I/O and returns its completion. Cache hits still
+use the preparation worker.
+
+This is the strongest active-CPU architecture candidate after the scheduler
+repair. A fused dispatch must retain bounded admission, descriptor identity,
+replacement fences, cancellation ownership, cache invalidation, and the
+portable backend path. No storage-dispatch rewrite is included in this change;
+the current implementation should be profiled and the fused path measured
+separately before adoption.
+
+The archive's three-repeat mechanism result was 2.016 CPU-s/GiB for two worker
+round trips and 0.124 for inline execution. Re-running its included harness on
+this checkout with rustc 1.94 measured medians of 0.588 (range 0.581–0.677)
+and 0.106 (range 0.103–0.119), respectively. The different environment and
+compiler make the exact values unsuitable for comparison; both runs are
+synthetic queue costs, not TorrentNG application scores.
+
+### Conditional io_uring work
+
+The audit identifies fixed-file registration churn, allocation before
+registered-buffer selection, and registered-buffer cache pinning. These can
+only affect runs that actually selected io_uring. Record backend and fixed
+buffer support in the diagnostic profile first; do not treat these as causes
+for pread results. Any registration cache must retain the leased descriptor
+and generation, not only a numeric file descriptor.
+
+### RAM retention
+
+The audit distinguishes per-scheduler read-cache budgets, backing allocations
+kept alive by slices, and idle buffers retained by the shared frame pool.
+Returning a cache buffer to a free list can keep memory resident. A global
+reclaimable cache budget, pressure eviction before required payload admission,
+and coordinated frame-pool trimming remain open. Future measurements should
+report cache bytes, backing bytes, active and idle frame bytes, cgroup
+anonymous memory, PSS, and process RSS separately because some counters overlap.
+
+### Download assembly and parsing
+
+The handoff proposes a bounded global incomplete-piece budget and parsing that
+retains the received payload, compared at 0, 4, and 8 MiB. TorrentNG currently
+defaults this budget to zero. This remains an independent CPU/RAM experiment;
+the audit did not establish its contribution, and it must preserve v1, v2,
+hybrid, padding, cancellation, and crash-checkpoint behavior.
+
+## Validation sequence
+
+1. Run the rate scheduler regressions and the private two-seeder download
+   reproduction. The scheduler regressions and full workspace tests now pass;
+   the private fixture remains open.
+2. Profile an exact-source hash-verified seed separately from scored runs;
+   identify thread CPU, backend selection, handoffs, context switches, and
+   relevant syscalls.
+3. Compare the current and fused storage paths with the same backend, fixture,
+   cache state, and receiver, recording CPU/GiB, goodput, memory series, and
+   worker dispatch counts.
+4. Run io_uring and retained-memory experiments only where measurements show
+   they apply; keep assembly-budget trials independent.
+5. Re-run the comparative client suite only after the selected candidate passes
+   correctness and shows improvement beyond run variation.
+
+The audit did not run a full-daemon benchmark. It does not establish a CPU
+speedup, RAM improvement, or universal client ranking.

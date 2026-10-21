@@ -28,6 +28,10 @@ use super::Nanos;
 /// services that span multiple torrent ledgers.
 pub type RatePeerId = TransferPeerId;
 
+/// A fairness-blocked demand has no clock deadline; it wakes when a peer
+/// makes progress, is removed, or retires its pending demand.
+pub const CHANGE_ONLY_WAKE: Nanos = Nanos::MAX;
+
 const NANOS_PER_SEC: i128 = 1_000_000_000;
 /// Burst a limited bucket may accumulate: this fraction of a second of rate.
 const BURST_DIVISOR: u64 = 10;
@@ -155,6 +159,8 @@ struct TorrentNode {
     peers: BTreeSet<(u128, RatePeerId)>,
     /// Waiting peers ordered by progress then retry deadline.
     waiting: BTreeSet<(u128, Nanos, RatePeerId)>,
+    /// Number of registered peers with at least one event-only waiter.
+    change_waiters: usize,
 }
 
 struct PeerNode {
@@ -166,9 +172,24 @@ struct PeerNode {
     refundable_bytes: u64,
     /// Limit levels debited by each unsettled grant, keyed by grant identity.
     outstanding_grants: BTreeMap<u64, OutstandingGrant>,
-    /// Denied and still wanting service.
+    /// Aggregate fairness-index state across the legacy, synchronous and
+    /// independently-owned asynchronous demand lifetimes below.
     waiting: bool,
     wake_at: Nanos,
+    change_waiting: bool,
+    /// Pending demand registered through the pure-core compatibility API.
+    legacy_wake_at: Option<Nanos>,
+    /// One serialized pending demand for synchronous actor refill paths.
+    sync_wake_at: Option<Nanos>,
+    /// Pending asynchronous admissions, each removed by its own owner.
+    demand_wake_at: BTreeMap<u64, Nanos>,
+}
+
+#[derive(Clone, Copy)]
+enum WaitOwner {
+    Legacy,
+    Sync,
+    Demand(u64),
 }
 
 #[derive(Clone, Copy)]
@@ -236,12 +257,18 @@ impl RateTree {
                 .filter(|(_, peer)| peer.torrent == key && peer.waiting)
                 .map(|(peer_id, peer)| (peer.vfinish, peer.wake_at, *peer_id))
                 .collect();
+            let change_waiters = self
+                .peers
+                .values()
+                .filter(|peer| peer.torrent == key && peer.change_waiting)
+                .count();
             self.torrents.insert(
                 key,
                 TorrentNode {
                     bucket,
                     peers,
                     waiting,
+                    change_waiters,
                 },
             );
         }
@@ -314,6 +341,10 @@ impl RateTree {
                 outstanding_grants: BTreeMap::new(),
                 waiting: false,
                 wake_at: 0,
+                change_waiting: false,
+                legacy_wake_at: None,
+                sync_wake_at: None,
+                demand_wake_at: BTreeMap::new(),
             },
         );
         if let Some(node) = self.torrents.get_mut(&peer_id.torrent) {
@@ -349,6 +380,9 @@ impl RateTree {
             torrent.bucket.credit_back(refundable_torrent);
             torrent.peers.remove(&(peer.vfinish, peer_id));
             if peer.waiting {
+                if peer.change_waiting {
+                    torrent.change_waiters = torrent.change_waiters.saturating_sub(1);
+                }
                 torrent
                     .waiting
                     .remove(&(peer.vfinish, peer.wake_at, peer_id));
@@ -366,43 +400,96 @@ impl RateTree {
             .or_else(|| node.peers.first().map(|(vfinish, _)| *vfinish))
     }
 
-    fn mark_waiting(&mut self, peer_id: RatePeerId, wake_at: Nanos) {
+    fn refresh_waiting_index(&mut self, peer_id: RatePeerId) {
         let Some(peer) = self.peers.get(&peer_id) else {
             return;
         };
-        let (torrent_key, vfinish, was_waiting, old_wake_at) =
-            (peer.torrent, peer.vfinish, peer.waiting, peer.wake_at);
+        let torrent_key = peer.torrent;
+        let vfinish = peer.vfinish;
+        let was_waiting = peer.waiting;
+        let old_wake_at = peer.wake_at;
+        let was_change_waiting = peer.change_waiting;
+        let mut next_wake_at = peer.legacy_wake_at;
+        for wake_at in peer
+            .sync_wake_at
+            .into_iter()
+            .chain(peer.demand_wake_at.values().copied())
+        {
+            next_wake_at = Some(next_wake_at.map_or(wake_at, |current| current.min(wake_at)));
+        }
+        let is_waiting = next_wake_at.is_some();
+        let wake_at = next_wake_at.unwrap_or(0);
+        let is_change_waiting = peer.legacy_wake_at == Some(CHANGE_ONLY_WAKE)
+            || peer.sync_wake_at == Some(CHANGE_ONLY_WAKE)
+            || peer
+                .demand_wake_at
+                .values()
+                .any(|wake_at| *wake_at == CHANGE_ONLY_WAKE);
+
         if was_waiting {
             if let Some(torrent) = self.torrents.get_mut(&torrent_key) {
+                if was_change_waiting {
+                    torrent.change_waiters = torrent.change_waiters.saturating_sub(1);
+                }
                 torrent.waiting.remove(&(vfinish, old_wake_at, peer_id));
             }
             self.wake_queue.remove(&(old_wake_at, peer_id));
         }
+        if is_waiting {
+            if let Some(torrent) = self.torrents.get_mut(&torrent_key) {
+                if is_change_waiting {
+                    torrent.change_waiters = torrent.change_waiters.saturating_add(1);
+                }
+                torrent.waiting.insert((vfinish, wake_at, peer_id));
+            }
+            self.wake_queue.insert((wake_at, peer_id));
+        }
         if let Some(peer) = self.peers.get_mut(&peer_id) {
-            peer.waiting = true;
+            peer.waiting = is_waiting;
             peer.wake_at = wake_at;
+            peer.change_waiting = is_change_waiting;
         }
-        if let Some(torrent) = self.torrents.get_mut(&torrent_key) {
-            torrent.waiting.insert((vfinish, wake_at, peer_id));
-        }
-        self.wake_queue.insert((wake_at, peer_id));
     }
 
-    fn clear_waiting(&mut self, peer_id: RatePeerId) {
-        let Some(peer) = self.peers.get(&peer_id) else {
+    fn set_waiting_for(&mut self, peer_id: RatePeerId, owner: WaitOwner, wake_at: Nanos) {
+        let Some(peer) = self.peers.get_mut(&peer_id) else {
             return;
         };
-        if !peer.waiting {
-            return;
+        match owner {
+            WaitOwner::Legacy => peer.legacy_wake_at = Some(wake_at),
+            WaitOwner::Sync => peer.sync_wake_at = Some(wake_at),
+            WaitOwner::Demand(demand_id) => {
+                peer.demand_wake_at.insert(demand_id, wake_at);
+            }
         }
-        let (torrent_key, vfinish, wake_at) = (peer.torrent, peer.vfinish, peer.wake_at);
-        if let Some(torrent) = self.torrents.get_mut(&torrent_key) {
-            torrent.waiting.remove(&(vfinish, wake_at, peer_id));
+        self.refresh_waiting_index(peer_id);
+    }
+
+    fn clear_waiting_for(&mut self, peer_id: RatePeerId, owner: WaitOwner) -> bool {
+        let Some(peer) = self.peers.get_mut(&peer_id) else {
+            return false;
+        };
+        let removed = match owner {
+            WaitOwner::Legacy => peer.legacy_wake_at.take().is_some(),
+            WaitOwner::Sync => peer.sync_wake_at.take().is_some(),
+            WaitOwner::Demand(demand_id) => peer.demand_wake_at.remove(&demand_id).is_some(),
+        };
+        if removed {
+            self.refresh_waiting_index(peer_id);
         }
-        self.wake_queue.remove(&(wake_at, peer_id));
-        if let Some(peer) = self.peers.get_mut(&peer_id) {
-            peer.waiting = false;
-        }
+        removed
+    }
+
+    /// Retire the serialized synchronous refill demand without unregistering
+    /// the live peer or touching any outstanding grant.
+    pub fn retire_sync_demand(&mut self, peer_id: RatePeerId) -> bool {
+        self.clear_waiting_for(peer_id, WaitOwner::Sync)
+    }
+
+    /// Retire one asynchronous admission's demand without clearing sibling
+    /// waiters owned by concurrent requests from the same peer.
+    pub fn retire_demand(&mut self, peer_id: RatePeerId, demand_id: u64) -> bool {
+        self.clear_waiting_for(peer_id, WaitOwner::Demand(demand_id))
     }
 
     fn update_peer_vfinish(&mut self, peer_id: RatePeerId, vfinish: u128) {
@@ -440,6 +527,39 @@ impl RateTree {
         peer_id: RatePeerId,
         bytes: u64,
         now: Nanos,
+    ) -> (Grant, Option<u64>) {
+        self.try_grant_for(peer_id, bytes, now, WaitOwner::Legacy)
+    }
+
+    /// Runtime refill attempt with one persistent, serialized demand lifetime
+    /// per peer. The owner retires it when the peer is choked or has no useful
+    /// request to admit.
+    pub fn try_grant_sync_tracked(
+        &mut self,
+        peer_id: RatePeerId,
+        bytes: u64,
+        now: Nanos,
+    ) -> (Grant, Option<u64>) {
+        self.try_grant_for(peer_id, bytes, now, WaitOwner::Sync)
+    }
+
+    /// Runtime asynchronous attempt with an independently-owned demand ID.
+    pub fn try_grant_demand_tracked(
+        &mut self,
+        peer_id: RatePeerId,
+        demand_id: u64,
+        bytes: u64,
+        now: Nanos,
+    ) -> (Grant, Option<u64>) {
+        self.try_grant_for(peer_id, bytes, now, WaitOwner::Demand(demand_id))
+    }
+
+    fn try_grant_for(
+        &mut self,
+        peer_id: RatePeerId,
+        bytes: u64,
+        now: Nanos,
+        wait_owner: WaitOwner,
     ) -> (Grant, Option<u64>) {
         let Some(peer) = self.peers.get(&peer_id) else {
             return (Grant::Unknown, None);
@@ -485,15 +605,20 @@ impl RateTree {
                 let lag = FAIRNESS_LAG_BYTES * VTIME_SCALE / u128::from(weight);
                 if vfinish > floor.saturating_add(lag) {
                     ready = false;
-                    // Retry when the lowest-progress peer can next run rather
-                    // than waking every connection on a fixed fairness tick.
-                    wake = wake.max(laggard_wake.max(now.saturating_add(1)));
+                    // A live laggard with a future refill deadline gives us a
+                    // real timer. Once that deadline is due, wait for demand
+                    // progress or retirement instead of re-arming at now+1ns.
+                    wake = if laggard_wake > now && laggard_wake != CHANGE_ONLY_WAKE {
+                        wake.max(laggard_wake)
+                    } else {
+                        CHANGE_ONLY_WAKE
+                    };
                 }
             }
         }
 
         if !ready {
-            self.mark_waiting(peer_id, wake);
+            self.set_waiting_for(peer_id, wait_owner, wake);
             return (Grant::Wait { until: wake }, None);
         }
 
@@ -502,7 +627,7 @@ impl RateTree {
             .torrents
             .get(&torrent_key)
             .and_then(|torrent| torrent.bucket.limit.map(|_| torrent.bucket.epoch));
-        self.clear_waiting(peer_id);
+        self.clear_waiting_for(peer_id, wait_owner);
         self.global.debit(bytes);
         self.torrents
             .get_mut(&torrent_key)
@@ -656,7 +781,16 @@ impl RateTree {
     /// Earliest retry deadline among waiting peers, for a single timer;
     /// `None` when nobody is waiting.
     pub fn next_wake(&self) -> Option<Nanos> {
-        self.wake_queue.first().map(|(wake_at, _)| *wake_at)
+        self.wake_queue
+            .iter()
+            .find_map(|(wake_at, _)| (*wake_at != CHANGE_ONLY_WAKE).then_some(*wake_at))
+    }
+
+    /// Whether progress in `torrent` should notify parked fairness waiters.
+    pub fn has_change_waiters(&self, torrent: TorrentKey) -> bool {
+        self.torrents
+            .get(&torrent)
+            .is_some_and(|node| node.change_waiters > 0)
     }
 
     /// Return at most `limit` peers whose deadlines are due. The entries stay
@@ -1129,20 +1263,23 @@ mod tests {
         };
         assert_eq!(tree.next_wake(), Some(laggard_wake));
 
-        let fairness_wake = laggard_wake.saturating_add(1);
         assert_eq!(
             tree.try_grant(peer(1, 1), BLOCK, laggard_wake),
             Grant::Wait {
-                until: fairness_wake
+                until: CHANGE_ONLY_WAKE
             },
-            "fairness waits for the laggard instead of polling on a fixed tick"
+            "fairness waits for peer progress instead of polling on a timer"
         );
         assert_eq!(tree.next_wake(), Some(laggard_wake));
+        assert!(tree.has_change_waiters(torrent));
         assert_eq!(
             tree.try_grant(peer(1, 2), BLOCK, laggard_wake),
             Grant::Granted
         );
-        assert_eq!(tree.next_wake(), Some(fairness_wake));
+        assert!(matches!(
+            tree.try_grant(peer(1, 1), BLOCK, laggard_wake),
+            Grant::Wait { .. }
+        ));
 
         tree.remove_peer(peer(1, 1));
         assert_eq!(tree.next_wake(), None);
@@ -1150,6 +1287,85 @@ mod tests {
         assert!(tree.torrents[&torrent]
             .peers
             .contains(&(vfinish, peer(1, 2))));
+    }
+
+    #[test]
+    fn retiring_a_live_sync_demand_unblocks_funded_peers_without_disconnect() {
+        let torrent = TorrentKey(1);
+        let active = peer(1, 1);
+        let parked = peer(1, 2);
+        let mut tree = RateTree::new(Some(32 * 1024 * 1024), 0);
+        tree.add_torrent(torrent, Some(32 * 1024 * 1024), 0);
+        tree.add_peer(active, 1);
+        tree.add_peer(parked, 1);
+
+        while let (Grant::Granted, Some(grant_id)) = tree.try_grant_sync_tracked(active, BLOCK, 0) {
+            assert_eq!(tree.settle_grant(active, grant_id, BLOCK), BLOCK);
+        }
+        assert!(matches!(
+            tree.try_grant_sync_tracked(parked, BLOCK, 0).0,
+            Grant::Wait { .. }
+        ));
+        assert!(tree.waiting_peers(8).contains(&parked));
+
+        // Make rate credit available while both peers remain registered. The
+        // parked peer must stop participating once its owner retires demand.
+        tree.set_global_limit(None, 1_000_000_000);
+        tree.set_torrent_limit(torrent, None, 1_000_000_000);
+        assert!(matches!(
+            tree.try_grant_sync_tracked(active, BLOCK, 1_000_000_000).0,
+            Grant::Wait { .. }
+        ));
+        assert!(tree.retire_sync_demand(parked));
+        for _ in 0..1_000 {
+            let (grant, grant_id) = tree.try_grant_sync_tracked(active, BLOCK, 1_000_000_000);
+            assert_eq!(grant, Grant::Granted);
+            assert_eq!(tree.settle_grant(active, grant_id.unwrap(), BLOCK), BLOCK);
+        }
+        assert!(tree.peers.contains_key(&parked));
+        assert!(!tree.waiting_peers(8).contains(&parked));
+    }
+
+    #[test]
+    fn retiring_one_demand_keeps_another_demand_for_the_same_peer() {
+        let torrent = TorrentKey(1);
+        let peer_id = peer(1, 1);
+        let mut tree = RateTree::new(Some(1), 0);
+        tree.add_torrent(torrent, Some(1), 0);
+        tree.add_peer(peer_id, 1);
+        assert_eq!(tree.try_grant(peer_id, BLOCK + 1, 0), Grant::Granted);
+
+        assert!(matches!(
+            tree.try_grant_demand_tracked(peer_id, 10, 1, 0).0,
+            Grant::Wait { .. }
+        ));
+        assert!(matches!(
+            tree.try_grant_demand_tracked(peer_id, 11, 1, 0).0,
+            Grant::Wait { .. }
+        ));
+        assert!(tree.retire_demand(peer_id, 10));
+        assert_eq!(tree.waiting_peers(8), vec![peer_id]);
+        assert!(tree.retire_demand(peer_id, 11));
+        assert!(tree.waiting_peers(8).is_empty());
+    }
+
+    #[test]
+    fn a_timer_wait_does_not_hide_a_sibling_event_only_demand() {
+        let torrent = TorrentKey(1);
+        let peer_id = peer(1, 1);
+        let mut tree = RateTree::new(None, 0);
+        tree.add_torrent(torrent, None, 0);
+        tree.add_peer(peer_id, 1);
+
+        tree.set_waiting_for(peer_id, WaitOwner::Demand(10), CHANGE_ONLY_WAKE);
+        tree.set_waiting_for(peer_id, WaitOwner::Demand(11), 100);
+
+        assert!(tree.has_change_waiters(torrent));
+        assert_eq!(tree.next_wake(), Some(100));
+        assert!(tree.retire_demand(peer_id, 10));
+        assert!(!tree.has_change_waiters(torrent));
+        assert_eq!(tree.next_wake(), Some(100));
+        assert_eq!(tree.waiting_peers(1), vec![peer_id]);
     }
 
     #[test]

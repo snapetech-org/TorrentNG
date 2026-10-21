@@ -1,0 +1,13 @@
+mechanism,repeat,block_bytes,cpu_seconds_per_GiB,wall_seconds_per_GiB
+inline_warm_read,0,16384,0.113020,0.113002
+one_worker_round_trip,0,16384,1.187098,1.459901
+two_worker_round_trips,0,16384,2.035482,2.638749
+one_worker_batched_256KiB,0,262144,0.107183,0.123718
+one_worker_round_trip,1,16384,1.247363,1.553018
+two_worker_round_trips,1,16384,1.968170,2.583367
+one_worker_batched_256KiB,1,262144,0.130508,0.148413
+inline_warm_read,1,16384,0.125559,0.125788
+two_worker_round_trips,2,16384,2.016327,2.607553
+one_worker_batched_256KiB,2,262144,0.106984,0.123676
+inline_warm_read,2,16384,0.124054,0.124656
+one_worker_round_trip,2,16384,1.088642,1.358734

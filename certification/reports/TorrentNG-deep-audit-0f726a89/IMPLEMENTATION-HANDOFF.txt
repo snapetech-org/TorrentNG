@@ -1,0 +1,194 @@
+TorrentNG — implementation handoff for 0f726a89
+
+Objective
+Reduce work per useful byte while preserving protocol correctness, bounded
+memory, cancellation, and filesystem replacement protection. Resolve the
+reproduced rate-scheduler liveness defect before interpreting public-download
+performance. Measure the upload CPU path separately: the two-peer liveness
+reproduction does not explain a one-leecher seed comparison.
+
+Priority 0 — repair pending-demand lifetime in the hierarchical rate scheduler
+
+Files: transfer/rate.rs, network_budget.rs, torrent_task/peer_transfer.rs,
+torrent_task.rs; audit all other live callers including v2 and webseeds.
+
+The production reproduction is repro/rate_repro.rs. RateTree::mark_waiting
+outlives the request that wanted admission. Choking skips refills without
+retiring the waiter. Async acquire cancellation returns without clearing it.
+The compatibility adapter removes its temporary registration; live peers do
+not have that lifecycle. Preserve the live peer and outstanding grant records.
+
+Design a demand registration distinct from the peer registration and the
+already granted byte reservation. Pending demand must have a generation and
+an owner. Only genuinely runnable demand participates in fairness. Retire it
+on cancellation, choke when new requests cannot run, lack of useful work,
+completion of the admission attempt, and connection teardown. Uploads can
+have several read futures for one peer: cancelling one must not erase siblings'
+pending demand. Use explicit demand IDs or a correctly owned per-peer pending
+count, not a blanket clear_waiting() in every future destructor.
+
+Do not use remove_peer() as the production repair. It also removes grant
+accounting and affects refunds, limit epochs, and connection identity.
+
+Separate credit waits, which have a real refill deadline, from fairness waits,
+which require another demand's progress or retirement. A fairness-only wait
+must not re-arm for now+1 ns repeatedly. Make service work-conserving: when an
+eligible peer has demand and credit is available, absent/blocked peers must
+not prevent the service from granting work. Preserve weighted fairness under
+actual saturation. Consider a runnable DRR queue if repairing the existing
+virtual-finish bookkeeping cannot make those properties explicit.
+
+Required regressions:
+- Deny B, choke B without disconnecting, continue A: A progresses with credit.
+- Cancel B's async admission future without disconnecting: A progresses.
+- B runs out of useful blocks or its window fills after an earlier denial.
+- Two upload waiters for B; cancel one and keep the other eligible.
+- Choke with Fast-extension outstanding requests: legitimate late responses
+  keep their existing grants and memory ownership, while unsent demand retires.
+- Limit changes, refunds, peer-generation reuse, and disconnects preserve caps.
+- Fairness-only waits do not create a rapid timer retry loop.
+- Existing 19 RateTree tests continue to pass, plus live-adapter tests.
+
+Then run a controlled private DOWNLOAD fixture with two programmable seeders:
+B becomes unavailable after a credit denial while A remains willing. Record
+wait reason, waiter count, available credit, outstanding requests, request
+window, and useful unchoked peers. This is the targeted test for the repeated
+public-download plateau. Do not use public swarm ranking as its proof.
+
+Priority 1 — remove storage round trips as an architectural change
+
+Files: scheduler.rs, backend.rs, handle_cache.rs, torrent_task.rs.
+
+Current miss: peer task -> preparation worker -> peer task -> backend worker
+or ring -> peer task -> socket. A cache hit still pays the preparation trip.
+
+Create one bounded storage request owning all relevant permits and the final
+completion. For the blocking backend, do descriptor preparation, cache lookup,
+positioned I/O, and final identity checks inside one worker dispatch. The
+caller awaits one completion. For io_uring, keep preparation and ring ownership
+in the storage service and avoid bouncing a prepared read through the peer
+runtime before submitting it. Keep slow path metadata work off the Tokio I/O
+reactor; network filesystem validation may require its own bounded worker.
+
+Reuse an opened-file capability bound to catalog identity, access mode, content
+generation, and the existing replacement fences. Move path normalization,
+formatting, and operation-wrapper construction out of every 16 KiB request
+where lifetime permits. Do not remove replacement or no-follow checks to win
+a benchmark. Batch requests to amortize those checks and keep their ordering
+contracts explicit.
+
+Add a bounded API for already queued adjacent demand. Start experiments with
+4 and 16 blocks per batch; never wait for a full batch or reorder control
+messages. Fair admission still charges each block/byte. The scheduler can
+produce one shared read allocation with sliced responses; a short socket
+batch can send several ready Piece frames. Each block retains its own cancel,
+Fast-extension and wire-order obligations. Batching must yield to other peers
+and to deadlines. Cross-file/padding/v2 geometry keeps its correct fallback.
+
+Required evidence: worker dispatches/GiB, completions/GiB, voluntary context
+switches/GiB, metadata syscalls/GiB, CPU-s/GiB and latency. Collect counts in
+separate diagnostic runs. Compare the fused path before adding further knobs.
+The included queue benchmark demonstrates the mechanism, not app performance.
+
+Priority 2 — eliminate io_uring work that defeats its intended amortization
+
+First record the selected backend and fixed-buffer support at a phase boundary.
+These findings cannot explain a run that used pread.
+
+A. register_file_slot()/release_file_slot() register a fixed FD on demand and
+clear it when the final in-flight operation ends. At low concurrency this adds
+two fixed-file updates for isolated I/O. Compare ordinary FD SQEs with a small
+persistent, bounded fixed-file cache. If retaining slots, retain the actual
+leased descriptor and generation/access identity; a bare numeric FD is unsafe
+after close/reuse. Evict only idle entries and invalidate with existing file
+lifecycle rules. Do not persist the present numeric-FD-only key unmodified.
+
+B. Scheduler allocates an ordinary Frame before backend chooses a registered
+buffer. On a fixed read, into_registered_slot() discards that ordinary backing
+instead of returning it to the pool. Choose the actual buffer backend first,
+or submit a capacity reservation from which exactly one backing is acquired.
+Keep charges with actual allocations and the registered set accounted once.
+
+C. Registered slots now follow Bytes through socket and cache lifetimes.
+Cached read-ahead can pin all four slots of a ring, forcing ordinary fallback.
+Measure occupancy, hold time and fallback rate. Separate long-lived cache
+storage from scarce I/O slots when its saved copy does not justify pinning.
+
+Priority 3 — make retention globally reclaimable
+
+Files: scheduler.rs, frame.rs, resource.rs, codec.rs.
+
+The cache is per TorrentTask scheduler, default 8 MiB, bounded collectively
+by resource admission. It is separate from the shared workers and file catalog.
+Use a process-wide reclaimable cache budget with per-torrent fairness and a
+pressure eviction interface. PeerReadCache currently shares PeerBuffer credit
+with required wire/payload buffers. Required work should be able to evict
+optional cached data before denial. Evict a replacement victim before trying
+to reserve memory for its replacement, or use a safe atomic replacement lease.
+
+Track full backing capacity and live aliases. A small slice can keep a larger
+allocation alive after its cache entry is evicted. Keep mandatory in-flight
+ownership until the final view drops. Distinguish cache logical bytes, backing
+bytes, frame-pool active bytes, idle retained bytes, and actual anonymous RSS.
+Some counters overlap; do not sum them as independent allocations.
+
+Coordinate cache eviction with frame-pool trimming. Returning an evicted cache
+buffer to a 16 MiB idle free list does not return memory to the allocator.
+Add pressure/lull trimming or a no-retain return under pressure, with hysteresis
+and a modest warm reserve so steady transfers retain reuse benefits. No periodic
+high-frequency sweeper. Registered buffers remain a separately budgeted baseline.
+
+PeerCodec keeps capacity credits to the connection high-water mark. It has no
+shrink path. Audit retained read capacity and lease high-water values after a
+large metadata/bitfield message. Reconcile shrink with real allocation and
+outstanding views; do not release accounting while backing memory is live.
+
+Validate fresh idle AND post-transfer idle at 1, 10, and 100 loaded torrents,
+with a long-lived seed connection case and an idle/dormant lifecycle case.
+Measure actual occupancy; reducing an unused maximum is not an RSS improvement.
+
+Priority 4 — reduce download storage and parse work after fixing liveness
+
+The default assembly budget is zero. Incoming Piece parsing copies payload;
+received blocks are written separately; completed pieces are read back for
+hashing. Page-cache hits can hide those rereads from io.stat but do not remove
+CPU, queues, allocations, or logical filesystem I/O.
+
+Introduce a small GLOBAL incomplete-piece budget and hash from retained receive
+bytes when practical, then write coalesced ranges. Start controlled experiments
+at 0, 4, and 8 MiB global budgets. Prefer completing useful partial pieces to
+spreading this budget across unrelated pieces. Support oversized pieces and
+out-of-order arrivals through an explicit bounded spill path. Reuse the existing
+assembly mechanism only after verifying its accounting and request-selection
+behavior under multiple torrents. TCP's owned decoded Piece buffer can avoid
+the parse copy; keep compact ownership and guard against large-buffer pinning.
+
+Required correctness: v1/v2/hybrid hashes, piece boundaries, padding, truncated
+I/O, cancellation during write/hash, recheck, crash checkpoint, and peer churn.
+Do not infer full-download RAM from a public probe that completes only 5%.
+
+Validation order that avoids more uninformative full runs
+
+1. Run the targeted liveness regressions and private two-seeder fixture.
+2. Capture a diagnostic CPU profile of the exact current binary with a single
+   verified seeding fixture. Record backend/fixed-buffer selection. Attribute
+   user and system CPU to thread names and stacks, with context switch and
+   relevant syscall counts. Run these separately from clean score runs.
+3. Baseline versus fused storage path, same backend, same file/cache state and
+   receiver. Alternate order, repeat, retain raw CPU/bytes/time and RAM series.
+4. Backend/fixed-file experiment if the measured backend is io_uring.
+5. Global-retention and assembly-budget experiments, independently.
+6. Only the winning combined candidate gets another five-client comparison.
+
+Use a throughput ladder (4, 32, 128 MiB/s where feasible, and uncapped) to expose
+fixed CPU costs versus per-byte CPU costs. Equal 198-second times with a
+4 MiB/s receiver cap are expected and do not show unchanged maximum throughput.
+Report achieved goodput alongside CPU-s/GiB, anonymous RAM, file-backed memory,
+PSS, socket/kernel memory, logical I/O, and physical block I/O. Compare equal
+completed workloads with final hash checks. Hold protocol/encryption, peer
+count, DHT mode, durability, cache state and memory pressure constant.
+
+Acceptance is measured improvement beyond run variation with unchanged useful
+work and correctness. No particular speedup or universal superiority has been
+established by this audit. CPU attribution to the whole client is still unknown;
+the direct source defect and mechanism results are the starting evidence.

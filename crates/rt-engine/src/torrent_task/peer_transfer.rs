@@ -395,6 +395,13 @@ impl TorrentTask {
                     .active_peers
                     .get(&peer)
                     .map(|handle| handle.transfer_conn);
+                if let Some(transfer_conn) = transfer_conn {
+                    self.network_budget
+                        .retire_download_demand(TransferPeerId::new(
+                            self.transfer_rate_torrent,
+                            transfer_conn,
+                        ));
+                }
                 let outstanding = if let Some(handle) = self.active_peers.get_mut(&peer) {
                     handle.download_generation = download_generation;
                     handle.choked = true;
@@ -553,6 +560,7 @@ impl TorrentTask {
             PeerEvent::Disconnected {
                 peer, outstanding, ..
             } => {
+                self.rate_waiting_peers.remove(&peer);
                 // The peer loop's view can omit commands still queued in its
                 // mailbox. Union it with the engine's view so a disconnect
                 // cannot strand picker reservations, while deduplicating the
@@ -743,12 +751,20 @@ impl TorrentTask {
 
     pub(super) async fn refill_peer_requests(&mut self, peer: SocketAddr) {
         let Some(handle) = self.active_peers.get(&peer) else {
+            self.rate_waiting_peers.remove(&peer);
             return;
         };
+        let transfer_conn = handle.transfer_conn;
         if handle.choked {
+            self.network_budget
+                .retire_download_demand(TransferPeerId::new(
+                    self.transfer_rate_torrent,
+                    transfer_conn,
+                ));
+            self.rate_waiting_peers.remove(&peer);
             return;
         }
-        let transfer_conn = handle.transfer_conn;
+        let rate_peer = TransferPeerId::new(self.transfer_rate_torrent, transfer_conn);
         // The ledger already maintains this torrent-wide count. Subtract the
         // serial webseed request and this peer's requests to avoid scanning
         // every active peer on every refill.
@@ -837,6 +853,7 @@ impl TorrentTask {
         let mut queue_full = 0u64;
         let mut memory_retry = false;
         let mut rate_wait_delay = None;
+        let mut rate_demand_waiting = false;
         let mut rate_admission_error = None;
         {
             let picker = &mut self.picker;
@@ -849,7 +866,6 @@ impl TorrentTask {
                 .hybrid_v2
                 .as_ref()
                 .and_then(|hybrid| hybrid.geometry.clone());
-            let rate_peer = TransferPeerId::new(self.transfer_rate_torrent, transfer_conn);
             let source_admission = network_budget.source_admission_for_torrent(rate_peer.torrent);
             let Some(handle) = peers.get_mut(&peer) else {
                 return;
@@ -942,6 +958,17 @@ impl TorrentTask {
                             }
                             drop(memory_lease);
                             rate_wait_delay = Some(delay);
+                            rate_demand_waiting = true;
+                            break;
+                        }
+                        Ok(RateAdmissionAttempt::WaitForChange) => {
+                            transfer_ledger.on_reject_peer(transfer_conn, block);
+                            picker.cancel_request(req.piece as usize, req.begin);
+                            if transfer_ledger.piece_progress(req.piece).is_none() {
+                                transfer_piece_memory_leases.remove(&req.piece);
+                            }
+                            drop(memory_lease);
+                            rate_demand_waiting = true;
                             break;
                         }
                         Err(error) => {
@@ -1022,6 +1049,17 @@ impl TorrentTask {
             self.peer_request_window_reductions =
                 self.peer_request_window_reductions.saturating_add(1);
         }
+        if !rate_demand_waiting {
+            // A previous denial can stop being runnable when the peer's
+            // window fills, useful work disappears, or another admission
+            // path makes the refill complete without another rate wait.
+            self.network_budget.retire_download_demand(rate_peer);
+        }
+        if rate_demand_waiting {
+            self.rate_waiting_peers.insert(peer);
+        } else {
+            self.rate_waiting_peers.remove(&peer);
+        }
         if let Some(wait) = rate_wait_delay {
             let deadline = Instant::now() + wait;
             self.download_rate_wake = Some(
@@ -1043,6 +1081,20 @@ impl TorrentTask {
         let peers: Vec<SocketAddr> = self.active_peers.keys().copied().collect();
         for peer in peers {
             self.refill_peer_requests(peer).await;
+        }
+    }
+
+    /// Retry only peers that were parked on rate admission after a change to
+    /// the picker or transfer ledger can make their request useful again.
+    pub(super) async fn retry_rate_waiting_peers(&mut self) {
+        if self.paused || self.rate_waiting_peers.is_empty() {
+            return;
+        }
+        let peers: Vec<SocketAddr> = self.rate_waiting_peers.drain().collect();
+        for peer in peers {
+            if self.active_peers.contains_key(&peer) {
+                self.refill_peer_requests(peer).await;
+            }
         }
     }
 
@@ -1891,6 +1943,7 @@ impl TorrentTask {
             return;
         }
         self.shutting_down_peers = true;
+        self.rate_waiting_peers.clear();
         self.close_webseed_transfer_connection();
         // Accepted transfer writes and hashes own their payload leases and
         // piece generation until completion. Drain them before resetting the

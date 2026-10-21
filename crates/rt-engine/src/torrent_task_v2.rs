@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -632,8 +632,14 @@ struct V2PeerContext {
     storage: MountScheduler,
     resources: ResourceGovernor,
     network_budget: GlobalNetworkBudget,
+    /// Per-torrent requestability epoch plus targeted wakeups for peers
+    /// parked on rate admission.
+    requestability: V2Requestability,
+    requestability_retry: RateLimitCancellation,
     /// Global credit changes also change the advisory request-window budget.
     download_limit_changes: RateLimitCancellation,
+    /// Same-torrent progress can release event-only fairness waits.
+    download_demand_changes: RateLimitCancellation,
     peer_control: RateLimitCancellation,
     peer_generation: u64,
     transfer_conn: ConnectionId,
@@ -657,6 +663,76 @@ struct V2PeerContext {
     assembly_cap_bytes: usize,
     events: mpsc::Sender<V2PeerEvent>,
     proof_cache: Arc<V2ProofCache>,
+}
+
+#[derive(Clone, Default)]
+struct V2Requestability {
+    generation: Arc<AtomicU64>,
+    waiting: Arc<Mutex<HashMap<RatePeerId, RateLimitCancellation>>>,
+    waiting_count: Arc<AtomicUsize>,
+    actor_retry: RateLimitCancellation,
+    actor_waiting: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl V2Requestability {
+    fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+
+    fn mark_changed(&self) {
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        if self.actor_waiting.load(Ordering::Acquire) {
+            self.actor_retry.cancel();
+        }
+        if self.waiting_count.load(Ordering::Acquire) == 0 {
+            return;
+        }
+        if let Ok(waiting) = self.waiting.lock() {
+            for retry in waiting.values() {
+                retry.cancel();
+            }
+        }
+    }
+
+    fn set_waiting(&self, peer: RatePeerId, retry: RateLimitCancellation, is_waiting: bool) {
+        let Ok(mut waiting) = self.waiting.lock() else {
+            return;
+        };
+        if is_waiting {
+            if let std::collections::hash_map::Entry::Vacant(entry) = waiting.entry(peer) {
+                entry.insert(retry);
+                self.waiting_count.fetch_add(1, Ordering::AcqRel);
+            }
+        } else if waiting.remove(&peer).is_some() {
+            self.waiting_count.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
+
+    fn remove_waiter(&self, peer: RatePeerId) {
+        self.set_waiting(peer, RateLimitCancellation::default(), false);
+    }
+
+    fn is_waiting(&self, peer: RatePeerId) -> bool {
+        self.waiting
+            .lock()
+            .is_ok_and(|waiting| waiting.contains_key(&peer))
+    }
+
+    fn clear(&self) {
+        if let Ok(mut waiting) = self.waiting.lock() {
+            waiting.clear();
+            self.waiting_count.store(0, Ordering::Release);
+        }
+        self.actor_waiting.store(false, Ordering::Release);
+    }
+
+    fn actor_retry(&self) -> RateLimitCancellation {
+        self.actor_retry.clone()
+    }
+
+    fn set_actor_waiting(&self, is_waiting: bool) {
+        self.actor_waiting.store(is_waiting, Ordering::Release);
+    }
 }
 
 fn update_v2_peer_bitmap(
@@ -689,7 +765,9 @@ fn update_v2_peer_bitmap(
     };
     let result = update(Arc::make_mut(&mut peer.remote_have), &mut record_change);
     peer.remote_have_count = have_count;
-    result.map_err(anyhow::Error::msg)
+    result.map_err(anyhow::Error::msg)?;
+    context.requestability.mark_changed();
+    Ok(())
 }
 
 fn record_v2_peer_have_change(have_count: &mut usize, have: bool) {
@@ -1812,6 +1890,7 @@ pub struct V2TorrentTask {
     resources: ResourceGovernor,
     network_budget: GlobalNetworkBudget,
     transfer_rate_torrent: TorrentKey,
+    requestability: V2Requestability,
     torrent_download_limit_bytes_per_sec: Option<u64>,
     torrent_upload_limit_bytes_per_sec: Option<u64>,
     rate_limits_restore_failed: bool,
@@ -1867,6 +1946,7 @@ impl Drop for V2TorrentTask {
         for peer in self.peers.values() {
             peer.peer_control.cancel();
         }
+        self.requestability.clear();
         self.network_budget
             .remove_transfer_torrent(self.transfer_rate_torrent);
     }
@@ -2032,6 +2112,7 @@ impl V2TorrentTask {
         let transfer_piece_memory_leases = Arc::new(Mutex::new(HashMap::new()));
         let prepared_files = Arc::new(Mutex::new(HashSet::new()));
         let prepared_file_locks = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+        let requestability = V2Requestability::default();
         let transfer_started_at = Instant::now();
         let peer_event_capacity = max_peers.clamp(64, 512);
         let (events_tx, events_rx) = mpsc::channel(peer_event_capacity);
@@ -2068,6 +2149,7 @@ impl V2TorrentTask {
             resources,
             network_budget,
             transfer_rate_torrent,
+            requestability,
             torrent_download_limit_bytes_per_sec,
             torrent_upload_limit_bytes_per_sec,
             rate_limits_restore_failed: rate_limit_restore_failed,
@@ -2545,6 +2627,14 @@ impl V2TorrentTask {
         let mut choke_tick = interval(V2_CHOKE_INTERVAL);
         let mut request_timeout_tick = interval(V2_REQUEST_TIMEOUT_TICK);
         let mut webseed_sleep = Box::pin(tokio::time::sleep(Duration::ZERO));
+        let download_limit_changes = self.network_budget.download_limit_changes();
+        let mut download_limit_generation = download_limit_changes.generation();
+        let download_demand_changes = self
+            .network_budget
+            .download_demand_changes(self.transfer_rate_torrent);
+        let mut download_demand_generation = download_demand_changes.generation();
+        let requestability_retry = self.requestability.actor_retry();
+        let mut requestability_generation = requestability_retry.generation();
         loop {
             tokio::select! {
                 command = self.cmd_rx.recv() => {
@@ -2595,6 +2685,18 @@ impl V2TorrentTask {
                         self.start_due_tracker_announces().await;
                     }
                 }
+                _ = download_limit_changes.wait_for_change(download_limit_generation) => {
+                    download_limit_generation = download_limit_changes.generation();
+                    webseed_sleep.as_mut().reset(tokio::time::Instant::now());
+                }
+                _ = download_demand_changes.wait_for_change(download_demand_generation) => {
+                    download_demand_generation = download_demand_changes.generation();
+                    webseed_sleep.as_mut().reset(tokio::time::Instant::now());
+                }
+                _ = requestability_retry.wait_for_change(requestability_generation) => {
+                    requestability_generation = requestability_retry.generation();
+                    webseed_sleep.as_mut().reset(tokio::time::Instant::now());
+                }
                 activity = async {
                     let webseed = self.webseed.as_mut().expect("guarded v2 webseed runtime");
                     tokio::select! {
@@ -2612,9 +2714,11 @@ impl V2TorrentTask {
                     match activity {
                         V2WebseedActivity::Fetch(result) => {
                             self.finish_v2_webseed_fetch(result).await;
+                            self.requestability.mark_changed();
                         }
                         V2WebseedActivity::Transfer(Some(completion)) => {
                             self.handle_v2_webseed_transfer_completion(completion).await;
+                            self.requestability.mark_changed();
                         }
                         V2WebseedActivity::Transfer(None) => {}
                     }
@@ -2748,31 +2852,67 @@ impl V2TorrentTask {
     }
 
     async fn start_v2_webseed_block(&mut self) -> bool {
+        let requestability_generation = self.requestability.generation();
+        self.requestability.set_actor_waiting(false);
+        if let Some(webseed) = self.webseed.as_ref() {
+            // A prior rate denial belongs to the previous admission attempt.
+            // Retire it before checking picker, memory, or seed retry state so
+            // an early exit cannot leave the webseed as a fairness blocker.
+            webseed
+                .context
+                .network_budget
+                .retire_download_demand(webseed.context.rate_peer);
+        }
         if self.paused
             || self.meta.webseeds.is_empty()
             || self
                 .completion_held
                 .load(std::sync::atomic::Ordering::Relaxed)
         {
+            if let Some(webseed) = self.webseed.as_ref() {
+                webseed
+                    .context
+                    .network_budget
+                    .retire_download_demand(webseed.context.rate_peer);
+            }
             return false;
         }
         if !self.ensure_v2_webseed_runtime() {
+            if let Some(webseed) = self.webseed.as_ref() {
+                webseed
+                    .context
+                    .network_budget
+                    .retire_download_demand(webseed.context.rate_peer);
+            }
             return false;
         }
         let local_have = self.local_have.read().await.clone();
         if local_have.count_ones() == self.piece_map.piece_count as usize {
+            if let Some(webseed) = self.webseed.as_ref() {
+                webseed
+                    .context
+                    .network_budget
+                    .retire_download_demand(webseed.context.rate_peer);
+            }
             return false;
         }
         let Some(webseed) = self.webseed.as_ref() else {
             return false;
         };
+        if webseed
+            .admission_retry_at
+            .is_some_and(|deadline| Instant::now() < deadline)
+        {
+            return false;
+        }
         if webseed.fetch.is_some()
             || webseed.transfer_jobs.len() >= V2_MAX_PENDING_TRANSFER_JOBS
             || webseed.pending_piece_completions.len() >= V2_MAX_PENDING_PIECE_JOBS
-            || webseed
-                .admission_retry_at
-                .is_some_and(|deadline| Instant::now() < deadline)
         {
+            webseed
+                .context
+                .network_budget
+                .retire_download_demand(webseed.context.rate_peer);
             return false;
         }
 
@@ -2782,6 +2922,9 @@ impl V2TorrentTask {
         let mut selected = None;
         {
             let Ok(ledger) = context.transfer_ledger.lock() else {
+                context
+                    .network_budget
+                    .retire_download_demand(context.rate_peer);
                 return false;
             };
             for piece in active_pieces {
@@ -2844,13 +2987,22 @@ impl V2TorrentTask {
             }
         }
         let Some(block) = selected else {
+            context
+                .network_budget
+                .retire_download_demand(context.rate_peer);
             return false;
         };
         let Ok(region) = context.piece_map.piece_to_file(block.piece) else {
+            context
+                .network_budget
+                .retire_download_demand(context.rate_peer);
             self.advance_v2_webseed_cursor(block.piece);
             return false;
         };
         if region.pad {
+            context
+                .network_budget
+                .retire_download_demand(context.rate_peer);
             self.advance_v2_webseed_cursor(block.piece);
             return false;
         }
@@ -2860,10 +3012,16 @@ impl V2TorrentTask {
             .iter()
             .find(|file| file.index == region.file_index)
         else {
+            context
+                .network_budget
+                .retire_download_demand(context.rate_peer);
             self.advance_v2_webseed_cursor(block.piece);
             return false;
         };
         let Some((seed_index, url)) = self.select_v2_webseed(block.piece, file) else {
+            context
+                .network_budget
+                .retire_download_demand(context.rate_peer);
             self.advance_v2_webseed_cursor(block.piece);
             return false;
         };
@@ -2902,6 +3060,22 @@ impl V2TorrentTask {
             Ok(RateAdmissionAttempt::Wait(delay)) => {
                 if let Some(webseed) = self.webseed.as_mut() {
                     webseed.admission_retry_at = Some(Instant::now() + delay);
+                }
+                self.requestability.set_actor_waiting(true);
+                if self.requestability.generation() != requestability_generation {
+                    self.requestability.actor_retry.cancel();
+                }
+                drop(memory_lease);
+                release_v2_transfer_piece_memory_if_idle(&context, block.piece);
+                return false;
+            }
+            Ok(RateAdmissionAttempt::WaitForChange) => {
+                if let Some(webseed) = self.webseed.as_mut() {
+                    webseed.admission_retry_at = None;
+                }
+                self.requestability.set_actor_waiting(true);
+                if self.requestability.generation() != requestability_generation {
+                    self.requestability.actor_retry.cancel();
                 }
                 drop(memory_lease);
                 release_v2_transfer_piece_memory_if_idle(&context, block.piece);
@@ -3324,6 +3498,7 @@ impl V2TorrentTask {
     }
 
     async fn shutdown_webseed(&mut self) {
+        self.requestability.set_actor_waiting(false);
         let Some(mut webseed) = self.webseed.take() else {
             return;
         };
@@ -4536,6 +4711,7 @@ impl V2TorrentTask {
     async fn handle_peer_event(&mut self, event: V2PeerEvent) {
         match event {
             V2PeerEvent::Downloaded { peer, bytes } => {
+                self.requestability.mark_changed();
                 self.pending_downloaded_bytes = self.pending_downloaded_bytes.saturating_add(bytes);
                 let complete = self.is_complete().await;
                 let release = complete && self.completion_may_release().await;
@@ -4567,9 +4743,14 @@ impl V2TorrentTask {
                     .is_some_and(|handle| handle.transfer_conn == transfer_conn);
                 if still_current {
                     self.peers.remove(&peer);
+                    self.requestability.remove_waiter(TransferPeerId::new(
+                        self.transfer_rate_torrent,
+                        transfer_conn,
+                    ));
                     if let Ok(mut ledger) = self.transfer_ledger.lock() {
                         let _ = ledger.disconnect(transfer_conn);
                     }
+                    self.requestability.mark_changed();
                 }
             }
             V2PeerEvent::TransferActions { actions } => {
@@ -4584,6 +4765,7 @@ impl V2TorrentTask {
     }
 
     fn apply_v2_transfer_actions(&self, actions: Vec<TransferAction>) {
+        let requestability_changed = !actions.is_empty();
         let mut failed = 0u64;
         for action in actions {
             let TransferAction::Cancel { conn, block } = action;
@@ -4620,6 +4802,9 @@ impl V2TorrentTask {
                 failed,
                 "some v2 peer cancellation actions could not enter their bounded control queues"
             );
+        }
+        if requestability_changed {
+            self.requestability.mark_changed();
         }
     }
 
@@ -4725,6 +4910,7 @@ impl V2TorrentTask {
         let rate_peer = TransferPeerId::new(self.transfer_rate_torrent, transfer_conn);
         self.network_budget.register_transfer_peer(rate_peer);
         let peer_control = RateLimitCancellation::default();
+        let requestability_retry = RateLimitCancellation::default();
         let peer_generation = peer_control.generation();
         let (transfer_commands, transfer_command_rx) = mpsc::channel(V2_TRANSFER_COMMAND_CAPACITY);
         V2PeerContext {
@@ -4739,7 +4925,12 @@ impl V2TorrentTask {
             storage: self.storage.clone(),
             resources: self.resources.clone(),
             network_budget: self.network_budget.clone(),
+            requestability: self.requestability.clone(),
+            requestability_retry,
             download_limit_changes: self.network_budget.download_limit_changes(),
+            download_demand_changes: self
+                .network_budget
+                .download_demand_changes(self.transfer_rate_torrent),
             peer_control,
             peer_generation,
             transfer_conn,
@@ -5133,6 +5324,10 @@ impl V2TorrentTask {
             return;
         };
         let transfer_conn = handle.transfer_conn;
+        self.requestability.remove_waiter(TransferPeerId::new(
+            self.transfer_rate_torrent,
+            transfer_conn,
+        ));
         handle.peer_control.cancel();
         let tasks = futures::stream::FuturesUnordered::new();
         tasks.push(handle.task);
@@ -5145,6 +5340,7 @@ impl V2TorrentTask {
         if let Ok(mut ledger) = self.transfer_ledger.lock() {
             let _ = ledger.disconnect(transfer_conn);
         }
+        self.requestability.mark_changed();
     }
 
     async fn shutdown_peers(&mut self) {
@@ -5169,6 +5365,7 @@ impl V2TorrentTask {
                 let _ = ledger.disconnect(transfer_conn);
             }
         }
+        self.requestability.clear();
     }
 
     async fn join_v2_peer_tasks(
@@ -5722,6 +5919,8 @@ async fn run_v2_peer_protocol(
     let mut memory_retry = interval(Duration::from_secs(1));
     let mut last_activity = Instant::now();
     let mut download_limit_generation = context.download_limit_changes.generation();
+    let mut download_demand_generation = context.download_demand_changes.generation();
+    let mut requestability_generation = context.requestability_retry.generation();
 
     let protocol_result = async {
         loop {
@@ -5757,6 +5956,34 @@ async fn run_v2_peer_protocol(
             }
             _ = context.download_limit_changes.wait_for_change(download_limit_generation) => {
                 download_limit_generation = context.download_limit_changes.generation();
+                fill_v2_requests(
+                    &context,
+                    &mut framed,
+                    &state,
+                    &mut outstanding,
+                    &mut assemblies,
+                    transfer_jobs.len(),
+                    &pending_block_completions,
+                    &pending_piece_completions,
+                ).await?;
+            }
+            _ = context.download_demand_changes.wait_for_change(download_demand_generation) => {
+                download_demand_generation = context.download_demand_changes.generation();
+                if context.requestability.is_waiting(context.rate_peer) {
+                    fill_v2_requests(
+                        &context,
+                        &mut framed,
+                        &state,
+                        &mut outstanding,
+                        &mut assemblies,
+                        transfer_jobs.len(),
+                        &pending_block_completions,
+                        &pending_piece_completions,
+                    ).await?;
+                }
+            }
+            _ = context.requestability_retry.wait_for_change(requestability_generation) => {
+                requestability_generation = context.requestability_retry.generation();
                 fill_v2_requests(
                     &context,
                     &mut framed,
@@ -5993,6 +6220,11 @@ async fn run_v2_peer_protocol(
                         ).await?;
                     }
                     Message::Choke => {
+                        // Choke ends unsent request demand, but outstanding
+                        // Fast requests and their grants retain ownership.
+                        context
+                            .network_budget
+                            .retire_download_demand(context.rate_peer);
                         let abandoned_pieces = if remote_supports_fast {
                             Vec::new()
                         } else {
@@ -6016,6 +6248,7 @@ async fn run_v2_peer_protocol(
                         }
                         if let Ok(mut peer) = state.lock() {
                             peer.choked = true;
+                            peer.download_rate_retry_at = None;
                             peer.outstanding = outstanding.len();
                             update_v2_assembly_stats(
                                 &mut peer,
@@ -6024,6 +6257,12 @@ async fn run_v2_peer_protocol(
                                 &pending_piece_completions,
                             );
                         }
+                        context.requestability.set_waiting(
+                            context.rate_peer,
+                            context.requestability_retry.clone(),
+                            false,
+                        );
+                        context.requestability.mark_changed();
                     }
                     Message::Interested => {
                         let changed = if let Ok(mut peer) = state.lock() {
@@ -6117,6 +6356,7 @@ async fn run_v2_peer_protocol(
                                     BlockExtent::new(piece, begin, length),
                                 );
                             }
+                            context.requestability.mark_changed();
                         }
                         fill_v2_requests(
                             &context,
@@ -6144,6 +6384,7 @@ async fn run_v2_peer_protocol(
                             begin,
                             data,
                         ).await?;
+                        context.requestability.mark_changed();
                         start_ready_v2_piece_jobs(
                             &context,
                             &mut assemblies,
@@ -6261,6 +6502,7 @@ async fn run_v2_peer_protocol(
                         ).await;
                     }
                 }
+                context.requestability.mark_changed();
                 start_ready_v2_piece_jobs(
                     &context,
                     &mut assemblies,
@@ -6552,6 +6794,14 @@ async fn update_v2_interest(
     remote_availability_known: bool,
 ) -> anyhow::Result<()> {
     if context.peer_control.generation() != context.peer_generation {
+        context
+            .network_budget
+            .retire_download_demand(context.rate_peer);
+        context.requestability.set_waiting(
+            context.rate_peer,
+            context.requestability_retry.clone(),
+            false,
+        );
         return Ok(());
     }
     let local_have = context.local_have.read().await.clone();
@@ -6798,7 +7048,11 @@ async fn fill_v2_requests(
     pending_block_completions: &HashMap<(u32, u32), V2PendingCompletion>,
     pending_piece_completions: &HashMap<u32, V2PendingCompletion>,
 ) -> anyhow::Result<()> {
+    let requestability_generation = context.requestability.generation();
     if context.peer_control.generation() != context.peer_generation {
+        context
+            .network_budget
+            .retire_download_demand(context.rate_peer);
         return Ok(());
     }
     let choked = state
@@ -6809,6 +7063,14 @@ async fn fill_v2_requests(
         })
         .unwrap_or(true);
     if choked {
+        context
+            .network_budget
+            .retire_download_demand(context.rate_peer);
+        context.requestability.set_waiting(
+            context.rate_peer,
+            context.requestability_retry.clone(),
+            false,
+        );
         return Ok(());
     }
     let (remote_have, mut next_piece_cursor) = state
@@ -6884,6 +7146,7 @@ async fn fill_v2_requests(
     } else {
         None
     };
+    let mut rate_demand_waiting = false;
     while outstanding.len() < request_window {
         let foreign_activity = context
             .transfer_ledger
@@ -7066,6 +7329,26 @@ async fn fill_v2_requests(
                 if let Ok(mut peer) = state.lock() {
                     peer.download_rate_retry_at = Some(Instant::now() + delay);
                 }
+                rate_demand_waiting = true;
+                break;
+            }
+            Ok(RateAdmissionAttempt::WaitForChange) => {
+                let piece_released = {
+                    let mut ledger = context
+                        .transfer_ledger
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("v2 transfer ledger lock poisoned"))?;
+                    let _ = ledger.on_reject(context.transfer_conn, block);
+                    ledger.piece_progress(piece).is_none()
+                };
+                if is_new_assembly {
+                    assemblies.remove(&piece);
+                }
+                if piece_released {
+                    release_v2_transfer_piece_memory(context, piece);
+                }
+                drop(memory_lease);
+                rate_demand_waiting = true;
                 break;
             }
             Err(error) => {
@@ -7210,6 +7493,22 @@ async fn fill_v2_requests(
             pending_block_completions,
             pending_piece_completions,
         );
+    }
+    if !rate_demand_waiting {
+        context
+            .network_budget
+            .retire_download_demand(context.rate_peer);
+    }
+    context.requestability.set_waiting(
+        context.rate_peer,
+        context.requestability_retry.clone(),
+        rate_demand_waiting,
+    );
+    if rate_demand_waiting && context.requestability.generation() != requestability_generation {
+        // A picker or ledger change raced the failed refill before it could
+        // join the sparse waiter set. Retry against the new state immediately
+        // instead of parking on an event that has already happened.
+        context.requestability_retry.cancel();
     }
     Ok(())
 }
@@ -7380,6 +7679,7 @@ async fn apply_v2_piece_completion(
         return;
     }
     pending_piece_completions.remove(&completion.piece);
+    context.requestability.mark_changed();
     match completion.result {
         Ok(()) => {
             let actions = {
@@ -7484,6 +7784,7 @@ async fn drain_v2_transfer_jobs(
                     .await;
             }
         }
+        context.requestability.mark_changed();
         start_ready_v2_piece_jobs(
             context,
             assemblies,
@@ -7780,6 +8081,7 @@ async fn handle_v2_piece(
         | ReceiveOutcome::Unsolicited
         | ReceiveOutcome::Invalid(_) => anyhow::bail!("unsolicited v2 piece block"),
     };
+    context.requestability.mark_changed();
     if let Ok(mut peer) = state.lock() {
         peer.request_window
             .on_response_delay(accepted_at.saturating_sub(sent_at));
@@ -8764,6 +9066,54 @@ mod tests {
     use super::*;
 
     #[test]
+    fn requestability_wakes_only_peers_parked_on_rate_admission() {
+        let requestability = V2Requestability::default();
+        let first_peer = RatePeerId::new(
+            TorrentKey(1),
+            ConnectionId {
+                slot: 1,
+                generation: 1,
+            },
+        );
+        let second_peer = RatePeerId::new(
+            TorrentKey(1),
+            ConnectionId {
+                slot: 2,
+                generation: 1,
+            },
+        );
+        let first_retry = RateLimitCancellation::default();
+        let second_retry = RateLimitCancellation::default();
+        let first_generation = first_retry.generation();
+        let second_generation = second_retry.generation();
+
+        requestability.set_waiting(first_peer, first_retry.clone(), true);
+        assert!(requestability.is_waiting(first_peer));
+        assert!(!requestability.is_waiting(second_peer));
+        requestability.mark_changed();
+
+        assert_ne!(first_retry.generation(), first_generation);
+        assert_eq!(second_retry.generation(), second_generation);
+        assert_eq!(requestability.generation(), 1);
+
+        requestability.remove_waiter(first_peer);
+        let retired_generation = first_retry.generation();
+        requestability.mark_changed();
+        assert_eq!(first_retry.generation(), retired_generation);
+        assert_eq!(requestability.waiting_count.load(Ordering::Acquire), 0);
+
+        let actor_retry = requestability.actor_retry();
+        let actor_generation = actor_retry.generation();
+        requestability.set_actor_waiting(true);
+        requestability.mark_changed();
+        assert_ne!(actor_retry.generation(), actor_generation);
+        requestability.set_actor_waiting(false);
+        let actor_generation = actor_retry.generation();
+        requestability.mark_changed();
+        assert_eq!(actor_retry.generation(), actor_generation);
+    }
+
+    #[test]
     fn bitmap_roundtrip_preserves_v2_shape() {
         let mut bitmap = V2Bitmap::new(10);
         bitmap.set(0, true);
@@ -9469,7 +9819,10 @@ mod tests {
             storage: storage.clone(),
             resources,
             network_budget: network_budget.clone(),
+            requestability: V2Requestability::default(),
+            requestability_retry: RateLimitCancellation::default(),
             download_limit_changes: network_budget.download_limit_changes(),
+            download_demand_changes: network_budget.download_demand_changes(rate_torrent),
             peer_control: RateLimitCancellation::default(),
             peer_generation: 0,
             transfer_conn,
@@ -10179,6 +10532,9 @@ mod tests {
             RateAdmissionAttempt::Granted(grant) => grant,
             RateAdmissionAttempt::Wait(delay) => {
                 panic!("startup burst unexpectedly waited: {delay:?}")
+            }
+            RateAdmissionAttempt::WaitForChange => {
+                panic!("startup burst unexpectedly waited for fairness progress")
             }
         };
         assert_eq!(

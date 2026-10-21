@@ -2145,6 +2145,18 @@ Deadlines describe the last grant attempt. A limit change or refund can make
 parked requests eligible sooner, so the live adapter must promptly reconsider
 the affected requests instead of waiting for their previous deadlines.
 
+Pending demand is a separate lifetime from the live peer registration and any
+granted byte reservation. Synchronous refills own one demand per peer;
+asynchronous admissions own distinct demand IDs so canceling one request cannot
+erase a sibling. Owners retire pending demand when choking, useful work ending,
+admission completion, cancellation, or teardown makes it unrunnable. A
+fairness-only wait has no timer. Same-torrent rate progress wakes pending
+demands; changes to picker or ledger requestability wake only the parked v1
+peers and pure-v2 peers. V2 uses a requestability epoch to catch state changes
+that race waiter registration, and its webseed actor wakes from the same
+requestability change rather than relying on its 60-second idle retry. This
+avoids rapid retry timers while preserving live peer and unsettled-grant state.
+
 `TorrentKey` is unique for a task generation while stale peer work may still
 exist. `TransferPeerId` combines that key with the connection-local generation-safe
 `ConnectionId`, because separate torrent ledgers can both register `conn#0.1`.
@@ -2199,6 +2211,14 @@ cancellation/refund, and shared source scheduling.
   payload, and clamp at bucket capacity.
 - Ordered per-torrent active/wait indexes and the global wake index stay
   coherent across grant, wait, refund, peer removal, and torrent removal.
+- A peer that stops requesting after a denial cannot remain as a fairness
+  blocker after choke, exhausted useful work, cancellation, or teardown;
+  another registered peer with available credit can continue without removing
+  the parked peer's live connection or outstanding grants.
+- Canceling one asynchronous demand removes only that request's waiter and
+  leaves sibling requests for the same peer represented.
+- Fairness-only waits wake from same-torrent progress or demand retirement and
+  do not create a rapid timer retry loop.
 - The due-peer query returns only indexed peers at or before the supplied
   deadline, respects its caller-provided batch bound, and leaves entries
   indexed until a grant attempt reconciles them.
@@ -2239,6 +2259,12 @@ cancellation/refund, and shared source scheduling.
   torrent-limit updates, and
   `reused_ledger_connections_are_isolated_between_torrents`; bounded waiter
   batches also cover immediate reconsideration after a global limit change.
+- New pending-demand regressions cover stale live-peer retirement, same-peer
+  asynchronous demand ownership, mixed timer/event indexing, and event-only
+  retry after fairness progress. The engine adds a v1 actor regression for
+  demand retirement after the last useful piece is consumed and a pure-v2
+  targeted-wake regression. All pass in the 753-test engine suite and the full
+  workspace test pass; the private two-seeder qualification remains open.
 - **Live upload regression sources:** peers across different torrents share
   global credit; limit changes wake parked uploads; unused grants refund; v1
   peers share the configured torrent bucket; and pure-v2 per-torrent limit

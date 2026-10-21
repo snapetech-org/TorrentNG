@@ -1,0 +1,30 @@
+{
+  "reviewed_commit": "0f726a89bb207933f9017320a909fdb4d40e1a55",
+  "repository": "https://github.com/snapetech-org/TorrentNG",
+  "source_file_sha256": {
+    "crates/rt-engine/src/transfer/rate.rs": "bf8f90a14473bad9799e6d76ef417a8ab0aefb3722a3e925e624ca1709c4a5af",
+    "crates/rt-engine/src/transfer/window.rs": "2ea64afa0d35d7343d564a7f68cf49a0e309da1b31dbc641ac28512ae2d013d6",
+    "crates/rt-engine/src/transfer/upload_scheduler.rs": "6ce6222ee6b3045da85e671063f99ec579346b633215b2521035450a50360fbd",
+    "crates/rt-engine/src/transfer/shared_upload.rs": "5954b0448acc95ad77aecf03917515c5d9cb5855c8f0c7e57125fbe780b53cab",
+    "crates/rt-engine/src/network_budget.rs": "3a7fb39a6b48a7c0f0db95c88cb6b961efd209c7ee1230231243b52e64303e4e",
+    "crates/rt-engine/src/torrent_task.rs": "aa9e07895c5db3f3570f98df535d8eeb6a4bc31d29b85fbd8534d2819f8de180",
+    "crates/rt-engine/src/torrent_task/peer_transfer.rs": "fef63451724e9aa13a0f410f675780b495fee23039b74ada8901de74f6e5c053",
+    "crates/rt-storage/src/scheduler.rs": "e6d25ed6025271a279bdff827a45361472ef7d4d5a6f5952de27572642367290",
+    "crates/rt-storage/src/backend.rs": "8d8356b8d933e200f7b75efdc4693405556895914fb1beb91e4fe6352618436d",
+    "crates/rt-storage/src/frame.rs": "be23eaa8a9a30236ee6561ffcd03fbeb885a0a3f363f1007c1e95f2fa5dde9fc",
+    "crates/rt-storage/src/handle_cache.rs": "093a20874a1086df9cd16924e3792b4c5c665443500dd42019b8cdf641015eff",
+    "crates/rt-storage/src/open.rs": "fdebbac167cd1ff9d41e20b362e8ebfeddfd922af9ec2199a4b88e48b18f67cc",
+    "crates/rt-storage/src/verify.rs": "1ee59c8d782fcebf7b48bfe9d734d32cfc7a14e4604f5f2eaa11b9f2956899a3",
+    "crates/rt-peer-wire/src/codec.rs": "bb6207b134cc0ffaccd7fde81ef3dd70a4c83d70f82947ef3f7423693e6a23db",
+    "crates/rt-peer-wire/src/message.rs": "383b554622612f755d23340903f14337e8cc2de777d6015187e3bcadd12501de",
+    "crates/rt-config/src/lib.rs": "2e875d695adcdfd9b6178ed09e2c7ac46905c7ba28090dac75851bc9f911eb26",
+    "crates/rt-metrics/src/resource.rs": "b153c2a75f7338dbbbf54e5d57ab3a2aedc3f06eb9d15b552736e6cebbc670ba",
+    "scripts/client_performance_benchmark.py": "44c24538f8c2a4175823edcb8112069ce877bba991495bd588b876f26edbb206"
+  },
+  "mechanism_test_environment": {
+    "kernel": "Linux-6.18.55-x86_64-with-glibc2.39",
+    "logical_cpus": 9,
+    "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)"
+  },
+  "scope": "Source review, unmodified RateTree reproduction and original module tests, synthetic worker-handoff mechanism benchmark. No full daemon, live swarm or five-client benchmark run here."
+}

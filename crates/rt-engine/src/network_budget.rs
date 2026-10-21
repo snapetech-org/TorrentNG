@@ -14,7 +14,7 @@ use rt_utp::{UtpEndpoint, UtpRuntime};
 use tokio::time::Instant;
 
 use crate::transfer::coords::{ConnectionId, TorrentKey};
-use crate::transfer::rate::{Grant, RatePeerId, RateTree};
+use crate::transfer::rate::{Grant, RatePeerId, RateTree, CHANGE_ONLY_WAKE};
 use crate::transfer::shared_upload::SharedUploadService;
 use crate::transfer::upload_scheduler::UploadReadLimits;
 
@@ -91,13 +91,17 @@ impl GlobalNetworkBudget {
             tree: Mutex::new(RateTree::new(download_limit_bytes_per_sec, 0)),
             origin: upload_origin,
             changed: RateLimitCancellation::default(),
+            demand_changes: Mutex::new(HashMap::new()),
             next_torrent: AtomicU64::new(1),
+            next_demand: AtomicU64::new(1),
         });
         let upload_tree = Arc::new(HierarchicalRateService {
             tree: Mutex::new(RateTree::new(upload_limit_bytes_per_sec, 0)),
             origin: upload_origin,
             changed: RateLimitCancellation::default(),
+            demand_changes: Mutex::new(HashMap::new()),
             next_torrent: AtomicU64::new(1),
+            next_demand: AtomicU64::new(1),
         });
         // The reference actors still expose the former process-global rate
         // limiter API. Give each direction one stable synthetic peer in the
@@ -236,6 +240,12 @@ impl GlobalNetworkBudget {
         self.download_tree.limit_changes()
     }
 
+    /// Wake only one torrent when its fairness waiters may have become
+    /// eligible after another peer makes progress or retires demand.
+    pub(crate) fn download_demand_changes(&self, torrent: TorrentKey) -> RateLimitCancellation {
+        self.download_tree.demand_changes_for(torrent)
+    }
+
     pub(crate) fn set_upload_limit(&self, limit: Option<u64>) {
         self.upload_tree.set_global_limit(limit);
     }
@@ -276,6 +286,13 @@ impl GlobalNetworkBudget {
         self.source_admission.remove_source(peer_id);
         self.upload_tree.remove_peer(peer_id);
         self.download_tree.remove_peer(peer_id);
+    }
+
+    /// Retire a synchronous download refill that no longer has runnable
+    /// demand. The peer registration and any grants already attached to
+    /// requests remain live.
+    pub(crate) fn retire_download_demand(&self, peer_id: RatePeerId) {
+        self.download_tree.retire_sync_demand(peer_id);
     }
 
     pub(crate) async fn acquire_upload(
@@ -835,6 +852,9 @@ impl std::fmt::Debug for SourceRequestPermit {
 pub(crate) enum RateAdmissionAttempt {
     Granted(RateAdmissionGrant),
     Wait(Duration),
+    /// Fairness is blocked on peer progress or demand retirement, with no
+    /// useful clock deadline to poll.
+    WaitForChange,
 }
 
 /// Live Tokio adapter for the deterministic transfer `RateTree`. The lock is
@@ -844,7 +864,9 @@ struct HierarchicalRateService {
     tree: Mutex<RateTree>,
     origin: Instant,
     changed: RateLimitCancellation,
+    demand_changes: Mutex<HashMap<TorrentKey, RateLimitCancellation>>,
     next_torrent: AtomicU64,
+    next_demand: AtomicU64,
 }
 
 impl HierarchicalRateService {
@@ -881,6 +903,67 @@ impl HierarchicalRateService {
         }
     }
 
+    fn new_demand_id(&self) -> u64 {
+        let mut current = self.next_demand.load(Ordering::Relaxed);
+        loop {
+            let next = current
+                .checked_add(1)
+                .expect("transfer rate demand identity space exhausted");
+            match self.next_demand.compare_exchange_weak(
+                current,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return current,
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    fn demand_changes_for(&self, torrent: TorrentKey) -> RateLimitCancellation {
+        let mut changes = self
+            .demand_changes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        changes.entry(torrent).or_default().clone()
+    }
+
+    fn notify_demand_change(&self, torrent: TorrentKey) {
+        let changes = self
+            .demand_changes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&torrent)
+            .cloned();
+        if let Some(changes) = changes {
+            changes.cancel();
+        }
+    }
+
+    fn remove_demand_changes(&self, torrent: TorrentKey) {
+        let changes = self
+            .demand_changes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&torrent);
+        if let Some(changes) = changes {
+            changes.cancel();
+        }
+    }
+
+    fn retire_sync_demand(&self, peer_id: RatePeerId) {
+        if self.lock_tree().retire_sync_demand(peer_id) {
+            self.notify_demand_change(peer_id.torrent);
+        }
+    }
+
+    fn retire_demand(&self, peer_id: RatePeerId, demand_id: u64) {
+        if self.lock_tree().retire_demand(peer_id, demand_id) {
+            self.notify_demand_change(peer_id.torrent);
+        }
+    }
+
     fn set_global_limit(&self, limit: Option<u64>) {
         self.lock_tree().set_global_limit(limit, self.now());
         self.changed.cancel();
@@ -895,6 +978,7 @@ impl HierarchicalRateService {
     }
 
     fn register_torrent(&self, key: TorrentKey, limit: Option<u64>) {
+        self.demand_changes_for(key);
         self.lock_tree().add_torrent(key, limit, self.now());
         self.changed.cancel();
     }
@@ -906,16 +990,19 @@ impl HierarchicalRateService {
 
     fn remove_torrent(&self, key: TorrentKey) {
         self.lock_tree().remove_torrent(key);
+        self.remove_demand_changes(key);
         self.changed.cancel();
     }
 
     fn register_peer(&self, peer_id: RatePeerId) {
         self.lock_tree().add_peer(peer_id, 1);
+        self.notify_demand_change(peer_id.torrent);
         self.changed.cancel();
     }
 
     fn remove_peer(&self, peer_id: RatePeerId) {
         self.lock_tree().remove_peer(peer_id);
+        self.notify_demand_change(peer_id.torrent);
         self.changed.cancel();
     }
 
@@ -942,7 +1029,16 @@ impl HierarchicalRateService {
             anyhow::bail!("zero-byte payload cannot consume rate admission");
         }
         let now = self.now();
-        let (grant, grant_id) = self.lock_tree().try_grant_tracked(peer_id, bytes, now);
+        let (grant, grant_id, wake_fairness_waiters) = {
+            let mut tree = self.lock_tree();
+            let (grant, grant_id) = tree.try_grant_sync_tracked(peer_id, bytes, now);
+            let wake_fairness_waiters =
+                grant == Grant::Granted && tree.has_change_waiters(peer_id.torrent);
+            (grant, grant_id, wake_fairness_waiters)
+        };
+        if wake_fairness_waiters {
+            self.notify_demand_change(peer_id.torrent);
+        }
         match grant {
             Grant::Granted => Ok(RateAdmissionAttempt::Granted(RateAdmissionGrant {
                 scheduler: Arc::clone(self),
@@ -951,6 +1047,9 @@ impl HierarchicalRateService {
                 bytes,
                 active: true,
             })),
+            Grant::Wait { until } if until == CHANGE_ONLY_WAKE => {
+                Ok(RateAdmissionAttempt::WaitForChange)
+            }
             Grant::Wait { until } => Ok(RateAdmissionAttempt::Wait(Duration::from_nanos(
                 until.saturating_sub(self.now()),
             ))),
@@ -973,13 +1072,31 @@ impl HierarchicalRateService {
         if bytes == 0 {
             anyhow::bail!("zero-byte payload cannot consume rate admission");
         }
+        let demand_changes = self.demand_changes_for(peer_id.torrent);
+        let demand_id = self.new_demand_id();
+        let _demand = RateDemandGuard {
+            scheduler: Arc::clone(self),
+            peer_id,
+            demand_id,
+        };
         loop {
             if cancellation.generation() != generation {
                 return Ok(None);
             }
             let changed_generation = self.changed.generation();
+            let demand_generation = demand_changes.generation();
             let now = self.now();
-            let (grant, grant_id) = self.lock_tree().try_grant_tracked(peer_id, bytes, now);
+            let (grant, grant_id, wake_fairness_waiters) = {
+                let mut tree = self.lock_tree();
+                let (grant, grant_id) =
+                    tree.try_grant_demand_tracked(peer_id, demand_id, bytes, now);
+                let wake_fairness_waiters =
+                    grant == Grant::Granted && tree.has_change_waiters(peer_id.torrent);
+                (grant, grant_id, wake_fairness_waiters)
+            };
+            if wake_fairness_waiters {
+                self.notify_demand_change(peer_id.torrent);
+            }
             match grant {
                 Grant::Granted => {
                     let grant = RateAdmissionGrant {
@@ -1002,15 +1119,39 @@ impl HierarchicalRateService {
                     peer_id.connection.generation
                 ),
                 Grant::Wait { until } => {
-                    let delay = Duration::from_nanos(until.saturating_sub(self.now()));
-                    tokio::select! {
-                        _ = tokio::time::sleep(delay) => {}
-                        _ = self.changed.wait_for_change(changed_generation) => {}
-                        _ = cancellation.wait_for_change(generation) => return Ok(None),
+                    if until == CHANGE_ONLY_WAKE {
+                        tokio::select! {
+                            _ = self.changed.wait_for_change(changed_generation) => {}
+                            _ = demand_changes.wait_for_change(demand_generation) => {}
+                            _ = cancellation.wait_for_change(generation) => return Ok(None),
+                        }
+                    } else {
+                        let delay = Duration::from_nanos(until.saturating_sub(self.now()));
+                        tokio::select! {
+                            _ = tokio::time::sleep(delay) => {}
+                            _ = self.changed.wait_for_change(changed_generation) => {}
+                            _ = demand_changes.wait_for_change(demand_generation) => {}
+                            _ = cancellation.wait_for_change(generation) => return Ok(None),
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+/// A pending rate demand is owned by one asynchronous request. Dropping or
+/// cancelling that request clears only its own waiter, so another request
+/// from the same connection remains represented in the fairness queue.
+struct RateDemandGuard {
+    scheduler: Arc<HierarchicalRateService>,
+    peer_id: RatePeerId,
+    demand_id: u64,
+}
+
+impl Drop for RateDemandGuard {
+    fn drop(&mut self) {
+        self.scheduler.retire_demand(self.peer_id, self.demand_id);
     }
 }
 
@@ -1333,6 +1474,116 @@ mod tests {
             .lock_tree()
             .waiting_peers(8)
             .is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retiring_sync_download_demand_unblocks_live_peer_without_removal() {
+        const BLOCK: u64 = 16 * 1024;
+        let budget = GlobalNetworkBudget::new(2, Some(32 * 1024 * 1024), None);
+        let torrent = budget.new_transfer_torrent_key();
+        budget.register_download_torrent(torrent, Some(32 * 1024 * 1024));
+        let active = rate_peer(torrent, 0);
+        let parked = rate_peer(torrent, 1);
+        budget.register_transfer_peer(active);
+        budget.register_transfer_peer(parked);
+
+        while let RateAdmissionAttempt::Granted(grant) =
+            budget.try_acquire_download(active, BLOCK).unwrap()
+        {
+            grant.settle(BLOCK);
+        }
+        assert!(matches!(
+            budget.try_acquire_download(parked, BLOCK).unwrap(),
+            RateAdmissionAttempt::Wait(_) | RateAdmissionAttempt::WaitForChange
+        ));
+
+        let demand_changes = budget.download_demand_changes(torrent);
+        let demand_generation = demand_changes.generation();
+        budget.set_download_limit(None);
+        budget.set_download_torrent_limit(torrent, None);
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert!(
+            matches!(
+                budget.try_acquire_download(active, BLOCK).unwrap(),
+                RateAdmissionAttempt::WaitForChange
+            ),
+            "a stale live demand should be present until its owner retires it"
+        );
+
+        budget.retire_download_demand(parked);
+        assert_ne!(demand_changes.generation(), demand_generation);
+        let RateAdmissionAttempt::Granted(grant) =
+            budget.try_acquire_download(active, BLOCK).unwrap()
+        else {
+            panic!("retiring parked demand should restore work-conserving service");
+        };
+        grant.settle(BLOCK);
+        let RateAdmissionAttempt::Granted(grant) = budget.try_acquire_download(parked, 1).unwrap()
+        else {
+            panic!("retiring pending demand must keep the peer registration live");
+        };
+        grant.settle(1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancelling_one_async_rate_demand_keeps_its_sibling_waiter() {
+        let budget = GlobalNetworkBudget::new(3, Some(1), None);
+        let torrent = budget.new_transfer_torrent_key();
+        budget.register_download_torrent(torrent, None);
+        let spender = rate_peer(torrent, 0);
+        let waiting = rate_peer(torrent, 1);
+        budget.register_transfer_peer(spender);
+        budget.register_transfer_peer(waiting);
+
+        let spender_control = RateLimitCancellation::default();
+        budget
+            .acquire_download(
+                spender,
+                32 * 1024,
+                &spender_control,
+                spender_control.generation(),
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .settle(32 * 1024);
+
+        let first_control = RateLimitCancellation::default();
+        let first_task_control = first_control.clone();
+        let first_generation = first_control.generation();
+        let first_budget = budget.clone();
+        let first_waiter = tokio::spawn(async move {
+            first_budget
+                .acquire_download(waiting, 1, &first_task_control, first_generation)
+                .await
+        });
+        let second_control = RateLimitCancellation::default();
+        let second_generation = second_control.generation();
+        let second_budget = budget.clone();
+        let second_waiter = tokio::spawn(async move {
+            second_budget
+                .acquire_download(waiting, 1, &second_control, second_generation)
+                .await
+        });
+        tokio::task::yield_now().await;
+        tokio::task::yield_now().await;
+        assert_eq!(
+            budget.download_tree.lock_tree().waiting_peers(8),
+            vec![waiting]
+        );
+
+        first_control.cancel();
+        assert!(first_waiter.await.unwrap().unwrap().is_none());
+        assert_eq!(
+            budget.download_tree.lock_tree().waiting_peers(8),
+            vec![waiting],
+            "one cancelled request must not erase its sibling's demand"
+        );
+
+        budget.set_download_limit(None);
+        let grant = second_waiter.await.unwrap().unwrap().unwrap();
+        grant.settle(1);
+        assert!(budget.download_tree.lock_tree().waiting_peers(8).is_empty());
     }
 
     #[tokio::test(start_paused = true)]

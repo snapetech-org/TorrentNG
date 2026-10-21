@@ -1,0 +1,26 @@
+{
+  "inline_warm_read": {
+    "median_cpu_s_per_GiB": 0.124054,
+    "min": 0.11302,
+    "max": 0.125559,
+    "repeats": 3
+  },
+  "one_worker_round_trip": {
+    "median_cpu_s_per_GiB": 1.187098,
+    "min": 1.088642,
+    "max": 1.247363,
+    "repeats": 3
+  },
+  "two_worker_round_trips": {
+    "median_cpu_s_per_GiB": 2.016327,
+    "min": 1.96817,
+    "max": 2.035482,
+    "repeats": 3
+  },
+  "one_worker_batched_256KiB": {
+    "median_cpu_s_per_GiB": 0.107183,
+    "min": 0.106984,
+    "max": 0.130508,
+    "repeats": 3
+  }
+}
