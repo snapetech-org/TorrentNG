@@ -184,7 +184,7 @@ class CgroupCounterTests(unittest.TestCase):
 
         self.assertEqual(
             observation["phase"],
-            "after_torrentng_transfer_windows_before_container_stop",
+            "after_torrentng_seed_window_before_torrent_pause",
         )
         self.assertEqual(observation["metrics"]["selected_backend"], "pread")
         instance._torrentng_request.assert_called_once_with("/metrics")
@@ -192,6 +192,29 @@ class CgroupCounterTests(unittest.TestCase):
         instance._torrentng_request.reset_mock()
         self.assertIsNone(instance._capture_storage_backend_observation("qbittorrent"))
         instance._torrentng_request.assert_not_called()
+
+    def test_storage_backend_is_captured_before_pausing_torrentng(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        events = []
+        instance._capture_storage_backend_observation = mock.Mock(
+            side_effect=lambda client: events.append(("backend", client)),
+        )
+        instance._pause = mock.Mock(
+            side_effect=lambda client, info_hash: events.append(("pause", client, info_hash)),
+        )
+        instance._capture_engine_memory_metrics = mock.Mock(
+            side_effect=lambda client, phase: events.append(("memory", client, phase)),
+        )
+
+        instance._finish_transfer_window(
+            "torrentngd", "torrent-hash", "after_controlled_seed",
+        )
+
+        self.assertEqual(events, [
+            ("backend", "torrentngd"),
+            ("pause", "torrentngd", "torrent-hash"),
+            ("memory", "torrentngd", "after_controlled_seed"),
+        ])
 
     def test_network_namespace_parser_sums_non_loopback_interfaces(self) -> None:
         received, transmitted = benchmark.parse_proc_net_dev(

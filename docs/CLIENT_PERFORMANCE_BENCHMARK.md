@@ -67,13 +67,31 @@ one run on a different host-load window and has no client comparator; it does
 not establish a CPU or RAM improvement. The 60-second public probe reached
 5.18% and timed out, so it is excluded. The selected storage backend is
 unknown: this runner attempted `/metrics` after stopping the container and got
-`URLError`. A later harness change moves that scrape before container stop;
-it does not retroactively identify the backend for this run.
+`URLError`. A follow-up runner did reach `/metrics` before container shutdown,
+but after pausing TorrentNG; it found that the storage runtime had already
+been released. The capture now runs before the final torrent pause, and neither
+earlier run establishes the selected backend.
 
 The [report](../certification/reports/client-performance-backend-observation-8a27b32d-20261021.md),
 [samples](../certification/reports/client-performance-backend-observation-8a27b32d-20261021-samples.csv),
 and [memory profile](../certification/reports/client-performance-backend-observation-8a27b32d-20261021-memory-profile.json)
 record the trial and its limits.
+
+## 2026-10-21 backend-capture follow-up (`3e7a15ed`)
+
+A second TorrentNG-only verified seed on clean source `3e7a15edb5ba8e692c4c797097312daa7eaf0999`
+again passed SHA-256 at 3.82 MiB/s. It used **2.73 CPU-s/GiB**, with **24.9
+MiB cgroup anonymous peak**, **43.4 MiB process-tree PSS**, and **43.9 MiB
+RSS**. Together with the preceding run, CPU was 2.57–2.73 (two-run median
+2.65) and anonymous peak was 23.3–24.9 MiB (median 24.1 MiB). These two
+single-client runs have no comparator and cannot establish a gain or ranking.
+The public probe timed out at 6.04% and is excluded. The runner reached
+`/metrics` before container shutdown but after pausing TorrentNG; it reported
+`runtime_initialized=0`, so backend identity is still unknown. The runner now
+captures after the seed window and before pausing the torrent. The [report](../certification/reports/client-performance-backend-observation-3e7a15ed-20261021-repeat.md),
+[samples](../certification/reports/client-performance-backend-observation-3e7a15ed-20261021-repeat-samples.csv),
+and [memory profile](../certification/reports/client-performance-backend-observation-3e7a15ed-20261021-repeat-memory-profile.json)
+record this trial.
 
 ## 2026-10-20 hot-path follow-up
 
@@ -102,8 +120,8 @@ The implementation disables container healthchecks symmetrically, samples
 process-tree RSS/PSS for every client, and keeps detailed TorrentNG `/metrics`,
 `smaps`, and process-spike attribution behind
 `TNG_CLIENT_BENCH_DIAGNOSTICS=1`. When TorrentNG is included, each transfer run
-performs one authenticated `/metrics` scrape after its measured transfer windows
-and before its container stops, recording the selected storage backend,
+performs one authenticated `/metrics` scrape after its measured transfer window
+and before pausing the final TorrentNG torrent, recording the selected backend,
 fixed-buffer and registered-file support, and buffer strategy in its
 report/profile. This makes io_uring findings attributable without adding metric
 scrapes during scored work. Storage completion ownership is carried by

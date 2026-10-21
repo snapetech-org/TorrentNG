@@ -1286,6 +1286,18 @@ class Benchmark:
         else:
             self._scgi("d.stop", info_hash)
 
+    def _finish_transfer_window(self, client, info_hash, metrics_phase):
+        # Capture backend selection while TorrentNG's torrent actor still owns
+        # the live StorageRuntime. Pausing the final torrent can drop that
+        # runtime before the container itself stops.
+        if client == "torrentngd":
+            self._capture_storage_backend_observation(client)
+        try:
+            self._pause(client, info_hash)
+        except Exception:
+            pass
+        self._capture_engine_memory_metrics(client, metrics_phase)
+
     def _remember_container(self, client):
         cid = self.service_id(client)
         if not cid:
@@ -1570,7 +1582,7 @@ class Benchmark:
             "observed_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(
                 timespec="milliseconds",
             ),
-            "phase": "after_torrentng_transfer_windows_before_container_stop",
+            "phase": "after_torrentng_seed_window_before_torrent_pause",
         }
         try:
             body = self._torrentng_request("/metrics").decode("utf-8", "replace")
@@ -2422,14 +2434,9 @@ class Benchmark:
                 seed_error = f"{type(error).__name__}: {error}"
             finally:
                 seed_setup = self.partial_seed_setup.get(client, 0.0)
-                try:
-                    self._pause(client, local_hash)
-                except Exception:
-                    pass
-                self._capture_engine_memory_metrics(client, "after_controlled_seed")
-
-        if client == "torrentngd":
-            self._capture_storage_backend_observation(client)
+                self._finish_transfer_window(
+                    client, local_hash, "after_controlled_seed",
+                )
 
         idle = self._summary(
             [row for row in self.samples if row[1] == client], "idle",

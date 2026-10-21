@@ -180,12 +180,26 @@ A TorrentNG-only repeat on clean `8a27b32d` then verified the same payload at
 observations are close to the preceding TorrentNG row, but the repeat has no
 client comparator and ran in a different host-load window; it does not confirm
 a CPU or RAM improvement. Its public probe timed out at 5.18% and is excluded.
-The backend remains unknown because this runner attempted its `/metrics`
-scrape after container shutdown and received `URLError`. The harness now
-captures the scrape before shutdown; this cannot recover the missed value.
+The backend remains unknown: the preceding run's `/metrics` request failed
+after container shutdown, and this run reached the service before shutdown but
+after pausing TorrentNG, when the storage runtime was already released. The
+harness now captures backend metrics before that final torrent pause; this
+cannot recover either missed value.
 See the [repeat report](../certification/reports/client-performance-backend-observation-8a27b32d-20261021.md),
 [samples](../certification/reports/client-performance-backend-observation-8a27b32d-20261021-samples.csv),
 and [memory profile](../certification/reports/client-performance-backend-observation-8a27b32d-20261021-memory-profile.json).
+
+A second TorrentNG-only seed on source `3e7a15ed` also passed the hash at 3.82
+MiB/s, measuring 2.73 CPU-s/GiB, 24.9 MiB anonymous peak, 43.4 MiB PSS, and
+43.9 MiB RSS. Across both one-run samples, median CPU is 2.65 CPU-s/GiB and
+median anonymous peak is 24.1 MiB; this is a small repeatability check without
+a client comparator. Its metrics scrape ran before container shutdown but
+after the torrent was paused, when `runtime_initialized=0`. That exposed the
+remaining ordering bug; the runner now scrapes after the seed window and
+before pause. Backend selection remains unverified until a run confirms it.
+See the [report](../certification/reports/client-performance-backend-observation-3e7a15ed-20261021-repeat.md),
+[samples](../certification/reports/client-performance-backend-observation-3e7a15ed-20261021-repeat-samples.csv),
+and [profile](../certification/reports/client-performance-backend-observation-3e7a15ed-20261021-repeat-memory-profile.json).
 
 ### Download assembly and parsing
 
