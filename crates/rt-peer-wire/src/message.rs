@@ -492,13 +492,8 @@ impl Message {
                     Err(shared_message) => {
                         let duplicate_lease = _memory_lease
                             .try_duplicate()
-                            .ok_or(WireError::PeerBufferAllocationDenied(
-                                _memory_lease.bytes(),
-                            ))?;
-                        Ok((
-                            (*shared_message).clone(),
-                            Some(Arc::new(duplicate_lease)),
-                        ))
+                            .ok_or(WireError::PeerBufferAllocationDenied(_memory_lease.bytes()))?;
+                        Ok(((*shared_message).clone(), Some(Arc::new(duplicate_lease))))
                     }
                 }
             }
