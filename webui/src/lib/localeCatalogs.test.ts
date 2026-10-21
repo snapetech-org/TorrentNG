@@ -23,7 +23,7 @@ function placeholders(value: string) {
 
 describe('interface locale catalogs', () => {
   it('keeps all twelve catalogs in parity with the source-message catalog', () => {
-    expect(referenceKeys).toHaveLength(1140)
+    expect(referenceKeys).toHaveLength(1142)
     for (const [locale, catalog] of Object.entries(catalogs)) {
       expect(Object.keys(catalog).sort(), locale).toEqual(referenceKeys)
     }

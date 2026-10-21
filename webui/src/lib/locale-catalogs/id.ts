@@ -1139,4 +1139,6 @@ export const UI_LABELS: Record<string, string> = {
   "Selected torrents removed": "Torrent yang dipilih dihapus",
   "Selected torrents and files deleted": "Torrent dan file yang dipilih dihapus",
   "Some selected torrents could not be removed": "Beberapa torrent yang dipilih tidak dapat dihapus",
+  "Continue with {provider}": "Lanjutkan dengan {provider}",
+  "Provider setup guide": "Panduan penyiapan penyedia",
 }

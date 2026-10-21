@@ -260,7 +260,10 @@ pub async fn require_auth(
                 )
                     .into_response();
             }
-            if is_public_login_path(&path) && req.method() == Method::POST {
+            if is_public_login_path(&path)
+                && (req.method() == Method::POST
+                    || (path == "/api/v1/auth/oidc/login" && req.method() == Method::GET))
+            {
                 let peer_ip = peer_ip(&req);
                 if let Err(retry_after_secs) =
                     state.login_attempt_limiter.begin_attempt(peer_ip).await
@@ -343,6 +346,15 @@ pub async fn require_auth(
         return next.run(req).await;
     }
 
+    // OIDC creates an app-owned, short-lived session credential. It is kept
+    // separate from the configured API-token set, including on public binds.
+    if local_session_cookie_valid(&state, &req) {
+        if (is_mutating(&req) || path == "/ws") && !csrf_request_allowed(req.headers()) {
+            return (StatusCode::FORBIDDEN, "cross-site cookie mutation rejected").into_response();
+        }
+        return next.run(req).await;
+    }
+
     // Only the documented login/logout endpoints are public. Do not make an
     // accidentally added future auth route public by prefix matching.
     if is_public_auth_path(&path) {
@@ -356,7 +368,10 @@ pub async fn require_auth(
             )
                 .into_response();
         }
-        if is_public_login_path(&path) && req.method() == Method::POST {
+        if is_public_login_path(&path)
+            && (req.method() == Method::POST
+                || (path == "/api/v1/auth/oidc/login" && req.method() == Method::GET))
+        {
             let peer_ip = peer_ip(&req);
             if let Err(retry_after_secs) = state.login_attempt_limiter.begin_attempt(peer_ip).await
             {
@@ -461,9 +476,6 @@ fn cookie_token(state: &AppState, req: &Request<Body>) -> Option<String> {
 }
 
 fn local_session_cookie_valid(state: &AppState, req: &Request<Body>) -> bool {
-    let Some(expected) = state.local_webui_session_token.as_deref() else {
-        return false;
-    };
     let Some(cookie) = req
         .headers()
         .get("Cookie")
@@ -471,6 +483,13 @@ fn local_session_cookie_valid(state: &AppState, req: &Request<Body>) -> bool {
     else {
         return false;
     };
+    let mut expected = state.oidc_auth.active_session_credentials();
+    if let Some(local) = state.local_webui_session_token.as_ref() {
+        expected.push(local.clone());
+    }
+    if expected.is_empty() {
+        return false;
+    }
     cookie.split(';').any(|part| {
         let part = part.trim();
         let value = part
@@ -480,12 +499,38 @@ fn local_session_cookie_valid(state: &AppState, req: &Request<Body>) -> bool {
             .and_then(|value| urlencoding::decode(value).ok())
             .is_some_and(|value| {
                 if let Some(secret) = state.cfg.auth.secret_key.as_deref() {
-                    verify_signed_session(secret, &[expected.to_owned()], &value).is_some()
+                    verify_signed_session(secret, &expected, &value).is_some()
                 } else {
-                    tokens_match(expected, &value)
+                    expected
+                        .iter()
+                        .any(|expected| tokens_match(expected, &value))
                 }
             })
     })
+}
+
+pub(crate) fn revoke_oidc_session_cookie(state: &AppState, cookie_header: Option<&str>) {
+    let Some(value) = cookie_header
+        .and_then(|cookie| cookie.split(';').map(str::trim).find_map(|part| {
+            part.strip_prefix("tng_session=")
+                .or_else(|| part.strip_prefix("SID="))
+        }))
+        .and_then(|value| urlencoding::decode(value).ok())
+    else {
+        return;
+    };
+    let credentials = state.oidc_auth.active_session_credentials();
+    let credential = if let Some(secret) = state.cfg.auth.secret_key.as_deref() {
+        verify_signed_session(secret, &credentials, &value)
+    } else {
+        credentials
+            .iter()
+            .find(|credential| tokens_match(credential, &value))
+            .cloned()
+    };
+    if let Some(credential) = credential {
+        state.oidc_auth.revoke_session_credential(&credential);
+    }
 }
 
 fn verify_signed_session(secret: &str, tokens: &[String], value: &str) -> Option<String> {
@@ -658,6 +703,9 @@ fn is_public_auth_path(path: &str) -> bool {
         path,
         "/api/v1/auth/login"
             | "/api/v1/auth/logout"
+            | "/api/v1/auth/oidc/enabled"
+            | "/api/v1/auth/oidc/login"
+            | "/api/v1/auth/oidc/callback"
             | "/api/qb/v2/auth/login"
             | "/api/qb/v2/auth/logout"
             | "/api/v2/auth/login"
@@ -668,7 +716,10 @@ fn is_public_auth_path(path: &str) -> bool {
 fn is_public_login_path(path: &str) -> bool {
     matches!(
         path,
-        "/api/v1/auth/login" | "/api/qb/v2/auth/login" | "/api/v2/auth/login"
+        "/api/v1/auth/login"
+            | "/api/v1/auth/oidc/login"
+            | "/api/qb/v2/auth/login"
+            | "/api/v2/auth/login"
     )
 }
 

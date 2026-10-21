@@ -588,7 +588,14 @@ async fn persist_auth_credentials(
     }
     Ok(())
 }
-pub(crate) async fn auth_logout(State(s): State<AppState>) -> impl IntoResponse {
+pub(crate) async fn auth_logout(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    crate::auth::revoke_oidc_session_cookie(
+        &s,
+        headers.get(header::COOKIE).and_then(|value| value.to_str().ok()),
+    );
     let secure_attribute = if s.cfg.auth.secure_cookies {
         "; Secure"
     } else {

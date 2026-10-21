@@ -77,6 +77,7 @@ pub struct AppState {
     pub auth_settings_path: PathBuf,
     pub auth_settings_write: Arc<Mutex<()>>,
     pub local_webui_session_token: Option<String>,
+    pub oidc_auth: crate::oidc::OidcAuth,
     pub public_bind: bool,
     /// Serializes read-modify-write control-plane records stored as one JSON
     /// value in the cache database. The Db mutex protects individual SQL
@@ -103,6 +104,20 @@ pub fn build_router(state: AppState) -> Router {
             )),
         )
         .route("/api/v1/auth/logout", post(crate::qbcompat::auth_logout))
+        .route(
+            "/api/v1/auth/oidc/enabled",
+            get(crate::oidc::oidc_enabled),
+        )
+        .route(
+            "/api/v1/auth/oidc/login",
+            get(crate::oidc::oidc_login),
+        )
+        .route(
+            "/api/v1/auth/oidc/callback",
+            get(crate::oidc::oidc_callback).post(crate::oidc::oidc_callback_form).layer(
+                DefaultBodyLimit::max(16 * 1024),
+            ),
+        )
         .route(
             "/api/v1/auth/settings",
             get(crate::qbcompat::auth_settings)

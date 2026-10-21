@@ -248,6 +248,10 @@ external endpoint.
 | `api_tokens_file` | unset | Optional newline-delimited token file; loaded in addition to `api_tokens` |
 | `metrics.include_torrent_ids` | `false` | Include raw infohashes in hot-torrent Prometheus labels; disabled by default because labels are high-cardinality identifiers |
 
+OIDC lives in the nested `[auth.oidc]` section. See
+[`OIDC authentication`](OIDC_AUTHENTICATION.md) for provider setup and the
+verified-email admission policy.
+
 An empty token list is valid only when `[daemon].api_bind` is loopback. A
 non-loopback bind requires at least one real token of 16 or more characters;
 placeholder values such as `change-me` and `REPLACE_WITH_*` are rejected at
@@ -644,6 +648,14 @@ Use these only for lab compatibility testing. Tracker-facing identity is still c
 | `api_tokens` | `[]` | `TNG_API_TOKENS` | Comma-separated pre-shared bearer tokens for automation tools and WebUI login; enter a token in either login field. Public binds require tokens of at least 16 characters |
 | `trust_proxy_header` | `false` | - | Trust a non-empty `X-Remote-User` only on a loopback listener; the proxy must authenticate the request and discard client-supplied copies before setting its own identity (the bundled Nginx config clears this header) |
 | `secure_cookies` | `true` | - | Add `Secure` to issued and cleared session cookies; required for non-loopback listeners. Set `false` only for trusted loopback HTTP setups. |
+| `oidc.issuer_url` | unset | `TNG_OIDC_ISSUER_URL` / `RTNG_OIDC_ISSUER_URL` | Exact OIDC issuer URL; core OIDC settings must be configured together |
+| `oidc.client_id` | unset | `TNG_OIDC_CLIENT_ID` / `RTNG_OIDC_CLIENT_ID` | Confidential client ID |
+| `oidc.client_secret` | unset | `TNG_OIDC_CLIENT_SECRET` / `RTNG_OIDC_CLIENT_SECRET` | Confidential client secret; redacted from debug output |
+| `oidc.redirect_uri` | unset | `TNG_OIDC_REDIRECT_URI` / `RTNG_OIDC_REDIRECT_URI` | HTTPS callback URI ending in `/api/v1/auth/oidc/callback` |
+| `oidc.allowed_emails` | `[]` | `TNG_OIDC_ALLOWED_EMAILS` / `RTNG_OIDC_ALLOWED_EMAILS` | Exact verified-email allowlist |
+| `oidc.allowed_email_domains` | `[]` | `TNG_OIDC_ALLOWED_EMAIL_DOMAINS` / `RTNG_OIDC_ALLOWED_EMAIL_DOMAINS` | Exact verified-email-domain allowlist |
+| `oidc.allow_any_verified_user` | `false` | `TNG_OIDC_ALLOW_ANY_VERIFIED_USER` / `RTNG_OIDC_ALLOW_ANY_VERIFIED_USER` | Explicitly admit any verified email; each admitted user has the app's full operator access |
+| `oidc.allow_private_issuer` | `false` | `TNG_OIDC_ALLOW_PRIVATE_ISSUER` / `RTNG_OIDC_ALLOW_PRIVATE_ISSUER` | Explicitly allow a private issuer and endpoints; callback must remain HTTPS |
 
 Requests authenticated by `X-Remote-User` require same-origin evidence for
 browser mutations and WebSocket handshakes. Automation clients should use an

@@ -8,6 +8,7 @@ mod log_sanitization;
 pub mod media_type;
 pub mod metrics;
 mod multipart;
+pub mod oidc;
 pub mod qbcompat;
 pub mod rtorrent;
 pub mod rtorrent_logs;

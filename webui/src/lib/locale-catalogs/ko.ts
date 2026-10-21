@@ -1139,4 +1139,6 @@ export const UI_LABELS: Record<string, string> = {
   "Selected torrents removed": "선택한 토렌트 제거됨",
   "Selected torrents and files deleted": "선택한 토렌트와 파일 삭제됨",
   "Some selected torrents could not be removed": "선택한 일부 토렌트를 제거하지 못했습니다",
+  "Continue with {provider}": "{provider}(으)로 계속",
+  "Provider setup guide": "공급자 설정 가이드",
 }

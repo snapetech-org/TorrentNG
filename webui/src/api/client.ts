@@ -388,6 +388,23 @@ async function logout(): Promise<void> {
   })
 }
 
+async function oidcEnabled(): Promise<{ enabled: boolean; provider: string }> {
+  try {
+    const response = await get<{ enabled?: boolean; provider?: string }>('/auth/oidc/enabled')
+    return { enabled: response.enabled === true, provider: response.provider ?? 'generic' }
+  } catch {
+    return { enabled: false, provider: 'generic' }
+  }
+}
+
+function oidcLoginUrl(): string {
+  return appPath('/api/v1/auth/oidc/login')
+}
+
+function oidcProviderIconsUrl(): string {
+  return appPath('/oidc-provider-icons.svg')
+}
+
 export interface Category {
   name: string
   save_path: string
@@ -955,6 +972,9 @@ export const api = {
   auth: {
     login,
     logout,
+    oidcEnabled,
+    oidcLoginUrl,
+    oidcProviderIconsUrl,
     getSettings: (): Promise<AuthSettings> => get('/auth/settings'),
     updateSettings: (settings: { username: string; password: string }): Promise<AuthSettings> =>
       put('/auth/settings', settings),

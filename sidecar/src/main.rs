@@ -224,6 +224,7 @@ async fn main() -> Result<()> {
         auth_settings_path,
         auth_settings_write: Arc::new(tokio::sync::Mutex::new(())),
         local_webui_session_token,
+        oidc_auth: torrentng::oidc::OidcAuth::new(cfg.auth.oidc.clone()),
         public_bind,
         control_plane_write: Arc::new(tokio::sync::Mutex::new(())),
         request_concurrency: Arc::new(tokio::sync::Semaphore::new(

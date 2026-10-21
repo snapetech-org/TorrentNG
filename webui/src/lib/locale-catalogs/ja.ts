@@ -1139,4 +1139,6 @@ export const UI_LABELS: Record<string, string> = {
   "Selected torrents removed": "選択したトレントを削除しました",
   "Selected torrents and files deleted": "選択したトレントとファイルを削除しました",
   "Some selected torrents could not be removed": "一部の選択したトレントを削除できませんでした",
+  "Continue with {provider}": "{provider} で続行",
+  "Provider setup guide": "プロバイダー設定ガイド",
 }

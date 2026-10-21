@@ -1139,4 +1139,6 @@ export const UI_LABELS: Record<string, string> = {
   "Selected torrents removed": "已移除所选种子",
   "Selected torrents and files deleted": "已删除所选种子及其文件",
   "Some selected torrents could not be removed": "部分所选种子无法移除",
+  "Continue with {provider}": "使用 {provider} 继续",
+  "Provider setup guide": "提供商设置指南",
 }

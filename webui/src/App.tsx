@@ -26,6 +26,7 @@ import { api, AuthError, type ListParams, type LiveStats, type TorrentSummary } 
 import { PALETTES, applyTheme, findPalette, THEME_MODE_STORAGE_KEY, THEME_STORAGE_KEY, type ThemeMode } from './themes'
 import { formatRegionalNumber, getRegionalLocale, setRegionalFormatPreference, useRegionalFormat } from './lib/localeFormat'
 import { useInterfaceLanguage } from './lib/interfaceLocale'
+import { getOidcProviderPresentation } from './lib/oidcProvider'
 
 const EnginePanel = lazy(() => import('./components/EnginePanel').then(module => ({ default: module.EnginePanel })))
 const StoragePanel = lazy(() => import('./components/StoragePanel').then(module => ({ default: module.StoragePanel })))
@@ -1614,10 +1615,32 @@ function LoginScreen({ message, onLogin }: {
   }
   const [username, setUsername] = useState('torrentng')
   const [password, setPassword] = useState('')
-  const [error, setError] = useState(message)
+  const [oidcAvailable, setOidcAvailable] = useState(false)
+  const [oidcProvider, setOidcProvider] = useState('generic')
+  const [error, setError] = useState(() =>
+    message || (new URLSearchParams(window.location.search).has('oidc-error')
+      ? translateInterface('Single sign-on failed. Check account access and try again.')
+      : ''),
+  )
   const [busy, setBusy] = useState(false)
+  const oidcPresentation = getOidcProviderPresentation(oidcProvider)
 
-  useEffect(() => setError(message), [message])
+  useEffect(() => {
+    setError(message || (new URLSearchParams(window.location.search).has('oidc-error')
+      ? translateInterface('Single sign-on failed. Check account access and try again.')
+      : ''))
+  }, [message])
+
+  useEffect(() => {
+    let active = true
+    void api.auth.oidcEnabled().then(status => {
+      if (active) {
+        setOidcAvailable(status.enabled)
+        setOidcProvider(status.provider)
+      }
+    })
+    return () => { active = false }
+  }, [])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -1754,6 +1777,16 @@ function LoginScreen({ message, onLogin }: {
         }}>
           {busy ? <LocalizedText source="Signing in..." /> : <LocalizedText source="Sign in" />}
         </button>
+        {oidcAvailable && <a href={api.auth.oidcLoginUrl()} style={{
+          display: 'block', textAlign: 'center', color: 'var(--accent)',
+          border: '1px solid var(--border-strong)', borderRadius: 5,
+          padding: '8px 12px', fontSize: 13, textDecoration: 'none',
+        }}><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" style={{ marginRight: 8, verticalAlign: 'middle' }}>
+          <use href={`${api.auth.oidcProviderIconsUrl()}#oidc-${oidcPresentation.icon}`} />
+        </svg><LocalizedText source="Continue with {provider}" parameters={{ provider: oidcPresentation.label }} /></a>}
+        {oidcAvailable && <a href={oidcPresentation.setupUrl} target="_blank" rel="noopener noreferrer" style={{
+          display: 'block', marginTop: 8, textAlign: 'center', color: 'var(--muted)', fontSize: 12,
+        }}><LocalizedText source="Provider setup guide" /></a>}
       </form>
     </div>
   )

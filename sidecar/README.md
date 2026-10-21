@@ -33,7 +33,9 @@ terminal, never stdout, and refuses non-interactive use. Configure a custom
 username/password in `[auth]`, `TNG_USERNAME` / `TNG_PASSWORD`, or
 **Settings -> Security**. Public binds require an API token and a WebUI password
 of at least 16 characters. Runtime changes persist in the service data
-directory; API tokens remain enabled for automation.
+directory; API tokens remain enabled for automation. OIDC provider
+configuration and callback setup are documented in
+[`docs/OIDC_AUTHENTICATION.md`](../docs/OIDC_AUTHENTICATION.md).
 
 On Unraid, open the **Docker** tab, click the icon for the
 `torrentng-webui` container, and choose **Console**. At the prompt, run

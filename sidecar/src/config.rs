@@ -193,6 +193,54 @@ pub struct AuthConfig {
     pub api_tokens: Vec<String>,
     pub trust_proxy_header: bool,
     pub secure_cookies: bool,
+    pub oidc: OidcConfig,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct OidcConfig {
+    pub provider: String,
+    pub issuer_url: String,
+    pub client_id: String,
+    pub client_secret: String,
+    pub redirect_uri: String,
+    pub allowed_emails: Vec<String>,
+    pub allowed_email_domains: Vec<String>,
+    pub allow_any_verified_user: bool,
+    pub allow_private_issuer: bool,
+}
+
+impl Default for OidcConfig {
+    fn default() -> Self {
+        Self {
+            provider: "generic".to_owned(),
+            issuer_url: String::new(),
+            client_id: String::new(),
+            client_secret: String::new(),
+            redirect_uri: String::new(),
+            allowed_emails: Vec::new(),
+            allowed_email_domains: Vec::new(),
+            allow_any_verified_user: false,
+            allow_private_issuer: false,
+        }
+    }
+}
+
+impl std::fmt::Debug for OidcConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("OidcConfig")
+            .field("provider", &self.provider)
+            .field("issuer_url", &self.issuer_url)
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"[REDACTED]")
+            .field("redirect_uri", &self.redirect_uri)
+            .field("allowed_emails", &self.allowed_emails)
+            .field("allowed_email_domains", &self.allowed_email_domains)
+            .field("allow_any_verified_user", &self.allow_any_verified_user)
+            .field("allow_private_issuer", &self.allow_private_issuer)
+            .finish()
+    }
 }
 
 impl Default for AuthConfig {
@@ -206,6 +254,7 @@ impl Default for AuthConfig {
             api_tokens: Vec::new(),
             trust_proxy_header: false,
             secure_cookies: true,
+            oidc: OidcConfig::default(),
         }
     }
 }
@@ -226,6 +275,7 @@ impl std::fmt::Debug for AuthConfig {
             )
             .field("trust_proxy_header", &self.trust_proxy_header)
             .field("secure_cookies", &self.secure_cookies)
+            .field("oidc", &self.oidc)
             .finish()
     }
 }
@@ -401,6 +451,72 @@ fn env_override(primary: &str, legacy: &str) -> Option<String> {
     std::env::var(primary)
         .ok()
         .or_else(|| std::env::var(legacy).ok())
+}
+
+fn split_auth_values(value: &str) -> Vec<String> {
+    value
+        .split([',', ';', ' ', '\t', '\r', '\n'])
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn parse_env_bool(value: &str) -> bool {
+    value == "1" || value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("yes")
+}
+
+fn validate_oidc_config(config: &OidcConfig) -> Result<()> {
+    let core = [
+        config.issuer_url.trim(),
+        config.client_id.trim(),
+        config.client_secret.trim(),
+        config.redirect_uri.trim(),
+    ];
+    let extras_configured = !config.allowed_emails.is_empty()
+        || !config.allowed_email_domains.is_empty()
+        || config.allow_any_verified_user
+        || config.allow_private_issuer;
+    if core.iter().all(|value| value.is_empty()) {
+        anyhow::ensure!(
+            !extras_configured,
+            "auth.oidc allowlist and flags require issuer, client ID, secret, and redirect URI"
+        );
+        return Ok(());
+    }
+    anyhow::ensure!(
+        core.iter().all(|value| !value.is_empty()),
+        "auth.oidc issuer, client ID, client secret, and redirect URI must be configured together"
+    );
+    anyhow::ensure!(
+        config.client_id.len() <= 512 && config.client_secret.len() <= 4096,
+        "auth.oidc client ID and secret exceed the supported length"
+    );
+    let issuer = openidconnect::url::Url::parse(&config.issuer_url)
+        .context("auth.oidc.issuer_url must be an absolute URL")?;
+    anyhow::ensure!(
+        issuer.host_str().is_some()
+            && issuer.username().is_empty()
+            && issuer.password().is_none()
+            && issuer.query().is_none()
+            && issuer.fragment().is_none()
+            && (issuer.scheme() == "https"
+                || (config.allow_private_issuer && issuer.scheme() == "http")),
+        "auth.oidc issuer must use HTTPS (or HTTP with allow_private_issuer) and have no credentials, query, or fragment"
+    );
+    let callback = openidconnect::url::Url::parse(&config.redirect_uri)
+        .context("auth.oidc.redirect_uri must be an absolute URL")?;
+    anyhow::ensure!(
+        callback.scheme() == "https"
+            && callback.host_str().is_some()
+            && callback.username().is_empty()
+            && callback.password().is_none()
+            && callback.query().is_none()
+            && callback.fragment().is_none()
+            && callback.path() == "/api/v1/auth/oidc/callback",
+        "auth.oidc.redirect_uri must be HTTPS and end at /api/v1/auth/oidc/callback"
+    );
+    Ok(())
 }
 
 // --- loading ---
@@ -621,6 +737,42 @@ impl Config {
                 .map(ToOwned::to_owned)
                 .collect();
         }
+        if let Some(v) = env_override("TNG_OIDC_PROVIDER", "RTNG_OIDC_PROVIDER") {
+            self.auth.oidc.provider = v;
+        }
+        if let Some(v) = env_override("TNG_OIDC_ISSUER_URL", "RTNG_OIDC_ISSUER_URL") {
+            self.auth.oidc.issuer_url = v;
+        }
+        if let Some(v) = env_override("TNG_OIDC_CLIENT_ID", "RTNG_OIDC_CLIENT_ID") {
+            self.auth.oidc.client_id = v;
+        }
+        if let Some(v) = env_override("TNG_OIDC_CLIENT_SECRET", "RTNG_OIDC_CLIENT_SECRET") {
+            self.auth.oidc.client_secret = v;
+        }
+        if let Some(v) = env_override("TNG_OIDC_REDIRECT_URI", "RTNG_OIDC_REDIRECT_URI") {
+            self.auth.oidc.redirect_uri = v;
+        }
+        if let Some(v) = env_override("TNG_OIDC_ALLOWED_EMAILS", "RTNG_OIDC_ALLOWED_EMAILS") {
+            self.auth.oidc.allowed_emails = split_auth_values(&v);
+        }
+        if let Some(v) = env_override(
+            "TNG_OIDC_ALLOWED_EMAIL_DOMAINS",
+            "RTNG_OIDC_ALLOWED_EMAIL_DOMAINS",
+        ) {
+            self.auth.oidc.allowed_email_domains = split_auth_values(&v);
+        }
+        if let Some(v) = env_override(
+            "TNG_OIDC_ALLOW_ANY_VERIFIED_USER",
+            "RTNG_OIDC_ALLOW_ANY_VERIFIED_USER",
+        ) {
+            self.auth.oidc.allow_any_verified_user = parse_env_bool(&v);
+        }
+        if let Some(v) = env_override(
+            "TNG_OIDC_ALLOW_PRIVATE_ISSUER",
+            "RTNG_OIDC_ALLOW_PRIVATE_ISSUER",
+        ) {
+            self.auth.oidc.allow_private_issuer = parse_env_bool(&v);
+        }
         if let Some(v) = env_override("TNG_ALLOW_SCRIPTS", "RTNG_ALLOW_SCRIPTS") {
             self.workflows.allow_scripts = v == "1" || v.eq_ignore_ascii_case("true");
         }
@@ -698,6 +850,7 @@ impl Config {
         if self.auth.username.trim().is_empty() || self.auth.username.len() > 256 {
             bail!("auth.username must contain 1-256 bytes");
         }
+        validate_oidc_config(&self.auth.oidc)?;
         if !self.auth.password.is_empty()
             && (self.auth.password.trim().len() < 8 || self.auth.password.len() > 1024)
         {

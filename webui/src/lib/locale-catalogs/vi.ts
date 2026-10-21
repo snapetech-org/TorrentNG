@@ -1139,4 +1139,6 @@ export const UI_LABELS: Record<string, string> = {
   "Selected torrents removed": "Đã gỡ các torrent đã chọn",
   "Selected torrents and files deleted": "Đã xóa torrent và tệp đã chọn",
   "Some selected torrents could not be removed": "Không thể gỡ một số torrent đã chọn",
+  "Continue with {provider}": "Tiếp tục với {provider}",
+  "Provider setup guide": "Hướng dẫn thiết lập nhà cung cấp",
 }

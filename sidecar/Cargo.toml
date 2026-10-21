@@ -59,6 +59,8 @@ urlencoding = "2"
 dirs-next = "2"
 libc = "0.2"
 reqwest = { version = "0.13", features = ["json", "multipart", "cookies", "form"] }
+reqwest-oidc = { package = "reqwest", version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+openidconnect = { version = "4.0.1", default-features = false, features = ["accept-string-booleans", "reqwest", "rustls-tls"] }
 
 [dev-dependencies]
 tokio-test = "0.4"
