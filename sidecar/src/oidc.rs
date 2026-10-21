@@ -26,13 +26,14 @@ use openidconnect::{
     reqwest,
 };
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use tokio::net::lookup_host;
 
 use crate::config::OidcConfig;
 
 const FLOW_TTL: Duration = Duration::from_secs(10 * 60);
 const SESSION_TTL_SECS: u64 = 24 * 60 * 60;
-const MAX_PENDING_FLOWS: usize = 256;
+const MAX_PENDING_FLOWS: usize = 16;
 const MAX_OIDC_SESSIONS: usize = 4_096;
 const MAX_PROVIDER_RESPONSE_BYTES: usize = 1 << 20;
 
@@ -499,7 +500,8 @@ pub(crate) async fn oidc_login(
         "Lax"
     };
     let cookie = format!(
-        "tng_oidc_state={}; Path=/api/v1/auth/oidc/callback; Max-Age={}; HttpOnly; SameSite={same_site}; Secure",
+        "{}={}; Path=/api/v1/auth/oidc/callback; Max-Age={}; HttpOnly; SameSite={same_site}; Secure",
+        oidc_state_cookie_name(&start.state),
         start.state,
         FLOW_TTL.as_secs(),
     );
@@ -517,16 +519,7 @@ pub(crate) async fn oidc_callback(
     headers: axum::http::HeaderMap,
 ) -> Response {
     let state_value = query.state.as_deref().unwrap_or_default();
-    let cookie_state = headers
-        .get(header::COOKIE)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| {
-            value
-                .split(';')
-                .map(str::trim)
-                .find_map(|part| part.strip_prefix("tng_oidc_state="))
-        })
-        .unwrap_or_default();
+    let cookie_state = oidc_state_cookie(&headers, state_value);
     oidc_callback_parts(
         &state,
         state_value,
@@ -582,10 +575,11 @@ pub(crate) async fn oidc_callback_form(
     let Some(form) = parse_oidc_callback_form(&body) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    let cookie_state = oidc_state_cookie(&headers);
+    let state_value = form.state.as_deref().unwrap_or_default();
+    let cookie_state = oidc_state_cookie(&headers, state_value);
     oidc_callback_parts(
         &state,
-        form.state.as_deref().unwrap_or_default(),
+        state_value,
         cookie_state,
         form.code.as_deref(),
         form.error.is_some(),
@@ -593,7 +587,9 @@ pub(crate) async fn oidc_callback_form(
     .await
 }
 
-fn oidc_state_cookie(headers: &axum::http::HeaderMap) -> &str {
+fn oidc_state_cookie<'a>(headers: &'a axum::http::HeaderMap, state: &str) -> &'a str {
+    let cookie_name = oidc_state_cookie_name(state);
+    let cookie_prefix = format!("{cookie_name}=");
     headers
         .get(header::COOKIE)
         .and_then(|value| value.to_str().ok())
@@ -601,7 +597,7 @@ fn oidc_state_cookie(headers: &axum::http::HeaderMap) -> &str {
             value
                 .split(';')
                 .map(str::trim)
-                .find_map(|part| part.strip_prefix("tng_oidc_state="))
+                .find_map(|part| part.strip_prefix(&cookie_prefix))
         })
         .unwrap_or_default()
 }
@@ -628,7 +624,7 @@ async fn oidc_callback_parts(
     };
     let (_email, _subject, return_to) = match identity {
         Ok(identity) => identity,
-        Err(_) => return oidc_failure_response(same_site),
+        Err(_) => return oidc_failure_response(same_site, state_value),
     };
     let credential = state.oidc_auth.new_session_credential();
     let cookie_value =
@@ -652,7 +648,8 @@ async fn oidc_callback_parts(
     response.headers_mut().append(
         header::SET_COOKIE,
         HeaderValue::from_str(&format!(
-            "tng_oidc_state=; Path=/api/v1/auth/oidc/callback; Max-Age=0; HttpOnly; SameSite={same_site}; Secure"
+            "{}=; Path=/api/v1/auth/oidc/callback; Max-Age=0; HttpOnly; SameSite={same_site}; Secure",
+            oidc_state_cookie_name(state_value)
         ))
         .expect("generated OIDC state cookie is a valid header"),
     );
@@ -662,12 +659,13 @@ async fn oidc_callback_parts(
     response
 }
 
-fn oidc_failure_response(same_site: &str) -> Response {
+fn oidc_failure_response(same_site: &str, state: &str) -> Response {
     let mut response = Redirect::to("/?oidc-error=1").into_response();
     response.headers_mut().insert(
         header::SET_COOKIE,
         HeaderValue::from_str(&format!(
-            "tng_oidc_state=; Path=/api/v1/auth/oidc/callback; Max-Age=0; HttpOnly; SameSite={same_site}; Secure"
+            "{}=; Path=/api/v1/auth/oidc/callback; Max-Age=0; HttpOnly; SameSite={same_site}; Secure",
+            oidc_state_cookie_name(state)
         ))
         .expect("generated OIDC state cookie is a valid header"),
     );
@@ -675,6 +673,15 @@ fn oidc_failure_response(same_site: &str) -> Response {
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
+}
+
+fn oidc_state_cookie_name(state: &str) -> String {
+    let digest = Sha256::digest(state.as_bytes());
+    let suffix = digest[..16]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("tng_oidc_state_{suffix}")
 }
 
 fn constant_time_equal(left: &[u8], right: &[u8]) -> bool {
@@ -748,7 +755,10 @@ fn public_ipv6(ip: Ipv6Addr) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{json_boolean, parse_oidc_callback_form};
+    use super::{
+        json_boolean, oidc_state_cookie, oidc_state_cookie_name, parse_oidc_callback_form,
+    };
+    use axum::http::{HeaderMap, HeaderValue, header};
 
     #[test]
     fn apple_form_post_parses_single_bounded_callback_fields() {
@@ -773,5 +783,28 @@ mod tests {
         assert!(!json_boolean(Some(&serde_json::json!(false))));
         assert!(!json_boolean(Some(&serde_json::json!("false"))));
         assert!(!json_boolean(Some(&serde_json::json!("yes"))));
+    }
+
+    #[test]
+    fn state_cookie_names_are_isolated_per_transaction() {
+        let first = oidc_state_cookie_name("first-flow");
+        let second = oidc_state_cookie_name("second-flow");
+
+        assert!(first.starts_with("tng_oidc_state_"));
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn state_cookie_lookup_selects_the_matching_concurrent_flow() {
+        let first = oidc_state_cookie_name("first-flow");
+        let second = oidc_state_cookie_name("second-flow");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_bytes(format!("{first}=first-flow; {second}=second-flow").as_bytes())
+                .unwrap(),
+        );
+
+        assert_eq!(oidc_state_cookie(&headers, "second-flow"), "second-flow");
     }
 }

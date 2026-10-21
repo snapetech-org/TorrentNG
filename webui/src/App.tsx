@@ -1784,9 +1784,10 @@ function LoginScreen({ message, onLogin }: {
         }}><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" style={{ marginRight: 8, verticalAlign: 'middle' }}>
           <use href={`${api.auth.oidcProviderIconsUrl()}#oidc-${oidcPresentation.icon}`} />
         </svg><LocalizedText source="Continue with {provider}" parameters={{ provider: oidcPresentation.label }} /></a>}
-        {oidcAvailable && <a href={oidcPresentation.setupUrl} target="_blank" rel="noopener noreferrer" style={{
+        {oidcAvailable && <a href={oidcPresentation.setupUrl} target="_blank" rel="noopener noreferrer"
+          aria-label={`${oidcPresentation.label} identity provider setup guide (opens in a new tab)`} style={{
           display: 'block', marginTop: 8, textAlign: 'center', color: 'var(--muted)', fontSize: 12,
-        }}><LocalizedText source="Provider setup guide" /></a>}
+        }}><LocalizedText source="Provider setup guide" /> <span aria-hidden="true">↗</span></a>}
       </form>
     </div>
   )
