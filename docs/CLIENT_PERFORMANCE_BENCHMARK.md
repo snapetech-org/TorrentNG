@@ -702,3 +702,16 @@ upload-future candidate: 2.74 CPU-s/GiB and 24.2 MiB cgroup anonymous peak for
 TorrentNG, versus 2.20 CPU-s/GiB and 18.5 MiB for qBittorrent in one run. That
 run predates this rate-settlement edit and cannot establish its effect. No new
 CPU/RAM score was collected; the comparison remains open.
+
+## Incoming Piece decode copy removal candidate (2026-10-21)
+
+The TCP codec now keeps incoming Piece data as a `Bytes` slice of the decoded
+frame, removing one block-sized allocation and copy before the engine handles
+the block. The borrowed `Message::parse` API retains its existing owned-copy
+semantics; this change applies to codec-owned frames. A pointer-identity
+regression checks the path. The full workspace all-target suite passed on Rust
+1.94.0 and 1.88.0 (2,346 passed, 0 failed, 12 ignored across 37 summaries on
+each); strict workspace Clippy passed on both, and all 357 Python tests passed.
+A matched download CPU/RAM measurement has not run for this candidate. The
+latest cross-client CPU/RAM rows therefore remain the prior source-bound
+results; this edit has no measured gain yet.

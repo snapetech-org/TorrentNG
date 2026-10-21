@@ -232,8 +232,8 @@ impl Decoder for PeerCodec {
             return Ok(None);
         }
         src.advance(4);
-        let payload = src.split_to(len as usize);
-        let msg = Message::parse(&payload)?;
+        let payload = src.split_to(len as usize).freeze();
+        let msg = Message::parse_owned(payload)?;
         Ok(Some(msg))
     }
 }
@@ -260,6 +260,7 @@ impl Encoder<Message> for PeerCodec {
 mod tests {
     use super::*;
     use bytes::BufMut;
+    use bytes::Bytes;
     use bytes::BytesMut;
     use tokio_util::codec::{Decoder, Encoder};
 
@@ -343,6 +344,27 @@ mod tests {
                 data,
             }
         );
+    }
+
+    #[test]
+    fn codec_piece_decode_reuses_frame_payload() {
+        let message = Message::Piece {
+            piece: 7,
+            begin: 16_384,
+            data: Bytes::from(vec![0x42u8; 4096]),
+        };
+        let mut frame = encode_msg(message);
+        let frame_start = frame.as_ptr();
+
+        let decoded = PeerCodec::default().decode(&mut frame).unwrap().unwrap();
+        let Message::Piece { data, .. } = decoded else {
+            panic!("expected Piece message");
+        };
+
+        // Four length bytes, one message id, and two u32 coordinates precede
+        // the payload. Pointer identity proves the codec did not copy it.
+        assert_eq!(data.as_ptr(), frame_start.wrapping_add(13));
+        assert!(frame.is_empty());
     }
 
     #[test]

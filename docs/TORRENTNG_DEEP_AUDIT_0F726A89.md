@@ -326,6 +326,20 @@ defaults this budget to zero. This remains an independent CPU/RAM experiment;
 the audit did not establish its contribution, and it must preserve v1, v2,
 hybrid, padding, cancellation, and crash-checkpoint behavior.
 
+**Implementation update, 2026-10-21:** the TCP peer codec now freezes the
+completed wire frame and represents an incoming Piece payload as a `Bytes`
+slice of that frame. This removes the parser's extra 16 KiB payload allocation
+and copy on the normal codec path; the borrowed `Message::parse` API keeps its
+copying behavior for callers that do not own the frame. A pointer-identity
+regression is included. The existing configured `PieceAssembly` governor cap
+already applies process-wide; its default remains zero, and no assembly-budget
+or CPU/RAM measurement is changed by this edit. The full all-target workspace
+suite passed on Rust 1.94.0 and 1.88.0 (2,346 passed, 0 failed, 12
+ignored across 37 summaries on each); strict workspace Clippy passed on both,
+and all 357 Python tests passed. Formatting and whitespace checks passed.
+Matched download CPU/RAM measurement remains pending, so this is a verified
+copy elimination in the codec path, not a measured performance claim.
+
 ## Validation sequence
 
 1. Run the rate scheduler regressions and the private two-seeder download

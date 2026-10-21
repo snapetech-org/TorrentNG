@@ -394,6 +394,33 @@ impl Message {
             _ => Err(WireError::UnknownMessageId(id)),
         }
     }
+
+    /// Parse an owned peer-wire payload. Piece blocks keep a slice of the
+    /// completed frame instead of allocating and copying a second payload
+    /// buffer. Other message variants retain the existing parsing behavior.
+    pub(crate) fn parse_owned(payload: Bytes) -> Result<Self, WireError> {
+        if payload.first() != Some(&7) {
+            return Self::parse(&payload);
+        }
+        if payload.len() < 9 {
+            return Err(WireError::InvalidMessage("Piece body too short".into()));
+        }
+
+        let piece = u32::from_be_bytes(payload[1..5].try_into().unwrap());
+        let begin = u32::from_be_bytes(payload[5..9].try_into().unwrap());
+        let data_len = payload.len() - 9;
+        if data_len > MAX_BLOCK_SIZE as usize {
+            return Err(WireError::InvalidMessage(format!(
+                "Piece block {data_len} bytes exceeds MAX_BLOCK_SIZE {MAX_BLOCK_SIZE}"
+            )));
+        }
+
+        Ok(Message::Piece {
+            piece,
+            begin,
+            data: payload.slice(9..),
+        })
+    }
 }
 
 type HashExchange = ([u8; 32], u32, u32, u32, u32, Vec<[u8; 32]>);
