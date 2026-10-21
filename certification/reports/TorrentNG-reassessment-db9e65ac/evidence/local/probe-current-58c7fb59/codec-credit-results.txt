@@ -1,0 +1,3 @@
+after_message_drop_and_trim: read_capacity=65536 governor_used=589830
+after_100_empty_decodes: read_capacity=65536 governor_used=589830
+after_connection_drop: governor_used=0
