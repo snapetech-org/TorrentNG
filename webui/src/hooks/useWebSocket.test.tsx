@@ -71,6 +71,8 @@ describe('useWebSocket', () => {
     const { unmount } = renderHook(() => useWebSocket(undefined, true), { wrapper })
     const socket = MockWebSocket.instances[0]
 
+    // jsdom uses an HTTP origin; the hook selects wss for HTTPS pages in production.
+    // nosemgrep: javascript.lang.security.detect-insecure-websocket.detect-insecure-websocket
     expect(socket.url).toBe(`ws://${location.host}/torrentng/ws`)
     unmount()
     queryClient.clear()

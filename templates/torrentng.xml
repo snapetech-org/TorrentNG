@@ -9,7 +9,7 @@
 
   <Icon>https://raw.githubusercontent.com/snapetech-org/TorrentNG/main/icon.png</Icon>
 
-  <WebUI>http://[IP]:[PORT:8080]</WebUI>
+  <WebUI>http://[IP]:[PORT:8080]/?tng-install=unraid-native</WebUI>
 
   <Overview>TorrentNG is a modern torrent management stack for headless power-user seeding at 10k-100k+ torrents and 200-500+ TB. This template runs torrentngd, TorrentNG's own first-party Rust BitTorrent client daemon, with its built-in WebUI, REST/SSE API, and qBittorrent-compatible API (for Prowlarr/Sonarr/Radarr/autobrr/cross-seed) all in one container. torrentngd owns torrent state, peer traffic, tracker state, storage, rechecks, jobs, and metrics directly -- it does not run or depend on rTorrent.
 

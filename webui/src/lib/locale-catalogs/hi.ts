@@ -1133,4 +1133,10 @@ export const UI_LABELS: Record<string, string> = {
   "“{path}” is listed as both weak and strong.": "“{path}” को कमज़ोर और मज़बूत, दोनों के रूप में सूचीबद्ध किया गया है।",
   "“{path}” needs an absolute folder path.": "“{path}” के लिए फ़ोल्डर का निरपेक्ष पथ होना चाहिए।",
   "✕ Deselect all": "✕ सभी का चयन हटाएँ",
+  "Remove torrent (keep files)": "टॉरेंट हटाएँ (फ़ाइलें रखें)",
+  "Delete torrent + files": "टॉरेंट और फ़ाइलें हटाएँ",
+  "{count} selected torrents": "{count} टॉरेंट चुने गए",
+  "Selected torrents removed": "चुने गए टॉरेंट हटाए गए",
+  "Selected torrents and files deleted": "चुने गए टॉरेंट और फ़ाइलें हटाई गईं",
+  "Some selected torrents could not be removed": "कुछ चुने गए टॉरेंट हटाए नहीं जा सके",
 }

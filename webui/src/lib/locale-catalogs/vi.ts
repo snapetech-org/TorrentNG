@@ -1133,4 +1133,10 @@ export const UI_LABELS: Record<string, string> = {
   "“{path}” is listed as both weak and strong.": "“{path}” được liệt kê là vừa yếu vừa mạnh.",
   "“{path}” needs an absolute folder path.": "“{path}” cần có đường dẫn thư mục tuyệt đối.",
   "✕ Deselect all": "✕ Bỏ chọn tất cả",
+  "Remove torrent (keep files)": "Gỡ torrent (giữ lại tệp)",
+  "Delete torrent + files": "Xóa torrent + tệp",
+  "{count} selected torrents": "Đã chọn {count} torrent",
+  "Selected torrents removed": "Đã gỡ các torrent đã chọn",
+  "Selected torrents and files deleted": "Đã xóa torrent và tệp đã chọn",
+  "Some selected torrents could not be removed": "Không thể gỡ một số torrent đã chọn",
 }

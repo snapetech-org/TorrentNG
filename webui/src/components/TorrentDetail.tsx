@@ -257,12 +257,12 @@ export function TorrentDetail({ torrent: t, onClose, autoDisplay, onAutoDisplayC
               background: 'color-mix(in srgb, var(--danger) 18%, var(--surface-2))', border: 'none', borderRadius: 4,
               color: 'var(--danger)', padding: '3px 10px', fontSize: 11,
               cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.55 : 1,
-            }}><LocalizedText source="Remove torrent" /></button>
+            }}><LocalizedText source="Remove torrent (keep files)" /></button>
             <button type="button" disabled={busy} onClick={() => remove(true)} style={{
               background: 'color-mix(in srgb, var(--danger) 28%, var(--surface-2))', border: 'none', borderRadius: 4,
               color: 'var(--danger)', padding: '3px 10px', fontSize: 11,
               cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.55 : 1,
-            }}><LocalizedText source="+ Delete files" /></button>
+            }}><LocalizedText source="Delete torrent + files" /></button>
             <button type="button" disabled={busy} onClick={() => setConfirmDelete(false)} style={{
               background: 'none', border: '1px solid var(--border-strong)', borderRadius: 4,
               color: 'var(--faint)', padding: '3px 8px', fontSize: 11,

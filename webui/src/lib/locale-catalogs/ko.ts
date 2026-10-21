@@ -1133,4 +1133,10 @@ export const UI_LABELS: Record<string, string> = {
   "“{path}” is listed as both weak and strong.": "“{path}”는 약함과 강함 모두로 나열됩니다.",
   "“{path}” needs an absolute folder path.": "“{path}”에는 절대 폴더 경로가 필요합니다.",
   "✕ Deselect all": "✕ 모두 선택 해제",
+  "Remove torrent (keep files)": "토렌트 제거 (파일 유지)",
+  "Delete torrent + files": "토렌트 + 파일 삭제",
+  "{count} selected torrents": "{count}개 토렌트 선택됨",
+  "Selected torrents removed": "선택한 토렌트 제거됨",
+  "Selected torrents and files deleted": "선택한 토렌트와 파일 삭제됨",
+  "Some selected torrents could not be removed": "선택한 일부 토렌트를 제거하지 못했습니다",
 }

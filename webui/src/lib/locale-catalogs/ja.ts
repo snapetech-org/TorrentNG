@@ -1133,4 +1133,10 @@ export const UI_LABELS: Record<string, string> = {
   "“{path}” is listed as both weak and strong.": "「{path}」は弱と強の両方としてリストされています。",
   "“{path}” needs an absolute folder path.": "「{path}」には絶対フォルダーパスが必要です。",
   "✕ Deselect all": "✕ すべての選択を解除",
+  "Remove torrent (keep files)": "トレントを削除（ファイルを保持）",
+  "Delete torrent + files": "トレントとファイルを削除",
+  "{count} selected torrents": "{count} 件のトレントを選択中",
+  "Selected torrents removed": "選択したトレントを削除しました",
+  "Selected torrents and files deleted": "選択したトレントとファイルを削除しました",
+  "Some selected torrents could not be removed": "一部の選択したトレントを削除できませんでした",
 }

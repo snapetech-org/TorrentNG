@@ -9,7 +9,7 @@
 
   <Icon>https://raw.githubusercontent.com/snapetech-org/TorrentNG/main/icon.png</Icon>
 
-  <WebUI>http://[IP]:[PORT:8080]</WebUI>
+  <WebUI>http://[IP]:[PORT:8080]/?tng-install=unraid-webui</WebUI>
 
   <Overview>TorrentNG WebUI is a modern replacement web interface and API for an rTorrent, qBittorrent, Transmission, or Deluge install you already run -- on this box or elsewhere on your network. It does not run its own torrent engine; your existing client keeps owning transfer/session state. TorrentNG polls it, caches state for a fast virtualized 10k-100k-row table, pushes live updates over WebSocket, and exposes a qBittorrent-compatible API so Prowlarr/Sonarr/Radarr/autobrr/cross-seed keep working unchanged.
 

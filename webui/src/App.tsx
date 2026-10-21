@@ -325,7 +325,11 @@ export function App() {
   const [helpOpen, setHelpOpen] = useState(false)
   const [toolbarBusy, setToolbarBusy] = useState(false)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
-  const [pendingDelete, setPendingDelete] = useState<TorrentSummary | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<{
+    hashes: string[]
+    torrents: TorrentSummary[]
+  } | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
   const [propertiesHash, setPropertiesHash] = useState<string | null>(null)
   const [bulkEditOpen, setBulkEditOpen] = useState(false)
   const [togglingFeature, setTogglingFeature] = useState<'dht' | 'pex' | null>(null)
@@ -352,6 +356,20 @@ export function App() {
   const isAuthed = activeTab.isActive && authState === 'authenticated'
   const query = useTorrentsInfinite(params, isAuthed, pageOffset)
   const { torrents, total } = flattenPages(query.data)
+  const openDeleteDialog = useCallback((torrent?: TorrentSummary) => {
+    const hashes = torrent && !selected.has(torrent.hash) ? [torrent.hash] : [...selected]
+    if (hashes.length === 0 && torrent) hashes.push(torrent.hash)
+    const records = new Map(selectedSnapshots)
+    for (const current of torrents) records.set(current.hash, current)
+    if (torrent) records.set(torrent.hash, torrent)
+    setPendingDelete({
+      hashes,
+      torrents: hashes.flatMap(hash => {
+        const record = records.get(hash)
+        return record ? [record] : []
+      }),
+    })
+  }, [selected, selectedSnapshots, torrents])
   useEffect(() => {
     const currentByHash = new Map(torrents.map(torrent => [torrent.hash, torrent]))
     setSelectedSnapshots(previous => {
@@ -494,7 +512,10 @@ export function App() {
       if (e.key === 'Escape') {
         if (contextMenu) { setContextMenu(null); return }
         if (helpOpen) { setHelpOpen(false); return }
-        if (pendingDelete) { setPendingDelete(null); return }
+        if (pendingDelete) {
+          if (!deleteBusy) setPendingDelete(null)
+          return
+        }
         if (bulkEditOpen) { setBulkEditOpen(false); return }
         if (propertiesHash) { setPropertiesHash(null); return }
         if (addOpen) { setAddOpen(false); return }
@@ -511,11 +532,10 @@ export function App() {
         setAddOpen(true)
         return
       }
-      if ((e.key === 'Delete' || e.key === 'Backspace') && !inEditable && selected.size === 1
+      if ((e.key === 'Delete' || e.key === 'Backspace') && !inEditable && selected.size > 0
         && !contextMenu && !helpOpen && !pendingDelete && !bulkEditOpen && !propertiesHash && !addOpen) {
-        const hash = [...selected][0]
-        const torrent = torrents.find(t => t.hash === hash)
-        if (torrent) { e.preventDefault(); setPendingDelete(torrent) }
+        e.preventDefault()
+        openDeleteDialog()
         return
       }
       if (e.key === 'a' && (e.ctrlKey || e.metaKey) && !inEditable) {
@@ -525,7 +545,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [addOpen, bulkEditOpen, contextMenu, detailHash, helpOpen, pendingDelete, propertiesHash, selected, torrents])
+  }, [addOpen, bulkEditOpen, contextMenu, deleteBusy, detailHash, helpOpen, openDeleteDialog, pendingDelete, propertiesHash, selected, torrents])
 
   function goToTrackerTorrents(tracker: string) {
     setPageOffset(0)
@@ -776,32 +796,67 @@ export function App() {
     }
   }
 
-  async function deleteTorrent(torrent: TorrentSummary, deleteFiles: boolean) {
+  async function deleteTorrents(pending: { hashes: string[]; torrents: TorrentSummary[] }, deleteFiles: boolean) {
+    const hashes = [...new Set(pending.hashes)]
+    if (hashes.length === 0) return
+    setDeleteBusy(true)
     setActionNotice(null)
+    const outcomes: Array<{ hash: string; payloadDeleted: boolean } | null> = Array(hashes.length).fill(null)
+    const failures: string[] = []
+    let nextIndex = 0
+    const worker = async () => {
+      while (nextIndex < hashes.length) {
+        const index = nextIndex++
+        const hash = hashes[index]
+        try {
+          const removal = await api.torrents.remove(hash, deleteFiles)
+          outcomes[index] = { hash, payloadDeleted: removal.payloadDeleted }
+        } catch {
+          failures.push(hash)
+        }
+      }
+    }
+
     try {
-      const removal = await api.torrents.remove(torrent.hash, deleteFiles)
-      setPendingDelete(null)
-      setSelected(prev => {
-        const next = new Set(prev)
-        next.delete(torrent.hash)
-        return next
-      })
-      setSelectedSnapshots(prev => {
-        const next = new Map(prev)
-        next.delete(torrent.hash)
-        return next
-      })
-      if (selectionAnchor === torrent.hash) setSelectionAnchor(null)
-      if (detailHash === torrent.hash) setDetailHash(null)
-      qc.invalidateQueries({ queryKey: ['torrents'], exact: false })
-      setActionNotice({
-        message: {
-          source: deleteFiles && removal.payloadDeleted ? 'Torrent and files deleted' : 'Torrent removed',
-        },
-        tone: 'ok',
-      })
-    } catch {
-      setActionNotice({ message: { source: 'Failed to delete torrent' }, tone: 'error' })
+      await Promise.all(Array.from({ length: Math.min(16, hashes.length) }, () => worker()))
+      const removed = outcomes.flatMap(outcome => outcome ? [outcome] : [])
+      const removedHashes = new Set(removed.map(outcome => outcome.hash))
+      if (removedHashes.size > 0) {
+        setSelected(previous => {
+          const next = new Set(previous)
+          for (const hash of removedHashes) next.delete(hash)
+          return next
+        })
+        setSelectedSnapshots(previous => {
+          const next = new Map(previous)
+          for (const hash of removedHashes) next.delete(hash)
+          return next
+        })
+        setSelectionAnchor(current => current && removedHashes.has(current) ? null : current)
+        setDetailHash(current => current && removedHashes.has(current) ? null : current)
+        qc.invalidateQueries({ queryKey: ['torrents'], exact: false })
+      }
+
+      if (failures.length === 0) {
+        setPendingDelete(null)
+        const payloadsDeleted = removed.filter(outcome => outcome.payloadDeleted).length
+        setActionNotice({
+          message: {
+            source: deleteFiles && payloadsDeleted === removed.length
+              ? (hashes.length === 1 ? 'Torrent and files deleted' : 'Selected torrents and files deleted')
+              : (hashes.length === 1 ? 'Torrent removed' : 'Selected torrents removed'),
+          },
+          tone: 'ok',
+        })
+      } else {
+        setPendingDelete({
+          hashes: failures,
+          torrents: pending.torrents.filter(torrent => failures.includes(torrent.hash)),
+        })
+        setActionNotice({ message: { source: 'Some selected torrents could not be removed' }, tone: 'error' })
+      }
+    } finally {
+      setDeleteBusy(false)
     }
   }
 
@@ -1195,7 +1250,7 @@ export function App() {
           onStop={() => runTorrent(contextMenu.torrent, 'stop')}
           onRecheck={() => runTorrent(contextMenu.torrent, 'recheck')}
           onReannounce={() => runTorrent(contextMenu.torrent, 'reannounce')}
-          onDelete={() => setPendingDelete(contextMenu.torrent)}
+          onDelete={() => openDeleteDialog(contextMenu.torrent)}
           onCopyHash={() => navigator.clipboard?.writeText(contextMenu.torrent.hash)}
           onCopyName={() => navigator.clipboard?.writeText(contextMenu.torrent.name)}
           onToggleSequential={() => toggleSequential([contextMenu.torrent.hash])}
@@ -1209,10 +1264,11 @@ export function App() {
       )}
       {pendingDelete && (
         <DeleteDialog
-          torrent={pendingDelete}
-          onCancel={() => setPendingDelete(null)}
-          onRemove={() => deleteTorrent(pendingDelete, false)}
-          onRemoveFiles={() => deleteTorrent(pendingDelete, true)}
+          pending={pendingDelete}
+          busy={deleteBusy}
+          onCancel={() => { if (!deleteBusy) setPendingDelete(null) }}
+          onRemove={() => void deleteTorrents(pendingDelete, false)}
+          onRemoveFiles={() => void deleteTorrents(pendingDelete, true)}
         />
       )}
     </div>
@@ -1448,8 +1504,9 @@ function PanelFrame({ children }: { children: React.ReactNode }) {
   return <div style={{ borderBottom: '1px solid var(--border)' }}>{children}</div>
 }
 
-function DeleteDialog({ torrent, onCancel, onRemove, onRemoveFiles }: {
-  torrent: TorrentSummary
+function DeleteDialog({ pending, busy, onCancel, onRemove, onRemoveFiles }: {
+  pending: { hashes: string[]; torrents: TorrentSummary[] }
+  busy: boolean
   onCancel: () => void
   onRemove: () => void
   onRemoveFiles: () => void
@@ -1458,7 +1515,7 @@ function DeleteDialog({ torrent, onCancel, onRemove, onRemoveFiles }: {
 
   return (
     <div className="tng-modal-backdrop" role="presentation" onMouseDown={e => {
-      if (e.target === e.currentTarget) onCancel()
+      if (!busy && e.target === e.currentTarget) onCancel()
     }} style={{
       position: 'fixed', inset: 0, background: 'rgba(2,6,23,0.72)', zIndex: 1150,
       display: 'grid', placeItems: 'center', padding: 24,
@@ -1477,7 +1534,11 @@ function DeleteDialog({ torrent, onCancel, onRemove, onRemoveFiles }: {
             }}>!</span>
             <h2 id="delete-torrent-title" style={{ margin: 0, fontSize: 16, fontWeight: 800, color: 'var(--danger)' }}><LocalizedText source="Delete torrent" /></h2>
           </div>
-          <div style={{ marginTop: 8, color: 'var(--text)', fontSize: 13, lineHeight: 1.4, wordBreak: 'break-word' }}>{torrent.name}</div>
+          <div style={{ marginTop: 8, color: 'var(--text)', fontSize: 13, lineHeight: 1.4, wordBreak: 'break-word' }}>
+            {pending.hashes.length === 1 && pending.torrents[0]
+              ? pending.torrents[0].name
+              : <LocalizedText source="{count} selected torrents" parameters={{ count: formatRegionalNumber(pending.hashes.length) }} />}
+          </div>
           <div id="delete-torrent-description" style={{
             marginTop: 10, color: 'var(--faint)', fontSize: 12, lineHeight: 1.45,
             border: '1px solid var(--border)', borderRadius: 6, background: 'var(--surface)', padding: 9,
@@ -1485,9 +1546,10 @@ function DeleteDialog({ torrent, onCancel, onRemove, onRemoveFiles }: {
             <LocalizedText source="Removing only the torrent keeps downloaded files. Deleting files removes the saved payload from disk." /></div>
         </div>
         <div style={{ padding: 14, display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
-          <button type="button" onClick={onCancel} data-dialog-initial-focus style={dialogButton('var(--muted)')}><LocalizedText source="Cancel" /></button>
-          <button type="button" onClick={onRemove} style={dialogButton('#f87171')}><LocalizedText source="Remove torrent" /></button>
-          <button type="button" onClick={onRemoveFiles} style={dialogButton('var(--danger)')}><LocalizedText source="Delete files" /></button>
+          {busy && <div role="status" aria-live="polite" style={{ flex: '1 0 100%', color: 'var(--faint)', fontSize: 12 }}><LocalizedText source="Removing…" /></div>}
+          <button type="button" className="tng-delete-cancel-action" onClick={onCancel} disabled={busy} data-dialog-initial-focus><LocalizedText source="Cancel" /></button>
+          <button type="button" className="tng-delete-action tng-delete-action-keep-files" onClick={onRemove} disabled={busy}><LocalizedText source="Remove torrent (keep files)" /></button>
+          <button type="button" className="tng-delete-action tng-delete-action-delete-files" onClick={onRemoveFiles} disabled={busy}><LocalizedText source="Delete torrent + files" /></button>
         </div>
       </div>
     </div>
@@ -1535,22 +1597,14 @@ const supportButton: React.CSSProperties = {
   cursor: 'pointer',
 }
 
-function dialogButton(color: string): React.CSSProperties {
-  return {
-    background: 'var(--surface-2)',
-    border: `1px solid color-mix(in srgb, ${color} 42%, var(--border))`,
-    borderRadius: 5,
-    color: `color-mix(in srgb, ${color} 78%, var(--text))`,
-    padding: '6px 10px',
-    fontSize: 12,
-    cursor: 'pointer',
-  }
-}
-
 function LoginScreen({ message, onLogin }: {
   message: string
   onLogin: (username: string, password: string) => Promise<void>
 }) {
+  const installHint = typeof window === 'undefined'
+    ? null
+    : new URLSearchParams(window.location.search).get('tng-install')
+  const isUnraidInstall = installHint === 'unraid-native' || installHint === 'unraid-webui'
   const helpLinkStyle: React.CSSProperties = {
     color: 'var(--accent)', textUnderlineOffset: 3,
   }
@@ -1592,69 +1646,68 @@ function LoginScreen({ message, onLogin }: {
             }} />
             <h1 style={{ margin: 0, fontWeight: 800, fontSize: 18 }}>TorrentNG</h1>
           </div>
-          <div style={{ color: 'var(--faint)', fontSize: 12, marginTop: 4, lineHeight: 1.5 }}>
-            <p style={{ margin: '0 0 6px' }}><LocalizedRichText
-              source="Fresh installs generate a unique WebUI password. Run {nativeCommand} on the native daemon, or run {webuiCommand} in the WebUI service console to retrieve it. You can use an API token in either login field."
-              parameters={{ nativeCommand: <code>torrentngd auth-token</code>, webuiCommand: <code>torrentng auth-token</code> }}
-            /></p>
-            <p style={{ margin: 0 }}><LocalizedRichText
-              source="On Unraid, find the API token in the native container template's {nativeSetting} field or the WebUI service template's {webuiSetting} field. Native config accepts {tokenConfig} or {tokenFileConfig}; the WebUI service accepts {tngApiTokens} or {rtngApiTokens}."
-              parameters={{
-                nativeSetting: <strong><LocalizedText source="API Token" /></strong>,
-                webuiSetting: <strong><LocalizedText source="API Tokens" /></strong>,
-                tokenConfig: <code>[auth].api_tokens</code>,
-                tokenFileConfig: <code>[auth].api_tokens_file</code>,
-                tngApiTokens: <code>TNG_API_TOKENS</code>,
-                rtngApiTokens: <code>RTNG_API_TOKENS</code>,
-              }}
-            /></p>
-          </div>
-          <nav aria-label={translateInterface("Sign-in instructions")} style={{
-            marginTop: 8, color: 'var(--faint)', fontSize: 12, lineHeight: 1.8,
-          }} {...interfaceTextProps("Sign-in instructions")}>
-            <LocalizedText source="Login help:" />{' '}
-            <a
-              href="https://github.com/snapetech-org/TorrentNG/blob/main/README.md#try-the-torrentng-engine"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={helpLinkStyle}
-            >
-              Docker Engine</a>
-            {' · '}
-            <a
-              href="https://github.com/snapetech-org/TorrentNG/blob/main/docs/NATIVE_DEPLOYMENT.md#webui-login"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={helpLinkStyle}
-            >
-              <LocalizedText source="Linux / Kubernetes" /></a>
-            {' · '}
-            <a
-              href="https://github.com/snapetech-org/TorrentNG/blob/main/sidecar/README.md#webui-login"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={helpLinkStyle}
-            >
-              <LocalizedText source="Docker + existing client" /></a>
-            {' · '}
-            <a
-              href="https://github.com/snapetech-org/TorrentNG/blob/main/deploy/unraid/README.md#webui-login"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={helpLinkStyle}
-            >
-              Unraid
-            </a>
-            {' · '}
-            <a
-              href="https://github.com/snapetech-org/TorrentNG/blob/main/packaging/yunohost/doc/POST_INSTALL.md#first-sign-in"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={helpLinkStyle}
-            >
-              YunoHost
-            </a>
-          </nav>
+          <details className="tng-login-help">
+            <summary><LocalizedText source="Login help:" /></summary>
+            <div className="tng-login-help-content">
+              <p><LocalizedRichText
+                source="Fresh installs generate a unique WebUI password. Run {nativeCommand} on the native daemon, or run {webuiCommand} in the WebUI service console to retrieve it. You can use an API token in either login field."
+                parameters={{ nativeCommand: <code>torrentngd auth-token</code>, webuiCommand: <code>torrentng auth-token</code> }}
+              /></p>
+              {isUnraidInstall && <p><LocalizedRichText
+                source="On Unraid, find the API token in the native container template's {nativeSetting} field or the WebUI service template's {webuiSetting} field. Native config accepts {tokenConfig} or {tokenFileConfig}; the WebUI service accepts {tngApiTokens} or {rtngApiTokens}."
+                parameters={{
+                  nativeSetting: <strong><LocalizedText source="API Token" /></strong>,
+                  webuiSetting: <strong><LocalizedText source="API Tokens" /></strong>,
+                  tokenConfig: <code>[auth].api_tokens</code>,
+                  tokenFileConfig: <code>[auth].api_tokens_file</code>,
+                  tngApiTokens: <code>TNG_API_TOKENS</code>,
+                  rtngApiTokens: <code>RTNG_API_TOKENS</code>,
+                }}
+              /></p>}
+              <nav aria-label={translateInterface("Sign-in instructions")} {...interfaceTextProps("Sign-in instructions")}>
+                <a
+                  href="https://github.com/snapetech-org/TorrentNG/blob/main/README.md#try-the-torrentng-engine"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={helpLinkStyle}
+                >
+                  Docker Engine</a>
+                {' · '}
+                <a
+                  href="https://github.com/snapetech-org/TorrentNG/blob/main/docs/NATIVE_DEPLOYMENT.md#webui-login"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={helpLinkStyle}
+                >
+                  <LocalizedText source="Linux / Kubernetes" /></a>
+                {' · '}
+                <a
+                  href="https://github.com/snapetech-org/TorrentNG/blob/main/sidecar/README.md#webui-login"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={helpLinkStyle}
+                >
+                  <LocalizedText source="Docker + existing client" /></a>
+                {isUnraidInstall && <>{' · '}<a
+                  href="https://github.com/snapetech-org/TorrentNG/blob/main/deploy/unraid/README.md#webui-login"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={helpLinkStyle}
+                >
+                  Unraid
+                </a></>}
+                {' · '}
+                <a
+                  href="https://github.com/snapetech-org/TorrentNG/blob/main/packaging/yunohost/doc/POST_INSTALL.md#first-sign-in"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={helpLinkStyle}
+                >
+                  YunoHost
+                </a>
+              </nav>
+            </div>
+          </details>
         </div>
         <label className="tng-form-card" style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12, color: 'var(--muted)' }}>
           <LocalizedText source="Username or API token" /><input

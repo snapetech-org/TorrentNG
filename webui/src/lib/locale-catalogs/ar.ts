@@ -1133,4 +1133,10 @@ export const UI_LABELS: Record<string, string> = {
   "“{path}” is listed as both weak and strong.": "«{path}» مُدرج بوصفه ضعيفًا وقويًا في آنٍ واحد.",
   "“{path}” needs an absolute folder path.": "يجب أن يكون «{path}» مسار مجلد مطلقًا.",
   "✕ Deselect all": "✕ إلغاء تحديد الكل",
+  "Remove torrent (keep files)": "إزالة التورنت (الاحتفاظ بالملفات)",
+  "Delete torrent + files": "حذف التورنت والملفات",
+  "{count} selected torrents": "تم تحديد {count} تورنت",
+  "Selected torrents removed": "تمت إزالة التورنتات المحددة",
+  "Selected torrents and files deleted": "تم حذف التورنتات والملفات المحددة",
+  "Some selected torrents could not be removed": "تعذرت إزالة بعض التورنتات المحددة",
 }

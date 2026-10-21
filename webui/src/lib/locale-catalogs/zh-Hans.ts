@@ -1133,4 +1133,10 @@ export const UI_LABELS: Record<string, string> = {
   "“{path}” is listed as both weak and strong.": "“{path}”被列为弱和强。",
   "“{path}” needs an absolute folder path.": "“{path}”需要绝对文件夹路径。",
   "✕ Deselect all": "✕ 取消全选",
+  "Remove torrent (keep files)": "移除种子（保留文件）",
+  "Delete torrent + files": "删除种子及文件",
+  "{count} selected torrents": "已选择 {count} 个种子",
+  "Selected torrents removed": "已移除所选种子",
+  "Selected torrents and files deleted": "已删除所选种子及其文件",
+  "Some selected torrents could not be removed": "部分所选种子无法移除",
 }

@@ -1133,4 +1133,10 @@ export const UI_LABELS: Record<string, string> = {
   "“{path}” is listed as both weak and strong.": "“{path}” terdaftar sebagai lemah dan kuat.",
   "“{path}” needs an absolute folder path.": "“{path}” memerlukan jalur folder absolut.",
   "✕ Deselect all": "✕ Batalkan semua pilihan",
+  "Remove torrent (keep files)": "Hapus torrent (simpan file)",
+  "Delete torrent + files": "Hapus torrent + file",
+  "{count} selected torrents": "{count} torrent dipilih",
+  "Selected torrents removed": "Torrent yang dipilih dihapus",
+  "Selected torrents and files deleted": "Torrent dan file yang dipilih dihapus",
+  "Some selected torrents could not be removed": "Beberapa torrent yang dipilih tidak dapat dihapus",
 }
