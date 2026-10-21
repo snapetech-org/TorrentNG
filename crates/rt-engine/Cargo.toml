@@ -10,6 +10,7 @@ license.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 bytes.workspace = true
+smallvec.workspace = true
 futures.workspace = true
 reqwest.workspace = true
 rusqlite.workspace = true

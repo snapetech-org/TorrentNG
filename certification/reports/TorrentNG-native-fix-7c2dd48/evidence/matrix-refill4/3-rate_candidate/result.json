@@ -1,0 +1,1173 @@
+{
+  "label": "rate_candidate",
+  "binary_sha256": "4e65f83a43b84560ee7522958b214f2dd6829898fdb00d233a9dd264c480f9e2",
+  "payload_sha256": "300c45d4f674374972b2255193016697efceb15fb4ca85b99351d91da25b3dad",
+  "payload_bytes": 134217728,
+  "cpu_seconds": 0.8285247259999999,
+  "cpu_s_per_gib": 6.6281978079999995,
+  "elapsed_seconds": 32.00008561899995,
+  "rate_cap_mib_s": 4.0,
+  "request_window": 32,
+  "refill_blocks": 4,
+  "diagnostics": false,
+  "before": {
+    "VmHWM": 31704,
+    "VmRSS": 31704,
+    "RssAnon": 9112,
+    "RssFile": 22592,
+    "Threads": 10
+  },
+  "after": {
+    "VmHWM": 31784,
+    "VmRSS": 31784,
+    "RssAnon": 9112,
+    "RssFile": 22672,
+    "Threads": 9
+  },
+  "peak_rss_kib": 31784,
+  "peak_anon_kib": 9112,
+  "samples": [
+    {
+      "t": 11978.286469303,
+      "VmHWM": 31704,
+      "VmRSS": 31704,
+      "RssAnon": 9112,
+      "RssFile": 22592,
+      "Threads": 10
+    },
+    {
+      "t": 11978.536777739,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11978.787063929,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11979.03747057,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11979.287885313,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11979.538181332,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11979.788533572,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11980.038792016,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11980.289055165,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11980.539326388,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11980.789587139,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11981.03984378,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11981.290143142,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11981.540487381,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11981.790744091,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11982.041073475,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11982.291612578,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11982.541946729,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11982.792223213,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11983.042551826,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11983.292830683,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11983.543158295,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11983.793512034,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11984.043791093,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11984.294248222,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11984.544542095,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11984.794831611,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11985.045193591,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11985.295562847,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11985.545882933,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11985.796151743,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11986.046477293,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11986.296889593,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11986.547146521,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11986.797582151,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11987.047873054,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11987.298195179,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11987.54848141,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11987.798776224,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11988.049059355,
+      "VmHWM": 31768,
+      "VmRSS": 31768,
+      "RssAnon": 9112,
+      "RssFile": 22656,
+      "Threads": 10
+    },
+    {
+      "t": 11988.299350023,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11988.549633005,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11988.799955495,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11989.050414676,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11989.300882103,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11989.551159081,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11989.801655167,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11990.051929385,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11990.302324385,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11990.552773715,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11990.803452135,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11991.053822104,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11991.304045623,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11991.554326228,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11991.80462777,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11992.054905295,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11992.305167437,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11992.55641817,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11992.806681767,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11993.057015423,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11993.307329316,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11993.557662962,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11993.807933123,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11994.058238127,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11994.308530711,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11994.558877037,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11994.809500419,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11995.059780485,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11995.310067682,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11995.560410902,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11995.810785591,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11996.061067039,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11996.31132996,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11996.561634032,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11996.811986262,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11997.062376588,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11997.312834241,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11997.563188148,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11997.813591118,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11998.063877444,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11998.314185998,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11998.564496504,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11998.814837953,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11999.065123337,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11999.315450865,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11999.565721406,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 11999.816127952,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12000.066432715,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12000.316771784,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12000.567057441,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12000.817385772,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12001.067675671,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12001.317994982,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12001.568321667,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12001.818643173,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12002.068915684,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12002.319180966,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12002.569606443,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12002.819865319,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12003.070212725,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12003.320532277,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12003.570850523,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12003.821105784,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12004.071395672,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12004.321698977,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12004.571971032,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12004.822303159,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12005.072594174,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12005.322927148,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12005.573252078,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12005.8237505,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12006.074050108,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12006.324369906,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12006.57465672,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12006.824922812,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12007.075189816,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12007.325498818,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12007.575820399,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12007.826179526,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12008.076568699,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12008.326834911,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12008.577119234,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12008.827447067,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12009.077716603,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12009.327989178,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12009.578295053,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12009.828564594,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    },
+    {
+      "t": 12010.078897465,
+      "VmHWM": 31784,
+      "VmRSS": 31784,
+      "RssAnon": 9112,
+      "RssFile": 22672,
+      "Threads": 9
+    }
+  ],
+  "before_threads": {
+    "23649": {
+      "name": "torrentngd-rate",
+      "cpu_s": 0.0,
+      "user_s": 0.0,
+      "system_s": 0.0
+    },
+    "23650": {
+      "name": "tokio-rt-worker",
+      "cpu_s": 0.0,
+      "user_s": 0.0,
+      "system_s": 0.0
+    },
+    "23651": {
+      "name": "tokio-rt-worker",
+      "cpu_s": 0.0,
+      "user_s": 0.0,
+      "system_s": 0.0
+    },
+    "23652": {
+      "name": "torrentng-db",
+      "cpu_s": 0.0,
+      "user_s": 0.0,
+      "system_s": 0.0
+    },
+    "23653": {
+      "name": "tokio-rt-worker",
+      "cpu_s": 0.0,
+      "user_s": 0.0,
+      "system_s": 0.0
+    },
+    "23654": {
+      "name": "rt-storage-io-0",
+      "cpu_s": 0.0,
+      "user_s": 0.0,
+      "system_s": 0.0
+    },
+    "23655": {
+      "name": "rt-storage-io-1",
+      "cpu_s": 0.0,
+      "user_s": 0.0,
+      "system_s": 0.0
+    },
+    "23656": {
+      "name": "tng-disk-0",
+      "cpu_s": 0.0,
+      "user_s": 0.0,
+      "system_s": 0.0
+    },
+    "23657": {
+      "name": "tng-disk-1",
+      "cpu_s": 0.0,
+      "user_s": 0.0,
+      "system_s": 0.0
+    },
+    "23658": {
+      "name": "rt-storage-hash",
+      "cpu_s": 0.07,
+      "user_s": 0.07,
+      "system_s": 0.0
+    }
+  },
+  "after_threads": {
+    "23649": {
+      "name": "torrentngd-rate",
+      "cpu_s": 0.0,
+      "user_s": 0.0,
+      "system_s": 0.0
+    },
+    "23650": {
+      "name": "tokio-rt-worker",
+      "cpu_s": 0.27,
+      "user_s": 0.15,
+      "system_s": 0.12
+    },
+    "23651": {
+      "name": "tokio-rt-worker",
+      "cpu_s": 0.3,
+      "user_s": 0.18,
+      "system_s": 0.12
+    },
+    "23652": {
+      "name": "torrentng-db",
+      "cpu_s": 0.0,
+      "user_s": 0.0,
+      "system_s": 0.0
+    },
+    "23654": {
+      "name": "rt-storage-io-0",
+      "cpu_s": 0.0,
+      "user_s": 0.0,
+      "system_s": 0.0
+    },
+    "23655": {
+      "name": "rt-storage-io-1",
+      "cpu_s": 0.0,
+      "user_s": 0.0,
+      "system_s": 0.0
+    },
+    "23656": {
+      "name": "tng-disk-0",
+      "cpu_s": 0.13,
+      "user_s": 0.04,
+      "system_s": 0.09
+    },
+    "23657": {
+      "name": "tng-disk-1",
+      "cpu_s": 0.12,
+      "user_s": 0.03,
+      "system_s": 0.09
+    },
+    "23658": {
+      "name": "rt-storage-hash",
+      "cpu_s": 0.07,
+      "user_s": 0.07,
+      "system_s": 0.0
+    }
+  }
+}

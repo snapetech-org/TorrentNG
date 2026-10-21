@@ -1,0 +1,111 @@
+diff --git a/crates/rt-engine/src/torrent_task.rs b/crates/rt-engine/src/torrent_task.rs
+index 6264f1a..6383adb 100644
+--- a/crates/rt-engine/src/torrent_task.rs
++++ b/crates/rt-engine/src/torrent_task.rs
+@@ -115,6 +115,11 @@ pub(crate) const UTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+ const UPLOAD_ACCOUNTING_BATCH_BYTES: u64 = 64 * 1024;
+ const UPLOAD_ACCOUNTING_MAX_DELAY: Duration = Duration::from_millis(25);
+ const MAX_READY_UPLOAD_INTAKE_MESSAGES: usize = MAX_UPLOAD_READ_BATCH_BLOCKS;
++// A pipelined receiver can refill one 16 KiB request at a time. Ready-only
++// draining never combines those refills, so every cache hit still enters the
++// disk queue. Bound collection latency, and never wait for more requests than
++// this peer has demonstrated it can keep outstanding.
++const UPLOAD_READ_COALESCE_MAX_DELAY: Duration = Duration::from_millis(8);
+ 
+ pub(crate) async fn connect_utp_with_deadline(
+     network_budget: &GlobalNetworkBudget,
+@@ -8949,6 +8954,10 @@ where
+     let mut upload_reads = UploadReadTasks::<F>::default();
+     let mut upload_dispatch_pending = false;
+     let mut upload_intake_messages = 0usize;
++    let mut upload_pipeline_width = 1usize;
++    let mut upload_coalescing_expired = false;
++    let upload_coalescing_flush = sleep(UPLOAD_READ_COALESCE_MAX_DELAY);
++    tokio::pin!(upload_coalescing_flush);
+     let mut deferred_peer_message: Option<anyhow::Result<Option<Message>>> = None;
+     // Protocol obligations are process-owned by generation-safe connection
+     // identity. The socket loop retains the only writer and upload-read futures.
+@@ -8962,14 +8971,20 @@ where
+         'peer: loop {
+         // Poll the decoder once while upload dispatch is pending. Any complete
+         // frames already in the socket buffer are processed first, up to a
+-        // small hard cap; no timer is used to wait for a fuller batch.
++        // small hard cap. Staggered refills from a pipelined peer may collect
++        // until the bounded deadline; a serial requester dispatches at once.
+         if deferred_peer_message.is_none()
+             && upload_dispatch_pending
+             && upload_intake_messages < MAX_READY_UPLOAD_INTAKE_MESSAGES
+         {
+             deferred_peer_message = peer_io.try_next_ready();
+         }
+-        let dispatch_upload_reads_now = upload_dispatch_pending && deferred_peer_message.is_none();
++        let dispatch_upload_reads_now = upload_dispatch_pending
++            && deferred_peer_message.is_none()
++            && (upload_choked
++                || upload.plane != Plane::V1
++                || upload_intake_messages >= upload_pipeline_width
++                || upload_coalescing_expired);
+         tokio::select! {
+             cmd = peer_cmd_rx.recv() => {
+                 let Some(cmd) = cmd else {
+@@ -9121,6 +9136,7 @@ where
+                         }
+                         upload_dispatch_pending = false;
+                         upload_intake_messages = 0;
++                        upload_pipeline_width = 1;
+                         start_upload_reads(
+                             &mut upload_reads,
+                             &upload_obligations,
+@@ -9143,6 +9159,7 @@ where
+                         peer_io.send(Message::Unchoke).await?;
+                         upload_dispatch_pending = false;
+                         upload_intake_messages = 0;
++                        upload_pipeline_width = 1;
+                         start_upload_reads(
+                             &mut upload_reads,
+                             &upload_obligations,
+@@ -9536,9 +9553,18 @@ where
+                         }
+                         match decision {
+                             InboundDecision::Queue => {
++                                upload_pipeline_width = upload_pipeline_width.max(
++                                    upload_reads.pending_request_count()
++                                        .saturating_add(upload_obligations.queued_len())
++                                        .min(MAX_READY_UPLOAD_INTAKE_MESSAGES),
++                                );
+                                 if !upload_dispatch_pending {
+                                     upload_dispatch_pending = true;
+                                     upload_intake_messages = 1;
++                                    upload_coalescing_expired = false;
++                                    upload_coalescing_flush.as_mut().reset(
++                                        TokioInstant::now() + UPLOAD_READ_COALESCE_MAX_DELAY,
++                                    );
+                                 }
+                             }
+                             InboundDecision::Reject(_) => {
+@@ -9892,6 +9918,14 @@ where
+                 }
+             }
+             _ = std::future::ready(()), if dispatch_upload_reads_now => {
++                if upload_coalescing_expired
++                    && upload_obligations.queued_len() <= 1
++                    && upload_reads.pending_request_count() == 0
++                {
++                    // A peer may shrink its window after the initial burst.
++                    // One solitary deadline flush restores immediate service.
++                    upload_pipeline_width = 1;
++                }
+                 upload_dispatch_pending = false;
+                 upload_intake_messages = 0;
+                 start_upload_reads(
+@@ -9902,6 +9936,10 @@ where
+                     make_upload_read_future,
+                 )?;
+             }
++            _ = upload_coalescing_flush.as_mut(),
++                if upload_dispatch_pending && !upload_coalescing_expired => {
++                upload_coalescing_expired = true;
++            }
+             _ = timeout_tick.tick() => {
+                 if last_activity.elapsed() > PEER_IDLE_TIMEOUT {
+                     anyhow::bail!("peer idle timeout");

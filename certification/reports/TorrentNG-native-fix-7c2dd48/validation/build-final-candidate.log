@@ -1,0 +1,20 @@
+   Compiling rt-storage v0.1.0 (/workspace/scratch/64035e61355e/torrentng-native-fix/crates/rt-storage)
+   Compiling rt-fastresume v0.1.0 (/workspace/scratch/64035e61355e/torrentng-native-fix/crates/rt-fastresume)
+   Compiling rt-engine v0.1.0 (/workspace/scratch/64035e61355e/torrentng-native-fix/crates/rt-engine)
+   Compiling rt-migrate v0.1.0 (/workspace/scratch/64035e61355e/torrentng-native-fix/crates/rt-migrate)
+warning: function `read_upload_block` is never used
+     --> crates/rt-engine/src/torrent_task.rs:10149:10
+      |
+10149 | async fn read_upload_block(
+      |          ^^^^^^^^^^^^^^^^^
+      |
+      = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling rt-api-qbit v0.1.0 (/workspace/scratch/64035e61355e/torrentng-native-fix/crates/rt-api-qbit)
+   Compiling rt-api-transmission v0.1.0 (/workspace/scratch/64035e61355e/torrentng-native-fix/crates/rt-api-transmission)
+   Compiling rt-api-native v0.1.0 (/workspace/scratch/64035e61355e/torrentng-native-fix/crates/rt-api-native)
+warning: `rt-engine` (lib) generated 1 warning
+   Compiling rt-api-deluge v0.1.0 (/workspace/scratch/64035e61355e/torrentng-native-fix/crates/rt-api-deluge)
+error: failed to build archive at `/workspace/scratch/64035e61355e/audit-native-fix/target/release/deps/librt_api_native-289877a7b1242611.rlib`: failed to map object file: memory map must have a non-zero length
+
+error: could not compile `rt-api-native` (lib) due to 1 previous error

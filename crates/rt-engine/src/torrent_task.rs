@@ -115,6 +115,11 @@ pub(crate) const UTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const UPLOAD_ACCOUNTING_BATCH_BYTES: u64 = 64 * 1024;
 const UPLOAD_ACCOUNTING_MAX_DELAY: Duration = Duration::from_millis(25);
 const MAX_READY_UPLOAD_INTAKE_MESSAGES: usize = MAX_UPLOAD_READ_BATCH_BLOCKS;
+// A pipelined receiver can refill one 16 KiB request at a time. Ready-only
+// draining never combines those refills, so every cache hit still enters the
+// disk queue. Bound collection latency, and never wait for more requests than
+// this peer has demonstrated it can keep outstanding.
+const UPLOAD_READ_COALESCE_MAX_DELAY: Duration = Duration::from_millis(8);
 
 pub(crate) async fn connect_utp_with_deadline(
     network_budget: &GlobalNetworkBudget,
@@ -217,7 +222,7 @@ fn validate_padding_block(
 ) -> anyhow::Result<()> {
     let length = u32::try_from(data.len())
         .map_err(|_| anyhow::anyhow!("peer block length does not fit in u32"))?;
-    let regions = piece_map.validate_request(piece, begin, length)?;
+    let regions = piece_map.request_regions(piece, begin, length)?;
     let mut data_offset = 0usize;
     for region in regions {
         let region_len = usize::try_from(region.length)
@@ -2120,6 +2125,10 @@ impl UploadContext {
     }
 }
 
+// These collections have a protocol scheduling bound; keep their elements
+// inline instead of allocating a new Vec at each stage of every read.
+type UploadBatch<T> = smallvec::SmallVec<[T; MAX_UPLOAD_READ_BATCH_BLOCKS]>;
+
 struct UploadReadContext {
     save_root: PathBuf,
     piece_map: Arc<PieceMap>,
@@ -2140,19 +2149,36 @@ struct UploadRateAdmission {
 
 struct LeasedUploadBlock {
     data: bytes::Bytes,
-    _lease: Arc<MemoryLease>,
+    _lease: UploadMemoryLease,
     _read_permit: UploadReadPermit,
     rate_grant: Option<RateAdmissionGrant>,
 }
 
-#[derive(Clone)]
+/// A single block has one owner. Only slices of a multi-block backing need
+/// shared ownership of their memory charge.
+enum UploadMemoryLease {
+    Single { _lease: MemoryLease },
+    Shared { _lease: Arc<MemoryLease> },
+}
+
+#[cfg(test)]
+impl UploadMemoryLease {
+    fn bytes(&self) -> u64 {
+        match self {
+            Self::Single { _lease } => _lease.bytes(),
+            Self::Shared { _lease } => _lease.bytes(),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 struct UploadReadSpan {
-    path: PathBuf,
+    file_ordinal: usize,
     offset: u64,
     length: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 struct UploadReadSpec {
     request: UploadRequest,
     span: Option<UploadReadSpan>,
@@ -2540,7 +2566,7 @@ async fn write_transfer_block(
     ))?;
     let regions = context
         .piece_map
-        .validate_request(block.piece, block.offset, block_len)?;
+        .request_regions(block.piece, block.offset, block_len)?;
     let mut data_offset = 0usize;
 
     for region in regions {
@@ -2561,14 +2587,8 @@ async fn write_transfer_block(
             data_offset = end;
             continue;
         }
-        let file = context
-            .meta
-            .files
-            .iter()
-            .find(|file| file.index == region.file_index)
-            .ok_or_else(|| anyhow::anyhow!("file index {} out of range", region.file_index))?;
-        let path = file.path.resolve(&context.save_root);
-        prepare_transfer_file_once(context, file.index, &path, file.length).await?;
+        let path = region.path.resolve(&context.save_root);
+        prepare_transfer_file_once(context, region.file_index, &path, region.file_length).await?;
         data_offset = end;
         match _memory_lease.as_ref() {
             Some(lease) => {
@@ -5833,9 +5853,8 @@ impl TorrentTask {
             block.offset,
             block_len,
         ))?;
-        let regions = self
-            .piece_map
-            .validate_request(block.piece, block.offset, block_len)?;
+        let piece_map = Arc::clone(&self.piece_map);
+        let regions = piece_map.request_regions(block.piece, block.offset, block_len)?;
         let mut data_offset = 0usize;
 
         for region in regions {
@@ -5856,14 +5875,8 @@ impl TorrentTask {
                 data_offset = end;
                 continue;
             }
-            let (path, file_length) = self
-                .meta
-                .files
-                .iter()
-                .find(|file| file.index == region.file_index)
-                .map(|file| (file.path.resolve(&self.save_root), file.length))
-                .ok_or_else(|| anyhow::anyhow!("file index {} out of range", region.file_index))?;
-            self.prepare_file_once(region.file_index, &path, file_length)
+            let path = region.path.resolve(&self.save_root);
+            self.prepare_file_once(region.file_index, &path, region.file_length)
                 .await?;
             data_offset = end;
             match shared_payload_lease.as_ref() {
@@ -8899,8 +8912,8 @@ async fn run_peer_loop_with_upload_future<MakeUploadReadFuture, F>(
 ) -> PeerLoopExit
 where
     MakeUploadReadFuture:
-        Fn(Vec<UploadReadSpec>, Arc<UploadReadContext>) -> F + Copy + Send + 'static,
-    F: std::future::Future<Output = Vec<UploadReadCompletion>> + Send + 'static,
+        Fn(UploadBatch<UploadReadSpec>, Arc<UploadReadContext>) -> F + Copy + Send + 'static,
+    F: std::future::Future<Output = UploadBatch<UploadReadCompletion>> + Send + 'static,
 {
     let mut outstanding = Vec::<OutstandingRequest>::new();
     let upload_service = upload.upload_rate.network_budget.upload_service();
@@ -8949,6 +8962,10 @@ where
     let mut upload_reads = UploadReadTasks::<F>::default();
     let mut upload_dispatch_pending = false;
     let mut upload_intake_messages = 0usize;
+    let mut upload_pipeline_width = 1usize;
+    let mut upload_coalescing_expired = false;
+    let upload_coalescing_flush = sleep(UPLOAD_READ_COALESCE_MAX_DELAY);
+    tokio::pin!(upload_coalescing_flush);
     let mut deferred_peer_message: Option<anyhow::Result<Option<Message>>> = None;
     // Protocol obligations are process-owned by generation-safe connection
     // identity. The socket loop retains the only writer and upload-read futures.
@@ -8962,14 +8979,20 @@ where
         'peer: loop {
         // Poll the decoder once while upload dispatch is pending. Any complete
         // frames already in the socket buffer are processed first, up to a
-        // small hard cap; no timer is used to wait for a fuller batch.
+        // small hard cap. Staggered refills from a pipelined peer may collect
+        // until the bounded deadline; a serial requester dispatches at once.
         if deferred_peer_message.is_none()
             && upload_dispatch_pending
             && upload_intake_messages < MAX_READY_UPLOAD_INTAKE_MESSAGES
         {
             deferred_peer_message = peer_io.try_next_ready();
         }
-        let dispatch_upload_reads_now = upload_dispatch_pending && deferred_peer_message.is_none();
+        let dispatch_upload_reads_now = upload_dispatch_pending
+            && deferred_peer_message.is_none()
+            && (upload_choked
+                || upload.plane != Plane::V1
+                || upload_intake_messages >= upload_pipeline_width
+                || upload_coalescing_expired);
         tokio::select! {
             cmd = peer_cmd_rx.recv() => {
                 let Some(cmd) = cmd else {
@@ -9121,6 +9144,7 @@ where
                         }
                         upload_dispatch_pending = false;
                         upload_intake_messages = 0;
+                        upload_pipeline_width = 1;
                         start_upload_reads(
                             &mut upload_reads,
                             &upload_obligations,
@@ -9143,6 +9167,7 @@ where
                         peer_io.send(Message::Unchoke).await?;
                         upload_dispatch_pending = false;
                         upload_intake_messages = 0;
+                        upload_pipeline_width = 1;
                         start_upload_reads(
                             &mut upload_reads,
                             &upload_obligations,
@@ -9536,9 +9561,18 @@ where
                         }
                         match decision {
                             InboundDecision::Queue => {
+                                upload_pipeline_width = upload_pipeline_width.max(
+                                    upload_reads.pending_request_count()
+                                        .saturating_add(upload_obligations.queued_len())
+                                        .min(MAX_READY_UPLOAD_INTAKE_MESSAGES),
+                                );
                                 if !upload_dispatch_pending {
                                     upload_dispatch_pending = true;
                                     upload_intake_messages = 1;
+                                    upload_coalescing_expired = false;
+                                    upload_coalescing_flush.as_mut().reset(
+                                        TokioInstant::now() + UPLOAD_READ_COALESCE_MAX_DELAY,
+                                    );
                                 }
                             }
                             InboundDecision::Reject(_) => {
@@ -9717,7 +9751,7 @@ where
                 let Some(upload_completions) = upload_result else {
                     continue;
                 };
-                let mut ready_uploads = Vec::with_capacity(upload_completions.len());
+                let mut ready_uploads = UploadBatch::new();
                 for upload_completion in upload_completions {
                     upload_reads.finish_request();
                     let (request, result, rate_interrupted) = match upload_completion {
@@ -9815,11 +9849,12 @@ where
                         .map(|(request, block)| {
                             (request.wire_piece, request.wire_begin, &block.data)
                         })
-                        .collect::<Vec<_>>();
+                        .collect::<UploadBatch<_>>();
                     let (completed_frames, send_error) = match peer_io.send_pieces(&frames).await {
                         Ok(completed) => (completed, None),
                         Err((completed, error)) => (completed, Some(error)),
                     };
+                    drop(frames);
                     let completed_frames = completed_frames.min(ready_uploads.len());
                     let mut upload_event_due = false;
                     for (request, mut block) in ready_uploads
@@ -9892,6 +9927,14 @@ where
                 }
             }
             _ = std::future::ready(()), if dispatch_upload_reads_now => {
+                if upload_coalescing_expired
+                    && upload_obligations.queued_len() <= 1
+                    && upload_reads.pending_request_count() == 0
+                {
+                    // A peer may shrink its window after the initial burst.
+                    // One solitary deadline flush restores immediate service.
+                    upload_pipeline_width = 1;
+                }
                 upload_dispatch_pending = false;
                 upload_intake_messages = 0;
                 start_upload_reads(
@@ -9901,6 +9944,10 @@ where
                     &upload_read_context,
                     make_upload_read_future,
                 )?;
+            }
+            _ = upload_coalescing_flush.as_mut(),
+                if upload_dispatch_pending && !upload_coalescing_expired => {
+                upload_coalescing_expired = true;
             }
             _ = timeout_tick.tick() => {
                 if last_activity.elapsed() > PEER_IDLE_TIMEOUT {
@@ -10148,11 +10195,17 @@ async fn read_upload_block_with_span(
             upload.plane == Plane::V1 && span.length == length as usize,
             "cached upload span does not match its admitted request"
         );
+        let path = upload
+            .piece_map
+            .file_by_ordinal(span.file_ordinal)
+            .ok_or_else(|| anyhow::anyhow!("upload span file is outside its piece map"))?
+            .path
+            .resolve(&upload.save_root);
         let read = upload
             .storage
             .read_owned_at_with_priority(
                 IoClass::PeerRead,
-                &span.path,
+                &path,
                 span.offset,
                 span.length,
                 priority,
@@ -10166,12 +10219,15 @@ async fn read_upload_block_with_span(
         );
         read.into_bytes()
     } else {
-        let regions =
-            upload
-                .piece_map
-                .validate_request(canonical.piece, canonical.begin, length)?;
-        if regions.len() == 1 && !regions[0].pad {
-            let region = &regions[0];
+        let mut regions = upload
+            .piece_map
+            .request_regions(canonical.piece, canonical.begin, length)?
+            .peekable();
+        let first = regions
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("upload request has no file regions"))?;
+        if regions.peek().is_none() && !first.pad {
+            let region = first;
             let path = region.path.resolve(&upload.save_root);
             let read = upload
                 .storage
@@ -10192,7 +10248,7 @@ async fn read_upload_block_with_span(
             read.into_bytes()
         } else {
             let mut data = Vec::with_capacity(length as usize);
-            for region in regions {
+            for region in std::iter::once(first).chain(regions) {
                 if region.pad {
                     data.resize(data.len() + region.length as usize, 0);
                     continue;
@@ -10240,7 +10296,7 @@ async fn read_upload_block_with_span(
     );
     Ok(LeasedUploadBlock {
         data,
-        _lease: Arc::new(lease),
+        _lease: UploadMemoryLease::Single { _lease: lease },
         _read_permit,
         rate_grant: None,
     })
@@ -10323,24 +10379,19 @@ fn upload_read_spec(
 
 fn upload_read_span(upload: &UploadReadContext, request: UploadRequest) -> Option<UploadReadSpan> {
     let canonical = request.canonical_block();
-    if upload.plane != Plane::V1
-        || request.wire_block() != canonical
-        || canonical.length == 0
-        || canonical.length > MAX_BLOCK_SIZE
-        || PieceGeometry::validate_served_block(&upload.piece_map, canonical).is_err()
-    {
+    if upload.plane != Plane::V1 || request.wire_block() != canonical {
         return None;
     }
-    let regions = upload
+    let mut regions = upload
         .piece_map
-        .validate_request(canonical.piece, canonical.begin, canonical.length)
+        .request_regions(canonical.piece, canonical.begin, canonical.length)
         .ok()?;
-    if regions.len() != 1 || regions[0].pad || regions[0].length != canonical.length {
+    let region = regions.next()?;
+    if regions.next().is_some() || region.pad || region.length != canonical.length {
         return None;
     }
-    let region = &regions[0];
     Some(UploadReadSpan {
-        path: region.path.resolve(&upload.save_root),
+        file_ordinal: region.file_ordinal,
         offset: region.file_offset,
         length: region.length as usize,
     })
@@ -10360,7 +10411,7 @@ fn can_append_upload_read(
     if batch.len() >= MAX_UPLOAD_READ_BATCH_BLOCKS
         || last.request.piece != next.request.piece
         || last.choke_critical != next.choke_critical
-        || last_span.path != next_span.path
+        || last_span.file_ordinal != next_span.file_ordinal
         || last_span.offset.checked_add(last_span.length as u64) != Some(next_span.offset)
     {
         return false;
@@ -10373,9 +10424,13 @@ fn can_append_upload_read(
 async fn read_upload_batch_blocks(
     upload: &UploadReadContext,
     specs: &[UploadReadSpec],
-) -> anyhow::Result<Vec<LeasedUploadBlock>> {
+) -> anyhow::Result<UploadBatch<LeasedUploadBlock>> {
+    anyhow::ensure!(
+        !specs.is_empty() && specs.len() <= MAX_UPLOAD_READ_BATCH_BLOCKS,
+        "upload batch has an invalid request count"
+    );
     if specs.len() == 1 || specs.iter().any(|spec| spec.span.is_none()) {
-        let mut blocks = Vec::with_capacity(specs.len());
+        let mut blocks = UploadBatch::new();
         for spec in specs {
             blocks.push(
                 read_upload_block_with_span(
@@ -10413,7 +10468,7 @@ async fn read_upload_batch_blocks(
             let previous_span = previous.span.as_ref().expect("batch span checked above");
             anyhow::ensure!(
                 block.piece == previous.request.piece
-                    && span.path == first_span.path
+                    && span.file_ordinal == first_span.file_ordinal
                     && previous_span
                         .offset
                         .checked_add(previous_span.length as u64)
@@ -10450,11 +10505,17 @@ async fn read_upload_batch_blocks(
     } else {
         IoRequestPriority::deadline(deadline)
     };
+    let path = upload
+        .piece_map
+        .file_by_ordinal(first_span.file_ordinal)
+        .ok_or_else(|| anyhow::anyhow!("upload batch file is outside its piece map"))?
+        .path
+        .resolve(&upload.save_root);
     let read = upload
         .storage
         .read_owned_at_with_priority(
             IoClass::PeerRead,
-            &first_span.path,
+            &path,
             first_span.offset,
             total_len,
             priority,
@@ -10468,13 +10529,15 @@ async fn read_upload_batch_blocks(
     );
     let backing = read.into_bytes();
     let mut offset = 0usize;
-    let mut blocks = Vec::with_capacity(specs.len());
+    let mut blocks = UploadBatch::new();
     for (spec, read_permit) in specs.iter().zip(read_permits) {
         let length = spec.request.length as usize;
         let end = offset + length;
         blocks.push(LeasedUploadBlock {
             data: backing.slice(offset..end),
-            _lease: Arc::clone(&shared_lease),
+            _lease: UploadMemoryLease::Shared {
+                _lease: Arc::clone(&shared_lease),
+            },
             _read_permit: read_permit,
             rate_grant: None,
         });
@@ -10485,42 +10548,45 @@ async fn read_upload_batch_blocks(
 }
 
 async fn upload_read_batch_future(
-    specs: Vec<UploadReadSpec>,
+    specs: UploadBatch<UploadReadSpec>,
     read_context: Arc<UploadReadContext>,
-) -> Vec<UploadReadCompletion> {
-    let panicked_requests = specs.iter().map(|spec| spec.request).collect::<Vec<_>>();
+) -> UploadBatch<UploadReadCompletion> {
+    let panicked_requests = specs
+        .iter()
+        .map(|spec| spec.request)
+        .collect::<UploadBatch<_>>();
     let read = async move {
-        let read = async {
-            let blocks: Vec<anyhow::Result<LeasedUploadBlock>> =
-                match read_upload_batch_blocks(&read_context, &specs).await {
-                    Ok(blocks) => blocks.into_iter().map(Ok).collect(),
-                    // Keep batch failure atomic. Retrying its members one at a
-                    // time here could hold early permits while waiting for later
-                    // ones, recreating the admission cycle batching removed.
-                    Err(error) => {
-                        let message = format!("{error:#}");
-                        (0..specs.len())
-                            .map(|_| Err(anyhow::anyhow!(message.clone())))
-                            .collect()
-                    }
-                };
-            blocks
+        // Keep only one collection of successful blocks. Error and timeout
+        // paths carry one message until each obligation is resolved; success
+        // no longer rebuilds the block list as a second Vec<Result<_>>.
+        let (blocks, error) = match timeout(
+            PEER_UPLOAD_READ_TIMEOUT,
+            read_upload_batch_blocks(&read_context, &specs),
+        )
+        .await
+        {
+            Ok(Ok(blocks)) => (blocks, None),
+            // Batch failure is atomic: never retry members while holding a
+            // partial set of read permits.
+            Ok(Err(error)) => (UploadBatch::new(), Some(format!("{error:#}"))),
+            Err(_) => (
+                UploadBatch::new(),
+                Some(format!(
+                    "upload block read exceeded its peer deadline ({}s)",
+                    PEER_UPLOAD_READ_TIMEOUT.as_secs()
+                )),
+            ),
         };
-        let results = match timeout(PEER_UPLOAD_READ_TIMEOUT, read).await {
-            Ok(results) => results,
-            Err(_) => specs
-                .iter()
-                .map(|_| {
-                    Err(anyhow::anyhow!(
-                        "upload block read exceeded its peer deadline ({}s)",
-                        PEER_UPLOAD_READ_TIMEOUT.as_secs()
-                    ))
-                })
-                .collect(),
-        };
+        let mut blocks = blocks.into_iter();
         let control_generation = read_context.upload_control.generation();
-        let mut completions = Vec::with_capacity(specs.len());
-        for (spec, result) in specs.into_iter().zip(results) {
+        let mut completions = UploadBatch::new();
+        for spec in specs {
+            let result = match error.as_ref() {
+                Some(message) => Err(anyhow::anyhow!(message.clone())),
+                None => blocks
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("upload batch lost a completed block")),
+            };
             match result {
                 Ok(mut block) => {
                     let bytes = block.data.len() as u64;
@@ -10576,14 +10642,14 @@ fn start_upload_reads<MakeUploadReadFuture, F>(
     make_upload_read_future: MakeUploadReadFuture,
 ) -> anyhow::Result<()>
 where
-    MakeUploadReadFuture: Fn(Vec<UploadReadSpec>, Arc<UploadReadContext>) -> F + Copy,
-    F: std::future::Future<Output = Vec<UploadReadCompletion>> + Send + 'static,
+    MakeUploadReadFuture: Fn(UploadBatch<UploadReadSpec>, Arc<UploadReadContext>) -> F + Copy,
+    F: std::future::Future<Output = UploadBatch<UploadReadCompletion>> + Send + 'static,
 {
     while upload_reads.pending_request_count() < MAX_PENDING_UPLOAD_READS {
         let Some(block) = obligations.next_request() else {
             break;
         };
-        let mut batch = vec![upload_read_spec(
+        let mut batch: UploadBatch<UploadReadSpec> = smallvec::smallvec![upload_read_spec(
             upload,
             read_context,
             obligations,
@@ -17145,7 +17211,8 @@ mod tests {
             }
         });
 
-        let completions = upload_read_batch_future(specs.to_vec(), Arc::new(read_context)).await;
+        let completions =
+            upload_read_batch_future(specs.into_iter().collect(), Arc::new(read_context)).await;
 
         assert_eq!(completions.len(), 2);
         assert!(completions.into_iter().all(|completion| matches!(

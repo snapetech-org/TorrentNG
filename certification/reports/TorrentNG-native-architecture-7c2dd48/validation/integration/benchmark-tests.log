@@ -1,0 +1,14 @@
+...........................Scratch: /var/tmp/tng-native-architecture-7c2dd48-20261021/tmp/tmpihuashpi
+Config scratch: /var/tmp/tng-native-architecture-7c2dd48-20261021/tmp/tmpihuashpi/config
+Compose project: checkpoint-test
+.Scratch: /var/tmp/tng-native-architecture-7c2dd48-20261021/tmp/tmpv_qmuq33
+Config scratch: /var/tmp/tng-native-architecture-7c2dd48-20261021/tmp/tmpv_qmuq33/config
+Compose project: checkpoint-test
+Scratch: /var/tmp/tng-native-architecture-7c2dd48-20261021/tmp/tmpzq0js0js
+Config scratch: /var/tmp/tng-native-architecture-7c2dd48-20261021/tmp/tmpzq0js0js/config
+Compose project: checkpoint-test
+.................
+----------------------------------------------------------------------
+Ran 45 tests in 0.014s
+
+OK

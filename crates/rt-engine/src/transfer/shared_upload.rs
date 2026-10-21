@@ -14,7 +14,7 @@ use super::coords::{BlockExtent, TransferPeerId};
 use super::obligations::{InboundDecision, InboundObligations, Reject, Served};
 use super::upload_scheduler::{
     UploadReadAdmissionError, UploadReadConnection, UploadReadLimits, UploadReadPermit,
-    UploadReadScheduler,
+    UploadReadPermits, UploadReadScheduler,
 };
 
 /// One live, process-wide owner for inbound upload obligations and the
@@ -186,7 +186,7 @@ impl SharedUploadService {
         &self,
         identity: TransferPeerId,
         blocks: &[BlockExtent],
-    ) -> Result<Vec<UploadReadPermit>, UploadReadAdmissionError> {
+    ) -> Result<UploadReadPermits, UploadReadAdmissionError> {
         self.reads.acquire_batch(identity, blocks).await
     }
 }
@@ -211,7 +211,7 @@ impl SharedUploadReadHandle {
     pub(crate) async fn acquire_read_batch(
         &self,
         blocks: &[BlockExtent],
-    ) -> Result<Vec<UploadReadPermit>, UploadReadAdmissionError> {
+    ) -> Result<UploadReadPermits, UploadReadAdmissionError> {
         self.service.acquire_read_batch(self.identity, blocks).await
     }
 

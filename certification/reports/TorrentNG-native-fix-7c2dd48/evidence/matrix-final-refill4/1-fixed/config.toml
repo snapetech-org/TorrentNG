@@ -1,0 +1,23 @@
+[daemon]
+api_bind = "127.0.0.1:60247"
+session_dir = "/workspace/scratch/64035e61355e/audit-native-fix/matrix-final-refill4/1-fixed/session"
+log_level = "warn"
+shutdown_timeout_secs = 2
+[network]
+listen_port = 46217
+max_peers = 32
+upload_rate_limit = 33554432
+download_rate_limit = 33554432
+[storage]
+download_dir = "/workspace/scratch/64035e61355e/audit-native-fix/fixtures"
+[dht]
+enabled = false
+bootstrap_nodes = []
+[tracker]
+allow_loopback_egress = true
+[auth]
+api_tokens = ["local-native-seed-probe"]
+[logging]
+format = "json"
+profile = "basic"
+filter = "warn"

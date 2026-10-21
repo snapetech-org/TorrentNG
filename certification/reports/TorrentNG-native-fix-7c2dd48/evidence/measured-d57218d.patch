@@ -1,0 +1,881 @@
+diff --git a/crates/rt-engine/src/torrent_task.rs b/crates/rt-engine/src/torrent_task.rs
+index 6264f1a..6383adb 100644
+--- a/crates/rt-engine/src/torrent_task.rs
++++ b/crates/rt-engine/src/torrent_task.rs
+@@ -115,6 +115,11 @@ pub(crate) const UTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+ const UPLOAD_ACCOUNTING_BATCH_BYTES: u64 = 64 * 1024;
+ const UPLOAD_ACCOUNTING_MAX_DELAY: Duration = Duration::from_millis(25);
+ const MAX_READY_UPLOAD_INTAKE_MESSAGES: usize = MAX_UPLOAD_READ_BATCH_BLOCKS;
++// A pipelined receiver can refill one 16 KiB request at a time. Ready-only
++// draining never combines those refills, so every cache hit still enters the
++// disk queue. Bound collection latency, and never wait for more requests than
++// this peer has demonstrated it can keep outstanding.
++const UPLOAD_READ_COALESCE_MAX_DELAY: Duration = Duration::from_millis(8);
+ 
+ pub(crate) async fn connect_utp_with_deadline(
+     network_budget: &GlobalNetworkBudget,
+@@ -8949,6 +8954,10 @@ where
+     let mut upload_reads = UploadReadTasks::<F>::default();
+     let mut upload_dispatch_pending = false;
+     let mut upload_intake_messages = 0usize;
++    let mut upload_pipeline_width = 1usize;
++    let mut upload_coalescing_expired = false;
++    let upload_coalescing_flush = sleep(UPLOAD_READ_COALESCE_MAX_DELAY);
++    tokio::pin!(upload_coalescing_flush);
+     let mut deferred_peer_message: Option<anyhow::Result<Option<Message>>> = None;
+     // Protocol obligations are process-owned by generation-safe connection
+     // identity. The socket loop retains the only writer and upload-read futures.
+@@ -8962,14 +8971,20 @@ where
+         'peer: loop {
+         // Poll the decoder once while upload dispatch is pending. Any complete
+         // frames already in the socket buffer are processed first, up to a
+-        // small hard cap; no timer is used to wait for a fuller batch.
++        // small hard cap. Staggered refills from a pipelined peer may collect
++        // until the bounded deadline; a serial requester dispatches at once.
+         if deferred_peer_message.is_none()
+             && upload_dispatch_pending
+             && upload_intake_messages < MAX_READY_UPLOAD_INTAKE_MESSAGES
+         {
+             deferred_peer_message = peer_io.try_next_ready();
+         }
+-        let dispatch_upload_reads_now = upload_dispatch_pending && deferred_peer_message.is_none();
++        let dispatch_upload_reads_now = upload_dispatch_pending
++            && deferred_peer_message.is_none()
++            && (upload_choked
++                || upload.plane != Plane::V1
++                || upload_intake_messages >= upload_pipeline_width
++                || upload_coalescing_expired);
+         tokio::select! {
+             cmd = peer_cmd_rx.recv() => {
+                 let Some(cmd) = cmd else {
+@@ -9121,6 +9136,7 @@ where
+                         }
+                         upload_dispatch_pending = false;
+                         upload_intake_messages = 0;
++                        upload_pipeline_width = 1;
+                         start_upload_reads(
+                             &mut upload_reads,
+                             &upload_obligations,
+@@ -9143,6 +9159,7 @@ where
+                         peer_io.send(Message::Unchoke).await?;
+                         upload_dispatch_pending = false;
+                         upload_intake_messages = 0;
++                        upload_pipeline_width = 1;
+                         start_upload_reads(
+                             &mut upload_reads,
+                             &upload_obligations,
+@@ -9536,9 +9553,18 @@ where
+                         }
+                         match decision {
+                             InboundDecision::Queue => {
++                                upload_pipeline_width = upload_pipeline_width.max(
++                                    upload_reads.pending_request_count()
++                                        .saturating_add(upload_obligations.queued_len())
++                                        .min(MAX_READY_UPLOAD_INTAKE_MESSAGES),
++                                );
+                                 if !upload_dispatch_pending {
+                                     upload_dispatch_pending = true;
+                                     upload_intake_messages = 1;
++                                    upload_coalescing_expired = false;
++                                    upload_coalescing_flush.as_mut().reset(
++                                        TokioInstant::now() + UPLOAD_READ_COALESCE_MAX_DELAY,
++                                    );
+                                 }
+                             }
+                             InboundDecision::Reject(_) => {
+@@ -9892,6 +9918,14 @@ where
+                 }
+             }
+             _ = std::future::ready(()), if dispatch_upload_reads_now => {
++                if upload_coalescing_expired
++                    && upload_obligations.queued_len() <= 1
++                    && upload_reads.pending_request_count() == 0
++                {
++                    // A peer may shrink its window after the initial burst.
++                    // One solitary deadline flush restores immediate service.
++                    upload_pipeline_width = 1;
++                }
+                 upload_dispatch_pending = false;
+                 upload_intake_messages = 0;
+                 start_upload_reads(
+@@ -9902,6 +9936,10 @@ where
+                     make_upload_read_future,
+                 )?;
+             }
++            _ = upload_coalescing_flush.as_mut(),
++                if upload_dispatch_pending && !upload_coalescing_expired => {
++                upload_coalescing_expired = true;
++            }
+             _ = timeout_tick.tick() => {
+                 if last_activity.elapsed() > PEER_IDLE_TIMEOUT {
+                     anyhow::bail!("peer idle timeout");
+diff --git a/crates/rt-storage/src/scheduler.rs b/crates/rt-storage/src/scheduler.rs
+index 8d2e737..7dcb28b 100644
+--- a/crates/rt-storage/src/scheduler.rs
++++ b/crates/rt-storage/src/scheduler.rs
+@@ -1300,9 +1300,54 @@ struct PeerReadCacheEntry {
+     data: bytes::Bytes,
+     consumed_prefix: usize,
+     consumed_suffix: usize,
++    consumed_granules: u64,
+     last_used: Instant,
+ }
+ 
++impl PeerReadCacheEntry {
++    /// Remember full granules even when they arrive before either edge. One
++    /// word covers a normal read-ahead window without allocating per hit.
++    /// Partial, out-of-order granules remain conservatively cached.
++    fn consume(&mut self, offset: u64, len: usize) -> bool {
++        if len == 0 {
++            return false;
++        }
++        let Some(request_end) = offset.checked_add(len as u64) else {
++            return false;
++        };
++        let relative = offset.saturating_sub(self.offset).min(self.data.len() as u64) as usize;
++        let end = request_end.saturating_sub(self.offset).min(self.data.len() as u64) as usize;
++        if relative >= end {
++            return false;
++        }
++        if relative <= self.consumed_prefix {
++            self.consumed_prefix = self.consumed_prefix.max(end);
++        }
++        if end >= self.consumed_suffix {
++            self.consumed_suffix = self.consumed_suffix.min(relative);
++        }
++        let granule = self.data.len().div_ceil(64).next_power_of_two().max(16 * 1024);
++        for index in relative.div_ceil(granule)..end / granule {
++            self.consumed_granules |= 1u64 << index;
++        }
++        while self.consumed_prefix < self.consumed_suffix {
++            let index = self.consumed_prefix / granule;
++            if index >= 64 || self.consumed_granules & (1u64 << index) == 0 {
++                break;
++            }
++            self.consumed_prefix = (index + 1) * granule;
++        }
++        while self.consumed_suffix > self.consumed_prefix {
++            let index = (self.consumed_suffix - 1) / granule;
++            if index >= 64 || self.consumed_granules & (1u64 << index) == 0 {
++                break;
++            }
++            self.consumed_suffix = index * granule;
++        }
++        self.consumed_prefix >= self.consumed_suffix
++    }
++}
++
+ /// Bounded multi-range cache for peer upload reads. A single hot file may
+ /// retain several independently useful forward ranges without evicting its
+ /// previous range on every seek.
+@@ -1354,7 +1399,7 @@ impl PeerReadCache {
+             self.remove_file(path);
+             return None;
+         }
+-        let (index, result, consumes_window) = {
++        let result = {
+             let entries = self.files.get_mut(path)?;
+             let (index, relative, end) = entries
+                 .iter()
+@@ -1368,32 +1413,40 @@ impl PeerReadCache {
+                 .map(|(index, relative, end, _)| (index, relative, end))?;
+             let entry = &mut entries[index];
+             entry.last_used = Instant::now();
+-            // Track contiguous coverage at both edges without a per-byte
+-            // bitmap. A tail hit cannot retire unread middle bytes; windows
+-            // covered from both ends can retire without a second backend read.
+-            if len > 0 {
+-                if relative <= entry.consumed_prefix {
+-                    entry.consumed_prefix = entry.consumed_prefix.max(end);
+-                }
+-                if end >= entry.consumed_suffix {
+-                    entry.consumed_suffix = entry.consumed_suffix.min(relative);
+-                }
+-            }
+-            (
+-                index,
+-                entry.data.slice(relative..relative + len),
+-                len > 0 && entry.consumed_prefix >= entry.consumed_suffix,
+-            )
++            entry.data.slice(relative..end)
+         };
+-        // The covered prefix and suffix now overlap. Remove the cache
+-        // reference; returned Bytes may keep the backing alive only until the
+-        // current storage consumer finishes.
+-        if consumes_window {
+-            self.remove_entry(path, index);
+-        }
++        // The same requested bytes also consume overlapping windows, even
++        // when the smallest covering window supplied the returned view.
++        self.consume(path, identity, offset, len);
+         Some(result)
+     }
+ 
++    fn consume(&mut self, path: &Path, identity: FileIdentity, offset: u64, len: usize) {
++        if len == 0 {
++            return;
++        }
++        let Some(entries) = self.files.get_mut(path) else {
++            return;
++        };
++        let mut removed = 0;
++        let mut removed_bytes = 0;
++        entries.retain_mut(|entry| {
++            if entry.identity != identity || entry.consume(offset, len) {
++                removed += 1;
++                removed_bytes += entry.data.len();
++                false
++            } else {
++                true
++            }
++        });
++        let empty = entries.is_empty();
++        self.entries = self.entries.saturating_sub(removed);
++        self.cached_bytes = self.cached_bytes.saturating_sub(removed_bytes);
++        if empty {
++            self.files.remove(path);
++        }
++    }
++
+     fn remove_entry(&mut self, path: &Path, index: usize) -> bool {
+         let remove_path = {
+             let Some(entries) = self.files.get_mut(path) else {
+@@ -2194,6 +2247,10 @@ impl PreparedPread {
+         drop(read_buffer_queued_bytes);
+ 
+         current_file_identity(&key, file.as_ref(), "payload_read")?;
++        if class == IoClass::PeerRead {
++            lock_reset_derived_cache(&self.peer_read_cache)
++                .consume(&key, file.identity(), offset, len);
++        }
+         self.counters.read_ops_by_class[class_index(class)].fetch_add(1, Ordering::Relaxed);
+         self.counters.bytes_read_by_class[class_index(class)]
+             .fetch_add(len as u64, Ordering::Relaxed);
+@@ -4511,6 +4568,10 @@ impl MountScheduler {
+                 // its bytes must not be returned or cached as the current
+                 // path's payload after that replacement.
+                 current_file_identity(&key, file.as_ref(), "payload_read")?;
++                if class == IoClass::PeerRead {
++                    lock_reset_derived_cache(&peer_read_cache)
++                        .consume(&key, file.identity(), offset, len);
++                }
+                 counters.read_ops_by_class[class_index(class)].fetch_add(1, Ordering::Relaxed);
+                 counters.bytes_read_by_class[class_index(class)]
+                     .fetch_add(len as u64, Ordering::Relaxed);
+@@ -5901,6 +5962,7 @@ fn peer_read_cache_store_parts(
+             data,
+             consumed_prefix,
+             consumed_suffix,
++            consumed_granules: 0,
+             last_used: Instant::now(),
+         },
+         max_entries,
+@@ -6189,6 +6251,98 @@ mod tests {
+     use rt_path::StorageRootId;
+     use rt_piece_map::{FileSpan, PieceMap};
+ 
++    fn insert_coverage_range(
++        cache: &mut PeerReadCache, path: &Path, identity: FileIdentity,
++        offset: u64, length: usize,
++    ) {
++        cache.insert(path.to_path_buf(), PeerReadCacheEntry {
++            identity, offset,
++            data: bytes::Bytes::from(vec![0x5a; length]),
++            consumed_prefix: 0,
++            consumed_suffix: length,
++            consumed_granules: 0,
++            last_used: Instant::now(),
++        }, 8, 1024 * 1024).unwrap();
++    }
++
++    #[test]
++    fn completed_wire_blocks_retire_cache_in_every_completion_order() {
++        const BLOCK: usize = 16 * 1024;
++        let path = Path::new("coverage.bin");
++        let identity = test_file_identity();
++        for a in 0..4 {
++            for b in 0..4 {
++                for c in 0..4 {
++                    for d in 0..4 {
++                        let order = [a, b, c, d];
++                        if (0..4).any(|i| order[..i].contains(&order[i])) { continue; }
++                        let mut cache = PeerReadCache::default();
++                        insert_coverage_range(&mut cache, path, identity, 0, 4 * BLOCK);
++                        for (served, block) in order.into_iter().enumerate() {
++                            assert_eq!(cache.hit(path, identity, (block * BLOCK) as u64, BLOCK)
++                                .unwrap().len(), BLOCK);
++                            assert_eq!(cache.entry_count(), usize::from(served != 3), "order {order:?}");
++                        }
++                        assert_eq!(cache.cached_bytes(), 0);
++                    }
++                }
++            }
++        }
++    }
++
++    #[test]
++    fn consuming_one_window_retires_other_fully_consumed_overlaps() {
++        const BLOCK: usize = 16 * 1024;
++        let path = Path::new("overlap.bin");
++        let identity = test_file_identity();
++        let mut cache = PeerReadCache::default();
++        insert_coverage_range(&mut cache, path, identity, 0, 4 * BLOCK);
++        insert_coverage_range(&mut cache, path, identity, BLOCK as u64, 3 * BLOCK);
++        assert!(cache.hit(path, identity, 0, BLOCK).is_some());
++        let response = cache.hit(path, identity, BLOCK as u64, 3 * BLOCK).unwrap();
++        assert_eq!(cache.entry_count(), 0);
++        assert_eq!(cache.cached_bytes(), 0);
++        assert!(response.iter().all(|byte| *byte == 0x5a));
++    }
++
++    #[test]
++    fn partial_granule_keeps_its_unread_gap() {
++        const BLOCK: usize = 16 * 1024;
++        let path = Path::new("gap.bin");
++        let identity = test_file_identity();
++        let mut cache = PeerReadCache::default();
++        insert_coverage_range(&mut cache, path, identity, 0, 4 * BLOCK);
++        assert!(cache.hit(path, identity, BLOCK as u64, BLOCK / 2).is_some());
++        assert!(cache.hit(path, identity, 0, BLOCK).is_some());
++        assert!(cache.hit(path, identity, (2 * BLOCK) as u64, 2 * BLOCK).is_some());
++        assert_eq!(cache.entry_count(), 1, "half of the middle block is still unread");
++        assert!(cache.hit(path, identity, BLOCK as u64, BLOCK).is_some());
++        assert_eq!(cache.entry_count(), 0);
++    }
++
++    #[tokio::test]
++    async fn read_crossing_a_cached_window_consumes_its_remaining_tail() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("straddling.bin");
++        std::fs::write(&path, b"abcdefghijklmnopqrstuvwx").unwrap();
++        let scheduler = MountScheduler::new_for_path(StorageRootId::new(), dir.path(),
++            &SchedulerConfig {
++                storage_io: StorageIoConfig {
++                    peer_read_readahead_bytes: 16,
++                    peer_read_readahead_sequential_only: false,
++                    peer_read_cache_entries: 8,
++                    peer_read_cache_bytes: 64,
++                    ..Default::default()
++                },
++                ..Default::default()
++            });
++        assert_eq!(&scheduled_read_owned(&scheduler, IoClass::PeerRead, &path, 0, 4).await.unwrap().as_slice(), &b"abcd");
++        assert_eq!(&scheduled_read_owned(&scheduler, IoClass::PeerRead, &path, 4, 8).await.unwrap().as_slice(), &b"efghijkl");
++        assert_eq!(&scheduled_read_owned(&scheduler, IoClass::PeerRead, &path, 12, 8).await.unwrap().as_slice(), &b"mnopqrst");
++        assert_eq!(scheduler.stats().peer_read_cache_entries, 1);
++        assert_eq!(scheduler.stats().peer_read_cache_bytes, 12);
++    }
++
+     fn insert_manager_test_range(
+         manager: &Arc<PeerReadCacheManager>,
+         cache: &Arc<Mutex<PeerReadCache>>,
+@@ -6212,6 +6366,7 @@ mod tests {
+                 data,
+                 consumed_prefix: 0,
+                 consumed_suffix,
++                consumed_granules: 0,
+                 last_used: Instant::now(),
+             },
+             8,
+@@ -9024,6 +9179,7 @@ mod tests {
+                     data: bytes::Bytes::from_static(b"stale"),
+                     consumed_prefix: 0,
+                     consumed_suffix: 5,
++                    consumed_granules: 0,
+                     last_used: Instant::now(),
+                 },
+                 1,
+@@ -9546,6 +9702,7 @@ mod tests {
+                     data: bytes::Bytes::from_static(b"stale"),
+                     consumed_prefix: 0,
+                     consumed_suffix: 5,
++                    consumed_granules: 0,
+                     last_used: Instant::now(),
+                 },
+                 1,
+diff --git a/scripts/client_performance_benchmark.py b/scripts/client_performance_benchmark.py
+index 8824440..a66a54a 100755
+--- a/scripts/client_performance_benchmark.py
++++ b/scripts/client_performance_benchmark.py
+@@ -554,9 +554,9 @@ class HttpClient:
+ class Benchmark:
+     def __init__(self):
+         self.mode = os.environ.get("TNG_CLIENT_BENCH_MODE", "transfer").strip().lower()
+-        if self.mode not in ("transfer", "idle", "controlled-download"):
++        if self.mode not in ("transfer", "idle", "controlled-download", "controlled-seed"):
+             raise RuntimeError(
+-                "TNG_CLIENT_BENCH_MODE must be transfer, idle, or controlled-download"
++                "TNG_CLIENT_BENCH_MODE must be transfer, idle, controlled-download, or controlled-seed"
+             )
+         self.diagnostics = env_enabled("TNG_CLIENT_BENCH_DIAGNOSTICS")
+         self.skip_build = env_enabled("TNG_CLIENT_BENCH_SKIP_BUILD")
+@@ -733,6 +733,7 @@ class Benchmark:
+         self.seed_cache_eviction = {}
+         seed_source = os.environ.get("TNG_CLIENT_BENCH_SEED_SOURCE")
+         self.seed_source_override = Path(seed_source).expanduser().resolve() if seed_source else None
++        self.seed_sha256_override = os.environ.get("TNG_CLIENT_BENCH_SEED_SHA256", "").strip().lower()
+         self.seed_leecher_version = "unknown"
+         self.seed_leecher_image = "not started"
+         configured_order_seed = optional_nonnegative_int(
+@@ -941,10 +942,10 @@ class Benchmark:
+         )
+         self._prepare_qbit_config()
+         self._prepare_torrentng_config(
+-            dht_enabled=False if self.mode in ("idle", "controlled-download") else None,
++            dht_enabled=False if self.mode in ("idle", "controlled-download", "controlled-seed") else None,
+         )
+         self._prepare_rtorrent_config(
+-            dht_enabled=False if self.mode in ("idle", "controlled-download") else None,
++            dht_enabled=False if self.mode in ("idle", "controlled-download", "controlled-seed") else None,
+         )
+         self.csv_path.parent.mkdir(parents=True, exist_ok=True)
+         with self.csv_path.open("w", newline="") as handle:
+@@ -2130,6 +2131,28 @@ class Benchmark:
+             time.sleep(INTERVAL)
+         raise TimeoutError(f"{LABELS[client]} did not complete {phase} within {timeout}s")
+ 
++    def _validate_controlled_seed_source(self):
++        source = self.seed_source_override
++        if source is None or not source.is_file() or source.stat().st_size == 0:
++            raise RuntimeError("controlled-seed requires a nonempty TNG_CLIENT_BENCH_SEED_SOURCE file")
++        if not re.fullmatch(r"[0-9a-f]{64}", self.seed_sha256_override):
++            raise RuntimeError("controlled-seed requires the expected TNG_CLIENT_BENCH_SEED_SHA256")
++        if self._sha256(source) != self.seed_sha256_override:
++            raise RuntimeError("controlled seed source failed expected SHA-256 verification")
++
++    def _controlled_seed_metadata(self, tracker_ip):
++        # A caller-supplied digest and local file make this independent of
++        # public tracker availability, Debian index changes, and aria2c.
++        source = self.seed_source_override
++        path = self.workdir / "torrents" / "controlled-source.torrent"
++        info_hash = make_private_torrent(source, f"http://{tracker_ip}:6969/announce", path)
++        return {
++            "filename": source.name, "torrent_url": "local verified fixture",
++            "torrent_path": path, "iso_name": source.name,
++            "size": source.stat().st_size, "info_hash": info_hash,
++            "sha256": self.seed_sha256_override,
++        }
++
+     def _torrent_metadata(self):
+         with _open_http(TORRENT_INDEX, timeout=30) as response:
+             index_bytes = response.read(4 * 1024 * 1024 + 1)
+@@ -2528,57 +2551,61 @@ class Benchmark:
+             shutil.rmtree(leecher_dir)
+ 
+     def _run_one(self, client, meta, tracker_ip, private_path):
+-        print(f"\n==> {LABELS[client]}: public download", flush=True)
++        phase_name = "controlled seed" if self.mode == "controlled-seed" else "public download"
++        print(f"\n==> {LABELS[client]}: {phase_name}", flush=True)
+         self.compose("up", "-d", client, quiet=True, timeout=900)
+         self.sessions[client] = HttpClient(self.api_url(client)) if client != "rtorrent" else None
+         self._wait_ready(client)
+         self._configure(client)
++        if self.mode == "controlled-seed":
++            self._set_idle_dht(client, False)
+         self._remember_container(client)
+         self._sample_idle(client)
+         self._capture_engine_memory_metrics(client, "idle")
+         version = self._version(client)
+         torrent = meta["torrent_path"]
+         save_path = "/downloads/rtorrent" if client == "rtorrent" else f"/downloads/{client}/public"
+-        public_result = "FAIL"
++        public_result = "SKIPPED" if self.mode == "controlled-seed" else "FAIL"
+         download_error = ""
+         download_elapsed = 0.0
+         download_progress = 0.0
+         download_bytes = 0
+         download_sha = ""
+         public_rows = []
+-        try:
+-            self._add_torrent(client, torrent, save_path)
+-            elapsed, status, public_rows = self._wait_complete(
+-                client, meta["info_hash"], meta["iso_name"], meta["size"],
+-                DOWNLOAD_TIMEOUT, "public_download",
+-            )
+-            payload = self._data_path(client, meta["iso_name"])
+-            if not payload.is_file() or payload.stat().st_size != meta["size"]:
+-                raise RuntimeError(f"completed file missing or short: {payload}")
+-            actual = self._sha256(payload)
+-            if actual != meta["sha256"]:
+-                raise RuntimeError(f"Debian SHA-256 mismatch: {actual}")
+-            public_result = "PASS"
+-            download_elapsed = elapsed
+-            download_progress = status["progress"]
+-            download_bytes = meta["size"]
+-            download_sha = actual
+-            if self.seed_source is None:
+-                self.seed_source = payload
+-        except Exception as error:
+-            download_error = f"{type(error).__name__}: {error}"
+-            public_rows = self.partial_download_rows.get(client, public_rows)
+-            if public_rows:
+-                latest = public_rows[-1]
+-                download_elapsed = float(latest[3])
+-                download_progress = float(latest[4])
+-                download_bytes = int(meta["size"] * download_progress)
+-        finally:
++        if self.mode != "controlled-seed":
+             try:
+-                self._pause(client, meta["info_hash"])
+-            except Exception:
+-                pass
+-            self._capture_engine_memory_metrics(client, "after_public_download")
++                self._add_torrent(client, torrent, save_path)
++                elapsed, status, public_rows = self._wait_complete(
++                    client, meta["info_hash"], meta["iso_name"], meta["size"],
++                    DOWNLOAD_TIMEOUT, "public_download",
++                )
++                payload = self._data_path(client, meta["iso_name"])
++                if not payload.is_file() or payload.stat().st_size != meta["size"]:
++                    raise RuntimeError(f"completed file missing or short: {payload}")
++                actual = self._sha256(payload)
++                if actual != meta["sha256"]:
++                    raise RuntimeError(f"Debian SHA-256 mismatch: {actual}")
++                public_result = "PASS"
++                download_elapsed = elapsed
++                download_progress = status["progress"]
++                download_bytes = meta["size"]
++                download_sha = actual
++                if self.seed_source is None:
++                    self.seed_source = payload
++            except Exception as error:
++                download_error = f"{type(error).__name__}: {error}"
++                public_rows = self.partial_download_rows.get(client, public_rows)
++                if public_rows:
++                    latest = public_rows[-1]
++                    download_elapsed = float(latest[3])
++                    download_progress = float(latest[4])
++                    download_bytes = int(meta["size"] * download_progress)
++            finally:
++                try:
++                    self._pause(client, meta["info_hash"])
++                except Exception:
++                    pass
++                self._capture_engine_memory_metrics(client, "after_public_download")
+ 
+         seed_result = "NOT RUN"
+         seed_error = ""
+@@ -3108,15 +3135,17 @@ class Benchmark:
+             f"{self.load_start[0]:.2f}/{self.load_start[1]:.2f}/{self.load_start[2]:.2f} "
+             f"at start; {load_end[0]:.2f}/{load_end[1]:.2f}/{load_end[2]:.2f} at end; "
+             f"sampled 1m peak {load_peak:.2f}",
+-            f"- Public source: [official Debian torrent directory]({TORRENT_INDEX}); "
+-            f"resolved torrent {meta['torrent_url']}",
+-            f"- ISO: {meta['iso_name']}; {meta['size']:,} bytes; "
++            ("- Public download and metadata lookup: skipped; local verified fixture."
++             if self.mode == "controlled-seed" else
++             f"- Public source: [official Debian torrent directory]({TORRENT_INDEX}); "
++             f"resolved torrent {meta['torrent_url']}"),
++            f"- Payload: {meta['iso_name']}; {meta['size']:,} bytes; "
+             f"torrent infohash {meta['info_hash']}",
+             "- Seed fixture page-cache eviction: "
+             f"POSIX_FADV_DONTNEED succeeded for "
+             f"{sum(self.seed_cache_eviction.values())}/{len(self.seed_cache_eviction)} "
+             "seed phases (best-effort kernel hint).",
+-            f"- Official SHA-256: {meta['sha256']}",
++            f"- {'Supplied expected' if self.mode == 'controlled-seed' else 'Official'} SHA-256: {meta['sha256']}",
+             "- Clients selected for this run: " + ", ".join(LABELS[c] for c in CLIENTS),
+             f"- Client download and upload limits: {RATE_BPS:,} B/s "
+             f"({RATE_BPS / 1048576:.1f} MiB/s); max peers {MAX_PEERS}",
+@@ -3124,7 +3153,7 @@ class Benchmark:
+             f"({SEED_LEECHER_RATE_BPS / 1048576:.1f} MiB/s), shared across all seeders. "
+             "This is 12.5% of the configured per-client upload ceiling. Seed rates are "
+             "therefore measured under a controlled receiver load, not as maximum upload capacity.",
+-            "- Each public download ran alone, in this order: " +
++            "- Each client ran alone, in this order: " +
+             ", ".join(LABELS[c] for c in CLIENTS),
+             "- Container image references: " + "; ".join(
+                 f"{LABELS[c]}: {client_images.get(c, 'not started')}" for c in CLIENTS
+@@ -3142,7 +3171,7 @@ class Benchmark:
+             row = by_client.get(client, {})
+             lines.append(
+                 f"| {LABELS[client]} | {row.get('version', 'n/a')} | "
+-                f"{row.get('public', 'FAIL')} | {row.get('download_progress', 0):.2%} | "
++                f"{row.get('public', 'NOT RUN')} | {row.get('download_progress', 0):.2%} | "
+                 f"{row.get('download_seconds', 0):.1f} | "
+                 f"{row.get('download_mib_s', 0):.2f} | {row.get('download_peak_mib_s', 0):.2f} | "
+                 f"{row.get('download_mean_cpu', 0):.2f} | {row.get('download_peak_cpu', 0):.2f} | "
+@@ -3153,13 +3182,13 @@ class Benchmark:
+             "",
+             "## Controlled seeding",
+             "",
+-            "Each client seeded the same SHA-256-verified ISO through a private single-file "
++            "Each client seeded the same SHA-256-verified payload through a private single-file "
+             "torrent on the isolated Compose OpenTracker. A separate qBittorrent "
+             "container with BitTorrent encryption disabled and TCP enabled "
+-            "downloaded and checked Debian's published SHA-256. This measures a "
++            "downloaded and checked the expected SHA-256. This measures a "
+             "controlled one-seeder/one-leecher transfer, not public swarm demand. "
+             "Seed tests use a separate per-client copy of the same SHA-256-verified "
+-            "ISO source, either the first completed public download or the explicitly "
++            "payload source, either the first completed public download or the explicitly "
+             "verified seed-source file, and can run "
+             "even if that client's public-swarm download stalls.",
+             "",
+@@ -3169,7 +3198,7 @@ class Benchmark:
+         for client in CLIENTS:
+             row = by_client.get(client, {})
+             lines.append(
+-                f"| {LABELS[client]} | {row.get('seed', 'FAIL')} | "
++                f"| {LABELS[client]} | {row.get('seed', 'NOT RUN')} | "
+                 f"{row.get('seed_setup_seconds', 0):.1f} | {row.get('seed_seconds', 0):.1f} | "
+                 f"{row.get('seed_mib_s', 0):.2f} | "
+                 f"{row.get('seed_peak_mib_s', 0):.2f} | {row.get('seed_mean_cpu', 0):.2f} | "
+@@ -3233,9 +3262,11 @@ class Benchmark:
+             "",
+             "## Method and scope",
+             "",
+-            "- One current official Debian amd64 netinst v1 torrent per client; clients "
+-            "ran sequentially on the same host and local scratch filesystem.",
+-            "- Public downloads used the live Debian swarm. All seed tests used the same "
++            ("- One local verified v1 fixture per client; no public-swarm phase."
++             if self.mode == "controlled-seed" else
++             "- One current official Debian amd64 netinst v1 torrent per client.")
++            + " Clients ran sequentially on the same host and local scratch filesystem.",
++            "- All seed tests used the same "
+             "SHA-256-verified ISO source (the first completed public download or an explicitly "
+             "supplied verified seed file), copied into a separate seed path for each client, so "
+             "seed performance is measured independently of public-swarm completion.",
+@@ -3259,8 +3290,9 @@ class Benchmark:
+             "include additional measurement work and must not be compared as clean resource trials. "
+             "Jemalloc counters appear only "
+             "when that allocator is selected and do not represent total process allocations.",
+-            f"- Public download uses the current public Debian swarm with a {DOWNLOAD_TIMEOUT}s "
+-            "completion timeout. Controlled seeding "
++            ("- Public download is skipped. " if self.mode == "controlled-seed" else
++             f"- Public download uses the current Debian swarm with a {DOWNLOAD_TIMEOUT}s timeout. ")
++            + "Controlled seeding "
+             "uses a private task-local tracker and one qBittorrent leecher on the same "
+             "Compose network. The tracker is reset between clients. The no-peer "
+             f"startup limit is {SEED_NO_PEER_TIMEOUT}s; full transfer limit is "
+@@ -3271,8 +3303,8 @@ class Benchmark:
+             "- Hash validation gives high confidence that successful runs transferred "
+             "the same ISO.",
+             "- Throughput and resource comparisons have low confidence: "
+-            "one sequential public-swarm pass and one seed pass per client, on a shared "
+-            "host with the load reported above. Public peer availability changes over time.",
++            "one seed pass per client, on a shared host with the load reported above. "
++            "Public-swarm results, when requested, additionally depend on changing peers.",
+             "- Results apply to this host, storage, build, image digests, peer ceiling, "
+             "rate ceiling, and test window. They do not establish a general ranking, "
+             "multi-torrent capacity, or likely public seed demand.",
+@@ -3722,13 +3754,13 @@ class Benchmark:
+ 
+     def run(self):
+         if (RATE_BPS < 1 or MAX_PEERS < 1 or INTERVAL < 1
+-                or (self.mode == "transfer" and SEED_LEECHER_RATE_BPS < 1)
++                or (self.mode in ("transfer", "controlled-seed") and SEED_LEECHER_RATE_BPS < 1)
+                 or (self.mode == "controlled-download"
+                     and CONTROLLED_DOWNLOAD_SEED_UPLOAD_BPS < 1)):
+             raise RuntimeError("rate ceiling, peer ceiling, and sample interval must be positive")
+         if self.mode in ("transfer", "controlled-download") and DOWNLOAD_TIMEOUT < 60:
+             raise RuntimeError("download timeout must be at least 60 seconds")
+-        if self.mode == "transfer" and SEED_TIMEOUT < 60:
++        if self.mode in ("transfer", "controlled-seed") and SEED_TIMEOUT < 60:
+             raise RuntimeError("seed timeout must be at least 60 seconds")
+         if self.mode == "controlled-download" and (
+             self.seed_source_override is None
+@@ -3738,6 +3770,8 @@ class Benchmark:
+                 "controlled-download mode requires an existing verified "
+                 "TNG_CLIENT_BENCH_SEED_SOURCE file"
+             )
++        if self.mode == "controlled-seed":
++            self._validate_controlled_seed_source()
+         if IDLE_SAMPLE_SECONDS < 0:
+             raise RuntimeError("idle memory sample duration cannot be negative")
+         if (not math.isfinite(PROCESS_TREE_SAMPLE_SECONDS)
+@@ -3752,10 +3786,10 @@ class Benchmark:
+             raise RuntimeError(
+                 "idle warmup must be nonnegative and measurement at least 10 seconds"
+             )
+-        if self.mode == "transfer" and SEED_NO_PEER_TIMEOUT < 10:
++        if self.mode in ("transfer", "controlled-seed") and SEED_NO_PEER_TIMEOUT < 10:
+             raise RuntimeError("no-peer timeout must be at least 10 seconds")
+         required_commands = ["docker", "findmnt", "git"]
+-        if self.mode != "idle":
++        if self.mode in ("transfer", "controlled-download"):
+             required_commands.append("aria2c")
+         for required in required_commands:
+             if shutil.which(required) is None:
+@@ -3772,13 +3806,14 @@ class Benchmark:
+         if self.mode == "idle":
+             return self._run_idle_profiles()
+         tracker_ip = self._start_tracker()
+-        meta = self._torrent_metadata()
++        meta = (self._controlled_seed_metadata(tracker_ip)
++                if self.mode == "controlled-seed" else self._torrent_metadata())
+         if self.seed_source_override is not None:
+             source = self.seed_source_override
+             if not source.is_file() or source.stat().st_size != meta["size"]:
+                 raise RuntimeError(f"seed source is absent or has the wrong size: {source}")
+             if self._sha256(source) != meta["sha256"]:
+-                raise RuntimeError(f"seed source failed Debian SHA-256 verification: {source}")
++                raise RuntimeError(f"seed source failed expected SHA-256 verification: {source}")
+             self.seed_source = source
+         client_images = {}
+         if self.mode == "controlled-download":
+@@ -3794,7 +3829,7 @@ class Benchmark:
+                       file=sys.stderr, flush=True)
+                 self.results.append({
+                     "client": client, "version": "unavailable",
+-                    "public": "FAIL", "seed": "NOT RUN",
++                    "public": "SKIPPED" if self.mode == "controlled-seed" else "FAIL", "seed": "NOT RUN",
+                     "error": f"{type(error).__name__}: {error}",
+                 })
+             finally:
+@@ -3810,6 +3845,9 @@ class Benchmark:
+                 )
+                 if stop_code == 0:
+                     self._release_client_payloads(client, meta["iso_name"])
++                # A later client or an interrupted public swarm must not hide
++                # already completed seed measurements until the entire run ends.
++                self._write_report(meta, client_images)
+                 self.compose("restart", "opentracker", check=False, quiet=True, timeout=60)
+         client_images["seed_leecher"] = self.seed_leecher_image
+         if self.artifact_dir is not None:
+@@ -3821,7 +3859,8 @@ class Benchmark:
+         self._write_report(meta, client_images)
+         return int(not (
+             len(self.results) == len(CLIENTS)
+-            and all(r.get("public") == "PASS" and r.get("seed") == "PASS" for r in self.results)
++            and all((self.mode == "controlled-seed" or r.get("public") == "PASS")
++                    and r.get("seed") == "PASS" for r in self.results)
+         ))
+ 
+     def cleanup(self):
+@@ -3905,13 +3944,14 @@ TNG_CLIENT_BENCH_BUILD_CPUS to override the cap. Reference client images are
+ pinned by digest in deploy/interop/compose.yml.
+ 
+ Environment:
+-TNG_CLIENT_BENCH_MODE=transfer|controlled-download|idle (default: transfer)
++TNG_CLIENT_BENCH_MODE=transfer|controlled-download|controlled-seed|idle (default: transfer)
+   TNG_CLIENT_BENCH_CLIENTS=torrentngd,qbittorrent,... (default: all five)
+   TNG_CLIENT_BENCH_ALLOCATOR=system|jemalloc|mimalloc (default: system)
+   TNG_CLIENT_BENCH_BUILD_CPUS=2 (task-scoped BuildKit CPU limit; default: min(2, host CPUs))
+   TNG_CLIENT_BENCH_SKIP_BUILD=1 (use an image with matching commit, source fingerprint, and allocator labels)
+   TNG_CLIENT_BENCH_PREBUILT_IMAGE=torrentng/torrentngd:interop
+   TNG_CLIENT_BENCH_SEED_SOURCE=/path/to/verified/debian.iso
++  TNG_CLIENT_BENCH_SEED_SHA256=<expected digest> (required for controlled-seed)
+   TNG_CLIENT_BENCH_REPORT=/path/to/report.md
+   TNG_CLIENT_BENCH_ARTIFACT_DIR=/persistent/path (verified ISO and .torrent)
+   TNG_CLIENT_BENCH_SCRATCH_ROOT=/existing/writable/path (default: /var/tmp)
+@@ -3940,6 +3980,11 @@ TNG_CLIENT_BENCH_MODE=transfer|controlled-download|idle (default: transfer)
+   TNG_CLIENT_BENCH_PIECE_ASSEMBLY_CAP_MB=0
+   TNG_CLIENT_BENCH_PEER_BUFFER_CAP_MB=16
+ 
++Set TNG_CLIENT_BENCH_MODE=controlled-seed with TNG_CLIENT_BENCH_SEED_SOURCE and
++TNG_CLIENT_BENCH_SEED_SHA256 to run verified private uploads directly, without
++the public download or any Debian metadata lookup. The existing seeder/leecher,
++cgroup measurements, source/image checks, and final hash checks are retained.
++
+ Set TNG_CLIENT_BENCH_MODE=controlled-download with a SHA-256-verified
+ TNG_CLIENT_BENCH_SEED_SOURCE to compare active download CPU and RAM against one
+ fixed private qBittorrent seeder. The seeder upload cap defaults to 4 MiB/s;
+diff --git a/scripts/test_client_performance_benchmark.py b/scripts/test_client_performance_benchmark.py
+index 43e8097..41f0b11 100644
+--- a/scripts/test_client_performance_benchmark.py
++++ b/scripts/test_client_performance_benchmark.py
+@@ -3,6 +3,8 @@
+ from __future__ import annotations
+ 
+ import sys
++import hashlib
++from collections import defaultdict
+ import tempfile
+ import unittest
+ from pathlib import Path
+@@ -13,6 +15,94 @@ sys.path.insert(0, str(Path(__file__).parent))
+ import client_performance_benchmark as benchmark
+ 
+ 
++class ControlledSeedTests(unittest.TestCase):
++    def fixture(self, directory):
++        instance = object.__new__(benchmark.Benchmark)
++        instance.workdir = Path(directory)
++        (instance.workdir / "torrents").mkdir()
++        instance.seed_source_override = instance.workdir / "fixture.bin"
++        instance.seed_source_override.write_bytes(b"verified private seed fixture" * 100)
++        instance.seed_sha256_override = hashlib.sha256(instance.seed_source_override.read_bytes()).hexdigest()
++        return instance
++
++    def test_local_metadata_never_uses_the_public_index(self):
++        with tempfile.TemporaryDirectory() as directory:
++            instance = self.fixture(directory)
++            with mock.patch.object(benchmark, "_open_http", side_effect=AssertionError("network lookup")):
++                instance._validate_controlled_seed_source()
++                meta = instance._controlled_seed_metadata("198.18.0.2")
++            self.assertEqual(meta["sha256"], instance.seed_sha256_override)
++            self.assertEqual(meta["size"], instance.seed_source_override.stat().st_size)
++            self.assertTrue(meta["torrent_path"].is_file())
++            self.assertEqual(len(meta["info_hash"]), 40)
++
++    def test_missing_or_mismatched_expected_hash_is_rejected(self):
++        with tempfile.TemporaryDirectory() as directory:
++            instance = self.fixture(directory)
++            for digest in ("", "not-a-sha", "0" * 64):
++                with self.subTest(digest=digest):
++                    instance.seed_sha256_override = digest
++                    with self.assertRaises(RuntimeError):
++                        instance._validate_controlled_seed_source()
++
++    def test_controlled_seed_run_passes_only_on_verified_seed_and_needs_no_aria2(self):
++        for seed_status in ("PASS", "FAIL"):
++            with self.subTest(seed_status=seed_status), tempfile.TemporaryDirectory() as directory:
++                instance = self.fixture(directory)
++                instance.mode = "controlled-seed"
++                instance.config_dir = instance.workdir / "config"
++                instance.project = "controlled-seed-test"
++                instance.skip_build = True
++                instance.artifact_dir = None
++                instance.seed_leecher_image = "test-leecher"
++                instance.results = []
++                for name in ("prepare", "_use_prebuilt_image", "_write_report", "_release_client_payloads"):
++                    setattr(instance, name, mock.Mock())
++                instance._start_tracker = mock.Mock(return_value="198.18.0.2")
++                instance._torrent_metadata = mock.Mock(side_effect=AssertionError("public metadata"))
++                instance.service_id = mock.Mock(return_value="")
++                instance.compose = mock.Mock(return_value=("", 0))
++                instance._run_one = mock.Mock(side_effect=lambda *args: instance.results.append({
++                    "client": "torrentngd", "public": "SKIPPED", "seed": seed_status,
++                }))
++                with mock.patch.object(benchmark, "CLIENTS", ["torrentngd"]), mock.patch.object(
++                    benchmark.shutil, "which", side_effect=lambda name: None if name == "aria2c" else "/bin/" + name,
++                ):
++                    status = instance.run()
++                self.assertEqual(status, 0 if seed_status == "PASS" else 1)
++                instance._torrent_metadata.assert_not_called()
++                instance._use_prebuilt_image.assert_called_once()
++                self.assertEqual(instance._write_report.call_count, 2)
++
++    def test_controlled_seed_reaches_existing_seed_test_without_public_download(self):
++        with tempfile.TemporaryDirectory() as directory:
++            instance = self.fixture(directory)
++            instance.mode = "controlled-seed"
++            instance.seed_source = instance.seed_source_override
++            meta = instance._controlled_seed_metadata("198.18.0.2")
++            instance.sessions = {}
++            instance.samples = []
++            instance.results = []
++            instance.partial_seed_setup = {}
++            instance.api_url = mock.Mock(return_value="http://127.0.0.1:8080")
++            for name in ("compose", "_wait_ready", "_configure", "_set_idle_dht", "_remember_container",
++                         "_sample_idle", "_capture_engine_memory_metrics", "_finish_transfer_window"):
++                setattr(instance, name, mock.Mock())
++            instance._version = mock.Mock(return_value="test")
++            instance._add_torrent = mock.Mock(side_effect=AssertionError("public add"))
++            instance._wait_complete = mock.Mock(side_effect=AssertionError("public wait"))
++            instance._seed_test = mock.Mock(return_value=(1.0, [[0, 0, 0, 1.0, 1.0]], meta["sha256"]))
++            instance._summary = mock.Mock(return_value=defaultdict(float))
++            instance._peak_engine_metric = mock.Mock(return_value=None)
++            instance._run_one("torrentngd", meta, "198.18.0.2", instance.workdir / "private.torrent")
++            instance._seed_test.assert_called_once()
++            instance._add_torrent.assert_not_called()
++            instance._wait_complete.assert_not_called()
++            self.assertEqual(instance.results[0]["public"], "SKIPPED")
++            self.assertEqual(instance.results[0]["seed"], "PASS")
++            self.assertEqual(instance.results[0]["seed_sha"], meta["sha256"])
++
++
+ class CgroupCounterTests(unittest.TestCase):
+     def test_benchmark_build_uses_a_task_scoped_buildkit_builder(self) -> None:
+         instance = object.__new__(benchmark.Benchmark)

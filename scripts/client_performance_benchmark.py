@@ -10,6 +10,7 @@ import errno
 import fcntl
 import hashlib
 import http.cookiejar
+import ipaddress
 import json
 import math
 import os
@@ -47,6 +48,13 @@ LABELS = {
     "transmission": "Transmission",
     "deluge": "Deluge",
     "rtorrent": "rTorrent",
+}
+API_CONTAINER_PORTS = {
+    "torrentngd": 8080,
+    "qbittorrent": 8080,
+    "transmission": 9091,
+    "deluge": 8112,
+    "seed_leecher": 8080,
 }
 TOKEN = "interop-backend-token-20260904"
 RATE_BPS = int(os.environ.get("TNG_CLIENT_BENCH_RATE_BPS", 32 * 1024 * 1024))
@@ -532,10 +540,11 @@ class _HttpOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(request, file_pointer, code, message, headers, new_url)
 
 
-def _build_http_opener(cookie_jar=None):
+def _build_http_opener(cookie_jar=None, *, use_environment_proxy=True):
     """Create a urllib opener with HTTP(S) handlers only; file URLs are unavailable."""
     opener = urllib.request.OpenerDirector()
-    opener.add_handler(urllib.request.ProxyHandler())
+    if use_environment_proxy:
+        opener.add_handler(urllib.request.ProxyHandler())
     opener.add_handler(urllib.request.HTTPHandler())
     opener.add_handler(urllib.request.HTTPSHandler())
     if cookie_jar is not None:
@@ -558,7 +567,9 @@ class HttpClient:
     def __init__(self, base_url):
         self.base_url = base_url
         self.jar = http.cookiejar.CookieJar()
-        self.opener = _build_http_opener(self.jar)
+        # These sessions control APIs on the task-local Docker network. Never
+        # send private bridge addresses through the host's HTTP proxy.
+        self.opener = _build_http_opener(self.jar, use_environment_proxy=False)
         self.transmission_sid = ""
         self.transmission_style = "hyphen"
 
@@ -738,6 +749,7 @@ class Benchmark:
         self.ports = {}
         used_ports = set()
         self.sessions = {}
+        self.api_addresses = {}
         self.results = []
         self.idle_results = []
         self.idle_client_images = {}
@@ -923,6 +935,13 @@ class Benchmark:
         )
 
     def compose(self, *args, check=True, quiet=False, timeout=None):
+        if args and args[0] in {"up", "stop", "restart", "down"}:
+            if args[0] == "down":
+                self.api_addresses.clear()
+            else:
+                for service in args[1:]:
+                    if service in API_CONTAINER_PORTS:
+                        self.api_addresses.pop(service, None)
         command = ["docker", "compose", "-p", self.project, "-f", str(COMPOSE_FILE)]
         if self.compose_override_path is not None:
             command.extend(["-f", str(self.compose_override_path)])
@@ -936,7 +955,42 @@ class Benchmark:
         return self.compose("ps", "-q", client, quiet=True)[0].strip()
 
     def api_url(self, client):
-        return "http://127.0.0.1:" + str(self.ports[client])
+        container_port = API_CONTAINER_PORTS.get(client)
+        if container_port is None:
+            raise RuntimeError(f"no HTTP API port is defined for {client}")
+        cached = self.api_addresses.get(client)
+        if cached is not None:
+            return cached
+        container_id = self.service_id(client)
+        if not container_id:
+            raise RuntimeError(f"{LABELS.get(client, client)} container was not created")
+        output, code = run_command(
+            ["docker", "inspect", "-f", "{{json .NetworkSettings.Networks}}", container_id],
+            env=self.env, check=False, quiet=True,
+        )
+        if code:
+            raise RuntimeError(f"could not inspect {LABELS.get(client, client)} network address")
+        try:
+            networks = json.loads(output)
+            network = networks[f"{self.project}_interop"]
+            host = network["IPAddress"]
+            address = ipaddress.ip_address(host)
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            raise RuntimeError(
+                f"{LABELS.get(client, client)} is not attached to the task-local network"
+            ) from error
+        if (
+            address.version != 4
+            or not address.is_private
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_multicast
+            or address.is_reserved
+        ):
+            raise RuntimeError("task-local Docker API address must be a private IPv4 address")
+        endpoint = f"http://{address}:{container_port}"
+        self.api_addresses[client] = endpoint
+        return endpoint
 
     def http(self, client, path, *, data=None, headers=None, timeout=15, method=None):
         return self.sessions[client].request(
@@ -2360,8 +2414,8 @@ class Benchmark:
         client_config = self.config_dir / "qbittorrent-seed" / seeder
         self._env("INTEROP_SEED_QBIT_CONFIG", client_config)
         self._prepare_seed_qbit_config(seeder)
-        self.sessions[client] = HttpClient(self.api_url(client))
         self.compose("up", "-d", client, quiet=True, timeout=900)
+        self.sessions[client] = HttpClient(self.api_url(client))
         container_id = self.service_id(client)
         if container_id:
             self.seed_leecher_image = run_command(
@@ -3276,7 +3330,7 @@ class Benchmark:
             row = by_client.get(client, {})
             lines.append(
                 f"| {LABELS[client]} | {row.get('version', 'n/a')} | "
-                f"{row.get('public', 'FAIL')} | {row.get('download_progress', 0):.2%} | "
+                f"{row.get('public', 'NOT RUN')} | {row.get('download_progress', 0):.2%} | "
                 f"{row.get('download_seconds', 0):.1f} | "
                 f"{row.get('download_mib_s', 0):.2f} | {row.get('download_peak_mib_s', 0):.2f} | "
                 f"{row.get('download_mean_cpu', 0):.2f} | {row.get('download_peak_cpu', 0):.2f} | "
@@ -3303,7 +3357,7 @@ class Benchmark:
         for client in CLIENTS:
             row = by_client.get(client, {})
             lines.append(
-                f"| {LABELS[client]} | {row.get('seed', 'FAIL')} | "
+                f"| {LABELS[client]} | {row.get('seed', 'NOT RUN')} | "
                 f"{row.get('seed_setup_seconds', 0):.1f} | {row.get('seed_seconds', 0):.1f} | "
                 f"{row.get('seed_mib_s', 0):.2f} | "
                 f"{row.get('seed_peak_mib_s', 0):.2f} | {row.get('seed_mean_cpu', 0):.2f} | "
@@ -4081,6 +4135,9 @@ class Benchmark:
                 )
                 if stop_code == 0:
                     self._release_client_payloads(client, meta["iso_name"])
+                # Preserve completed measurements before starting another
+                # client, even if that later trial is interrupted.
+                self._write_report(meta, client_images)
                 self.compose("restart", "opentracker", check=False, quiet=True, timeout=60)
         client_images["seed_leecher"] = self.seed_leecher_image
         if self.artifact_dir is not None:

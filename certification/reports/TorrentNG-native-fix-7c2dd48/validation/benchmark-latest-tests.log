@@ -1,0 +1,13 @@
+Scratch: /tmp/tmpdpfcqfoz
+Config scratch: /tmp/tmpdpfcqfoz/config
+Compose project: checkpoint-test
+Scratch: /tmp/tmph0ugh4_9
+Config scratch: /tmp/tmph0ugh4_9/config
+Compose project: checkpoint-test
+Scratch: /tmp/tmpk2uu_d4h
+Config scratch: /tmp/tmpk2uu_d4h/config
+Compose project: checkpoint-test
+----------------------------------------------------------------------
+Ran 45 tests in 0.015s
+
+OK

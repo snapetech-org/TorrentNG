@@ -1,0 +1,82 @@
+diff --git a/crates/rt-engine/src/network_budget.rs b/crates/rt-engine/src/network_budget.rs
+index b0ebcfc..02d74de 100644
+--- a/crates/rt-engine/src/network_budget.rs
++++ b/crates/rt-engine/src/network_budget.rs
+@@ -1089,19 +1089,25 @@ impl HierarchicalRateService {
+         if bytes == 0 {
+             anyhow::bail!("zero-byte payload cannot consume rate admission");
+         }
+-        let demand_changes = self.demand_changes_for(peer_id.torrent);
++        // Most payload grants are immediately eligible. Do not enter the
++        // notification registry or retire a nonexistent waiter for those
++        // grants: both operations take process-wide mutexes per wire block.
++        let mut demand_changes = None;
+         let demand_id = self.new_demand_id();
+-        let _demand = RateDemandGuard {
+-            scheduler: Arc::clone(self),
++        let mut demand = RateDemandGuard {
++            scheduler: self,
+             peer_id,
+             demand_id,
++            armed: false,
+         };
+         loop {
+             if cancellation.generation() != generation {
+                 return Ok(None);
+             }
+             let changed_generation = self.changed.generation();
+-            let demand_generation = demand_changes.generation();
++            let demand_generation = demand_changes
++                .as_ref()
++                .map_or(0, RateLimitCancellation::generation);
+             let now = self.now();
+             let (grant, grant_id, wake_fairness_waiters) = {
+                 let mut tree = self.lock_tree();
+@@ -1116,6 +1122,10 @@ impl HierarchicalRateService {
+             }
+             match grant {
+                 Grant::Granted => {
++                    // try_grant_demand_tracked cleared this demand under the
++                    // tree lock. A cancelled grant still refunds its credit,
++                    // but must not lock the tree again to retire the waiter.
++                    demand.armed = false;
+                     let grant = RateAdmissionGrant {
+                         scheduler: Arc::clone(self),
+                         peer_id,
+@@ -1136,6 +1146,13 @@ impl HierarchicalRateService {
+                     peer_id.connection.generation
+                 ),
+                 Grant::Wait { until } => {
++                    demand.armed = true;
++                    let Some(demand_changes) = demand_changes.as_ref() else {
++                        demand_changes = Some(self.demand_changes_for(peer_id.torrent));
++                        // Retry after subscribing. A fairness change between
++                        // the denied attempt and subscription must not be lost.
++                        continue;
++                    };
+                     if until == CHANGE_ONLY_WAKE {
+                         tokio::select! {
+                             _ = self.changed.wait_for_change(changed_generation) => {}
+@@ -1160,15 +1177,18 @@ impl HierarchicalRateService {
+ /// A pending rate demand is owned by one asynchronous request. Dropping or
+ /// cancelling that request clears only its own waiter, so another request
+ /// from the same connection remains represented in the fairness queue.
+-struct RateDemandGuard {
+-    scheduler: Arc<HierarchicalRateService>,
++struct RateDemandGuard<'a> {
++    scheduler: &'a HierarchicalRateService,
+     peer_id: RatePeerId,
+     demand_id: u64,
++    armed: bool,
+ }
+ 
+-impl Drop for RateDemandGuard {
++impl Drop for RateDemandGuard<'_> {
+     fn drop(&mut self) {
+-        self.scheduler.retire_demand(self.peer_id, self.demand_id);
++        if self.armed {
++            self.scheduler.retire_demand(self.peer_id, self.demand_id);
++        }
+     }
+ }
+ 

@@ -1,0 +1,2137 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 57f6c9a..cee35ee 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1647,6 +1647,7 @@ dependencies = [
+  "serde_json",
+  "sha1",
+  "sha2",
++ "smallvec",
+  "tempfile",
+  "thiserror 2.0.20",
+  "tokio",
+diff --git a/Cargo.toml b/Cargo.toml
+index ff3d7c2..8be5368 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -78,6 +78,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
+ # metrics
+ # utilities
+ bytes = "1"
++smallvec = "1.15.1"
+ uuid = { version = "1", features = ["v4", "serde"] }
+ rand = "0.10"
+ url = "2"
+diff --git a/crates/rt-engine/Cargo.toml b/crates/rt-engine/Cargo.toml
+index f8814bb..1d5defe 100644
+--- a/crates/rt-engine/Cargo.toml
++++ b/crates/rt-engine/Cargo.toml
+@@ -10,6 +10,7 @@ license.workspace = true
+ tokio.workspace = true
+ tokio-util.workspace = true
+ bytes.workspace = true
++smallvec.workspace = true
+ futures.workspace = true
+ reqwest.workspace = true
+ rusqlite.workspace = true
+diff --git a/crates/rt-engine/src/torrent_task.rs b/crates/rt-engine/src/torrent_task.rs
+index e35f21b..a1637a7 100644
+--- a/crates/rt-engine/src/torrent_task.rs
++++ b/crates/rt-engine/src/torrent_task.rs
+@@ -115,6 +115,11 @@ pub(crate) const UTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+ const UPLOAD_ACCOUNTING_BATCH_BYTES: u64 = 64 * 1024;
+ const UPLOAD_ACCOUNTING_MAX_DELAY: Duration = Duration::from_millis(25);
+ const MAX_READY_UPLOAD_INTAKE_MESSAGES: usize = MAX_UPLOAD_READ_BATCH_BLOCKS;
++// A pipelined receiver can refill one 16 KiB request at a time. Ready-only
++// draining never combines those refills, so every cache hit still enters the
++// disk queue. Bound collection latency, and never wait for more requests than
++// this peer has demonstrated it can keep outstanding.
++const UPLOAD_READ_COALESCE_MAX_DELAY: Duration = Duration::from_millis(8);
+ 
+ pub(crate) async fn connect_utp_with_deadline(
+     network_budget: &GlobalNetworkBudget,
+@@ -217,7 +222,7 @@ fn validate_padding_block(
+ ) -> anyhow::Result<()> {
+     let length = u32::try_from(data.len())
+         .map_err(|_| anyhow::anyhow!("peer block length does not fit in u32"))?;
+-    let regions = piece_map.validate_request(piece, begin, length)?;
++    let regions = piece_map.request_regions(piece, begin, length)?;
+     let mut data_offset = 0usize;
+     for region in regions {
+         let region_len = usize::try_from(region.length)
+@@ -2120,6 +2125,10 @@ impl UploadContext {
+     }
+ }
+ 
++// These collections have a protocol scheduling bound; keep their elements
++// inline instead of allocating a new Vec at each stage of every read.
++type UploadBatch<T> = smallvec::SmallVec<[T; MAX_UPLOAD_READ_BATCH_BLOCKS]>;
++
+ struct UploadReadContext {
+     save_root: PathBuf,
+     piece_map: Arc<PieceMap>,
+@@ -2140,19 +2149,36 @@ struct UploadRateAdmission {
+ 
+ struct LeasedUploadBlock {
+     data: bytes::Bytes,
+-    _lease: Arc<MemoryLease>,
++    _lease: UploadMemoryLease,
+     _read_permit: UploadReadPermit,
+     rate_grant: Option<RateAdmissionGrant>,
+ }
+ 
+-#[derive(Clone)]
++/// A single block has one owner. Only slices of a multi-block backing need
++/// shared ownership of their memory charge.
++enum UploadMemoryLease {
++    Single { _lease: MemoryLease },
++    Shared { _lease: Arc<MemoryLease> },
++}
++
++#[cfg(test)]
++impl UploadMemoryLease {
++    fn bytes(&self) -> u64 {
++        match self {
++            Self::Single { _lease } => _lease.bytes(),
++            Self::Shared { _lease } => _lease.bytes(),
++        }
++    }
++}
++
++#[derive(Clone, Copy)]
+ struct UploadReadSpan {
+-    path: PathBuf,
++    file_ordinal: usize,
+     offset: u64,
+     length: usize,
+ }
+ 
+-#[derive(Clone)]
++#[derive(Clone, Copy)]
+ struct UploadReadSpec {
+     request: UploadRequest,
+     span: Option<UploadReadSpan>,
+@@ -2540,7 +2566,7 @@ async fn write_transfer_block(
+     ))?;
+     let regions = context
+         .piece_map
+-        .validate_request(block.piece, block.offset, block_len)?;
++        .request_regions(block.piece, block.offset, block_len)?;
+     let mut data_offset = 0usize;
+ 
+     for region in regions {
+@@ -2561,14 +2587,8 @@ async fn write_transfer_block(
+             data_offset = end;
+             continue;
+         }
+-        let file = context
+-            .meta
+-            .files
+-            .iter()
+-            .find(|file| file.index == region.file_index)
+-            .ok_or_else(|| anyhow::anyhow!("file index {} out of range", region.file_index))?;
+-        let path = file.path.resolve(&context.save_root);
+-        prepare_transfer_file_once(context, file.index, &path, file.length).await?;
++        let path = region.path.resolve(&context.save_root);
++        prepare_transfer_file_once(context, region.file_index, &path, region.file_length).await?;
+         data_offset = end;
+         match _memory_lease.as_ref() {
+             Some(lease) => {
+@@ -5833,9 +5853,8 @@ impl TorrentTask {
+             block.offset,
+             block_len,
+         ))?;
+-        let regions = self
+-            .piece_map
+-            .validate_request(block.piece, block.offset, block_len)?;
++        let piece_map = Arc::clone(&self.piece_map);
++        let regions = piece_map.request_regions(block.piece, block.offset, block_len)?;
+         let mut data_offset = 0usize;
+ 
+         for region in regions {
+@@ -5856,14 +5875,8 @@ impl TorrentTask {
+                 data_offset = end;
+                 continue;
+             }
+-            let (path, file_length) = self
+-                .meta
+-                .files
+-                .iter()
+-                .find(|file| file.index == region.file_index)
+-                .map(|file| (file.path.resolve(&self.save_root), file.length))
+-                .ok_or_else(|| anyhow::anyhow!("file index {} out of range", region.file_index))?;
+-            self.prepare_file_once(region.file_index, &path, file_length)
++            let path = region.path.resolve(&self.save_root);
++            self.prepare_file_once(region.file_index, &path, region.file_length)
+                 .await?;
+             data_offset = end;
+             match shared_payload_lease.as_ref() {
+@@ -8899,8 +8912,8 @@ async fn run_peer_loop_with_upload_future<MakeUploadReadFuture, F>(
+ ) -> PeerLoopExit
+ where
+     MakeUploadReadFuture:
+-        Fn(Vec<UploadReadSpec>, Arc<UploadReadContext>) -> F + Copy + Send + 'static,
+-    F: std::future::Future<Output = Vec<UploadReadCompletion>> + Send + 'static,
++        Fn(UploadBatch<UploadReadSpec>, Arc<UploadReadContext>) -> F + Copy + Send + 'static,
++    F: std::future::Future<Output = UploadBatch<UploadReadCompletion>> + Send + 'static,
+ {
+     let mut outstanding = Vec::<OutstandingRequest>::new();
+     let upload_service = upload.upload_rate.network_budget.upload_service();
+@@ -8949,6 +8962,10 @@ where
+     let mut upload_reads = UploadReadTasks::<F>::default();
+     let mut upload_dispatch_pending = false;
+     let mut upload_intake_messages = 0usize;
++    let mut upload_pipeline_width = 1usize;
++    let mut upload_coalescing_expired = false;
++    let upload_coalescing_flush = sleep(UPLOAD_READ_COALESCE_MAX_DELAY);
++    tokio::pin!(upload_coalescing_flush);
+     let mut deferred_peer_message: Option<anyhow::Result<Option<Message>>> = None;
+     // Protocol obligations are process-owned by generation-safe connection
+     // identity. The socket loop retains the only writer and upload-read futures.
+@@ -8962,14 +8979,20 @@ where
+         'peer: loop {
+         // Poll the decoder once while upload dispatch is pending. Any complete
+         // frames already in the socket buffer are processed first, up to a
+-        // small hard cap; no timer is used to wait for a fuller batch.
++        // small hard cap. Staggered refills from a pipelined peer may collect
++        // until the bounded deadline; a serial requester dispatches at once.
+         if deferred_peer_message.is_none()
+             && upload_dispatch_pending
+             && upload_intake_messages < MAX_READY_UPLOAD_INTAKE_MESSAGES
+         {
+             deferred_peer_message = peer_io.try_next_ready();
+         }
+-        let dispatch_upload_reads_now = upload_dispatch_pending && deferred_peer_message.is_none();
++        let dispatch_upload_reads_now = upload_dispatch_pending
++            && deferred_peer_message.is_none()
++            && (upload_choked
++                || upload.plane != Plane::V1
++                || upload_intake_messages >= upload_pipeline_width
++                || upload_coalescing_expired);
+         tokio::select! {
+             cmd = peer_cmd_rx.recv() => {
+                 let Some(cmd) = cmd else {
+@@ -9121,6 +9144,7 @@ where
+                         }
+                         upload_dispatch_pending = false;
+                         upload_intake_messages = 0;
++                        upload_pipeline_width = 1;
+                         start_upload_reads(
+                             &mut upload_reads,
+                             &upload_obligations,
+@@ -9143,6 +9167,7 @@ where
+                         peer_io.send(Message::Unchoke).await?;
+                         upload_dispatch_pending = false;
+                         upload_intake_messages = 0;
++                        upload_pipeline_width = 1;
+                         start_upload_reads(
+                             &mut upload_reads,
+                             &upload_obligations,
+@@ -9536,9 +9561,18 @@ where
+                         }
+                         match decision {
+                             InboundDecision::Queue => {
++                                upload_pipeline_width = upload_pipeline_width.max(
++                                    upload_reads.pending_request_count()
++                                        .saturating_add(upload_obligations.queued_len())
++                                        .min(MAX_READY_UPLOAD_INTAKE_MESSAGES),
++                                );
+                                 if !upload_dispatch_pending {
+                                     upload_dispatch_pending = true;
+                                     upload_intake_messages = 1;
++                                    upload_coalescing_expired = false;
++                                    upload_coalescing_flush.as_mut().reset(
++                                        TokioInstant::now() + UPLOAD_READ_COALESCE_MAX_DELAY,
++                                    );
+                                 }
+                             }
+                             InboundDecision::Reject(_) => {
+@@ -9717,7 +9751,7 @@ where
+                 let Some(upload_completions) = upload_result else {
+                     continue;
+                 };
+-                let mut ready_uploads = Vec::with_capacity(upload_completions.len());
++                let mut ready_uploads = UploadBatch::new();
+                 for upload_completion in upload_completions {
+                     upload_reads.finish_request();
+                     let (request, result, rate_interrupted) = match upload_completion {
+@@ -9815,11 +9849,12 @@ where
+                         .map(|(request, block)| {
+                             (request.wire_piece, request.wire_begin, &block.data)
+                         })
+-                        .collect::<Vec<_>>();
++                        .collect::<UploadBatch<_>>();
+                     let (completed_frames, send_error) = match peer_io.send_pieces(&frames).await {
+                         Ok(completed) => (completed, None),
+                         Err((completed, error)) => (completed, Some(error)),
+                     };
++                    drop(frames);
+                     let completed_frames = completed_frames.min(ready_uploads.len());
+                     let mut upload_event_due = false;
+                     for (request, mut block) in ready_uploads
+@@ -9892,6 +9927,14 @@ where
+                 }
+             }
+             _ = std::future::ready(()), if dispatch_upload_reads_now => {
++                if upload_coalescing_expired
++                    && upload_obligations.queued_len() <= 1
++                    && upload_reads.pending_request_count() == 0
++                {
++                    // A peer may shrink its window after the initial burst.
++                    // One solitary deadline flush restores immediate service.
++                    upload_pipeline_width = 1;
++                }
+                 upload_dispatch_pending = false;
+                 upload_intake_messages = 0;
+                 start_upload_reads(
+@@ -9902,6 +9945,10 @@ where
+                     make_upload_read_future,
+                 )?;
+             }
++            _ = upload_coalescing_flush.as_mut(),
++                if upload_dispatch_pending && !upload_coalescing_expired => {
++                upload_coalescing_expired = true;
++            }
+             _ = timeout_tick.tick() => {
+                 if last_activity.elapsed() > PEER_IDLE_TIMEOUT {
+                     anyhow::bail!("peer idle timeout");
+@@ -10148,11 +10195,17 @@ async fn read_upload_block_with_span(
+             upload.plane == Plane::V1 && span.length == length as usize,
+             "cached upload span does not match its admitted request"
+         );
++        let path = upload
++            .piece_map
++            .file_by_ordinal(span.file_ordinal)
++            .ok_or_else(|| anyhow::anyhow!("upload span file is outside its piece map"))?
++            .path
++            .resolve(&upload.save_root);
+         let read = upload
+             .storage
+             .read_owned_at_with_priority(
+                 IoClass::PeerRead,
+-                &span.path,
++                &path,
+                 span.offset,
+                 span.length,
+                 priority,
+@@ -10166,12 +10219,15 @@ async fn read_upload_block_with_span(
+         );
+         read.into_bytes()
+     } else {
+-        let regions =
+-            upload
+-                .piece_map
+-                .validate_request(canonical.piece, canonical.begin, length)?;
+-        if regions.len() == 1 && !regions[0].pad {
+-            let region = &regions[0];
++        let mut regions = upload
++            .piece_map
++            .request_regions(canonical.piece, canonical.begin, length)?
++            .peekable();
++        let first = regions
++            .next()
++            .ok_or_else(|| anyhow::anyhow!("upload request has no file regions"))?;
++        if regions.peek().is_none() && !first.pad {
++            let region = first;
+             let path = region.path.resolve(&upload.save_root);
+             let read = upload
+                 .storage
+@@ -10192,7 +10248,7 @@ async fn read_upload_block_with_span(
+             read.into_bytes()
+         } else {
+             let mut data = Vec::with_capacity(length as usize);
+-            for region in regions {
++            for region in std::iter::once(first).chain(regions) {
+                 if region.pad {
+                     data.resize(data.len() + region.length as usize, 0);
+                     continue;
+@@ -10240,7 +10296,7 @@ async fn read_upload_block_with_span(
+     );
+     Ok(LeasedUploadBlock {
+         data,
+-        _lease: Arc::new(lease),
++        _lease: UploadMemoryLease::Single { _lease: lease },
+         _read_permit,
+         rate_grant: None,
+     })
+@@ -10323,24 +10379,19 @@ fn upload_read_spec(
+ 
+ fn upload_read_span(upload: &UploadReadContext, request: UploadRequest) -> Option<UploadReadSpan> {
+     let canonical = request.canonical_block();
+-    if upload.plane != Plane::V1
+-        || request.wire_block() != canonical
+-        || canonical.length == 0
+-        || canonical.length > MAX_BLOCK_SIZE
+-        || PieceGeometry::validate_served_block(&upload.piece_map, canonical).is_err()
+-    {
++    if upload.plane != Plane::V1 || request.wire_block() != canonical {
+         return None;
+     }
+-    let regions = upload
++    let mut regions = upload
+         .piece_map
+-        .validate_request(canonical.piece, canonical.begin, canonical.length)
++        .request_regions(canonical.piece, canonical.begin, canonical.length)
+         .ok()?;
+-    if regions.len() != 1 || regions[0].pad || regions[0].length != canonical.length {
++    let region = regions.next()?;
++    if regions.next().is_some() || region.pad || region.length != canonical.length {
+         return None;
+     }
+-    let region = &regions[0];
+     Some(UploadReadSpan {
+-        path: region.path.resolve(&upload.save_root),
++        file_ordinal: region.file_ordinal,
+         offset: region.file_offset,
+         length: region.length as usize,
+     })
+@@ -10360,7 +10411,7 @@ fn can_append_upload_read(
+     if batch.len() >= MAX_UPLOAD_READ_BATCH_BLOCKS
+         || last.request.piece != next.request.piece
+         || last.choke_critical != next.choke_critical
+-        || last_span.path != next_span.path
++        || last_span.file_ordinal != next_span.file_ordinal
+         || last_span.offset.checked_add(last_span.length as u64) != Some(next_span.offset)
+     {
+         return false;
+@@ -10373,9 +10424,13 @@ fn can_append_upload_read(
+ async fn read_upload_batch_blocks(
+     upload: &UploadReadContext,
+     specs: &[UploadReadSpec],
+-) -> anyhow::Result<Vec<LeasedUploadBlock>> {
++) -> anyhow::Result<UploadBatch<LeasedUploadBlock>> {
++    anyhow::ensure!(
++        !specs.is_empty() && specs.len() <= MAX_UPLOAD_READ_BATCH_BLOCKS,
++        "upload batch has an invalid request count"
++    );
+     if specs.len() == 1 || specs.iter().any(|spec| spec.span.is_none()) {
+-        let mut blocks = Vec::with_capacity(specs.len());
++        let mut blocks = UploadBatch::new();
+         for spec in specs {
+             blocks.push(
+                 read_upload_block_with_span(
+@@ -10413,7 +10468,7 @@ async fn read_upload_batch_blocks(
+             let previous_span = previous.span.as_ref().expect("batch span checked above");
+             anyhow::ensure!(
+                 block.piece == previous.request.piece
+-                    && span.path == first_span.path
++                    && span.file_ordinal == first_span.file_ordinal
+                     && previous_span
+                         .offset
+                         .checked_add(previous_span.length as u64)
+@@ -10450,11 +10505,17 @@ async fn read_upload_batch_blocks(
+     } else {
+         IoRequestPriority::deadline(deadline)
+     };
++    let path = upload
++        .piece_map
++        .file_by_ordinal(first_span.file_ordinal)
++        .ok_or_else(|| anyhow::anyhow!("upload batch file is outside its piece map"))?
++        .path
++        .resolve(&upload.save_root);
+     let read = upload
+         .storage
+         .read_owned_at_with_priority(
+             IoClass::PeerRead,
+-            &first_span.path,
++            &path,
+             first_span.offset,
+             total_len,
+             priority,
+@@ -10468,13 +10529,15 @@ async fn read_upload_batch_blocks(
+     );
+     let backing = read.into_bytes();
+     let mut offset = 0usize;
+-    let mut blocks = Vec::with_capacity(specs.len());
++    let mut blocks = UploadBatch::new();
+     for (spec, read_permit) in specs.iter().zip(read_permits) {
+         let length = spec.request.length as usize;
+         let end = offset + length;
+         blocks.push(LeasedUploadBlock {
+             data: backing.slice(offset..end),
+-            _lease: Arc::clone(&shared_lease),
++            _lease: UploadMemoryLease::Shared {
++                _lease: Arc::clone(&shared_lease),
++            },
+             _read_permit: read_permit,
+             rate_grant: None,
+         });
+@@ -10485,42 +10548,45 @@ async fn read_upload_batch_blocks(
+ }
+ 
+ async fn upload_read_batch_future(
+-    specs: Vec<UploadReadSpec>,
++    specs: UploadBatch<UploadReadSpec>,
+     read_context: Arc<UploadReadContext>,
+-) -> Vec<UploadReadCompletion> {
+-    let panicked_requests = specs.iter().map(|spec| spec.request).collect::<Vec<_>>();
++) -> UploadBatch<UploadReadCompletion> {
++    let panicked_requests = specs
++        .iter()
++        .map(|spec| spec.request)
++        .collect::<UploadBatch<_>>();
+     let read = async move {
+-        let read = async {
+-            let blocks: Vec<anyhow::Result<LeasedUploadBlock>> =
+-                match read_upload_batch_blocks(&read_context, &specs).await {
+-                    Ok(blocks) => blocks.into_iter().map(Ok).collect(),
+-                    // Keep batch failure atomic. Retrying its members one at a
+-                    // time here could hold early permits while waiting for later
+-                    // ones, recreating the admission cycle batching removed.
+-                    Err(error) => {
+-                        let message = format!("{error:#}");
+-                        (0..specs.len())
+-                            .map(|_| Err(anyhow::anyhow!(message.clone())))
+-                            .collect()
+-                    }
+-                };
+-            blocks
+-        };
+-        let results = match timeout(PEER_UPLOAD_READ_TIMEOUT, read).await {
+-            Ok(results) => results,
+-            Err(_) => specs
+-                .iter()
+-                .map(|_| {
+-                    Err(anyhow::anyhow!(
+-                        "upload block read exceeded its peer deadline ({}s)",
+-                        PEER_UPLOAD_READ_TIMEOUT.as_secs()
+-                    ))
+-                })
+-                .collect(),
++        // Keep only one collection of successful blocks. Error and timeout
++        // paths carry one message until each obligation is resolved; success
++        // no longer rebuilds the block list as a second Vec<Result<_>>.
++        let (blocks, error) = match timeout(
++            PEER_UPLOAD_READ_TIMEOUT,
++            read_upload_batch_blocks(&read_context, &specs),
++        )
++        .await
++        {
++            Ok(Ok(blocks)) => (blocks, None),
++            // Batch failure is atomic: never retry members while holding a
++            // partial set of read permits.
++            Ok(Err(error)) => (UploadBatch::new(), Some(format!("{error:#}"))),
++            Err(_) => (
++                UploadBatch::new(),
++                Some(format!(
++                    "upload block read exceeded its peer deadline ({}s)",
++                    PEER_UPLOAD_READ_TIMEOUT.as_secs()
++                )),
++            ),
+         };
++        let mut blocks = blocks.into_iter();
+         let control_generation = read_context.upload_control.generation();
+-        let mut completions = Vec::with_capacity(specs.len());
+-        for (spec, result) in specs.into_iter().zip(results) {
++        let mut completions = UploadBatch::new();
++        for spec in specs {
++            let result = match error.as_ref() {
++                Some(message) => Err(anyhow::anyhow!(message.clone())),
++                None => blocks
++                    .next()
++                    .ok_or_else(|| anyhow::anyhow!("upload batch lost a completed block")),
++            };
+             match result {
+                 Ok(mut block) => {
+                     let bytes = block.data.len() as u64;
+@@ -10576,14 +10642,14 @@ fn start_upload_reads<MakeUploadReadFuture, F>(
+     make_upload_read_future: MakeUploadReadFuture,
+ ) -> anyhow::Result<()>
+ where
+-    MakeUploadReadFuture: Fn(Vec<UploadReadSpec>, Arc<UploadReadContext>) -> F + Copy,
+-    F: std::future::Future<Output = Vec<UploadReadCompletion>> + Send + 'static,
++    MakeUploadReadFuture: Fn(UploadBatch<UploadReadSpec>, Arc<UploadReadContext>) -> F + Copy,
++    F: std::future::Future<Output = UploadBatch<UploadReadCompletion>> + Send + 'static,
+ {
+     while upload_reads.pending_request_count() < MAX_PENDING_UPLOAD_READS {
+         let Some(block) = obligations.next_request() else {
+             break;
+         };
+-        let mut batch = vec![upload_read_spec(
++        let mut batch: UploadBatch<UploadReadSpec> = smallvec::smallvec![upload_read_spec(
+             upload,
+             read_context,
+             obligations,
+@@ -17145,7 +17211,8 @@ mod tests {
+             }
+         });
+ 
+-        let completions = upload_read_batch_future(specs.to_vec(), Arc::new(read_context)).await;
++        let completions =
++            upload_read_batch_future(specs.into_iter().collect(), Arc::new(read_context)).await;
+ 
+         assert_eq!(completions.len(), 2);
+         assert!(completions.into_iter().all(|completion| matches!(
+diff --git a/crates/rt-engine/src/transfer/shared_upload.rs b/crates/rt-engine/src/transfer/shared_upload.rs
+index 2b91a95..ea75bfa 100644
+--- a/crates/rt-engine/src/transfer/shared_upload.rs
++++ b/crates/rt-engine/src/transfer/shared_upload.rs
+@@ -14,7 +14,7 @@ use super::coords::{BlockExtent, TransferPeerId};
+ use super::obligations::{InboundDecision, InboundObligations, Reject, Served};
+ use super::upload_scheduler::{
+     UploadReadAdmissionError, UploadReadConnection, UploadReadLimits, UploadReadPermit,
+-    UploadReadScheduler,
++    UploadReadPermits, UploadReadScheduler,
+ };
+ 
+ /// One live, process-wide owner for inbound upload obligations and the
+@@ -186,7 +186,7 @@ impl SharedUploadService {
+         &self,
+         identity: TransferPeerId,
+         blocks: &[BlockExtent],
+-    ) -> Result<Vec<UploadReadPermit>, UploadReadAdmissionError> {
++    ) -> Result<UploadReadPermits, UploadReadAdmissionError> {
+         self.reads.acquire_batch(identity, blocks).await
+     }
+ }
+@@ -211,7 +211,7 @@ impl SharedUploadReadHandle {
+     pub(crate) async fn acquire_read_batch(
+         &self,
+         blocks: &[BlockExtent],
+-    ) -> Result<Vec<UploadReadPermit>, UploadReadAdmissionError> {
++    ) -> Result<UploadReadPermits, UploadReadAdmissionError> {
+         self.service.acquire_read_batch(self.identity, blocks).await
+     }
+ 
+diff --git a/crates/rt-engine/src/transfer/upload_scheduler.rs b/crates/rt-engine/src/transfer/upload_scheduler.rs
+index a2d8dff..d3c707e 100644
+--- a/crates/rt-engine/src/transfer/upload_scheduler.rs
++++ b/crates/rt-engine/src/transfer/upload_scheduler.rs
+@@ -16,6 +16,9 @@ use super::rate::RatePeerId;
+ 
+ const MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS: usize = 4;
+ 
++pub(crate) type UploadReadPermits =
++    smallvec::SmallVec<[UploadReadPermit; MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS]>;
++
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub(crate) struct UploadReadLimits {
+     pub max_connections: usize,
+@@ -89,7 +92,7 @@ struct Waiter {
+ 
+ enum WaiterReply {
+     Single(oneshot::Sender<UploadReadPermit>),
+-    Batch(oneshot::Sender<Vec<UploadReadPermit>>),
++    Batch(oneshot::Sender<UploadReadPermits>),
+ }
+ 
+ pub(crate) struct UploadReadPermit {
+@@ -289,7 +292,7 @@ impl UploadReadScheduler {
+         &self,
+         peer: RatePeerId,
+         blocks: &[BlockExtent],
+-    ) -> Result<Vec<UploadReadPermit>, UploadReadAdmissionError> {
++    ) -> Result<UploadReadPermits, UploadReadAdmissionError> {
+         if blocks.is_empty()
+             || blocks
+                 .iter()
+@@ -583,7 +586,7 @@ fn pump(inner: &Arc<Inner>) {
+                         bytes: waiter.bytes,
+                     };
+                     if let Err(permit) = reply.send(permit) {
+-                        failed_permits.push(vec![permit]);
++                        failed_permits.push(smallvec::smallvec![permit]);
+                     }
+                 }
+                 WaiterReply::Batch(reply) => {
+diff --git a/crates/rt-piece-map/src/lib.rs b/crates/rt-piece-map/src/lib.rs
+index a926ae3..d2f4488 100644
+--- a/crates/rt-piece-map/src/lib.rs
++++ b/crates/rt-piece-map/src/lib.rs
+@@ -3,5 +3,5 @@ pub mod map;
+ pub mod v2;
+ 
+ pub use error::PieceMapError;
+-pub use map::{FileRegion, FileSpan, PieceMap, PieceRegion};
++pub use map::{FileRegion, FileSpan, PieceMap, PieceRegion, PieceRegionRef, RequestRegions};
+ pub use v2::{V2FileSpan, V2PieceMap, V2PieceRegion};
+diff --git a/crates/rt-piece-map/src/map.rs b/crates/rt-piece-map/src/map.rs
+index 13a03c5..e985c81 100644
+--- a/crates/rt-piece-map/src/map.rs
++++ b/crates/rt-piece-map/src/map.rs
+@@ -43,6 +43,67 @@ pub struct PieceRegion {
+     pub pad: bool,
+ }
+ 
++/// A validated request region borrowing immutable torrent metadata. Walking
++/// a request does not allocate a region list or clone path components.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct PieceRegionRef<'a> {
++    /// Position in this map's immutable file list, distinct from file_index.
++    pub file_ordinal: usize,
++    pub file_index: u32,
++    pub path: &'a SafeRelPath,
++    /// Full file length, for preparing a download without another file lookup.
++    pub file_length: u64,
++    pub file_offset: u64,
++    pub length: u32,
++    pub pad: bool,
++}
++
++/// File regions of an already validated request, in content-stream order.
++#[derive(Debug, Clone)]
++pub struct RequestRegions<'a> {
++    files: std::slice::Iter<'a, FileSpan>,
++    next_file_ordinal: usize,
++    padding_file_indices: &'a [u32],
++    start: u64,
++    end: u64,
++}
++
++impl<'a> Iterator for RequestRegions<'a> {
++    type Item = PieceRegionRef<'a>;
++
++    fn next(&mut self) -> Option<Self::Item> {
++        for file in self.files.by_ref() {
++            let file_ordinal = self.next_file_ordinal;
++            self.next_file_ordinal += 1;
++            if file.content_offset >= self.end {
++                self.files = [].iter();
++                return None;
++            }
++            // PieceMap construction checks every file end and contiguous
++            // coverage. Its private file spans cannot change afterwards.
++            let start = self.start.max(file.content_offset);
++            let end = self.end.min(file.content_offset + file.length);
++            if start < end {
++                return Some(PieceRegionRef {
++                    file_ordinal,
++                    file_index: file.file_index,
++                    path: &file.path,
++                    file_length: file.length,
++                    file_offset: start - file.content_offset,
++                    length: (end - start) as u32,
++                    pad: self
++                        .padding_file_indices
++                        .binary_search(&file.file_index)
++                        .is_ok(),
++                });
++            }
++        }
++        None
++    }
++}
++
++impl std::iter::FusedIterator for RequestRegions<'_> {}
++
+ /// Maps pieces to file regions and validates peer block requests.
+ #[derive(Debug, Clone)]
+ pub struct PieceMap {
+@@ -124,6 +185,11 @@ impl PieceMap {
+         self.padding_file_indices.binary_search(&file_index).is_ok()
+     }
+ 
++    /// Resolve a region's stable position without a path clone or file scan.
++    pub fn file_by_ordinal(&self, ordinal: usize) -> Option<&FileSpan> {
++        self.files.get(ordinal)
++    }
++
+     /// Byte length of a specific piece (last piece may be shorter).
+     pub fn piece_len(&self, piece: u32) -> Result<u32, PieceMapError> {
+         if piece >= self.piece_count {
+@@ -274,6 +340,26 @@ impl PieceMap {
+         begin: u32,
+         length: u32,
+     ) -> Result<Vec<PieceRegion>, PieceMapError> {
++        Ok(self
++            .request_regions(piece, begin, length)?
++            .map(|region| PieceRegion {
++                file_index: region.file_index,
++                path: region.path.clone(),
++                file_offset: region.file_offset,
++                length: region.length,
++                pad: region.pad,
++            })
++            .collect())
++    }
++
++    /// Validate the complete request before exposing any regions. Unlike
++    /// `validate_request`, this borrows paths and performs no heap allocation.
++    pub fn request_regions(
++        &self,
++        piece: u32,
++        begin: u32,
++        length: u32,
++    ) -> Result<RequestRegions<'_>, PieceMapError> {
+         if length == 0 {
+             return Err(PieceMapError::ZeroRequestLength);
+         }
+@@ -302,30 +388,14 @@ impl PieceMap {
+             .checked_add(u64::from(length))
+             .ok_or(PieceMapError::IntegerOverflow("request end"))?;
+ 
+-        let mut regions = Vec::new();
+         let start_idx = self.first_file_at_or_after(request_start);
+-        for file in &self.files[start_idx..] {
+-            if file.content_offset >= request_end {
+-                break;
+-            }
+-            let file_end = file
+-                .content_offset
+-                .checked_add(file.length)
+-                .ok_or(PieceMapError::IntegerOverflow("file span end"))?;
+-            let overlap_start = request_start.max(file.content_offset);
+-            let overlap_end = request_end.min(file_end);
+-            if overlap_start >= overlap_end {
+-                continue;
+-            }
+-            regions.push(PieceRegion {
+-                file_index: file.file_index,
+-                path: file.path.clone(),
+-                file_offset: overlap_start - file.content_offset,
+-                length: (overlap_end - overlap_start) as u32,
+-                pad: self.file_is_padding(file.file_index),
+-            });
+-        }
+-        Ok(regions)
++        Ok(RequestRegions {
++            files: self.files[start_idx..].iter(),
++            next_file_ordinal: start_idx,
++            padding_file_indices: &self.padding_file_indices,
++            start: request_start,
++            end: request_end,
++        })
+     }
+ }
+ 
+@@ -351,6 +421,79 @@ mod tests {
+             .collect()
+     }
+ 
++    #[test]
++    fn borrowed_requests_cover_boundaries_padding_and_nonsequential_file_ids() {
++        let mut files = make_files(&[
++            (&["empty"], 0),
++            (&["dir", "first"], 7),
++            (&["pad"], 3),
++            (&["empty-middle"], 0),
++            (&["last"], 19),
++        ]);
++        for (file, index) in files.iter_mut().zip([9, 41, 2, 70, 6]) {
++            file.file_index = index;
++        }
++        for piece_length in 1..=31 {
++            let map = PieceMap::new_with_padding(piece_length, files.clone(), [2]).unwrap();
++            for piece in 0..map.piece_count {
++                let piece_len = map.piece_len(piece).unwrap();
++                for begin in 0..piece_len {
++                    for length in 1..=piece_len - begin {
++                        let mut position = u64::from(piece) * piece_length + u64::from(begin);
++                        let end = position + u64::from(length);
++                        let mut regions = map.request_regions(piece, begin, length).unwrap();
++                        for region in regions.by_ref() {
++                            let file = map
++                                .files
++                                .iter()
++                                .find(|f| f.file_index == region.file_index)
++                                .unwrap();
++                            assert!(std::ptr::eq(region.path, &file.path));
++                            assert!(std::ptr::eq(
++                                map.file_by_ordinal(region.file_ordinal).unwrap(),
++                                file
++                            ));
++                            assert_eq!(region.file_length, file.length);
++                            assert_eq!(file.content_offset + region.file_offset, position);
++                            assert!(region.length > 0);
++                            assert!(region.file_offset + u64::from(region.length) <= file.length);
++                            assert_eq!(region.pad, region.file_index == 2);
++                            position += u64::from(region.length);
++                            assert!(position <= end);
++                        }
++                        assert_eq!(position, end);
++                        assert!(regions.next().is_none());
++                    }
++                }
++            }
++        }
++    }
++
++    #[test]
++    fn borrowed_requests_reject_invalid_ranges_before_iteration() {
++        let map = PieceMap::new(
++            u64::from(u32::MAX),
++            make_files(&[(&["large"], u64::from(u32::MAX))]),
++        )
++        .unwrap();
++        for (piece, begin, length) in [
++            (0, 0, 0),
++            (0, 0, MAX_BLOCK_SIZE + 1),
++            (1, 0, 1),
++            (0, u32::MAX, 1),
++            (0, u32::MAX - 1, 2),
++        ] {
++            assert!(map.request_regions(piece, begin, length).is_err());
++        }
++        let region = map
++            .request_regions(0, u32::MAX - 1, 1)
++            .unwrap()
++            .next()
++            .unwrap();
++        assert_eq!(region.file_offset, u64::from(u32::MAX - 1));
++        assert_eq!(region.length, 1);
++    }
++
+     #[test]
+     fn file_byte_range_maps_to_the_pieces_it_touches() {
+         // Two files: a.bin = 100 bytes, b.bin = 250 bytes; piece length 64.
+diff --git a/crates/rt-storage/src/file_handle.rs b/crates/rt-storage/src/file_handle.rs
+index c040984..5698f9c 100644
+--- a/crates/rt-storage/src/file_handle.rs
++++ b/crates/rt-storage/src/file_handle.rs
+@@ -295,6 +295,13 @@ impl LeasedFileHandle {
+     pub(crate) fn identity(&self) -> FileIdentity {
+         self.file.identity()
+     }
++
++    /// A cache can remember the original descriptor without pinning its
++    /// quota slot. Upgrading this weak reference prevents inode reuse while
++    /// a cached payload's path identity is checked.
++    pub(crate) fn source_weak(&self) -> std::sync::Weak<LeasedFile> {
++        Arc::downgrade(&self.file)
++    }
+ }
+ 
+ impl Deref for LeasedFileHandle {
+diff --git a/crates/rt-storage/src/handle_cache.rs b/crates/rt-storage/src/handle_cache.rs
+index 8e96cc1..929de59 100644
+--- a/crates/rt-storage/src/handle_cache.rs
++++ b/crates/rt-storage/src/handle_cache.rs
+@@ -262,16 +262,19 @@ impl HandleCache {
+             .map(Self::operation_handle)
+     }
+ 
+-    /// Scheduler-facing operation handle. It retains the same catalog lease
+-    /// without allocating an intermediate public wrapper.
+-    pub(crate) fn get_or_open_leased(
++    /// Borrow an already-normalized scheduler key. A cache hit needs only
++    /// the existing descriptor's Arc, not a new path or an Arc wrapper for
++    /// the operation. Callers may wrap the returned lease if a backend needs
++    /// shared ownership. Identity checking and secure opens are unchanged.
++    pub(crate) fn get_or_open_normalized_lease(
+         &self,
+         path: &Path,
+         write: bool,
+         create: bool,
+-    ) -> io::Result<Arc<LeasedFileHandle>> {
+-        self.get_or_open_file(path, write, create)
+-            .map(|file| Arc::new(LeasedFileHandle::new(file)))
++    ) -> io::Result<LeasedFileHandle> {
++        let access = if write { Access::Write } else { Access::Read };
++        self.get_or_open_normalized_file(path, access, create)
++            .map(LeasedFileHandle::new)
+     }
+ 
+     /// Open a leased operation descriptor through the shared catalog without
+@@ -304,7 +307,16 @@ impl HandleCache {
+         create: bool,
+     ) -> io::Result<Arc<LeasedFile>> {
+         let (path, access) = Self::cache_key(path, write)?;
+-        if let Some(file) = self.touch_for_access(&path, access) {
++        self.get_or_open_normalized_file(&path, access, create)
++    }
++
++    fn get_or_open_normalized_file(
++        &self,
++        path: &Path,
++        access: Access,
++        create: bool,
++    ) -> io::Result<Arc<LeasedFile>> {
++        if let Some(file) = self.touch_for_access(path, access) {
+             return Ok(file);
+         }
+ 
+@@ -312,10 +324,10 @@ impl HandleCache {
+         // Reserve capacity before opening so concurrent misses cannot exceed
+         // this cache's live-descriptor budget while the opens race.
+         let permit = self.acquire_descriptor();
+-        if let Some(file) = self.touch_for_access(&path, access) {
++        if let Some(file) = self.touch_for_access(path, access) {
+             return Ok(file);
+         }
+-        self.open_and_insert(path, access, create, permit)
++        self.open_and_insert(path.to_path_buf(), access, create, permit)
+     }
+ 
+     /// Async counterpart to [`HandleCache::get_or_open`]. Descriptor
+diff --git a/crates/rt-storage/src/scheduler.rs b/crates/rt-storage/src/scheduler.rs
+index 8d2e737..712500e 100644
+--- a/crates/rt-storage/src/scheduler.rs
++++ b/crates/rt-storage/src/scheduler.rs
+@@ -30,7 +30,7 @@ use crate::{
+     elevator::elevator_class_weight,
+     error::StorageError,
+     fd_limit::process_handle_cache_capacity,
+-    file_handle::LeasedFileHandle,
++    file_handle::{LeasedFile, LeasedFileHandle},
+     frame::{global_frame_pool, try_global_frame_pool, Frame},
+     handle_cache::HandleCache,
+     io_class::IoClass,
+@@ -535,8 +535,18 @@ impl FilePool {
+         mode: OpenMode,
+         create: bool,
+     ) -> Result<Arc<LeasedFileHandle>, StorageError> {
++        self.get_or_open_normalized_owned(key, mode, create)
++            .map(Arc::new)
++    }
++
++    fn get_or_open_normalized_owned(
++        &self,
++        key: &Path,
++        mode: OpenMode,
++        create: bool,
++    ) -> Result<LeasedFileHandle, StorageError> {
+         self.catalog
+-            .get_or_open_leased(key, mode == OpenMode::Write, create)
++            .get_or_open_normalized_lease(key, mode == OpenMode::Write, create)
+             .map_err(|error| StorageError::io(key.display().to_string(), error))
+     }
+ 
+@@ -1296,13 +1306,68 @@ impl Default for StorageCounters {
+ #[derive(Debug)]
+ struct PeerReadCacheEntry {
+     identity: FileIdentity,
++    source: Weak<LeasedFile>,
+     offset: u64,
+     data: bytes::Bytes,
+     consumed_prefix: usize,
+     consumed_suffix: usize,
++    consumed_granules: u64,
+     last_used: Instant,
+ }
+ 
++impl PeerReadCacheEntry {
++    /// Remember full granules even when they arrive before either edge. One
++    /// word covers a normal read-ahead window without allocating per hit.
++    /// Partial, out-of-order granules remain conservatively cached.
++    fn consume(&mut self, offset: u64, len: usize) -> bool {
++        if len == 0 {
++            return false;
++        }
++        let Some(request_end) = offset.checked_add(len as u64) else {
++            return false;
++        };
++        let relative = offset
++            .saturating_sub(self.offset)
++            .min(self.data.len() as u64) as usize;
++        let end = request_end
++            .saturating_sub(self.offset)
++            .min(self.data.len() as u64) as usize;
++        if relative >= end {
++            return false;
++        }
++        if relative <= self.consumed_prefix {
++            self.consumed_prefix = self.consumed_prefix.max(end);
++        }
++        if end >= self.consumed_suffix {
++            self.consumed_suffix = self.consumed_suffix.min(relative);
++        }
++        let granule = self
++            .data
++            .len()
++            .div_ceil(64)
++            .next_power_of_two()
++            .max(16 * 1024);
++        for index in relative.div_ceil(granule)..end / granule {
++            self.consumed_granules |= 1u64 << index;
++        }
++        while self.consumed_prefix < self.consumed_suffix {
++            let index = self.consumed_prefix / granule;
++            if index >= 64 || self.consumed_granules & (1u64 << index) == 0 {
++                break;
++            }
++            self.consumed_prefix = (index + 1) * granule;
++        }
++        while self.consumed_suffix > self.consumed_prefix {
++            let index = (self.consumed_suffix - 1) / granule;
++            if index >= 64 || self.consumed_granules & (1u64 << index) == 0 {
++                break;
++            }
++            self.consumed_suffix = index * granule;
++        }
++        self.consumed_prefix >= self.consumed_suffix
++    }
++}
++
+ /// Bounded multi-range cache for peer upload reads. A single hot file may
+ /// retain several independently useful forward ranges without evicting its
+ /// previous range on every seek.
+@@ -1354,7 +1419,20 @@ impl PeerReadCache {
+             self.remove_file(path);
+             return None;
+         }
+-        let (index, result, consumes_window) = {
++        self.candidate(path, offset, len).map(|(_, bytes, _)| bytes)
++    }
++
++    /// Take a candidate and its captured identity together. A caller without
++    /// an already-validated descriptor MUST validate this identity against
++    /// the current path before exposing the bytes. No filesystem I/O runs
++    /// while this cache is locked.
++    fn candidate(
++        &mut self,
++        path: &Path,
++        offset: u64,
++        len: usize,
++    ) -> Option<(FileIdentity, bytes::Bytes, Weak<LeasedFile>)> {
++        let result = {
+             let entries = self.files.get_mut(path)?;
+             let (index, relative, end) = entries
+                 .iter()
+@@ -1368,32 +1446,44 @@ impl PeerReadCache {
+                 .map(|(index, relative, end, _)| (index, relative, end))?;
+             let entry = &mut entries[index];
+             entry.last_used = Instant::now();
+-            // Track contiguous coverage at both edges without a per-byte
+-            // bitmap. A tail hit cannot retire unread middle bytes; windows
+-            // covered from both ends can retire without a second backend read.
+-            if len > 0 {
+-                if relative <= entry.consumed_prefix {
+-                    entry.consumed_prefix = entry.consumed_prefix.max(end);
+-                }
+-                if end >= entry.consumed_suffix {
+-                    entry.consumed_suffix = entry.consumed_suffix.min(relative);
+-                }
+-            }
+             (
+-                index,
+-                entry.data.slice(relative..relative + len),
+-                len > 0 && entry.consumed_prefix >= entry.consumed_suffix,
++                entry.identity,
++                entry.data.slice(relative..end),
++                entry.source.clone(),
+             )
+         };
+-        // The covered prefix and suffix now overlap. Remove the cache
+-        // reference; returned Bytes may keep the backing alive only until the
+-        // current storage consumer finishes.
+-        if consumes_window {
+-            self.remove_entry(path, index);
+-        }
++        // The same requested bytes also consume overlapping windows, even
++        // when the smallest covering window supplied the returned view.
++        self.consume(path, result.0, offset, len);
+         Some(result)
+     }
+ 
++    fn consume(&mut self, path: &Path, identity: FileIdentity, offset: u64, len: usize) {
++        if len == 0 {
++            return;
++        }
++        let Some(entries) = self.files.get_mut(path) else {
++            return;
++        };
++        let mut removed = 0;
++        let mut removed_bytes = 0;
++        entries.retain_mut(|entry| {
++            if entry.identity != identity || entry.consume(offset, len) {
++                removed += 1;
++                removed_bytes += entry.data.len();
++                false
++            } else {
++                true
++            }
++        });
++        let empty = entries.is_empty();
++        self.entries = self.entries.saturating_sub(removed);
++        self.cached_bytes = self.cached_bytes.saturating_sub(removed_bytes);
++        if empty {
++            self.files.remove(path);
++        }
++    }
++
+     fn remove_entry(&mut self, path: &Path, index: usize) -> bool {
+         let remove_path = {
+             let Some(entries) = self.files.get_mut(path) else {
+@@ -2043,6 +2133,7 @@ enum ReadPreparation {
+ }
+ 
+ struct PreparedPread {
++    device_queue: Arc<DeviceQueue>,
+     file_pool: Arc<FilePool>,
+     peer_read_cache: Arc<Mutex<PeerReadCache>>,
+     peer_read_cache_manager: Arc<PeerReadCacheManager>,
+@@ -2059,6 +2150,29 @@ struct PreparedPread {
+     submission: Option<DiskSubmission>,
+ }
+ 
++enum PreadPreparation {
++    Complete(StorageRead),
++    /// Only a contended cache miss allocates this continuation. Never block
++    /// a disk worker waiting for a device slot held by another worker job.
++    AwaitDevice(Box<DeferredPread>),
++}
++
++struct DeferredPread {
++    prepared: PreparedPread,
++    class: IoClass,
++    key: PathBuf,
++    offset: u64,
++    len: usize,
++    started: Instant,
++}
++
++impl DeferredPread {
++    fn execute(self) -> Result<StorageRead, StorageError> {
++        self.prepared
++            .execute_miss(self.class, self.key, self.offset, self.len, self.started)
++    }
++}
++
+ impl PreparedPread {
+     fn execute(
+         mut self,
+@@ -2067,20 +2181,31 @@ impl PreparedPread {
+         offset: u64,
+         len: usize,
+         started: Instant,
+-    ) -> Result<StorageRead, StorageError> {
++    ) -> Result<PreadPreparation, StorageError> {
+         #[cfg(test)]
+         self.counters
+             .prepared_pread_operations
+             .fetch_add(1, Ordering::Relaxed);
+ 
+-        let key = normalized_key(&path);
+-        let file = self
+-            .file_pool
+-            .get_or_open_normalized(&key, OpenMode::Read, false)?;
++        let key = if path.is_absolute() {
++            path
++        } else {
++            normalized_key(&path)
++        };
+         if class == IoClass::PeerRead && self.readahead_bytes > len {
+-            if let Some(bytes) =
+-                peer_read_cache_hit(&self.peer_read_cache, &key, file.identity(), offset, len)
+-            {
++            let candidate =
++                lock_reset_derived_cache(&self.peer_read_cache).candidate(&key, offset, len);
++            // Upgrade only the original descriptor: an inode number can be
++            // reused after its last descriptor closes. A weak source neither
++            // pins an idle descriptor nor consumes extra descriptor quota.
++            // No catalog lookup, open, or LRU update is needed on a hit.
++            let candidate = candidate.and_then(|(identity, bytes, source)| {
++                let source = LeasedFileHandle::new(source.upgrade()?);
++                (source.identity() == identity).then_some((source, bytes))
++            });
++            if let Some((source, bytes)) = candidate.filter(|(source, _)| {
++                identity_matches_path(&key, source.identity()).unwrap_or(false)
++            }) {
+                 lock_recover(&self.peer_read_streams).observe(
+                     &key,
+                     offset,
+@@ -2091,7 +2216,6 @@ impl PreparedPread {
+                 self.counters
+                     .peer_read_cache_hits
+                     .fetch_add(1, Ordering::Relaxed);
+-                verify_path_identity(&key, file.identity(), "payload_read")?;
+                 self.counters.read_ops_by_class[class_index(class)].fetch_add(1, Ordering::Relaxed);
+                 self.counters.bytes_read_by_class[class_index(class)]
+                     .fetch_add(len as u64, Ordering::Relaxed);
+@@ -2105,16 +2229,61 @@ impl PreparedPread {
+                         io::Error::other("storage admission owner was already released"),
+                     )
+                 })?;
+-                submission.bind_file_identity(file.identity());
++                submission.bind_file_identity(source.identity());
+                 submission.operation.bind_byte_range(offset, len as u64);
+                 drop(submission);
+-                return Ok(StorageRead::Bytes(bytes));
++                return Ok(PreadPreparation::Complete(StorageRead::Bytes(bytes)));
+             }
+             self.counters
+                 .peer_read_cache_misses
+                 .fetch_add(1, Ordering::Relaxed);
+         }
+ 
++        // A cache lookup uses worker/mount capacity, but does not occupy a
++        // physical device operation. An uncontended miss still completes in
++        // this same worker turn; only contention returns to async admission.
++        if self
++            .submission
++            .as_ref()
++            .is_some_and(|owner| owner._device_operation.is_some())
++        {
++            return self
++                .execute_miss(class, key, offset, len, started)
++                .map(PreadPreparation::Complete);
++        }
++        if let Some(permit) = self.device_queue.try_acquire_uncontended() {
++            self.submission
++                .as_mut()
++                .expect("prepared pread owns its mount admission")
++                .start_device_operation(permit);
++            self.execute_miss(class, key, offset, len, started)
++                .map(PreadPreparation::Complete)
++        } else {
++            // No descriptor has been opened or retained before admission.
++            // A queued operation holding the device slot may itself need
++            // descriptor credit; avoid that resource-ordering cycle.
++            Ok(PreadPreparation::AwaitDevice(Box::new(DeferredPread {
++                prepared: self,
++                class,
++                key,
++                offset,
++                len,
++                started,
++            })))
++        }
++    }
++
++    fn execute_miss(
++        mut self,
++        class: IoClass,
++        key: PathBuf,
++        offset: u64,
++        len: usize,
++        started: Instant,
++    ) -> Result<StorageRead, StorageError> {
++        let file = self
++            .file_pool
++            .get_or_open_normalized(&key, OpenMode::Read, false)?;
+         let read_len =
+             if class == IoClass::PeerRead && self.readahead_bytes > len {
+                 let file_len = file
+@@ -2159,7 +2328,7 @@ impl PreparedPread {
+                     self.counters.clone(),
+                     self.resources.as_ref(),
+                     bytes,
+-                    format!("storage-root-{}-readahead", self.storage_root.0),
++                    format_args!("storage-root-{}-readahead", self.storage_root.0),
+                 )
+             })
+             .transpose()?;
+@@ -2194,6 +2363,14 @@ impl PreparedPread {
+         drop(read_buffer_queued_bytes);
+ 
+         current_file_identity(&key, file.as_ref(), "payload_read")?;
++        if class == IoClass::PeerRead {
++            lock_reset_derived_cache(&self.peer_read_cache).consume(
++                &key,
++                file.identity(),
++                offset,
++                len,
++            );
++        }
+         self.counters.read_ops_by_class[class_index(class)].fetch_add(1, Ordering::Relaxed);
+         self.counters.bytes_read_by_class[class_index(class)]
+             .fetch_add(len as u64, Ordering::Relaxed);
+@@ -2226,6 +2403,7 @@ impl PreparedPread {
+                     generation: cache_generation,
+                     key,
+                     identity: file.identity(),
++                    source: file.source_weak(),
+                     offset,
+                     data: bytes,
+                     max_entries: self.readahead_cache_entries,
+@@ -2246,7 +2424,7 @@ impl QueuedDiskBytes {
+         counters: Arc<StorageCounters>,
+         resources: Option<&ResourceGovernor>,
+         bytes: u64,
+-        mount: impl Into<String>,
++        mount: impl std::fmt::Display,
+     ) -> Result<Self, StorageError> {
+         Self::reserve_charged(counters, resources, queued_disk_charge(bytes), mount)
+     }
+@@ -2255,13 +2433,13 @@ impl QueuedDiskBytes {
+         counters: Arc<StorageCounters>,
+         resources: Option<&ResourceGovernor>,
+         bytes: u64,
+-        mount: impl Into<String>,
++        mount: impl std::fmt::Display,
+     ) -> Result<Self, StorageError> {
+         let lease = if let Some(resources) = resources {
+             let Some(lease) = resources.try_acquire(MemoryClass::QueuedDisk, bytes) else {
+                 counters.queue_full.fetch_add(1, Ordering::Relaxed);
+                 return Err(StorageError::QueueFull {
+-                    mount: mount.into(),
++                    mount: mount.to_string(),
+                 });
+             };
+             Some(lease)
+@@ -2287,12 +2465,11 @@ impl QueuedDiskBytes {
+         resources: Option<&ResourceGovernor>,
+         payload_bytes: u64,
+         payload_lease: Arc<MemoryLease>,
+-        mount: impl Into<String>,
++        mount: impl std::fmt::Display,
+     ) -> Result<Self, StorageError> {
+-        let mount = mount.into();
+         if payload_lease.bytes() < payload_bytes {
+             return Err(StorageError::io(
+-                mount,
++                mount.to_string(),
+                 io::Error::new(
+                     io::ErrorKind::InvalidInput,
+                     "shared payload lease is smaller than the queued view",
+@@ -2307,7 +2484,9 @@ impl QueuedDiskBytes {
+         let lease = if let Some(resources) = resources {
+             let Some(lease) = resources.try_acquire(MemoryClass::QueuedDisk, overhead) else {
+                 counters.queue_full.fetch_add(1, Ordering::Relaxed);
+-                return Err(StorageError::QueueFull { mount });
++                return Err(StorageError::QueueFull {
++                    mount: mount.to_string(),
++                });
+             };
+             Some(lease)
+         } else {
+@@ -2723,6 +2902,22 @@ impl DeviceQueue {
+         }
+     }
+ 
++    /// Reserve only when there are no earlier waiters. Used inside a disk
++    /// worker after a cache miss; contended callers use normal async
++    /// admission, preserving class/owner fairness and cancellation.
++    fn try_acquire_uncontended(self: &Arc<Self>) -> Option<DeviceOperationPermit> {
++        let mut state = lock_recover(&self.state);
++        if state.active >= self.active_limit || state.pending_count != 0 {
++            return None;
++        }
++        state.active += 1;
++        Some(DeviceOperationPermit {
++            queue: self.clone(),
++            operation_id: DeviceOperationId(take_device_sequence(&mut state.next_operation_id)),
++            armed: true,
++        })
++    }
++
+     async fn acquire(
+         self: &Arc<Self>,
+         class: IoClass,
+@@ -3681,25 +3876,10 @@ impl MountScheduler {
+         let peer_read_elevator_enabled =
+             matches!(profile, StorageProfile::Hdd) && io_config.peer_read_elevator_budget_ms > 0;
+         let peer_read_elevator_queue_depth = io_config.io_queue_depth.max(peer_read_limit);
+-        let peer_read_elevator =
+-            if peer_read_elevator_enabled && tokio::runtime::Handle::try_current().is_ok() {
+-                Some(PeerReadElevator::spawn(
+-                    storage_root,
+-                    peer_read_elevator_queue_depth,
+-                    peer_read_limit,
+-                    Duration::from_millis(io_config.peer_read_elevator_budget_ms),
+-                    file_pool.clone(),
+-                    io_pool.clone(),
+-                    disk_backend.clone(),
+-                    queue_sem.clone(),
+-                    device_queue.clone(),
+-                    counters.clone(),
+-                    config.resources.clone(),
+-                ))
+-            } else {
+-                None
+-            };
+-        let peer_read_elevator = Arc::new(Mutex::new(peer_read_elevator));
++        // Read-ahead and urgent uploads bypass the elevator. Create its task
++        // and queue only when an eligible read actually uses them, rather
++        // than retaining an unused actor for every HDD storage scheduler.
++        let peer_read_elevator = Arc::new(Mutex::new(None));
+         let peer_read_cache = Arc::new(Mutex::new(PeerReadCache::default()));
+         let peer_read_cache_manager = Arc::clone(&GLOBAL_PEER_READ_CACHE_MANAGER);
+         if let Some(resources) = config.resources.as_ref() {
+@@ -4126,20 +4306,19 @@ impl MountScheduler {
+         queued_bytes: u64,
+         shared_payload_lease: Option<Arc<MemoryLease>>,
+     ) -> Result<DiskSubmission, StorageError> {
+-        let mount = format!("storage-root-{}", self.storage_root.0);
+         let queued_bytes = match shared_payload_lease {
+             Some(lease) => Arc::new(QueuedDiskBytes::reserve_shared_payload(
+                 self.counters.clone(),
+                 self.resources.as_ref(),
+                 queued_bytes,
+                 lease,
+-                mount,
++                format_args!("storage-root-{}", self.storage_root.0),
+             )?),
+             None => Arc::new(QueuedDiskBytes::reserve(
+                 self.counters.clone(),
+                 self.resources.as_ref(),
+                 queued_bytes,
+-                mount,
++                format_args!("storage-root-{}", self.storage_root.0),
+             )?),
+         };
+         self.reserve_mount_submission_with_queued_bytes(queued_bytes)
+@@ -4283,7 +4462,6 @@ impl MountScheduler {
+         let peer_read_cache = self.peer_read_cache.clone();
+         let peer_read_cache_epoch = self.peer_read_cache_epoch.clone();
+         let peer_read_streams = self.peer_read_streams.clone();
+-        let peer_read_elevator = self.peer_read_elevator();
+         let path = path.to_path_buf();
+         let configured_readahead_bytes = self.io_config.peer_read_readahead_bytes;
+         let sequential_only = self.io_config.peer_read_readahead_sequential_only;
+@@ -4299,7 +4477,7 @@ impl MountScheduler {
+         let cache_generation = (class == IoClass::PeerRead && readahead_bytes > len)
+             .then(|| peer_read_cache_epoch.load(Ordering::Acquire));
+         if class == IoClass::PeerRead && readahead_bytes <= len && !priority.is_urgent() {
+-            if let Some(elevator) = peer_read_elevator {
++            if let Some(elevator) = self.peer_read_elevator() {
+                 let bytes = elevator.read(path.to_path_buf(), offset, len).await?;
+                 counters.read_ops_by_class[class_index(class)].fetch_add(1, Ordering::Relaxed);
+                 counters.bytes_read_by_class[class_index(class)]
+@@ -4314,11 +4492,16 @@ impl MountScheduler {
+ 
+         if disk_backend.uses_pread_workers() {
+             let mut submission = self.reserve_mount_submission(len as u64)?;
+-            submission.start_device_operation(
+-                self.acquire_device_operation_with_priority(class, priority)
+-                    .await?,
+-            );
++            if class != IoClass::PeerRead || readahead_bytes <= len {
++                // Non-cacheable operations keep direct admission, avoiding
++                // a preparation round-trip when the device is contended.
++                submission.start_device_operation(
++                    self.acquire_device_operation_with_priority(class, priority)
++                        .await?,
++                );
++            }
+             let prepared = PreparedPread {
++                device_queue: self.device_queue.clone(),
+                 file_pool: pool,
+                 peer_read_cache,
+                 peer_read_cache_manager: self.peer_read_cache_manager.clone(),
+@@ -4335,9 +4518,27 @@ impl MountScheduler {
+                 submission: Some(submission),
+             };
+             let failed_counter = counters.clone();
+-            let result = disk_backend
++            let preparation = disk_backend
+                 .run_prepared_pread(move || prepared.execute(class, path, offset, len, started))
+                 .await;
++            let result = match preparation {
++                Ok(PreadPreparation::Complete(read)) => Ok(read),
++                Ok(PreadPreparation::AwaitDevice(mut pending)) => {
++                    let permit = self
++                        .acquire_device_operation_with_priority(class, priority)
++                        .await?;
++                    pending
++                        .prepared
++                        .submission
++                        .as_mut()
++                        .expect("deferred pread owns its mount admission")
++                        .start_device_operation(permit);
++                    disk_backend
++                        .run_prepared_pread(move || pending.execute())
++                        .await
++                }
++                Err(error) => Err(error),
++            };
+             if matches!(
+                 &result,
+                 Err(StorageError::QueueFull { mount })
+@@ -4466,7 +4667,7 @@ impl MountScheduler {
+                             counters.clone(),
+                             self.resources.as_ref(),
+                             bytes,
+-                            format!("storage-root-{}-readahead", self.storage_root.0),
++                            format_args!("storage-root-{}-readahead", self.storage_root.0),
+                         )
+                     })
+                     .transpose()?;
+@@ -4511,6 +4712,14 @@ impl MountScheduler {
+                 // its bytes must not be returned or cached as the current
+                 // path's payload after that replacement.
+                 current_file_identity(&key, file.as_ref(), "payload_read")?;
++                if class == IoClass::PeerRead {
++                    lock_reset_derived_cache(&peer_read_cache).consume(
++                        &key,
++                        file.identity(),
++                        offset,
++                        len,
++                    );
++                }
+                 counters.read_ops_by_class[class_index(class)].fetch_add(1, Ordering::Relaxed);
+                 counters.bytes_read_by_class[class_index(class)]
+                     .fetch_add(len as u64, Ordering::Relaxed);
+@@ -4532,6 +4741,7 @@ impl MountScheduler {
+                         generation: cache_generation.expect("peer-read cache generation is set"),
+                         key,
+                         identity,
++                        source: file.source_weak(),
+                         offset,
+                         data: bytes,
+                         max_entries: self.io_config.peer_read_cache_entries,
+@@ -5837,6 +6047,7 @@ struct PeerReadCacheInsert {
+     generation: u64,
+     key: PathBuf,
+     identity: FileIdentity,
++    source: Weak<LeasedFile>,
+     offset: u64,
+     data: bytes::Bytes,
+     max_entries: usize,
+@@ -5857,6 +6068,7 @@ fn peer_read_cache_store_parts(
+         generation,
+         key,
+         identity,
++        source,
+         offset,
+         data,
+         max_entries,
+@@ -5897,10 +6109,12 @@ fn peer_read_cache_store_parts(
+         key,
+         PeerReadCacheEntry {
+             identity,
++            source,
+             offset,
+             data,
+             consumed_prefix,
+             consumed_suffix,
++            consumed_granules: 0,
+             last_used: Instant::now(),
+         },
+         max_entries,
+@@ -6189,6 +6403,148 @@ mod tests {
+     use rt_path::StorageRootId;
+     use rt_piece_map::{FileSpan, PieceMap};
+ 
++    fn insert_coverage_range(
++        cache: &mut PeerReadCache,
++        path: &Path,
++        identity: FileIdentity,
++        offset: u64,
++        length: usize,
++    ) {
++        cache
++            .insert(
++                path.to_path_buf(),
++                PeerReadCacheEntry {
++                    source: Weak::new(),
++                    identity,
++                    offset,
++                    data: bytes::Bytes::from(vec![0x5a; length]),
++                    consumed_prefix: 0,
++                    consumed_suffix: length,
++                    consumed_granules: 0,
++                    last_used: Instant::now(),
++                },
++                8,
++                1024 * 1024,
++            )
++            .unwrap();
++    }
++
++    #[test]
++    fn completed_wire_blocks_retire_cache_in_every_completion_order() {
++        const BLOCK: usize = 16 * 1024;
++        let path = Path::new("coverage.bin");
++        let identity = test_file_identity();
++        for a in 0..4 {
++            for b in 0..4 {
++                for c in 0..4 {
++                    for d in 0..4 {
++                        let order = [a, b, c, d];
++                        if (0..4).any(|i| order[..i].contains(&order[i])) {
++                            continue;
++                        }
++                        let mut cache = PeerReadCache::default();
++                        insert_coverage_range(&mut cache, path, identity, 0, 4 * BLOCK);
++                        for (served, block) in order.into_iter().enumerate() {
++                            assert_eq!(
++                                cache
++                                    .hit(path, identity, (block * BLOCK) as u64, BLOCK)
++                                    .unwrap()
++                                    .len(),
++                                BLOCK
++                            );
++                            assert_eq!(
++                                cache.entry_count(),
++                                usize::from(served != 3),
++                                "order {order:?}"
++                            );
++                        }
++                        assert_eq!(cache.cached_bytes(), 0);
++                    }
++                }
++            }
++        }
++    }
++
++    #[test]
++    fn consuming_one_window_retires_other_fully_consumed_overlaps() {
++        const BLOCK: usize = 16 * 1024;
++        let path = Path::new("overlap.bin");
++        let identity = test_file_identity();
++        let mut cache = PeerReadCache::default();
++        insert_coverage_range(&mut cache, path, identity, 0, 4 * BLOCK);
++        insert_coverage_range(&mut cache, path, identity, BLOCK as u64, 3 * BLOCK);
++        assert!(cache.hit(path, identity, 0, BLOCK).is_some());
++        let response = cache.hit(path, identity, BLOCK as u64, 3 * BLOCK).unwrap();
++        assert_eq!(cache.entry_count(), 0);
++        assert_eq!(cache.cached_bytes(), 0);
++        assert!(response.iter().all(|byte| *byte == 0x5a));
++    }
++
++    #[test]
++    fn partial_granule_keeps_its_unread_gap() {
++        const BLOCK: usize = 16 * 1024;
++        let path = Path::new("gap.bin");
++        let identity = test_file_identity();
++        let mut cache = PeerReadCache::default();
++        insert_coverage_range(&mut cache, path, identity, 0, 4 * BLOCK);
++        assert!(cache.hit(path, identity, BLOCK as u64, BLOCK / 2).is_some());
++        assert!(cache.hit(path, identity, 0, BLOCK).is_some());
++        assert!(cache
++            .hit(path, identity, (2 * BLOCK) as u64, 2 * BLOCK)
++            .is_some());
++        assert_eq!(
++            cache.entry_count(),
++            1,
++            "half of the middle block is still unread"
++        );
++        assert!(cache.hit(path, identity, BLOCK as u64, BLOCK).is_some());
++        assert_eq!(cache.entry_count(), 0);
++    }
++
++    #[tokio::test]
++    async fn read_crossing_a_cached_window_consumes_its_remaining_tail() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("straddling.bin");
++        std::fs::write(&path, b"abcdefghijklmnopqrstuvwx").unwrap();
++        let scheduler = MountScheduler::new_for_path(
++            StorageRootId::new(),
++            dir.path(),
++            &SchedulerConfig {
++                storage_io: StorageIoConfig {
++                    peer_read_readahead_bytes: 16,
++                    peer_read_readahead_sequential_only: false,
++                    peer_read_cache_entries: 8,
++                    peer_read_cache_bytes: 64,
++                    ..Default::default()
++                },
++                ..Default::default()
++            },
++        );
++        assert_eq!(
++            &scheduled_read_owned(&scheduler, IoClass::PeerRead, &path, 0, 4)
++                .await
++                .unwrap()
++                .as_slice(),
++            &b"abcd"
++        );
++        assert_eq!(
++            &scheduled_read_owned(&scheduler, IoClass::PeerRead, &path, 4, 8)
++                .await
++                .unwrap()
++                .as_slice(),
++            &b"efghijkl"
++        );
++        assert_eq!(
++            &scheduled_read_owned(&scheduler, IoClass::PeerRead, &path, 12, 8)
++                .await
++                .unwrap()
++                .as_slice(),
++            &b"mnopqrst"
++        );
++        assert_eq!(scheduler.stats().peer_read_cache_entries, 1);
++        assert_eq!(scheduler.stats().peer_read_cache_bytes, 12);
++    }
++
+     fn insert_manager_test_range(
+         manager: &Arc<PeerReadCacheManager>,
+         cache: &Arc<Mutex<PeerReadCache>>,
+@@ -6207,11 +6563,13 @@ mod tests {
+         let inserted = lock_reset_derived_cache(cache).insert(
+             key,
+             PeerReadCacheEntry {
++                source: Weak::new(),
+                 identity,
+                 offset: 0,
+                 data,
+                 consumed_prefix: 0,
+                 consumed_suffix,
++                consumed_granules: 0,
+                 last_used: Instant::now(),
+             },
+             8,
+@@ -6297,6 +6655,7 @@ mod tests {
+             Some(&governor),
+             &counters,
+             PeerReadCacheInsert {
++                source: Weak::new(),
+                 generation: 0,
+                 key: path,
+                 identity,
+@@ -6355,6 +6714,7 @@ mod tests {
+             Some(&first_governor),
+             &first_counters,
+             PeerReadCacheInsert {
++                source: Weak::new(),
+                 generation: 0,
+                 key: first_path,
+                 identity: first_identity,
+@@ -6374,6 +6734,7 @@ mod tests {
+             Some(&second_governor),
+             &second_counters,
+             PeerReadCacheInsert {
++                source: Weak::new(),
+                 generation: 0,
+                 key: second_path,
+                 identity: second_identity,
+@@ -9019,11 +9380,13 @@ mod tests {
+             .insert(
+                 path.clone(),
+                 PeerReadCacheEntry {
++                    source: Weak::new(),
+                     identity: file_identity(&file).unwrap(),
+                     offset: 0,
+                     data: bytes::Bytes::from_static(b"stale"),
+                     consumed_prefix: 0,
+                     consumed_suffix: 5,
++                    consumed_granules: 0,
+                     last_used: Instant::now(),
+                 },
+                 1,
+@@ -9317,6 +9680,209 @@ mod tests {
+         );
+     }
+ 
++    fn saturated_pread_test_scheduler() -> MountScheduler {
++        let mut scheduler = MountScheduler::new(
++            StorageRootId::new(),
++            &SchedulerConfig {
++                profile: StorageProfile::Hdd,
++                storage_io: StorageIoConfig {
++                    peer_read_readahead_bytes: 16,
++                    peer_read_readahead_sequential_only: false,
++                    ..Default::default()
++                },
++                ..Default::default()
++            },
++        );
++        scheduler.disk_backend = Arc::new(SelectedDiskBackend::select(BackendRequest::Pread, 1));
++        scheduler.device_queue = Arc::new(DeviceQueue::new(Arc::from("pread-test"), 2, 1));
++        scheduler.device_queue_capacity = 2;
++        scheduler
++    }
++
++    async fn wait_for_pending_device_read(scheduler: &MountScheduler) {
++        tokio::time::timeout(Duration::from_secs(2), async {
++            loop {
++                if lock_recover(&scheduler.device_queue.state).pending_count == 1 {
++                    break;
++                }
++                tokio::task::yield_now().await;
++            }
++        })
++        .await
++        .expect("cache miss must reach async device admission");
++    }
++
++    #[tokio::test]
++    async fn portable_cached_read_does_not_wait_for_or_reserve_a_device_slot() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("cached.bin");
++        std::fs::write(&path, b"abcdefghijklmnopqrstuvwxyz").unwrap();
++        let scheduler = saturated_pread_test_scheduler();
++        scheduled_read(&scheduler, IoClass::PeerRead, &path, 0, 4)
++            .await
++            .unwrap();
++        let held = scheduler
++            .acquire_device_operation(IoClass::PeerWrite)
++            .await
++            .unwrap();
++        let next_id = lock_recover(&scheduler.device_queue.state).next_operation_id;
++        let descriptor_hits = scheduler.file_pool.stats().hits;
++        assert!(lock_recover(&scheduler.peer_read_elevator).is_none());
++        let bytes = tokio::time::timeout(
++            Duration::from_secs(2),
++            scheduled_read(&scheduler, IoClass::PeerRead, &path, 4, 4),
++        )
++        .await
++        .expect("cached data must not wait for disk capacity")
++        .unwrap();
++        assert_eq!(&bytes[..], b"efgh");
++        assert_eq!(scheduler.file_pool.stats().hits, descriptor_hits);
++        assert!(lock_recover(&scheduler.peer_read_elevator).is_none());
++        let state = lock_recover(&scheduler.device_queue.state);
++        assert_eq!(state.active, 1);
++        assert_eq!(state.pending_count, 0);
++        assert_eq!(state.next_operation_id, next_id);
++        drop(state);
++        assert_eq!(
++            scheduler.stats().backend_read_ops_by_class[class_index(IoClass::PeerRead)],
++            1
++        );
++        drop(held);
++        assert_storage_admission_released(&scheduler);
++    }
++
++    #[tokio::test]
++    async fn cached_payload_does_not_pin_descriptors_or_reuse_a_closed_source() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("closed-source.bin");
++        std::fs::write(&path, b"abcdefghijklmnopqrstuvwxyz").unwrap();
++        let mut scheduler = saturated_pread_test_scheduler();
++        // Use a catalog owned only by this scheduler; its normal shared
++        // resource bundle retains a separate process-lifetime catalog.
++        scheduler.file_pool = Arc::new(FilePool::new(1, Duration::from_secs(60)));
++        scheduled_read(&scheduler, IoClass::PeerRead, &path, 0, 4)
++            .await
++            .unwrap();
++        let source = lock_reset_derived_cache(&scheduler.peer_read_cache)
++            .files
++            .get(&path)
++            .unwrap()[0]
++            .source
++            .clone();
++        assert!(source.upgrade().is_some());
++        // Close the original catalog. Cached payloads retain only a weak
++        // descriptor identity and cannot prevent descriptor reclamation.
++        scheduler.file_pool = Arc::new(FilePool::new(1, Duration::from_secs(60)));
++        assert!(source.upgrade().is_none());
++        let bytes = scheduled_read(&scheduler, IoClass::PeerRead, &path, 4, 4)
++            .await
++            .unwrap();
++        assert_eq!(&bytes[..], b"efgh");
++        let stats = scheduler.stats();
++        assert_eq!(stats.peer_read_cache_hits, 0);
++        assert_eq!(
++            stats.backend_read_ops_by_class[class_index(IoClass::PeerRead)],
++            2
++        );
++        assert_storage_admission_released(&scheduler);
++    }
++
++    #[tokio::test]
++    async fn portable_cache_miss_waits_without_opening_a_file_or_blocking_a_worker() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("miss.bin");
++        std::fs::write(&path, b"abcdefgh").unwrap();
++        let scheduler = saturated_pread_test_scheduler();
++        let held = scheduler
++            .acquire_device_operation(IoClass::PeerWrite)
++            .await
++            .unwrap();
++        let reader = scheduler.clone();
++        let task =
++            tokio::spawn(
++                async move { scheduled_read(&reader, IoClass::PeerRead, &path, 0, 4).await },
++            );
++        wait_for_pending_device_read(&scheduler).await;
++        assert_eq!(scheduler.file_pool.stats().open_files, 0);
++        assert_eq!(
++            scheduler.stats().backend_read_ops_by_class[class_index(IoClass::PeerRead)],
++            0
++        );
++        assert!(scheduler.device_queue.try_acquire_uncontended().is_none());
++        tokio::time::timeout(
++            Duration::from_secs(2),
++            scheduler.disk_backend.run_prepared_pread(|| Ok(())),
++        )
++        .await
++        .expect("the sole pread worker must remain runnable")
++        .unwrap();
++        drop(held);
++        let bytes = tokio::time::timeout(Duration::from_secs(2), task)
++            .await
++            .unwrap()
++            .unwrap()
++            .unwrap();
++        assert_eq!(&bytes[..], b"abcd");
++        assert_storage_admission_released(&scheduler);
++    }
++
++    #[tokio::test]
++    async fn cancelled_deferred_pread_releases_mount_bytes_and_device_waiter() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("cancelled.bin");
++        std::fs::write(&path, b"abcdefgh").unwrap();
++        let scheduler = saturated_pread_test_scheduler();
++        let held = scheduler
++            .acquire_device_operation(IoClass::PeerWrite)
++            .await
++            .unwrap();
++        let reader = scheduler.clone();
++        let task =
++            tokio::spawn(
++                async move { scheduled_read(&reader, IoClass::PeerRead, &path, 0, 4).await },
++            );
++        wait_for_pending_device_read(&scheduler).await;
++        task.abort();
++        assert!(task.await.unwrap_err().is_cancelled());
++        assert_eq!(lock_recover(&scheduler.device_queue.state).pending_count, 0);
++        assert_eq!(scheduler.file_pool.stats().open_files, 0);
++        drop(held);
++        assert_storage_admission_released(&scheduler);
++    }
++
++    #[cfg(unix)]
++    #[tokio::test]
++    async fn deferred_pread_revalidates_file_replaced_during_device_wait() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("replaced.bin");
++        std::fs::write(&path, b"abcdefghijklmnopqrstuvwxyz").unwrap();
++        let scheduler = saturated_pread_test_scheduler();
++        scheduled_read(&scheduler, IoClass::PeerRead, &path, 0, 4)
++            .await
++            .unwrap();
++        let held = scheduler
++            .acquire_device_operation(IoClass::PeerWrite)
++            .await
++            .unwrap();
++        let reader = scheduler.clone();
++        let read_path = path.clone();
++        let task = tokio::spawn(async move {
++            scheduled_read(&reader, IoClass::PeerRead, &read_path, 20, 4).await
++        });
++        wait_for_pending_device_read(&scheduler).await;
++        let replacement = dir.path().join("replacement.bin");
++        std::fs::write(&replacement, b"ABCDEFGHIJKLMNOPQRSTUVWXYZ").unwrap();
++        std::fs::rename(replacement, path).unwrap();
++        drop(held);
++        let bytes = tokio::time::timeout(Duration::from_secs(2), task)
++            .await
++            .unwrap()
++            .unwrap()
++            .unwrap();
++        assert_eq!(&bytes[..], b"UVWX");
++        assert_storage_admission_released(&scheduler);
++    }
++
+     #[tokio::test]
+     async fn portable_peer_read_fuses_cache_lookup_and_backend_completion() {
+         let dir = tempfile::tempdir().unwrap();
+@@ -9541,11 +10107,13 @@ mod tests {
+             .insert(
+                 key.clone(),
+                 PeerReadCacheEntry {
++                    source: Weak::new(),
+                     identity: file_identity(&file).unwrap(),
+                     offset: 0,
+                     data: bytes::Bytes::from_static(b"stale"),
+                     consumed_prefix: 0,
+                     consumed_suffix: 5,
++                    consumed_granules: 0,
+                     last_used: Instant::now(),
+                 },
+                 1,
+diff --git a/scripts/client_performance_benchmark.py b/scripts/client_performance_benchmark.py
+index 5f9fbbd..95f5bbd 100755
+--- a/scripts/client_performance_benchmark.py
++++ b/scripts/client_performance_benchmark.py
+@@ -3276,7 +3276,7 @@ class Benchmark:
+             row = by_client.get(client, {})
+             lines.append(
+                 f"| {LABELS[client]} | {row.get('version', 'n/a')} | "
+-                f"{row.get('public', 'FAIL')} | {row.get('download_progress', 0):.2%} | "
++                f"{row.get('public', 'NOT RUN')} | {row.get('download_progress', 0):.2%} | "
+                 f"{row.get('download_seconds', 0):.1f} | "
+                 f"{row.get('download_mib_s', 0):.2f} | {row.get('download_peak_mib_s', 0):.2f} | "
+                 f"{row.get('download_mean_cpu', 0):.2f} | {row.get('download_peak_cpu', 0):.2f} | "
+@@ -3303,7 +3303,7 @@ class Benchmark:
+         for client in CLIENTS:
+             row = by_client.get(client, {})
+             lines.append(
+-                f"| {LABELS[client]} | {row.get('seed', 'FAIL')} | "
++                f"| {LABELS[client]} | {row.get('seed', 'NOT RUN')} | "
+                 f"{row.get('seed_setup_seconds', 0):.1f} | {row.get('seed_seconds', 0):.1f} | "
+                 f"{row.get('seed_mib_s', 0):.2f} | "
+                 f"{row.get('seed_peak_mib_s', 0):.2f} | {row.get('seed_mean_cpu', 0):.2f} | "
+@@ -4081,6 +4081,9 @@ class Benchmark:
+                 )
+                 if stop_code == 0:
+                     self._release_client_payloads(client, meta["iso_name"])
++                # Preserve completed measurements before starting another
++                # client, even if that later trial is interrupted.
++                self._write_report(meta, client_images)
+                 self.compose("restart", "opentracker", check=False, quiet=True, timeout=60)
+         client_images["seed_leecher"] = self.seed_leecher_image
+         if self.artifact_dir is not None:
+diff --git a/scripts/test_client_performance_benchmark.py b/scripts/test_client_performance_benchmark.py
+index 1d9afbf..680444d 100644
+--- a/scripts/test_client_performance_benchmark.py
++++ b/scripts/test_client_performance_benchmark.py
+@@ -8,7 +8,8 @@ import tempfile
+ import unittest
+ from pathlib import Path
+ from types import SimpleNamespace
+-from unittest.mock import call, mock
++from unittest import mock
++from unittest.mock import call
+ 
+ sys.path.insert(0, str(Path(__file__).parent))
+ import client_performance_benchmark as benchmark
+@@ -643,6 +644,84 @@ class PinnedSeedFixtureTests(unittest.TestCase):
+             self.assertEqual(meta["info_hash"], "local-info-hash")
+ 
+ 
++class CheckpointReportTests(unittest.TestCase):
++    def fixture(self, directory):
++        instance = object.__new__(benchmark.Benchmark)
++        instance.workdir = Path(directory)
++        (instance.workdir / "torrents").mkdir()
++        instance.seed_source_override = instance.workdir / "fixture.bin"
++        instance.seed_source_override.write_bytes(b"verified private fixture")
++        instance.seed_sha256_override = hashlib.sha256(
++            instance.seed_source_override.read_bytes(),
++        ).hexdigest()
++        instance.mode = "controlled-seed"
++        instance.config_dir = instance.workdir / "config"
++        instance.project = "checkpoint-test"
++        instance.skip_build = True
++        instance.artifact_dir = None
++        instance.seed_leecher_image = "test-leecher"
++        instance.results = []
++        for name in (
++            "prepare", "_use_prebuilt_image", "_write_report",
++            "_release_client_payloads",
++        ):
++            setattr(instance, name, mock.Mock())
++        instance._start_tracker = mock.Mock(return_value="198.18.0.2")
++        instance._torrent_metadata = mock.Mock(
++            side_effect=AssertionError("public metadata must not be fetched"),
++        )
++        instance.service_id = mock.Mock(return_value="")
++        instance.compose = mock.Mock(return_value=("", 0))
++        return instance
++
++    def test_seed_result_is_checkpointed_and_only_verified_pass_succeeds(self):
++        for seed_status in ("PASS", "FAIL"):
++            with self.subTest(seed_status=seed_status):
++                with tempfile.TemporaryDirectory() as directory:
++                    instance = self.fixture(directory)
++                    instance._run_one = mock.Mock(
++                        side_effect=lambda *args: instance.results.append({
++                            "client": "torrentngd", "public": "NOT RUN",
++                            "seed": seed_status,
++                        }),
++                    )
++                    with mock.patch.object(benchmark, "CLIENTS", ["torrentngd"]), mock.patch.object(
++                        benchmark.shutil, "which",
++                        side_effect=lambda name: None if name == "aria2c" else "/bin/" + name,
++                    ):
++                        status = instance.run()
++                    self.assertEqual(status, 0 if seed_status == "PASS" else 1)
++                    instance._torrent_metadata.assert_not_called()
++                    self.assertEqual(instance._write_report.call_count, 2)
++
++    def test_interrupted_next_client_preserves_completed_client_report(self):
++        with tempfile.TemporaryDirectory() as directory:
++            instance = self.fixture(directory)
++            checkpoints = []
++            instance._write_report = mock.Mock(side_effect=lambda *args: checkpoints.append(
++                [dict(row) for row in instance.results],
++            ))
++
++            def trial(client, *args):
++                if client == "qbittorrent":
++                    raise KeyboardInterrupt()
++                instance.results.append({
++                    "client": client, "public": "NOT RUN", "seed": "PASS",
++                })
++
++            instance._run_one = mock.Mock(side_effect=trial)
++            with mock.patch.object(benchmark, "CLIENTS", ["torrentngd", "qbittorrent"]), mock.patch.object(
++                benchmark.shutil, "which", return_value="/bin/available",
++            ):
++                with self.assertRaises(KeyboardInterrupt):
++                    instance.run()
++            self.assertEqual(len(checkpoints), 2)
++            for checkpoint in checkpoints:
++                self.assertEqual(checkpoint, [{
++                    "client": "torrentngd", "public": "NOT RUN", "seed": "PASS",
++                }])
++
++
+ class ControlledDownloadTests(unittest.TestCase):
+     def test_controlled_download_reads_its_own_payload_directory(self) -> None:
+         with tempfile.TemporaryDirectory() as directory:

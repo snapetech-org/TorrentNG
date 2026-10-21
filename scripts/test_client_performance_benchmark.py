@@ -6,15 +6,95 @@ import hashlib
 import sys
 import tempfile
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import call, mock
+from unittest import mock
+from unittest.mock import call
 
 sys.path.insert(0, str(Path(__file__).parent))
 import client_performance_benchmark as benchmark
 
 
 class CgroupCounterTests(unittest.TestCase):
+    def test_http_api_uses_task_local_container_ip_and_internal_port(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance.project = "tngbenchtest"
+        instance.env = {}
+        instance.api_addresses = {}
+        instance.service_id = mock.Mock(return_value="container-id")
+        with mock.patch.object(
+            benchmark,
+            "run_command",
+            return_value=(
+                '{"tngbenchtest_interop":{"IPAddress":"172.23.0.3"}}',
+                0,
+            ),
+        ) as command:
+            endpoint = instance.api_url("torrentngd")
+
+        self.assertEqual(endpoint, "http://172.23.0.3:8080")
+        command.assert_called_once_with(
+            ["docker", "inspect", "-f", "{{json .NetworkSettings.Networks}}", "container-id"],
+            env={}, check=False, quiet=True,
+        )
+
+    def test_http_api_rejects_addresses_outside_task_local_network(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance.project = "tngbenchtest"
+        instance.env = {}
+        instance.api_addresses = {}
+        instance.service_id = mock.Mock(return_value="container-id")
+        with mock.patch.object(
+            benchmark,
+            "run_command",
+            return_value=(
+                '{"other_project_interop":{"IPAddress":"172.23.0.3"}}',
+                0,
+            ),
+        ), self.assertRaisesRegex(RuntimeError, "not attached to the task-local network"):
+            instance.api_url("torrentngd")
+
+    def test_http_api_clients_bypass_host_proxy_environment(self) -> None:
+        client = benchmark.HttpClient("http://172.23.0.3:8080")
+        self.assertFalse(any(
+            isinstance(handler, benchmark.urllib.request.ProxyHandler)
+            for handler in client.opener.handlers
+        ))
+
+    def test_seed_leecher_api_address_is_resolved_after_container_start(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance.config_dir = Path("/unused")
+        instance.env = {}
+        instance.sessions = {}
+        instance.seed_leecher_version = "unknown"
+        instance.seed_leecher_image = "not started"
+        started = {"value": False}
+        instance._env = mock.Mock()
+        instance._prepare_seed_qbit_config = mock.Mock()
+        instance.compose = mock.Mock(
+            side_effect=lambda *args, **kwargs: started.__setitem__("value", True)
+        )
+
+        def api_url(client):
+            self.assertEqual(client, "seed_leecher")
+            self.assertTrue(started["value"])
+            return "http://172.23.0.4:8080"
+
+        instance.api_url = mock.Mock(side_effect=api_url)
+        instance.service_id = mock.Mock(return_value="container-id")
+        instance.http = mock.Mock(
+            return_value=nullcontext(SimpleNamespace(read=lambda: b"qBittorrent 5.2"))
+        )
+        instance._qbit_json = mock.Mock()
+        instance._add_torrent = mock.Mock()
+
+        with mock.patch.object(benchmark, "run_command", return_value=("image", 0)):
+            instance._start_seed_leecher(Path("/unused.torrent"), "torrentngd")
+
+        self.assertTrue(started["value"])
+        instance.api_url.assert_called_once_with("seed_leecher")
+
     def test_benchmark_build_uses_a_bounded_persistent_buildkit_builder(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             instance = object.__new__(benchmark.Benchmark)
@@ -641,6 +721,84 @@ class PinnedSeedFixtureTests(unittest.TestCase):
             self.assertEqual(meta["size"], len(b"pinned fixture"))
             self.assertEqual(meta["sha256"], instance.seed_sha256_override)
             self.assertEqual(meta["info_hash"], "local-info-hash")
+
+
+class CheckpointReportTests(unittest.TestCase):
+    def fixture(self, directory):
+        instance = object.__new__(benchmark.Benchmark)
+        instance.workdir = Path(directory)
+        (instance.workdir / "torrents").mkdir()
+        instance.seed_source_override = instance.workdir / "fixture.bin"
+        instance.seed_source_override.write_bytes(b"verified private fixture")
+        instance.seed_sha256_override = hashlib.sha256(
+            instance.seed_source_override.read_bytes(),
+        ).hexdigest()
+        instance.mode = "controlled-seed"
+        instance.config_dir = instance.workdir / "config"
+        instance.project = "checkpoint-test"
+        instance.skip_build = True
+        instance.artifact_dir = None
+        instance.seed_leecher_image = "test-leecher"
+        instance.results = []
+        for name in (
+            "prepare", "_use_prebuilt_image", "_write_report",
+            "_release_client_payloads",
+        ):
+            setattr(instance, name, mock.Mock())
+        instance._start_tracker = mock.Mock(return_value="198.18.0.2")
+        instance._torrent_metadata = mock.Mock(
+            side_effect=AssertionError("public metadata must not be fetched"),
+        )
+        instance.service_id = mock.Mock(return_value="")
+        instance.compose = mock.Mock(return_value=("", 0))
+        return instance
+
+    def test_seed_result_is_checkpointed_and_only_verified_pass_succeeds(self):
+        for seed_status in ("PASS", "FAIL"):
+            with self.subTest(seed_status=seed_status):
+                with tempfile.TemporaryDirectory() as directory:
+                    instance = self.fixture(directory)
+                    instance._run_one = mock.Mock(
+                        side_effect=lambda *args: instance.results.append({
+                            "client": "torrentngd", "public": "NOT RUN",
+                            "seed": seed_status,
+                        }),
+                    )
+                    with mock.patch.object(benchmark, "CLIENTS", ["torrentngd"]), mock.patch.object(
+                        benchmark.shutil, "which",
+                        side_effect=lambda name: None if name == "aria2c" else "/bin/" + name,
+                    ):
+                        status = instance.run()
+                    self.assertEqual(status, 0 if seed_status == "PASS" else 1)
+                    instance._torrent_metadata.assert_not_called()
+                    self.assertEqual(instance._write_report.call_count, 2)
+
+    def test_interrupted_next_client_preserves_completed_client_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            instance = self.fixture(directory)
+            checkpoints = []
+            instance._write_report = mock.Mock(side_effect=lambda *args: checkpoints.append(
+                [dict(row) for row in instance.results],
+            ))
+
+            def trial(client, *args):
+                if client == "qbittorrent":
+                    raise KeyboardInterrupt()
+                instance.results.append({
+                    "client": client, "public": "NOT RUN", "seed": "PASS",
+                })
+
+            instance._run_one = mock.Mock(side_effect=trial)
+            with mock.patch.object(benchmark, "CLIENTS", ["torrentngd", "qbittorrent"]), mock.patch.object(
+                benchmark.shutil, "which", return_value="/bin/available",
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    instance.run()
+            self.assertEqual(len(checkpoints), 2)
+            for checkpoint in checkpoints:
+                self.assertEqual(checkpoint, [{
+                    "client": "torrentngd", "public": "NOT RUN", "seed": "PASS",
+                }])
 
 
 class ControlledDownloadTests(unittest.TestCase):

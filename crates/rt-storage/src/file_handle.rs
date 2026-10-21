@@ -295,6 +295,13 @@ impl LeasedFileHandle {
     pub(crate) fn identity(&self) -> FileIdentity {
         self.file.identity()
     }
+
+    /// A cache can remember the original descriptor without pinning its
+    /// quota slot. Upgrading this weak reference prevents inode reuse while
+    /// a cached payload's path identity is checked.
+    pub(crate) fn source_weak(&self) -> std::sync::Weak<LeasedFile> {
+        Arc::downgrade(&self.file)
+    }
 }
 
 impl Deref for LeasedFileHandle {

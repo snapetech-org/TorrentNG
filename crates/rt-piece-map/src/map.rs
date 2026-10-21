@@ -43,6 +43,67 @@ pub struct PieceRegion {
     pub pad: bool,
 }
 
+/// A validated request region borrowing immutable torrent metadata. Walking
+/// a request does not allocate a region list or clone path components.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PieceRegionRef<'a> {
+    /// Position in this map's immutable file list, distinct from file_index.
+    pub file_ordinal: usize,
+    pub file_index: u32,
+    pub path: &'a SafeRelPath,
+    /// Full file length, for preparing a download without another file lookup.
+    pub file_length: u64,
+    pub file_offset: u64,
+    pub length: u32,
+    pub pad: bool,
+}
+
+/// File regions of an already validated request, in content-stream order.
+#[derive(Debug, Clone)]
+pub struct RequestRegions<'a> {
+    files: std::slice::Iter<'a, FileSpan>,
+    next_file_ordinal: usize,
+    padding_file_indices: &'a [u32],
+    start: u64,
+    end: u64,
+}
+
+impl<'a> Iterator for RequestRegions<'a> {
+    type Item = PieceRegionRef<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        for file in self.files.by_ref() {
+            let file_ordinal = self.next_file_ordinal;
+            self.next_file_ordinal += 1;
+            if file.content_offset >= self.end {
+                self.files = [].iter();
+                return None;
+            }
+            // PieceMap construction checks every file end and contiguous
+            // coverage. Its private file spans cannot change afterwards.
+            let start = self.start.max(file.content_offset);
+            let end = self.end.min(file.content_offset + file.length);
+            if start < end {
+                return Some(PieceRegionRef {
+                    file_ordinal,
+                    file_index: file.file_index,
+                    path: &file.path,
+                    file_length: file.length,
+                    file_offset: start - file.content_offset,
+                    length: (end - start) as u32,
+                    pad: self
+                        .padding_file_indices
+                        .binary_search(&file.file_index)
+                        .is_ok(),
+                });
+            }
+        }
+        None
+    }
+}
+
+impl std::iter::FusedIterator for RequestRegions<'_> {}
+
 /// Maps pieces to file regions and validates peer block requests.
 #[derive(Debug, Clone)]
 pub struct PieceMap {
@@ -122,6 +183,11 @@ impl PieceMap {
 
     fn file_is_padding(&self, file_index: u32) -> bool {
         self.padding_file_indices.binary_search(&file_index).is_ok()
+    }
+
+    /// Resolve a region's stable position without a path clone or file scan.
+    pub fn file_by_ordinal(&self, ordinal: usize) -> Option<&FileSpan> {
+        self.files.get(ordinal)
     }
 
     /// Byte length of a specific piece (last piece may be shorter).
@@ -274,6 +340,26 @@ impl PieceMap {
         begin: u32,
         length: u32,
     ) -> Result<Vec<PieceRegion>, PieceMapError> {
+        Ok(self
+            .request_regions(piece, begin, length)?
+            .map(|region| PieceRegion {
+                file_index: region.file_index,
+                path: region.path.clone(),
+                file_offset: region.file_offset,
+                length: region.length,
+                pad: region.pad,
+            })
+            .collect())
+    }
+
+    /// Validate the complete request before exposing any regions. Unlike
+    /// `validate_request`, this borrows paths and performs no heap allocation.
+    pub fn request_regions(
+        &self,
+        piece: u32,
+        begin: u32,
+        length: u32,
+    ) -> Result<RequestRegions<'_>, PieceMapError> {
         if length == 0 {
             return Err(PieceMapError::ZeroRequestLength);
         }
@@ -302,30 +388,14 @@ impl PieceMap {
             .checked_add(u64::from(length))
             .ok_or(PieceMapError::IntegerOverflow("request end"))?;
 
-        let mut regions = Vec::new();
         let start_idx = self.first_file_at_or_after(request_start);
-        for file in &self.files[start_idx..] {
-            if file.content_offset >= request_end {
-                break;
-            }
-            let file_end = file
-                .content_offset
-                .checked_add(file.length)
-                .ok_or(PieceMapError::IntegerOverflow("file span end"))?;
-            let overlap_start = request_start.max(file.content_offset);
-            let overlap_end = request_end.min(file_end);
-            if overlap_start >= overlap_end {
-                continue;
-            }
-            regions.push(PieceRegion {
-                file_index: file.file_index,
-                path: file.path.clone(),
-                file_offset: overlap_start - file.content_offset,
-                length: (overlap_end - overlap_start) as u32,
-                pad: self.file_is_padding(file.file_index),
-            });
-        }
-        Ok(regions)
+        Ok(RequestRegions {
+            files: self.files[start_idx..].iter(),
+            next_file_ordinal: start_idx,
+            padding_file_indices: &self.padding_file_indices,
+            start: request_start,
+            end: request_end,
+        })
     }
 }
 
@@ -349,6 +419,79 @@ mod tests {
                 span
             })
             .collect()
+    }
+
+    #[test]
+    fn borrowed_requests_cover_boundaries_padding_and_nonsequential_file_ids() {
+        let mut files = make_files(&[
+            (&["empty"], 0),
+            (&["dir", "first"], 7),
+            (&["pad"], 3),
+            (&["empty-middle"], 0),
+            (&["last"], 19),
+        ]);
+        for (file, index) in files.iter_mut().zip([9, 41, 2, 70, 6]) {
+            file.file_index = index;
+        }
+        for piece_length in 1..=31 {
+            let map = PieceMap::new_with_padding(piece_length, files.clone(), [2]).unwrap();
+            for piece in 0..map.piece_count {
+                let piece_len = map.piece_len(piece).unwrap();
+                for begin in 0..piece_len {
+                    for length in 1..=piece_len - begin {
+                        let mut position = u64::from(piece) * piece_length + u64::from(begin);
+                        let end = position + u64::from(length);
+                        let mut regions = map.request_regions(piece, begin, length).unwrap();
+                        for region in regions.by_ref() {
+                            let file = map
+                                .files
+                                .iter()
+                                .find(|f| f.file_index == region.file_index)
+                                .unwrap();
+                            assert!(std::ptr::eq(region.path, &file.path));
+                            assert!(std::ptr::eq(
+                                map.file_by_ordinal(region.file_ordinal).unwrap(),
+                                file
+                            ));
+                            assert_eq!(region.file_length, file.length);
+                            assert_eq!(file.content_offset + region.file_offset, position);
+                            assert!(region.length > 0);
+                            assert!(region.file_offset + u64::from(region.length) <= file.length);
+                            assert_eq!(region.pad, region.file_index == 2);
+                            position += u64::from(region.length);
+                            assert!(position <= end);
+                        }
+                        assert_eq!(position, end);
+                        assert!(regions.next().is_none());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn borrowed_requests_reject_invalid_ranges_before_iteration() {
+        let map = PieceMap::new(
+            u64::from(u32::MAX),
+            make_files(&[(&["large"], u64::from(u32::MAX))]),
+        )
+        .unwrap();
+        for (piece, begin, length) in [
+            (0, 0, 0),
+            (0, 0, MAX_BLOCK_SIZE + 1),
+            (1, 0, 1),
+            (0, u32::MAX, 1),
+            (0, u32::MAX - 1, 2),
+        ] {
+            assert!(map.request_regions(piece, begin, length).is_err());
+        }
+        let region = map
+            .request_regions(0, u32::MAX - 1, 1)
+            .unwrap()
+            .next()
+            .unwrap();
+        assert_eq!(region.file_offset, u64::from(u32::MAX - 1));
+        assert_eq!(region.length, 1);
     }
 
     #[test]

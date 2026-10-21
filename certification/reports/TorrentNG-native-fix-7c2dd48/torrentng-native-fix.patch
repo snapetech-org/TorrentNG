@@ -1,0 +1,526 @@
+diff --git a/crates/rt-engine/src/torrent_task.rs b/crates/rt-engine/src/torrent_task.rs
+index e35f21b..a8735f3 100644
+--- a/crates/rt-engine/src/torrent_task.rs
++++ b/crates/rt-engine/src/torrent_task.rs
+@@ -115,6 +115,11 @@ pub(crate) const UTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+ const UPLOAD_ACCOUNTING_BATCH_BYTES: u64 = 64 * 1024;
+ const UPLOAD_ACCOUNTING_MAX_DELAY: Duration = Duration::from_millis(25);
+ const MAX_READY_UPLOAD_INTAKE_MESSAGES: usize = MAX_UPLOAD_READ_BATCH_BLOCKS;
++// A pipelined receiver can refill one 16 KiB request at a time. Ready-only
++// draining never combines those refills, so every cache hit still enters the
++// disk queue. Bound collection latency, and never wait for more requests than
++// this peer has demonstrated it can keep outstanding.
++const UPLOAD_READ_COALESCE_MAX_DELAY: Duration = Duration::from_millis(8);
+ 
+ pub(crate) async fn connect_utp_with_deadline(
+     network_budget: &GlobalNetworkBudget,
+@@ -8949,6 +8954,10 @@ where
+     let mut upload_reads = UploadReadTasks::<F>::default();
+     let mut upload_dispatch_pending = false;
+     let mut upload_intake_messages = 0usize;
++    let mut upload_pipeline_width = 1usize;
++    let mut upload_coalescing_expired = false;
++    let upload_coalescing_flush = sleep(UPLOAD_READ_COALESCE_MAX_DELAY);
++    tokio::pin!(upload_coalescing_flush);
+     let mut deferred_peer_message: Option<anyhow::Result<Option<Message>>> = None;
+     // Protocol obligations are process-owned by generation-safe connection
+     // identity. The socket loop retains the only writer and upload-read futures.
+@@ -8962,14 +8971,20 @@ where
+         'peer: loop {
+         // Poll the decoder once while upload dispatch is pending. Any complete
+         // frames already in the socket buffer are processed first, up to a
+-        // small hard cap; no timer is used to wait for a fuller batch.
++        // small hard cap. Staggered refills from a pipelined peer may collect
++        // until the bounded deadline; a serial requester dispatches at once.
+         if deferred_peer_message.is_none()
+             && upload_dispatch_pending
+             && upload_intake_messages < MAX_READY_UPLOAD_INTAKE_MESSAGES
+         {
+             deferred_peer_message = peer_io.try_next_ready();
+         }
+-        let dispatch_upload_reads_now = upload_dispatch_pending && deferred_peer_message.is_none();
++        let dispatch_upload_reads_now = upload_dispatch_pending
++            && deferred_peer_message.is_none()
++            && (upload_choked
++                || upload.plane != Plane::V1
++                || upload_intake_messages >= upload_pipeline_width
++                || upload_coalescing_expired);
+         tokio::select! {
+             cmd = peer_cmd_rx.recv() => {
+                 let Some(cmd) = cmd else {
+@@ -9121,6 +9136,7 @@ where
+                         }
+                         upload_dispatch_pending = false;
+                         upload_intake_messages = 0;
++                        upload_pipeline_width = 1;
+                         start_upload_reads(
+                             &mut upload_reads,
+                             &upload_obligations,
+@@ -9143,6 +9159,7 @@ where
+                         peer_io.send(Message::Unchoke).await?;
+                         upload_dispatch_pending = false;
+                         upload_intake_messages = 0;
++                        upload_pipeline_width = 1;
+                         start_upload_reads(
+                             &mut upload_reads,
+                             &upload_obligations,
+@@ -9536,9 +9553,18 @@ where
+                         }
+                         match decision {
+                             InboundDecision::Queue => {
++                                upload_pipeline_width = upload_pipeline_width.max(
++                                    upload_reads.pending_request_count()
++                                        .saturating_add(upload_obligations.queued_len())
++                                        .min(MAX_READY_UPLOAD_INTAKE_MESSAGES),
++                                );
+                                 if !upload_dispatch_pending {
+                                     upload_dispatch_pending = true;
+                                     upload_intake_messages = 1;
++                                    upload_coalescing_expired = false;
++                                    upload_coalescing_flush.as_mut().reset(
++                                        TokioInstant::now() + UPLOAD_READ_COALESCE_MAX_DELAY,
++                                    );
+                                 }
+                             }
+                             InboundDecision::Reject(_) => {
+@@ -9892,6 +9918,14 @@ where
+                 }
+             }
+             _ = std::future::ready(()), if dispatch_upload_reads_now => {
++                if upload_coalescing_expired
++                    && upload_obligations.queued_len() <= 1
++                    && upload_reads.pending_request_count() == 0
++                {
++                    // A peer may shrink its window after the initial burst.
++                    // One solitary deadline flush restores immediate service.
++                    upload_pipeline_width = 1;
++                }
+                 upload_dispatch_pending = false;
+                 upload_intake_messages = 0;
+                 start_upload_reads(
+@@ -9902,6 +9936,10 @@ where
+                     make_upload_read_future,
+                 )?;
+             }
++            _ = upload_coalescing_flush.as_mut(),
++                if upload_dispatch_pending && !upload_coalescing_expired => {
++                upload_coalescing_expired = true;
++            }
+             _ = timeout_tick.tick() => {
+                 if last_activity.elapsed() > PEER_IDLE_TIMEOUT {
+                     anyhow::bail!("peer idle timeout");
+diff --git a/crates/rt-storage/src/scheduler.rs b/crates/rt-storage/src/scheduler.rs
+index 8d2e737..7dcb28b 100644
+--- a/crates/rt-storage/src/scheduler.rs
++++ b/crates/rt-storage/src/scheduler.rs
+@@ -1300,9 +1300,54 @@ struct PeerReadCacheEntry {
+     data: bytes::Bytes,
+     consumed_prefix: usize,
+     consumed_suffix: usize,
++    consumed_granules: u64,
+     last_used: Instant,
+ }
+ 
++impl PeerReadCacheEntry {
++    /// Remember full granules even when they arrive before either edge. One
++    /// word covers a normal read-ahead window without allocating per hit.
++    /// Partial, out-of-order granules remain conservatively cached.
++    fn consume(&mut self, offset: u64, len: usize) -> bool {
++        if len == 0 {
++            return false;
++        }
++        let Some(request_end) = offset.checked_add(len as u64) else {
++            return false;
++        };
++        let relative = offset.saturating_sub(self.offset).min(self.data.len() as u64) as usize;
++        let end = request_end.saturating_sub(self.offset).min(self.data.len() as u64) as usize;
++        if relative >= end {
++            return false;
++        }
++        if relative <= self.consumed_prefix {
++            self.consumed_prefix = self.consumed_prefix.max(end);
++        }
++        if end >= self.consumed_suffix {
++            self.consumed_suffix = self.consumed_suffix.min(relative);
++        }
++        let granule = self.data.len().div_ceil(64).next_power_of_two().max(16 * 1024);
++        for index in relative.div_ceil(granule)..end / granule {
++            self.consumed_granules |= 1u64 << index;
++        }
++        while self.consumed_prefix < self.consumed_suffix {
++            let index = self.consumed_prefix / granule;
++            if index >= 64 || self.consumed_granules & (1u64 << index) == 0 {
++                break;
++            }
++            self.consumed_prefix = (index + 1) * granule;
++        }
++        while self.consumed_suffix > self.consumed_prefix {
++            let index = (self.consumed_suffix - 1) / granule;
++            if index >= 64 || self.consumed_granules & (1u64 << index) == 0 {
++                break;
++            }
++            self.consumed_suffix = index * granule;
++        }
++        self.consumed_prefix >= self.consumed_suffix
++    }
++}
++
+ /// Bounded multi-range cache for peer upload reads. A single hot file may
+ /// retain several independently useful forward ranges without evicting its
+ /// previous range on every seek.
+@@ -1354,7 +1399,7 @@ impl PeerReadCache {
+             self.remove_file(path);
+             return None;
+         }
+-        let (index, result, consumes_window) = {
++        let result = {
+             let entries = self.files.get_mut(path)?;
+             let (index, relative, end) = entries
+                 .iter()
+@@ -1368,32 +1413,40 @@ impl PeerReadCache {
+                 .map(|(index, relative, end, _)| (index, relative, end))?;
+             let entry = &mut entries[index];
+             entry.last_used = Instant::now();
+-            // Track contiguous coverage at both edges without a per-byte
+-            // bitmap. A tail hit cannot retire unread middle bytes; windows
+-            // covered from both ends can retire without a second backend read.
+-            if len > 0 {
+-                if relative <= entry.consumed_prefix {
+-                    entry.consumed_prefix = entry.consumed_prefix.max(end);
+-                }
+-                if end >= entry.consumed_suffix {
+-                    entry.consumed_suffix = entry.consumed_suffix.min(relative);
+-                }
+-            }
+-            (
+-                index,
+-                entry.data.slice(relative..relative + len),
+-                len > 0 && entry.consumed_prefix >= entry.consumed_suffix,
+-            )
++            entry.data.slice(relative..end)
+         };
+-        // The covered prefix and suffix now overlap. Remove the cache
+-        // reference; returned Bytes may keep the backing alive only until the
+-        // current storage consumer finishes.
+-        if consumes_window {
+-            self.remove_entry(path, index);
+-        }
++        // The same requested bytes also consume overlapping windows, even
++        // when the smallest covering window supplied the returned view.
++        self.consume(path, identity, offset, len);
+         Some(result)
+     }
+ 
++    fn consume(&mut self, path: &Path, identity: FileIdentity, offset: u64, len: usize) {
++        if len == 0 {
++            return;
++        }
++        let Some(entries) = self.files.get_mut(path) else {
++            return;
++        };
++        let mut removed = 0;
++        let mut removed_bytes = 0;
++        entries.retain_mut(|entry| {
++            if entry.identity != identity || entry.consume(offset, len) {
++                removed += 1;
++                removed_bytes += entry.data.len();
++                false
++            } else {
++                true
++            }
++        });
++        let empty = entries.is_empty();
++        self.entries = self.entries.saturating_sub(removed);
++        self.cached_bytes = self.cached_bytes.saturating_sub(removed_bytes);
++        if empty {
++            self.files.remove(path);
++        }
++    }
++
+     fn remove_entry(&mut self, path: &Path, index: usize) -> bool {
+         let remove_path = {
+             let Some(entries) = self.files.get_mut(path) else {
+@@ -2194,6 +2247,10 @@ impl PreparedPread {
+         drop(read_buffer_queued_bytes);
+ 
+         current_file_identity(&key, file.as_ref(), "payload_read")?;
++        if class == IoClass::PeerRead {
++            lock_reset_derived_cache(&self.peer_read_cache)
++                .consume(&key, file.identity(), offset, len);
++        }
+         self.counters.read_ops_by_class[class_index(class)].fetch_add(1, Ordering::Relaxed);
+         self.counters.bytes_read_by_class[class_index(class)]
+             .fetch_add(len as u64, Ordering::Relaxed);
+@@ -4511,6 +4568,10 @@ impl MountScheduler {
+                 // its bytes must not be returned or cached as the current
+                 // path's payload after that replacement.
+                 current_file_identity(&key, file.as_ref(), "payload_read")?;
++                if class == IoClass::PeerRead {
++                    lock_reset_derived_cache(&peer_read_cache)
++                        .consume(&key, file.identity(), offset, len);
++                }
+                 counters.read_ops_by_class[class_index(class)].fetch_add(1, Ordering::Relaxed);
+                 counters.bytes_read_by_class[class_index(class)]
+                     .fetch_add(len as u64, Ordering::Relaxed);
+@@ -5901,6 +5962,7 @@ fn peer_read_cache_store_parts(
+             data,
+             consumed_prefix,
+             consumed_suffix,
++            consumed_granules: 0,
+             last_used: Instant::now(),
+         },
+         max_entries,
+@@ -6189,6 +6251,98 @@ mod tests {
+     use rt_path::StorageRootId;
+     use rt_piece_map::{FileSpan, PieceMap};
+ 
++    fn insert_coverage_range(
++        cache: &mut PeerReadCache, path: &Path, identity: FileIdentity,
++        offset: u64, length: usize,
++    ) {
++        cache.insert(path.to_path_buf(), PeerReadCacheEntry {
++            identity, offset,
++            data: bytes::Bytes::from(vec![0x5a; length]),
++            consumed_prefix: 0,
++            consumed_suffix: length,
++            consumed_granules: 0,
++            last_used: Instant::now(),
++        }, 8, 1024 * 1024).unwrap();
++    }
++
++    #[test]
++    fn completed_wire_blocks_retire_cache_in_every_completion_order() {
++        const BLOCK: usize = 16 * 1024;
++        let path = Path::new("coverage.bin");
++        let identity = test_file_identity();
++        for a in 0..4 {
++            for b in 0..4 {
++                for c in 0..4 {
++                    for d in 0..4 {
++                        let order = [a, b, c, d];
++                        if (0..4).any(|i| order[..i].contains(&order[i])) { continue; }
++                        let mut cache = PeerReadCache::default();
++                        insert_coverage_range(&mut cache, path, identity, 0, 4 * BLOCK);
++                        for (served, block) in order.into_iter().enumerate() {
++                            assert_eq!(cache.hit(path, identity, (block * BLOCK) as u64, BLOCK)
++                                .unwrap().len(), BLOCK);
++                            assert_eq!(cache.entry_count(), usize::from(served != 3), "order {order:?}");
++                        }
++                        assert_eq!(cache.cached_bytes(), 0);
++                    }
++                }
++            }
++        }
++    }
++
++    #[test]
++    fn consuming_one_window_retires_other_fully_consumed_overlaps() {
++        const BLOCK: usize = 16 * 1024;
++        let path = Path::new("overlap.bin");
++        let identity = test_file_identity();
++        let mut cache = PeerReadCache::default();
++        insert_coverage_range(&mut cache, path, identity, 0, 4 * BLOCK);
++        insert_coverage_range(&mut cache, path, identity, BLOCK as u64, 3 * BLOCK);
++        assert!(cache.hit(path, identity, 0, BLOCK).is_some());
++        let response = cache.hit(path, identity, BLOCK as u64, 3 * BLOCK).unwrap();
++        assert_eq!(cache.entry_count(), 0);
++        assert_eq!(cache.cached_bytes(), 0);
++        assert!(response.iter().all(|byte| *byte == 0x5a));
++    }
++
++    #[test]
++    fn partial_granule_keeps_its_unread_gap() {
++        const BLOCK: usize = 16 * 1024;
++        let path = Path::new("gap.bin");
++        let identity = test_file_identity();
++        let mut cache = PeerReadCache::default();
++        insert_coverage_range(&mut cache, path, identity, 0, 4 * BLOCK);
++        assert!(cache.hit(path, identity, BLOCK as u64, BLOCK / 2).is_some());
++        assert!(cache.hit(path, identity, 0, BLOCK).is_some());
++        assert!(cache.hit(path, identity, (2 * BLOCK) as u64, 2 * BLOCK).is_some());
++        assert_eq!(cache.entry_count(), 1, "half of the middle block is still unread");
++        assert!(cache.hit(path, identity, BLOCK as u64, BLOCK).is_some());
++        assert_eq!(cache.entry_count(), 0);
++    }
++
++    #[tokio::test]
++    async fn read_crossing_a_cached_window_consumes_its_remaining_tail() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("straddling.bin");
++        std::fs::write(&path, b"abcdefghijklmnopqrstuvwx").unwrap();
++        let scheduler = MountScheduler::new_for_path(StorageRootId::new(), dir.path(),
++            &SchedulerConfig {
++                storage_io: StorageIoConfig {
++                    peer_read_readahead_bytes: 16,
++                    peer_read_readahead_sequential_only: false,
++                    peer_read_cache_entries: 8,
++                    peer_read_cache_bytes: 64,
++                    ..Default::default()
++                },
++                ..Default::default()
++            });
++        assert_eq!(&scheduled_read_owned(&scheduler, IoClass::PeerRead, &path, 0, 4).await.unwrap().as_slice(), &b"abcd");
++        assert_eq!(&scheduled_read_owned(&scheduler, IoClass::PeerRead, &path, 4, 8).await.unwrap().as_slice(), &b"efghijkl");
++        assert_eq!(&scheduled_read_owned(&scheduler, IoClass::PeerRead, &path, 12, 8).await.unwrap().as_slice(), &b"mnopqrst");
++        assert_eq!(scheduler.stats().peer_read_cache_entries, 1);
++        assert_eq!(scheduler.stats().peer_read_cache_bytes, 12);
++    }
++
+     fn insert_manager_test_range(
+         manager: &Arc<PeerReadCacheManager>,
+         cache: &Arc<Mutex<PeerReadCache>>,
+@@ -6212,6 +6366,7 @@ mod tests {
+                 data,
+                 consumed_prefix: 0,
+                 consumed_suffix,
++                consumed_granules: 0,
+                 last_used: Instant::now(),
+             },
+             8,
+@@ -9024,6 +9179,7 @@ mod tests {
+                     data: bytes::Bytes::from_static(b"stale"),
+                     consumed_prefix: 0,
+                     consumed_suffix: 5,
++                    consumed_granules: 0,
+                     last_used: Instant::now(),
+                 },
+                 1,
+@@ -9546,6 +9702,7 @@ mod tests {
+                     data: bytes::Bytes::from_static(b"stale"),
+                     consumed_prefix: 0,
+                     consumed_suffix: 5,
++                    consumed_granules: 0,
+                     last_used: Instant::now(),
+                 },
+                 1,
+diff --git a/scripts/client_performance_benchmark.py b/scripts/client_performance_benchmark.py
+index 5f9fbbd..95f5bbd 100755
+--- a/scripts/client_performance_benchmark.py
++++ b/scripts/client_performance_benchmark.py
+@@ -3276,7 +3276,7 @@ class Benchmark:
+             row = by_client.get(client, {})
+             lines.append(
+                 f"| {LABELS[client]} | {row.get('version', 'n/a')} | "
+-                f"{row.get('public', 'FAIL')} | {row.get('download_progress', 0):.2%} | "
++                f"{row.get('public', 'NOT RUN')} | {row.get('download_progress', 0):.2%} | "
+                 f"{row.get('download_seconds', 0):.1f} | "
+                 f"{row.get('download_mib_s', 0):.2f} | {row.get('download_peak_mib_s', 0):.2f} | "
+                 f"{row.get('download_mean_cpu', 0):.2f} | {row.get('download_peak_cpu', 0):.2f} | "
+@@ -3303,7 +3303,7 @@ class Benchmark:
+         for client in CLIENTS:
+             row = by_client.get(client, {})
+             lines.append(
+-                f"| {LABELS[client]} | {row.get('seed', 'FAIL')} | "
++                f"| {LABELS[client]} | {row.get('seed', 'NOT RUN')} | "
+                 f"{row.get('seed_setup_seconds', 0):.1f} | {row.get('seed_seconds', 0):.1f} | "
+                 f"{row.get('seed_mib_s', 0):.2f} | "
+                 f"{row.get('seed_peak_mib_s', 0):.2f} | {row.get('seed_mean_cpu', 0):.2f} | "
+@@ -4081,6 +4081,9 @@ class Benchmark:
+                 )
+                 if stop_code == 0:
+                     self._release_client_payloads(client, meta["iso_name"])
++                # Preserve completed measurements before starting another
++                # client, even if that later trial is interrupted.
++                self._write_report(meta, client_images)
+                 self.compose("restart", "opentracker", check=False, quiet=True, timeout=60)
+         client_images["seed_leecher"] = self.seed_leecher_image
+         if self.artifact_dir is not None:
+diff --git a/scripts/test_client_performance_benchmark.py b/scripts/test_client_performance_benchmark.py
+index 1d9afbf..680444d 100644
+--- a/scripts/test_client_performance_benchmark.py
++++ b/scripts/test_client_performance_benchmark.py
+@@ -8,7 +8,8 @@ import tempfile
+ import unittest
+ from pathlib import Path
+ from types import SimpleNamespace
+-from unittest.mock import call, mock
++from unittest import mock
++from unittest.mock import call
+ 
+ sys.path.insert(0, str(Path(__file__).parent))
+ import client_performance_benchmark as benchmark
+@@ -643,6 +644,84 @@ class PinnedSeedFixtureTests(unittest.TestCase):
+             self.assertEqual(meta["info_hash"], "local-info-hash")
+ 
+ 
++class CheckpointReportTests(unittest.TestCase):
++    def fixture(self, directory):
++        instance = object.__new__(benchmark.Benchmark)
++        instance.workdir = Path(directory)
++        (instance.workdir / "torrents").mkdir()
++        instance.seed_source_override = instance.workdir / "fixture.bin"
++        instance.seed_source_override.write_bytes(b"verified private fixture")
++        instance.seed_sha256_override = hashlib.sha256(
++            instance.seed_source_override.read_bytes(),
++        ).hexdigest()
++        instance.mode = "controlled-seed"
++        instance.config_dir = instance.workdir / "config"
++        instance.project = "checkpoint-test"
++        instance.skip_build = True
++        instance.artifact_dir = None
++        instance.seed_leecher_image = "test-leecher"
++        instance.results = []
++        for name in (
++            "prepare", "_use_prebuilt_image", "_write_report",
++            "_release_client_payloads",
++        ):
++            setattr(instance, name, mock.Mock())
++        instance._start_tracker = mock.Mock(return_value="198.18.0.2")
++        instance._torrent_metadata = mock.Mock(
++            side_effect=AssertionError("public metadata must not be fetched"),
++        )
++        instance.service_id = mock.Mock(return_value="")
++        instance.compose = mock.Mock(return_value=("", 0))
++        return instance
++
++    def test_seed_result_is_checkpointed_and_only_verified_pass_succeeds(self):
++        for seed_status in ("PASS", "FAIL"):
++            with self.subTest(seed_status=seed_status):
++                with tempfile.TemporaryDirectory() as directory:
++                    instance = self.fixture(directory)
++                    instance._run_one = mock.Mock(
++                        side_effect=lambda *args: instance.results.append({
++                            "client": "torrentngd", "public": "NOT RUN",
++                            "seed": seed_status,
++                        }),
++                    )
++                    with mock.patch.object(benchmark, "CLIENTS", ["torrentngd"]), mock.patch.object(
++                        benchmark.shutil, "which",
++                        side_effect=lambda name: None if name == "aria2c" else "/bin/" + name,
++                    ):
++                        status = instance.run()
++                    self.assertEqual(status, 0 if seed_status == "PASS" else 1)
++                    instance._torrent_metadata.assert_not_called()
++                    self.assertEqual(instance._write_report.call_count, 2)
++
++    def test_interrupted_next_client_preserves_completed_client_report(self):
++        with tempfile.TemporaryDirectory() as directory:
++            instance = self.fixture(directory)
++            checkpoints = []
++            instance._write_report = mock.Mock(side_effect=lambda *args: checkpoints.append(
++                [dict(row) for row in instance.results],
++            ))
++
++            def trial(client, *args):
++                if client == "qbittorrent":
++                    raise KeyboardInterrupt()
++                instance.results.append({
++                    "client": client, "public": "NOT RUN", "seed": "PASS",
++                })
++
++            instance._run_one = mock.Mock(side_effect=trial)
++            with mock.patch.object(benchmark, "CLIENTS", ["torrentngd", "qbittorrent"]), mock.patch.object(
++                benchmark.shutil, "which", return_value="/bin/available",
++            ):
++                with self.assertRaises(KeyboardInterrupt):
++                    instance.run()
++            self.assertEqual(len(checkpoints), 2)
++            for checkpoint in checkpoints:
++                self.assertEqual(checkpoint, [{
++                    "client": "torrentngd", "public": "NOT RUN", "seed": "PASS",
++                }])
++
++
+ class ControlledDownloadTests(unittest.TestCase):
+     def test_controlled_download_reads_its_own_payload_directory(self) -> None:
+         with tempfile.TemporaryDirectory() as directory:

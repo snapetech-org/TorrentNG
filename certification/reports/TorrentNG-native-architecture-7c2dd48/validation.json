@@ -1,0 +1,80 @@
+{
+  "base_commit": "7c2dd481ca224da8f5e47b783678b6110146ba9b",
+  "applied_locally": true,
+  "pushed": false,
+  "native_unit_tests": {
+    "rt-engine": 762,
+    "rt-storage": 349,
+    "rt-piece-map": 29,
+    "total": 1140
+  },
+  "benchmark_harness_unit_tests": 45,
+  "wire_correctness": [
+    {
+      "status": "PASS",
+      "request_window": 1,
+      "refill_blocks": 1,
+      "bytes": 8388608,
+      "blocks": 512,
+      "payload_sha256": "13cda4de78e9de4ebe14230e819a87cf0f50999b91d94152da76e0d2fef66513",
+      "binary_sha256": "c5b415733ff9f3abe7aea65c70a5e4b41a904a11b1b9f0e3e4c7f7909e7c8210",
+      "measurement": "correctness only"
+    },
+    {
+      "status": "PASS",
+      "request_window": 32,
+      "refill_blocks": 1,
+      "bytes": 8388608,
+      "blocks": 512,
+      "payload_sha256": "13cda4de78e9de4ebe14230e819a87cf0f50999b91d94152da76e0d2fef66513",
+      "binary_sha256": "c5b415733ff9f3abe7aea65c70a5e4b41a904a11b1b9f0e3e4c7f7909e7c8210",
+      "measurement": "correctness only"
+    }
+  ],
+  "comparative_performance_measurements": null,
+  "toolchain": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+  "target": "x86_64-unknown-linux-gnu",
+  "local_release_overrides": {
+    "lto": false,
+    "codegen_units": 16
+  },
+  "build_cache_note": "Stale rt-fastresume release artifacts were cleaned and rebuilt before the final successful daemon build.",
+  "source_sha256": {
+    "Cargo.lock": "667fa1fe9e6d7076ecec380f59a58a45ce868ff9719d512eab37b43fca546d0d",
+    "Cargo.toml": "12c5c830c0711ed883b6a3c74e11046871ff61ce82ad122c9f91ba2037cc17fb",
+    "crates/rt-engine/Cargo.toml": "1fdd9b46b984019a5f1ed0d863c9fda16e32c93eec05a9d693de45476b706240",
+    "crates/rt-engine/src/torrent_task.rs": "fe3df093f0b3f47119993db3d99b16711624622630149413e9a3797333dd967e",
+    "crates/rt-engine/src/transfer/shared_upload.rs": "b615a659a7231d4fb230662eb96e62c19e91ff662739f797ff43ae3af69fdc37",
+    "crates/rt-engine/src/transfer/upload_scheduler.rs": "21eae6dcdda9387b8c44b9c2646c15c05ae6ce288d9b1a821dae4ca6865b4d22",
+    "crates/rt-piece-map/src/lib.rs": "51c70803659dc915f3071194515d0469a170315ef2a8b6a9642ec81c792b3c62",
+    "crates/rt-piece-map/src/map.rs": "d6178a16dfafb4ff881b9036996bd4b1931392dfe6656924011933a43592b8f1",
+    "crates/rt-storage/src/file_handle.rs": "ffd1f53df09fd6cf304990b72f073bc42373d50f56a6a742769ad5352cac07e6",
+    "crates/rt-storage/src/handle_cache.rs": "386e624ceccd13ed762cc3c3753c4d7e7e2424fb4a13734c1dffffc514b03d7a",
+    "crates/rt-storage/src/scheduler.rs": "e8a0bbed6abb40c8b2b428cd19d26137f16359ad648be2059761587644014400",
+    "scripts/client_performance_benchmark.py": "b063dfe8d4360916ad0c90886652358485b4a0c650ff6d16e7b8c88e78d17e52",
+    "scripts/test_client_performance_benchmark.py": "8f7c31632b08d5bb42df7de44ae25a7c041a7fa34185f6ffce942feb4ad6ec4d"
+  },
+  "new_native_files": [
+    "Cargo.lock",
+    "Cargo.toml",
+    "crates/rt-engine/Cargo.toml",
+    "crates/rt-engine/src/torrent_task.rs",
+    "crates/rt-engine/src/transfer/shared_upload.rs",
+    "crates/rt-engine/src/transfer/upload_scheduler.rs",
+    "crates/rt-piece-map/src/lib.rs",
+    "crates/rt-piece-map/src/map.rs",
+    "crates/rt-storage/src/file_handle.rs",
+    "crates/rt-storage/src/handle_cache.rs",
+    "crates/rt-storage/src/scheduler.rs"
+  ],
+  "patch_sha256": {
+    "torrentng-complete.patch": "b83e2cbdb84ccd41286c76d1cae6af3a0b4c5c789b7712fa9123bbdd27290bd9",
+    "torrentng-architecture-only.patch": "160b657073e92c9fa9375253d70bf63d39a7ebb582b5e470555d17f91f59accd"
+  },
+  "patch_checks": {
+    "complete_on_clean_base": "PASS",
+    "incremental_on_prior_zip_patch": "PASS",
+    "git_diff_check": "PASS",
+    "rustfmt_changed_files": "PASS"
+  }
+}

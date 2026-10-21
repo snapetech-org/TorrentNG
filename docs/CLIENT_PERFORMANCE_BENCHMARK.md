@@ -70,6 +70,9 @@ with no external route. DHT and peer exchange are disabled before measurement.
 The 4 MiB/s receiver cap,
 transfer windows, and final leecher hash verification stay unchanged. Public
 swarm behavior remains covered by the default transfer mode.
+The host controller reaches each API through its private address on that
+task-local bridge and bypasses environment HTTP proxies. The clients remain
+on the isolated network with no external route.
 
 To screen TorrentNG alone, select only its adapter:
 

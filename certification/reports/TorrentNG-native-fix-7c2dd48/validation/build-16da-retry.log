@@ -1,0 +1,7 @@
+   Compiling rt-engine v0.1.0 (/workspace/scratch/64035e61355e/torrentng-review-current/crates/rt-engine)
+   Compiling rt-api-transmission v0.1.0 (/workspace/scratch/64035e61355e/torrentng-review-current/crates/rt-api-transmission)
+   Compiling rt-api-native v0.1.0 (/workspace/scratch/64035e61355e/torrentng-review-current/crates/rt-api-native)
+   Compiling rt-api-deluge v0.1.0 (/workspace/scratch/64035e61355e/torrentng-review-current/crates/rt-api-deluge)
+   Compiling rt-api-qbit v0.1.0 (/workspace/scratch/64035e61355e/torrentng-review-current/crates/rt-api-qbit)
+   Compiling torrentngd v0.1.0 (/workspace/scratch/64035e61355e/torrentng-review-current/crates/torrentngd)
+    Finished `release` profile [optimized] target(s) in 6m 24s

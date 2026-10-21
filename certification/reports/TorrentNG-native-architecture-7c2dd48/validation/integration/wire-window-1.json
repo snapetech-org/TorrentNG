@@ -1,0 +1,10 @@
+{
+  "status": "PASS",
+  "request_window": 1,
+  "refill_blocks": 1,
+  "bytes": 8388608,
+  "blocks": 512,
+  "payload_sha256": "13cda4de78e9de4ebe14230e819a87cf0f50999b91d94152da76e0d2fef66513",
+  "binary_sha256": "e47cf0a103f9bcf9b5e06192bf7cca9be00a54253e20e2bf49fee5de8c7d5415",
+  "measurement": "correctness only"
+}

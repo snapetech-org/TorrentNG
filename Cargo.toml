@@ -78,6 +78,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # metrics
 # utilities
 bytes = "1"
+smallvec = "1.15.1"
 uuid = { version = "1", features = ["v4", "serde"] }
 rand = "0.10"
 url = "2"

@@ -1,0 +1,11 @@
+{
+  "base_commit": "d57218d0324ee66cb8d0145c59a5a9154c600dbd",
+  "binary_sha256": "f4800abc4c2223a73d700ef2a9e26f577a5470f70722f91aa3f8470f1ed5c4bd",
+  "patch_sha256": "67fd2f94b9b0867abb096ad808894147829e4a207c5c6a4fd24c39741c2f8c12",
+  "files": {
+    "crates/rt-engine/src/torrent_task.rs": "0dedacc99559a0db382763ad2d68461b50d033b7be1f33599c1e89210cd66df5",
+    "crates/rt-storage/src/scheduler.rs": "216cd984f7b2238bec31eb4608aa89786efa55665dcea112b486ce4c27e5e3db",
+    "scripts/client_performance_benchmark.py": "7b32cff7a3fee238941d03cdf79b335db9fe89b89d6e2f1f2f3d3b8e8dc101ea",
+    "scripts/test_client_performance_benchmark.py": "779654934971d6fc27cdda764341b81017c145c3fa3e60613a4fec30aa9c3724"
+  }
+}

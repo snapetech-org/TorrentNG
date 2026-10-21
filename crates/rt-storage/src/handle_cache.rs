@@ -262,16 +262,19 @@ impl HandleCache {
             .map(Self::operation_handle)
     }
 
-    /// Scheduler-facing operation handle. It retains the same catalog lease
-    /// without allocating an intermediate public wrapper.
-    pub(crate) fn get_or_open_leased(
+    /// Borrow an already-normalized scheduler key. A cache hit needs only
+    /// the existing descriptor's Arc, not a new path or an Arc wrapper for
+    /// the operation. Callers may wrap the returned lease if a backend needs
+    /// shared ownership. Identity checking and secure opens are unchanged.
+    pub(crate) fn get_or_open_normalized_lease(
         &self,
         path: &Path,
         write: bool,
         create: bool,
-    ) -> io::Result<Arc<LeasedFileHandle>> {
-        self.get_or_open_file(path, write, create)
-            .map(|file| Arc::new(LeasedFileHandle::new(file)))
+    ) -> io::Result<LeasedFileHandle> {
+        let access = if write { Access::Write } else { Access::Read };
+        self.get_or_open_normalized_file(path, access, create)
+            .map(LeasedFileHandle::new)
     }
 
     /// Open a leased operation descriptor through the shared catalog without
@@ -304,7 +307,16 @@ impl HandleCache {
         create: bool,
     ) -> io::Result<Arc<LeasedFile>> {
         let (path, access) = Self::cache_key(path, write)?;
-        if let Some(file) = self.touch_for_access(&path, access) {
+        self.get_or_open_normalized_file(&path, access, create)
+    }
+
+    fn get_or_open_normalized_file(
+        &self,
+        path: &Path,
+        access: Access,
+        create: bool,
+    ) -> io::Result<Arc<LeasedFile>> {
+        if let Some(file) = self.touch_for_access(path, access) {
             return Ok(file);
         }
 
@@ -312,10 +324,10 @@ impl HandleCache {
         // Reserve capacity before opening so concurrent misses cannot exceed
         // this cache's live-descriptor budget while the opens race.
         let permit = self.acquire_descriptor();
-        if let Some(file) = self.touch_for_access(&path, access) {
+        if let Some(file) = self.touch_for_access(path, access) {
             return Ok(file);
         }
-        self.open_and_insert(path, access, create, permit)
+        self.open_and_insert(path.to_path_buf(), access, create, permit)
     }
 
     /// Async counterpart to [`HandleCache::get_or_open`]. Descriptor

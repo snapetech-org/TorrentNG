@@ -1,0 +1,12 @@
+diff --git a/crates/rt-engine/src/torrent_task.rs b/crates/rt-engine/src/torrent_task.rs
+index 6264f1a..e35f21b 100644
+--- a/crates/rt-engine/src/torrent_task.rs
++++ b/crates/rt-engine/src/torrent_task.rs
+@@ -10108,6 +10108,7 @@ async fn send_have_state(
+     Ok(())
+ }
+ 
++#[cfg(test)]
+ async fn read_upload_block(
+     upload: &UploadReadContext,
+     request: UploadRequest,

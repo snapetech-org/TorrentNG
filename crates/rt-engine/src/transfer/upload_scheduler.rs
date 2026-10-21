@@ -16,6 +16,9 @@ use super::rate::RatePeerId;
 
 const MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS: usize = 4;
 
+pub(crate) type UploadReadPermits =
+    smallvec::SmallVec<[UploadReadPermit; MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS]>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct UploadReadLimits {
     pub max_connections: usize,
@@ -89,7 +92,7 @@ struct Waiter {
 
 enum WaiterReply {
     Single(oneshot::Sender<UploadReadPermit>),
-    Batch(oneshot::Sender<Vec<UploadReadPermit>>),
+    Batch(oneshot::Sender<UploadReadPermits>),
 }
 
 pub(crate) struct UploadReadPermit {
@@ -289,7 +292,7 @@ impl UploadReadScheduler {
         &self,
         peer: RatePeerId,
         blocks: &[BlockExtent],
-    ) -> Result<Vec<UploadReadPermit>, UploadReadAdmissionError> {
+    ) -> Result<UploadReadPermits, UploadReadAdmissionError> {
         if blocks.is_empty()
             || blocks
                 .iter()
@@ -583,7 +586,7 @@ fn pump(inner: &Arc<Inner>) {
                         bytes: waiter.bytes,
                     };
                     if let Err(permit) = reply.send(permit) {
-                        failed_permits.push(vec![permit]);
+                        failed_permits.push(smallvec::smallvec![permit]);
                     }
                 }
                 WaiterReply::Batch(reply) => {
