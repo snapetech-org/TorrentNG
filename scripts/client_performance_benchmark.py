@@ -1562,15 +1562,15 @@ class Benchmark:
         ]
         return max(values) if values else None
 
-    def _capture_storage_backend_observation(self):
-        if not any(row.get("client") == "torrentngd" for row in self.results):
+    def _capture_storage_backend_observation(self, client):
+        if client != "torrentngd":
             self.storage_backend_observation = None
             return None
         observation = {
             "observed_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(
                 timespec="milliseconds",
             ),
-            "phase": "after_all_transfer_windows",
+            "phase": "after_torrentng_transfer_windows_before_container_stop",
         }
         try:
             body = self._torrentng_request("/metrics").decode("utf-8", "replace")
@@ -1645,7 +1645,7 @@ class Benchmark:
                 "process_tree_sample_interval_seconds": PROCESS_TREE_SAMPLE_SECONDS,
                 "storage_backend_observation": (
                     "when TorrentNG is included, one authenticated /metrics scrape "
-                    "after all transfer windows"
+                    "after its transfer windows and before its container stops"
                 ),
             },
             "host": self.host,
@@ -1670,8 +1670,9 @@ class Benchmark:
                 "engine_metrics": "Diagnostic-only TorrentNG resource-governor leases, estimated peer-buffer capacities, storage-pool gauges, and optional allocator metrics sampled during transfer and at phase boundaries.",
                 "storage_backend_observation": (
                     "When TorrentNG is included, one authenticated /metrics scrape "
-                    "after all transfer windows records the selected backend and "
-                    "fixed-buffer capabilities without adding scrapes to measured intervals."
+                    "after its transfer windows and before its container stops records "
+                    "the selected backend and fixed-buffer capabilities without adding "
+                    "scrapes to measured intervals."
                 ),
                 "jemalloc_metrics": "Jemalloc allocator gauges are present only when the jemalloc-allocator feature is selected. They describe Jemalloc's allocator state, not total process allocations or RSS.",
                 "source_fingerprint": "SHA-256 derived from commit/tree, a normalized full-index Git diff, and all non-ignored untracked file paths and contents at benchmark start.",
@@ -2427,6 +2428,9 @@ class Benchmark:
                     pass
                 self._capture_engine_memory_metrics(client, "after_controlled_seed")
 
+        if client == "torrentngd":
+            self._capture_storage_backend_observation(client)
+
         idle = self._summary(
             [row for row in self.samples if row[1] == client], "idle",
         )
@@ -2511,7 +2515,6 @@ class Benchmark:
             )
 
     def _write_report(self, meta, client_images):
-        self._capture_storage_backend_observation()
         self._write_memory_profile()
         load_end = os.getloadavg()
         load_peak = max((float(row[10]) for row in self.samples), default=self.load_start[0])

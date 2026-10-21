@@ -56,6 +56,25 @@ samples, memory profile, and cleanup status:
 [`samples`](../certification/reports/client-performance-benchmark-457df452-20261021T0525-cpu-ram-samples.csv),
 [`memory profile`](../certification/reports/client-performance-benchmark-457df452-20261021T0525-cpu-ram-memory-profile.json).
 
+## 2026-10-21 TorrentNG-only repeat (`8a27b32d`)
+
+A TorrentNG-only controlled seed on clean source `8a27b32d6243d22e90bf16706ae5a79afb169f66`
+passed the same Debian SHA-256 check at 3.82 MiB/s. It measured **2.57
+CPU-s/GiB**, **23.3 MiB cgroup anonymous peak**, **41.5 MiB process-tree PSS**,
+and **41.9 MiB process-tree RSS**. This is close to the preceding exact-main
+five-client observation (2.66 CPU-s/GiB and 25.2 MiB anonymous peak), but it is
+one run on a different host-load window and has no client comparator; it does
+not establish a CPU or RAM improvement. The 60-second public probe reached
+5.18% and timed out, so it is excluded. The selected storage backend is
+unknown: this runner attempted `/metrics` after stopping the container and got
+`URLError`. A later harness change moves that scrape before container stop;
+it does not retroactively identify the backend for this run.
+
+The [report](../certification/reports/client-performance-backend-observation-8a27b32d-20261021.md),
+[samples](../certification/reports/client-performance-backend-observation-8a27b32d-20261021-samples.csv),
+and [memory profile](../certification/reports/client-performance-backend-observation-8a27b32d-20261021-memory-profile.json)
+record the trial and its limits.
+
 ## 2026-10-20 hot-path follow-up
 
 The uploaded source review and verified evidence archive are preserved at
@@ -83,11 +102,11 @@ The implementation disables container healthchecks symmetrically, samples
 process-tree RSS/PSS for every client, and keeps detailed TorrentNG `/metrics`,
 `smaps`, and process-spike attribution behind
 `TNG_CLIENT_BENCH_DIAGNOSTICS=1`. When TorrentNG is included, each transfer run
-performs one authenticated `/metrics` scrape after all measured transfer windows
-and records the selected storage backend, fixed-buffer and registered-file
-support, and buffer strategy in its report/profile. This makes io_uring findings
-attributable without adding metric scrapes during scored work. Storage completion
-ownership is carried by
+performs one authenticated `/metrics` scrape after its measured transfer windows
+and before its container stops, recording the selected storage backend,
+fixed-buffer and registered-file support, and buffer strategy in its
+report/profile. This makes io_uring findings attributable without adding metric
+scrapes during scored work. Storage completion ownership is carried by
 the actual Pread or io_uring job, removing the forwarding Tokio task and
 second completion channel while retaining operation guards through completion
 and invalidating the peer-read cache after writes. Upload admission grants

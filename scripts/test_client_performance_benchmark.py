@@ -173,7 +173,6 @@ class CgroupCounterTests(unittest.TestCase):
 
     def test_post_transfer_storage_backend_scrape_runs_only_for_torrentng(self) -> None:
         instance = object.__new__(benchmark.Benchmark)
-        instance.results = [{"client": "torrentngd"}]
         instance._torrentng_request = mock.Mock(return_value=(
             b'torrentng_storage_runtime_initialized 1\n'
             b'torrentng_storage_backend_selected{backend="pread"} 1\n'
@@ -181,15 +180,17 @@ class CgroupCounterTests(unittest.TestCase):
             b'torrentng_storage_backend_registered_files_supported 0\n'
         ))
 
-        observation = instance._capture_storage_backend_observation()
+        observation = instance._capture_storage_backend_observation("torrentngd")
 
-        self.assertEqual(observation["phase"], "after_all_transfer_windows")
+        self.assertEqual(
+            observation["phase"],
+            "after_torrentng_transfer_windows_before_container_stop",
+        )
         self.assertEqual(observation["metrics"]["selected_backend"], "pread")
         instance._torrentng_request.assert_called_once_with("/metrics")
 
-        instance.results = [{"client": "qbittorrent"}]
         instance._torrentng_request.reset_mock()
-        self.assertIsNone(instance._capture_storage_backend_observation())
+        self.assertIsNone(instance._capture_storage_backend_observation("qbittorrent"))
         instance._torrentng_request.assert_not_called()
 
     def test_network_namespace_parser_sums_non_loopback_interfaces(self) -> None:

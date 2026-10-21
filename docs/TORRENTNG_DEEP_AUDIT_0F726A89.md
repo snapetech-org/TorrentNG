@@ -174,6 +174,19 @@ the [exact-main report](../certification/reports/client-performance-benchmark-45
 and its [samples](../certification/reports/client-performance-benchmark-457df452-20261021T0525-cpu-ram-samples.csv)
 and [memory profile](../certification/reports/client-performance-benchmark-457df452-20261021T0525-cpu-ram-memory-profile.json).
 
+A TorrentNG-only repeat on clean `8a27b32d` then verified the same payload at
+3.82 MiB/s, with **2.57 CPU-s/GiB**, **23.3 MiB cgroup anonymous peak**,
+**41.5 MiB process-tree PSS**, and **41.9 MiB process-tree RSS**. These single
+observations are close to the preceding TorrentNG row, but the repeat has no
+client comparator and ran in a different host-load window; it does not confirm
+a CPU or RAM improvement. Its public probe timed out at 5.18% and is excluded.
+The backend remains unknown because this runner attempted its `/metrics`
+scrape after container shutdown and received `URLError`. The harness now
+captures the scrape before shutdown; this cannot recover the missed value.
+See the [repeat report](../certification/reports/client-performance-backend-observation-8a27b32d-20261021.md),
+[samples](../certification/reports/client-performance-backend-observation-8a27b32d-20261021-samples.csv),
+and [memory profile](../certification/reports/client-performance-backend-observation-8a27b32d-20261021-memory-profile.json).
+
 ### Download assembly and parsing
 
 The handoff proposes a bounded global incomplete-piece budget and parsing that
