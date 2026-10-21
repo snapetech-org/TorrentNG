@@ -885,6 +885,21 @@ class TrackerScrapeTests(unittest.TestCase):
         sleep.assert_called_once_with(2)
 
 
+class BenchmarkPathTests(unittest.TestCase):
+    def test_linux_rtorrent_scgi_path_limit_fails_before_client_startup(self) -> None:
+        too_long = Path("/tmp") / ("x" * 110) / "rtorrent/scgi.sock"
+
+        with mock.patch.object(benchmark.sys, "platform", "linux"):
+            with self.assertRaisesRegex(
+                RuntimeError, "maximum 107.*TNG_CLIENT_BENCH_WORKDIR",
+            ):
+                benchmark.validate_unix_socket_path(too_long)
+
+    def test_linux_rtorrent_scgi_path_accepts_short_workdir(self) -> None:
+        with mock.patch.object(benchmark.sys, "platform", "linux"):
+            benchmark.validate_unix_socket_path(Path("/tmp/tngb/config/rtorrent/scgi.sock"))
+
+
 class ControlledDownloadTests(unittest.TestCase):
     def test_controlled_download_report_uses_generated_private_torrent_hash(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

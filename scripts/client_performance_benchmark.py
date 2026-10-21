@@ -584,6 +584,18 @@ def opentracker_scrape_counts(payload, info_hash):
     return {"complete": complete, "incomplete": incomplete}
 
 
+def validate_unix_socket_path(path):
+    """Fail early when an rTorrent Unix socket path exceeds Linux sun_path."""
+    if sys.platform.startswith("linux"):
+        path_bytes = len(os.fsencode(path))
+        if path_bytes > 107:
+            raise RuntimeError(
+                "rTorrent SCGI Unix socket path is too long for Linux "
+                f"({path_bytes} bytes; maximum 107): {path}. Set a shorter "
+                "TNG_CLIENT_BENCH_WORKDIR or TNG_CLIENT_BENCH_CONFIG_ROOT."
+            )
+
+
 def make_private_torrent(path, announce, output):
     piece_size = 1024 * 1024
     piece_hashes = []
@@ -4192,6 +4204,8 @@ class Benchmark:
         for required in required_commands:
             if shutil.which(required) is None:
                 raise RuntimeError(f"missing required command: {required}")
+        if "rtorrent" in CLIENTS:
+            validate_unix_socket_path(self.config_dir / "rtorrent/scgi.sock")
         print(f"Scratch: {self.workdir}", flush=True)
         print(f"Config scratch: {self.config_dir}", flush=True)
         print(f"Compose project: {self.project}", flush=True)
