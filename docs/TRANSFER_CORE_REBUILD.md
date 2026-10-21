@@ -136,11 +136,19 @@ product contracts. This is a provisional architecture decision, not a claim
 that the in-house candidate is better. See
 [`TRANSFER_CORE_REFERENCE_EVALUATION.md`](TRANSFER_CORE_REFERENCE_EVALUATION.md).
 
+**D1 — efficiency acceptance priority:** prioritize CPU seconds per
+hash-verified GiB and RAM for the next comparisons. Report cgroup anonymous
+memory, process-tree RSS, and PSS as distinct measurements. Defer comparative
+disk-I/O efficiency ranking and upload-goodput parity as acceptance priorities
+until CPU and RAM are addressed; retain all storage correctness, boundedness,
+and durability gates. The proposed scorecard's numeric thresholds remain
+provisional, and this priority does not claim the current candidate meets it.
+See [`CLIENT_PERFORMANCE_BENCHMARK.md`](CLIENT_PERFORMANCE_BENCHMARK.md).
+
 ### Decisions still open with the owner (not blocking G0)
 
 | # | Decision | Needed before |
 |---|---|---|
-| D1 | Adopt, amend, or reject the proposed scorecard numbers | PERF-110 |
 | D4 | Dedicated hardware lane (HDD / NVMe / 10 Gb helper) availability | PERF-115 |
 
 ## 2. Architecture target (summary)
@@ -886,3 +894,4 @@ performance measurement.
 | 2026-10-21 | Deep-audit storage/memory candidate validation: full all-target workspace suites passed on Rust 1.94 and 1.88 (each 2,339 passed, 0 failed, 12 ignored across 37 summaries), strict workspace Clippy passed on both, and all 351 discovered Python tests passed. The first parallel 1.94 rerun hit one IPv6 DHT test failure; the case passed alone and both serial full suites passed. A one-peer hash-verified seed pair compared clean `bf37a330` with the integrated dirty candidate: CPU fell from 3.29 to 3.06 s/GiB, goodput stayed 3.82 MiB/s, cgroup anonymous peak rose 23.5 to 25.0 MiB, and process-tree PSS rose 38.7 to 43.1 MiB. The candidate host load peak was higher (21.17 vs 14.95); this is a low-confidence CPU hint and not a RAM improvement. The public phase timed out for both and is excluded. Cross-torrent/high-peer memory pressure, repeated seed trials, backend-specific profiling, and private two-seeder rate fairness qualification remain open. Reports and raw data: `certification/reports/torrentng-deep-audit-{baseline,candidate}-20261021.*`. |
 | 2026-10-21 | Exact-main five-client CPU/RAM check on clean `457df452`: all controlled seed hashes passed at 3.82–3.94 MiB/s. TorrentNG measured 2.66 CPU-s/GiB and 25.2 MiB cgroup anonymous peak; qBittorrent 2.02/18.0, Transmission 1.33/24.8, Deluge 2.43/85.1, and rTorrent 0.55/1.9. This one sequential pass shows no CPU lead and mixed RAM results; public-swarm timeouts are excluded. The run exited 1 because three public phases timed out, not because a controlled seed failed. Stack-attributed profiling is still unavailable on this host, so the next CPU step is a matched diagnostic profile before more hot-path changes. The audit archive is already stored, unpacked, and checksum-verified under `certification/reports/TorrentNG-deep-audit-0f726a89/`. Report, samples, and memory profile: `certification/reports/client-performance-benchmark-457df452-20261021T0525-cpu-ram.*`. |
 | 2026-10-21 | Two TorrentNG-only verified-seed runs on identical engine/runtime source measured 2.57 and 2.73 CPU-s/GiB (median 2.65), 23.3 and 24.9 MiB cgroup anonymous peak (median 24.1), and 41.5/43.4 MiB PSS and 41.9/43.9 MiB RSS, both at 3.82 MiB/s with matching hashes. This small sample has no client comparator and establishes no improvement. Both public probes timed out below 7%. The first scrape failed after container shutdown; the second succeeded after torrent pause but found `runtime_initialized=0`. The harness now captures after the seed window and before pause; backend selection still needs a confirming run. Reports: `certification/reports/client-performance-backend-observation-8a27b32d-20261021.*` and `certification/reports/client-performance-backend-observation-3e7a15ed-20261021-repeat.*`. |
+| 2026-10-21 | Owner priority recorded as D1: put CPU per hash-verified GiB and RAM first, keep cgroup anonymous memory/RSS/PSS distinct, defer comparative disk-I/O ranking and upload-goodput parity, and retain storage correctness, boundedness, and durability gates. No numeric scorecard threshold is adopted. The latest available TorrentNG-only seed on `1a748ba3` measured 2.47 CPU-s/GiB, 24.3 MiB cgroup anonymous peak, 42.4 MiB PSS, and 42.8 MiB RSS; it has no comparator and does not establish a gain. Exact Rust workspace suites and strict Clippy passed on `d997a698` under Rust 1.94 and 1.88 (2,341 passed, 0 failed, 12 ignored across 37 summaries each); 357 Python tests passed on `9163f2c8`. A matched whole-client run on the current source remains open. |

@@ -18,6 +18,16 @@ sequential pass on a loaded host. TorrentNG, Transmission, and Deluge did not
 finish the 60-second public-swarm phase, so those rows are not download
 rankings.
 
+## Owner's measurement priority
+
+The next comparisons prioritize CPU seconds per hash-verified GiB and RAM.
+Keep cgroup anonymous memory, process-tree RSS, and PSS as separate measures.
+Disk-I/O counters may remain diagnostic context, but comparative I/O ranking
+and upload-goodput parity are deferred until CPU and RAM are addressed.
+Storage correctness, boundedness, and durability remain required gates. No
+numeric efficiency threshold has been adopted, and this priority is not a
+claim that the current candidate meets it.
+
 ## 2026-10-21 exact-main CPU/RAM check (`457df452`)
 
 A clean image built from current `main` commit

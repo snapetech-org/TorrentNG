@@ -57,6 +57,23 @@ are linked in [`CLIENT_PERFORMANCE_BENCHMARK.md`](CLIENT_PERFORMANCE_BENCHMARK.m
 Repeated randomized client order and a current-source matched PERF-110 run
 remain open.
 
+## Follow-up validation — source `d997a698` (2026-10-21)
+
+After adding live peer-storage backend observations, the locked all-target
+workspace suites passed on Rust 1.94 and 1.88 with 2,341 passed, 0 failed, and
+12 ignored tests across 37 summaries on each toolchain. Strict workspace
+Clippy passed on both toolchains. All 357 discovered Python tests passed on
+`9163f2c8`, the next commit, which changes only release-note wording. These
+checks establish local correctness for the recorded source; they do not close
+the private two-seeder fairness, current-source matched-client, cross-torrent
+memory-pressure, backend-specific profile, or protected-hardware gates.
+
+The last exact-main five-client comparison remains the one at `457df452` above.
+The later `1a748ba3` TorrentNG-only run measured 2.47 CPU-s/GiB and 24.3 MiB
+cgroup anonymous peak, with 42.4 MiB PSS and 42.8 MiB RSS. It passed the
+controlled seed hash at 3.82 MiB/s, but has no client comparator; it does not
+replace a matched comparison on the current source.
+
 ## Earlier bulk validation — implementation source `3758d021` (2026-10-20)
 
 The Rust implementation under test is exact commit `3758d0217dea665fefdfcd6775a3f72d935cf058`; the only working-tree edits during this pass were documentation. The full workspace passed on Rust 1.94.0 and 1.88.0: each run had 2,309 passed, 0 failed, and 12 ignored across 37 result summaries. Release `rt-engine` passed 738/738, including the seeded ownership simulator. All 11 runnable ignored cases passed explicitly: the two release 100k live-catalog cases, seven storage diagnostics, the real-root move/import/delete fixture, and the peer-wire encode probe. The remaining ignored panic-hook child is exercised through its passing parent regression.
