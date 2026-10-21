@@ -265,6 +265,20 @@ timeout remains to preserve stalled-admission handling. The bulk correctness
 pass and one five-client seed measurement are complete; the measurement did
 not establish a CPU gain, as detailed below.
 
+A follow-up removes the zero-byte refund after a fully transmitted rate grant.
+The diagnostic profile attributed 2.25% of sampled self cycles to
+`RateAdmissionGrant::settle`; a full send used to settle its grant and then
+reacquire the shared rate-tree lock to refund zero bytes. The candidate now
+settles and refunds a nonzero unsent remainder under one lock. Partial-send
+credit has a regression test. This change still needs a matched CPU/RAM run
+before it can be credited with a performance gain. The
+formatted all-target workspace suite passed on Rust 1.94.0 and 1.88.0 with
+2,342 passed, 0 failed, and 12 ignored across 37 summaries on each; strict
+Clippy passed on both, formatting and `git diff --check` passed, and all 357
+Python tests passed. The focused partial-settlement regression also passed on
+both toolchains. No CPU/RAM run was collected for this candidate because
+unrelated builds and game processes kept the shared desktop busy.
+
 ### Five-client remeasurement after context sharing (`c6984493`, 2026-10-21)
 
 All five controlled seeds passed SHA-256 at 3.82–3.94 MiB/s. TorrentNG used

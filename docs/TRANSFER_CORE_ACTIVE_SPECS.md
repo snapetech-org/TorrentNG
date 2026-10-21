@@ -135,6 +135,18 @@ does not isolate the candidate's effect from its parent source. The public
 probe did not complete and is excluded. The change remains provisional with
 no claimed CPU or RAM gain; randomized paired trials are still needed.
 
+The diagnostic sample also attributed 2.25% self cycles to
+`RateAdmissionGrant::settle`. Full payload sends settled all granted bytes and
+then reacquired the shared rate-tree mutex to refund zero bytes. The current
+candidate settles and returns any nonzero remainder under one tree lock;
+partial settlement and drop-time refunds retain their existing behavior.
+The formatted workspace all-target suite passed on Rust 1.94.0 and 1.88.0
+(2,342 passed, 0 failed, 12 ignored across 37 summaries on each). Strict
+workspace Clippy passed on both, formatting and `git diff --check` passed, and
+Python discovery passed 357 tests. The partial-settlement regression passed on
+both toolchains. A matched CPU/RAM run has not been collected for this edit;
+the preceding upload-future run predates it, so no gain is credited.
+
 ## Earlier bulk validation — implementation source `3758d021` (2026-10-20)
 
 The Rust implementation under test is exact commit `3758d0217dea665fefdfcd6775a3f72d935cf058`; the only working-tree edits during this pass were documentation. The full workspace passed on Rust 1.94.0 and 1.88.0: each run had 2,309 passed, 0 failed, and 12 ignored across 37 result summaries. Release `rt-engine` passed 738/738, including the seeded ownership simulator. All 11 runnable ignored cases passed explicitly: the two release 100k live-catalog cases, seven storage diagnostics, the real-root move/import/delete fixture, and the peer-wire encode probe. The remaining ignored panic-hook child is exercised through its passing parent regression.

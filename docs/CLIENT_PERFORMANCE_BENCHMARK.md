@@ -678,3 +678,25 @@ change remains provisional pending randomized, hash-verified paired trials.
 See the [run report](../certification/reports/client-performance-benchmark-upload-future-candidate-20261021-round1.md),
 [samples](../certification/reports/client-performance-benchmark-upload-future-candidate-20261021-round1-samples.csv),
 and [memory profile](../certification/reports/client-performance-benchmark-upload-future-candidate-20261021-round1-memory-profile.json).
+
+## Full rate-grant settlement candidate (2026-10-21)
+
+The diagnostic profile attributed 2.25% of sampled self cycles to
+`RateAdmissionGrant::settle`. A fully sent payload settled all admitted bytes
+and then called the refund path with zero bytes, taking the shared rate-tree
+mutex a second time. Settlement and any nonzero refund now happen under one
+tree lock; a full send skips the no-op refund while partial sends still return
+unused bytes. Dropped grants retain their refund path. This edit has not yet
+gone through a matched performance run, so no efficiency gain is claimed. It
+passed the formatted workspace all-target suite on Rust 1.94.0 and 1.88.0
+(2,342 passed, 0 failed, 12 ignored across 37 summaries on each), strict
+workspace Clippy on both toolchains, formatting, `git diff --check`, and all
+357 Python tests. The partial-send regression passed on both toolchains.
+
+The rate-settlement candidate has not yet been measured against its parent
+source. The latest available source-bound seed result is the preceding
+upload-future candidate: 2.74 CPU-s/GiB and 24.2 MiB cgroup anonymous peak for
+TorrentNG, versus 2.20 CPU-s/GiB and 18.5 MiB for qBittorrent in one run. That
+run predates this rate-settlement edit and cannot establish its effect. No new
+CPU/RAM score was collected while unrelated builds and game processes kept
+`kspld0` busy; the comparison remains open.

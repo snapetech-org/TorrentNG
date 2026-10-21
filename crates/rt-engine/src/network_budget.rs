@@ -1006,8 +1006,25 @@ impl HierarchicalRateService {
         self.changed.cancel();
     }
 
-    fn settle(&self, peer_id: RatePeerId, grant_id: u64, bytes: u64) {
-        self.lock_tree().settle_grant(peer_id, grant_id, bytes);
+    fn settle_and_refund_unused(
+        &self,
+        peer_id: RatePeerId,
+        grant_id: u64,
+        transferred: u64,
+        unused: u64,
+    ) {
+        let refunded = {
+            let mut tree = self.lock_tree();
+            tree.settle_grant(peer_id, grant_id, transferred);
+            if unused == 0 {
+                0
+            } else {
+                tree.refund_grant(peer_id, grant_id, unused, self.now())
+            }
+        };
+        if refunded > 0 {
+            self.changed.cancel();
+        }
     }
 
     fn refund(&self, peer_id: RatePeerId, grant_id: u64, bytes: u64) {
@@ -1180,12 +1197,11 @@ impl std::fmt::Debug for RateAdmissionGrant {
 impl RateAdmissionGrant {
     pub(crate) fn settle(mut self, transferred: u64) {
         let transferred = transferred.min(self.bytes);
-        self.scheduler
-            .settle(self.peer_id, self.grant_id, transferred);
-        self.scheduler.refund(
+        self.scheduler.settle_and_refund_unused(
             self.peer_id,
             self.grant_id,
-            self.bytes.saturating_sub(transferred),
+            transferred,
+            self.bytes - transferred,
         );
         self.active = false;
     }
@@ -1687,5 +1703,39 @@ mod tests {
             .unwrap()
             .unwrap()
             .settle(32 * 1024);
+    }
+
+    #[test]
+    fn partial_upload_rate_settlement_refunds_only_the_unsent_bytes() {
+        const BLOCK: u64 = 32 * 1024;
+        let budget = GlobalNetworkBudget::new(4, None, Some(1));
+        let torrent = budget.new_transfer_torrent_key();
+        budget.register_upload_torrent(torrent, None);
+        let peer = rate_peer(torrent, 0);
+        budget.register_transfer_peer(peer);
+
+        let RateAdmissionAttempt::Granted(grant) =
+            budget.upload_tree.try_acquire(peer, BLOCK).unwrap()
+        else {
+            panic!("initial burst should grant a full block");
+        };
+        grant.settle(BLOCK / 2);
+
+        // A one-byte-per-second bucket begins with 64 KiB of burst credit.
+        // Half the 32 KiB grant was sent; the other half must be refundable.
+        let RateAdmissionAttempt::Granted(grant) =
+            budget.upload_tree.try_acquire(peer, 48 * 1024).unwrap()
+        else {
+            panic!("partial settlement should return its unsent half");
+        };
+        grant.settle(48 * 1024);
+
+        assert!(
+            matches!(
+                budget.upload_tree.try_acquire(peer, 1).unwrap(),
+                RateAdmissionAttempt::Wait(_) | RateAdmissionAttempt::WaitForChange
+            ),
+            "the sent half stays charged; only the unsent half is refunded"
+        );
     }
 }

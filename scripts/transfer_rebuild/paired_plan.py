@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build a reproducible randomized schedule for the 28 PERF-110 slots.
 
-This writes a plan only. PERF-110's process launcher still has to consume the
-schedule, run each client against a shared fixture, and produce trial records.
+The paired runner consumes this plan after compatibility preflight and records
+source-bound transfer trials and resource observations.
 """
 
 from __future__ import annotations
