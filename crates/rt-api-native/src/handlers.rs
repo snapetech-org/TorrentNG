@@ -8136,6 +8136,20 @@ fn render_metrics_with_health(
     );
     metric(
         &mut out,
+        "torrentng_storage_peer_read_cache_global_backing_bytes",
+        "gauge",
+        "Process-wide peer-read cache backing bytes including live response slices",
+        stats.storage_peer_read_cache_global_backing_bytes,
+    );
+    metric(
+        &mut out,
+        "torrentng_storage_peer_read_cache_global_budget_bytes",
+        "gauge",
+        "Process-wide peer-read cache backing-byte budget",
+        stats.storage_peer_read_cache_global_budget_bytes,
+    );
+    metric(
+        &mut out,
         "torrentng_storage_peer_read_cache_hits_total",
         "counter",
         "Peer-read readahead cache hits across running torrent schedulers",
@@ -10853,6 +10867,8 @@ mod tests {
             storage_queued_disk_bytes: 54,
             storage_queue_full: 56,
             storage_peer_read_cache_bytes: 4096,
+            storage_peer_read_cache_global_backing_bytes: 8192,
+            storage_peer_read_cache_global_budget_bytes: 16 * 1024 * 1024,
             storage_peer_read_cache_hits: 8,
             storage_peer_read_cache_evictions: 58,
             piece_assembly_evictions: 9,
@@ -10985,6 +11001,8 @@ mod tests {
         assert!(rendered.contains("torrentng_storage_queued_disk_bytes 54"));
         assert!(rendered.contains("torrentng_storage_queue_full_total 56"));
         assert!(rendered.contains("torrentng_storage_peer_read_cache_bytes 4096"));
+        assert!(rendered.contains("torrentng_storage_peer_read_cache_global_backing_bytes 8192"));
+        assert!(rendered.contains("torrentng_storage_peer_read_cache_global_budget_bytes 16777216"));
         assert!(rendered.contains("torrentng_storage_peer_read_cache_hits_total 8"));
         assert!(rendered.contains("torrentng_storage_peer_read_cache_evictions_total 58"));
         assert!(rendered.contains("torrentng_piece_assembly_evictions_total 9"));

@@ -83,9 +83,7 @@ use the preparation worker.
 This is the strongest active-CPU architecture candidate after the scheduler
 repair. A fused dispatch must retain bounded admission, descriptor identity,
 replacement fences, cancellation ownership, cache invalidation, and the
-portable backend path. No storage-dispatch rewrite is included in this change;
-the current implementation should be profiled and the fused path measured
-separately before adoption.
+portable backend path.
 
 The archive's three-repeat mechanism result was 2.016 CPU-s/GiB for two worker
 round trips and 0.124 for inline execution. Re-running its included harness on
@@ -93,6 +91,19 @@ this checkout with rustc 1.94 measured medians of 0.588 (range 0.581–0.677)
 and 0.106 (range 0.103–0.119), respectively. The different environment and
 compiler make the exact values unsuitable for comparison; both runs are
 synthetic queue costs, not TorrentNG application scores.
+
+**Implementation update, 2026-10-20:** the portable `pread` path now submits
+descriptor lookup, cache lookup, positioned read, and final path-identity
+validation as one bounded disk-worker operation with one completion. The job
+retains mount/device admission, queued-byte credit, the leased descriptor, and
+the frame until the read finishes. Source regressions cover a read miss/cache
+hit on this route, backend worker dispatch, and owner retention after caller
+cancellation of started work.
+These regressions passed in the 335-test `rt-storage` suite and in the full
+workspace suites on Rust 1.94 and 1.88. The io_uring and injected-backend routes
+remain unchanged pending backend-specific profiling. The portable route also
+briefly holds device admission during a cache hit; its effect on queue fairness
+is still unmeasured.
 
 ### Conditional io_uring work
 
@@ -107,11 +118,47 @@ and generation, not only a numeric file descriptor.
 
 The audit distinguishes per-scheduler read-cache budgets, backing allocations
 kept alive by slices, and idle buffers retained by the shared frame pool.
-Returning a cache buffer to a free list can keep memory resident. A global
-reclaimable cache budget, pressure eviction before required payload admission,
-and coordinated frame-pool trimming remain open. Future measurements should
-report cache bytes, backing bytes, active and idle frame bytes, cgroup
-anonymous memory, PSS, and process RSS separately because some counters overlap.
+Returning a cache buffer to a free list can keep memory resident. The current
+worktree now adds a process-wide 16 MiB backing-allocation budget alongside the
+existing per-scheduler payload limits. Cache entries and the first returned
+slice share an owner that retains both the PeerBuffer lease and global budget
+charge until the last alias is dropped. ResourceGovernor reclaim is scoped to
+the governor that admitted each cache, and total-cap pressure can also trim
+idle buffers from the shared frame pool. Trimming releases reusable Vec
+allocations from the pool; the allocator may retain their pages, so this does
+not promise an immediate RSS decrease. Regression coverage for these lifetimes,
+pressure eviction, governor scope, and pool trimming passed on both supported
+workspace toolchains. The one-peer measurement below did not trigger or qualify
+cross-torrent memory reclamation. Future pressure runs should report
+per-scheduler logical cache bytes, process-wide backing bytes, active and idle
+frame bytes, cgroup anonymous memory, PSS, and process RSS separately because
+some counters overlap.
+
+### Integrated-candidate validation and CPU/RAM measurement (2026-10-21)
+
+Both full Rust workspace all-target suites passed with 2,339 passed, 0 failed,
+and 12 ignored tests across 37 summaries on Rust 1.94 and 1.88. Strict
+workspace Clippy passed on both toolchains, and all 351 discovered Python
+tests passed. A parallel Rust 1.94 run once hit an unrelated IPv6 DHT test
+failure; that test passed alone, and the serialized full suites passed on both
+toolchains.
+
+One controlled seed pair compared clean `bf37a330` with the integrated dirty
+worktree, using the same SHA-256-verified Debian ISO and one qBittorrent leecher
+capped at 4 MiB/s. TorrentNG measured **3.29 CPU-s/GiB** on clean main and
+**3.06 CPU-s/GiB** on the candidate (about 7% lower). Seed goodput was 3.82
+MiB/s in both runs. Candidate peak cgroup anonymous memory was **25.0 MiB**,
+up from **23.5 MiB**, while process-tree PSS rose from **38.7 to 43.1 MiB**.
+The host was shared: its sampled one-minute load peak was 14.95 for the
+baseline and 21.17 for the candidate. This is a CPU-positive hint, not a
+confirmed win; memory did not improve and one run per source cannot separate
+the change from run variation. The public phase timed out in both runs and is
+excluded. The single-torrent workload also does not establish the cache cap's
+effect under concurrent cross-torrent memory pressure.
+
+Full reports, time-series samples, and memory profiles:
+[clean-main baseline](../certification/reports/torrentng-deep-audit-baseline-20261021.md)
+and [integrated candidate](../certification/reports/torrentng-deep-audit-candidate-20261021.md).
 
 ### Download assembly and parsing
 
@@ -137,5 +184,6 @@ hybrid, padding, cancellation, and crash-checkpoint behavior.
 5. Re-run the comparative client suite only after the selected candidate passes
    correctness and shows improvement beyond run variation.
 
-The audit did not run a full-daemon benchmark. It does not establish a CPU
-speedup, RAM improvement, or universal client ranking.
+The original archived audit did not run a full-daemon benchmark. The later
+single-pair run adds preliminary source-level evidence but still does not
+establish a CPU speedup, RAM improvement, or universal client ranking.

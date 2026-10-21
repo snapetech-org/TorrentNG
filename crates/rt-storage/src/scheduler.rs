@@ -22,13 +22,13 @@ use sha1::{Digest, Sha1};
 #[cfg(any(unix, windows))]
 use crate::open::identity_matches_path;
 use crate::{
-    backend::{BackendJobOwnership, BackendRequest, SelectedDiskBackend},
+    backend::{read_frame_leased, BackendJobOwnership, BackendRequest, SelectedDiskBackend},
     device::{detect_storage_topology, StorageTopology},
     elevator::elevator_class_weight,
     error::StorageError,
     fd_limit::process_handle_cache_capacity,
     file_handle::LeasedFileHandle,
-    frame::{global_frame_pool, Frame},
+    frame::{global_frame_pool, try_global_frame_pool, Frame},
     handle_cache::HandleCache,
     io_class::IoClass,
     open::{create_dir_all_no_follow, normalized_storage_path, FileIdentity},
@@ -350,6 +350,11 @@ pub struct StorageIoStats {
     pub peer_read_cache_entries: usize,
     /// Payload bytes currently retained across all peer-read cache ranges.
     pub peer_read_cache_bytes: u64,
+    /// Backing allocation bytes held by peer-read cache owners process-wide,
+    /// including returned slices that outlive their cache entry.
+    pub peer_read_cache_global_backing_bytes: u64,
+    /// Process-wide cache backing allocation budget.
+    pub peer_read_cache_global_budget_bytes: u64,
     pub peer_read_cache_hits: u64,
     pub peer_read_cache_misses: u64,
     pub peer_read_cache_evictions: u64,
@@ -443,6 +448,8 @@ impl Default for StorageIoStats {
             preallocation_shrink_refused: 0,
             peer_read_cache_entries: 0,
             peer_read_cache_bytes: 0,
+            peer_read_cache_global_backing_bytes: 0,
+            peer_read_cache_global_budget_bytes: 0,
             peer_read_cache_hits: 0,
             peer_read_cache_misses: 0,
             peer_read_cache_evictions: 0,
@@ -516,8 +523,17 @@ impl FilePool {
         create: bool,
     ) -> Result<Arc<LeasedFileHandle>, StorageError> {
         let key = normalized_key(path);
+        self.get_or_open_normalized(&key, mode, create)
+    }
+
+    fn get_or_open_normalized(
+        &self,
+        key: &Path,
+        mode: OpenMode,
+        create: bool,
+    ) -> Result<Arc<LeasedFileHandle>, StorageError> {
         self.catalog
-            .get_or_open_leased(&key, mode == OpenMode::Write, create)
+            .get_or_open_leased(key, mode == OpenMode::Write, create)
             .map_err(|error| StorageError::io(key.display().to_string(), error))
     }
 
@@ -1113,6 +1129,7 @@ pub struct MountScheduler {
     write_admission_gate: Arc<AsyncRwLock<()>>,
     write_sequence: Arc<AtomicU64>,
     peer_read_cache: Arc<Mutex<PeerReadCache>>,
+    peer_read_cache_manager: Arc<PeerReadCacheManager>,
     peer_read_cache_epoch: Arc<AtomicU64>,
     /// Where each recently read file's next sequential read would start, so
     /// readahead only expands streams that actually continue.
@@ -1166,6 +1183,8 @@ struct StorageCounters {
     sparse_seek_fallbacks: AtomicU64,
     #[cfg(test)]
     operation_dispatches: Mutex<Vec<StorageDispatchTestSnapshot>>,
+    #[cfg(test)]
+    prepared_pread_operations: AtomicU64,
 }
 
 impl Default for StorageCounters {
@@ -1207,6 +1226,8 @@ impl Default for StorageCounters {
             sparse_seek_fallbacks: AtomicU64::new(0),
             #[cfg(test)]
             operation_dispatches: Mutex::new(Vec::new()),
+            #[cfg(test)]
+            prepared_pread_operations: AtomicU64::new(0),
         }
     }
 }
@@ -1217,7 +1238,6 @@ struct PeerReadCacheEntry {
     offset: u64,
     data: bytes::Bytes,
     last_used: Instant,
-    _lease: Option<MemoryLease>,
 }
 
 /// Bounded multi-range cache for peer upload reads. A single hot file may
@@ -1228,6 +1248,7 @@ struct PeerReadCache {
     files: HashMap<PathBuf, Vec<PeerReadCacheEntry>>,
     entries: usize,
     cached_bytes: usize,
+    registered_with_manager: bool,
 }
 
 impl PeerReadCache {
@@ -1328,10 +1349,10 @@ impl PeerReadCache {
         entry: PeerReadCacheEntry,
         max_entries: usize,
         max_bytes: usize,
-    ) -> bool {
+    ) -> Option<bool> {
         let entry_bytes = entry.data.len();
         if max_entries == 0 || max_bytes == 0 || entry_bytes > max_bytes {
-            return false;
+            return None;
         }
         if let Some(index) = self.files.get(&path).and_then(|entries| {
             entries
@@ -1346,14 +1367,244 @@ impl PeerReadCache {
             || self.cached_bytes.saturating_add(entry_bytes) > max_bytes
         {
             if !self.evict_oldest() {
-                return false;
+                return None;
             }
             evicted = true;
         }
         self.files.entry(path).or_default().push(entry);
         self.entries = self.entries.saturating_add(1);
         self.cached_bytes = self.cached_bytes.saturating_add(entry_bytes);
-        evicted
+        Some(evicted)
+    }
+}
+
+const MAX_GLOBAL_PEER_READ_CACHE_BYTES: u64 = 16 * 1024 * 1024;
+
+#[derive(Debug, Default)]
+struct PeerReadCacheRegistry {
+    caches: Vec<PeerReadCacheOwner>,
+    cache_ids: HashSet<usize>,
+    cursor: usize,
+}
+
+#[derive(Debug, Clone)]
+struct PeerReadCacheOwner {
+    id: usize,
+    cache: Weak<Mutex<PeerReadCache>>,
+    counters: Weak<StorageCounters>,
+    reclaim_scope_id: Option<usize>,
+}
+
+/// Process-wide peer read-cache budget. Per-torrent byte and entry limits
+/// still apply; this manager caps their combined retained backing memory and
+/// evicts one oldest range per cache turn when memory is needed.
+#[derive(Debug)]
+struct PeerReadCacheManager {
+    budget_bytes: u64,
+    used_bytes: AtomicU64,
+    registry: Mutex<PeerReadCacheRegistry>,
+}
+
+impl PeerReadCacheManager {
+    fn new(budget_bytes: u64) -> Self {
+        Self {
+            budget_bytes,
+            used_bytes: AtomicU64::new(0),
+            registry: Mutex::new(PeerReadCacheRegistry::default()),
+        }
+    }
+
+    fn reserve(self: &Arc<Self>, bytes: u64) -> Option<PeerReadCacheBudgetLease> {
+        if bytes > self.budget_bytes {
+            return None;
+        }
+        loop {
+            let current = self.used_bytes.load(Ordering::Acquire);
+            let next = current.checked_add(bytes)?;
+            if next <= self.budget_bytes {
+                if self
+                    .used_bytes
+                    .compare_exchange_weak(current, next, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    return Some(PeerReadCacheBudgetLease {
+                        manager: Arc::clone(self),
+                        bytes,
+                    });
+                }
+                continue;
+            }
+
+            let needed = next.saturating_sub(self.budget_bytes);
+            let reclaimed = self.reclaim(needed);
+            let trimmed = try_global_frame_pool()
+                .map(|pool| pool.trim_retained(needed))
+                .unwrap_or(0);
+            if reclaimed == 0 && trimmed == 0 {
+                return None;
+            }
+        }
+    }
+
+    fn register(
+        &self,
+        cache: &Arc<Mutex<PeerReadCache>>,
+        counters: &Arc<StorageCounters>,
+        reclaim_scope_id: Option<usize>,
+    ) {
+        lock_reset_derived_cache(cache).registered_with_manager = true;
+        let id = Arc::as_ptr(cache) as usize;
+        let mut registry = lock_recover(&self.registry);
+        if registry.cache_ids.contains(&id) {
+            if registry.caches.iter().any(|owner| {
+                owner.id == id
+                    && owner
+                        .cache
+                        .upgrade()
+                        .is_some_and(|registered| Arc::ptr_eq(&registered, cache))
+            }) {
+                return;
+            }
+            registry.caches.retain(|owner| owner.id != id);
+            registry.cache_ids.remove(&id);
+        }
+        registry.cache_ids.insert(id);
+        registry.caches.push(PeerReadCacheOwner {
+            id,
+            cache: Arc::downgrade(cache),
+            counters: Arc::downgrade(counters),
+            reclaim_scope_id,
+        });
+        if registry.cursor >= registry.caches.len() {
+            registry.cursor = 0;
+        }
+    }
+
+    fn reclaim(&self, target_bytes: u64) -> u64 {
+        self.reclaim_matching(target_bytes, None)
+    }
+
+    fn reclaim_for_scope(&self, target_bytes: u64, reclaim_scope_id: usize) -> u64 {
+        self.reclaim_matching(target_bytes, Some(reclaim_scope_id))
+    }
+
+    fn reclaim_matching(&self, target_bytes: u64, reclaim_scope_id: Option<usize>) -> u64 {
+        if target_bytes == 0 {
+            return 0;
+        }
+        let before = self.used_bytes.load(Ordering::Acquire);
+        let mut registry = lock_recover(&self.registry);
+        let mut remaining_in_round = registry.caches.len();
+        let mut released_in_round = false;
+        while before.saturating_sub(self.used_bytes.load(Ordering::Acquire)) < target_bytes
+            && !registry.caches.is_empty()
+        {
+            if remaining_in_round == 0 {
+                if !released_in_round {
+                    break;
+                }
+                remaining_in_round = registry.caches.len();
+                released_in_round = false;
+            }
+            let index = registry.cursor % registry.caches.len();
+            let owner = registry.caches[index].clone();
+            remaining_in_round -= 1;
+            if reclaim_scope_id.is_some_and(|id| owner.reclaim_scope_id != Some(id)) {
+                registry.cursor = (index + 1) % registry.caches.len();
+                continue;
+            }
+            let Some(cache_owner) = owner.cache.upgrade() else {
+                registry.caches.remove(index);
+                registry.cache_ids.remove(&owner.id);
+                registry.cursor = if registry.caches.is_empty() {
+                    0
+                } else {
+                    index % registry.caches.len()
+                };
+                continue;
+            };
+            let mut cache = lock_reset_derived_cache(&cache_owner);
+            if cache.entry_count() == 0 {
+                cache.registered_with_manager = false;
+                drop(cache);
+                registry.caches.remove(index);
+                registry.cache_ids.remove(&owner.id);
+                registry.cursor = if registry.caches.is_empty() {
+                    0
+                } else {
+                    index % registry.caches.len()
+                };
+                continue;
+            }
+
+            let used_before = self.used_bytes.load(Ordering::Acquire);
+            let evicted = cache.evict_oldest();
+            if evicted {
+                if let Some(counters) = owner.counters.upgrade() {
+                    counters
+                        .peer_read_cache_evictions
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            let became_empty = cache.entry_count() == 0;
+            if became_empty {
+                cache.registered_with_manager = false;
+            }
+            drop(cache);
+
+            if became_empty {
+                registry.caches.remove(index);
+                registry.cache_ids.remove(&owner.id);
+                registry.cursor = if registry.caches.is_empty() {
+                    0
+                } else {
+                    index % registry.caches.len()
+                };
+            } else {
+                registry.cursor = (index + 1) % registry.caches.len();
+            }
+            if self.used_bytes.load(Ordering::Acquire) < used_before {
+                released_in_round = true;
+            }
+        }
+        if registry.caches.is_empty() {
+            registry.cursor = 0;
+        }
+        before.saturating_sub(self.used_bytes.load(Ordering::Acquire))
+    }
+
+    fn used_bytes(&self) -> u64 {
+        self.used_bytes.load(Ordering::Relaxed)
+    }
+}
+
+static GLOBAL_PEER_READ_CACHE_MANAGER: Lazy<Arc<PeerReadCacheManager>> =
+    Lazy::new(|| Arc::new(PeerReadCacheManager::new(MAX_GLOBAL_PEER_READ_CACHE_BYTES)));
+
+#[derive(Debug)]
+struct PeerReadCacheBudgetLease {
+    manager: Arc<PeerReadCacheManager>,
+    bytes: u64,
+}
+
+impl Drop for PeerReadCacheBudgetLease {
+    fn drop(&mut self) {
+        self.manager
+            .used_bytes
+            .fetch_sub(self.bytes, Ordering::AcqRel);
+    }
+}
+
+#[derive(Debug)]
+struct CachedPeerBytes {
+    bytes: bytes::Bytes,
+    _resource_lease: Option<MemoryLease>,
+    _budget_lease: PeerReadCacheBudgetLease,
+}
+
+impl AsRef<[u8]> for CachedPeerBytes {
+    fn as_ref(&self) -> &[u8] {
+        self.bytes.as_ref()
     }
 }
 
@@ -1702,6 +1953,205 @@ enum ReadPreparation {
         file: Arc<LeasedFileHandle>,
         read_len: usize,
     },
+}
+
+struct PreparedPread {
+    file_pool: Arc<FilePool>,
+    peer_read_cache: Arc<Mutex<PeerReadCache>>,
+    peer_read_cache_manager: Arc<PeerReadCacheManager>,
+    peer_read_cache_epoch: Arc<AtomicU64>,
+    peer_read_streams: Arc<Mutex<PeerReadStreams>>,
+    counters: Arc<StorageCounters>,
+    resources: Option<ResourceGovernor>,
+    storage_root: StorageRootId,
+    cache_generation: Option<u64>,
+    readahead_bytes: usize,
+    sequential_only: bool,
+    readahead_cache_entries: usize,
+    readahead_cache_bytes: usize,
+    submission: Option<DiskSubmission>,
+}
+
+impl PreparedPread {
+    fn execute(
+        mut self,
+        class: IoClass,
+        path: PathBuf,
+        offset: u64,
+        len: usize,
+        started: Instant,
+    ) -> Result<StorageRead, StorageError> {
+        #[cfg(test)]
+        self.counters
+            .prepared_pread_operations
+            .fetch_add(1, Ordering::Relaxed);
+
+        let key = normalized_key(&path);
+        let file = self
+            .file_pool
+            .get_or_open_normalized(&key, OpenMode::Read, false)?;
+        if class == IoClass::PeerRead && self.readahead_bytes > len {
+            if let Some(bytes) =
+                peer_read_cache_hit(&self.peer_read_cache, &key, file.identity(), offset, len)
+            {
+                lock_recover(&self.peer_read_streams).observe(
+                    &key,
+                    offset,
+                    len,
+                    self.readahead_bytes,
+                    true,
+                );
+                self.counters
+                    .peer_read_cache_hits
+                    .fetch_add(1, Ordering::Relaxed);
+                verify_path_identity(&key, file.identity(), "payload_read")?;
+                self.counters.read_ops_by_class[class_index(class)].fetch_add(1, Ordering::Relaxed);
+                self.counters.bytes_read_by_class[class_index(class)]
+                    .fetch_add(len as u64, Ordering::Relaxed);
+                let latency_ns = latency_ns_since(started);
+                self.counters.read_latency_ns_by_class[class_index(class)]
+                    .fetch_add(latency_ns, Ordering::Relaxed);
+                record_latency_bucket(&self.counters.read_latency_buckets, latency_ns);
+                let mut submission = self.submission.take().ok_or_else(|| {
+                    StorageError::io(
+                        "prepared pread",
+                        io::Error::other("storage admission owner was already released"),
+                    )
+                })?;
+                submission.bind_file_identity(file.identity());
+                submission.operation.bind_byte_range(offset, len as u64);
+                drop(submission);
+                return Ok(StorageRead::Bytes(bytes));
+            }
+            self.counters
+                .peer_read_cache_misses
+                .fetch_add(1, Ordering::Relaxed);
+        }
+
+        let read_len =
+            if class == IoClass::PeerRead && self.readahead_bytes > len {
+                let file_len = file
+                    .metadata()
+                    .map_err(|error| StorageError::io(key.display().to_string(), error))?
+                    .len();
+                let (sequential, recommended_bytes) = lock_recover(&self.peer_read_streams)
+                    .observe(&key, offset, len, self.readahead_bytes, false);
+                if offset >= file_len || (self.sequential_only && !sequential) {
+                    len
+                } else {
+                    (if self.sequential_only {
+                        recommended_bytes
+                    } else {
+                        self.readahead_bytes
+                    })
+                    .min(file_len.saturating_sub(offset) as usize)
+                    .max(len)
+                }
+            } else {
+                len
+            };
+        advise_for_read_class(file.as_ref(), class, offset, read_len, &self.counters);
+
+        let mut submission = self.submission.take().ok_or_else(|| {
+            StorageError::io(
+                "prepared pread",
+                io::Error::other("storage admission owner was already released"),
+            )
+        })?;
+        submission.retain_file(Arc::clone(&file));
+        submission
+            .operation
+            .bind_byte_range(offset, read_len as u64);
+        let requested_charge = queued_disk_charge(len as u64);
+        let read_buffer_charge = queued_disk_charge(read_len as u64);
+        let read_buffer_queued_bytes = read_buffer_charge
+            .checked_sub(requested_charge)
+            .filter(|bytes| *bytes > 0)
+            .map(|bytes| {
+                QueuedDiskBytes::reserve_charged(
+                    self.counters.clone(),
+                    self.resources.as_ref(),
+                    bytes,
+                    format!("storage-root-{}-readahead", self.storage_root.0),
+                )
+            })
+            .transpose()?;
+        if let Some(extra_charge) = read_buffer_queued_bytes.as_ref() {
+            submission
+                .operation
+                .resource_credit
+                .include(extra_charge.resource_credit());
+        }
+        let frame = global_frame_pool()
+            .try_acquire_for_overwrite(read_len)
+            .ok_or_else(|| StorageError::QueueFull {
+                mount: "scheduler-read-frame".to_string(),
+            })?;
+        submission.record_frame_pool_charge(&frame);
+        submission.trace_dispatch("positioned_read", class, 1);
+        let frame = read_frame_leased(file.as_ref(), frame, offset).map_err(|error| {
+            if matches!(
+                error.kind(),
+                io::ErrorKind::UnexpectedEof | io::ErrorKind::WriteZero
+            ) {
+                StorageError::ShortIo {
+                    path: key.display().to_string(),
+                    expected: len,
+                    actual: 0,
+                }
+            } else {
+                StorageError::io(key.display().to_string(), error)
+            }
+        })?;
+        drop(submission);
+        drop(read_buffer_queued_bytes);
+
+        current_file_identity(&key, file.as_ref(), "payload_read")?;
+        self.counters.read_ops_by_class[class_index(class)].fetch_add(1, Ordering::Relaxed);
+        self.counters.bytes_read_by_class[class_index(class)]
+            .fetch_add(len as u64, Ordering::Relaxed);
+        self.counters.backend_read_ops_by_class[class_index(class)].fetch_add(1, Ordering::Relaxed);
+        self.counters.backend_bytes_read_by_class[class_index(class)]
+            .fetch_add(read_len as u64, Ordering::Relaxed);
+        advise_after_read_class(file.as_ref(), class, offset, read_len, &self.counters);
+        let latency_ns = latency_ns_since(started);
+        self.counters.read_latency_ns_by_class[class_index(class)]
+            .fetch_add(latency_ns, Ordering::Relaxed);
+        record_latency_bucket(&self.counters.read_latency_buckets, latency_ns);
+
+        if class == IoClass::PeerRead && read_len > len {
+            let backing_bytes = frame.charged_bytes();
+            let bytes = frame.into_bytes();
+            let Some(cache_generation) = self.cache_generation else {
+                return Err(StorageError::io(
+                    "peer read cache",
+                    io::Error::other("read-ahead completed without a cache generation"),
+                ));
+            };
+            let exact = bytes.slice(..len);
+            let cached_exact = peer_read_cache_store_parts(
+                &self.peer_read_cache,
+                &self.peer_read_cache_manager,
+                &self.peer_read_cache_epoch,
+                self.resources.as_ref(),
+                &self.counters,
+                PeerReadCacheInsert {
+                    generation: cache_generation,
+                    key,
+                    identity: file.identity(),
+                    offset,
+                    data: bytes,
+                    max_entries: self.readahead_cache_entries,
+                    max_bytes: self.readahead_cache_bytes,
+                    backing_bytes,
+                    result_len: len,
+                },
+            );
+            Ok(StorageRead::Bytes(cached_exact.unwrap_or(exact)))
+        } else {
+            Ok(StorageRead::Frame(frame))
+        }
+    }
 }
 
 impl QueuedDiskBytes {
@@ -3163,6 +3613,30 @@ impl MountScheduler {
                 None
             };
         let peer_read_elevator = Arc::new(Mutex::new(peer_read_elevator));
+        let peer_read_cache = Arc::new(Mutex::new(PeerReadCache::default()));
+        let peer_read_cache_manager = Arc::clone(&GLOBAL_PEER_READ_CACHE_MANAGER);
+        if let Some(resources) = config.resources.as_ref() {
+            let manager = Arc::clone(&peer_read_cache_manager);
+            resources.register_reclaimer(MemoryClass::PeerBuffer, "rt-storage.peer-read-cache", {
+                let reclaim_scope_id = resources.reclaim_scope_id();
+                move |needed| {
+                    let cache_reclaimed = manager.reclaim_for_scope(needed, reclaim_scope_id);
+                    let frame_reclaimed = try_global_frame_pool()
+                        .map(|pool| pool.trim_retained(needed))
+                        .unwrap_or(0);
+                    cache_reclaimed.max(frame_reclaimed)
+                }
+            });
+            resources.register_reclaimer(
+                MemoryClass::StorageFrame,
+                "rt-storage.frame-pool",
+                |needed| {
+                    try_global_frame_pool()
+                        .map(|pool| pool.trim_retained(needed))
+                        .unwrap_or(0)
+                },
+            );
+        }
 
         MountScheduler {
             storage_root,
@@ -3185,7 +3659,8 @@ impl MountScheduler {
             file_sync_fences: Arc::new(FileSyncFenceRegistry::default()),
             write_admission_gate: Arc::new(AsyncRwLock::new(())),
             write_sequence: Arc::new(AtomicU64::new(0)),
-            peer_read_cache: Arc::new(Mutex::new(PeerReadCache::default())),
+            peer_read_cache,
+            peer_read_cache_manager,
             peer_read_cache_epoch: Arc::new(AtomicU64::new(0)),
             peer_read_streams: Arc::new(Mutex::new(PeerReadStreams::default())),
             peer_read_elevator,
@@ -3276,6 +3751,8 @@ impl MountScheduler {
                 .load(Ordering::Relaxed),
             peer_read_cache_entries,
             peer_read_cache_bytes,
+            peer_read_cache_global_backing_bytes: self.peer_read_cache_manager.used_bytes(),
+            peer_read_cache_global_budget_bytes: self.peer_read_cache_manager.budget_bytes,
             peer_read_cache_hits: self.counters.peer_read_cache_hits.load(Ordering::Relaxed),
             peer_read_cache_misses: self.counters.peer_read_cache_misses.load(Ordering::Relaxed),
             peer_read_cache_evictions: self
@@ -3747,6 +4224,43 @@ impl MountScheduler {
                 return Ok(StorageRead::Bytes(bytes));
             }
         }
+
+        if disk_backend.uses_pread_workers() {
+            let mut submission = self.reserve_mount_submission(len as u64)?;
+            submission.start_device_operation(
+                self.acquire_device_operation_with_priority(class, priority)
+                    .await?,
+            );
+            let prepared = PreparedPread {
+                file_pool: pool,
+                peer_read_cache,
+                peer_read_cache_manager: self.peer_read_cache_manager.clone(),
+                peer_read_cache_epoch,
+                peer_read_streams,
+                counters: counters.clone(),
+                resources: self.resources.clone(),
+                storage_root: self.storage_root,
+                cache_generation,
+                readahead_bytes,
+                sequential_only,
+                readahead_cache_entries,
+                readahead_cache_bytes,
+                submission: Some(submission),
+            };
+            let failed_counter = counters.clone();
+            let result = disk_backend
+                .run_prepared_pread(move || prepared.execute(class, path, offset, len, started))
+                .await;
+            if matches!(
+                &result,
+                Err(StorageError::QueueFull { mount })
+                    if mount == "disk-backend" || mount == "scheduler-read-frame"
+            ) {
+                failed_counter.queue_full.fetch_add(1, Ordering::Relaxed);
+            }
+            return result;
+        }
+
         let submission = self.reserve_mount_submission(len as u64)?;
         let preparation_counters = counters.clone();
         let preparation_peer_read_cache = peer_read_cache.clone();
@@ -3923,17 +4437,22 @@ impl MountScheduler {
                     .fetch_add(latency_ns, Ordering::Relaxed);
                 record_latency_bucket(&counters.read_latency_buckets, latency_ns);
                 if class == IoClass::PeerRead && read_len > len {
+                    let backing_bytes = frame.charged_bytes();
                     let bytes = frame.into_bytes();
                     let exact = bytes.slice(..len);
                     let identity = file.identity();
-                    self.peer_read_cache_store(
-                        cache_generation.expect("peer-read cache generation is set"),
+                    let cached_exact = self.peer_read_cache_store(PeerReadCacheInsert {
+                        generation: cache_generation.expect("peer-read cache generation is set"),
                         key,
                         identity,
                         offset,
-                        bytes,
-                    );
-                    Ok(StorageRead::Bytes(exact))
+                        data: bytes,
+                        max_entries: self.io_config.peer_read_cache_entries,
+                        max_bytes: self.io_config.peer_read_cache_bytes,
+                        backing_bytes,
+                        result_len: len,
+                    });
+                    Ok(StorageRead::Bytes(cached_exact.unwrap_or(exact)))
                 } else {
                     Ok(StorageRead::Frame(frame))
                 }
@@ -3941,52 +4460,19 @@ impl MountScheduler {
         }
     }
 
-    fn peer_read_cache_store(
-        &self,
-        generation: u64,
-        key: PathBuf,
-        identity: FileIdentity,
-        offset: u64,
-        data: bytes::Bytes,
-    ) {
-        let max_entries = self.io_config.peer_read_cache_entries;
-        let max_bytes = self.io_config.peer_read_cache_bytes;
-        if max_entries == 0 || max_bytes == 0 || data.len() > max_bytes {
-            return;
-        }
-        let lease = if let Some(resources) = self.resources.as_ref() {
-            match resources.try_acquire(MemoryClass::PeerBuffer, data.len() as u64) {
-                Some(lease) => Some(lease),
-                None => {
-                    self.counters.queue_full.fetch_add(1, Ordering::Relaxed);
-                    return;
-                }
-            }
-        } else {
-            None
-        };
-        let mut cache = lock_reset_derived_cache(&self.peer_read_cache);
-        if self.peer_read_cache_epoch.load(Ordering::Acquire) != generation {
-            // A write completed while this read was in flight. Do not
-            // publish the stale backend bytes into the cache.
-            return;
-        }
-        if cache.insert(
-            key,
-            PeerReadCacheEntry {
-                identity,
-                offset,
-                data,
-                last_used: Instant::now(),
-                _lease: lease,
+    fn peer_read_cache_store(&self, insert: PeerReadCacheInsert) -> Option<bytes::Bytes> {
+        peer_read_cache_store_parts(
+            &self.peer_read_cache,
+            &self.peer_read_cache_manager,
+            &self.peer_read_cache_epoch,
+            self.resources.as_ref(),
+            &self.counters,
+            PeerReadCacheInsert {
+                max_entries: self.io_config.peer_read_cache_entries,
+                max_bytes: self.io_config.peer_read_cache_bytes,
+                ..insert
             },
-            max_entries,
-            max_bytes,
-        ) {
-            self.counters
-                .peer_read_cache_evictions
-                .fetch_add(1, Ordering::Relaxed);
-        }
+        )
     }
 
     pub async fn write_at(
@@ -5260,6 +5746,94 @@ fn peer_read_cache_invalidate(cache: &Mutex<PeerReadCache>, epoch: &AtomicU64, k
     lock_reset_derived_cache(cache).remove_file(key);
 }
 
+struct PeerReadCacheInsert {
+    generation: u64,
+    key: PathBuf,
+    identity: FileIdentity,
+    offset: u64,
+    data: bytes::Bytes,
+    max_entries: usize,
+    max_bytes: usize,
+    backing_bytes: u64,
+    result_len: usize,
+}
+
+fn peer_read_cache_store_parts(
+    cache: &Arc<Mutex<PeerReadCache>>,
+    manager: &Arc<PeerReadCacheManager>,
+    epoch: &AtomicU64,
+    resources: Option<&ResourceGovernor>,
+    counters: &Arc<StorageCounters>,
+    insert: PeerReadCacheInsert,
+) -> Option<bytes::Bytes> {
+    let PeerReadCacheInsert {
+        generation,
+        key,
+        identity,
+        offset,
+        data,
+        max_entries,
+        max_bytes,
+        backing_bytes,
+        result_len,
+    } = insert;
+    if max_entries == 0 || max_bytes == 0 || data.len() > max_bytes || result_len > data.len() {
+        return None;
+    }
+    let budget_lease = manager.reserve(backing_bytes)?;
+    let lease = if let Some(resources) = resources {
+        match resources.try_acquire(MemoryClass::PeerBuffer, backing_bytes) {
+            Some(lease) => Some(lease),
+            None => {
+                counters.queue_full.fetch_add(1, Ordering::Relaxed);
+                return None;
+            }
+        }
+    } else {
+        None
+    };
+    let mut cache_guard = lock_reset_derived_cache(cache);
+    if epoch.load(Ordering::Acquire) != generation {
+        // A write completed while this read was in flight. Do not publish
+        // stale backend bytes into the cache.
+        return None;
+    }
+    let data = bytes::Bytes::from_owner(CachedPeerBytes {
+        bytes: data,
+        _resource_lease: lease,
+        _budget_lease: budget_lease,
+    });
+    let result = data.slice(..result_len);
+    let evicted = cache_guard.insert(
+        key,
+        PeerReadCacheEntry {
+            identity,
+            offset,
+            data,
+            last_used: Instant::now(),
+        },
+        max_entries,
+        max_bytes,
+    );
+    let evicted = evicted?;
+    if evicted {
+        counters
+            .peer_read_cache_evictions
+            .fetch_add(1, Ordering::Relaxed);
+    }
+    let should_register = !cache_guard.registered_with_manager;
+    cache_guard.registered_with_manager = true;
+    drop(cache_guard);
+    if should_register {
+        manager.register(
+            cache,
+            counters,
+            resources.map(ResourceGovernor::reclaim_scope_id),
+        );
+    }
+    Some(result)
+}
+
 fn advise_for_read_class(
     file: &File,
     class: IoClass,
@@ -5523,6 +6097,219 @@ mod tests {
     use rt_path::SafeRelPath;
     use rt_path::StorageRootId;
     use rt_piece_map::{FileSpan, PieceMap};
+
+    fn insert_manager_test_range(
+        manager: &Arc<PeerReadCacheManager>,
+        cache: &Arc<Mutex<PeerReadCache>>,
+        counters: &Arc<StorageCounters>,
+        key: PathBuf,
+        identity: FileIdentity,
+        payload: &[u8],
+    ) {
+        let budget_lease = manager.reserve(payload.len() as u64).unwrap();
+        let data = bytes::Bytes::from_owner(CachedPeerBytes {
+            bytes: bytes::Bytes::copy_from_slice(payload),
+            _resource_lease: None,
+            _budget_lease: budget_lease,
+        });
+        let inserted = lock_reset_derived_cache(cache).insert(
+            key,
+            PeerReadCacheEntry {
+                identity,
+                offset: 0,
+                data,
+                last_used: Instant::now(),
+            },
+            8,
+            1024,
+        );
+        assert!(inserted.is_some());
+        manager.register(cache, counters, None);
+    }
+
+    #[test]
+    fn global_peer_cache_budget_reclaims_ranges_across_torrents() {
+        let dir = tempfile::tempdir().unwrap();
+        let first_path = dir.path().join("first-cache-owner.bin");
+        let second_path = dir.path().join("second-cache-owner.bin");
+        std::fs::write(&first_path, b"first").unwrap();
+        std::fs::write(&second_path, b"second").unwrap();
+        let first_identity = file_identity(&File::open(&first_path).unwrap()).unwrap();
+        let second_identity = file_identity(&File::open(&second_path).unwrap()).unwrap();
+        let manager = Arc::new(PeerReadCacheManager::new(8));
+        let first_cache = Arc::new(Mutex::new(PeerReadCache::default()));
+        let second_cache = Arc::new(Mutex::new(PeerReadCache::default()));
+        let first_counters = Arc::new(StorageCounters::default());
+        let second_counters = Arc::new(StorageCounters::default());
+
+        insert_manager_test_range(
+            &manager,
+            &first_cache,
+            &first_counters,
+            first_path,
+            first_identity,
+            b"1234",
+        );
+        insert_manager_test_range(
+            &manager,
+            &second_cache,
+            &second_counters,
+            second_path,
+            second_identity,
+            b"5678",
+        );
+        assert_eq!(manager.used_bytes(), 8);
+
+        let new_owner = manager.reserve(6).unwrap();
+
+        assert_eq!(manager.used_bytes(), 6);
+        assert_eq!(lock_reset_derived_cache(&first_cache).entry_count(), 0);
+        assert_eq!(lock_reset_derived_cache(&second_cache).entry_count(), 0);
+        assert_eq!(
+            first_counters
+                .peer_read_cache_evictions
+                .load(Ordering::Relaxed),
+            1
+        );
+        assert_eq!(
+            second_counters
+                .peer_read_cache_evictions
+                .load(Ordering::Relaxed),
+            1
+        );
+        drop(new_owner);
+        assert_eq!(manager.used_bytes(), 0);
+    }
+
+    #[test]
+    fn cache_alias_keeps_both_memory_budgets_until_last_slice_drops() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache-alias-owner.bin");
+        std::fs::write(&path, b"payload").unwrap();
+        let identity = file_identity(&File::open(&path).unwrap()).unwrap();
+        let manager = Arc::new(PeerReadCacheManager::new(32));
+        let cache = Arc::new(Mutex::new(PeerReadCache::default()));
+        let counters = Arc::new(StorageCounters::default());
+        let governor = ResourceGovernor::new(rt_metrics::ResourceGovernorConfig {
+            total_cap_bytes: 32,
+            class_caps_bytes: [32; rt_metrics::MEMORY_CLASS_COUNT],
+            ..Default::default()
+        });
+        let epoch = AtomicU64::new(0);
+        let response = peer_read_cache_store_parts(
+            &cache,
+            &manager,
+            &epoch,
+            Some(&governor),
+            &counters,
+            PeerReadCacheInsert {
+                generation: 0,
+                key: path,
+                identity,
+                offset: 0,
+                data: bytes::Bytes::from_static(b"payload"),
+                max_entries: 4,
+                max_bytes: 32,
+                backing_bytes: 7,
+                result_len: 3,
+            },
+        )
+        .expect("bounded cache admission succeeds");
+        assert_eq!(&response[..], b"pay");
+        assert_eq!(manager.reclaim(7), 0);
+        assert_eq!(lock_reset_derived_cache(&cache).entry_count(), 0);
+        assert_eq!(manager.used_bytes(), 7);
+        assert_eq!(
+            governor.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
+            7
+        );
+
+        drop(response);
+        assert_eq!(manager.used_bytes(), 0);
+        assert_eq!(
+            governor.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
+            0
+        );
+    }
+
+    #[test]
+    fn governor_reclaim_does_not_evict_another_governors_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let first_path = dir.path().join("governor-one.bin");
+        let second_path = dir.path().join("governor-two.bin");
+        std::fs::write(&first_path, b"first").unwrap();
+        std::fs::write(&second_path, b"second").unwrap();
+        let first_identity = file_identity(&File::open(&first_path).unwrap()).unwrap();
+        let second_identity = file_identity(&File::open(&second_path).unwrap()).unwrap();
+        let manager = Arc::new(PeerReadCacheManager::new(8));
+        let first_cache = Arc::new(Mutex::new(PeerReadCache::default()));
+        let second_cache = Arc::new(Mutex::new(PeerReadCache::default()));
+        let first_counters = Arc::new(StorageCounters::default());
+        let second_counters = Arc::new(StorageCounters::default());
+        let config = rt_metrics::ResourceGovernorConfig {
+            total_cap_bytes: 8,
+            class_caps_bytes: [8; rt_metrics::MEMORY_CLASS_COUNT],
+            ..Default::default()
+        };
+        let first_governor = ResourceGovernor::new(config);
+        let second_governor = ResourceGovernor::new(config);
+
+        let first_response = peer_read_cache_store_parts(
+            &first_cache,
+            &manager,
+            &AtomicU64::new(0),
+            Some(&first_governor),
+            &first_counters,
+            PeerReadCacheInsert {
+                generation: 0,
+                key: first_path,
+                identity: first_identity,
+                offset: 0,
+                data: bytes::Bytes::from_static(b"1111"),
+                max_entries: 4,
+                max_bytes: 8,
+                backing_bytes: 4,
+                result_len: 1,
+            },
+        )
+        .unwrap();
+        let second_response = peer_read_cache_store_parts(
+            &second_cache,
+            &manager,
+            &AtomicU64::new(0),
+            Some(&second_governor),
+            &second_counters,
+            PeerReadCacheInsert {
+                generation: 0,
+                key: second_path,
+                identity: second_identity,
+                offset: 0,
+                data: bytes::Bytes::from_static(b"2222"),
+                max_entries: 4,
+                max_bytes: 8,
+                backing_bytes: 4,
+                result_len: 1,
+            },
+        )
+        .unwrap();
+        drop((first_response, second_response));
+
+        assert_eq!(
+            manager.reclaim_for_scope(4, first_governor.reclaim_scope_id()),
+            4
+        );
+        assert_eq!(lock_reset_derived_cache(&first_cache).entry_count(), 0);
+        assert_eq!(lock_reset_derived_cache(&second_cache).entry_count(), 1);
+        assert_eq!(manager.used_bytes(), 4);
+        assert_eq!(
+            first_governor.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
+            0
+        );
+        assert_eq!(
+            second_governor.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
+            4
+        );
+    }
 
     #[test]
     fn default_storage_pools_use_bounded_worker_counts() {
@@ -7118,14 +7905,17 @@ mod tests {
 
         let result = scheduled_read(&sched, IoClass::Foreground, &path, 0, 8).await;
 
-        assert!(matches!(
-            result,
-            Err(StorageError::ShortIo {
-                expected: 8,
-                actual: 0,
-                ..
-            })
-        ));
+        assert!(
+            matches!(
+                result,
+                Err(StorageError::ShortIo {
+                    expected: 8,
+                    actual: 0,
+                    ..
+                })
+            ),
+            "unexpected short positioned read result: {result:?}"
+        );
     }
 
     #[tokio::test]
@@ -8115,18 +8905,21 @@ mod tests {
         std::fs::write(&path, b"fresh").unwrap();
         let file = File::open(&path).unwrap();
         let cache = Arc::new(Mutex::new(PeerReadCache::default()));
-        cache.lock().unwrap().insert(
-            path.clone(),
-            PeerReadCacheEntry {
-                identity: file_identity(&file).unwrap(),
-                offset: 0,
-                data: bytes::Bytes::from_static(b"stale"),
-                last_used: Instant::now(),
-                _lease: None,
-            },
-            1,
-            1024,
-        );
+        assert!(cache
+            .lock()
+            .unwrap()
+            .insert(
+                path.clone(),
+                PeerReadCacheEntry {
+                    identity: file_identity(&file).unwrap(),
+                    offset: 0,
+                    data: bytes::Bytes::from_static(b"stale"),
+                    last_used: Instant::now(),
+                },
+                1,
+                1024,
+            )
+            .is_some());
 
         let poisoner = Arc::clone(&cache);
         assert!(std::thread::spawn(move || {
@@ -8319,6 +9112,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn portable_peer_read_fuses_cache_lookup_and_backend_completion() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("prepared-pread.bin");
+        std::fs::write(&path, b"abcdefghijklmnopqrstuvwxyz").unwrap();
+        let mut scheduler = MountScheduler::new(
+            StorageRootId::new(),
+            &SchedulerConfig {
+                profile: StorageProfile::Hdd,
+                storage_io: StorageIoConfig {
+                    peer_read_readahead_bytes: 16,
+                    peer_read_readahead_sequential_only: false,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        scheduler.disk_backend = Arc::new(SelectedDiskBackend::select(BackendRequest::Pread, 1));
+
+        let first = scheduled_read(&scheduler, IoClass::PeerRead, &path, 0, 4)
+            .await
+            .unwrap();
+        let second = scheduled_read(&scheduler, IoClass::PeerRead, &path, 4, 4)
+            .await
+            .unwrap();
+
+        assert_eq!(&first[..], b"abcd");
+        assert_eq!(&second[..], b"efgh");
+        assert_eq!(
+            scheduler
+                .counters
+                .prepared_pread_operations
+                .load(Ordering::Relaxed),
+            2
+        );
+        let stats = scheduler.stats();
+        assert_eq!(stats.peer_read_cache_misses, 1);
+        assert_eq!(stats.peer_read_cache_hits, 1);
+        assert_eq!(
+            stats.backend_read_ops_by_class[class_index(IoClass::PeerRead)],
+            1
+        );
+    }
+
+    #[tokio::test]
     async fn peer_read_readahead_cache_retains_disjoint_ranges_for_one_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("multi-range-readahead.bin");
@@ -8492,18 +9329,21 @@ mod tests {
         let file = File::open(&path).unwrap();
         let key = path.clone();
         let cache = Arc::new(Mutex::new(PeerReadCache::default()));
-        cache.lock().unwrap().insert(
-            key.clone(),
-            PeerReadCacheEntry {
-                identity: file_identity(&file).unwrap(),
-                offset: 0,
-                data: bytes::Bytes::from_static(b"stale"),
-                last_used: Instant::now(),
-                _lease: None,
-            },
-            1,
-            1024,
-        );
+        assert!(cache
+            .lock()
+            .unwrap()
+            .insert(
+                key.clone(),
+                PeerReadCacheEntry {
+                    identity: file_identity(&file).unwrap(),
+                    offset: 0,
+                    data: bytes::Bytes::from_static(b"stale"),
+                    last_used: Instant::now(),
+                },
+                1,
+                1024,
+            )
+            .is_some());
         let epoch = Arc::new(AtomicU64::new(0));
         let owner_dropped = Arc::new(AtomicBool::new(false));
         let (caller_ownership, backend_owner) =

@@ -27,6 +27,7 @@ use std::os::unix::io::AsRawFd;
 use std::os::windows::fs::FileExt;
 #[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering as AtomicOrdering};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
 use std::thread;
 
@@ -38,6 +39,7 @@ use crate::file_handle::LeasedFileHandle;
 use crate::frame::Frame;
 #[cfg(target_os = "linux")]
 use crate::frame::{RegisteredFrameSlot, RegisteredFrameSlots};
+use crate::StorageError;
 
 fn lock_job_receiver<T>(receiver: &Mutex<T>) -> MutexGuard<'_, T> {
     match receiver.lock() {
@@ -283,6 +285,32 @@ impl SelectedDiskBackend {
 
     pub fn selection(&self) -> &BackendSelection {
         &self.selection
+    }
+
+    pub(crate) fn uses_pread_workers(&self) -> bool {
+        matches!(&self.inner, SelectedDiskBackendInner::Pread(_))
+    }
+
+    /// Execute one complete path-backed operation in the portable disk
+    /// worker queue. io_uring keeps its own submission/completion lifecycle.
+    pub(crate) async fn run_prepared_pread<T, F>(&self, f: F) -> Result<T, StorageError>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> Result<T, StorageError> + Send + 'static,
+    {
+        match &self.inner {
+            SelectedDiskBackendInner::Pread(backend) => backend.run_prepared(f).await,
+            #[cfg(target_os = "linux")]
+            SelectedDiskBackendInner::Uring(_) => Err(StorageError::io(
+                "prepared pread",
+                io::Error::other("prepared path operation requires the portable backend"),
+            )),
+            #[cfg(test)]
+            SelectedDiskBackendInner::Injected(_) => Err(StorageError::io(
+                "prepared pread",
+                io::Error::other("prepared path operation is unavailable for injected backends"),
+            )),
+        }
     }
 
     /// Construct a scheduler backend around a scripted test implementation.
@@ -1152,6 +1180,12 @@ impl UringWorker {
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1).max(1);
         match job {
+            Job::Prepared(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "prepared operations must use the portable disk worker pool",
+                ));
+            }
             Job::Read {
                 file,
                 mut frame,
@@ -1574,6 +1608,7 @@ impl BackendFile {
 }
 
 enum Job {
+    Prepared(PreparedJob),
     Read {
         file: BackendFile,
         frame: Frame,
@@ -1593,6 +1628,25 @@ enum Job {
         reply: oneshot::Sender<io::Result<()>>,
         owner: Option<BackendJobOwnership>,
     },
+}
+
+type PreparedJob = Box<dyn FnOnce() + Send + 'static>;
+
+const PREPARED_JOB_QUEUED: u8 = 0;
+const PREPARED_JOB_STARTED: u8 = 1;
+const PREPARED_JOB_CANCELLED: u8 = 2;
+
+struct PreparedJobCancelGuard(Arc<AtomicU8>);
+
+impl Drop for PreparedJobCancelGuard {
+    fn drop(&mut self) {
+        let _ = self.0.compare_exchange(
+            PREPARED_JOB_QUEUED,
+            PREPARED_JOB_CANCELLED,
+            AtomicOrdering::AcqRel,
+            AtomicOrdering::Acquire,
+        );
+    }
 }
 
 fn read_exact_with(
@@ -1651,6 +1705,17 @@ fn read_exact_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
     read_exact_with(buf, offset, |buffer, position| {
         file.read_at(buffer, position)
     })
+}
+
+#[cfg(any(unix, windows))]
+pub(crate) fn read_frame_leased(
+    file: &LeasedFileHandle,
+    mut frame: Frame,
+    offset: u64,
+) -> io::Result<Frame> {
+    read_exact_at(file.as_file(), frame.as_mut_slice(), offset)?;
+    frame.mark_initialized();
+    Ok(frame)
 }
 
 #[cfg(windows)]
@@ -1808,6 +1873,53 @@ impl PreadBackend {
         rx
     }
 
+    /// Run a complete prepared storage operation on the same bounded worker
+    /// pool that performs positioned I/O. This lets the scheduler keep path
+    /// normalization, descriptor lookup, cache checks, the read, and final
+    /// identity validation behind one queue and one completion.
+    pub(crate) async fn run_prepared<T, F>(&self, f: F) -> Result<T, StorageError>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> Result<T, StorageError> + Send + 'static,
+    {
+        let (reply, result) = oneshot::channel();
+        let state = Arc::new(AtomicU8::new(PREPARED_JOB_QUEUED));
+        let worker_state = Arc::clone(&state);
+        let job: PreparedJob = Box::new(move || {
+            if worker_state
+                .compare_exchange(
+                    PREPARED_JOB_QUEUED,
+                    PREPARED_JOB_STARTED,
+                    AtomicOrdering::AcqRel,
+                    AtomicOrdering::Acquire,
+                )
+                .is_err()
+            {
+                return;
+            }
+            let _ = reply.send(f());
+        });
+        let _cancel_guard = PreparedJobCancelGuard(state);
+        match self.tx.try_send(Job::Prepared(job)) {
+            Ok(()) => {}
+            Err(mpsc::TrySendError::Full(_)) => {
+                return Err(StorageError::QueueFull {
+                    mount: "disk-backend".to_string(),
+                });
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => {
+                return Err(StorageError::io(
+                    "disk-backend",
+                    io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "portable disk worker pool is closed",
+                    ),
+                ));
+            }
+        }
+        result.await.map_err(|_| StorageError::Cancelled)?
+    }
+
     fn worker(rx: Arc<Mutex<mpsc::Receiver<Job>>>) {
         loop {
             // Lock only to dequeue; the actual syscall runs unlocked so
@@ -1820,6 +1932,7 @@ impl PreadBackend {
                 return; // sender dropped → shutdown
             };
             match job {
+                Job::Prepared(job) => job(),
                 Job::Read {
                     file,
                     mut frame,
@@ -1936,6 +2049,7 @@ fn fail_job_on_full(result: Result<(), mpsc::TrySendError<Job>>) {
 fn fail_job(job: Job, kind: io::ErrorKind, message: &'static str) {
     let error = || io::Error::new(kind, message);
     match job {
+        Job::Prepared(_) => {}
         Job::Read {
             reply, mut owner, ..
         } => {
@@ -1964,6 +2078,18 @@ mod tests {
     use crate::frame::FramePool;
     use crate::handle_cache::HandleCache;
     use std::time::Duration;
+
+    struct PreparedDropProbe {
+        dropped: Arc<std::sync::atomic::AtomicBool>,
+        notify: Arc<tokio::sync::Notify>,
+    }
+
+    impl Drop for PreparedDropProbe {
+        fn drop(&mut self) {
+            self.dropped.store(true, AtomicOrdering::Release);
+            self.notify.notify_one();
+        }
+    }
 
     #[test]
     fn queued_job_retains_descriptor_lease_after_caller_cancellation() {
@@ -2099,6 +2225,56 @@ mod tests {
         let mut frame = pool.try_acquire(5).unwrap();
         frame = backend.pread(file, frame, 8).await.unwrap().unwrap();
         assert_eq!(frame.as_slice(), b"hello");
+    }
+
+    #[tokio::test]
+    async fn prepared_storage_operation_runs_on_bounded_disk_worker() {
+        let backend = PreadBackend::new_with_queue_depth(1, 1);
+        let worker_name = backend
+            .run_prepared(|| {
+                Ok(std::thread::current()
+                    .name()
+                    .unwrap_or_default()
+                    .to_string())
+            })
+            .await
+            .unwrap();
+        assert!(worker_name.starts_with("tng-disk-"));
+    }
+
+    #[tokio::test]
+    async fn prepared_operation_keeps_owners_until_started_work_finishes() {
+        let backend = Arc::new(PreadBackend::new_with_queue_depth(1, 1));
+        let (started_tx, started_rx) = oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let drop_notify = Arc::new(tokio::sync::Notify::new());
+        let operation_dropped = Arc::clone(&dropped);
+        let operation_notify = Arc::clone(&drop_notify);
+
+        let operation = tokio::spawn(async move {
+            let probe = PreparedDropProbe {
+                dropped: operation_dropped,
+                notify: operation_notify,
+            };
+            backend
+                .run_prepared(move || {
+                    let _probe = probe;
+                    let _ = started_tx.send(());
+                    release_rx.recv().unwrap();
+                    Ok(())
+                })
+                .await
+        });
+
+        started_rx.await.unwrap();
+        operation.abort();
+        assert!(operation.await.is_err());
+        assert!(!dropped.load(AtomicOrdering::Acquire));
+
+        release_tx.send(()).unwrap();
+        drop_notify.notified().await;
+        assert!(dropped.load(AtomicOrdering::Acquire));
     }
 
     #[tokio::test]

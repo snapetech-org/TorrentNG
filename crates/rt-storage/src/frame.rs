@@ -90,6 +90,35 @@ impl FramePool {
         self.lock_inner().retained_bytes
     }
 
+    /// Drop idle reusable buffers until at least `target_bytes` have been
+    /// released, or the pool is empty. Live frames and byte owners are never
+    /// affected. The returned count is allocation capacity removed from the
+    /// pool; the process allocator may retain freed pages independently.
+    pub(crate) fn trim_retained(&self, target_bytes: u64) -> u64 {
+        if target_bytes == 0 {
+            return 0;
+        }
+        let mut dropped = Vec::new();
+        let mut released = 0u64;
+        {
+            let mut inner = self.lock_inner();
+            while released < target_bytes {
+                let Some(class) = inner.free.iter().position(|buffers| !buffers.is_empty()) else {
+                    break;
+                };
+                let Some(buffer) = inner.free[class].pop() else {
+                    continue;
+                };
+                let bytes = buffer.capacity() as u64;
+                inner.retained_bytes = inner.retained_bytes.saturating_sub(bytes);
+                released = released.saturating_add(bytes);
+                dropped.push(buffer);
+            }
+        }
+        drop(dropped);
+        released
+    }
+
     pub fn denied_allocations(&self) -> u64 {
         self.denied.load(Ordering::Relaxed)
     }
@@ -577,6 +606,23 @@ mod tests {
 
         assert_eq!(pool.retained_bytes(), MAX_RETAINED_BYTES);
         assert_eq!(pool.lock_inner().free[2].len(), 64);
+        assert_eq!(pool.in_use_bytes(), 0);
+    }
+
+    #[test]
+    fn trimming_releases_idle_buffers_but_keeps_live_frames_charged() {
+        let pool = FramePool::new(512 * 1024);
+        let live = pool.try_acquire(16 * 1024).unwrap();
+        drop(pool.try_acquire(16 * 1024).unwrap());
+        drop(pool.try_acquire(64 * 1024).unwrap());
+        let in_use_before = pool.in_use_bytes();
+
+        let released = pool.trim_retained(16 * 1024);
+
+        assert!(released >= 16 * 1024);
+        assert_eq!(pool.retained_bytes(), 64 * 1024);
+        assert_eq!(pool.in_use_bytes(), in_use_before);
+        drop(live);
         assert_eq!(pool.in_use_bytes(), 0);
     }
 

@@ -423,3 +423,31 @@ The code candidate was reverted because it showed no measured CPU improvement
 and no attributable memory improvement. Its report, samples, and memory profile
 remain under `certification/reports/` as one-peer diagnostic evidence, not a
 whole-client comparison.
+
+## Deep-audit storage and memory candidate (October 21, 2026)
+
+One controlled seed pair compared clean `bf37a330` against the integrated
+storage/cache candidate in a dirty worktree based on the same commit. Both runs
+used the same SHA-256-verified Debian ISO and a qBittorrent leecher capped at
+4 MiB/s. The candidate fused portable `pread` preparation and completion and
+added shared backing-memory accounting and reclaim. Only TorrentNG was scored;
+the qBittorrent container was the receiver, not a scored comparison client.
+
+| TorrentNG source | Seed hash | CPU (s/GiB) | Goodput (MiB/s) | Peak cgroup anonymous (MiB) | Peak process-tree PSS (MiB) |
+|---|---|---:|---:|---:|---:|
+| Clean `bf37a330` | pass | 3.29 | 3.82 | 23.5 | 38.7 |
+| Integrated dirty candidate | pass | 3.06 | 3.82 | 25.0 | 43.1 |
+
+CPU was about 7% lower in the candidate pass, while anonymous peak memory rose
+1.5 MiB and process-tree PSS rose 4.4 MiB. The candidate's sampled one-minute
+host load peak was 21.17 versus 14.95 for baseline. With one pass per source on
+a shared host, this is a CPU-positive hint, not a demonstrated efficiency win;
+it does not show a RAM reduction. The single-torrent workload does not exercise
+concurrent cross-torrent cache pressure. Both 60-second public-swarm phases
+timed out and are excluded from download comparisons.
+
+The full reports and raw evidence are
+[clean-main baseline](../certification/reports/torrentng-deep-audit-baseline-20261021.md)
+and [integrated candidate](../certification/reports/torrentng-deep-audit-candidate-20261021.md),
+with adjacent CSV and memory-profile files. Repeat these runs and test
+multi-torrent memory pressure before claiming a CPU or RAM improvement.

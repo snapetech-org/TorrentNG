@@ -1,6 +1,6 @@
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 use std::time::Instant;
 
@@ -171,6 +171,24 @@ struct ResourceGovernorInner {
     class_used: [AtomicU64; MEMORY_CLASS_COUNT],
     denied: [AtomicU64; MEMORY_CLASS_COUNT],
     payload_copies: PayloadCopyCounters,
+    reclaimers: Mutex<Vec<MemoryReclaimer>>,
+}
+
+type ReclaimerAction = dyn Fn(u64) -> u64 + Send + Sync + 'static;
+
+struct MemoryReclaimer {
+    class: MemoryClass,
+    key: String,
+    action: Arc<ReclaimerAction>,
+}
+
+impl std::fmt::Debug for MemoryReclaimer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemoryReclaimer")
+            .field("class", &self.class)
+            .field("key", &self.key)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -187,8 +205,45 @@ impl ResourceGovernor {
                 class_used: std::array::from_fn(|_| AtomicU64::new(0)),
                 denied: std::array::from_fn(|_| AtomicU64::new(0)),
                 payload_copies: PayloadCopyCounters::default(),
+                reclaimers: Mutex::new(Vec::new()),
             }),
         }
+    }
+
+    /// Opaque process-local identity used to keep optional-memory reclaim
+    /// scoped to the governor that admitted its owners.
+    #[doc(hidden)]
+    pub fn reclaim_scope_id(&self) -> usize {
+        Arc::as_ptr(&self.inner) as usize
+    }
+
+    /// Register an optional-memory reclaimer for one class. Registration is
+    /// idempotent by `(class, key)` so shared subsystem schedulers do not add
+    /// one callback per torrent. The callback must drop optional owners and
+    /// return the number of bytes it actually released.
+    pub fn register_reclaimer(
+        &self,
+        class: MemoryClass,
+        key: impl Into<String>,
+        action: impl Fn(u64) -> u64 + Send + Sync + 'static,
+    ) {
+        let key = key.into();
+        let mut reclaimers = self
+            .inner
+            .reclaimers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if reclaimers
+            .iter()
+            .any(|reclaimer| reclaimer.class == class && reclaimer.key == key)
+        {
+            return;
+        }
+        reclaimers.push(MemoryReclaimer {
+            class,
+            key,
+            action: Arc::new(action),
+        });
     }
 
     /// Record bytes copied at one of the explicitly instrumented transfer
@@ -205,8 +260,26 @@ impl ResourceGovernor {
     }
 
     pub fn try_acquire(&self, class: MemoryClass, bytes: u64) -> Option<MemoryLease> {
+        if self.try_reserve_with_reclaim(class, bytes) {
+            return Some(MemoryLease::new(self.clone(), class, bytes));
+        }
+        self.inner.denied[class.index()].fetch_add(1, Ordering::Relaxed);
+        None
+    }
+
+    fn try_reserve_with_reclaim(&self, class: MemoryClass, bytes: u64) -> bool {
+        if self.try_reserve_lease_bytes(class, bytes) {
+            return true;
+        }
+        let (class_deficit, _) = self.reclaim_deficits(class, bytes);
+        if class_deficit > 0 {
+            self.reclaim_optional(Some(class), class_deficit);
+        }
+        let (_, total_deficit) = self.reclaim_deficits(class, bytes);
+        if total_deficit > 0 {
+            self.reclaim_optional(None, total_deficit);
+        }
         self.try_reserve_lease_bytes(class, bytes)
-            .then(|| MemoryLease::new(self.clone(), class, bytes))
     }
 
     fn try_reserve_lease_bytes(&self, class: MemoryClass, bytes: u64) -> bool {
@@ -217,12 +290,10 @@ impl ResourceGovernor {
         let class_idx = class.index();
         let class_cap = self.inner.config.class_caps_bytes[class_idx];
         if class_cap == 0 || bytes > class_cap || bytes > self.inner.config.total_cap_bytes {
-            self.inner.denied[class_idx].fetch_add(1, Ordering::Relaxed);
             return false;
         }
 
         if !reserve(&self.inner.class_used[class_idx], bytes, class_cap) {
-            self.inner.denied[class_idx].fetch_add(1, Ordering::Relaxed);
             return false;
         }
 
@@ -232,11 +303,48 @@ impl ResourceGovernor {
             self.inner.config.total_cap_bytes,
         ) {
             self.inner.class_used[class_idx].fetch_sub(bytes, Ordering::AcqRel);
-            self.inner.denied[class_idx].fetch_add(1, Ordering::Relaxed);
             return false;
         }
 
         true
+    }
+
+    fn reclaim_deficits(&self, class: MemoryClass, bytes: u64) -> (u64, u64) {
+        let class_cap = self.inner.config.class_caps_bytes[class.index()];
+        let total_cap = self.inner.config.total_cap_bytes;
+        if class_cap == 0 || bytes > class_cap || bytes > total_cap {
+            return (0, 0);
+        }
+        let class_used = self.inner.class_used[class.index()].load(Ordering::Acquire);
+        let total_used = self.inner.total_used.load(Ordering::Acquire);
+        (
+            class_used.saturating_add(bytes).saturating_sub(class_cap),
+            total_used.saturating_add(bytes).saturating_sub(total_cap),
+        )
+    }
+
+    fn reclaim_optional(&self, class: Option<MemoryClass>, bytes: u64) -> u64 {
+        let actions = {
+            let reclaimers = self
+                .inner
+                .reclaimers
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            reclaimers
+                .iter()
+                .filter(|reclaimer| class.is_none_or(|class| reclaimer.class == class))
+                .map(|reclaimer| Arc::clone(&reclaimer.action))
+                .collect::<Vec<_>>()
+        };
+        let mut reclaimed = 0u64;
+        for action in actions {
+            let needed = bytes.saturating_sub(reclaimed);
+            if needed == 0 {
+                break;
+            }
+            reclaimed = reclaimed.saturating_add(action(needed).min(needed));
+        }
+        reclaimed
     }
 
     pub fn pressure(&self) -> MemoryPressure {
@@ -391,7 +499,7 @@ impl MemoryLease {
         }
         if !self
             .governor
-            .try_reserve_lease_bytes(self.class, additional)
+            .try_reserve_with_reclaim(self.class, additional)
         {
             return false;
         }
@@ -491,6 +599,85 @@ mod tests {
         assert_eq!(governor.snapshot().total_used_bytes, 70);
         drop(lease);
         assert_eq!(governor.snapshot().total_used_bytes, 0);
+    }
+
+    #[test]
+    fn peer_buffer_admission_reclaims_optional_memory_before_denial() {
+        let mut config = config();
+        config.class_caps_bytes[MemoryClass::PeerBuffer as usize] = 10;
+        let governor = ResourceGovernor::new(config);
+        let cached = Arc::new(std::sync::Mutex::new(Some(
+            governor.try_acquire(MemoryClass::PeerBuffer, 8).unwrap(),
+        )));
+        let reclaimer_cache = Arc::clone(&cached);
+        governor.register_reclaimer(MemoryClass::PeerBuffer, "test-peer-cache", move |needed| {
+            let mut cached = reclaimer_cache
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let Some(lease) = cached.take() else {
+                return 0;
+            };
+            let freed = lease.bytes();
+            drop(lease);
+            freed.min(needed)
+        });
+
+        let required = governor.try_acquire(MemoryClass::PeerBuffer, 5).unwrap();
+        assert_eq!(required.bytes(), 5);
+        assert!(cached
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_none());
+        let snapshot = governor.snapshot();
+        assert_eq!(
+            snapshot.classes[MemoryClass::PeerBuffer as usize].used_bytes,
+            5
+        );
+        assert_eq!(
+            snapshot.classes[MemoryClass::PeerBuffer as usize].denied_allocations,
+            0
+        );
+    }
+
+    #[test]
+    fn total_cap_reclaims_optional_memory_across_classes() {
+        let mut config = config();
+        config.total_cap_bytes = 100;
+        let governor = ResourceGovernor::new(config);
+        let cached = Arc::new(std::sync::Mutex::new(Some(
+            governor.try_acquire(MemoryClass::PeerBuffer, 30).unwrap(),
+        )));
+        let reclaimer_cache = Arc::clone(&cached);
+        governor.register_reclaimer(MemoryClass::PeerBuffer, "test-peer-cache", move |needed| {
+            let mut cached = reclaimer_cache
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let Some(lease) = cached.take() else {
+                return 0;
+            };
+            let released = lease.bytes();
+            drop(lease);
+            released.min(needed)
+        });
+
+        let required = governor
+            .try_acquire(MemoryClass::Metadata, 80)
+            .expect("total-cap pressure reclaims cache from another class");
+        assert_eq!(required.bytes(), 80);
+        assert!(cached
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_none());
+        let snapshot = governor.snapshot();
+        assert_eq!(snapshot.total_used_bytes, 80);
+        assert_eq!(
+            snapshot.classes[MemoryClass::PeerBuffer as usize].used_bytes,
+            0
+        );
+        assert_eq!(
+            snapshot.classes[MemoryClass::Metadata as usize].denied_allocations,
+            0
+        );
     }
 
     #[test]

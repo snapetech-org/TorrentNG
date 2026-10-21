@@ -400,6 +400,8 @@ pub struct EngineStats {
     pub storage_preallocation_fallbacks: u64,
     pub storage_peer_read_cache_entries: u64,
     pub storage_peer_read_cache_bytes: u64,
+    pub storage_peer_read_cache_global_backing_bytes: u64,
+    pub storage_peer_read_cache_global_budget_bytes: u64,
     pub storage_peer_read_cache_hits: u64,
     pub storage_peer_read_cache_misses: u64,
     pub storage_peer_read_cache_evictions: u64,
@@ -910,6 +912,12 @@ impl EngineStats {
         self.storage_peer_read_cache_bytes = self
             .storage_peer_read_cache_bytes
             .saturating_add(storage.peer_read_cache_bytes);
+        self.storage_peer_read_cache_global_backing_bytes = self
+            .storage_peer_read_cache_global_backing_bytes
+            .max(storage.peer_read_cache_global_backing_bytes);
+        self.storage_peer_read_cache_global_budget_bytes = self
+            .storage_peer_read_cache_global_budget_bytes
+            .max(storage.peer_read_cache_global_budget_bytes);
         self.storage_peer_read_cache_hits = self
             .storage_peer_read_cache_hits
             .saturating_add(storage.peer_read_cache_hits);
@@ -1888,6 +1896,8 @@ mod tests {
             preallocation_fallbacks: 10,
             peer_read_cache_entries: 11,
             peer_read_cache_bytes: 12 * 1024,
+            peer_read_cache_global_backing_bytes: 13 * 1024,
+            peer_read_cache_global_budget_bytes: 16 * 1024 * 1024,
             peer_read_cache_hits: 12,
             peer_read_cache_misses: 13,
             peer_read_cache_evictions: 29,
@@ -2015,6 +2025,14 @@ mod tests {
             }]
         );
         assert_eq!(stats.storage_peer_read_cache_bytes, 12 * 1024);
+        assert_eq!(
+            stats.storage_peer_read_cache_global_backing_bytes,
+            13 * 1024
+        );
+        assert_eq!(
+            stats.storage_peer_read_cache_global_budget_bytes,
+            16 * 1024 * 1024
+        );
         assert_eq!(stats.storage_peer_read_cache_hits, 12);
         assert_eq!(stats.storage_peer_read_cache_evictions, 29);
         assert_eq!(stats.storage_peer_read_elevator_enabled, 1);
@@ -2126,6 +2144,34 @@ mod tests {
 
         assert_eq!(stats.storage_device_queue_capacity, 32);
         assert_eq!(stats.storage_device_queue_available, 31);
+    }
+
+    #[test]
+    fn engine_stats_reports_process_wide_cache_backing_once() {
+        let storage = StorageIoStats {
+            peer_read_cache_global_backing_bytes: 10 * 1024,
+            peer_read_cache_global_budget_bytes: 16 * 1024 * 1024,
+            ..Default::default()
+        };
+        let mut stats = EngineStats::default();
+        for hash in ["hash-a", "hash-b"] {
+            stats.add_torrent_runtime(
+                hash.to_string(),
+                TorrentRuntimeStats {
+                    storage: storage.clone(),
+                    ..Default::default()
+                },
+            );
+        }
+
+        assert_eq!(
+            stats.storage_peer_read_cache_global_backing_bytes,
+            10 * 1024
+        );
+        assert_eq!(
+            stats.storage_peer_read_cache_global_budget_bytes,
+            16 * 1024 * 1024
+        );
     }
 
     #[test]

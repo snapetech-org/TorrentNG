@@ -5,6 +5,45 @@ This file instantiates the template in
 implementation slices currently in progress. A ticket stays `wip` until its
 written acceptance and exact-revision evidence are complete.
 
+## Deep-audit storage and memory candidate (2026-10-21)
+
+The deep-audit follow-up adds two source candidates. Portable `pread` reads
+combine normalized path lookup, descriptor
+lookup, peer-cache lookup, positioned I/O, and final path-identity validation
+in one bounded disk-worker job. The job keeps mount/device admission, queued
+byte credit, the descriptor, and frame ownership until completion. io_uring
+and injected-backend routes are unchanged. A cache hit briefly holds device
+admission while it is resolved on the worker; its fairness and CPU effects are
+unmeasured.
+
+Peer-read cache entries now share their backing owner with returned slices.
+PeerBuffer leases and a process-wide 16 MiB budget count the frame allocation
+charge, not just the logical payload length, and remain held until the last
+slice disappears. The existing per-scheduler 8 MiB payload budget still
+applies. ResourceGovernor reclaim targets caches belonging to that governor;
+total-cap pressure also trims idle vectors from the shared frame pool, whose
+separate retention budget remains 16 MiB. The new global backing-byte metrics
+report live cache owners including slices held outside cache entries. Freeing
+pool vectors reduces retained capacity but does not guarantee an immediate
+RSS reduction by the process allocator.
+
+Regression sources cover fused pread cache miss/hit behavior, started-job
+cancellation ownership, cross-torrent global cache eviction, backing-lease
+retention by a returned slice, governor-scoped reclaim, and frame-pool trim.
+Full all-target workspace suites passed on Rust 1.94 and 1.88 with 2,339 passed,
+0 failed, and 12 ignored tests each; strict workspace Clippy passed on both.
+All 351 discovered Python tests passed.
+
+One hash-verified single-peer seed pair compared clean `bf37a330` with the
+integrated dirty candidate. CPU moved from 3.29 to 3.06 s/GiB and goodput stayed
+at 3.82 MiB/s. Candidate cgroup anonymous peak rose from 23.5 to 25.0 MiB and
+process-tree PSS from 38.7 to 43.1 MiB. With one run per source and a higher
+candidate host-load peak, this is a preliminary CPU hint, not a demonstrated
+efficiency win. It does not exercise concurrent cross-torrent cache pressure
+or establish a whole-client ranking. See the
+[`deep-audit benchmark report`](../certification/reports/torrentng-deep-audit-candidate-20261021.md)
+and its [clean-main baseline](../certification/reports/torrentng-deep-audit-baseline-20261021.md).
+
 ## Earlier bulk validation — implementation source `3758d021` (2026-10-20)
 
 The Rust implementation under test is exact commit `3758d0217dea665fefdfcd6775a3f72d935cf058`; the only working-tree edits during this pass were documentation. The full workspace passed on Rust 1.94.0 and 1.88.0: each run had 2,309 passed, 0 failed, and 12 ignored across 37 result summaries. Release `rt-engine` passed 738/738, including the seeded ownership simulator. All 11 runnable ignored cases passed explicitly: the two release 100k live-catalog cases, seven storage diagnostics, the real-root move/import/delete fixture, and the peer-wire encode probe. The remaining ignored panic-hook child is exercised through its passing parent regression.
@@ -1432,8 +1471,10 @@ the owner key, so schedulers sharing one device remain distinct fairness
 participants. A unique operation ID and permit travel through the existing
 completion owner. Pending depth and availability use an O(1) counter; canceled
 waiter guards remove their own entry, so normal admission does not scan the
-pending queue. Cache hits and file-open preparation happen before device
-admission so they do not occupy a physical-device slot.
+pending queue. In the io_uring and injected-backend paths, cache hits and
+file-open preparation happen before device admission. The portable `pread`
+path deliberately combines preparation and I/O in one admitted worker request;
+its short cache-check device-slot hold is described below.
 
 The live service currently covers scheduler positioned reads/writes/syncs,
 peer-read batches, preallocation, extent probes, and secure storage-plan
@@ -1451,11 +1492,20 @@ deadline, before normal weighted-class turns. These promotions occur only
 while dispatching the bounded pending queue; uncontended admission stays on
 the fast path. Urgent peer reads bypass the scheduler-local coalescer wait.
 Normal peer reads coalesce within one scheduler before entering the shared
-physical-device queue. Cross-mount coalescing is deferred as a performance
+physical-device queue. Portable `pread` reads now use one bounded disk-worker
+request for normalized descriptor lookup, peer-cache lookup, positioned I/O,
+and final path-identity validation. The request retains its mount/device
+admission, descriptor, queued-byte charge, and frame through completion; cache
+hits use the same single worker completion. This briefly holds a physical
+device slot during descriptor/cache checks, including on a cache hit, so the
+fairness and CPU effect still needs measurement. io_uring and injected test
+backends retain the earlier preparation-plus-backend flow. Regression sources
+cover the portable miss/cache-hit path, backend worker dispatch, and ownership
+retention when a caller cancels after work starts; they await the requested
+bulk validation. Cross-mount coalescing remains a separate
 experiment: it is useful only when distinct schedulers issue adjacent reads to
 the same file, and must preserve each caller's mount admission and completion
-owner. It is not a gap in physical-device ownership or fairness. Full
-injected-backend accounting remains open.
+owner. Full injected-backend accounting remains open.
 
 ### Ownership and invariant
 
