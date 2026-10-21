@@ -209,10 +209,14 @@ function loadDetailAutoDisplay(): boolean {
 function loadDetailPosition(): DetailPosition {
   try {
     const value = localStorage.getItem(DETAIL_POSITION_KEY)
-    return isDetailPosition(value) ? value : 'right'
+    return isDetailPosition(value) ? value : defaultDetailPosition()
   } catch {
-    return 'right'
+    return defaultDetailPosition()
   }
+}
+
+function defaultDetailPosition(): DetailPosition {
+  return typeof window !== 'undefined' && window.innerWidth <= 720 ? 'bottom' : 'right'
 }
 
 function isSettingsSection(value: string | null): value is SettingsSection {

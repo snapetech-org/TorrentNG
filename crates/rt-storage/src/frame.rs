@@ -21,7 +21,7 @@ pub const DEFAULT_FRAME_CAP_MB: u64 = 256;
 /// Pooled size classes. A request rounds up to the smallest class that
 /// fits; requests larger than the biggest class get an exact-size,
 /// non-pooled allocation (still counted against the cap).
-const SIZE_CLASSES: [usize; 3] = [16 * 1024, 64 * 1024, 256 * 1024];
+const SIZE_CLASSES: [usize; 4] = [16 * 1024, 64 * 1024, 256 * 1024, 512 * 1024];
 
 /// Per-class cap on retained (idle) buffers, to bound resident memory when
 /// load drops. Excess freed buffers are dropped rather than retained.
@@ -209,7 +209,12 @@ impl FramePool {
             debug_assert!(buf.len() >= SIZE_CLASSES[ci]);
             let mut guard = self.lock_inner();
             let retained = buf.capacity() as u64;
-            if guard.free[ci].len() < MAX_RETAINED_PER_CLASS
+            let class_retention_limit = if SIZE_CLASSES[ci] > 256 * 1024 {
+                2
+            } else {
+                MAX_RETAINED_PER_CLASS
+            };
+            if guard.free[ci].len() < class_retention_limit
                 && guard.retained_bytes.saturating_add(retained) <= MAX_RETAINED_BYTES
             {
                 guard.retained_bytes = guard.retained_bytes.saturating_add(retained);
@@ -687,6 +692,40 @@ mod tests {
         assert_eq!(pool.in_use_bytes(), big as u64);
         drop(f);
         assert_eq!(pool.in_use_bytes(), 0);
+    }
+
+    #[test]
+    fn large_512k_class_retains_at_most_two_idle_frames_after_burst() {
+        let big = 512 * 1024;
+        let pool = FramePool::new(4 * big as u64);
+        let frames = (0..4)
+            .map(|_| pool.try_acquire(big).unwrap())
+            .collect::<Vec<_>>();
+
+        assert!(pool.try_acquire(1).is_none());
+        drop(frames);
+
+        assert_eq!(pool.in_use_bytes(), 0);
+        assert_eq!(pool.retained_bytes(), 2 * big as u64);
+        assert_eq!(pool.lock_inner().free[3].len(), 2);
+    }
+
+    #[test]
+    fn large_512k_bytes_slices_keep_backing_charge_until_last_drop() {
+        let big = 512 * 1024;
+        let pool = FramePool::new(big as u64);
+        let frame = pool.try_acquire(big).unwrap();
+        let bytes = frame.into_bytes();
+        let slice = bytes.slice(..16 * 1024);
+        drop(bytes);
+
+        assert_eq!(pool.in_use_bytes(), big as u64);
+        assert_eq!(pool.retained_bytes(), 0);
+        assert!(pool.try_acquire(1).is_none());
+
+        drop(slice);
+        assert_eq!(pool.in_use_bytes(), 0);
+        assert_eq!(pool.retained_bytes(), big as u64);
     }
 
     #[test]
