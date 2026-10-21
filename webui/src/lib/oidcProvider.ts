@@ -16,6 +16,10 @@ const PROVIDERS: Record<string, OidcProviderPresentation> = {
   'amazon-cognito': { label: 'Amazon Cognito', icon: 'amazon-cognito', setupUrl: 'https://docs.aws.amazon.com/cognito/latest/developerguide/federation-endpoints.html' },
   'apple-sign-in': { label: 'Apple', icon: 'apple', setupUrl: 'https://developer.apple.com/documentation/signinwithapple/configuring-your-environment-for-sign-in-with-apple' },
   gitlab: { label: 'GitLab', icon: 'gitlab', setupUrl: 'https://docs.gitlab.com/integration/openid_connect_provider/' },
+  fusionauth: { label: 'FusionAuth', icon: 'fusionauth', setupUrl: 'https://fusionauth.io/docs/lifecycle/authenticate-users/oauth/' },
+  onelogin: { label: 'OneLogin', icon: 'onelogin', setupUrl: 'https://developers.onelogin.com/docs/openid-connect/connect-to-onelogin/' },
+  pingone: { label: 'PingOne', icon: 'pingone', setupUrl: 'https://docs.pingidentity.com/pingone/applications/p1_edit_application_oidc.html' },
+  jumpcloud: { label: 'JumpCloud', icon: 'jumpcloud', setupUrl: 'https://jumpcloud.com/support/sso-with-oidc' },
 }
 
 export function getOidcProviderPresentation(provider: unknown): OidcProviderPresentation {
