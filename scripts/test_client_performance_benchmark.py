@@ -801,6 +801,90 @@ class CheckpointReportTests(unittest.TestCase):
                 }])
 
 
+class TrackerScrapeTests(unittest.TestCase):
+    def setUp(self):
+        self.info_hash = "0123456789abcdef0123456789abcdef01234567"
+
+    def test_opentracker_scrape_counts_are_matched_by_raw_infohash(self) -> None:
+        raw_hash = bytes.fromhex(self.info_hash)
+        payload = benchmark.bencode({
+            b"files": {
+                raw_hash: {
+                    b"complete": 1,
+                    b"downloaded": 4,
+                    b"incomplete": 2,
+                },
+                b"x" * 20: {
+                    b"complete": 8,
+                    b"downloaded": 10,
+                    b"incomplete": 6,
+                },
+            },
+        })
+
+        self.assertEqual(
+            benchmark.opentracker_scrape_counts(payload, self.info_hash),
+            {"complete": 1, "incomplete": 2},
+        )
+
+    def test_opentracker_scrape_returns_none_when_hash_is_absent(self) -> None:
+        payload = benchmark.bencode({b"files": {b"x" * 20: {}}})
+
+        self.assertIsNone(benchmark.opentracker_scrape_counts(payload, self.info_hash))
+
+    def test_opentracker_scrape_rejects_malformed_counts_and_trailing_data(self) -> None:
+        raw_hash = bytes.fromhex(self.info_hash)
+        bad_counts = benchmark.bencode({
+            b"files": {raw_hash: {b"complete": -1, b"incomplete": 0}},
+        })
+
+        with self.assertRaisesRegex(ValueError, "invalid peer counts"):
+            benchmark.opentracker_scrape_counts(bad_counts, self.info_hash)
+        with self.assertRaisesRegex(ValueError, "trailing bytes"):
+            benchmark.opentracker_scrape_counts(
+                benchmark.bencode({b"files": {}}) + b"junk", self.info_hash,
+            )
+
+    def test_tracker_scrape_uses_raw_hash_and_bypasses_host_proxy(self) -> None:
+        raw_hash = bytes.fromhex(self.info_hash)
+        payload = benchmark.bencode({
+            b"files": {raw_hash: {b"complete": 1, b"incomplete": 0}},
+        })
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = payload
+        opener = mock.MagicMock()
+        opener.open.return_value = response
+        instance = object.__new__(benchmark.Benchmark)
+
+        with mock.patch.object(
+            benchmark, "_build_http_opener", return_value=opener,
+        ) as build_opener:
+            result = instance._tracker_scrape_counts("172.23.0.2", self.info_hash)
+
+        self.assertEqual(result, {"complete": 1, "incomplete": 0})
+        build_opener.assert_called_once_with(use_environment_proxy=False)
+        request = opener.open.call_args.args[0]
+        self.assertIn(
+            "info_hash=" + benchmark.urllib.parse.quote_from_bytes(raw_hash, safe=""),
+            request.full_url,
+        )
+
+    def test_tracker_wait_ignores_cached_qbittorrent_status(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance._tracker_scrape_counts = mock.Mock(side_effect=[
+            {"complete": 0, "incomplete": 1},
+            {"complete": 1, "incomplete": 1},
+        ])
+        instance._qbit_json = mock.Mock(side_effect=AssertionError("must use live scrape"))
+
+        with mock.patch.object(benchmark.time, "sleep") as sleep:
+            instance._wait_seed_leecher_tracker(self.info_hash, "172.23.0.2")
+
+        self.assertEqual(instance._tracker_scrape_counts.call_count, 2)
+        instance._qbit_json.assert_not_called()
+        sleep.assert_called_once_with(2)
+
+
 class ControlledDownloadTests(unittest.TestCase):
     def test_controlled_download_report_uses_generated_private_torrent_hash(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -841,6 +925,53 @@ class ControlledDownloadTests(unittest.TestCase):
             report_meta = instance._write_controlled_download_report.call_args.args[0]
             self.assertEqual(report_meta["info_hash"], "private-torrent-hash")
             self.assertEqual(meta["info_hash"], "official-torrent-hash")
+
+    def test_tracker_reset_restarts_the_seed_before_the_next_client(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            seed_source = root / "fixture.iso"
+            seed_source.write_bytes(b"verified local fixture")
+            workdir = root / "work"
+            (workdir / "leecher").mkdir(parents=True)
+            instance = object.__new__(benchmark.Benchmark)
+            instance.seed_source = seed_source
+            instance.workdir = workdir
+            instance.transfer_order = ("torrentngd", "qbittorrent")
+            instance.seed_leecher_image = "pinned-qbittorrent-image"
+            instance.seed_cache_eviction = {}
+            instance.results = [
+                {"client": client, "controlled_download": "PASS"}
+                for client in instance.transfer_order
+            ]
+            instance._start_seed_leecher = mock.Mock()
+            instance._wait_seed_leecher_tracker = mock.Mock()
+            instance._run_controlled_download_one = mock.Mock()
+            instance._write_controlled_download_report = mock.Mock()
+            instance.compose = mock.Mock(return_value=("", 0))
+            instance.service_id = mock.Mock(return_value="")
+            client_images = {}
+            meta = {
+                "iso_name": seed_source.name,
+                "size": seed_source.stat().st_size,
+                "sha256": hashlib.sha256(seed_source.read_bytes()).hexdigest(),
+                "info_hash": "official-torrent-hash",
+            }
+
+            with mock.patch.object(
+                benchmark, "make_private_torrent", return_value="private-torrent-hash",
+            ), mock.patch.object(benchmark, "evict_file_cache", return_value=True):
+                instance._run_controlled_download_mode("198.18.0.2", meta, client_images)
+
+            instance.compose.assert_any_call(
+                "restart", "seed_leecher", quiet=True, timeout=60,
+            )
+            self.assertEqual(
+                instance._wait_seed_leecher_tracker.call_args_list,
+                [
+                    mock.call("private-torrent-hash", "198.18.0.2"),
+                    mock.call("private-torrent-hash", "198.18.0.2"),
+                ],
+            )
 
     def test_controlled_download_reads_its_own_payload_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

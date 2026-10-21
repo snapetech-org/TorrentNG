@@ -494,6 +494,96 @@ def bencode(value):
     raise TypeError(f"unsupported bencode value: {type(value).__name__}")
 
 
+def bdecode(payload):
+    """Decode one bounded-size bencoded value, rejecting trailing or malformed data."""
+    def decode(offset, depth=0):
+        if depth > 16 or offset >= len(payload):
+            raise ValueError("invalid bencoded value")
+        token = payload[offset:offset + 1]
+        if token == b"i":
+            end = payload.find(b"e", offset + 1)
+            if end < 0:
+                raise ValueError("unterminated bencoded integer")
+            raw = payload[offset + 1:end]
+            if (not re.fullmatch(rb"-?(?:0|[1-9][0-9]*)", raw)
+                    or raw == b"-0"):
+                raise ValueError("invalid bencoded integer")
+            try:
+                return int(raw), end + 1
+            except ValueError as error:
+                raise ValueError("invalid bencoded integer") from error
+        if token == b"l":
+            values = []
+            offset += 1
+            while offset < len(payload) and payload[offset:offset + 1] != b"e":
+                value, offset = decode(offset, depth + 1)
+                values.append(value)
+            if offset >= len(payload):
+                raise ValueError("unterminated bencoded list")
+            return values, offset + 1
+        if token == b"d":
+            values = {}
+            offset += 1
+            while offset < len(payload) and payload[offset:offset + 1] != b"e":
+                key, offset = decode(offset, depth + 1)
+                if not isinstance(key, bytes):
+                    raise ValueError("bencoded dictionary key is not a byte string")
+                value, offset = decode(offset, depth + 1)
+                values[key] = value
+            if offset >= len(payload):
+                raise ValueError("unterminated bencoded dictionary")
+            return values, offset + 1
+        if token.isdigit():
+            colon = payload.find(b":", offset)
+            if colon < 0:
+                raise ValueError("invalid bencoded byte string")
+            raw_length = payload[offset:colon]
+            if not raw_length or (raw_length.startswith(b"0") and raw_length != b"0"):
+                raise ValueError("invalid bencoded byte string length")
+            try:
+                length = int(raw_length)
+            except ValueError as error:
+                raise ValueError("invalid bencoded byte string length") from error
+            start = colon + 1
+            end = start + length
+            if end > len(payload):
+                raise ValueError("truncated bencoded byte string")
+            return payload[start:end], end
+        raise ValueError("invalid bencoded token")
+
+    value, end = decode(0)
+    if end != len(payload):
+        raise ValueError("trailing bytes after bencoded value")
+    return value
+
+
+def opentracker_scrape_counts(payload, info_hash):
+    """Return OpenTracker complete/incomplete counts for one v1 infohash."""
+    if not isinstance(info_hash, str) or re.fullmatch(r"[0-9a-fA-F]{40}", info_hash) is None:
+        raise ValueError("tracker scrape requires a 40-digit v1 infohash")
+    hash_bytes = bytes.fromhex(info_hash)
+    response = bdecode(payload)
+    if not isinstance(response, dict):
+        raise ValueError("tracker scrape response is not a dictionary")
+    files = response.get(b"files")
+    if files is None:
+        return None
+    if not isinstance(files, dict):
+        raise ValueError("tracker scrape files field is not a dictionary")
+    torrent = files.get(hash_bytes)
+    if torrent is None:
+        return None
+    if not isinstance(torrent, dict):
+        raise ValueError("tracker scrape torrent entry is not a dictionary")
+    complete = torrent.get(b"complete")
+    incomplete = torrent.get(b"incomplete")
+    if (not isinstance(complete, int) or isinstance(complete, bool) or complete < 0
+            or not isinstance(incomplete, int) or isinstance(incomplete, bool)
+            or incomplete < 0):
+        raise ValueError("tracker scrape has invalid peer counts")
+    return {"complete": complete, "incomplete": incomplete}
+
+
 def make_private_torrent(path, announce, output):
     piece_size = 1024 * 1024
     piece_hashes = []
@@ -2456,27 +2546,38 @@ class Benchmark:
         row = next((r for r in rows if r.get("hash", "").lower() == info_hash.lower()), None)
         return self._qbit_shape(row)
 
-    def _wait_seed_leecher_tracker(self, info_hash):
+    def _tracker_scrape_counts(self, tracker_ip, info_hash):
+        if not isinstance(info_hash, str) or re.fullmatch(r"[0-9a-fA-F]{40}", info_hash) is None:
+            raise ValueError("tracker scrape requires a 40-digit v1 infohash")
+        hash_bytes = bytes.fromhex(info_hash)
+        encoded_hash = urllib.parse.quote_from_bytes(hash_bytes, safe="")
+        url = f"http://{tracker_ip}:6969/scrape?info_hash={encoded_hash}"
+        request = urllib.request.Request(_validate_http_url(url))
+        # This is a private task-local Docker bridge address. Never route it via
+        # the host proxy, and cap the response before decoding tracker data.
+        with _build_http_opener(use_environment_proxy=False).open(request, timeout=5) as response:
+            payload = response.read(64 * 1024 + 1)
+        if len(payload) > 64 * 1024:
+            raise ValueError("tracker scrape response exceeded 64 KiB")
+        return opentracker_scrape_counts(payload, info_hash)
+
+    def _wait_seed_leecher_tracker(self, info_hash, tracker_ip):
         deadline = time.monotonic() + 90
+        last_error = None
         while time.monotonic() < deadline:
             try:
-                rows = self._qbit_json(
-                    "seed_leecher",
-                    "/api/v2/torrents/trackers?hash=" + urllib.parse.quote(info_hash),
-                ) or []
-            except urllib.error.HTTPError as error:
-                if error.code != 404:
-                    raise
-                rows = []
-            tracker = next((
-                row for row in rows
-                if row.get("url", "").startswith(("http://", "https://", "udp://"))
-            ), None)
-            if (tracker and int(tracker.get("status", 0)) == 2
-                    and int(tracker.get("num_seeds", 0)) >= 1):
+                counts = self._tracker_scrape_counts(tracker_ip, info_hash)
+            except (OSError, urllib.error.URLError, ValueError) as error:
+                last_error = error
+                counts = None
+            if counts is not None and counts["complete"] >= 1:
                 return
             time.sleep(2)
-        raise TimeoutError("qBittorrent seed leecher did not register with the private tracker")
+        detail = f": {last_error}" if last_error is not None else ""
+        raise TimeoutError(
+            "OpenTracker live scrape did not report a registered seed for the test torrent"
+            + detail
+        )
 
     def _reannounce(self, client, info_hash):
         if client == "torrentngd":
@@ -2500,7 +2601,7 @@ class Benchmark:
         else:
             self._scgi("d.tracker_announce", info_hash)
 
-    def _seed_test(self, client, payload, torrent_path, info_hash, size, checksum):
+    def _seed_test(self, client, payload, torrent_path, info_hash, size, checksum, tracker_ip):
         save_path = "/downloads/rtorrent" if client == "rtorrent" else f"/downloads/{client}/seed"
         self._add_torrent(client, torrent_path, save_path, skip_check=True)
         deadline = time.monotonic() + 300
@@ -2523,7 +2624,7 @@ class Benchmark:
         next_log = 0
         try:
             self._start_seed_leecher(torrent_path, client)
-            self._wait_seed_leecher_tracker(info_hash)
+            self._wait_seed_leecher_tracker(info_hash, tracker_ip)
             self._reannounce(client, info_hash)
             self.seed_cache_eviction[client] = evict_file_cache(payload)
             started = time.monotonic()
@@ -2760,7 +2861,7 @@ class Benchmark:
             try:
                 seed_elapsed, seed_rows, seed_sha = self._seed_test(
                     client, seed_payload, private_path, local_hash,
-                    meta["size"], meta["sha256"],
+                    meta["size"], meta["sha256"], tracker_ip,
                 )
                 seed_result = "PASS"
             except Exception as error:
@@ -3001,7 +3102,7 @@ class Benchmark:
             skip_check=True,
             upload_limit_bps=CONTROLLED_DOWNLOAD_SEED_UPLOAD_BPS,
         )
-        self._wait_seed_leecher_tracker(info_hash)
+        self._wait_seed_leecher_tracker(info_hash, tracker_ip)
         self.seed_cache_eviction["controlled_download"] = evict_file_cache(seed_payload)
 
         try:
@@ -3053,8 +3154,13 @@ class Benchmark:
                         self._release_client_payloads(client, meta["iso_name"])
                     if index + 1 < len(self.transfer_order):
                         self.compose("restart", "opentracker", quiet=True, timeout=60)
-                        self._reannounce("seed_leecher", info_hash)
-                        self._wait_seed_leecher_tracker(info_hash)
+                        # The tracker reset clears its swarm state. qBittorrent's
+                        # cached API status can remain "working" after a
+                        # successful HTTP 200 reannounce without a live announce.
+                        # Restart the task-local seeder to force a new announce,
+                        # then require OpenTracker itself to report it.
+                        self.compose("restart", "seed_leecher", quiet=True, timeout=60)
+                        self._wait_seed_leecher_tracker(info_hash, tracker_ip)
         finally:
             self.compose("stop", "seed_leecher", check=False, quiet=True, timeout=60)
 
