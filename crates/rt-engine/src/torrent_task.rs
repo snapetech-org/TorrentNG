@@ -8350,10 +8350,7 @@ impl PeerIo {
                         Ok(Ok(())) => {}
                         Ok(Err(error)) => return Err((index, error)),
                         Err(_) => {
-                            return Err((
-                                index,
-                                anyhow::anyhow!("peer socket write timed out"),
-                            ));
+                            return Err((index, anyhow::anyhow!("peer socket write timed out")));
                         }
                     }
                 }
@@ -8412,8 +8409,17 @@ where
 {
     use tokio::io::AsyncWriteExt;
 
-    let mut headers = Vec::with_capacity(pieces.len());
-    for (piece, begin, data) in pieces {
+    if pieces.len() > MAX_UPLOAD_READ_BATCH_BLOCKS {
+        return Err((
+            0,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "too many Piece frames in one upload batch",
+            ),
+        ));
+    }
+    let mut headers = [[0u8; 13]; MAX_UPLOAD_READ_BATCH_BLOCKS];
+    for (index, (piece, begin, data)) in pieces.iter().enumerate() {
         let message_len = 9usize
             .checked_add(data.len())
             .and_then(|len| u32::try_from(len).ok())
@@ -8426,47 +8432,49 @@ where
                     ),
                 )
             })?;
-        let mut header = [0u8; 13];
+        let header = &mut headers[index];
         header[..4].copy_from_slice(&message_len.to_be_bytes());
         header[4] = 7;
         header[5..9].copy_from_slice(&piece.to_be_bytes());
         header[9..13].copy_from_slice(&begin.to_be_bytes());
-        headers.push(header);
     }
 
     let deadline = TokioInstant::now() + PEER_SOCKET_WRITE_TIMEOUT;
-    let mut cursors = vec![(0usize, 0usize); pieces.len()];
+    let mut cursors = [(0usize, 0usize); MAX_UPLOAD_READ_BATCH_BLOCKS];
     loop {
         let completed = cursors
             .iter()
+            .take(pieces.len())
             .zip(pieces)
-            .take_while(|((header, payload), (_, _, data))| {
-                *header == 13 && *payload == data.len()
-            })
+            .take_while(|((header, payload), (_, _, data))| *header == 13 && *payload == data.len())
             .count();
         if completed == pieces.len() {
             return Ok(completed);
         }
 
         let write_result = {
-            let mut buffers = Vec::with_capacity((pieces.len() - completed) * 2);
-            for (index, (piece, _, data)) in pieces.iter().enumerate().skip(completed) {
+            let mut buffers: [IoSlice<'_>; MAX_UPLOAD_READ_BATCH_BLOCKS * 2] =
+                std::array::from_fn(|_| IoSlice::new(&[]));
+            let mut buffer_count = 0;
+            for (index, (_, _, data)) in pieces.iter().enumerate().skip(completed) {
                 let (header_offset, payload_offset) = cursors[index];
                 if header_offset < headers[index].len() {
-                    buffers.push(IoSlice::new(&headers[index][header_offset..]));
+                    buffers[buffer_count] = IoSlice::new(&headers[index][header_offset..]);
+                    buffer_count += 1;
                 }
                 if payload_offset < data.len() {
-                    buffers.push(IoSlice::new(&data[payload_offset..]));
+                    buffers[buffer_count] = IoSlice::new(&data[payload_offset..]);
+                    buffer_count += 1;
                 }
-                let _ = piece;
             }
-            timeout_at(deadline, stream.write_vectored(&buffers)).await
+            tokio::time::timeout_at(deadline, stream.write_vectored(&buffers[..buffer_count])).await
         };
         let written = match write_result {
             Ok(Ok(written)) => written,
             Ok(Err(error)) => {
                 let completed = cursors
                     .iter()
+                    .take(pieces.len())
                     .zip(pieces)
                     .take_while(|((header, payload), (_, _, data))| {
                         *header == 13 && *payload == data.len()
@@ -8477,6 +8485,7 @@ where
             Err(_) => {
                 let completed = cursors
                     .iter()
+                    .take(pieces.len())
                     .zip(pieces)
                     .take_while(|((header, payload), (_, _, data))| {
                         *header == 13 && *payload == data.len()
@@ -8494,6 +8503,7 @@ where
         if written == 0 {
             let completed = cursors
                 .iter()
+                .take(pieces.len())
                 .zip(pieces)
                 .take_while(|((header, payload), (_, _, data))| {
                     *header == 13 && *payload == data.len()
@@ -9103,6 +9113,7 @@ where
                     break;
                 };
                 last_activity = Instant::now();
+                let (msg, _message_memory_lease) = msg.into_accounted_parts()?;
                 match msg {
                     Message::Bitfield(bits) => {
                         if let Err(error) = validate_bitfield_shape(&bits, upload.have_pieces.len()) {
@@ -9801,6 +9812,9 @@ where
                         .await
                     {
                         break 'peer;
+                    }
+                    if upload_event_due {
+                        upload_accounting_batch.clear();
                     }
                     if let Some(error) = send_error {
                         return Err(error);
@@ -10676,6 +10690,90 @@ mod tests {
         read_result.unwrap();
         assert_eq!(&received[..header.len()], &header);
         assert_eq!(&received[header.len()..], payload);
+    }
+
+    #[tokio::test]
+    async fn batched_piece_write_preserves_frames_across_partial_socket_writes() {
+        use tokio::io::AsyncReadExt;
+
+        let first = bytes::Bytes::from_static(b"abcd");
+        let second = bytes::Bytes::from_static(b"WXYZ");
+        let pieces = [(7, 0, &first), (7, 4, &second)];
+        let (mut writer, mut reader) = tokio::io::duplex(7);
+        let mut received = vec![0; 2 * (13 + first.len())];
+        let (write_result, read_result) = tokio::join!(
+            write_piece_frames_vectored(&mut writer, &pieces),
+            reader.read_exact(&mut received),
+        );
+
+        assert_eq!(write_result.unwrap(), 2);
+        read_result.unwrap();
+        assert_eq!(&received[..13], &[0, 0, 0, 13, 7, 0, 0, 0, 7, 0, 0, 0, 0]);
+        assert_eq!(&received[13..17], b"abcd");
+        assert_eq!(&received[17..30], &[0, 0, 0, 13, 7, 0, 0, 0, 7, 0, 0, 0, 4]);
+        assert_eq!(&received[30..], b"WXYZ");
+    }
+
+    #[tokio::test]
+    async fn batched_piece_write_reports_only_complete_frames_on_error() {
+        use std::pin::Pin;
+        use std::task::{Context, Poll};
+        use tokio::io::AsyncWrite;
+
+        struct FailingWriter {
+            written: Vec<u8>,
+            fail_after: usize,
+            max_chunk: usize,
+        }
+
+        impl AsyncWrite for FailingWriter {
+            fn poll_write(
+                mut self: Pin<&mut Self>,
+                _cx: &mut Context<'_>,
+                buffer: &[u8],
+            ) -> Poll<std::io::Result<usize>> {
+                if self.written.len() >= self.fail_after {
+                    return Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "test write failure",
+                    )));
+                }
+                let available = self.fail_after - self.written.len();
+                let count = buffer.len().min(available).min(self.max_chunk);
+                self.written.extend_from_slice(&buffer[..count]);
+                Poll::Ready(Ok(count))
+            }
+
+            fn poll_flush(
+                self: Pin<&mut Self>,
+                _cx: &mut Context<'_>,
+            ) -> Poll<std::io::Result<()>> {
+                Poll::Ready(Ok(()))
+            }
+
+            fn poll_shutdown(
+                self: Pin<&mut Self>,
+                _cx: &mut Context<'_>,
+            ) -> Poll<std::io::Result<()>> {
+                Poll::Ready(Ok(()))
+            }
+        }
+
+        let first = bytes::Bytes::from_static(b"abcd");
+        let second = bytes::Bytes::from_static(b"WXYZ");
+        let pieces = [(7, 0, &first), (7, 4, &second)];
+        let mut writer = FailingWriter {
+            written: Vec::new(),
+            fail_after: 13 + first.len() + 6,
+            max_chunk: 5,
+        };
+
+        let (completed, error) = write_piece_frames_vectored(&mut writer, &pieces)
+            .await
+            .unwrap_err();
+        assert_eq!(completed, 1);
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+        assert_eq!(writer.written.len(), 13 + first.len() + 6);
     }
 
     async fn test_upload_rate_admission(
