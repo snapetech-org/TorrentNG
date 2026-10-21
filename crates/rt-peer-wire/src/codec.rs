@@ -67,8 +67,7 @@ fn ensure_read_buffer_reservation(
             return Err(WireError::PeerBufferAllocationDenied(required_bytes));
         }
     } else {
-        let bytes =
-            u64::try_from(required_bytes).map_err(|_| WireError::PeerBufferLengthOverflow)?;
+        let bytes = required_bytes;
         let new_lease = resources
             .try_acquire(MemoryClass::PeerBuffer, bytes)
             .ok_or(WireError::PeerBufferAllocationDenied(bytes))?;
