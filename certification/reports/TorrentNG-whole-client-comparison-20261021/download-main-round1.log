@@ -1,0 +1,280 @@
+Scratch: /mnt/disks/gamespool0/torrentng-whole-client-architecture-comparison-20261021/run-download-main-1
+Config scratch: /var/tmp/tngb-arch-compare-config/torrentng-client-bench-20261021T201229Z
+Compose project: tngbench20261021t201229z
+ Image torrentng/torrentngd:benchmark-20261021t201229z Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 989B done
+#1 DONE 0.0s
+
+#2 [internal] booting buildkit
+#2 pulling image moby/buildkit:buildx-stable-1
+#2 pulling image moby/buildkit:buildx-stable-1 1.4s done
+#2 creating container buildx_buildkit_tngbench-client-build-cache-v10
+#2 creating container buildx_buildkit_tngbench-client-build-cache-v10 0.6s done
+#2 DONE 2.1s
+
+#3 [internal] load build definition from Dockerfile
+#3 transferring dockerfile:
+#3 transferring dockerfile: 3.29kB done
+#3 DONE 0.1s
+
+#4 resolve image config for docker-image://docker.io/docker/dockerfile:1.7
+#4 ...
+
+#5 [auth] docker/dockerfile:pull token for registry-1.docker.io
+#5 DONE 0.0s
+
+#4 resolve image config for docker-image://docker.io/docker/dockerfile:1.7
+#4 DONE 0.7s
+
+#6 docker-image://docker.io/docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
+#6 resolve docker.io/docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e 0.0s done
+#6 CACHED
+
+#7 [auth] library/alpine:pull token for registry-1.docker.io
+#7 DONE 0.0s
+
+#8 [auth] library/node:pull token for registry-1.docker.io
+#8 DONE 0.0s
+
+#9 [auth] library/rust:pull token for registry-1.docker.io
+#9 DONE 0.0s
+
+#10 [internal] load metadata for docker.io/library/rust:1.96-alpine
+#10 ...
+
+#11 [internal] load metadata for docker.io/library/alpine:3.24.2
+#11 DONE 0.3s
+
+#12 [internal] load metadata for docker.io/library/node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9
+#12 DONE 0.4s
+
+#10 [internal] load metadata for docker.io/library/rust:1.96-alpine
+#10 DONE 0.5s
+
+#13 [internal] load .dockerignore
+#13 transferring context: 221B done
+#13 DONE 0.1s
+
+#14 [internal] load build context
+#14 DONE 0.0s
+
+#15 [stage-2 1/9] FROM docker.io/library/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+#15 resolve docker.io/library/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 0.1s done
+#15 CACHED
+
+#16 [stage-2 2/9] RUN apk add --no-cache ca-certificates curl jq tini util-linux     && case "1000" in ''|*[!0-9]*) echo "TNG_UID must be a nonzero numeric ID" >&2; exit 1;; *[1-9]*) :;; *) echo "TNG_UID must be a nonzero numeric ID" >&2; exit 1;; esac     && case "1000" in ''|*[!0-9]*) echo "TNG_GID must be a nonzero numeric ID" >&2; exit 1;; *[1-9]*) :;; *) echo "TNG_GID must be a nonzero numeric ID" >&2; exit 1;; esac     && mkdir -p /data /downloads /config /var/lib/torrentngd /usr/share/torrentng/webui /run/secrets     && chown -R "1000:1000" /data /downloads /config /var/lib/torrentngd /run/secrets
+#16 ...
+
+#17 [webui-build 1/6] FROM docker.io/library/node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9
+#17 resolve docker.io/library/node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9 0.1s done
+#17 DONE 0.1s
+
+#18 [build 1/6] FROM docker.io/library/rust:1.96-alpine@sha256:a41f7740f8b45d45795624eec13a8b42263cc700f19f7e4e86e04d3dda08a479
+#18 resolve docker.io/library/rust:1.96-alpine@sha256:a41f7740f8b45d45795624eec13a8b42263cc700f19f7e4e86e04d3dda08a479 0.1s done
+#18 DONE 0.1s
+
+#14 [internal] load build context
+#14 transferring context: 12.32MB 0.0s done
+#14 DONE 0.1s
+
+#19 [webui-build 2/6] WORKDIR /webui
+#19 CACHED
+
+#20 [webui-build 3/6] COPY webui/package.json webui/package-lock.json ./
+#20 CACHED
+
+#21 [webui-build 4/6] RUN --mount=type=cache,id=torrentng-client-benchmark-npm,target=/root/.npm,sharing=locked npm ci
+#21 CACHED
+
+#22 [build 2/6] RUN apk add --no-cache build-base linux-headers musl-dev
+#22 CACHED
+
+#23 [build 5/6] COPY crates ./crates
+#23 CACHED
+
+#24 [build 3/6] WORKDIR /src
+#24 CACHED
+
+#25 [build 4/6] COPY Cargo.toml Cargo.lock ./
+#25 CACHED
+
+#26 [build 6/6] RUN --mount=type=cache,id=torrentng-client-benchmark-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=torrentng-client-benchmark-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=torrentng-client-benchmark-cargo-target,target=/src/target,sharing=locked     cargo build --release --locked --target x86_64-unknown-linux-musl -p torrentngd     --no-default-features --features "system-allocator"     && cp /src/target/x86_64-unknown-linux-musl/release/torrentngd /torrentngd
+#26 CACHED
+
+#27 [webui-build 5/6] COPY webui/ ./
+#27 DONE 0.2s
+
+#16 [stage-2 2/9] RUN apk add --no-cache ca-certificates curl jq tini util-linux     && case "1000" in ''|*[!0-9]*) echo "TNG_UID must be a nonzero numeric ID" >&2; exit 1;; *[1-9]*) :;; *) echo "TNG_UID must be a nonzero numeric ID" >&2; exit 1;; esac     && case "1000" in ''|*[!0-9]*) echo "TNG_GID must be a nonzero numeric ID" >&2; exit 1;; *[1-9]*) :;; *) echo "TNG_GID must be a nonzero numeric ID" >&2; exit 1;; esac     && mkdir -p /data /downloads /config /var/lib/torrentngd /usr/share/torrentng/webui /run/secrets     && chown -R "1000:1000" /data /downloads /config /var/lib/torrentngd /run/secrets
+#16 0.757 ( 1/49) Installing ca-certificates (20261020-r0)
+#16 0.802 ( 2/49) Installing brotli-libs (1.2.0-r1)
+#16 0.847 ( 3/49) Installing c-ares (1.34.9-r0)
+#16 0.887 ( 4/49) Installing libunistring (1.4.2-r0)
+#16 0.938 ( 5/49) Installing libidn2 (2.3.8-r0)
+#16 0.980 ( 6/49) Installing nghttp2-libs (1.70.0-r0)
+#16 1.025 ( 7/49) Installing libpsl (0.21.5-r3)
+#16 1.064 ( 8/49) Installing zstd-libs (1.5.7-r2)
+#16 1.112 ( 9/49) Installing libcurl (8.22.0-r0)
+#16 1.156 (10/49) Installing curl (8.22.0-r0)
+#16 1.196 (11/49) Installing oniguruma (6.9.10-r0)
+#16 1.240 (12/49) Installing jq (1.8.2-r0)
+#16 1.280 (13/49) Installing tini (0.19.0-r3)
+#16 1.319 (14/49) Installing util-linux (2.42.3-r1)
+#16 1.358 (15/49) Installing ncurses-terminfo-base (6.6_p20260516-r0)
+#16 1.399 (16/49) Installing libncursesw (6.6_p20260516-r0)
+#16 1.443 (17/49) Installing dmesg (2.42.3-r1)
+#16 1.480 (18/49) Installing setarch (2.42.3-r1)
+#16 1.761 (19/49) Installing libeconf (0.8.3-r0)
+#16 1.800 (20/49) Installing libblkid (2.42.3-r1)
+#16 1.839 (21/49) Installing libuuid (2.42.3-r1)
+#16 1.877 (22/49) Installing libfdisk (2.42.3-r1)
+#16 1.918 (23/49) Installing libmount (2.42.3-r1)
+#16 1.960 (24/49) Installing libsmartcols (2.42.3-r1)
+#16 1.999 (25/49) Installing skalibs-libs (2.15.0.0-r0)
+#16 2.038 (26/49) Installing utmps-libs (0.1.3.3-r0)
+#16 2.079 (27/49) Installing util-linux-misc (2.42.3-r1)
+#16 2.140 (28/49) Installing linux-pam (1.7.1-r2)
+#16 2.190 (29/49) Installing runuser (2.42.3-r1)
+#16 2.232 (30/49) Installing mount (2.42.3-r1)
+#16 2.274 (31/49) Installing losetup (2.42.3-r1)
+#16 2.313 (32/49) Installing hexdump (2.42.3-r1)
+#16 2.352 (33/49) Installing uuidgen (2.42.3-r1)
+#16 2.394 (34/49) Installing blkid (2.42.3-r1)
+#16 2.434 (35/49) Installing sfdisk (2.42.3-r1)
+#16 2.477 (36/49) Installing mcookie (2.42.3-r1)
+#16 2.516 (37/49) Installing agetty (2.42.3-r1)
+#16 2.555 (38/49) Installing wipefs (2.42.3-r1)
+#16 2.600 (39/49) Installing cfdisk (2.42.3-r1)
+#16 2.642 (40/49) Installing umount (2.42.3-r1)
+#16 2.682 (41/49) Installing flock (2.42.3-r1)
+#16 2.719 (42/49) Installing lsblk (2.42.3-r1)
+#16 2.765 (43/49) Installing libcap-ng (0.8.5-r2)
+#16 2.804 (44/49) Installing setpriv (2.42.3-r1)
+#16 2.847 (45/49) Installing lscpu (2.42.3-r1)
+#16 2.889 (46/49) Installing logger (2.42.3-r1)
+#16 2.929 (47/49) Installing partx (2.42.3-r1)
+#16 2.967 (48/49) Installing fstrim (2.42.3-r1)
+#16 3.007 (49/49) Installing findmnt (2.42.3-r1)
+#16 3.047 Executing busybox-1.37.0-r31.trigger
+#16 3.054 Executing ca-certificates-20261020-r0.trigger
+#16 3.072 OK: 19.9 MiB in 65 packages
+#16 DONE 3.2s
+
+#28 [webui-build 6/6] RUN TNG_WEBUI_OUT_DIR=dist npm run build
+#28 0.223 
+#28 0.223 > torrentng-webui@0.1.0 build
+#28 0.223 > tsc && vite build
+#28 0.223 
+#28 ...
+
+#29 [stage-2 3/9] COPY --from=build /torrentngd /usr/local/bin/torrentngd
+#29 DONE 0.1s
+
+#28 [webui-build 6/6] RUN TNG_WEBUI_OUT_DIR=dist npm run build
+#28 4.303 vite v8.3.4 building client environment for production...
+#28 4.312 transforming...
+#28 4.325 <script src="./runtime-config.js"> in "/index.html" can't be bundled without type="module" attribute
+#28 4.373 ✓ 115 modules transformed.
+#28 4.424 rendering chunks...
+#28 4.488 computing gzip size...
+#28 4.497 dist/index.html                             0.62 kB │ gzip:   0.41 kB
+#28 4.497 dist/assets/index-DRTj2GU6.css             33.19 kB │ gzip:   6.03 kB
+#28 4.497 dist/assets/AuthPanel-Bnj7svkN.js           4.66 kB │ gzip:   1.68 kB
+#28 4.497 dist/assets/UserAgentPanel-CSqzjkZT.js      6.21 kB │ gzip:   2.06 kB
+#28 4.497 dist/assets/LogsPanel-DzRwYzXr.js           7.50 kB │ gzip:   2.19 kB
+#28 4.497 dist/assets/RatioGroupsPanel-B-yEHXfT.js    8.84 kB │ gzip:   2.65 kB
+#28 4.497 dist/assets/WorkflowsPanel-C77PlEe4.js     11.98 kB │ gzip:   3.33 kB
+#28 4.497 dist/assets/RssRulesPanel-CEUsDc-b.js      12.16 kB │ gzip:   3.27 kB
+#28 4.497 dist/assets/StoragePanel-DSIp9lXT.js       18.30 kB │ gzip:   4.72 kB
+#28 4.497 dist/assets/CrashSafetyPanel-BZmi2KNh.js   32.51 kB │ gzip:   9.71 kB
+#28 4.497 dist/assets/EnginePanel-Bg1xq1zq.js        50.66 kB │ gzip:  11.92 kB
+#28 4.497 dist/assets/zh-Hans-DLctIZ64.js            66.17 kB │ gzip:  25.38 kB
+#28 4.497 dist/assets/zh-Hant-DhhRp7tq.js            67.98 kB │ gzip:  25.05 kB
+#28 4.497 dist/assets/id-AsO2u6hP.js                 71.52 kB │ gzip:  23.65 kB
+#28 4.497 dist/assets/pt-BR-Di4jf_U6.js              75.41 kB │ gzip:  24.84 kB
+#28 4.497 dist/assets/ko-BdEr8UeL.js                 75.72 kB │ gzip:  25.86 kB
+#28 4.497 dist/assets/de-Yrb6dtda.js                 76.44 kB │ gzip:  25.90 kB
+#28 4.497 dist/assets/es-BSJ2epaP.js                 76.47 kB │ gzip:  25.23 kB
+#28 4.497 dist/assets/fr-DDmK2Xpf.js                 78.98 kB │ gzip:  25.75 kB
+#28 4.497 dist/assets/vi-UVZXdelc.js                 82.22 kB │ gzip:  25.57 kB
+#28 4.497 dist/assets/ja-DfftL5b-.js                 83.21 kB │ gzip:  27.00 kB
+#28 4.497 dist/assets/ar-0GELuwjE.js                 90.46 kB │ gzip:  27.57 kB
+#28 4.497 dist/assets/hi-BMwIs2Pw.js                119.99 kB │ gzip:  29.20 kB
+#28 4.497 dist/assets/index-Bq_F23eZ.js             534.47 kB │ gzip: 148.16 kB
+#28 4.497 
+#28 4.498 [plugin builtin:vite-reporter] 
+#28 4.498 (!) Some chunks are larger than 500 kB after minification. Consider:
+#28 4.498 - Using dynamic import() to code-split the application
+#28 4.498 - Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+#28 4.498 - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+#28 4.499 ✓ built in 195ms
+#28 4.518 npm notice
+#28 4.518 npm notice New major version of npm available! 10.9.8 -> 12.2.0
+#28 4.518 npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.0
+#28 4.518 npm notice To update run: npm install -g npm@12.2.0
+#28 4.518 npm notice
+#28 DONE 4.6s
+
+#30 [stage-2 4/9] COPY --from=webui-build /webui/dist /usr/share/torrentng/webui
+#30 DONE 0.1s
+
+#31 [stage-2 5/9] COPY deploy/native/config.toml /etc/torrentngd/config.toml
+#31 DONE 0.1s
+
+#32 [stage-2 6/9] COPY deploy/container/identity.sh /usr/local/lib/torrentng/identity.sh
+#32 DONE 0.1s
+
+#33 [stage-2 7/9] COPY deploy/native/vpn-port-sync.sh /usr/local/lib/torrentng/vpn-port-sync.sh
+#33 DONE 0.1s
+
+#34 [stage-2 8/9] COPY deploy/native/entrypoint.sh /entrypoint.sh
+#34 DONE 0.1s
+
+#35 [stage-2 9/9] RUN chmod +x /entrypoint.sh /usr/local/lib/torrentng/vpn-port-sync.sh
+#35 DONE 0.2s
+
+#36 exporting to oci image format
+#36 exporting layers
+#36 exporting layers 1.2s done
+#36 exporting manifest sha256:dd5060c9ba2877b9ab65a66c5e62e260a5c0399664da6c96e19d05c3d1d5fdbb 0.0s done
+#36 exporting config sha256:493724433ad4332260a61a89265c00273515a83e0e88f305bc171f2c0d3b7412 0.0s done
+#36 sending tarball
+#36 sending tarball 0.8s done
+#36 DONE 2.1s
+
+#37 importing to docker
+#37 DONE 0.0s
+
+#38 resolving provenance for metadata file
+#38 DONE 0.0s
+ Image torrentng/torrentngd:benchmark-20261021t201229z Built
+
+==> Deluge: controlled private download
+[Deluge controlled_download] 0.0%, 0.00 MiB/s, 0 peers
+[Deluge controlled_download] 9.2%, 3.86 MiB/s, 0 peers
+[Deluge controlled_download] 20.8%, 4.26 MiB/s, 0 peers
+[Deluge controlled_download] 31.5%, 3.91 MiB/s, 0 peers
+[Deluge controlled_download] 43.2%, 4.24 MiB/s, 0 peers
+[Deluge controlled_download] 53.8%, 3.95 MiB/s, 0 peers
+[Deluge controlled_download] 65.5%, 4.29 MiB/s, 0 peers
+[Deluge controlled_download] 76.5%, 3.98 MiB/s, 0 peers
+[Deluge controlled_download] 87.8%, 4.31 MiB/s, 0 peers
+[Deluge controlled_download] 98.7%, 4.01 MiB/s, 0 peers
+[Deluge] verified 0.738 GiB; 3.89 MiB/s, 7.892 CPU-s/GiB
+
+==> TorrentNG: controlled private download
+[TorrentNG controlled_download] 0.0%, 0.00 MiB/s, 0 peers
+[TorrentNG controlled_download] 0.0%, 0.00 MiB/s, 0 peers
+[TorrentNG controlled_download] 0.0%, 0.00 MiB/s, 0 peers
+[TorrentNG controlled_download] 0.0%, 0.00 MiB/s, 0 peers
+[TorrentNG controlled_download] 0.0%, 0.00 MiB/s, 0 peers
+[TorrentNG controlled_download] 0.0%, 0.00 MiB/s, 0 peers
+[TorrentNG controlled_download] 0.0%, 0.00 MiB/s, 0 peers
+[TorrentNG controlled_download] 0.0%, 0.00 MiB/s, 0 peers
+[TorrentNG controlled_download] 0.0%, 0.00 MiB/s, 0 peers
+[TorrentNG controlled_download] 0.0%, 0.00 MiB/s, 0 peers
+[TorrentNG controlled_download] 0.0%, 0.00 MiB/s, 0 peers
+[TorrentNG controlled_download] 0.0%, 0.00 MiB/s, 0 peers
+benchmark interrupted
+Report: /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-round1.md
+Samples: /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-round1-samples.csv

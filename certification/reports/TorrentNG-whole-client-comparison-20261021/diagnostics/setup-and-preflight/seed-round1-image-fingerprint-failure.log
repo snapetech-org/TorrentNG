@@ -1,0 +1,6 @@
+Scratch: /mnt/disks/gamespool0/torrentng-whole-client-architecture-comparison-20261021/run-seed-1-recovered
+Config scratch: /var/tmp/tngb-arch-compare-config/torrentng-client-bench-20261021T184948Z
+Compose project: tngbench20261021t184948z
+benchmark failed: RuntimeError: TorrentNG image metadata does not match this benchmark checkout: ['7c2dd481ca224da8f5e47b783678b6110146ba9b', '023413a5b5c92f59cb4bc33818323d2799058b87cd4241529c984aaa379c5c13', 'system-allocator'] != ['7c2dd481ca224da8f5e47b783678b6110146ba9b', '52d861e5c7edb4acb90b45fdd7a40fa2871a90f7ff259d6ecd242cfcb80a73a6', 'system-allocator']
+Report: /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round1-recovered.md
+Samples: /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round1-recovered-samples.csv

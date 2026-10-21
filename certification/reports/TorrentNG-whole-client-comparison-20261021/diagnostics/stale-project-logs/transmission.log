@@ -1,0 +1,62 @@
+2026-10-21T18:38:48.388688190Z [migrations] started
+2026-10-21T18:38:48.388733887Z [migrations] no migrations found
+2026-10-21T18:38:48.411530943Z ───────────────────────────────────────
+2026-10-21T18:38:48.411547064Z 
+2026-10-21T18:38:48.411549408Z       ██╗     ███████╗██╗ ██████╗
+2026-10-21T18:38:48.411551052Z       ██║     ██╔════╝██║██╔═══██╗
+2026-10-21T18:38:48.411552114Z       ██║     ███████╗██║██║   ██║
+2026-10-21T18:38:48.411553136Z       ██║     ╚════██║██║██║   ██║
+2026-10-21T18:38:48.411554107Z       ███████╗███████║██║╚██████╔╝
+2026-10-21T18:38:48.411555089Z       ╚══════╝╚══════╝╚═╝ ╚═════╝
+2026-10-21T18:38:48.411556081Z 
+2026-10-21T18:38:48.411558426Z    Brought to you by linuxserver.io
+2026-10-21T18:38:48.411559478Z ───────────────────────────────────────
+2026-10-21T18:38:48.411723790Z 
+2026-10-21T18:38:48.411748707Z To support LSIO projects visit:
+2026-10-21T18:38:48.411751553Z https://www.linuxserver.io/donate/
+2026-10-21T18:38:48.411753466Z 
+2026-10-21T18:38:48.411754949Z ───────────────────────────────────────
+2026-10-21T18:38:48.411757334Z GID/UID
+2026-10-21T18:38:48.411758726Z ───────────────────────────────────────
+2026-10-21T18:38:48.413901210Z 
+2026-10-21T18:38:48.413922922Z User UID:    1000
+2026-10-21T18:38:48.413925617Z User GID:    1001
+2026-10-21T18:38:48.413927410Z ───────────────────────────────────────
+2026-10-21T18:38:48.414760594Z Linuxserver.io version: 4.1.3-r0-ls362
+2026-10-21T18:38:48.414829856Z Build-date: 2026-09-15T15:05:55+00:00
+2026-10-21T18:38:48.414837240Z ───────────────────────────────────────
+2026-10-21T18:38:48.414839605Z     
+2026-10-21T18:38:48.440805867Z stat: cannot statx '/downloads/complete': No such file or directory
+2026-10-21T18:38:48.441730525Z find: ‘/downloads/complete’: No such file or directory
+2026-10-21T18:38:48.441780189Z **** Permissions could not be set. This is probably because your volume mounts are remote or read-only. ****
+2026-10-21T18:38:48.441810116Z **** The app may not work properly and we will not provide support for it. ****
+2026-10-21T18:38:48.442724414Z stat: cannot statx '/downloads/incomplete': No such file or directory
+2026-10-21T18:38:48.443625518Z find: ‘/downloads/incomplete’: No such file or directory
+2026-10-21T18:38:48.443656747Z **** Permissions could not be set. This is probably because your volume mounts are remote or read-only. ****
+2026-10-21T18:38:48.443658801Z **** The app may not work properly and we will not provide support for it. ****
+2026-10-21T18:38:48.449030685Z [custom-init] No custom files found, skipping...
+2026-10-21T18:38:48.459262079Z sendto: Network unreachable
+2026-10-21T18:38:48.459271437Z sendto: Network unreachable
+2026-10-21T18:38:48.459273331Z sendto: Network unreachable
+2026-10-21T18:38:48.459274483Z sendto: Network unreachable
+2026-10-21T18:38:49.466428431Z Connection to localhost (::1) 9091 port [tcp/*] succeeded!
+2026-10-21T18:38:49.470798440Z [ls.io-init] done.
+2026-10-21T18:38:50.460893912Z [2026-10-21T18:38:48.459+0000] ERR ip-cache.cc:306 Couldn't obtain source address in any IP protocol, no network connections possible (ip-cache.cc:306)
+2026-10-21T18:38:50.460920633Z [2026-10-21T18:38:49.460+0000] ERR watchdir-inotify.cc:103 Couldn't watch '/watch': No such file or directory (2) (watchdir-inotify.cc:103)
+2026-10-21T18:38:50.460922727Z [2026-10-21T18:38:49.460+0000] ERR utils.cc:145 Couldn't read '/config/queue.json': No such file or directory (2) (utils.cc:145)
+2026-10-21T18:39:18.462813119Z [2026-10-21T18:39:18.460+0000] ERR ip-cache.cc:306 Couldn't obtain source address in any IP protocol, no network connections possible (ip-cache.cc:306)
+2026-10-21T18:39:18.462852163Z [2026-10-21T18:39:18.460+0000] ERR ip-cache.cc:306 Couldn't obtain source address in any IP protocol, no network connections possible (ip-cache.cc:306)
+2026-10-21T18:39:48.461846008Z [2026-10-21T18:39:48.460+0000] ERR ip-cache.cc:306 Couldn't obtain source address in any IP protocol, no network connections possible (ip-cache.cc:306)
+2026-10-21T18:39:48.461886045Z [2026-10-21T18:39:48.460+0000] ERR ip-cache.cc:306 Couldn't obtain source address in any IP protocol, no network connections possible (ip-cache.cc:306)
+2026-10-21T18:40:18.462068155Z [2026-10-21T18:40:18.461+0000] ERR ip-cache.cc:306 Couldn't obtain source address in any IP protocol, no network connections possible (ip-cache.cc:306)
+2026-10-21T18:40:18.462182853Z [2026-10-21T18:40:18.461+0000] ERR ip-cache.cc:306 Couldn't obtain source address in any IP protocol, no network connections possible (ip-cache.cc:306)
+2026-10-21T18:40:48.461814792Z [2026-10-21T18:40:48.460+0000] ERR ip-cache.cc:306 Couldn't obtain source address in any IP protocol, no network connections possible (ip-cache.cc:306)
+2026-10-21T18:40:48.461838487Z [2026-10-21T18:40:48.460+0000] ERR ip-cache.cc:306 Couldn't obtain source address in any IP protocol, no network connections possible (ip-cache.cc:306)
+2026-10-21T18:41:18.461843233Z [2026-10-21T18:41:18.460+0000] ERR ip-cache.cc:306 Couldn't obtain source address in any IP protocol, no network connections possible (ip-cache.cc:306)
+2026-10-21T18:41:18.461868741Z [2026-10-21T18:41:18.461+0000] ERR ip-cache.cc:306 Couldn't obtain source address in any IP protocol, no network connections possible (ip-cache.cc:306)
+2026-10-21T18:41:48.461843128Z [2026-10-21T18:41:48.460+0000] ERR ip-cache.cc:306 Couldn't obtain source address in any IP protocol, no network connections possible (ip-cache.cc:306)
+2026-10-21T18:41:48.461874978Z [2026-10-21T18:41:48.460+0000] ERR ip-cache.cc:306 Couldn't obtain source address in any IP protocol, no network connections possible (ip-cache.cc:306)
+2026-10-21T18:42:18.461838031Z [2026-10-21T18:42:18.460+0000] ERR ip-cache.cc:306 Couldn't obtain source address in any IP protocol, no network connections possible (ip-cache.cc:306)
+2026-10-21T18:42:18.461862187Z [2026-10-21T18:42:18.460+0000] ERR ip-cache.cc:306 Couldn't obtain source address in any IP protocol, no network connections possible (ip-cache.cc:306)
+2026-10-21T18:42:25.563617125Z 127.0.0.1:9091/transmission/rpc/ acknowledged notification
+2026-10-21T18:42:26.516156967Z Closing transmission session... done.

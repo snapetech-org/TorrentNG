@@ -1,0 +1,78 @@
+2026-10-21T18:42:46.691908227Z [migrations] started
+2026-10-21T18:42:46.691934617Z [migrations] no migrations found
+2026-10-21T18:42:46.744213447Z ───────────────────────────────────────
+2026-10-21T18:42:46.744248203Z 
+2026-10-21T18:42:46.744251720Z       ██╗     ███████╗██╗ ██████╗
+2026-10-21T18:42:46.744254205Z       ██║     ██╔════╝██║██╔═══██╗
+2026-10-21T18:42:46.744256149Z       ██║     ███████╗██║██║   ██║
+2026-10-21T18:42:46.744258142Z       ██║     ╚════██║██║██║   ██║
+2026-10-21T18:42:46.744259535Z       ███████╗███████║██║╚██████╔╝
+2026-10-21T18:42:46.744261018Z       ╚══════╝╚══════╝╚═╝ ╚═════╝
+2026-10-21T18:42:46.744262831Z 
+2026-10-21T18:42:46.744264184Z    Brought to you by linuxserver.io
+2026-10-21T18:42:46.744265887Z ───────────────────────────────────────
+2026-10-21T18:42:46.744825471Z 
+2026-10-21T18:42:46.744873522Z To support LSIO projects visit:
+2026-10-21T18:42:46.744876728Z https://www.linuxserver.io/donate/
+2026-10-21T18:42:46.744879093Z 
+2026-10-21T18:42:46.744881017Z ───────────────────────────────────────
+2026-10-21T18:42:46.744884834Z GID/UID
+2026-10-21T18:42:46.744886377Z ───────────────────────────────────────
+2026-10-21T18:42:46.746543708Z 
+2026-10-21T18:42:46.746564798Z User UID:    1000
+2026-10-21T18:42:46.746568214Z User GID:    1001
+2026-10-21T18:42:46.746570098Z ───────────────────────────────────────
+2026-10-21T18:42:46.747425073Z Linuxserver.io version: 2.2.0-ls382
+2026-10-21T18:42:46.747509724Z Build-date: 2026-08-24T16:04:39+00:00
+2026-10-21T18:42:46.747521086Z ───────────────────────────────────────
+2026-10-21T18:42:46.747524532Z     
+2026-10-21T18:42:46.784336588Z [custom-init] No custom files found, skipping...
+2026-10-21T18:42:46.918690876Z 18:42:46 [INFO    ][deluge.configmanager:49  ] Setting config directory to: /config
+2026-10-21T18:42:47.028500050Z /lsiopy/lib/python3.12/site-packages/deluge/pluginmanagerbase.py:16: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+2026-10-21T18:42:47.028531249Z   import pkg_resources
+2026-10-21T18:42:47.041187581Z 18:42:47 [INFO    ][deluge.core.daemon            :1672] Deluge daemon 2.2.0
+2026-10-21T18:42:47.053910269Z 18:42:47 [WARNING ][deluge.core.core              :1672] Unable to load /config/session.state: [Errno 2] No such file or directory: '/config/session.state'
+2026-10-21T18:42:47.053936920Z 18:42:47 [WARNING ][deluge.core.core              :1672] Unable to load /config/session.state.bak: [Errno 2] No such file or directory: '/config/session.state.bak'
+2026-10-21T18:42:47.054324046Z 18:42:47 [INFO    ][deluge.core.alertmanager      :1672] Alert Queue Size set to 10000
+2026-10-21T18:42:47.061495650Z 18:42:47 [INFO    ][deluge.core.rpcserver         :1672] Starting DelugeRPC server localhost:58846
+2026-10-21T18:42:47.079964041Z 18:42:47 [INFO    ][deluge.core.daemon            :1672] Deluge daemon starting...
+2026-10-21T18:42:47.092385707Z 18:42:47 [INFO    ][deluge.core.authmanager       :1672] Opening auth for load: /config/auth
+2026-10-21T18:42:47.092508731Z 18:42:47 [INFO    ][deluge.core.authmanager       :1672] Successfully loaded auth: /config/auth
+2026-10-21T18:42:47.093218670Z 18:42:47 [INFO    ][deluge.core.torrentmanager    :1672] Loading torrent state: /config/state/torrents.state
+2026-10-21T18:42:47.093242716Z 18:42:47 [INFO    ][deluge.core.torrentmanager    :1672] Loading torrent state: /config/state/torrents.state.bak
+2026-10-21T18:42:47.093259258Z 18:42:47 [INFO    ][deluge.core.torrentmanager    :1672] Opening torrents.fastresume for load: /config/state/torrents.fastresume
+2026-10-21T18:42:47.093274046Z 18:42:47 [INFO    ][deluge.core.torrentmanager    :1672] Opening torrents.fastresume for load: /config/state/torrents.fastresume.bak
+2026-10-21T18:42:47.093291749Z 18:42:47 [INFO    ][deluge.core.torrentmanager    :1672] Opening torrents.fastresume for load: /config/torrents.fastresume
+2026-10-21T18:42:47.093330954Z 18:42:47 [INFO    ][deluge.core.torrentmanager    :1672] Finished loading 0 torrents in 0:00:00.000202
+2026-10-21T18:42:47.801551590Z Connection to 127.0.0.1 58846 port [tcp/*] succeeded!
+2026-10-21T18:42:47.802791628Z 18:42:47 [INFO    ][deluge.core.rpcserver         :1672] Deluge Client connection made from: 127.0.0.1:56900
+2026-10-21T18:42:47.803199443Z 18:42:47 [INFO    ][deluge.core.rpcserver         :1672] Deluge client disconnected: Connection to the other side was lost in a non-clean fashion: Connection lost.
+2026-10-21T18:42:47.941076709Z 18:42:47 [INFO    ][deluge.configmanager:49  ] Setting config directory to: /config
+2026-10-21T18:42:47.941528047Z 18:42:47 [INFO    ][deluge.ui.ui:68  ] Deluge ui 2.2.0
+2026-10-21T18:42:47.941550540Z 18:42:47 [INFO    ][deluge.ui.ui:70  ] Starting web ui..
+2026-10-21T18:42:48.109218022Z /lsiopy/lib/python3.12/site-packages/deluge/pluginmanagerbase.py:16: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+2026-10-21T18:42:48.109240354Z   import pkg_resources
+2026-10-21T18:42:48.114250239Z 18:42:48 [WARNING ][deluge.config              :401 ] Unable to open config file /config/web.conf: [Errno 2] No such file or directory: '/config/web.conf'
+2026-10-21T18:42:48.115024160Z 18:42:48 [INFO    ][deluge.i18n.util           :103 ] Setting up translations from /lsiopy/lib/python3.12/site-packages/deluge/i18n
+2026-10-21T18:42:48.115255850Z 18:42:48 [WARNING ][deluge.config              :401 ] Unable to open config file /config/hostlist.conf: [Errno 2] No such file or directory: '/config/hostlist.conf'
+2026-10-21T18:42:48.115279305Z 18:42:48 [WARNING ][deluge.config              :478 ] Unable to open config file: /config/hostlist.conf because: [Errno 2] No such file or directory: '/config/hostlist.conf'
+2026-10-21T18:42:48.127288957Z 18:42:48 [WARNING ][deluge.config              :503 ] Unable to backup old config: [Errno 2] No such file or directory: '/config/hostlist.conf'
+2026-10-21T18:42:48.133451143Z 18:42:48 [INFO    ][deluge.ui.web.server       :1672] Starting webui server at PID 186
+2026-10-21T18:42:48.133712710Z 18:42:48 [INFO    ][deluge.ui.web.server       :1672] Serving at http://0.0.0.0:8112/
+2026-10-21T18:42:48.724301600Z 18:42:48 [INFO    ][deluge.ui.web.auth         :1672] Login success (ClientIP 172.23.0.1)
+2026-10-21T18:42:48.729504922Z 18:42:48 [INFO    ][deluge.core.rpcserver         :1672] Deluge Client connection made from: 127.0.0.1:56904
+2026-10-21T18:42:48.779522413Z 18:42:48 [INFO    ][deluge.ui.web.auth         :1672] Login success (ClientIP 172.23.0.1)
+2026-10-21T18:42:48.817429851Z Connection to 127.0.0.1 8112 port [tcp/*] succeeded!
+2026-10-21T18:42:48.822683138Z [ls.io-init] done.
+2026-10-21T18:42:57.953407280Z 18:42:57 [INFO    ][deluge.ui.web.auth         :1672] Login success (ClientIP 172.23.0.1)
+2026-10-21T18:42:57.959023557Z 18:42:57 [INFO    ][deluge.core.torrentmanager    :1672] Torrent debian-13.7.0-amd64-netinst.iso from user "localclient" added
+2026-10-21T18:42:57.960544449Z 18:42:57 [WARNING ][deluge.core.torrentmanager    :1672] Torrent id not in torrents loading list: 'bde512393bf3804515e883cc3188c408783d7b72'
+2026-10-21T18:43:04.651162412Z 18:43:04 [INFO    ][deluge.ui.web.auth         :1672] Login success (ClientIP 172.23.0.1)
+2026-10-21T18:46:19.976146052Z 18:46:19 [INFO    ][deluge.ui.web.server       :1672] Shutting down webserver
+2026-10-21T18:46:19.976168254Z 18:46:19 [INFO    ][deluge.core.rpcserver         :1672] Deluge client disconnected: Connection to the other side was lost in a non-clean fashion: Connection lost.
+2026-10-21T18:46:19.976170578Z 18:46:19 [WARNING ][deluge.config              :478 ] Unable to open config file: /config/web.conf because: [Errno 2] No such file or directory: '/config/web.conf'
+2026-10-21T18:46:19.978957386Z 18:46:19 [WARNING ][deluge.config              :503 ] Unable to backup old config: [Errno 2] No such file or directory: '/config/web.conf'
+2026-10-21T18:46:20.059791653Z 18:46:20 [INFO    ][deluge.core.daemon            :1672] Deluge daemon shutting down, waiting for components to shutdown...
+2026-10-21T18:46:20.059834004Z 18:46:20 [INFO    ][deluge.core.core              :1672] Saving the session.state at: /config/session.state
+2026-10-21T18:46:21.700666422Z 18:46:21 [INFO    ][deluge.core.daemon            :1672] Deluge daemon shutdown successfully
+2026-10-21T18:46:21.700690217Z 18:46:21 [INFO    ][deluge.core.daemon_entry      :1672] Exiting...

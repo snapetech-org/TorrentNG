@@ -1,0 +1,15 @@
+Scratch: /mnt/disks/gamespool0/torrentng-whole-client-architecture-comparison-20261021/run-download-main-peer-debug
+Config scratch: /var/tmp/tngb-arch-compare-config/torrentng-client-bench-20261021T202139Z
+Compose project: tngbench20261021t202139z
+Using prebuilt image torrentng/torrentngd:benchmark-20261021t201229z; source and allocator labels verified
+
+==> TorrentNG: controlled private download
+[TorrentNG controlled_download] 0.0%, 0.00 MiB/s, 0 peers
+[TorrentNG controlled_download] 4.7%, 0.00 MiB/s, 0 peers
+[TorrentNG controlled_download] 4.7%, 0.00 MiB/s, 0 peers
+[TorrentNG controlled_download] 4.7%, 0.00 MiB/s, 0 peers
+[TorrentNG controlled_download] 4.7%, 0.00 MiB/s, 0 peers
+[TorrentNG controlled_download] 4.7%, 0.00 MiB/s, 0 peers
+[TorrentNG] controlled download FAIL at 4.68%: TimeoutError: TorrentNG did not complete controlled_download within 120s
+Report: /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-peer-debug.md
+Samples: /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-peer-debug-samples.csv

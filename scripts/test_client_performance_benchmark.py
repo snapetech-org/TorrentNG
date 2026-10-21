@@ -802,6 +802,46 @@ class CheckpointReportTests(unittest.TestCase):
 
 
 class ControlledDownloadTests(unittest.TestCase):
+    def test_controlled_download_report_uses_generated_private_torrent_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            seed_source = root / "fixture.iso"
+            seed_source.write_bytes(b"verified local fixture")
+            workdir = root / "work"
+            (workdir / "leecher").mkdir(parents=True)
+            instance = object.__new__(benchmark.Benchmark)
+            instance.seed_source = seed_source
+            instance.workdir = workdir
+            instance.transfer_order = ("torrentngd",)
+            instance.seed_leecher_image = "pinned-qbittorrent-image"
+            instance.seed_cache_eviction = {}
+            instance.results = [{"client": "torrentngd", "controlled_download": "PASS"}]
+            instance._start_seed_leecher = mock.Mock()
+            instance._wait_seed_leecher_tracker = mock.Mock()
+            instance._run_controlled_download_one = mock.Mock()
+            instance._write_controlled_download_report = mock.Mock()
+            instance.compose = mock.Mock(return_value=("", 0))
+            instance.service_id = mock.Mock(return_value="")
+            client_images = {}
+            meta = {
+                "iso_name": seed_source.name,
+                "size": seed_source.stat().st_size,
+                "sha256": hashlib.sha256(seed_source.read_bytes()).hexdigest(),
+                "info_hash": "official-torrent-hash",
+            }
+
+            with mock.patch.object(
+                benchmark, "make_private_torrent", return_value="private-torrent-hash",
+            ), mock.patch.object(benchmark, "evict_file_cache", return_value=True):
+                status = instance._run_controlled_download_mode(
+                    "198.18.0.2", meta, client_images,
+                )
+
+            self.assertEqual(status, 0)
+            report_meta = instance._write_controlled_download_report.call_args.args[0]
+            self.assertEqual(report_meta["info_hash"], "private-torrent-hash")
+            self.assertEqual(meta["info_hash"], "official-torrent-hash")
+
     def test_controlled_download_reads_its_own_payload_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             instance = object.__new__(benchmark.Benchmark)

@@ -1,0 +1,754 @@
+Scratch: /mnt/disks/gamespool0/torrentng-whole-client-architecture-comparison-20261021/run-seed-1
+Config scratch: /mnt/disks/gamespool0/torrentng-whole-client-architecture-comparison-20261021/run-seed-1/config
+Compose project: tngbench20261021t180901z
+ Image torrentng/torrentngd:benchmark-20261021t180901z Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 869B done
+#1 DONE 0.0s
+
+#2 [internal] booting buildkit
+#2 pulling image moby/buildkit:buildx-stable-1
+#2 pulling image moby/buildkit:buildx-stable-1 2.7s done
+#2 creating container buildx_buildkit_tngbench-client-build-cache-v10
+#2 creating container buildx_buildkit_tngbench-client-build-cache-v10 0.6s done
+#2 DONE 3.3s
+
+#3 [internal] load build definition from Dockerfile
+#3 transferring dockerfile:
+#3 transferring dockerfile: 3.29kB done
+#3 DONE 0.1s
+
+#4 resolve image config for docker-image://docker.io/docker/dockerfile:1.7
+#4 ...
+
+#5 [auth] docker/dockerfile:pull token for registry-1.docker.io
+#5 DONE 0.0s
+
+#4 resolve image config for docker-image://docker.io/docker/dockerfile:1.7
+#4 DONE 1.3s
+
+#6 docker-image://docker.io/docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
+#6 resolve docker.io/docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e 0.0s done
+#6 sha256:96918c57e42509b97f10c074d80672ecdbd3bb7dcd38c1bd95960cf291207416 0B / 11.98MB 0.2s
+#6 sha256:96918c57e42509b97f10c074d80672ecdbd3bb7dcd38c1bd95960cf291207416 2.10MB / 11.98MB 0.5s
+#6 sha256:96918c57e42509b97f10c074d80672ecdbd3bb7dcd38c1bd95960cf291207416 11.98MB / 11.98MB 0.6s done
+#6 extracting sha256:96918c57e42509b97f10c074d80672ecdbd3bb7dcd38c1bd95960cf291207416 0.1s done
+#6 DONE 0.8s
+
+#7 [auth] library/node:pull token for registry-1.docker.io
+#7 DONE 0.0s
+
+#8 [auth] library/alpine:pull token for registry-1.docker.io
+#8 DONE 0.0s
+
+#9 [auth] library/rust:pull token for registry-1.docker.io
+#9 DONE 0.0s
+
+#10 [internal] load metadata for docker.io/library/rust:1.96-alpine
+#10 ...
+
+#11 [internal] load metadata for docker.io/library/node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9
+#11 DONE 0.8s
+
+#10 [internal] load metadata for docker.io/library/rust:1.96-alpine
+#10 DONE 0.9s
+
+#12 [internal] load metadata for docker.io/library/alpine:3.24.2
+#12 DONE 0.9s
+
+#13 [internal] load .dockerignore
+#13 transferring context: 221B done
+#13 DONE 0.1s
+
+#14 [build 1/6] FROM docker.io/library/rust:1.96-alpine@sha256:a41f7740f8b45d45795624eec13a8b42263cc700f19f7e4e86e04d3dda08a479
+#14 resolve docker.io/library/rust:1.96-alpine@sha256:a41f7740f8b45d45795624eec13a8b42263cc700f19f7e4e86e04d3dda08a479 0.1s done
+#14 ...
+
+#15 [internal] load build context
+#15 transferring context: 12.75MB 0.1s done
+#15 DONE 0.3s
+
+#16 [webui-build 1/6] FROM docker.io/library/node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9
+#16 resolve docker.io/library/node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9 0.1s done
+#16 DONE 0.6s
+
+#17 [stage-2 1/9] FROM docker.io/library/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+#17 resolve docker.io/library/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 0.1s done
+#17 sha256:e2de96513ba9eb53b431787ec8a65cdde380ac4772a3e4c4b714dcfde2a102b5 0B / 3.85MB 0.2s
+#17 sha256:e2de96513ba9eb53b431787ec8a65cdde380ac4772a3e4c4b714dcfde2a102b5 1.05MB / 3.85MB 0.6s
+#17 sha256:e2de96513ba9eb53b431787ec8a65cdde380ac4772a3e4c4b714dcfde2a102b5 2.10MB / 3.85MB 0.8s
+#17 sha256:e2de96513ba9eb53b431787ec8a65cdde380ac4772a3e4c4b714dcfde2a102b5 3.15MB / 3.85MB 0.9s
+#17 sha256:e2de96513ba9eb53b431787ec8a65cdde380ac4772a3e4c4b714dcfde2a102b5 3.85MB / 3.85MB 1.0s done
+#17 extracting sha256:e2de96513ba9eb53b431787ec8a65cdde380ac4772a3e4c4b714dcfde2a102b5 0.1s done
+#17 DONE 1.4s
+
+#18 [stage-2 2/9] RUN apk add --no-cache ca-certificates curl jq tini util-linux     && case "1000" in ''|*[!0-9]*) echo "TNG_UID must be a nonzero numeric ID" >&2; exit 1;; *[1-9]*) :;; *) echo "TNG_UID must be a nonzero numeric ID" >&2; exit 1;; esac     && case "1000" in ''|*[!0-9]*) echo "TNG_GID must be a nonzero numeric ID" >&2; exit 1;; *[1-9]*) :;; *) echo "TNG_GID must be a nonzero numeric ID" >&2; exit 1;; esac     && mkdir -p /data /downloads /config /var/lib/torrentngd /usr/share/torrentng/webui /run/secrets     && chown -R "1000:1000" /data /downloads /config /var/lib/torrentngd /run/secrets
+#18 ...
+
+#16 [webui-build 1/6] FROM docker.io/library/node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9
+#16 sha256:b571db164614a1290b74286b3e4f7ad934430b830515f81e922b39c75cf1dc7e 447B / 447B 0.2s done
+#16 sha256:e53f92c42dd657487b7f7f027b206c996cd3760cda60adda79e44449b2753a29 1.71MB / 1.71MB 0.5s done
+#16 sha256:60f37e2c93ec479af36bf1f7a41277e572d820f3b1abbea47d8073b1f01aa502 49.94MB / 49.94MB 1.9s done
+#16 sha256:d456d1aa143e47912621240cd8e79286732dc069a35b0e02b03449f60df966df 3.31kB / 3.31kB 0.2s done
+#16 sha256:774043ccc8ccd0d0833a9ee0792142ab7ad93df971e59dd248fbf82db16d0150 28.24MB / 28.24MB 2.3s done
+#16 DONE 4.8s
+
+#14 [build 1/6] FROM docker.io/library/rust:1.96-alpine@sha256:a41f7740f8b45d45795624eec13a8b42263cc700f19f7e4e86e04d3dda08a479
+#14 sha256:a43c54cb9b8ea310a3730234455f912038e9194b4bce20da9e9f9448e2d9eb42 270.53MB / 270.53MB 4.5s done
+#14 sha256:f9b9a4131e96b01688c4e6fd3400fd8ec85f23f1cb606d1b92364345a6b96764 75.08MB / 75.08MB 4.1s done
+#14 sha256:55afa1ecc21d2bb5e5045f32dafee56272ffd89860bac26f6c32123439af26a4 3.85MB / 3.85MB 1.7s done
+#14 extracting sha256:55afa1ecc21d2bb5e5045f32dafee56272ffd89860bac26f6c32123439af26a4 0.1s done
+#14 extracting sha256:f9b9a4131e96b01688c4e6fd3400fd8ec85f23f1cb606d1b92364345a6b96764
+#14 extracting sha256:f9b9a4131e96b01688c4e6fd3400fd8ec85f23f1cb606d1b92364345a6b96764 0.6s done
+#14 DONE 5.2s
+
+#16 [webui-build 1/6] FROM docker.io/library/node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9
+#16 extracting sha256:774043ccc8ccd0d0833a9ee0792142ab7ad93df971e59dd248fbf82db16d0150
+#16 extracting sha256:774043ccc8ccd0d0833a9ee0792142ab7ad93df971e59dd248fbf82db16d0150 0.3s done
+#16 DONE 5.1s
+
+#14 [build 1/6] FROM docker.io/library/rust:1.96-alpine@sha256:a41f7740f8b45d45795624eec13a8b42263cc700f19f7e4e86e04d3dda08a479
+#14 extracting sha256:a43c54cb9b8ea310a3730234455f912038e9194b4bce20da9e9f9448e2d9eb42
+#14 ...
+
+#16 [webui-build 1/6] FROM docker.io/library/node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9
+#16 extracting sha256:d456d1aa143e47912621240cd8e79286732dc069a35b0e02b03449f60df966df 0.0s done
+#16 extracting sha256:60f37e2c93ec479af36bf1f7a41277e572d820f3b1abbea47d8073b1f01aa502 0.5s done
+#16 DONE 5.7s
+
+#16 [webui-build 1/6] FROM docker.io/library/node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9
+#16 extracting sha256:e53f92c42dd657487b7f7f027b206c996cd3760cda60adda79e44449b2753a29 0.1s done
+#16 extracting sha256:b571db164614a1290b74286b3e4f7ad934430b830515f81e922b39c75cf1dc7e 0.0s done
+#16 DONE 5.8s
+
+#14 [build 1/6] FROM docker.io/library/rust:1.96-alpine@sha256:a41f7740f8b45d45795624eec13a8b42263cc700f19f7e4e86e04d3dda08a479
+#14 ...
+
+#19 [webui-build 2/6] WORKDIR /webui
+#19 DONE 0.3s
+
+#20 [webui-build 3/6] COPY webui/package.json webui/package-lock.json ./
+#20 DONE 0.2s
+
+#14 [build 1/6] FROM docker.io/library/rust:1.96-alpine@sha256:a41f7740f8b45d45795624eec13a8b42263cc700f19f7e4e86e04d3dda08a479
+#14 extracting sha256:a43c54cb9b8ea310a3730234455f912038e9194b4bce20da9e9f9448e2d9eb42 1.9s done
+#14 DONE 7.1s
+
+#21 [webui-build 4/6] RUN --mount=type=cache,id=torrentng-client-benchmark-npm,target=/root/.npm,sharing=locked npm ci
+#21 2.192 
+#21 2.192 added 236 packages, and audited 237 packages in 2s
+#21 2.192 
+#21 2.192 60 packages are looking for funding
+#21 2.192   run `npm fund` for details
+#21 2.193 
+#21 2.193 found 0 vulnerabilities
+#21 2.193 npm notice
+#21 2.193 npm notice New major version of npm available! 10.9.8 -> 12.2.0
+#21 2.193 npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.0
+#21 2.193 npm notice To update run: npm install -g npm@12.2.0
+#21 2.193 npm notice
+#21 DONE 2.4s
+
+#22 [webui-build 5/6] COPY webui/ ./
+#22 DONE 0.2s
+
+#23 [webui-build 6/6] RUN TNG_WEBUI_OUT_DIR=dist npm run build
+#23 0.306 
+#23 0.306 > torrentng-webui@0.1.0 build
+#23 0.306 > tsc && vite build
+#23 0.306 
+#23 ...
+
+#24 [build 2/6] RUN apk add --no-cache build-base linux-headers musl-dev
+#24 1.346 (1/9) Installing libmagic (5.47-r2)
+#24 1.484 (2/9) Installing file (5.47-r2)
+#24 1.535 (3/9) Installing libstdc++-dev (15.2.0-r5)
+#24 2.110 (4/9) Installing g++ (15.2.0-r5)
+#24 3.210 (5/9) Installing make (4.4.1-r4)
+#24 3.266 (6/9) Installing fortify-headers (3.0.1-r2)
+#24 3.320 (7/9) Installing patch (2.8-r0)
+#24 3.376 (8/9) Installing build-base (0.5-r4)
+#24 3.376 (9/9) Installing linux-headers (7.0.0-r1)
+#24 3.513 Executing busybox-1.37.0-r31.trigger
+#24 3.517 OK: 282.6 MiB in 40 packages
+#24 DONE 3.7s
+
+#25 [build 3/6] WORKDIR /src
+#25 DONE 0.1s
+
+#18 [stage-2 2/9] RUN apk add --no-cache ca-certificates curl jq tini util-linux     && case "1000" in ''|*[!0-9]*) echo "TNG_UID must be a nonzero numeric ID" >&2; exit 1;; *[1-9]*) :;; *) echo "TNG_UID must be a nonzero numeric ID" >&2; exit 1;; esac     && case "1000" in ''|*[!0-9]*) echo "TNG_GID must be a nonzero numeric ID" >&2; exit 1;; *[1-9]*) :;; *) echo "TNG_GID must be a nonzero numeric ID" >&2; exit 1;; esac     && mkdir -p /data /downloads /config /var/lib/torrentngd /usr/share/torrentng/webui /run/secrets     && chown -R "1000:1000" /data /downloads /config /var/lib/torrentngd /run/secrets
+#18 6.372 ( 1/49) Installing ca-certificates (20261020-r0)
+#18 6.507 ( 2/49) Installing brotli-libs (1.2.0-r1)
+#18 6.818 ( 3/49) Installing c-ares (1.34.9-r0)
+#18 6.925 ( 4/49) Installing libunistring (1.4.2-r0)
+#18 7.384 ( 5/49) Installing libidn2 (2.3.8-r0)
+#18 7.479 ( 6/49) Installing nghttp2-libs (1.70.0-r0)
+#18 7.554 ( 7/49) Installing libpsl (0.21.5-r3)
+#18 7.618 ( 8/49) Installing zstd-libs (1.5.7-r2)
+#18 7.849 ( 9/49) Installing libcurl (8.22.0-r0)
+#18 8.073 (10/49) Installing curl (8.22.0-r0)
+#18 8.199 (11/49) Installing oniguruma (6.9.10-r0)
+#18 8.327 (12/49) Installing jq (1.8.2-r0)
+#18 8.432 (13/49) Installing tini (0.19.0-r3)
+#18 8.475 (14/49) Installing util-linux (2.42.3-r1)
+#18 8.522 (15/49) Installing ncurses-terminfo-base (6.6_p20260516-r0)
+#18 8.575 (16/49) Installing libncursesw (6.6_p20260516-r0)
+#18 8.681 (17/49) Installing dmesg (2.42.3-r1)
+#18 8.736 (18/49) Installing setarch (2.42.3-r1)
+#18 8.779 (19/49) Installing libeconf (0.8.3-r0)
+#18 8.833 (20/49) Installing libblkid (2.42.3-r1)
+#18 8.919 (21/49) Installing libuuid (2.42.3-r1)
+#18 8.966 (22/49) Installing libfdisk (2.42.3-r1)
+#18 9.067 (23/49) Installing libmount (2.42.3-r1)
+#18 9.168 (24/49) Installing libsmartcols (2.42.3-r1)
+#18 9.237 (25/49) Installing skalibs-libs (2.15.0.0-r0)
+#18 9.307 (26/49) Installing utmps-libs (0.1.3.3-r0)
+#18 9.348 (27/49) Installing util-linux-misc (2.42.3-r1)
+#18 ...
+
+#26 [build 4/6] COPY Cargo.toml Cargo.lock ./
+#26 DONE 0.2s
+
+#18 [stage-2 2/9] RUN apk add --no-cache ca-certificates curl jq tini util-linux     && case "1000" in ''|*[!0-9]*) echo "TNG_UID must be a nonzero numeric ID" >&2; exit 1;; *[1-9]*) :;; *) echo "TNG_UID must be a nonzero numeric ID" >&2; exit 1;; esac     && case "1000" in ''|*[!0-9]*) echo "TNG_GID must be a nonzero numeric ID" >&2; exit 1;; *[1-9]*) :;; *) echo "TNG_GID must be a nonzero numeric ID" >&2; exit 1;; esac     && mkdir -p /data /downloads /config /var/lib/torrentngd /usr/share/torrentng/webui /run/secrets     && chown -R "1000:1000" /data /downloads /config /var/lib/torrentngd /run/secrets
+#18 9.711 (28/49) Installing linux-pam (1.7.1-r2)
+#18 9.848 (29/49) Installing runuser (2.42.3-r1)
+#18 ...
+
+#27 [build 5/6] COPY crates ./crates
+#27 DONE 0.2s
+
+#18 [stage-2 2/9] RUN apk add --no-cache ca-certificates curl jq tini util-linux     && case "1000" in ''|*[!0-9]*) echo "TNG_UID must be a nonzero numeric ID" >&2; exit 1;; *[1-9]*) :;; *) echo "TNG_UID must be a nonzero numeric ID" >&2; exit 1;; esac     && case "1000" in ''|*[!0-9]*) echo "TNG_GID must be a nonzero numeric ID" >&2; exit 1;; *[1-9]*) :;; *) echo "TNG_GID must be a nonzero numeric ID" >&2; exit 1;; esac     && mkdir -p /data /downloads /config /var/lib/torrentngd /usr/share/torrentng/webui /run/secrets     && chown -R "1000:1000" /data /downloads /config /var/lib/torrentngd /run/secrets
+#18 9.900 (30/49) Installing mount (2.42.3-r1)
+#18 9.948 (31/49) Installing losetup (2.42.3-r1)
+#18 10.00 (32/49) Installing hexdump (2.42.3-r1)
+#18 10.06 (33/49) Installing uuidgen (2.42.3-r1)
+#18 10.10 (34/49) Installing blkid (2.42.3-r1)
+#18 10.14 (35/49) Installing sfdisk (2.42.3-r1)
+#18 10.20 (36/49) Installing mcookie (2.42.3-r1)
+#18 10.25 (37/49) Installing agetty (2.42.3-r1)
+#18 10.29 (38/49) Installing wipefs (2.42.3-r1)
+#18 10.34 (39/49) Installing cfdisk (2.42.3-r1)
+#18 10.39 (40/49) Installing umount (2.42.3-r1)
+#18 10.44 (41/49) Installing flock (2.42.3-r1)
+#18 10.49 (42/49) Installing lsblk (2.42.3-r1)
+#18 10.55 (43/49) Installing libcap-ng (0.8.5-r2)
+#18 10.60 (44/49) Installing setpriv (2.42.3-r1)
+#18 10.65 (45/49) Installing lscpu (2.42.3-r1)
+#18 10.71 (46/49) Installing logger (2.42.3-r1)
+#18 10.75 (47/49) Installing partx (2.42.3-r1)
+#18 10.80 (48/49) Installing fstrim (2.42.3-r1)
+#18 10.84 (49/49) Installing findmnt (2.42.3-r1)
+#18 10.89 Executing busybox-1.37.0-r31.trigger
+#18 10.90 Executing ca-certificates-20261020-r0.trigger
+#18 10.91 OK: 19.9 MiB in 65 packages
+#18 DONE 11.0s
+
+#28 [build 6/6] RUN --mount=type=cache,id=torrentng-client-benchmark-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=torrentng-client-benchmark-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=torrentng-client-benchmark-cargo-target,target=/src/target,sharing=locked     cargo build --release --locked --target x86_64-unknown-linux-musl -p torrentngd     --no-default-features --features "system-allocator"     && cp /src/target/x86_64-unknown-linux-musl/release/torrentngd /torrentngd
+#28 0.348     Updating crates.io index
+#28 ...
+
+#23 [webui-build 6/6] RUN TNG_WEBUI_OUT_DIR=dist npm run build
+#23 3.636 vite v8.3.4 building client environment for production...
+#23 3.676 transforming...
+#23 3.685 <script src="./runtime-config.js"> in "/index.html" can't be bundled without type="module" attribute
+#23 4.941 ✓ 114 modules transformed.
+#23 5.482 rendering chunks...
+#23 6.066 computing gzip size...
+#23 6.142 dist/index.html                             0.62 kB │ gzip:   0.41 kB
+#23 6.142 dist/assets/index-DRTj2GU6.css             33.19 kB │ gzip:   6.03 kB
+#23 6.142 dist/assets/AuthPanel-A-nyUHwi.js           4.66 kB │ gzip:   1.68 kB
+#23 6.142 dist/assets/UserAgentPanel-CUS8WkPh.js      6.21 kB │ gzip:   2.06 kB
+#23 6.142 dist/assets/LogsPanel-CYnLYe6q.js           7.50 kB │ gzip:   2.19 kB
+#23 6.142 dist/assets/RatioGroupsPanel-Kqc1IVZx.js    8.84 kB │ gzip:   2.65 kB
+#23 6.142 dist/assets/WorkflowsPanel-Clba8Aq3.js     11.98 kB │ gzip:   3.33 kB
+#23 6.142 dist/assets/RssRulesPanel-DUECUDXG.js      12.16 kB │ gzip:   3.28 kB
+#23 6.142 dist/assets/StoragePanel-GuJBPq74.js       18.30 kB │ gzip:   4.72 kB
+#23 6.142 dist/assets/CrashSafetyPanel-WVxJNycV.js   32.51 kB │ gzip:   9.71 kB
+#23 6.142 dist/assets/EnginePanel-DP7AfCzy.js        50.66 kB │ gzip:  11.92 kB
+#23 6.142 dist/assets/zh-Hans-5Rm0PP6l.js            66.07 kB │ gzip:  25.33 kB
+#23 6.142 dist/assets/zh-Hant-D_c7JunT.js            67.88 kB │ gzip:  24.99 kB
+#23 6.142 dist/assets/id-CSOQVgfc.js                 71.41 kB │ gzip:  23.59 kB
+#23 6.142 dist/assets/pt-BR-CwigY0Ze.js              75.30 kB │ gzip:  24.78 kB
+#23 6.142 dist/assets/ko-CkZA9dAH.js                 75.61 kB │ gzip:  25.80 kB
+#23 6.142 dist/assets/de-D6WBVpio.js                 76.33 kB │ gzip:  25.84 kB
+#23 6.142 dist/assets/es-B6XK4jcH.js                 76.35 kB │ gzip:  25.17 kB
+#23 6.142 dist/assets/fr-DFf_XFJR.js                 78.86 kB │ gzip:  25.69 kB
+#23 6.142 dist/assets/vi-B7D2Lz2v.js                 82.09 kB │ gzip:  25.51 kB
+#23 6.142 dist/assets/ja-Riij0yvs.js                 83.10 kB │ gzip:  26.94 kB
+#23 6.142 dist/assets/ar-Dj4JhfF0.js                 90.31 kB │ gzip:  27.51 kB
+#23 6.142 dist/assets/hi-CwGYxuVl.js                119.82 kB │ gzip:  29.14 kB
+#23 6.142 dist/assets/index-DLYD5fKM.js             531.89 kB │ gzip: 147.09 kB
+#23 6.142 
+#23 6.143 [plugin builtin:vite-reporter] 
+#23 6.143 (!) Some chunks are larger than 500 kB after minification. Consider:
+#23 6.143 - Using dynamic import() to code-split the application
+#23 6.143 - Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+#23 6.143 - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+#23 6.144 ✓ built in 2.51s
+#23 6.160 npm notice
+#23 6.160 npm notice New major version of npm available! 10.9.8 -> 12.2.0
+#23 6.160 npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.0
+#23 6.160 npm notice To update run: npm install -g npm@12.2.0
+#23 6.160 npm notice
+#23 DONE 6.2s
+
+#28 [build 6/6] RUN --mount=type=cache,id=torrentng-client-benchmark-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=torrentng-client-benchmark-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=torrentng-client-benchmark-cargo-target,target=/src/target,sharing=locked     cargo build --release --locked --target x86_64-unknown-linux-musl -p torrentngd     --no-default-features --features "system-allocator"     && cp /src/target/x86_64-unknown-linux-musl/release/torrentngd /torrentngd
+#28 4.394  Downloading crates ...
+#28 4.721   Downloaded ahash v0.8.12
+#28 4.757   Downloaded anyhow v1.0.104
+#28 4.856   Downloaded atomic-waker v1.1.2
+#28 4.859   Downloaded aho-corasick v1.1.4
+#28 4.866   Downloaded async-trait v0.1.89
+#28 4.871   Downloaded quinn-udp v0.5.14
+#28 4.897   Downloaded axum v0.7.9
+#28 4.917   Downloaded base64 v0.22.1
+#28 4.920   Downloaded block-buffer v0.10.4
+#28 4.922   Downloaded axum-core v0.4.5
+#28 4.924   Downloaded block-buffer v0.12.1
+#28 4.932   Downloaded bitflags v2.11.1
+#28 4.935   Downloaded byteorder v1.5.0
+#28 4.936   Downloaded cfg-if v1.0.4
+#28 4.947   Downloaded cc v1.2.62
+#28 4.951   Downloaded chacha20 v0.10.2
+#28 4.952   Downloaded quinn v0.11.9
+#28 4.956   Downloaded const-oid v0.10.2
+#28 4.958   Downloaded cpufeatures v0.2.17
+#28 4.959   Downloaded cpufeatures v0.3.1
+#28 4.960   Downloaded crypto-common v0.1.7
+#28 4.961   Downloaded crypto-common v0.2.2
+#28 4.963   Downloaded digest v0.10.7
+#28 4.965   Downloaded digest v0.11.3
+#28 4.967   Downloaded displaydoc v0.2.5
+#28 4.968   Downloaded quote v1.0.45
+#28 4.970   Downloaded equivalent v1.0.2
+#28 5.024   Downloaded rand v0.8.6
+#28 5.033   Downloaded rand v0.10.2
+#28 5.037   Downloaded rand_chacha v0.3.1
+#28 5.041   Downloaded rand_core v0.6.4
+#28 5.045   Downloaded rand_core v0.10.1
+#28 5.048   Downloaded rand_pcg v0.10.2
+#28 5.111   Downloaded icu_collections v2.2.0
+#28 5.115   Downloaded proc-macro2 v1.0.106
+#28 5.117   Downloaded icu_provider v2.2.0
+#28 5.119   Downloaded icu_locale_core v2.2.0
+#28 5.123   Downloaded http v1.4.0
+#28 5.125   Downloaded quinn-proto v0.11.19
+#28 5.130   Downloaded mio v1.2.0
+#28 5.133   Downloaded litemap v0.8.2
+#28 5.135   Downloaded futures-sink v0.3.32
+#28 5.136   Downloaded axum-macros v0.4.2
+#28 5.141   Downloaded pin-project v1.1.13
+#28 5.149   Downloaded multer v3.1.0
+#28 5.151   Downloaded hashlink v0.9.1
+#28 5.152   Downloaded hashbrown v0.14.5
+#28 5.155   Downloaded generic-array v0.14.7
+#28 5.156   Downloaded futures-io v0.3.32
+#28 5.157   Downloaded data-encoding v2.11.0
+#28 5.157   Downloaded cfg_aliases v0.2.1
+#28 5.158   Downloaded base64 v0.23.1
+#28 5.160   Downloaded ppv-lite86 v0.2.21
+#28 5.161   Downloaded potential_utf v0.1.5
+#28 5.162   Downloaded pkg-config v0.3.33
+#28 5.163   Downloaded pin-project-lite v0.2.17
+#28 5.166   Downloaded pin-project-internal v1.1.13
+#28 5.167   Downloaded percent-encoding v2.3.2
+#28 5.168   Downloaded libc v0.2.186
+#28 5.187   Downloaded parking_lot_core v0.9.12
+#28 5.189   Downloaded parking_lot v0.12.5
+#28 5.190   Downloaded once_cell v1.21.4
+#28 5.192   Downloaded nu-ansi-term v0.50.3
+#28 5.193   Downloaded mime_guess v2.0.5
+#28 5.194   Downloaded mime v0.3.17
+#28 5.195   Downloaded memchr v2.8.0
+#28 5.197   Downloaded matchit v0.7.3
+#28 5.199   Downloaded matchers v0.2.0
+#28 5.199   Downloaded lru-slab v0.1.2
+#28 5.200   Downloaded log v0.4.29
+#28 5.201   Downloaded lock_api v0.4.14
+#28 5.202   Downloaded lazy_static v1.5.0
+#28 5.203   Downloaded itoa v1.0.18
+#28 5.204   Downloaded ipnet v2.12.0
+#28 5.205   Downloaded io-uring v0.7.12
+#28 5.207   Downloaded indexmap v2.14.0
+#28 5.209   Downloaded idna_adapter v1.2.2
+#28 5.210   Downloaded idna v1.1.0
+#28 5.212   Downloaded icu_properties_data v2.2.0
+#28 5.217   Downloaded icu_properties v2.2.0
+#28 5.219   Downloaded icu_normalizer_data v2.2.0
+#28 5.220   Downloaded icu_normalizer v2.2.0
+#28 5.222   Downloaded hyper v1.9.0
+#28 5.226   Downloaded futures-util v0.3.32
+#28 5.233   Downloaded futures-task v0.3.32
+#28 5.233   Downloaded futures-macro v0.3.32
+#28 5.234   Downloaded futures-core v0.3.32
+#28 5.235   Downloaded hyper-util v0.1.20
+#28 5.238   Downloaded hyper-rustls v0.27.9
+#28 5.239   Downloaded hybrid-array v0.4.15
+#28 5.241   Downloaded httpdate v1.0.3
+#28 5.241   Downloaded httparse v1.10.1
+#28 5.243   Downloaded http-range-header v0.4.2
+#28 5.244   Downloaded http-body-util v0.1.3
+#28 5.245   Downloaded http-body v1.0.1
+#28 5.245   Downloaded hex v0.4.3
+#28 5.247   Downloaded hashbrown v0.17.1
+#28 5.250   Downloaded getrandom v0.4.2
+#28 5.252   Downloaded getrandom v0.2.17
+#28 5.254   Downloaded futures-executor v0.3.32
+#28 5.255   Downloaded futures-channel v0.3.32
+#28 5.256   Downloaded futures v0.3.32
+#28 5.259   Downloaded form_urlencoded v1.2.2
+#28 5.260   Downloaded find-msvc-tools v0.1.9
+#28 5.261   Downloaded fallible-streaming-iterator v0.1.9
+#28 5.261   Downloaded fallible-iterator v0.3.0
+#28 5.262   Downloaded errno v0.3.14
+#28 5.263   Downloaded bytes v1.11.1
+#28 5.276   Downloaded libsqlite3-sys v0.28.0
+#28 5.317   Downloaded zmij v1.0.21
+#28 5.318   Downloaded socket2 v0.6.3
+#28 5.320   Downloaded zerovec-derive v0.11.3
+#28 5.321   Downloaded zerofrom-derive v0.1.7
+#28 5.321   Downloaded yoke v0.8.2
+#28 5.323   Downloaded zerocopy v0.8.48
+#28 5.332   Downloaded regex-automata v0.4.14
+#28 5.339   Downloaded vcpkg v0.2.15
+#28 5.361   Downloaded tower-http v0.5.2
+#28 5.366   Downloaded rusqlite v0.31.0
+#28 5.370   Downloaded tower-http v0.6.10
+#28 5.375   Downloaded syn v3.0.6
+#28 5.381   Downloaded rustls v0.23.46
+#28 5.388   Downloaded regex-syntax v0.8.10
+#28 5.393   Downloaded syn v2.0.117
+#28 5.398   Downloaded encoding_rs v0.8.35
+#28 5.410   Downloaded tracing v0.1.44
+#28 5.419   Downloaded writeable v0.6.3
+#28 5.421   Downloaded webpki-roots v1.0.10
+#28 5.423   Downloaded want v0.3.1
+#28 5.424   Downloaded unicase v2.9.0
+#28 5.424   Downloaded tracing-core v0.1.36
+#28 5.426   Downloaded tracing-attributes v0.1.31
+#28 5.428   Downloaded tower v0.5.3
+#28 5.433   Downloaded toml_edit v0.22.27
+#28 5.436   Downloaded rustls-pki-types v1.14.1
+#28 5.437   Downloaded rustc-hash v2.1.2
+#28 5.439   Downloaded zerovec v0.11.6
+#28 5.443   Downloaded zerotrie v0.2.4
+#28 5.445   Downloaded zeroize v1.8.2
+#28 5.446   Downloaded ring v0.17.14
+#28 5.469   Downloaded zerofrom v0.1.8
+#28 5.470   Downloaded yoke-derive v0.8.2
+#28 5.470   Downloaded winnow v0.7.15
+#28 5.475   Downloaded version_check v0.9.5
+#28 5.476   Downloaded uuid v1.23.1
+#28 5.478   Downloaded tokio v1.52.3
+#28 5.502   Downloaded utf8_iter v1.0.4
+#28 5.502   Downloaded utf-8 v0.7.6
+#28 5.503   Downloaded url v2.5.8
+#28 5.505   Downloaded untrusted v0.9.0
+#28 5.506   Downloaded unicode-ident v1.0.24
+#28 5.508   Downloaded typenum v1.20.0
+#28 5.510   Downloaded tungstenite v0.24.0
+#28 5.512   Downloaded try-lock v0.2.5
+#28 5.513   Downloaded tracing-subscriber v0.3.23
+#28 5.518   Downloaded tracing-serde v0.2.0
+#28 5.519   Downloaded tracing-log v0.2.0
+#28 5.520   Downloaded tower-service v0.3.3
+#28 5.521   Downloaded tower-layer v0.3.3
+#28 5.521   Downloaded tower v0.4.13
+#28 5.527   Downloaded toml_write v0.1.2
+#28 5.528   Downloaded toml_datetime v0.6.11
+#28 5.528   Downloaded toml v0.8.23
+#28 5.530   Downloaded tokio-util v0.7.18
+#28 5.534   Downloaded tokio-tungstenite v0.24.0
+#28 5.535   Downloaded tokio-rustls v0.26.4
+#28 5.536   Downloaded tokio-macros v2.7.0
+#28 5.537   Downloaded tinyvec_macros v0.1.1
+#28 5.537   Downloaded tinyvec v1.11.0
+#28 5.539   Downloaded tinystr v0.8.3
+#28 5.540   Downloaded thread_local v1.1.9
+#28 5.541   Downloaded thiserror-impl v2.0.20
+#28 5.542   Downloaded thiserror-impl v1.0.69
+#28 5.543   Downloaded thiserror v2.0.20
+#28 5.547   Downloaded thiserror v1.0.69
+#28 5.550   Downloaded synstructure v0.13.2
+#28 5.551   Downloaded sync_wrapper v1.0.2
+#28 5.552   Downloaded subtle v2.6.1
+#28 5.552   Downloaded stable_deref_trait v1.2.1
+#28 5.553   Downloaded spin v0.9.9
+#28 5.554   Downloaded smallvec v1.15.1
+#28 5.556   Downloaded slab v0.4.12
+#28 5.557   Downloaded signal-hook-registry v1.4.8
+#28 5.558   Downloaded shlex v1.3.0
+#28 5.559   Downloaded sharded-slab v0.1.7
+#28 5.561   Downloaded sha2 v0.11.0
+#28 5.564   Downloaded sha1 v0.10.7
+#28 5.565   Downloaded serde_urlencoded v0.7.1
+#28 5.567   Downloaded serde_spanned v0.6.9
+#28 5.568   Downloaded serde_path_to_error v0.1.20
+#28 5.569   Downloaded serde_json v1.0.149
+#28 5.573   Downloaded serde_derive v1.0.228
+#28 5.575   Downloaded serde_core v1.0.228
+#28 5.576   Downloaded serde v1.0.228
+#28 5.578   Downloaded scopeguard v1.2.0
+#28 5.578   Downloaded ryu v1.0.23
+#28 5.580   Downloaded rustversion v1.0.22
+#28 5.581   Downloaded rustls-webpki v0.103.16
+#28 5.583   Downloaded reqwest v0.12.28
+#28 5.651    Compiling proc-macro2 v1.0.106
+#28 5.651    Compiling unicode-ident v1.0.24
+#28 5.651    Compiling quote v1.0.45
+#28 5.651    Compiling cfg-if v1.0.4
+#28 5.652    Compiling libc v0.2.186
+#28 5.652    Compiling smallvec v1.15.1
+#28 5.652    Compiling pin-project-lite v0.2.17
+#28 5.652    Compiling once_cell v1.21.4
+#28 5.652    Compiling serde_core v1.0.228
+#28 5.656    Compiling bytes v1.11.1
+#28 5.656    Compiling version_check v0.9.5
+#28 5.657    Compiling itoa v1.0.18
+#28 5.657    Compiling parking_lot_core v0.9.12
+#28 5.657    Compiling futures-core v0.3.32
+#28 5.657    Compiling memchr v2.8.0
+#28 5.657    Compiling scopeguard v1.2.0
+#28 5.658    Compiling serde v1.0.228
+#28 5.659    Compiling futures-sink v0.3.32
+#28 5.660    Compiling log v0.4.29
+#28 5.662    Compiling typenum v1.20.0
+#28 5.662    Compiling stable_deref_trait v1.2.1
+#28 5.662    Compiling thiserror v2.0.20
+#28 5.662    Compiling slab v0.4.12
+#28 5.664    Compiling futures-task v0.3.32
+#28 5.670    Compiling futures-io v0.3.32
+#28 5.672    Compiling find-msvc-tools v0.1.9
+#28 5.674    Compiling shlex v1.3.0
+#28 5.682    Compiling rand_core v0.10.1
+#28 5.686    Compiling getrandom v0.4.2
+#28 5.686    Compiling zerocopy v0.8.48
+#28 5.686    Compiling cpufeatures v0.3.1
+#28 5.686    Compiling writeable v0.6.3
+#28 5.976    Compiling litemap v0.8.2
+#28 6.078    Compiling lock_api v0.4.14
+#28 6.078    Compiling percent-encoding v2.3.2
+#28 6.078    Compiling icu_properties_data v2.2.0
+#28 6.179    Compiling futures-channel v0.3.32
+#28 6.191    Compiling icu_normalizer_data v2.2.0
+#28 6.276    Compiling utf8_iter v1.0.4
+#28 6.376    Compiling httparse v1.10.1
+#28 6.775    Compiling zmij v1.0.21
+#28 6.776    Compiling bitflags v2.11.1
+#28 6.884    Compiling serde_json v1.0.149
+#28 6.975    Compiling tower-service v0.3.3
+#28 7.075    Compiling tracing-core v0.1.36
+#28 7.172    Compiling const-oid v0.10.2
+#28 7.183    Compiling cc v1.2.62
+#28 7.184    Compiling form_urlencoded v1.2.2
+#28 7.373    Compiling cpufeatures v0.2.17
+#28 7.373    Compiling tower-layer v0.3.3
+#28 7.379    Compiling zeroize v1.8.2
+#28 7.473    Compiling pkg-config v0.3.33
+#28 7.581    Compiling vcpkg v0.2.15
+#28 7.585    Compiling untrusted v0.9.0
+#28 7.676    Compiling try-lock v0.2.5
+#28 7.773    Compiling httpdate v1.0.3
+#28 7.783    Compiling chacha20 v0.10.2
+#28 7.872    Compiling sync_wrapper v1.0.2
+#28 7.873    Compiling io-uring v0.7.12
+#28 7.873    Compiling regex-syntax v0.8.10
+#28 8.075    Compiling generic-array v0.14.7
+#28 8.273    Compiling ahash v0.8.12
+#28 8.283    Compiling rustls-pki-types v1.14.1
+#28 8.372    Compiling want v0.3.1
+#28 8.378    Compiling rustls v0.23.46
+#28 8.577    Compiling atomic-waker v1.1.2
+#28 8.673    Compiling subtle v2.6.1
+#28 8.774    Compiling mime v0.3.17
+#28 8.778    Compiling ipnet v2.12.0
+#28 8.779    Compiling lazy_static v1.5.0
+#28 9.085    Compiling base64 v0.22.1
+#28 9.175    Compiling equivalent v1.0.2
+#28 9.175    Compiling thiserror v1.0.69
+#28 9.188    Compiling hashbrown v0.17.1
+#28 9.376    Compiling sharded-slab v0.1.7
+#28 9.376    Compiling thread_local v1.1.9
+#28 9.485    Compiling fallible-iterator v0.3.0
+#28 9.581    Compiling toml_write v0.1.2
+#28 9.678    Compiling nu-ansi-term v0.50.3
+#28 9.775    Compiling fallible-streaming-iterator v0.1.9
+#28 9.778    Compiling hex v0.4.3
+#28 9.872    Compiling rustversion v1.0.22
+#28 10.18    Compiling winnow v0.7.15
+#28 10.27    Compiling ryu v1.0.23
+#28 10.27    Compiling multer v3.1.0
+#28 10.48    Compiling tracing-log v0.2.0
+#28 10.88    Compiling data-encoding v2.11.0
+#28 11.48    Compiling http v1.4.0
+#28 11.57    Compiling byteorder v1.5.0
+#28 11.57    Compiling anyhow v1.0.104
+#28 11.67    Compiling utf-8 v0.7.6
+#28 11.78    Compiling encoding_rs v0.8.35
+#28 11.97    Compiling webpki-roots v1.0.10
+#28 11.98    Compiling spin v0.9.9
+#28 12.08    Compiling matchit v0.7.3
+#28 12.27    Compiling unicase v2.9.0
+#28 12.47    Compiling base64 v0.23.1
+#28 12.88    Compiling http-range-header v0.4.2
+#28 13.67    Compiling mime_guess v2.0.5
+#28 14.28    Compiling syn v2.0.117
+#28 14.28    Compiling syn v3.0.6
+#28 14.68    Compiling hybrid-array v0.4.15
+#28 15.49    Compiling indexmap v2.14.0
+#28 15.88    Compiling errno v0.3.14
+#28 15.88    Compiling mio v1.2.0
+#28 15.88    Compiling socket2 v0.6.3
+#28 15.88    Compiling getrandom v0.2.17
+#28 16.39    Compiling signal-hook-registry v1.4.8
+#28 16.68    Compiling ring v0.17.14
+#28 16.69    Compiling libsqlite3-sys v0.28.0
+#28 16.98    Compiling rand_core v0.6.4
+#28 17.19    Compiling rand v0.10.2
+#28 17.38    Compiling parking_lot v0.12.5
+#28 19.90    Compiling http-body v1.0.1
+#28 20.91    Compiling http-body-util v0.1.3
+#28 20.99    Compiling crypto-common v0.2.2
+#28 20.99    Compiling block-buffer v0.12.1
+#28 21.07    Compiling block-buffer v0.10.4
+#28 21.07    Compiling crypto-common v0.1.7
+#28 21.67    Compiling digest v0.10.7
+#28 24.86    Compiling regex-automata v0.4.14
+#28 25.09    Compiling sha1 v0.10.7
+#28 26.08    Compiling rt-piece-picker v0.1.0 (/src/crates/rt-piece-picker)
+#28 27.68    Compiling digest v0.11.3
+#28 28.19    Compiling sha2 v0.11.0
+#28 28.87    Compiling thiserror-impl v2.0.20
+#28 29.39    Compiling uuid v1.23.1
+#28 29.39    Compiling serde_path_to_error v0.1.20
+#28 30.48    Compiling rt-hash v0.1.0 (/src/crates/rt-hash)
+#28 31.71    Compiling rt-bencode v0.1.0 (/src/crates/rt-bencode)
+#28 31.71    Compiling rt-peer-manager v0.1.0 (/src/crates/rt-peer-manager)
+#28 32.07    Compiling rt-dht v0.1.0 (/src/crates/rt-dht)
+#28 32.40    Compiling matchers v0.2.0
+#28 33.10    Compiling synstructure v0.13.2
+#28 33.69    Compiling ppv-lite86 v0.2.21
+#28 34.00    Compiling hashbrown v0.14.5
+#28 34.69    Compiling rand_chacha v0.3.1
+#28 34.88    Compiling serde_derive v1.0.228
+#28 34.88    Compiling tokio-macros v2.7.0
+#28 34.88    Compiling zerofrom-derive v0.1.7
+#28 34.88    Compiling yoke-derive v0.8.2
+#28 34.88    Compiling tracing-attributes v0.1.31
+#28 34.88    Compiling futures-macro v0.3.32
+#28 34.88    Compiling zerovec-derive v0.11.3
+#28 34.88    Compiling displaydoc v0.2.5
+#28 34.88    Compiling thiserror-impl v1.0.69
+#28 34.88    Compiling pin-project-internal v1.1.13
+#28 34.88    Compiling async-trait v0.1.89
+#28 34.88    Compiling axum-macros v0.4.2
+#28 35.29    Compiling rand v0.8.6
+#28 36.49    Compiling hashlink v0.9.1
+#28 38.19    Compiling tokio v1.52.3
+#28 38.58    Compiling futures-util v0.3.32
+#28 40.19    Compiling pin-project v1.1.13
+#28 40.59    Compiling tracing v0.1.44
+#28 40.59    Compiling zerofrom v0.1.8
+#28 40.60    Compiling tungstenite v0.24.0
+#28 40.71    Compiling yoke v0.8.2
+#28 41.00    Compiling rt-metrics v0.1.0 (/src/crates/rt-metrics)
+#28 41.00    Compiling zerovec v0.11.6
+#28 41.00    Compiling zerotrie v0.2.4
+#28 42.41    Compiling tinystr v0.8.3
+#28 42.41    Compiling potential_utf v0.1.5
+#28 42.68    Compiling icu_collections v2.2.0
+#28 42.88    Compiling icu_locale_core v2.2.0
+#28 44.79    Compiling icu_provider v2.2.0
+#28 44.90    Compiling rt-path v0.1.0 (/src/crates/rt-path)
+#28 44.90    Compiling serde_spanned v0.6.9
+#28 44.90    Compiling toml_datetime v0.6.11
+#28 44.90    Compiling tracing-serde v0.2.0
+#28 44.90    Compiling serde_urlencoded v0.7.1
+#28 45.20    Compiling tracing-subscriber v0.3.23
+#28 45.31    Compiling icu_normalizer v2.2.0
+#28 45.31    Compiling icu_properties v2.2.0
+#28 45.38    Compiling toml_edit v0.22.27
+#28 45.40    Compiling rt-piece-map v0.1.0 (/src/crates/rt-piece-map)
+#28 46.40    Compiling rustls-webpki v0.103.16
+#28 46.50    Compiling futures-executor v0.3.32
+#28 46.50    Compiling axum-core v0.4.5
+#28 46.90    Compiling futures v0.3.32
+#28 48.19    Compiling idna_adapter v1.2.2
+#28 48.29    Compiling idna v1.1.0
+#28 48.99    Compiling rt-logging v0.1.0 (/src/crates/rt-logging)
+#28 49.00    Compiling url v2.5.8
+#28 50.07    Compiling toml v0.8.23
+#28 50.20    Compiling rt-metainfo v0.1.0 (/src/crates/rt-metainfo)
+#28 50.20    Compiling rt-tracker v0.1.0 (/src/crates/rt-tracker)
+#28 51.47    Compiling rt-config v0.1.0 (/src/crates/rt-config)
+#28 51.58    Compiling hyper v1.9.0
+#28 51.58    Compiling tower v0.5.3
+#28 51.58    Compiling tokio-util v0.7.18
+#28 51.58    Compiling rt-storage v0.1.0 (/src/crates/rt-storage)
+#28 51.58    Compiling rt-session v0.1.0 (/src/crates/rt-session)
+#28 51.58    Compiling rt-utp v0.1.0 (/src/crates/rt-utp)
+#28 51.58    Compiling tokio-tungstenite v0.24.0
+#28 51.58    Compiling rt-api-model v0.1.0 (/src/crates/rt-api-model)
+#28 53.58    Compiling tower-http v0.6.10
+#28 54.09    Compiling rt-peer-wire v0.1.0 (/src/crates/rt-peer-wire)
+#28 54.09    Compiling tower v0.4.13
+#28 54.09    Compiling tower-http v0.5.2
+#28 57.19    Compiling hyper-util v0.1.20
+#28 60.69    Compiling tokio-rustls v0.26.4
+#28 61.30    Compiling hyper-rustls v0.27.9
+#28 61.30    Compiling axum v0.7.9
+#28 61.58    Compiling reqwest v0.12.28
+#28 63.71    Compiling rt-fastresume v0.1.0 (/src/crates/rt-fastresume)
+#28 94.11    Compiling rusqlite v0.31.0
+#28 94.71    Compiling rt-db v0.1.0 (/src/crates/rt-db)
+#28 95.61    Compiling rt-engine v0.1.0 (/src/crates/rt-engine)
+#28 95.61    Compiling rt-migrate v0.1.0 (/src/crates/rt-migrate)
+#28 118.5    Compiling rt-api-qbit v0.1.0 (/src/crates/rt-api-qbit)
+#28 118.5    Compiling rt-api-deluge v0.1.0 (/src/crates/rt-api-deluge)
+#28 118.5    Compiling rt-api-transmission v0.1.0 (/src/crates/rt-api-transmission)
+#28 118.5    Compiling rt-api-native v0.1.0 (/src/crates/rt-api-native)
+#28 149.6    Compiling torrentngd v0.1.0 (/src/crates/torrentngd)
+#28 647.9     Finished `release` profile [optimized] target(s) in 10m 47s
+#28 DONE 648.1s
+
+#29 [stage-2 3/9] COPY --from=build /torrentngd /usr/local/bin/torrentngd
+#29 DONE 0.1s
+
+#30 [stage-2 4/9] COPY --from=webui-build /webui/dist /usr/share/torrentng/webui
+#30 DONE 0.1s
+
+#31 [stage-2 5/9] COPY deploy/native/config.toml /etc/torrentngd/config.toml
+#31 DONE 0.1s
+
+#32 [stage-2 6/9] COPY deploy/container/identity.sh /usr/local/lib/torrentng/identity.sh
+#32 DONE 0.1s
+
+#33 [stage-2 7/9] COPY deploy/native/vpn-port-sync.sh /usr/local/lib/torrentng/vpn-port-sync.sh
+#33 DONE 0.1s
+
+#34 [stage-2 8/9] COPY deploy/native/entrypoint.sh /entrypoint.sh
+#34 DONE 0.1s
+
+#35 [stage-2 9/9] RUN chmod +x /entrypoint.sh /usr/local/lib/torrentng/vpn-port-sync.sh
+#35 DONE 0.1s
+
+#36 exporting to oci image format
+#36 exporting layers
+#36 exporting layers 1.1s done
+#36 exporting manifest sha256:f242174ef609d798dbfed76ae58f6f25f169642d62ff45f2a9e42d298d555efb 0.0s done
+#36 exporting config sha256:f64821db89a42db922689f1bc91827e7476e070287a8562b63af49722d7554af 0.0s done
+#36 sending tarball
+#36 sending tarball 0.8s done
+#36 DONE 2.0s
+
+#37 importing to docker
+#37 DONE 0.0s
+
+#38 resolving provenance for metadata file
+#38 DONE 0.0s
+ Image torrentng/torrentngd:benchmark-20261021t180901z Built
+
+==> TorrentNG: controlled private seed
+[TorrentNG] RuntimeError: timed out waiting for TorrentNG
+
+==> qBittorrent: controlled private seed

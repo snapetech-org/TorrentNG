@@ -1,0 +1,71 @@
+Scratch: /mnt/disks/gamespool0/torrentng-whole-client-architecture-comparison-20261021/run-seed-main-2
+Config scratch: /var/tmp/tngb-arch-compare-config/torrentng-client-bench-20261021T193102Z
+Compose project: tngbench20261021t193102z
+Using prebuilt image torrentng/torrentngd:benchmark-20261021t191128z; source and allocator labels verified
+
+==> Deluge: controlled private seed
+[Deluge seed] 0.0%, leecher 0.00 MiB/s, 2 peers
+[Deluge seed] 10.8%, leecher 4.51 MiB/s, 1 peers
+[Deluge seed] 22.0%, leecher 3.86 MiB/s, 1 peers
+[Deluge seed] 33.3%, leecher 3.51 MiB/s, 1 peers
+[Deluge seed] 44.5%, leecher 4.38 MiB/s, 1 peers
+[Deluge seed] 55.7%, leecher 4.69 MiB/s, 1 peers
+[Deluge seed] 66.7%, leecher 4.45 MiB/s, 1 peers
+[Deluge seed] 78.3%, leecher 4.04 MiB/s, 1 peers
+[Deluge seed] 89.1%, leecher 3.28 MiB/s, 1 peers
+[Deluge seed] 100.0%, leecher 2.91 MiB/s, 0 peers
+[Deluge] controlled seed PASS; 756.0 MiB transferred and SHA-256 verified
+
+==> rTorrent: controlled private seed
+[rTorrent seed] 0.0%, leecher 0.00 MiB/s, 1 peers
+[rTorrent seed] 10.3%, leecher 3.90 MiB/s, 1 peers
+[rTorrent seed] 21.8%, leecher 4.61 MiB/s, 1 peers
+[rTorrent seed] 33.9%, leecher 4.32 MiB/s, 1 peers
+[rTorrent seed] 44.5%, leecher 4.37 MiB/s, 1 peers
+[rTorrent seed] 55.6%, leecher 4.25 MiB/s, 1 peers
+[rTorrent seed] 67.4%, leecher 3.56 MiB/s, 1 peers
+[rTorrent seed] 78.4%, leecher 4.64 MiB/s, 1 peers
+[rTorrent seed] 89.6%, leecher 4.56 MiB/s, 1 peers
+[rTorrent seed] 100.0%, leecher 2.74 MiB/s, 0 peers
+[rTorrent] controlled seed PASS; 756.0 MiB transferred and SHA-256 verified
+
+==> TorrentNG: controlled private seed
+[TorrentNG seed] 0.0%, leecher 0.00 MiB/s, 0 peers
+[TorrentNG seed] 8.2%, leecher 4.32 MiB/s, 1 peers
+[TorrentNG seed] 19.5%, leecher 3.17 MiB/s, 1 peers
+[TorrentNG seed] 30.0%, leecher 4.43 MiB/s, 1 peers
+[TorrentNG seed] 41.2%, leecher 4.71 MiB/s, 1 peers
+[TorrentNG seed] 52.6%, leecher 3.93 MiB/s, 1 peers
+[TorrentNG seed] 64.7%, leecher 3.93 MiB/s, 1 peers
+[TorrentNG seed] 75.3%, leecher 3.96 MiB/s, 1 peers
+[TorrentNG seed] 86.6%, leecher 3.71 MiB/s, 1 peers
+[TorrentNG seed] 97.5%, leecher 4.22 MiB/s, 1 peers
+[TorrentNG] controlled seed PASS; 756.0 MiB transferred and SHA-256 verified
+
+==> qBittorrent: controlled private seed
+[qBittorrent seed] 0.0%, leecher 0.00 MiB/s, 1 peers
+[qBittorrent seed] 10.4%, leecher 3.90 MiB/s, 1 peers
+[qBittorrent seed] 22.2%, leecher 4.21 MiB/s, 1 peers
+[qBittorrent seed] 33.4%, leecher 4.18 MiB/s, 1 peers
+[qBittorrent seed] 43.9%, leecher 4.34 MiB/s, 1 peers
+[qBittorrent seed] 56.1%, leecher 4.04 MiB/s, 1 peers
+[qBittorrent seed] 67.2%, leecher 4.30 MiB/s, 1 peers
+[qBittorrent seed] 77.8%, leecher 4.37 MiB/s, 1 peers
+[qBittorrent seed] 89.0%, leecher 4.38 MiB/s, 1 peers
+[qBittorrent seed] 100.0%, leecher 3.90 MiB/s, 0 peers
+[qBittorrent] controlled seed PASS; 756.0 MiB transferred and SHA-256 verified
+
+==> Transmission: controlled private seed
+[Transmission seed] 0.0%, leecher 0.00 MiB/s, 2 peers
+[Transmission seed] 7.4%, leecher 4.49 MiB/s, 1 peers
+[Transmission seed] 18.5%, leecher 4.24 MiB/s, 1 peers
+[Transmission seed] 30.5%, leecher 3.56 MiB/s, 1 peers
+[Transmission seed] 41.9%, leecher 4.04 MiB/s, 1 peers
+[Transmission seed] 52.7%, leecher 3.29 MiB/s, 1 peers
+[Transmission seed] 63.5%, leecher 4.39 MiB/s, 1 peers
+[Transmission seed] 75.1%, leecher 3.98 MiB/s, 1 peers
+[Transmission seed] 86.4%, leecher 3.95 MiB/s, 1 peers
+[Transmission seed] 97.0%, leecher 4.43 MiB/s, 1 peers
+[Transmission] controlled seed PASS; 756.0 MiB transferred and SHA-256 verified
+Report: /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-main-round2.md
+Samples: /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-main-round2-samples.csv

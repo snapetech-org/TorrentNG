@@ -1,0 +1,145 @@
+Task: matched TorrentNG whole-client comparison
+Host: kspld0
+Fixture (existing, read-only): /mnt/disks/gamespool0/torrentng-resource-qual-20261021-db9e65ac/source/debian-13.7.0-amd64-netinst.iso
+Fixture SHA-256: a7ef94ac2fb9a7fec454552abd629b7cc9d5155c886165a45649f5ce6167e355
+Benchmark scratch: /var/tmp and run workdirs on /mnt/disks/gamespool0 local NVMe
+Persistent BuildKit cache: ~/.cache/torrentng/client-performance-benchmark (reuse/preserve)
+Pre-commit pilot Docker image: torrentng/torrentngd:benchmark-20261021t185010z (remove after trials); source fingerprint d7c6762c4d06fa998f6664a9d8c1cd0ac79f6145be4492731955cdc60046bd63
+Committed-main Docker image retained during trials: torrentng/torrentngd:benchmark-20261021t191128z (remove after trials); source fingerprint da08674a960f9f43044ffc64483c95d272434844434b2db795fc25141772d6ca
+Deliverable reports to be copied after all runs: certification/reports/TorrentNG-whole-client-architecture-7c2dd48/
+Short rTorrent config root: /var/tmp/tngb-arch-compare-config/ (kept within Unix-domain socket path limit)
+Disposable outputs:
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round1-controller-failure.md
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round1-controller-failure-samples.csv
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round1-controller-failure-memory-profile.json
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round1-controller-failure.log
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round1-helper-order-failure.md
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round1-helper-order-failure-samples.csv
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round1-helper-order-failure-memory-profile.json
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round1-helper-order-failure.log
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round1-socket-path-failure.md
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round1-socket-path-failure-samples.csv
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round1-socket-path-failure-memory-profile.json
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round1-socket-path-failure.log
+- /mnt/disks/gamespool0/torrentng-whole-client-architecture-comparison-20261021/run-seed-1-socket-path-failure/
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round1-image-fingerprint-failure.md
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round1-image-fingerprint-failure-samples.csv
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round1-image-fingerprint-failure-memory-profile.json
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round1-image-fingerprint-failure.log
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-precommit-pilot.md
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-precommit-pilot-samples.csv
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-precommit-pilot-memory-profile.json
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-precommit-pilot.log
+- /mnt/disks/gamespool0/torrentng-whole-client-architecture-comparison-20261021/run-seed-1-final/
+- /var/tmp/tngb-arch-compare-config/
+- final source image will be benchmark-20261021t<timestamp>Z; exact tag recorded after build and removed at task end
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-precommit-image-rejection.md
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-precommit-image-rejection-samples.csv
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-precommit-image-rejection-memory-profile.json
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-precommit-image-rejection.log
+- /mnt/disks/gamespool0/torrentng-whole-client-architecture-comparison-20261021/run-seed-2/
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round3.md
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round3-samples.csv
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round3-memory-profile.json
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round3.log
+- /mnt/disks/gamespool0/torrentng-whole-client-architecture-comparison-20261021/run-seed-3/
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/download-preimage-source-rejection.md
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/download-preimage-source-rejection-samples.csv
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/download-preimage-source-rejection-memory-profile.json
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/download-preimage-source-rejection.log
+- /mnt/disks/gamespool0/torrentng-whole-client-architecture-comparison-20261021/run-download-1/
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/tmp/
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/harness-tests.log
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/ARTIFACTS.txt
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-main-round1.md
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-main-round1-samples.csv
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-main-round1-memory-profile.json
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-main-round1.log
+- /mnt/disks/gamespool0/torrentng-whole-client-architecture-comparison-20261021/run-seed-main-1/
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-main-round2.md
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-main-round2-samples.csv
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-main-round2-memory-profile.json
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-main-round2.log
+- /mnt/disks/gamespool0/torrentng-whole-client-architecture-comparison-20261021/run-seed-main-2/
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-prebranding-image-rejection.md
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-prebranding-image-rejection-samples.csv
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-prebranding-image-rejection-memory-profile.json
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-prebranding-image-rejection.log
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-main-round3-latest.md
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-main-round3-latest-samples.csv
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-main-round3-latest-memory-profile.json
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-main-round3-latest.log
+- /mnt/disks/gamespool0/torrentng-whole-client-architecture-comparison-20261021/run-seed-main-3-latest/
+
+Latest-main Docker image retained during trials: torrentng/torrentngd:benchmark-20261021t195056z (remove after trials); source fingerprint cd263342ecfb77c4b319f787c21b7a8bd715522a19d0223a30f36b2c4a9005aa; revision c3fee17d7ffec859edab3336e07cf5c1533b6614
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-round1.md
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-round1-samples.csv
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-round1-memory-profile.json
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-round1.log
+- /mnt/disks/gamespool0/torrentng-whole-client-architecture-comparison-20261021/run-download-main-1/
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-round2.md
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-round2-samples.csv
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-round2-memory-profile.json
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-round2.log
+- /mnt/disks/gamespool0/torrentng-whole-client-architecture-comparison-20261021/run-download-main-2/
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-round3.md
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-round3-samples.csv
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-round3-memory-profile.json
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-round3.log
+- /mnt/disks/gamespool0/torrentng-whole-client-architecture-comparison-20261021/run-download-main-3/
+- /mnt/disks/gamespool0/torrentng-whole-client-architecture-comparison-20261021/worktree-main-f886/ (detached at the main revision used for remaining benchmark passes)
+
+Pinned-main Docker image for controlled downloads: torrentng/torrentngd:benchmark-20261021t201229z (remove after trials); source fingerprint 306507753fd2d5847f6d282b479a660ca59dc9b8946405b0eea14227ae194fef; revision f886f4699997119366fe80d7161a1820bf10879a; detached worktree recorded above
+
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-peer-debug.md
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-peer-debug-samples.csv
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-peer-debug-memory-profile.json
+- /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-peer-debug.log
+- /mnt/disks/gamespool0/torrentng-whole-client-architecture-comparison-20261021/run-download-main-peer-debug/
+
+Receive-path live diagnostic reproduction 2 (diagnostic only; not scored):
+- Report: /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-peer-debug2.md
+- Time series: /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-peer-debug2-samples.csv
+- Memory profile: /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-peer-debug2-memory-profile.json
+- Harness stdout/stderr: /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-peer-debug2.log
+- TorrentNG daemon log captured live: /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-peer-debug2-torrentng.log
+- Sanitized seeder API snapshots: /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-peer-debug2-seeder.jsonl
+- Workdir: /mnt/disks/gamespool0/torrentng-whole-client-architecture-comparison-20261021/run-download-main-peer-debug2/
+- Config directory inside workdir: /mnt/disks/gamespool0/torrentng-whole-client-architecture-comparison-20261021/run-download-main-peer-debug2/config/
+- Reuses image torrentng/torrentngd:benchmark-20261021t201229z and the existing bounded TorrentNG BuildKit cache.
+
+Receive-path live diagnostic reproduction 3 (diagnostic only; not scored):
+- Report: /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-peer-debug3.md
+- Time series: /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-peer-debug3-samples.csv
+- Memory profile: /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-peer-debug3-memory-profile.json
+- Harness stdout/stderr: /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-peer-debug3.log
+- TorrentNG daemon log captured live: /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-peer-debug3-torrentng.log
+- Sanitized qBittorrent API snapshots: /var/tmp/tng-whole-client-architecture-comparison-20261021/download-main-peer-debug3-seeder.jsonl
+- Workdir: /mnt/disks/gamespool0/torrentng-whole-client-architecture-comparison-20261021/run-download-main-peer-debug3/
+- Config directory inside workdir: /mnt/disks/gamespool0/torrentng-whole-client-architecture-comparison-20261021/run-download-main-peer-debug3/config/
+- Reuses image torrentng/torrentngd:benchmark-20261021t201229z and the existing bounded TorrentNG BuildKit cache.
+
+Deliverable report directory: /home/keith/Documents/code/TorrentNG/certification/reports/TorrentNG-whole-client-comparison-20261021
+Preserved setup/preflight failure evidence: /home/keith/Documents/code/TorrentNG/certification/reports/TorrentNG-whole-client-comparison-20261021/diagnostics/setup-and-preflight
+Stale benchmark tracker log captured before cleanup: /var/tmp/tng-whole-client-architecture-comparison-20261021/stale-opentracker.log
+Stale isolated benchmark container log: /var/tmp/tng-whole-client-architecture-comparison-20261021/stale-project-rtorrent.log
+Stale isolated benchmark container log: /var/tmp/tng-whole-client-architecture-comparison-20261021/stale-project-seed_leecher.log
+Stale isolated benchmark container log: /var/tmp/tng-whole-client-architecture-comparison-20261021/stale-project-deluge.log
+Stale isolated benchmark container log: /var/tmp/tng-whole-client-architecture-comparison-20261021/stale-project-transmission.log
+Stale isolated benchmark container log: /var/tmp/tng-whole-client-architecture-comparison-20261021/stale-project-qbittorrent.log
+Stale isolated benchmark container log: /var/tmp/tng-whole-client-architecture-comparison-20261021/stale-project-torrentngd.log
+Stale isolated benchmark container log: /var/tmp/tng-whole-client-architecture-comparison-20261021/stale-project-opentracker.log
+Captured stale project container log /var/tmp/tng-whole-client-architecture-comparison-20261021/stale-project-deluge.log; sha256=eab57b7bf4d89e2a8409477cef17a8d275fe11b2728e3da4cbfe8ea357840049; sanitized copy=/home/keith/Documents/code/TorrentNG/certification/reports/TorrentNG-whole-client-comparison-20261021/diagnostics/stale-project-logs/deluge.log; redacted_lines=0
+Captured stale project container log /var/tmp/tng-whole-client-architecture-comparison-20261021/stale-project-rtorrent.log; sha256=432983dbcb8c6184dcfb2a9dfb445399cef9c6844c00443a901f03f1cf378d20; sanitized copy=/home/keith/Documents/code/TorrentNG/certification/reports/TorrentNG-whole-client-comparison-20261021/diagnostics/stale-project-logs/rtorrent.log; redacted_lines=0
+Captured stale project container log /var/tmp/tng-whole-client-architecture-comparison-20261021/stale-project-transmission.log; sha256=67b6ea4c1968607b004453b7c113b7300881855384d0adf3828861a1c96c332f; sanitized copy=/home/keith/Documents/code/TorrentNG/certification/reports/TorrentNG-whole-client-comparison-20261021/diagnostics/stale-project-logs/transmission.log; redacted_lines=0
+Captured stale project container log /var/tmp/tng-whole-client-architecture-comparison-20261021/stale-project-torrentngd.log; sha256=5cda3392a1d579fc5cbe3526c6b5f37381ffa235088ad3b84f8c49ad293e3e28; sanitized copy=/home/keith/Documents/code/TorrentNG/certification/reports/TorrentNG-whole-client-comparison-20261021/diagnostics/stale-project-logs/torrentngd.log; redacted_lines=0
+Captured stale project container log /var/tmp/tng-whole-client-architecture-comparison-20261021/stale-project-qbittorrent.log; sha256=fb2d26b8199ab66640b9cb8d1b05c2a4af9dfbe6209e1159a93c698a8ecbad0e; sanitized copy=/home/keith/Documents/code/TorrentNG/certification/reports/TorrentNG-whole-client-comparison-20261021/diagnostics/stale-project-logs/qbittorrent.log; redacted_lines=2
+Captured stale project container log /var/tmp/tng-whole-client-architecture-comparison-20261021/stale-project-seed_leecher.log; sha256=af5b830d009c9fe4fd5a71e24067c88761c658fc0219c1d7abbec3760ab70878; sanitized copy=/home/keith/Documents/code/TorrentNG/certification/reports/TorrentNG-whole-client-comparison-20261021/diagnostics/stale-project-logs/seed_leecher.log; redacted_lines=2
+Original generated diagnostic report preserved: /var/tmp/tng-whole-client-architecture-comparison-20261021/download-preimage-source-rejection.md; sha256=d1c05cf55519df07d43fcead2154491c6c88b5d13a0c54380e2e84735dbeeb94; exact copy=/home/keith/Documents/code/TorrentNG/certification/reports/TorrentNG-whole-client-comparison-20261021/diagnostics/setup-and-preflight/download-preimage-source-rejection.md.raw
+Original generated diagnostic report preserved: /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-prebranding-image-rejection.md; sha256=ad4bdeb4329608f8266f23581d7de9ab18fba6201193fc3be3e0247eb3820b51; exact copy=/home/keith/Documents/code/TorrentNG/certification/reports/TorrentNG-whole-client-comparison-20261021/diagnostics/setup-and-preflight/seed-prebranding-image-rejection.md.raw
+Original generated diagnostic report preserved: /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-precommit-image-rejection.md; sha256=4096151ba8c74a752a2cb6a6cd6fb27e81fb03c86abe5cf3968545044b80875b; exact copy=/home/keith/Documents/code/TorrentNG/certification/reports/TorrentNG-whole-client-comparison-20261021/diagnostics/setup-and-preflight/seed-precommit-image-rejection.md.raw
+Original generated diagnostic report preserved: /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-precommit-pilot.md; sha256=aed2801d11c84f6a07b41f204154ae82b4d4f6128a6736c1364581cf9eee91e2; exact copy=/home/keith/Documents/code/TorrentNG/certification/reports/TorrentNG-whole-client-comparison-20261021/diagnostics/setup-and-preflight/seed-precommit-pilot.md.raw
+Original generated diagnostic report preserved: /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round1-controller-failure.md; sha256=b412c0011619233e71ce4647b6d66b9237031a5d0a8b0ea1a20d26de8f8a8c44; exact copy=/home/keith/Documents/code/TorrentNG/certification/reports/TorrentNG-whole-client-comparison-20261021/diagnostics/setup-and-preflight/seed-round1-controller-failure.md.raw
+Original generated diagnostic report preserved: /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round1-helper-order-failure.md; sha256=43cf92228ac1e2da9c42e2b25d93cadc5033d5a54f341719a311790b94e5d993; exact copy=/home/keith/Documents/code/TorrentNG/certification/reports/TorrentNG-whole-client-comparison-20261021/diagnostics/setup-and-preflight/seed-round1-helper-order-failure.md.raw
+Original generated diagnostic report preserved: /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round1-image-fingerprint-failure.md; sha256=c9c34d0830f09f442aa86ebb145923d8d466353e8fd2a3e46d92e1afaa51486f; exact copy=/home/keith/Documents/code/TorrentNG/certification/reports/TorrentNG-whole-client-comparison-20261021/diagnostics/setup-and-preflight/seed-round1-image-fingerprint-failure.md.raw
+Original generated diagnostic report preserved: /var/tmp/tng-whole-client-architecture-comparison-20261021/seed-round1-socket-path-failure.md; sha256=2306ca7a12621c60105f6c35506db6e447f1d0b21b64673d4b5534ac6792d588; exact copy=/home/keith/Documents/code/TorrentNG/certification/reports/TorrentNG-whole-client-comparison-20261021/diagnostics/setup-and-preflight/seed-round1-socket-path-failure.md.raw

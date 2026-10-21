@@ -22,6 +22,8 @@ certification/reports/*
 !certification/reports/TorrentNG-followup-16da409.zip
 !certification/reports/TorrentNG-followup-16da409/
 !certification/reports/TorrentNG-followup-16da409/**
+!certification/reports/TorrentNG-whole-client-comparison-20261021/
+!certification/reports/TorrentNG-whole-client-comparison-20261021/**
 !certification/reports/TorrentNG-native-fix-7c2dd48.zip
 !certification/reports/TorrentNG-native-fix-7c2dd48/
 !certification/reports/TorrentNG-native-fix-7c2dd48/**

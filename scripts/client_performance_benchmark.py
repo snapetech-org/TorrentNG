@@ -3059,7 +3059,12 @@ class Benchmark:
             self.compose("stop", "seed_leecher", check=False, quiet=True, timeout=60)
 
         client_images["seed_leecher"] = self.seed_leecher_image
-        self._write_controlled_download_report(meta, client_images)
+        # The controlled run builds a new private torrent over the pinned
+        # local payload. Its infohash is distinct from the official torrent
+        # hash stored in public-download metadata, so report the hash actually
+        # used on the wire without mutating the shared metadata.
+        report_meta = {**meta, "info_hash": info_hash}
+        self._write_controlled_download_report(report_meta, client_images)
         return int(
             len(self.results) != len(self.transfer_order)
             or any(row.get("controlled_download") != "PASS" for row in self.results)

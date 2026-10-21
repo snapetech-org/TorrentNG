@@ -1,0 +1,10 @@
+# TorrentNG client performance benchmark — incomplete
+
+- Started (UTC): 2026-10-21T19:50:22+00:00
+- Source commit: c3fee17d7ffec859edab3336e07cf5c1533b6614
+- Source tree: 3b6560205e08fff1aca787e9522a3ca199146971
+- Host: kspld0; 32 logical CPUs; Linux 7.1.7-arch1-1 (x86_64)
+- Host load average at start: 2.30/4.81/11.68
+- Failure: RuntimeError: TorrentNG image metadata does not match this benchmark checkout: ['24e521aed22a9cfb4b905c75a208e06077ad6332', 'da08674a960f9f43044ffc64483c95d272434844434b2db795fc25141772d6ca', 'system-allocator'] != ['c3fee17d7ffec859edab3336e07cf5c1533b6614', 'cd263342ecfb77c4b319f787c21b7a8bd715522a19d0223a30f36b2c4a9005aa', 'system-allocator']
+- Cleanup: isolated Compose project, containers, and named volumes removed; benchmark image removal failed
+- Partial samples: [seed-main-round3-samples.csv](seed-prebranding-image-rejection-samples.csv)
