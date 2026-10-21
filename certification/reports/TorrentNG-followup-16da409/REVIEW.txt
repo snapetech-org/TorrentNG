@@ -1,0 +1,151 @@
+TORRENTNG FOLLOW-UP REVIEW — 16da409
+2026-10-21
+Reviewed revision: 16da409daa4b0a6bf91beace73e1af552718f862
+Repository: https://github.com/snapetech-org/TorrentNG
+Scope: current-source review and focused executable reproductions, not a daemon benchmark.
+
+DECISION
+
+The reported changes are present. Main advanced past d6a51b61; the empty-read retirement guard is committed in 4f3d4e3, and the implementation report is committed in 16da409.
+
+There is still no current-revision CPU/RAM comparison in the supplied evidence. Do not promote the pool probe or passing package suites into a whole-client performance claim.
+
+Two concrete new implementation problems should be addressed before treating this batching candidate as ready: partial acquisition of batch permits can stall all upload reads at the admission limit, and reaching a cache window's end can retire data that has never been served. A third reproduced gap concerns Piece backing-memory accounting. The main CPU hypothesis remains whether normal traffic ever builds useful batches and whether the singleton path became more expensive.
+
+WHAT IS COMPLETE, PARTIAL, AND STILL OPEN
+
+- Bounded 512 KiB pool: implemented in 5323d735, with two retained frames in the new class. The historical probe supports lower cumulative allocated bytes, not lower allocation frequency or CPU.
+- Contiguous v1 storage read batching: implemented, up to four blocks / 64 KiB, same piece/file. The helper's operation-count test is useful. Real peer-loop batch occupancy is unmeasured, and admission has the hold-and-wait problem below.
+- TCP write batching: implemented for the ready responses returned by one read batch. It is not yet a general ready queue across independently completed read futures.
+- Copied Bitfield/Extended/Hashes accounting: implemented with message ownership and clone handling. The previous stale copied-payload charge is addressed. Zero-copy Piece backing remains a distinct case.
+- Read-ahead retirement: implemented, including the zero-length guard. The end-offset predicate does not prove consumption of the entire range.
+- Small uncontended rate-admission cleanup: not implemented. network_budget.rs is unchanged since db9e65ac; it still eagerly obtains demand-change state and always retires the demand guard on return.
+- Controlled download harness: support exists in scripts/client_performance_benchmark.py. Do not reimplement it. A successful connected two-seeder run with hashes, choke/cancel coverage, and new whole-client results is still missing from the supplied evidence.
+
+F1 — BATCH ADMISSION CAN HOLD ALL CREDITS WHILE WAITING FOR MORE
+Priority: fix before release benchmarking.
+Confidence: HIGH for the resource cycle; unknown frequency in real swarms.
+
+Source:
+  crates/rt-engine/src/torrent_task.rs:10263 read_upload_batch_blocks
+  crates/rt-engine/src/torrent_task.rs:10317 permit acquisition loop
+  crates/rt-engine/src/torrent_task.rs:10401 outer 30-second read timeout
+  crates/rt-engine/src/transfer/upload_scheduler.rs:26 default limits
+  crates/rt-engine/src/transfer/upload_scheduler.rs:170 acquire
+  crates/rt-engine/src/transfer/shared_upload.rs:172 forwarding to that scheduler
+
+The batch awaits one permit per block, keeping every previously acquired permit, before starting its single storage read. The scheduler knows about individual blocks, not indivisible batches. Its default global limit is 64 jobs and per-connection limit is eight.
+
+The included probe imports the production scheduler source without changes and uses the exact sequential acquisition pattern. It registers 64 peers, fills the global slots with older work, queues a two-permit batch for each peer, then releases the older work. Each batch receives one permit. All 64 credits are now owned by batches awaiting a second credit. No batch can start I/O. All remain incomplete at the observation point; cancelling them releases capacity and a four-permit control batch succeeds.
+
+This is a resource deadlock in batch assembly, bounded in production by the 30-second read timeout and cancellation. It is not a permanent process deadlock. The probe does not run the entire peer loop or wait for its production timeout. This multi-peer saturation case does not explain the older single-leecher CPU result.
+
+Repair:
+Make admission atomic for the batch's complete job count and byte charge, preserving round-robin/per-connection fairness and cancellation. A queued batch must not retain partial grants. Alternatively split safely or release partial grants before waiting, without creating an unfair retry spin. Reject or split a batch that can never fit the configured limits; never wait forever for an impossible reservation. Keep charges alive through the relevant payload lifetime.
+
+Required cases: default-limit contention as above; per-connection and byte limits; cancellation before/after grant; batch larger than a configured limit; successful progress without relying on the 30-second failure path. Do not disable admission or simply increase the limits.
+
+F2 — THE REAL INTAKE PATH MAY BYPASS THE INTENDED CPU SAVING
+Priority: next CPU work after F1.
+Confidence: HIGH for control flow and duplicated mapping; MODERATE hypothesis for performance impact, unmeasured batch occupancy.
+
+Source:
+  crates/rt-engine/src/torrent_task.rs:9443 Message::Request
+  crates/rt-engine/src/torrent_task.rs:10463 start_upload_reads
+  crates/rt-engine/src/torrent_task.rs:10215 upload_read_span
+  crates/rt-engine/src/torrent_task.rs:10038 read_upload_block
+  crates/rt-engine/src/torrent_task.rs:8310 send_pieces
+  crates/rt-engine/src/torrent_task.rs:16893 contiguous-upload helper test
+  crates/rt-piece-map/src/map.rs:271 validate_request
+
+Each incoming request is admitted and immediately triggers start_upload_reads. When there is capacity and no existing backlog, that function drains the sole request into a singleton future before the next message is processed. It only combines requests already waiting in the obligations queue. Batches can form under backlog; this review does not claim they never form.
+
+The new test constructs two UploadReadSpecs directly and invokes the batch-read helper. It proves two legal responses can share one storage read. It does not prove normal socket input gets grouped.
+
+The singleton path computes upload_read_span first, including geometry checking, a Vec of regions and a resolved PathBuf. It then calls read_upload_block, which repeats the mapping and path resolution. There are also per-batch Vecs and an Arc memory owner even for one block. No exact extra allocation count or CPU percentage is claimed.
+
+Proposed change:
+Use a bounded drain of already-ready peer messages before dispatching upload work. Preserve control-message handling and fairness, and do not insert a timer to wait for a full batch. Reuse a validated span in the singleton path. Use bounded storage for up to four specs/completions where measurements justify it. Gather already-ready writes independently of which read future produced them.
+
+Record histograms for block count per read batch and frame count per socket write, plus request queue depth, storage submissions/completions, path/handle preparations and allocation EVENTS per useful GiB. A 1 GiB stream contains 65,536 16 KiB blocks; ideal four-block reads would reduce read jobs to 16,384, while wire frames stay legal and separate. This is an operation-count ceiling, not a predicted 4x CPU improvement.
+
+F3 — TAIL HITS RETIRE UNREAD CACHE DATA
+Priority: fix the policy before evaluating its memory/I/O tradeoff.
+Confidence: HIGH; reproduced through the current storage crate.
+
+Source: crates/rt-storage/src/scheduler.rs:1337 PeerReadCache::hit, particularly the len > 0 && end == range_bytes predicate and removal.
+
+The implementation equates reaching a window's end with having served the entire window. That only follows for a suitably tracked forward consumer. The cache is shared and the predicate does not record coverage.
+
+Reproduction with read-ahead enabled:
+  Read bytes [0,4) from a 16-byte file, loading a 16-byte window.
+  Read [12,16): cache hit, and the whole entry is removed.
+  Read [4,12): those bytes were never served, but another backend read is needed.
+
+Observed: entries after tail = 0; backend reads before middle = 1; after middle = 2; hits = 1, misses = 2. Payloads were correct. This is avoidable I/O/allocation, not data corruption. The tiny explicit read-ahead configuration isolates policy rather than representing a throughput benchmark.
+
+Repair:
+For a single-consumer forward window, track a consumed prefix or coverage and retire only when justified. For shared/reusable ranges, use reuse/pressure policy rather than the end position of one request. Avoid costly per-byte tracking on the hot path. Preserve live Bytes ownership. Add first-tail-middle, duplicate/overlap, interleaved peers and zero-read cases.
+
+Also coordinate cache retirement with the idle pool: moving storage from a cache reference into retained pool buffers is not automatically an RSS reduction.
+
+F4 — PIECE VIEWS STILL DO NOT OWN THE FULL INPUT BACKING CHARGE
+Priority: complete the memory-ownership invariant before claiming memory accounting is reconciled.
+Confidence: HIGH for the demonstrated lifetime gap; UNKNOWN effect on ordinary peak/RSS.
+
+Source:
+  crates/rt-peer-wire/src/codec.rs:150 trim_idle_read_buffer; :195 Decoder
+  crates/rt-peer-wire/src/message.rs:460 copied_payload_bytes
+  crates/rt-engine/src/torrent_task.rs:9270 Piece receipt and requested.memory_lease transfer
+
+The new sidecar accounts copied payloads. Piece uses a Bytes slice of the input allocation and receives no corresponding message-side backing lease. Its engine request reservation covers useful payload length, not necessarily the larger allocation that the view pins.
+
+The actual codec probe admits a 64 KiB input buffer, decodes a 16 KiB Piece, verifies that the view points into the same backing, and drops the codec/input. The Piece remains valid while the governor records only the modeled 16 KiB request reservation.
+
+A second synthetic-capacity case leaves the codec alive: a Piece pins an old 512 KiB input allocation, the next empty decode replaces the input with 64 KiB, and the governor records 80 KiB (64 KiB new buffer + 16 KiB request). The old backing remains alive. This is a constructed backing-lifetime test, not a claim that every normal input buffer is 512 KiB. Charges return to zero when owners drop; it is not an unreleased-memory leak.
+
+Repair:
+Account the shared allocation owner across the codec's tail and all emitted views, releasing its charge only with the last owner. Distinguish reserved demand from owned backing to avoid double charging. If selective copying is used to avoid a tiny view pinning a large slab, measure that copy/retention tradeoff. Extend tests to multiple Piece views surviving trim, clone/drop order and codec shutdown.
+
+OTHER OPEN DETAILS (SOURCE REVIEW, NOT NEW CPU MEASUREMENTS)
+
+- write_piece_frames_vectored reports only the number of complete frames on error. The caller settles only those frames; a grant for a partly written final frame refunds its full payload even if the socket already accepted some payload bytes. Rate credit should settle accepted payload bytes and refund only the unsent remainder, while complete-frame goodput can remain a separate metric. The older singleton error path has the same general limitation; this is not uniquely introduced by batching. The existing complete-frame error test does not validate byte settlement.
+- upload_read_batch_future gathers rate grants for every block before returning any completion. At a low cap, an earlier eligible block waits for later siblings. Separate read-batch completion from per-block send eligibility; coalesce only what is already ready. This can affect latency, but is not established as the controlled-seed CPU cause.
+- The prior small RateDemandGuard cleanup remains an independent follow-up. Preserve distinct simultaneous demands and cancellation races. It is not a substitute for reducing the number of jobs.
+
+WHAT THE EVIDENCE SAYS ABOUT CPU AND RAM
+
+The implementation report's older capped-pool probe:
+  median CPU-s/GiB: 0.5780 -> 0.5839
+  allocation events: 199,953 -> 199,475
+  allocated bytes: 276,521,600 -> 25,387,744
+  idle pool after scheduler drop: 933,888 B -> 1,982,464 B
+
+This explains why the pool change alone need not move CPU: it mostly changes allocation volume, while almost every allocation event remains. Retained pool memory rises in that probe. These are historical subsystem measurements, not a result for the newly batched client.
+
+The latest complete clean client comparison in the supplied evidence is still f6cce154:
+  TorrentNG: 2.46 CPU-s/GiB, 25.2 MiB anonymous memory
+  qBittorrent: 2.04, 18.0
+  Transmission: 1.31, 25.8
+  Deluge: 2.27, 89.1
+  rTorrent: 0.56, 1.7
+
+Those rows cannot rank 16da409. The test counts in IMPLEMENTATION-RESULTS.md are the implementation agent's reported historical working-tree validation, not a fresh independent full-suite run by this review.
+
+NEXT EXPERIMENT
+
+1. Fix and regress F1 and F3; complete the backing-lifetime tests for F4.
+2. Make batch occupancy visible and remove duplicated singleton work. Use one clean baseline and one clean candidate on the same production backend/build/allocator. Capture the exact source and image identity.
+3. Run repeated alternating A/B transfers with preverified payloads, fixed peer/connection/rate settings and hashes. Count useful-byte-normalized allocations, read jobs, actual backend reads and ready writes; collect user AND system CPU. Keep intrusive diagnostic profiling separate from timed scoring.
+4. Use the existing controlled-download harness for a genuinely connected two-seeder fixture; check choke/cancel progress and final hashes. A zero-connection run remains invalid.
+5. Only after repeatable whole-client benefit, rerun competitors. Include active anonymous/PSS/RSS, cgroup file versus anonymous memory, pool/cache retention after transfer and multi-peer/multi-torrent cases. Successful governor credit accounting is not an RSS result.
+
+REVIEW VALIDATION AND LIMITS
+
+Executed against current path dependencies: cache retirement, two Piece-backing lifetime cases.
+Executed against the unmodified production upload scheduler source: the batch acquisition pattern and cancellation recovery control.
+All included reproductions passed, meaning they detected the behavior described above.
+Packaged runner was checked against the reviewed revision.
+
+No daemon transfer, new full-client ranking, full workspace test run, perf/strace attribution or measured speedup was produced here. No production files were modified or pushed. The ZIP contains findings and reproducible evidence, not a tested production patch.
+

@@ -1,0 +1,83 @@
+{
+  "repository": "https://github.com/snapetech-org/TorrentNG",
+  "revision": "16da409daa4b0a6bf91beace73e1af552718f862",
+  "status_porcelain": "",
+  "reviewed_at_utc": "2026-10-21T14:51:39.507497+00:00",
+  "selected_source_files": [
+    {
+      "path": "Cargo.toml",
+      "bytes": 2187,
+      "sha256": "8067049821810d4bd5f3ecf203617839ea742b38ab627bebc8806a37728c2be7"
+    },
+    {
+      "path": "Cargo.lock",
+      "bytes": 77117,
+      "sha256": "b1ec667a5140e550ea8dcb0d0b7755356a8c9e39349c7e73b3ed9a2ce46165b6"
+    },
+    {
+      "path": "crates/rt-engine/src/torrent_task.rs",
+      "bytes": 775669,
+      "sha256": "c3e0290b0ea62090b363b04c25343c17a676904b547d295aa3dcdd56d10aecb1"
+    },
+    {
+      "path": "crates/rt-engine/src/transfer/upload_scheduler.rs",
+      "bytes": 22467,
+      "sha256": "6ce6222ee6b3045da85e671063f99ec579346b633215b2521035450a50360fbd"
+    },
+    {
+      "path": "crates/rt-engine/src/transfer/shared_upload.rs",
+      "bytes": 18172,
+      "sha256": "7d10eb88d626dc4260ef8c18b5cd682c5dbf0b270efcda7943f36e983656c28b"
+    },
+    {
+      "path": "crates/rt-engine/src/transfer/coords.rs",
+      "bytes": 35926,
+      "sha256": "ee44f0c348313f3973d3b2c2094be20b498bfdff4072d08cdf6670d16a4c8038"
+    },
+    {
+      "path": "crates/rt-engine/src/network_budget.rs",
+      "bytes": 63976,
+      "sha256": "2c133c684283bb4012d305883263b3667f077168227d5151c52a2da396139da7"
+    },
+    {
+      "path": "crates/rt-storage/src/scheduler.rs",
+      "bytes": 430193,
+      "sha256": "dd0aaf7a4bab98bc091488f3943a166a994981f18f55476beeada7f21c3ff309"
+    },
+    {
+      "path": "crates/rt-storage/src/frame.rs",
+      "bytes": 28050,
+      "sha256": "4657f38c240631151f94b79fdc7f8de21866dcd94dfd207a863b9778fbbcdd83"
+    },
+    {
+      "path": "crates/rt-peer-wire/src/codec.rs",
+      "bytes": 21852,
+      "sha256": "d21179dbace757970a6adb905df8ae4f7d8496daa25e1d7dea55d16751d29c9d"
+    },
+    {
+      "path": "crates/rt-peer-wire/src/message.rs",
+      "bytes": 32085,
+      "sha256": "c28e5880b5f250b72adf50aaab943505aa204fde67f8bd3b8ab6adc60c54cea6"
+    },
+    {
+      "path": "crates/rt-piece-map/src/map.rs",
+      "bytes": 25177,
+      "sha256": "181ab4aaf2533595fd486a15f2a7393313320a6007678c9749274ae884d05862"
+    },
+    {
+      "path": "crates/rt-path/src/path.rs",
+      "bytes": 14981,
+      "sha256": "f3aaf1a0f29ccc15b2f75a1936981fdedef72a5bd512954c40aff4b892a6c3a3"
+    },
+    {
+      "path": "certification/reports/TorrentNG-reassessment-db9e65ac/IMPLEMENTATION-RESULTS.md",
+      "packaged_path": "evidence/IMPLEMENTATION-RESULTS.md",
+      "sha256": "febf049fd53224a3e193aefaf430a7b970bdfb7463869ac080a3537dd9aad5dd"
+    },
+    {
+      "path": "certification/reports/TorrentNG-reassessment-db9e65ac/evidence/repository/client-performance-benchmark-f6cce154-20261021-cpu-ram.md",
+      "packaged_path": "evidence/client-performance-benchmark-f6cce154-20261021-cpu-ram.md",
+      "sha256": "7768a891ad95b07e8e9ba7f25ac151e4e9cdc8add4a29d3106bcde0e16b2e6e8"
+    }
+  ]
+}

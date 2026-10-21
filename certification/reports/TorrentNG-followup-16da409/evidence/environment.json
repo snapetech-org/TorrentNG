@@ -1,0 +1,13 @@
+{
+  "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+  "platform": "Linux-6.18.55-x86_64-with-glibc2.39",
+  "storage_backend": "pread",
+  "probe_profile": {
+    "opt_level": 3,
+    "lto": false,
+    "codegen_units": 8
+  },
+  "runtime": "Tokio current-thread",
+  "whole_daemon_benchmark": false,
+  "production_changes": false
+}

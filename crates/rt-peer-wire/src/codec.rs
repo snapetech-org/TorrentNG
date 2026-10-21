@@ -1,6 +1,7 @@
 /// tokio-util `Codec` impl for BEP 3 length-prefixed peer messages.
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, Bytes, BytesMut};
 use rt_metrics::{MemoryClass, MemoryLease, ResourceGovernor};
+use std::sync::Arc;
 use tokio_util::codec::{Decoder, Encoder};
 
 use crate::{
@@ -36,6 +37,47 @@ fn ensure_peer_buffer_reservation(
     Ok(())
 }
 
+fn acquire_read_buffer_lease(
+    resources: &ResourceGovernor,
+    capacity: usize,
+) -> Result<PeerReadBufferLease, WireError> {
+    let bytes = u64::try_from(capacity).map_err(|_| WireError::PeerBufferLengthOverflow)?;
+    let lease = resources
+        .try_acquire(MemoryClass::PeerBuffer, bytes)
+        .ok_or(WireError::PeerBufferAllocationDenied(bytes))?;
+    Ok(PeerReadBufferLease { lease })
+}
+
+fn ensure_read_buffer_reservation(
+    resources: &ResourceGovernor,
+    lease: &mut Option<Arc<PeerReadBufferLease>>,
+    reserved_bytes: &mut u64,
+    required_bytes: u64,
+) -> Result<(), WireError> {
+    if required_bytes <= *reserved_bytes {
+        return Ok(());
+    }
+
+    let additional = required_bytes - *reserved_bytes;
+    if let Some(lease) = lease.as_mut() {
+        let Some(owner) = Arc::get_mut(lease) else {
+            return Err(WireError::PeerBufferAllocationDenied(required_bytes));
+        };
+        if !owner.lease.try_grow(additional) {
+            return Err(WireError::PeerBufferAllocationDenied(required_bytes));
+        }
+    } else {
+        let bytes =
+            u64::try_from(required_bytes).map_err(|_| WireError::PeerBufferLengthOverflow)?;
+        let new_lease = resources
+            .try_acquire(MemoryClass::PeerBuffer, bytes)
+            .ok_or(WireError::PeerBufferAllocationDenied(bytes))?;
+        *lease = Some(Arc::new(PeerReadBufferLease { lease: new_lease }));
+    }
+    *reserved_bytes = required_bytes;
+    Ok(())
+}
+
 /// BEP 3 length-prefixed peer message codec.
 ///
 /// The default codec is useful for protocol-only callers. Engine-owned TCP
@@ -53,10 +95,25 @@ pub struct PeerCodec {
 
 #[derive(Default)]
 struct PeerCodecMemory {
-    read_memory_lease: Option<MemoryLease>,
+    read_memory_lease: Option<Arc<PeerReadBufferLease>>,
     write_memory_lease: Option<MemoryLease>,
     read_reserved_bytes: u64,
     write_reserved_bytes: u64,
+}
+
+struct PeerReadBufferLease {
+    lease: MemoryLease,
+}
+
+struct PiecePayloadOwner {
+    bytes: Bytes,
+    _read_buffer_lease: Arc<PeerReadBufferLease>,
+}
+
+impl AsRef<[u8]> for PiecePayloadOwner {
+    fn as_ref(&self) -> &[u8] {
+        self.bytes.as_ref()
+    }
 }
 
 impl PeerCodec {
@@ -75,19 +132,53 @@ impl PeerCodec {
         self.read_buffer_high_water_bytes =
             self.read_buffer_high_water_bytes.max(accounted_capacity);
         let resources = self.resources.clone();
-        let mut capacity_bytes = 0;
         if let Some(resources) = resources.as_ref() {
+            let accounted_capacity_bytes = u64::try_from(accounted_capacity)
+                .map_err(|_| WireError::PeerBufferLengthOverflow)?;
+            let reserved_read_bytes = self
+                .memory
+                .as_ref()
+                .map_or(0, |memory| memory.read_reserved_bytes);
+            let shared_backing = self
+                .memory
+                .as_ref()
+                .and_then(|memory| memory.read_memory_lease.as_ref())
+                .is_some_and(|lease| Arc::strong_count(lease) > 1);
+            if shared_backing
+                && (required > src.capacity() || accounted_capacity_bytes > reserved_read_bytes)
+            {
+                let lease = acquire_read_buffer_lease(resources, required)?;
+                let mut replacement = BytesMut::with_capacity(required);
+                replacement.extend_from_slice(src.as_ref());
+                let actual_capacity = replacement.capacity();
+                let actual_capacity_bytes = u64::try_from(actual_capacity)
+                    .map_err(|_| WireError::PeerBufferLengthOverflow)?;
+                let mut lease = lease;
+                if actual_capacity_bytes > lease.lease.bytes()
+                    && !lease
+                        .lease
+                        .try_grow(actual_capacity_bytes - lease.lease.bytes())
+                {
+                    return Err(WireError::PeerBufferAllocationDenied(actual_capacity_bytes));
+                }
+                *src = replacement;
+                let memory = self
+                    .memory
+                    .get_or_insert_with(|| Box::new(PeerCodecMemory::default()));
+                memory.read_reserved_bytes = lease.lease.bytes();
+                memory.read_memory_lease = Some(Arc::new(lease));
+                self.read_buffer_high_water_bytes = actual_capacity;
+                return Ok(());
+            }
+
             let memory = self
                 .memory
                 .get_or_insert_with(|| Box::new(PeerCodecMemory::default()));
-            capacity_bytes = u64::try_from(accounted_capacity)
-                .ok()
-                .ok_or(WireError::PeerBufferLengthOverflow)?;
-            ensure_peer_buffer_reservation(
+            ensure_read_buffer_reservation(
                 resources,
                 &mut memory.read_memory_lease,
                 &mut memory.read_reserved_bytes,
-                capacity_bytes,
+                accounted_capacity_bytes,
             )?;
         }
 
@@ -101,11 +192,11 @@ impl PeerCodec {
         if let Some(resources) = resources.as_ref() {
             let actual_capacity =
                 u64::try_from(src.capacity()).map_err(|_| WireError::PeerBufferLengthOverflow)?;
-            if actual_capacity > capacity_bytes {
-                let memory = self
-                    .memory
-                    .get_or_insert_with(|| Box::new(PeerCodecMemory::default()));
-                ensure_peer_buffer_reservation(
+            let memory = self
+                .memory
+                .get_or_insert_with(|| Box::new(PeerCodecMemory::default()));
+            if actual_capacity > memory.read_reserved_bytes {
+                ensure_read_buffer_reservation(
                     resources,
                     &mut memory.read_memory_lease,
                     &mut memory.read_reserved_bytes,
@@ -151,21 +242,39 @@ impl PeerCodec {
         if !src.is_empty() || self.read_buffer_high_water_bytes <= RETAINED_BUFFER_CAPACITY {
             return;
         }
+        let Some(resources) = self.resources.as_ref() else {
+            *src = BytesMut::with_capacity(RETAINED_BUFFER_CAPACITY);
+            self.read_buffer_high_water_bytes = src.capacity();
+            return;
+        };
 
-        *src = BytesMut::with_capacity(RETAINED_BUFFER_CAPACITY);
-        self.read_buffer_high_water_bytes = src.capacity();
-        let Some(buffer_bytes) = u64::try_from(src.capacity()).ok() else {
-            return;
+        // Account for both allocations during the detach. If a Piece still
+        // owns the old slab, its lease remains alive; otherwise replacing the
+        // codec owner releases that old charge immediately.
+        let lease = match acquire_read_buffer_lease(resources, RETAINED_BUFFER_CAPACITY) {
+            Ok(lease) => lease,
+            Err(_) => return,
         };
-        let Some(memory) = self.memory.as_mut() else {
-            return;
+        let replacement = BytesMut::with_capacity(RETAINED_BUFFER_CAPACITY);
+        let actual_capacity = replacement.capacity();
+        let actual_bytes = match u64::try_from(actual_capacity) {
+            Ok(bytes) => bytes,
+            Err(_) => return,
         };
-        if buffer_bytes < memory.read_reserved_bytes {
-            if let Some(lease) = memory.read_memory_lease.as_mut() {
-                lease.shrink_to(buffer_bytes);
-                memory.read_reserved_bytes = buffer_bytes;
-            }
+        let mut lease = lease;
+        if actual_bytes > lease.lease.bytes()
+            && !lease.lease.try_grow(actual_bytes - lease.lease.bytes())
+        {
+            return;
         }
+
+        let memory = self
+            .memory
+            .get_or_insert_with(|| Box::new(PeerCodecMemory::default()));
+        *src = replacement;
+        memory.read_reserved_bytes = lease.lease.bytes();
+        memory.read_memory_lease = Some(Arc::new(lease));
+        self.read_buffer_high_water_bytes = src.capacity();
     }
 
     fn trim_idle_write_buffer(&mut self, dst: &mut BytesMut) {
@@ -212,6 +321,9 @@ impl Decoder for PeerCodec {
             self.reserve_capacity(src, total)?;
             return Ok(None);
         }
+        if self.resources.is_some() && src.capacity() > 0 {
+            self.reserve_capacity(src, src.capacity())?;
+        }
         let copied_payload_bytes = Message::copied_payload_bytes(&src[4..total]);
         let message_memory_lease = if copied_payload_bytes == 0 {
             None
@@ -229,6 +341,26 @@ impl Decoder for PeerCodec {
         src.advance(4);
         let payload = src.split_to(len as usize).freeze();
         let mut msg = Message::parse_owned(payload)?;
+        msg = match msg {
+            Message::Piece { piece, begin, data } => {
+                match self
+                    .memory
+                    .as_ref()
+                    .and_then(|memory| memory.read_memory_lease.as_ref())
+                {
+                    Some(lease) => Message::Piece {
+                        piece,
+                        begin,
+                        data: Bytes::from_owner(PiecePayloadOwner {
+                            bytes: data,
+                            _read_buffer_lease: Arc::clone(lease),
+                        }),
+                    },
+                    None => Message::Piece { piece, begin, data },
+                }
+            }
+            other => other,
+        };
         if let Some(memory_lease) = message_memory_lease {
             msg = msg.with_memory_lease(memory_lease);
         }
@@ -363,6 +495,116 @@ mod tests {
         // the payload. Pointer identity proves the codec did not copy it.
         assert_eq!(data.as_ptr(), frame_start.wrapping_add(13));
         assert!(frame.is_empty());
+    }
+
+    #[test]
+    fn piece_views_share_the_read_buffer_charge_until_the_last_view_drops() {
+        let governor = peer_buffer_governor(2 * 1024 * 1024);
+        let request_lease = governor
+            .try_acquire(MemoryClass::PeerBuffer, 16 * 1024)
+            .expect("request reservation");
+        let mut codec = PeerCodec::with_resources(governor.clone());
+        let mut input = BytesMut::with_capacity(512 * 1024);
+        assert!(codec.decode(&mut input).unwrap().is_none());
+        let old_backing = input.as_ptr();
+
+        let mut wire = BytesMut::new();
+        let mut encoder = PeerCodec::default();
+        for (piece, byte) in [(1, 0x5a), (2, 0x6b)] {
+            encoder
+                .encode(
+                    Message::Piece {
+                        piece,
+                        begin: 0,
+                        data: Bytes::from(vec![byte; 16 * 1024]),
+                    },
+                    &mut wire,
+                )
+                .unwrap();
+        }
+        input.extend_from_slice(&wire);
+        drop(wire);
+
+        let Message::Piece { data: first, .. } = codec.decode(&mut input).unwrap().unwrap() else {
+            panic!("expected first Piece message");
+        };
+        let Message::Piece { data: second, .. } = codec.decode(&mut input).unwrap().unwrap() else {
+            panic!("expected second Piece message");
+        };
+        let first_clone = first.slice(..);
+        assert_eq!(first.as_ptr(), old_backing.wrapping_add(13));
+        assert_eq!(first[0], 0x5a);
+        assert_eq!(second[0], 0x6b);
+
+        assert!(codec.decode(&mut input).unwrap().is_none());
+        assert_eq!(input.capacity(), RETAINED_BUFFER_CAPACITY);
+        assert_eq!(
+            governor.snapshot().total_used_bytes,
+            (512 * 1024 + RETAINED_BUFFER_CAPACITY + 16 * 1024) as u64,
+            "the old slab is charged once across both Piece views and their clone"
+        );
+
+        drop(codec);
+        drop(input);
+        assert_eq!(
+            governor.snapshot().total_used_bytes,
+            (512 * 1024 + 16 * 1024) as u64,
+            "codec shutdown leaves the old slab charged while Piece owners retain it"
+        );
+        drop(first);
+        drop(second);
+        assert_eq!(
+            governor.snapshot().total_used_bytes,
+            (512 * 1024 + 16 * 1024) as u64,
+            "a cloned Bytes slice keeps the backing lease alive"
+        );
+        drop(first_clone);
+        assert_eq!(
+            governor.snapshot().total_used_bytes,
+            16 * 1024,
+            "the old slab lease releases after the final Piece view drops"
+        );
+        drop(request_lease);
+        assert_eq!(governor.snapshot().total_used_bytes, 0);
+    }
+
+    #[test]
+    fn piece_view_keeps_a_warm_read_buffer_charged_after_codec_shutdown() {
+        let governor = peer_buffer_governor(256 * 1024);
+        let mut codec = PeerCodec::with_resources(governor.clone());
+        let mut input = BytesMut::with_capacity(RETAINED_BUFFER_CAPACITY);
+        assert!(codec.decode(&mut input).unwrap().is_none());
+
+        let mut wire = BytesMut::new();
+        PeerCodec::default()
+            .encode(
+                Message::Piece {
+                    piece: 4,
+                    begin: 0,
+                    data: Bytes::from(vec![0x39; 16 * 1024]),
+                },
+                &mut wire,
+            )
+            .unwrap();
+        input.extend_from_slice(&wire);
+        let Message::Piece { data, .. } = codec.decode(&mut input).unwrap().unwrap() else {
+            panic!("expected Piece message");
+        };
+        assert_eq!(
+            governor.snapshot().total_used_bytes,
+            RETAINED_BUFFER_CAPACITY as u64
+        );
+
+        drop(codec);
+        drop(input);
+        assert_eq!(
+            governor.snapshot().total_used_bytes,
+            RETAINED_BUFFER_CAPACITY as u64,
+            "the data view retains the read slab lease after its codec is dropped"
+        );
+        assert_eq!(data[0], 0x39);
+        drop(data);
+        assert_eq!(governor.snapshot().total_used_bytes, 0);
     }
 
     #[test]

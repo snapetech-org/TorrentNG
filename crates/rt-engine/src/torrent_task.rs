@@ -114,6 +114,7 @@ const PEER_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 pub(crate) const UTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const UPLOAD_ACCOUNTING_BATCH_BYTES: u64 = 64 * 1024;
 const UPLOAD_ACCOUNTING_MAX_DELAY: Duration = Duration::from_millis(25);
+const MAX_READY_UPLOAD_INTAKE_MESSAGES: usize = MAX_UPLOAD_READ_BATCH_BLOCKS;
 
 pub(crate) async fn connect_utp_with_deadline(
     network_budget: &GlobalNetworkBudget,
@@ -8313,6 +8314,13 @@ impl PeerIo {
         if pieces.is_empty() {
             return Ok(0);
         }
+        debug!(
+            target: "torrentng::upload_batches",
+            operation = "ready_frame_group",
+            frames = pieces.len(),
+            payload_bytes = pieces.iter().map(|(_, _, data)| data.len() as u64).sum::<u64>(),
+            "writing ready peer Piece frames"
+        );
         if pieces.len() == 1 {
             let (piece, begin, data) = pieces[0];
             return self
@@ -8368,6 +8376,10 @@ impl PeerIo {
             PeerIo::Utp(io) => io.next().await,
         }
     }
+
+    fn try_next_ready(&mut self) -> Option<anyhow::Result<Option<Message>>> {
+        self.next().now_or_never()
+    }
 }
 
 async fn write_piece_vectored<W>(
@@ -8386,6 +8398,14 @@ where
         let header_slice = &header[header_offset..];
         let payload_slice = &payload[payload_offset..];
         let buffers = [IoSlice::new(header_slice), IoSlice::new(payload_slice)];
+        debug!(
+            target: "torrentng::upload_batches",
+            operation = "socket_write",
+            frames = 1,
+            payload_remaining = payload_slice.len(),
+            vectored_slices = buffers.len(),
+            "writing peer Piece frame"
+        );
         let written = stream.write_vectored(&buffers).await?;
         if written == 0 {
             return Err(std::io::Error::new(
@@ -8467,6 +8487,20 @@ where
                     buffer_count += 1;
                 }
             }
+            let payload_remaining = pieces
+                .iter()
+                .enumerate()
+                .skip(completed)
+                .map(|(index, (_, _, data))| data.len().saturating_sub(cursors[index].1))
+                .sum::<usize>();
+            debug!(
+                target: "torrentng::upload_batches",
+                operation = "socket_write",
+                frames = pieces.len() - completed,
+                payload_remaining,
+                vectored_slices = buffer_count,
+                "writing ready peer Piece frames"
+            );
             tokio::time::timeout_at(deadline, stream.write_vectored(&buffers[..buffer_count])).await
         };
         let written = match write_result {
@@ -8913,6 +8947,9 @@ where
     // prevents it from processing choke/shutdown/input messages. Keep their
     // futures in the select loop instead of spawning a Tokio task per block.
     let mut upload_reads = UploadReadTasks::<F>::default();
+    let mut upload_dispatch_pending = false;
+    let mut upload_intake_messages = 0usize;
+    let mut deferred_peer_message: Option<anyhow::Result<Option<Message>>> = None;
     // Protocol obligations are process-owned by generation-safe connection
     // identity. The socket loop retains the only writer and upload-read futures.
     let mut upload_request_drops = 0u64;
@@ -8923,6 +8960,16 @@ where
 
     let result: anyhow::Result<()> = async {
         'peer: loop {
+        // Poll the decoder once while upload dispatch is pending. Any complete
+        // frames already in the socket buffer are processed first, up to a
+        // small hard cap; no timer is used to wait for a fuller batch.
+        if deferred_peer_message.is_none()
+            && upload_dispatch_pending
+            && upload_intake_messages < MAX_READY_UPLOAD_INTAKE_MESSAGES
+        {
+            deferred_peer_message = peer_io.try_next_ready();
+        }
+        let dispatch_upload_reads_now = upload_dispatch_pending && deferred_peer_message.is_none();
         tokio::select! {
             cmd = peer_cmd_rx.recv() => {
                 let Some(cmd) = cmd else {
@@ -9072,6 +9119,8 @@ where
                         for reject in upload_obligations.on_local_choke() {
                             send_upload_obligation_reject(&mut peer_io, &upload, reject).await?;
                         }
+                        upload_dispatch_pending = false;
+                        upload_intake_messages = 0;
                         start_upload_reads(
                             &mut upload_reads,
                             &upload_obligations,
@@ -9092,6 +9141,8 @@ where
                         upload_choked = false;
                         upload_obligations.on_local_unchoke();
                         peer_io.send(Message::Unchoke).await?;
+                        upload_dispatch_pending = false;
+                        upload_intake_messages = 0;
                         start_upload_reads(
                             &mut upload_reads,
                             &upload_obligations,
@@ -9108,10 +9159,19 @@ where
                     }
                 }
             }
-            msg_result = peer_io.next() => {
+            msg_result = async {
+                match deferred_peer_message.take() {
+                    Some(result) => result,
+                    None => peer_io.next().await,
+                }
+            }, if !dispatch_upload_reads_now => {
                 let Some(msg) = msg_result? else {
                     break;
                 };
+                if upload_dispatch_pending {
+                    upload_intake_messages =
+                        upload_intake_messages.saturating_add(1);
+                }
                 last_activity = Instant::now();
                 let (msg, _message_memory_lease) = msg.into_accounted_parts()?;
                 match msg {
@@ -9475,13 +9535,12 @@ where
                             }
                         }
                         match decision {
-                            InboundDecision::Queue => start_upload_reads(
-                                &mut upload_reads,
-                                &upload_obligations,
-                                &upload,
-                                &upload_read_context,
-                                make_upload_read_future,
-                            )?,
+                            InboundDecision::Queue => {
+                                if !upload_dispatch_pending {
+                                    upload_dispatch_pending = true;
+                                    upload_intake_messages = 1;
+                                }
+                            }
                             InboundDecision::Reject(_) => {
                                 reject_upload_request(&mut peer_io, &upload, request).await?;
                             }
@@ -9821,6 +9880,20 @@ where
                     }
                 }
 
+                if !upload_dispatch_pending {
+                    upload_intake_messages = 0;
+                    start_upload_reads(
+                        &mut upload_reads,
+                        &upload_obligations,
+                        &upload,
+                        &upload_read_context,
+                        make_upload_read_future,
+                    )?;
+                }
+            }
+            _ = std::future::ready(()), if dispatch_upload_reads_now => {
+                upload_dispatch_pending = false;
+                upload_intake_messages = 0;
                 start_upload_reads(
                     &mut upload_reads,
                     &upload_obligations,
@@ -10040,6 +10113,15 @@ async fn read_upload_block(
     request: UploadRequest,
     choke_critical: bool,
 ) -> anyhow::Result<LeasedUploadBlock> {
+    read_upload_block_with_span(upload, request, choke_critical, None).await
+}
+
+async fn read_upload_block_with_span(
+    upload: &UploadReadContext,
+    request: UploadRequest,
+    choke_critical: bool,
+    span: Option<&UploadReadSpan>,
+) -> anyhow::Result<LeasedUploadBlock> {
     let canonical = request.canonical_block();
     let length = canonical.length;
     if length == 0 || length > MAX_BLOCK_SIZE {
@@ -10050,27 +10132,28 @@ async fn read_upload_block(
         .acquire_read(canonical)
         .await
         .map_err(|error| anyhow::anyhow!("global upload read admission failed: {error:?}"))?;
-    PieceGeometry::validate_served_block(&upload.piece_map, canonical)?;
+    if span.is_none() {
+        PieceGeometry::validate_served_block(&upload.piece_map, canonical)?;
+    }
     let lease = reserve_peer_upload_bytes(&upload.resources, length)?;
-    let regions = upload
-        .piece_map
-        .validate_request(canonical.piece, canonical.begin, length)?;
     let deadline = Instant::now() + PEER_SOCKET_WRITE_TIMEOUT;
     let priority = if choke_critical {
         IoRequestPriority::choke_critical(deadline)
     } else {
         IoRequestPriority::deadline(deadline)
     };
-    let canonical_data = if regions.len() == 1 && !regions[0].pad {
-        let region = &regions[0];
-        let path = region.path.resolve(&upload.save_root);
+    let canonical_data = if let Some(span) = span {
+        anyhow::ensure!(
+            upload.plane == Plane::V1 && span.length == length as usize,
+            "cached upload span does not match its admitted request"
+        );
         let read = upload
             .storage
             .read_owned_at_with_priority(
                 IoClass::PeerRead,
-                &path,
-                region.file_offset,
-                region.length as usize,
+                &span.path,
+                span.offset,
+                span.length,
                 priority,
             )
             .await?;
@@ -10082,12 +10165,12 @@ async fn read_upload_block(
         );
         read.into_bytes()
     } else {
-        let mut data = Vec::with_capacity(length as usize);
-        for region in regions {
-            if region.pad {
-                data.resize(data.len() + region.length as usize, 0);
-                continue;
-            }
+        let regions =
+            upload
+                .piece_map
+                .validate_request(canonical.piece, canonical.begin, length)?;
+        if regions.len() == 1 && !regions[0].pad {
+            let region = &regions[0];
             let path = region.path.resolve(&upload.save_root);
             let read = upload
                 .storage
@@ -10099,16 +10182,42 @@ async fn read_upload_block(
                     priority,
                 )
                 .await?;
-            data.extend_from_slice(read.as_slice());
-        }
-        if data.len() != length as usize {
-            anyhow::bail!(
-                "upload block read assembled {} bytes, expected {}",
-                data.len(),
+            anyhow::ensure!(
+                read.len() == length as usize,
+                "upload block read returned {} bytes, expected {}",
+                read.len(),
                 length
             );
+            read.into_bytes()
+        } else {
+            let mut data = Vec::with_capacity(length as usize);
+            for region in regions {
+                if region.pad {
+                    data.resize(data.len() + region.length as usize, 0);
+                    continue;
+                }
+                let path = region.path.resolve(&upload.save_root);
+                let read = upload
+                    .storage
+                    .read_owned_at_with_priority(
+                        IoClass::PeerRead,
+                        &path,
+                        region.file_offset,
+                        region.length as usize,
+                        priority,
+                    )
+                    .await?;
+                data.extend_from_slice(read.as_slice());
+            }
+            if data.len() != length as usize {
+                anyhow::bail!(
+                    "upload block read assembled {} bytes, expected {}",
+                    data.len(),
+                    length
+                );
+            }
+            bytes::Bytes::from(data)
         }
-        bytes::Bytes::from(data)
     };
     let (wire, data) = match upload.plane {
         Plane::V1 => (canonical, canonical_data),
@@ -10267,7 +10376,15 @@ async fn read_upload_batch_blocks(
     if specs.len() == 1 || specs.iter().any(|spec| spec.span.is_none()) {
         let mut blocks = Vec::with_capacity(specs.len());
         for spec in specs {
-            blocks.push(read_upload_block(upload, spec.request, spec.choke_critical).await?);
+            blocks.push(
+                read_upload_block_with_span(
+                    upload,
+                    spec.request,
+                    spec.choke_critical,
+                    spec.span.as_ref(),
+                )
+                .await?,
+            );
         }
         return Ok(blocks);
     }
@@ -10312,18 +10429,15 @@ async fn read_upload_batch_blocks(
         "upload batch exceeds its bounded read size"
     );
 
-    let mut read_permits = Vec::with_capacity(specs.len());
-    for spec in specs {
-        read_permits.push(
-            upload
-                .read_admission
-                .acquire_read(spec.request.canonical_block())
-                .await
-                .map_err(|error| {
-                    anyhow::anyhow!("global upload read admission failed: {error:?}")
-                })?,
-        );
+    let mut blocks = [BlockExtent::new(0, 0, 1); MAX_UPLOAD_READ_BATCH_BLOCKS];
+    for (block, spec) in blocks.iter_mut().zip(specs) {
+        *block = spec.request.canonical_block();
     }
+    let read_permits = upload
+        .read_admission
+        .acquire_read_batch(&blocks[..specs.len()])
+        .await
+        .map_err(|error| anyhow::anyhow!("global upload read admission failed: {error:?}"))?;
     let shared_lease = Arc::new(reserve_peer_upload_bytes(
         &upload.resources,
         u32::try_from(total_len).map_err(|_| anyhow::anyhow!("upload batch exceeds u32"))?,
@@ -10369,17 +10483,6 @@ async fn read_upload_batch_blocks(
     Ok(blocks)
 }
 
-async fn read_upload_blocks_individually(
-    upload: &UploadReadContext,
-    specs: &[UploadReadSpec],
-) -> Vec<anyhow::Result<LeasedUploadBlock>> {
-    let mut blocks = Vec::with_capacity(specs.len());
-    for spec in specs {
-        blocks.push(read_upload_block(upload, spec.request, spec.choke_critical).await);
-    }
-    blocks
-}
-
 async fn upload_read_batch_future(
     specs: Vec<UploadReadSpec>,
     read_context: Arc<UploadReadContext>,
@@ -10387,16 +10490,20 @@ async fn upload_read_batch_future(
     let panicked_requests = specs.iter().map(|spec| spec.request).collect::<Vec<_>>();
     let read = async move {
         let read = async {
-            match read_upload_batch_blocks(&read_context, &specs).await {
-                Ok(blocks) => blocks.into_iter().map(Ok).collect(),
-                Err(_) if specs.len() > 1 => {
-                    // A batch can exceed a per-peer buffer cap even when one
-                    // wire block still fits. Fall back to individual reads so
-                    // backpressure rejects only requests that cannot be held.
-                    read_upload_blocks_individually(&read_context, &specs).await
-                }
-                Err(error) => vec![Err(error)],
-            }
+            let blocks: Vec<anyhow::Result<LeasedUploadBlock>> =
+                match read_upload_batch_blocks(&read_context, &specs).await {
+                    Ok(blocks) => blocks.into_iter().map(Ok).collect(),
+                    // Keep batch failure atomic. Retrying its members one at a
+                    // time here could hold early permits while waiting for later
+                    // ones, recreating the admission cycle batching removed.
+                    Err(error) => {
+                        let message = format!("{error:#}");
+                        (0..specs.len())
+                            .map(|_| Err(anyhow::anyhow!(message.clone())))
+                            .collect()
+                    }
+                };
+            blocks
         };
         let results = match timeout(PEER_UPLOAD_READ_TIMEOUT, read).await {
             Ok(results) => results,
@@ -10516,6 +10623,15 @@ where
             batch.push(next_spec);
         }
         let request_count = batch.len();
+        debug!(
+            target: "torrentng::upload_batches",
+            operation = "storage_read",
+            blocks = request_count,
+            bytes = batch_bytes,
+            queued_requests = obligations.queued_len(),
+            in_flight_requests = upload_reads.pending_request_count(),
+            "scheduled peer upload storage read batch"
+        );
         upload_reads.push_batch(
             make_upload_read_future(batch, Arc::clone(read_context)),
             request_count,
@@ -16970,6 +17086,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn upload_batch_resource_denial_fails_all_members_without_partial_admission() {
+        let dir = tempfile::tempdir().unwrap();
+        let payload_len = MAX_BLOCK_SIZE as usize * 2;
+        std::fs::write(dir.path().join("payload.bin"), vec![0x4c; payload_len]).unwrap();
+        let piece_map = Arc::new(
+            PieceMap::new(
+                u64::from(MAX_BLOCK_SIZE) * 2,
+                vec![FileSpan {
+                    file_index: 0,
+                    path: SafeRelPath::from_name("payload.bin", false).unwrap(),
+                    content_offset: 0,
+                    length: u64::from(MAX_BLOCK_SIZE) * 2,
+                }],
+            )
+            .unwrap(),
+        );
+        let upload_rate = test_upload_rate_admission(None, 0).await;
+        let upload_registration = upload_rate
+            .network_budget
+            .upload_service()
+            .register(upload_rate.peer, false, MAX_UPLOAD_WORK)
+            .unwrap();
+        let mut resource_config = rt_metrics::ResourceGovernorConfig::default();
+        // One legal block fits, but the two-block backing allocation does not.
+        resource_config.class_caps_bytes[MemoryClass::PeerBuffer as usize] =
+            u64::from(MAX_BLOCK_SIZE);
+        let resources = ResourceGovernor::new(resource_config);
+        let read_context = UploadReadContext {
+            save_root: dir.path().to_path_buf(),
+            piece_map,
+            hybrid_v2: None,
+            plane: Plane::V1,
+            storage: MountScheduler::new_for_path(
+                StorageRootId::new(),
+                dir.path(),
+                &SchedulerConfig {
+                    profile: StorageProfile::Unknown,
+                    ..Default::default()
+                },
+            ),
+            resources: resources.clone(),
+            upload_control: RateLimitCancellation::default(),
+            upload_rate,
+            read_admission: upload_registration.read_admission(),
+        };
+        let requests = [
+            BlockExtent::new(0, 0, MAX_BLOCK_SIZE),
+            BlockExtent::new(0, MAX_BLOCK_SIZE, MAX_BLOCK_SIZE),
+        ];
+        let specs = requests.map(|block| {
+            let request = UploadRequest::from_wire(block);
+            UploadReadSpec {
+                request,
+                span: upload_read_span(&read_context, request),
+                choke_critical: false,
+            }
+        });
+
+        let completions = upload_read_batch_future(specs.to_vec(), Arc::new(read_context)).await;
+
+        assert_eq!(completions.len(), 2);
+        assert!(completions.into_iter().all(|completion| matches!(
+            completion,
+            UploadReadCompletion::Completed { result: Err(_), .. }
+        )));
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
+            0
+        );
+        assert_eq!(
+            upload_registration.read_admission().in_flight_read_jobs(),
+            0
+        );
+    }
+
+    #[tokio::test]
     async fn upload_block_synthesizes_missing_bep47_padding() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("payload.bin"), b"abc").unwrap();
@@ -17508,6 +17700,10 @@ mod tests {
             shutdown_control.clone(),
         )
         .await;
+        // Storage operation counts now reflect batched reads, so wait on the
+        // scheduler's logical job charges rather than assuming one operation
+        // per wire request.
+        let upload_service = upload.upload_rate.network_budget.upload_service();
         let (peer_event_tx, _peer_event_rx) = mpsc::channel(REQUESTS + 1);
         let (peer_cmd_tx, peer_cmd_rx) = mpsc::channel(REQUESTS + 1);
         let loop_task = tokio::spawn(run_peer_loop(
@@ -17545,15 +17741,15 @@ mod tests {
                 .max_in_flight_per_connection,
         );
         timeout(Duration::from_secs(15), async {
-            while storage.stats().read_ops_by_class[IoClass::PeerRead as usize]
-                < service_read_window as u64
+            while upload_service.in_flight_read_jobs() < service_read_window
+                || storage.stats().read_ops_by_class[IoClass::PeerRead as usize] == 0
             {
                 tokio::task::yield_now().await;
             }
         })
         .await
         .unwrap_or_else(|_| {
-            let observed = storage.stats().read_ops_by_class[IoClass::PeerRead as usize];
+            let observed = upload_service.in_flight_read_jobs();
             panic!("the process upload service admitted-read window did not fill: {observed}/{service_read_window} logical reads")
         });
 

@@ -1,0 +1,17 @@
+[package]
+name="tng-followup-probe"
+version="0.1.0"
+edition="2021"
+[dependencies]
+rt-storage={ path=@RT_STORAGE@ }
+rt-path={ path=@RT_PATH@ }
+rt-metrics={ path=@RT_METRICS@ }
+rt-peer-wire={ path=@RT_PEER_WIRE@ }
+tokio={ version="=1.52.3",features=["full"] }
+bytes={ version="=1.11.1" }
+libc={ version="=0.2.186" }
+tokio-util={ version="=0.7.18",features=["codec"] }
+[profile.release]
+opt-level=3
+lto=false
+codegen-units=8

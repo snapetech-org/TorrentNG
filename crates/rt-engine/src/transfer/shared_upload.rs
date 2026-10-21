@@ -169,12 +169,25 @@ impl SharedUploadService {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn in_flight_read_jobs(&self) -> usize {
+        self.reads.in_flight().0
+    }
+
     async fn acquire_read(
         &self,
         identity: TransferPeerId,
         block: BlockExtent,
     ) -> Result<UploadReadPermit, UploadReadAdmissionError> {
         self.reads.acquire(identity, block).await
+    }
+
+    async fn acquire_read_batch(
+        &self,
+        identity: TransferPeerId,
+        blocks: &[BlockExtent],
+    ) -> Result<Vec<UploadReadPermit>, UploadReadAdmissionError> {
+        self.reads.acquire_batch(identity, blocks).await
     }
 }
 
@@ -193,6 +206,18 @@ impl SharedUploadReadHandle {
         block: BlockExtent,
     ) -> Result<UploadReadPermit, UploadReadAdmissionError> {
         self.service.acquire_read(self.identity, block).await
+    }
+
+    pub(crate) async fn acquire_read_batch(
+        &self,
+        blocks: &[BlockExtent],
+    ) -> Result<Vec<UploadReadPermit>, UploadReadAdmissionError> {
+        self.service.acquire_read_batch(self.identity, blocks).await
+    }
+
+    #[cfg(test)]
+    pub(crate) fn in_flight_read_jobs(&self) -> usize {
+        self.service.in_flight_read_jobs()
     }
 }
 

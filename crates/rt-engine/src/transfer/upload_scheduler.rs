@@ -14,6 +14,8 @@ use tokio::sync::oneshot;
 use super::coords::{BlockExtent, BLOCK_SIZE};
 use super::rate::RatePeerId;
 
+const MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS: usize = 4;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct UploadReadLimits {
     pub max_connections: usize,
@@ -42,6 +44,7 @@ pub(crate) enum UploadReadAdmissionError {
     ConnectionLimit,
     QueueFull,
     InvalidBlock,
+    BatchTooLarge,
     IdentityExhausted,
 }
 
@@ -78,8 +81,15 @@ struct ConnectionState {
 
 struct Waiter {
     id: u64,
+    jobs: usize,
     bytes: u64,
-    reply: oneshot::Sender<UploadReadPermit>,
+    per_job_bytes: [u64; MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS],
+    reply: WaiterReply,
+}
+
+enum WaiterReply {
+    Single(oneshot::Sender<UploadReadPermit>),
+    Batch(oneshot::Sender<Vec<UploadReadPermit>>),
 }
 
 pub(crate) struct UploadReadPermit {
@@ -188,7 +198,7 @@ impl UploadReadScheduler {
                 .map(|connection| {
                     (
                         connection.closed,
-                        connection.queue.len(),
+                        queued_jobs(connection),
                         connection.in_flight_jobs,
                         connection.order,
                     )
@@ -244,7 +254,15 @@ impl UploadReadScheduler {
                 .expect("connection checked above");
             let add_to_round_robin =
                 connection.queue.is_empty() && !connection.queued_in_round_robin;
-            connection.queue.push_back(Waiter { id, bytes, reply });
+            let mut per_job_bytes = [0; MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS];
+            per_job_bytes[0] = bytes;
+            connection.queue.push_back(Waiter {
+                id,
+                jobs: 1,
+                bytes,
+                per_job_bytes,
+                reply: WaiterReply::Single(reply),
+            });
             if add_to_round_robin {
                 connection.queued_in_round_robin = true;
                 queue_pending_peer(&mut state, peer);
@@ -264,8 +282,138 @@ impl UploadReadScheduler {
         Ok(permit)
     }
 
+    /// Atomically reserve every job and byte charge needed by one storage
+    /// batch. A queued batch never holds a partial grant while it waits for
+    /// capacity, so peers cannot consume all global slots one permit at a time.
+    pub(crate) async fn acquire_batch(
+        &self,
+        peer: RatePeerId,
+        blocks: &[BlockExtent],
+    ) -> Result<Vec<UploadReadPermit>, UploadReadAdmissionError> {
+        if blocks.is_empty()
+            || blocks
+                .iter()
+                .any(|block| block.length == 0 || block.length > BLOCK_SIZE)
+        {
+            return Err(UploadReadAdmissionError::InvalidBlock);
+        }
+        if blocks.len() > MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS {
+            return Err(UploadReadAdmissionError::BatchTooLarge);
+        }
+
+        let jobs = blocks.len();
+        let mut per_job_bytes = [0; MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS];
+        let mut bytes = 0u64;
+        for (slot, block) in blocks.iter().enumerate() {
+            per_job_bytes[slot] = u64::from(block.length);
+            bytes = bytes
+                .checked_add(per_job_bytes[slot])
+                .ok_or(UploadReadAdmissionError::BatchTooLarge)?;
+        }
+        if jobs > self.inner.limits.max_in_flight_jobs
+            || jobs > self.inner.limits.max_in_flight_per_connection
+            || bytes > self.inner.limits.max_in_flight_bytes
+        {
+            return Err(UploadReadAdmissionError::BatchTooLarge);
+        }
+
+        let (waiter_id, receive) = {
+            let mut state = lock_state(&self.inner);
+            let (closed, queue_len, in_flight_jobs, connection_order) = state
+                .connections
+                .get(&peer)
+                .map(|connection| {
+                    (
+                        connection.closed,
+                        queued_jobs(connection),
+                        connection.in_flight_jobs,
+                        connection.order,
+                    )
+                })
+                .ok_or(UploadReadAdmissionError::NotRegistered)?;
+            if closed {
+                return Err(UploadReadAdmissionError::NotRegistered);
+            }
+            if queue_len
+                .saturating_add(in_flight_jobs)
+                .saturating_add(jobs)
+                > self
+                    .inner
+                    .limits
+                    .max_queued_per_connection
+                    .saturating_add(self.inner.limits.max_in_flight_per_connection)
+            {
+                return Err(UploadReadAdmissionError::QueueFull);
+            }
+
+            if state.round_robin.is_empty()
+                && queue_len == 0
+                && state.in_flight_jobs.saturating_add(jobs) <= self.inner.limits.max_in_flight_jobs
+                && state.in_flight_bytes.saturating_add(bytes)
+                    <= self.inner.limits.max_in_flight_bytes
+                && in_flight_jobs.saturating_add(jobs)
+                    <= self.inner.limits.max_in_flight_per_connection
+            {
+                state.in_flight_jobs += jobs;
+                state.in_flight_bytes = state.in_flight_bytes.saturating_add(bytes);
+                state.last_served_order = Some(connection_order);
+                let connection = state
+                    .connections
+                    .get_mut(&peer)
+                    .expect("connection checked above");
+                connection.in_flight_jobs += jobs;
+                connection.in_flight_bytes = connection.in_flight_bytes.saturating_add(bytes);
+                return Ok(per_job_bytes[..jobs]
+                    .iter()
+                    .copied()
+                    .map(|bytes| UploadReadPermit {
+                        inner: Arc::downgrade(&self.inner),
+                        peer,
+                        bytes,
+                    })
+                    .collect());
+            }
+
+            let id = state.next_waiter;
+            state.next_waiter = id
+                .checked_add(1)
+                .ok_or(UploadReadAdmissionError::IdentityExhausted)?;
+            let (reply, receive) = oneshot::channel();
+            let connection = state
+                .connections
+                .get_mut(&peer)
+                .expect("connection checked above");
+            let add_to_round_robin =
+                connection.queue.is_empty() && !connection.queued_in_round_robin;
+            connection.queue.push_back(Waiter {
+                id,
+                jobs,
+                bytes,
+                per_job_bytes,
+                reply: WaiterReply::Batch(reply),
+            });
+            if add_to_round_robin {
+                connection.queued_in_round_robin = true;
+                queue_pending_peer(&mut state, peer);
+            }
+            (id, receive)
+        };
+
+        let mut waiter_guard = WaiterGuard {
+            inner: Arc::downgrade(&self.inner),
+            peer,
+            id: Some(waiter_id),
+        };
+        pump(&self.inner);
+        let permits = receive
+            .await
+            .map_err(|_| UploadReadAdmissionError::NotRegistered)?;
+        waiter_guard.id = None;
+        Ok(permits)
+    }
+
     #[cfg(test)]
-    fn in_flight(&self) -> (usize, u64) {
+    pub(super) fn in_flight(&self) -> (usize, u64) {
         let state = lock_state(&self.inner);
         (state.in_flight_jobs, state.in_flight_bytes)
     }
@@ -275,7 +423,7 @@ impl UploadReadScheduler {
         lock_state(&self.inner)
             .connections
             .values()
-            .map(|connection| connection.queue.len())
+            .map(queued_jobs)
             .sum()
     }
 
@@ -283,6 +431,13 @@ impl UploadReadScheduler {
     fn pending_connection_count(&self) -> usize {
         lock_state(&self.inner).round_robin.len()
     }
+}
+
+fn queued_jobs(connection: &ConnectionState) -> usize {
+    connection
+        .queue
+        .iter()
+        .fold(0usize, |total, waiter| total.saturating_add(waiter.jobs))
 }
 
 pub(crate) struct UploadReadConnection {
@@ -356,6 +511,7 @@ fn pump(inner: &Arc<Inner>) {
             let Some(peer) = state.round_robin.pop_front() else {
                 break;
             };
+            let global_jobs = state.in_flight_jobs;
             let global_bytes = state.in_flight_bytes;
             let (closed, has_waiters, eligible, connection_order) = {
                 let Some(connection) = state.connections.get_mut(&peer) else {
@@ -366,10 +522,13 @@ fn pump(inner: &Arc<Inner>) {
                     connection.closed,
                     !connection.queue.is_empty(),
                     !connection.closed
-                        && connection.in_flight_jobs < inner.limits.max_in_flight_per_connection
                         && connection.queue.front().is_some_and(|waiter| {
-                            global_bytes.saturating_add(waiter.bytes)
-                                <= inner.limits.max_in_flight_bytes
+                            connection.in_flight_jobs.saturating_add(waiter.jobs)
+                                <= inner.limits.max_in_flight_per_connection
+                                && global_jobs.saturating_add(waiter.jobs)
+                                    <= inner.limits.max_in_flight_jobs
+                                && global_bytes.saturating_add(waiter.bytes)
+                                    <= inner.limits.max_in_flight_bytes
                         }),
                     connection.order,
                 )
@@ -397,7 +556,7 @@ fn pump(inner: &Arc<Inner>) {
                     .queue
                     .pop_front()
                     .expect("eligible connection has a queued waiter");
-                connection.in_flight_jobs += 1;
+                connection.in_flight_jobs += waiter.jobs;
                 connection.in_flight_bytes =
                     connection.in_flight_bytes.saturating_add(waiter.bytes);
                 if !connection.queue.is_empty() {
@@ -412,17 +571,35 @@ fn pump(inner: &Arc<Inner>) {
             {
                 state.round_robin.push_back(peer);
             }
-            state.in_flight_jobs += 1;
+            state.in_flight_jobs += waiter.jobs;
             state.in_flight_bytes = state.in_flight_bytes.saturating_add(waiter.bytes);
             state.last_served_order = Some(connection_order);
             idle_turns = 0;
-            let permit = UploadReadPermit {
-                inner: Arc::downgrade(inner),
-                peer,
-                bytes: waiter.bytes,
-            };
-            if let Err(error) = waiter.reply.send(permit) {
-                failed_permits.push(error);
+            match waiter.reply {
+                WaiterReply::Single(reply) => {
+                    let permit = UploadReadPermit {
+                        inner: Arc::downgrade(inner),
+                        peer,
+                        bytes: waiter.bytes,
+                    };
+                    if let Err(permit) = reply.send(permit) {
+                        failed_permits.push(vec![permit]);
+                    }
+                }
+                WaiterReply::Batch(reply) => {
+                    let permits = waiter.per_job_bytes[..waiter.jobs]
+                        .iter()
+                        .copied()
+                        .map(|bytes| UploadReadPermit {
+                            inner: Arc::downgrade(inner),
+                            peer,
+                            bytes,
+                        })
+                        .collect();
+                    if let Err(permits) = reply.send(permits) {
+                        failed_permits.push(permits);
+                    }
+                }
             }
         }
         failed_permits
@@ -547,6 +724,166 @@ mod tests {
         let first_waiting_permit = waiting_first.await.unwrap().unwrap();
         assert_eq!(scheduler.in_flight(), (1, 16 * 1024));
         drop(first_waiting_permit);
+        assert_eq!(scheduler.in_flight(), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn batch_admission_does_not_hold_partial_global_permits() {
+        let scheduler = UploadReadScheduler::new(UploadReadLimits::default());
+        let peers: Vec<_> = (0..64).map(|slot| peer(1, slot)).collect();
+        let mut old_permits = Vec::new();
+        for identity in &peers {
+            scheduler.register(*identity).unwrap();
+            old_permits.push(
+                scheduler
+                    .acquire(*identity, block(16 * 1024))
+                    .await
+                    .unwrap(),
+            );
+        }
+
+        let mut tasks = Vec::new();
+        for identity in &peers {
+            let scheduler = scheduler.clone();
+            let identity = *identity;
+            tasks.push(tokio::spawn(async move {
+                scheduler
+                    .acquire_batch(
+                        identity,
+                        &[
+                            BlockExtent::new(0, 16 * 1024, 16 * 1024),
+                            BlockExtent::new(0, 32 * 1024, 16 * 1024),
+                        ],
+                    )
+                    .await
+                    .unwrap()
+            }));
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while scheduler.queued() != 128 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("all multi-job batches should queue without taking partial grants");
+        drop(old_permits);
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            for task in tasks {
+                let permits = task.await.unwrap();
+                assert_eq!(permits.len(), 2);
+                drop(permits);
+            }
+        })
+        .await
+        .expect("atomic batches should make progress as old work releases");
+        assert_eq!(scheduler.in_flight(), (0, 0));
+        assert_eq!(scheduler.queued(), 0);
+    }
+
+    #[tokio::test]
+    async fn batch_admission_rejects_jobs_or_bytes_that_cannot_fit() {
+        let first = UploadReadScheduler::new(UploadReadLimits {
+            max_connections: 1,
+            max_in_flight_jobs: 1,
+            max_in_flight_bytes: 64 * 1024,
+            max_in_flight_per_connection: 1,
+            max_queued_per_connection: 2,
+        });
+        let identity = peer(1, 0);
+        let _connection = first.register_guard(identity).unwrap();
+        assert!(matches!(
+            first
+                .acquire_batch(identity, &[block(16 * 1024), block(16 * 1024)])
+                .await,
+            Err(UploadReadAdmissionError::BatchTooLarge)
+        ));
+        assert_eq!(first.in_flight(), (0, 0));
+
+        let second = UploadReadScheduler::new(UploadReadLimits {
+            max_connections: 1,
+            max_in_flight_jobs: 4,
+            max_in_flight_bytes: 16 * 1024,
+            max_in_flight_per_connection: 4,
+            max_queued_per_connection: 2,
+        });
+        let _connection = second.register_guard(identity).unwrap();
+        assert!(matches!(
+            second
+                .acquire_batch(identity, &[block(16 * 1024), block(16 * 1024)])
+                .await,
+            Err(UploadReadAdmissionError::BatchTooLarge)
+        ));
+        assert_eq!(second.in_flight(), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn batch_permits_release_each_job_and_cancel_without_partial_charge() {
+        let scheduler = UploadReadScheduler::new(UploadReadLimits {
+            max_connections: 1,
+            max_in_flight_jobs: 4,
+            max_in_flight_bytes: 64 * 1024,
+            max_in_flight_per_connection: 2,
+            max_queued_per_connection: 4,
+        });
+        let identity = peer(1, 0);
+        let _connection = scheduler.register_guard(identity).unwrap();
+        let mut permits = scheduler
+            .acquire_batch(identity, &[block(16 * 1024), block(8 * 1024)])
+            .await
+            .unwrap();
+        assert_eq!(scheduler.in_flight(), (2, 24 * 1024));
+
+        let waiting = {
+            let scheduler = scheduler.clone();
+            tokio::spawn(async move { scheduler.acquire(identity, block(16 * 1024)).await })
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while scheduler.queued() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("single job should wait for one slot");
+        drop(permits.pop().unwrap());
+        let permit = tokio::time::timeout(std::time::Duration::from_secs(2), waiting)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(scheduler.in_flight(), (2, 32 * 1024));
+        drop(permits);
+        drop(permit);
+        assert_eq!(scheduler.in_flight(), (0, 0));
+
+        let held = scheduler.acquire(identity, block(16 * 1024)).await.unwrap();
+        let queued = {
+            let scheduler = scheduler.clone();
+            tokio::spawn(async move {
+                scheduler
+                    .acquire_batch(identity, &[block(16 * 1024), block(8 * 1024)])
+                    .await
+            })
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while scheduler.queued() != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("both jobs in the queued batch are accounted together");
+        queued.abort();
+        let _ = queued.await;
+        assert_eq!(scheduler.queued(), 0);
+        assert_eq!(scheduler.in_flight(), (1, 16 * 1024));
+        drop(held);
+        assert_eq!(scheduler.in_flight(), (0, 0));
+        let admitted = scheduler
+            .acquire_batch(identity, &[block(16 * 1024), block(8 * 1024)])
+            .await
+            .unwrap();
+        assert_eq!(admitted.len(), 2);
+        drop(admitted);
         assert_eq!(scheduler.in_flight(), (0, 0));
     }
 

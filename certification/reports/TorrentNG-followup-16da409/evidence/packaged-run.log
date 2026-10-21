@@ -1,0 +1,10 @@
+Repository revision: 16da409daa4b0a6bf91beace73e1af552718f862; tracked changes: False
+Scope: current storage/codec crates and production upload scheduler acquisition pattern; no daemon benchmark.
+   Compiling tng-followup-probe v0.1.0 (/tmp/torrentng-followup-4jjyt31z)
+    Finished `release` profile [optimized] target(s) in 1.79s
+     Running `audit-db9e65a/probe/target/release/tng-followup-probe`
+CACHE: tail-first entries=0 backend_reads_before_middle=1 backend_reads_after_middle=2 hits=1 misses=2
+ADMISSION: default_global_jobs=64 peers=64 first_permit_acquired=64 completed_two_permit_batches=0 (no I/O can start)
+ADMISSION CONTROL: after cancelling blocked batches, one four-permit batch succeeds
+PIECE: live_view=16384 backing_capacity=65536 governor_used_with_request_lease=16384 message_has_backing_lease=false
+PIECE TRIM: pinned_old_backing=524288 new_codec_buffer=65536 live_view=16384 governor_used_with_request_lease=81920

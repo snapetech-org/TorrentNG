@@ -1298,6 +1298,8 @@ struct PeerReadCacheEntry {
     identity: FileIdentity,
     offset: u64,
     data: bytes::Bytes,
+    consumed_prefix: usize,
+    consumed_suffix: usize,
     last_used: Instant,
 }
 
@@ -1352,9 +1354,9 @@ impl PeerReadCache {
             self.remove_file(path);
             return None;
         }
-        let (index, result, consumes_window_end) = {
+        let (index, result, consumes_window) = {
             let entries = self.files.get_mut(path)?;
-            let (index, relative, consumes_window_end) = entries
+            let (index, relative, end) = entries
                 .iter()
                 .enumerate()
                 .filter_map(|(index, entry)| {
@@ -1363,21 +1365,30 @@ impl PeerReadCache {
                     (end <= entry.data.len()).then_some((index, relative, end, entry.data.len()))
                 })
                 .min_by_key(|(_, _, _, range_bytes)| *range_bytes)
-                .map(|(index, relative, end, range_bytes)| {
-                    (index, relative, len > 0 && end == range_bytes)
-                })?;
+                .map(|(index, relative, end, _)| (index, relative, end))?;
             let entry = &mut entries[index];
             entry.last_used = Instant::now();
+            // Track contiguous coverage at both edges without a per-byte
+            // bitmap. A tail hit cannot retire unread middle bytes; windows
+            // covered from both ends can retire without a second backend read.
+            if len > 0 {
+                if relative <= entry.consumed_prefix {
+                    entry.consumed_prefix = entry.consumed_prefix.max(end);
+                }
+                if end >= entry.consumed_suffix {
+                    entry.consumed_suffix = entry.consumed_suffix.min(relative);
+                }
+            }
             (
                 index,
                 entry.data.slice(relative..relative + len),
-                consumes_window_end,
+                len > 0 && entry.consumed_prefix >= entry.consumed_suffix,
             )
         };
-        // A forward window has served all of its bytes once a hit reaches
-        // its end. Remove the cache reference now; returned Bytes may keep
-        // the backing alive only until the current storage consumer finishes.
-        if consumes_window_end {
+        // The covered prefix and suffix now overlap. Remove the cache
+        // reference; returned Bytes may keep the backing alive only until the
+        // current storage consumer finishes.
+        if consumes_window {
             self.remove_entry(path, index);
         }
         Some(result)
@@ -5880,12 +5891,16 @@ fn peer_read_cache_store_parts(
         _budget_lease: budget_lease,
     });
     let result = data.slice(..result_len);
+    let consumed_prefix = result_len.min(data.len());
+    let consumed_suffix = data.len();
     let evicted = cache_guard.insert(
         key,
         PeerReadCacheEntry {
             identity,
             offset,
             data,
+            consumed_prefix,
+            consumed_suffix,
             last_used: Instant::now(),
         },
         max_entries,
@@ -6188,12 +6203,15 @@ mod tests {
             _resource_lease: None,
             _budget_lease: budget_lease,
         });
+        let consumed_suffix = data.len();
         let inserted = lock_reset_derived_cache(cache).insert(
             key,
             PeerReadCacheEntry {
                 identity,
                 offset: 0,
                 data,
+                consumed_prefix: 0,
+                consumed_suffix,
                 last_used: Instant::now(),
             },
             8,
@@ -9004,6 +9022,8 @@ mod tests {
                     identity: file_identity(&file).unwrap(),
                     offset: 0,
                     data: bytes::Bytes::from_static(b"stale"),
+                    consumed_prefix: 0,
+                    consumed_suffix: 5,
                     last_used: Instant::now(),
                 },
                 1,
@@ -9244,6 +9264,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn peer_read_readahead_tail_hit_preserves_unread_prefix_and_middle() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tail-first-readahead.bin");
+        std::fs::write(&path, b"abcdefghijklmnop").unwrap();
+        let scheduler = MountScheduler::new(
+            StorageRootId::new(),
+            &SchedulerConfig {
+                profile: StorageProfile::Hdd,
+                storage_io: StorageIoConfig {
+                    peer_read_readahead_bytes: 16,
+                    peer_read_readahead_sequential_only: false,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let first = scheduled_read(&scheduler, IoClass::PeerRead, &path, 0, 4)
+            .await
+            .unwrap();
+        let duplicate = scheduled_read(&scheduler, IoClass::PeerRead, &path, 0, 4)
+            .await
+            .unwrap();
+        let tail = scheduled_read(&scheduler, IoClass::PeerRead, &path, 12, 4)
+            .await
+            .unwrap();
+        let after_tail = scheduler.stats();
+        assert_eq!(after_tail.peer_read_cache_entries, 1);
+        assert_eq!(after_tail.peer_read_cache_hits, 2);
+        assert_eq!(
+            after_tail.backend_read_ops_by_class[class_index(IoClass::PeerRead)],
+            1
+        );
+
+        // A second reader can consume the remaining contiguous prefix. The
+        // earlier tail hit must leave all unread bytes available here.
+        let middle = scheduled_read(&scheduler, IoClass::PeerRead, &path, 4, 8)
+            .await
+            .unwrap();
+        assert_eq!(&first[..], b"abcd");
+        assert_eq!(&duplicate[..], b"abcd");
+        assert_eq!(&tail[..], b"mnop");
+        assert_eq!(&middle[..], b"efghijkl");
+        let after_middle = scheduler.stats();
+        assert_eq!(after_middle.peer_read_cache_hits, 3);
+        assert_eq!(after_middle.peer_read_cache_entries, 0);
+        assert_eq!(after_middle.peer_read_cache_bytes, 0);
+        assert_eq!(
+            after_middle.backend_read_ops_by_class[class_index(IoClass::PeerRead)],
+            1
+        );
+    }
+
+    #[tokio::test]
     async fn portable_peer_read_fuses_cache_lookup_and_backend_completion() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("prepared-pread.bin");
@@ -9470,6 +9544,8 @@ mod tests {
                     identity: file_identity(&file).unwrap(),
                     offset: 0,
                     data: bytes::Bytes::from_static(b"stale"),
+                    consumed_prefix: 0,
+                    consumed_suffix: 5,
                     last_used: Instant::now(),
                 },
                 1,
