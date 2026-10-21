@@ -13,7 +13,7 @@
     "diagnostics_enabled": false,
     "healthchecks_disabled_for_all_measured_clients": true,
     "process_tree_sample_interval_seconds": 15.0,
-    "storage_backend_observation": "This run captured /metrics after the controlled seed window but after pausing the TorrentNG torrent; the storage runtime had been released (runtime_initialized=0), so backend identity is unknown. A later harness revision moves the scrape before pause."
+    "storage_backend_observation": "This run captured /metrics after pausing TorrentNG and reported runtime_initialized=0 for the separate StorageRuntime. This metric did not observe the live peer-transfer MountScheduler, so the backend remains unknown; moving the scrape before pause alone cannot recover it."
   },
   "host": "kspld0",
   "memory_samples": [

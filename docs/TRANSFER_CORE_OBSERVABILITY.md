@@ -13,6 +13,10 @@ just to satisfy a scrape.
 - Storage runtime state comes from StorageRuntime::initialized(). The handler
   reports whether the runtime exists and reads it only when another path has
   already initialized it.
+- Peer-transfer backend identity comes from a separate passive snapshot of
+  existing path-backed MountScheduler resource owners. It reports active
+  scheduler groups and their selected backend capabilities without creating a
+  scheduler or StorageRuntime.
 - The descriptor-budget snapshot also has a passive accessor. Its initialized
   gauge distinguishes an absent gate; its value gauges are zero before a live
   storage path creates the gate. The scrape does not raise RLIMIT_NOFILE.
@@ -34,7 +38,8 @@ just to satisfy a scrape.
 | Peer ingress | PeerIngressStats snapshot | Admitted handshakes, budget rejects, read errors, timeouts, malformed handshakes | No peer-address labels |
 | Database worker | EngineHandle database-worker snapshot | Queue depth/capacity, command outcomes, timeouts, cumulative queue/command/batch durations | Duration totals do not provide database latency percentiles |
 | Storage schedulers | EngineStats storage snapshot | Device queueing, dirty files, read/write/hash/sync counters and latency summaries, per-class operations | Shared resources are aggregated by resource identity, not multiplied per torrent |
-| Storage runtime and descriptor budget | Initialized StorageRuntime and passive process descriptor-budget snapshot | Backend capabilities, handles, frame pool, active/capacity/wait counters, descriptor-budget initialized gauge | The scrape does not initialize the runtime or gate and does not raise RLIMIT_NOFILE; descriptor values are zero until the gate exists |
+| Live peer storage schedulers | Passive snapshot of shared MountScheduler resource owners | Scheduler-group count, selected backend, fixed-buffer and registered-file capabilities, batch size, buffer strategy | Reports backend owners retained by path-backed schedulers, not device activity; groups are process-local and distinct from StorageRuntime |
+| Storage runtime and descriptor budget | Initialized StorageRuntime and passive process descriptor-budget snapshot | Plan/import runtime backend capabilities, handles, frame pool, active/capacity/wait counters, descriptor-budget initialized gauge | The scrape does not initialize the runtime or gate and does not raise RLIMIT_NOFILE; descriptor values are zero until the gate exists |
 | API snapshot and SSE owner | ApiRuntimeMetrics snapshot | Snapshot refresh/update/expiry, active SSE clients, estimated response bytes, disconnects | Native API owner only; compatibility API counters have their own paths |
 | Crash-safety owner | CrashSafetyView | Previous-run verdict and recovery/audit counters | Read-only view; location-specific details are exposed through diagnostics |
 | Egress-policy owner | egress_policy_metrics snapshot | Rejections and cache activity for outbound target policy | Global policy scope |

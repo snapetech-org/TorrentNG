@@ -3821,6 +3821,9 @@ subsystems.
 ### Acceptance
 
 - The handler uses passive accessors for process-global storage/runtime state.
+- Live peer-transfer backend metrics read existing `MountScheduler` resource
+  owners separately from the plan/import `StorageRuntime`, identify each
+  scheduler resource group, and do not create a backend during collection.
 - The descriptor-budget scrape reports whether its gate exists and never
   raises RLIMIT_NOFILE.
 - Metric families and their source owners, scope, privacy, and known limits
@@ -3842,9 +3845,14 @@ subsystems.
 
 ### Evidence
 
-- **Regression source added or updated:** F29 uses StorageRuntime::initialized
-  in the renderer; the fresh-process descriptor-gate/RLIMIT passivity
-  regression passed in the exact-source suite at `354ad504`.
+- **Regression source added or updated:** F29 uses `StorageRuntime::initialized`
+  for that runtime's own state; a passive live-scheduler snapshot now exports
+  peer-transfer backend capabilities per resource group. A storage regression
+  covers snapshotting an existing path scheduler, and the fresh-process test
+  asserts that an empty scrape reports zero scheduler groups without
+  initializing storage. The new assertions are pending the current bulk pass;
+  the descriptor-gate/RLIMIT passivity regression passed in the earlier
+  exact-source suite at `354ad504`.
 - **Command or probe to run:** native metrics renderer and fresh-process
   passivity regressions during the requested bulk pass.
 - **Expected result:** a scrape never creates the storage runtime and each

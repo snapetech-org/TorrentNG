@@ -223,7 +223,7 @@ def parse_cgroup_cpu_usage_usec(text):
 
 
 def parse_torrentng_storage_backend_metrics(text):
-    """Read the selected storage backend and its fixed-buffer capabilities."""
+    """Read live peer-scheduler backends and the separate storage runtime."""
     boolean_metrics = {
         "torrentng_storage_runtime_initialized": "runtime_initialized",
         "torrentng_storage_backend_fixed_buffers_supported": "fixed_buffers_supported",
@@ -236,6 +236,7 @@ def parse_torrentng_storage_backend_metrics(text):
         "torrentng_storage_backend_fixed_buffer_bytes": "fixed_buffer_bytes",
     }
     observation = {}
+    scheduler_backends = {}
     seen = False
     for line in text.splitlines():
         if not line or line.startswith("#") or " " not in line:
@@ -254,6 +255,9 @@ def parse_torrentng_storage_backend_metrics(text):
         elif metric_name in integer_metrics:
             observation[integer_metrics[metric_name]] = int(value)
             seen = True
+        elif metric_name == "torrentng_storage_scheduler_groups":
+            observation["scheduler_groups"] = int(value)
+            seen = True
         elif (
             metric_name == "torrentng_storage_backend_selected"
             and separator and labels.endswith("}")
@@ -270,6 +274,63 @@ def parse_torrentng_storage_backend_metrics(text):
             if strategy and value >= 0.5:
                 observation["fixed_buffer_strategy"] = strategy.group(1)
                 seen = True
+        elif metric_name.startswith("torrentng_storage_scheduler_backend_") and separator and labels.endswith("}"):
+            label_text = labels[:-1]
+            backend = re.search(r'(?:^|,)backend="([^"]+)"', label_text)
+            group = re.search(r'(?:^|,)scheduler_group="([^"]+)"', label_text)
+            if not backend or not group:
+                continue
+            key = (backend.group(1), group.group(1))
+            row = scheduler_backends.setdefault(key, {
+                "backend": key[0],
+                "scheduler_group": key[1],
+            })
+            scheduler_prefix = "torrentng_storage_scheduler_backend_"
+            suffix = metric_name[len(scheduler_prefix):]
+            if suffix == "selected":
+                row["selected"] = value >= 0.5
+            elif suffix in {
+                "fixed_buffers_supported",
+                "registered_files_supported",
+                "fixed_buffer_worker_copy",
+                "frame_pool_slots_supported",
+            }:
+                row[suffix] = value >= 0.5
+            elif suffix == "max_batch_len":
+                row["max_batch_len"] = int(value)
+            elif suffix == "fixed_buffer_bytes":
+                row["fixed_buffer_bytes"] = int(value)
+            elif suffix == "fixed_buffer_strategy":
+                strategy = re.search(r'(?:^|,)strategy="([^"]+)"', label_text)
+                if strategy and value >= 0.5:
+                    row["fixed_buffer_strategy"] = strategy.group(1)
+            seen = True
+
+    if scheduler_backends:
+        rows = [scheduler_backends[key] for key in sorted(scheduler_backends)]
+        selected_rows = [row for row in rows if row.get("selected")]
+        selected_names = sorted({row["backend"] for row in selected_rows})
+        observation["scheduler_backends"] = rows
+        observation["backend_source"] = "live_scheduler"
+        observation["selected_backends"] = selected_names
+        if len(selected_names) == 1:
+            observation["selected_backend"] = selected_names[0]
+        elif selected_names:
+            observation["selected_backend"] = "mixed"
+        for field in (
+            "fixed_buffers_supported",
+            "registered_files_supported",
+            "max_batch_len",
+            "fixed_buffer_bytes",
+            "fixed_buffer_strategy",
+            "fixed_buffer_worker_copy",
+            "frame_pool_slots_supported",
+        ):
+            values = [row.get(field) for row in selected_rows]
+            if values and values[0] is not None and all(value == values[0] for value in values):
+                observation[field] = values[0]
+    elif observation.get("selected_backend"):
+        observation["backend_source"] = "storage_runtime"
     return observation if seen else None
 
 
@@ -281,11 +342,46 @@ def describe_torrentng_storage_backend(observation):
     metrics = observation.get("metrics")
     if metrics is None:
         return "unavailable (storage backend metrics were not exported)"
-    if metrics.get("runtime_initialized") is False:
-        return "storage runtime was not initialized at the post-transfer scrape"
 
     def yes_no(value):
         return "yes" if value is True else "no" if value is False else "n/a"
+
+    if metrics.get("backend_source") == "live_scheduler":
+        backends = metrics.get("selected_backends", [])
+        backend = backends[0] if len(backends) == 1 else (
+            f"mixed ({', '.join(backends)})" if backends else "unknown"
+        )
+        groups = metrics.get("scheduler_groups", 0)
+        details = [f"live peer scheduler backend={backend}; groups={groups}"]
+        details.append(f"fixed buffers={yes_no(metrics.get('fixed_buffers_supported'))}")
+        details.append(f"registered files={yes_no(metrics.get('registered_files_supported'))}")
+        if "max_batch_len" in metrics:
+            details.append(f"max batch={metrics['max_batch_len']}")
+        if "fixed_buffer_bytes" in metrics:
+            details.append(f"fixed buffer bytes={metrics['fixed_buffer_bytes']}")
+        if metrics.get("fixed_buffer_strategy"):
+            details.append(f"buffer strategy={metrics['fixed_buffer_strategy']}")
+        if "fixed_buffer_worker_copy" in metrics:
+            details.append(f"worker copy={yes_no(metrics['fixed_buffer_worker_copy'])}")
+        if "frame_pool_slots_supported" in metrics:
+            details.append(f"frame-pool slots={yes_no(metrics['frame_pool_slots_supported'])}")
+        return ", ".join(details)
+
+    if metrics.get("backend_source") == "storage_runtime":
+        backend = metrics.get("selected_backend", "unknown")
+        groups = metrics.get("scheduler_groups")
+        group_detail = f"; live scheduler groups={groups}" if groups is not None else ""
+        return (
+            f"separate StorageRuntime backend={backend}; "
+            f"live peer scheduler backend not observed{group_detail}"
+        )
+    if metrics.get("runtime_initialized") is False:
+        groups = metrics.get("scheduler_groups")
+        group_detail = f"; live scheduler groups={groups}" if groups is not None else ""
+        return (
+            "no live peer scheduler backend observed; separate StorageRuntime "
+            f"was not initialized{group_detail}"
+        )
 
     backend = metrics.get("selected_backend") or "unknown"
     fixed_buffers = yes_no(metrics.get("fixed_buffers_supported"))

@@ -68,9 +68,10 @@ not establish a CPU or RAM improvement. The 60-second public probe reached
 5.18% and timed out, so it is excluded. The selected storage backend is
 unknown: this runner attempted `/metrics` after stopping the container and got
 `URLError`. A follow-up runner did reach `/metrics` before container shutdown,
-but after pausing TorrentNG; it found that the storage runtime had already
-been released. The capture now runs before the final torrent pause, and neither
-earlier run establishes the selected backend.
+but after pausing TorrentNG; it reported `runtime_initialized=0`. That gauge
+belongs to the separate `StorageRuntime` used for plan and import operations,
+so it does not reveal which backend the live peer-transfer scheduler used.
+Neither earlier run establishes the selected backend.
 
 The [report](../certification/reports/client-performance-backend-observation-8a27b32d-20261021.md),
 [samples](../certification/reports/client-performance-backend-observation-8a27b32d-20261021-samples.csv),
@@ -87,8 +88,10 @@ RSS**. Together with the preceding run, CPU was 2.57–2.73 (two-run median
 single-client runs have no comparator and cannot establish a gain or ranking.
 The public probe timed out at 6.04% and is excluded. The runner reached
 `/metrics` before container shutdown but after pausing TorrentNG; it reported
-`runtime_initialized=0`, so backend identity is still unknown. The runner now
-captures after the seed window and before pausing the torrent. The [report](../certification/reports/client-performance-backend-observation-3e7a15ed-20261021-repeat.md),
+`runtime_initialized=0`, which says nothing about the live peer-transfer
+backend. Backend identity is still unknown because that version of `/metrics`
+did not observe `MountScheduler` owners. The runner now captures after the
+seed window and before pausing the torrent. The [report](../certification/reports/client-performance-backend-observation-3e7a15ed-20261021-repeat.md),
 [samples](../certification/reports/client-performance-backend-observation-3e7a15ed-20261021-repeat-samples.csv),
 and [memory profile](../certification/reports/client-performance-backend-observation-3e7a15ed-20261021-repeat-memory-profile.json)
 record this trial.
@@ -121,10 +124,14 @@ process-tree RSS/PSS for every client, and keeps detailed TorrentNG `/metrics`,
 `smaps`, and process-spike attribution behind
 `TNG_CLIENT_BENCH_DIAGNOSTICS=1`. When TorrentNG is included, each transfer run
 performs one authenticated `/metrics` scrape after its measured transfer window
-and before pausing the final TorrentNG torrent, recording the selected backend,
-fixed-buffer and registered-file support, and buffer strategy in its
-report/profile. This makes io_uring findings attributable without adding metric
-scrapes during scored work. Storage completion ownership is carried by
+and before pausing the final TorrentNG torrent. The live peer-transfer backend
+is read from existing `MountScheduler` owners and recorded per scheduler group,
+including fixed-buffer and registered-file support and buffer strategy. The
+separate `StorageRuntime` gauge remains distinct because it covers plan and
+import work, not peer transfers. Earlier runs did not export live scheduler
+selection, so their backend is unknown even when the scrape succeeded. This
+makes io_uring findings attributable without adding metric scrapes during
+scored work. Storage completion ownership is carried by
 the actual Pread or io_uring job, removing the forwarding Tokio task and
 second completion channel while retaining operation guards through completion
 and invalidating the peer-read cache after writes. Upload admission grants

@@ -149,6 +149,7 @@ class CgroupCounterTests(unittest.TestCase):
 
         self.assertEqual(metrics, {
             "runtime_initialized": True,
+            "backend_source": "storage_runtime",
             "selected_backend": "uring",
             "fixed_buffers_supported": True,
             "registered_files_supported": True,
@@ -159,6 +160,46 @@ class CgroupCounterTests(unittest.TestCase):
             "frame_pool_slots_supported": True,
         })
         self.assertIn("backend=", benchmark.describe_torrentng_storage_backend({"metrics": metrics}))
+
+    def test_storage_backend_metrics_prefer_live_scheduler_when_storage_runtime_is_absent(self) -> None:
+        metrics = benchmark.parse_torrentng_storage_backend_metrics(
+            "torrentng_storage_runtime_initialized 0\n"
+            "torrentng_storage_scheduler_groups 1\n"
+            'torrentng_storage_scheduler_backend_selected{backend="pread",scheduler_group="42"} 1\n'
+            'torrentng_storage_scheduler_backend_fixed_buffers_supported{backend="pread",scheduler_group="42"} 0\n'
+            'torrentng_storage_scheduler_backend_registered_files_supported{backend="pread",scheduler_group="42"} 0\n'
+            'torrentng_storage_scheduler_backend_max_batch_len{backend="pread",scheduler_group="42"} 8\n'
+            'torrentng_storage_scheduler_backend_fixed_buffer_bytes{backend="pread",scheduler_group="42"} 0\n'
+            'torrentng_storage_scheduler_backend_fixed_buffer_strategy{backend="pread",scheduler_group="42",strategy="worker_copy"} 1\n'
+            'torrentng_storage_scheduler_backend_fixed_buffer_worker_copy{backend="pread",scheduler_group="42"} 1\n'
+            'torrentng_storage_scheduler_backend_frame_pool_slots_supported{backend="pread",scheduler_group="42"} 0\n'
+        )
+
+        self.assertEqual(metrics["backend_source"], "live_scheduler")
+        self.assertEqual(metrics["scheduler_groups"], 1)
+        self.assertEqual(metrics["selected_backend"], "pread")
+        self.assertEqual(metrics["selected_backends"], ["pread"])
+        self.assertFalse(metrics["runtime_initialized"])
+        self.assertEqual(metrics["max_batch_len"], 8)
+        self.assertEqual(metrics["fixed_buffer_strategy"], "worker_copy")
+        description = benchmark.describe_torrentng_storage_backend({"metrics": metrics})
+        self.assertIn("live peer scheduler backend=pread", description)
+        self.assertIn("groups=1", description)
+
+    def test_storage_backend_metrics_keep_mixed_scheduler_groups_distinct(self) -> None:
+        metrics = benchmark.parse_torrentng_storage_backend_metrics(
+            "torrentng_storage_scheduler_groups 2\n"
+            'torrentng_storage_scheduler_backend_selected{backend="pread",scheduler_group="42"} 1\n'
+            'torrentng_storage_scheduler_backend_fixed_buffers_supported{backend="pread",scheduler_group="42"} 0\n'
+            'torrentng_storage_scheduler_backend_selected{backend="uring",scheduler_group="43"} 1\n'
+            'torrentng_storage_scheduler_backend_fixed_buffers_supported{backend="uring",scheduler_group="43"} 1\n'
+        )
+
+        self.assertEqual(metrics["backend_source"], "live_scheduler")
+        self.assertEqual(metrics["selected_backend"], "mixed")
+        self.assertEqual(metrics["selected_backends"], ["pread", "uring"])
+        self.assertNotIn("fixed_buffers_supported", metrics)
+        self.assertEqual(len(metrics["scheduler_backends"]), 2)
 
     def test_storage_backend_metrics_capture_uninitialized_runtime(self) -> None:
         metrics = benchmark.parse_torrentng_storage_backend_metrics(
@@ -174,10 +215,11 @@ class CgroupCounterTests(unittest.TestCase):
     def test_post_transfer_storage_backend_scrape_runs_only_for_torrentng(self) -> None:
         instance = object.__new__(benchmark.Benchmark)
         instance._torrentng_request = mock.Mock(return_value=(
-            b'torrentng_storage_runtime_initialized 1\n'
-            b'torrentng_storage_backend_selected{backend="pread"} 1\n'
-            b'torrentng_storage_backend_fixed_buffers_supported 0\n'
-            b'torrentng_storage_backend_registered_files_supported 0\n'
+            b'torrentng_storage_runtime_initialized 0\n'
+            b'torrentng_storage_scheduler_groups 1\n'
+            b'torrentng_storage_scheduler_backend_selected{backend="pread",scheduler_group="42"} 1\n'
+            b'torrentng_storage_scheduler_backend_fixed_buffers_supported{backend="pread",scheduler_group="42"} 0\n'
+            b'torrentng_storage_scheduler_backend_registered_files_supported{backend="pread",scheduler_group="42"} 0\n'
         ))
 
         observation = instance._capture_storage_backend_observation("torrentngd")
@@ -187,6 +229,7 @@ class CgroupCounterTests(unittest.TestCase):
             "after_torrentng_seed_window_before_torrent_pause",
         )
         self.assertEqual(observation["metrics"]["selected_backend"], "pread")
+        self.assertEqual(observation["metrics"]["backend_source"], "live_scheduler")
         instance._torrentng_request.assert_called_once_with("/metrics")
 
         instance._torrentng_request.reset_mock()

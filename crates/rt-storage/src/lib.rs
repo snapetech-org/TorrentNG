@@ -68,7 +68,8 @@ pub use plan::{
     StoragePlanExecution, StoragePlanStep,
 };
 pub use scheduler::{
-    preallocation_mode_for_topology, DurabilityBarrierEvidence, DurabilityMode, FilePoolStats,
+    active_storage_backend_snapshot, preallocation_mode_for_topology, ActiveStorageBackend,
+    ActiveStorageBackendSnapshot, DurabilityBarrierEvidence, DurabilityMode, FilePoolStats,
     HybridPieceHashes, IoRequest, IoRequestPriority, MountScheduler, PreallocationMode,
     SchedulerConfig, StorageIoConfig, StorageIoStats, StorageRead, STORAGE_LATENCY_BUCKETS_NS,
     STORAGE_LATENCY_BUCKET_COUNT,

@@ -8520,6 +8520,116 @@ fn render_metrics_with_health(
         "Storage descriptor admissions delayed by the shared managed-storage quota; zero until initialized",
         descriptor_budget.map_or(0, |stats| stats.admission_waits_total),
     );
+    // Peer transfers use MountScheduler's shared backend owners. Observe the
+    // owners already retained by live torrent tasks instead of relying on the
+    // separate StorageRuntime used by plan and import operations.
+    let scheduler_backends = rt_storage::active_storage_backend_snapshot();
+    metric(
+        &mut out,
+        "torrentng_storage_scheduler_groups",
+        "gauge",
+        "Distinct shared storage scheduler resource groups retained by live schedulers",
+        scheduler_backends.scheduler_groups as u64,
+    );
+    for (name, help) in [
+        (
+            "torrentng_storage_scheduler_backend_selected",
+            "Selected backend held by a live torrent storage scheduler",
+        ),
+        (
+            "torrentng_storage_scheduler_backend_fixed_buffers_supported",
+            "Whether the live torrent storage backend supports fixed registered buffers",
+        ),
+        (
+            "torrentng_storage_scheduler_backend_registered_files_supported",
+            "Whether the live torrent storage backend supports registered files",
+        ),
+        (
+            "torrentng_storage_scheduler_backend_max_batch_len",
+            "Maximum batch size supported by the live torrent storage backend",
+        ),
+        (
+            "torrentng_storage_scheduler_backend_fixed_buffer_bytes",
+            "Bytes in each fixed buffer supported by the live torrent storage backend",
+        ),
+        (
+            "torrentng_storage_scheduler_backend_fixed_buffer_strategy",
+            "Fixed-buffer strategy supported by the live torrent storage backend",
+        ),
+        (
+            "torrentng_storage_scheduler_backend_fixed_buffer_worker_copy",
+            "Whether the live backend copies through private fixed buffers",
+        ),
+        (
+            "torrentng_storage_scheduler_backend_frame_pool_slots_supported",
+            "Whether the live backend can submit frame-pool slots directly",
+        ),
+    ] {
+        metric_family_header(&mut out, name, "gauge", help);
+    }
+    for backend in scheduler_backends.backends {
+        let backend_name = backend.selected.as_str();
+        let scheduler_group = backend.scheduler_group_id.to_string();
+        metric_sample_with_two_labels(
+            &mut out,
+            "torrentng_storage_scheduler_backend_selected",
+            ("backend", backend_name),
+            ("scheduler_group", &scheduler_group),
+            1,
+        );
+        metric_sample_with_two_labels(
+            &mut out,
+            "torrentng_storage_scheduler_backend_fixed_buffers_supported",
+            ("backend", backend_name),
+            ("scheduler_group", &scheduler_group),
+            u64::from(backend.fixed_buffers_supported),
+        );
+        metric_sample_with_two_labels(
+            &mut out,
+            "torrentng_storage_scheduler_backend_registered_files_supported",
+            ("backend", backend_name),
+            ("scheduler_group", &scheduler_group),
+            u64::from(backend.registered_files_supported),
+        );
+        metric_sample_with_two_labels(
+            &mut out,
+            "torrentng_storage_scheduler_backend_max_batch_len",
+            ("backend", backend_name),
+            ("scheduler_group", &scheduler_group),
+            backend.max_batch_len as u64,
+        );
+        metric_sample_with_two_labels(
+            &mut out,
+            "torrentng_storage_scheduler_backend_fixed_buffer_bytes",
+            ("backend", backend_name),
+            ("scheduler_group", &scheduler_group),
+            backend.fixed_buffer_len as u64,
+        );
+        metric_sample_with_three_labels(
+            &mut out,
+            "torrentng_storage_scheduler_backend_fixed_buffer_strategy",
+            ("backend", backend_name),
+            ("scheduler_group", &scheduler_group),
+            ("strategy", backend.fixed_buffer_strategy.as_str()),
+            1,
+        );
+        metric_sample_with_two_labels(
+            &mut out,
+            "torrentng_storage_scheduler_backend_fixed_buffer_worker_copy",
+            ("backend", backend_name),
+            ("scheduler_group", &scheduler_group),
+            u64::from(backend.fixed_buffer_strategy.uses_worker_copy()),
+        );
+        metric_sample_with_two_labels(
+            &mut out,
+            "torrentng_storage_scheduler_backend_frame_pool_slots_supported",
+            ("backend", backend_name),
+            ("scheduler_group", &scheduler_group),
+            u64::from(
+                backend.fixed_buffer_strategy == rt_storage::FixedBufferStrategy::FramePoolSlots,
+            ),
+        );
+    }
     // Observe the live runtime only; a scrape must never create a second one.
     let storage = StorageRuntime::initialized();
     metric(
@@ -8984,15 +9094,7 @@ fn metric_with_label(
     out.push('\n');
 }
 
-fn metric_with_two_labels(
-    out: &mut String,
-    name: &str,
-    kind: &str,
-    help: &str,
-    first: (&str, &str),
-    second: (&str, &str),
-    value: u64,
-) {
+fn metric_family_header(out: &mut String, name: &str, kind: &str, help: &str) {
     out.push_str("# HELP ");
     out.push_str(name);
     out.push(' ');
@@ -9003,6 +9105,15 @@ fn metric_with_two_labels(
     out.push(' ');
     out.push_str(kind);
     out.push('\n');
+}
+
+fn metric_sample_with_two_labels(
+    out: &mut String,
+    name: &str,
+    first: (&str, &str),
+    second: (&str, &str),
+    value: u64,
+) {
     out.push_str(name);
     out.push('{');
     out.push_str(first.0);
@@ -9015,6 +9126,43 @@ fn metric_with_two_labels(
     out.push_str("\"} ");
     out.push_str(&value.to_string());
     out.push('\n');
+}
+
+fn metric_sample_with_three_labels(
+    out: &mut String,
+    name: &str,
+    first: (&str, &str),
+    second: (&str, &str),
+    third: (&str, &str),
+    value: u64,
+) {
+    out.push_str(name);
+    out.push('{');
+    for (index, (label, label_value)) in [first, second, third].into_iter().enumerate() {
+        if index != 0 {
+            out.push(',');
+        }
+        out.push_str(label);
+        out.push_str("=\"");
+        push_label_value(out, label_value);
+        out.push('"');
+    }
+    out.push_str("} ");
+    out.push_str(&value.to_string());
+    out.push('\n');
+}
+
+fn metric_with_two_labels(
+    out: &mut String,
+    name: &str,
+    kind: &str,
+    help: &str,
+    first: (&str, &str),
+    second: (&str, &str),
+    value: u64,
+) {
+    metric_family_header(out, name, kind, help);
+    metric_sample_with_two_labels(out, name, first, second, value);
 }
 
 fn push_label_value(out: &mut String, value: &str) {
@@ -10751,6 +10899,7 @@ mod tests {
             let rendered = render_metrics(&rt_engine::EngineStats::default());
 
             assert!(rendered.contains("torrentng_storage_runtime_initialized 0"));
+            assert!(rendered.contains("torrentng_storage_scheduler_groups 0"));
             assert!(rendered.contains("torrentng_storage_descriptor_budget_initialized 0"));
             assert!(StorageRuntime::initialized().is_none());
             assert!(rt_storage::fd_limit::try_process_descriptor_budget_stats().is_none());
@@ -13366,6 +13515,25 @@ mod tests {
 
         assert!(rendered.contains("torrentng_test_metric{backend=\"pool\\\"a\\\\disk\\n1\"} 1"));
         assert!(!rendered.contains("pool\\\"a\\\\disk\\n1pool"));
+    }
+
+    #[test]
+    fn metric_with_three_labels_emits_unique_scheduler_group_series() {
+        let mut rendered = String::new();
+        let metric_name = "torrentng_storage_scheduler_backend_fixed_buffer_strategy";
+        metric_family_header(&mut rendered, metric_name, "gauge", "test metric");
+        metric_sample_with_three_labels(
+            &mut rendered,
+            metric_name,
+            ("backend", "uring"),
+            ("scheduler_group", "42"),
+            ("strategy", "frame_pool_slots"),
+            1,
+        );
+
+        assert!(rendered.contains(
+            "torrentng_storage_scheduler_backend_fixed_buffer_strategy{backend=\"uring\",scheduler_group=\"42\",strategy=\"frame_pool_slots\"} 1"
+        ));
     }
 
     #[test]

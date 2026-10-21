@@ -19,7 +19,7 @@
 - TorrentNG build mode: built from this checkout; image labels verified
 - Requested TorrentNG runtime/storage worker overrides: defaults
 - Requested TorrentNG memory-cap overrides: config defaults
-- TorrentNG storage backend (one post-transfer `/metrics` scrape): unknown; this scrape ran after the TorrentNG torrent was paused, when the storage runtime had already been released (`runtime_initialized=0`). A later harness revision moves the scrape before pause.
+- TorrentNG storage backend (one post-transfer `/metrics` scrape): unknown; this scrape ran after pausing the torrent and reported `runtime_initialized=0` for the separate `StorageRuntime`. That gauge does not observe the live peer-transfer `MountScheduler`; this source did not export its selected backend.
 - Measurement instrumentation: healthchecks disabled for all measured clients; process-tree RSS/PSS sampled every 15s; diagnostic metrics and detailed TorrentNG smaps disabled.
 - Peak `tokio-rt-worker`-named threads by phase (async + blocking): diagnostics disabled
 - Host load average (1/5/15m): 7.34/7.49/7.82 at start; 5.27/5.89/6.72 at end; sampled 1m peak 6.48

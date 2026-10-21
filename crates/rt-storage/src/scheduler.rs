@@ -22,7 +22,10 @@ use sha1::{Digest, Sha1};
 #[cfg(any(unix, windows))]
 use crate::open::identity_matches_path;
 use crate::{
-    backend::{read_frame_leased, BackendJobOwnership, BackendRequest, SelectedDiskBackend},
+    backend::{
+        read_frame_leased, BackendJobOwnership, BackendKind, BackendRequest, DiskBackend,
+        FixedBufferStrategy, SelectedDiskBackend,
+    },
     device::{detect_storage_topology, StorageTopology},
     elevator::elevator_class_weight,
     error::StorageError,
@@ -705,6 +708,64 @@ struct SharedSchedulerResources {
     io_pool: Arc<BlockingPool>,
     disk_backend: Arc<SelectedDiskBackend>,
     hash_pool: Arc<BlockingPool>,
+}
+
+/// Selected backend capabilities for a backend used by live mount schedulers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveStorageBackend {
+    /// Identity of the shared worker/backend resource group in this process.
+    pub scheduler_group_id: u64,
+    pub selected: BackendKind,
+    pub fixed_buffers_supported: bool,
+    pub registered_files_supported: bool,
+    pub max_batch_len: usize,
+    pub fixed_buffer_len: usize,
+    pub fixed_buffer_strategy: FixedBufferStrategy,
+}
+
+/// Passive snapshot of backend owners currently held by live schedulers.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ActiveStorageBackendSnapshot {
+    pub scheduler_groups: usize,
+    pub backends: Vec<ActiveStorageBackend>,
+}
+
+fn active_storage_backend(backend: &SelectedDiskBackend) -> ActiveStorageBackend {
+    ActiveStorageBackend {
+        scheduler_group_id: 0,
+        selected: backend.kind(),
+        fixed_buffers_supported: backend.supports_fixed_buffers(),
+        registered_files_supported: backend.supports_registered_files(),
+        max_batch_len: backend.max_batch_len(),
+        fixed_buffer_len: backend.fixed_buffer_len(),
+        fixed_buffer_strategy: backend.fixed_buffer_strategy(),
+    }
+}
+
+/// Snapshot the backend groups already retained by live `MountScheduler`s.
+/// This never initializes a backend; metrics can therefore observe the actual
+/// transfer owner without constructing a separate `StorageRuntime`.
+pub fn active_storage_backend_snapshot() -> ActiveStorageBackendSnapshot {
+    let active: Vec<_> = {
+        let resources = lock_recover(&SHARED_SCHEDULER_RESOURCES);
+        resources.values().filter_map(Weak::upgrade).collect()
+    };
+    let mut backends = Vec::with_capacity(active.len());
+    for resource in &active {
+        let mut backend = active_storage_backend(&resource.disk_backend);
+        backend.scheduler_group_id = resource.id;
+        backends.push(backend);
+    }
+    backends.sort_by(|left, right| {
+        left.selected
+            .as_str()
+            .cmp(right.selected.as_str())
+            .then_with(|| left.scheduler_group_id.cmp(&right.scheduler_group_id))
+    });
+    ActiveStorageBackendSnapshot {
+        scheduler_groups: active.len(),
+        backends,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -7816,6 +7877,20 @@ mod tests {
             first.file_pool_stats().capacity,
             effective_file_pool_size(3, process_handle_cache_capacity())
         );
+    }
+
+    #[test]
+    fn active_backend_snapshot_reports_live_path_scheduler() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = SchedulerConfig::default();
+        let scheduler = MountScheduler::new_for_path(StorageRootId::new(), dir.path(), &config);
+        let mut expected = active_storage_backend(&scheduler.disk_backend);
+        expected.scheduler_group_id = scheduler.stats().shared_resource_id;
+
+        let snapshot = active_storage_backend_snapshot();
+
+        assert!(snapshot.scheduler_groups > 0);
+        assert!(snapshot.backends.contains(&expected));
     }
 
     #[test]

@@ -182,9 +182,11 @@ client comparator and ran in a different host-load window; it does not confirm
 a CPU or RAM improvement. Its public probe timed out at 5.18% and is excluded.
 The backend remains unknown: the preceding run's `/metrics` request failed
 after container shutdown, and this run reached the service before shutdown but
-after pausing TorrentNG, when the storage runtime was already released. The
-harness now captures backend metrics before that final torrent pause; this
-cannot recover either missed value.
+after pausing TorrentNG, when the separate `StorageRuntime` gauge read zero.
+That runtime is used for plan and import work; it does not own the live peer
+transfer backend. The harness now captures before the final torrent pause, but
+these older metrics did not expose active `MountScheduler` owners and cannot
+recover either missed backend value.
 See the [repeat report](../certification/reports/client-performance-backend-observation-8a27b32d-20261021.md),
 [samples](../certification/reports/client-performance-backend-observation-8a27b32d-20261021-samples.csv),
 and [memory profile](../certification/reports/client-performance-backend-observation-8a27b32d-20261021-memory-profile.json).
@@ -194,12 +196,25 @@ MiB/s, measuring 2.73 CPU-s/GiB, 24.9 MiB anonymous peak, 43.4 MiB PSS, and
 43.9 MiB RSS. Across both one-run samples, median CPU is 2.65 CPU-s/GiB and
 median anonymous peak is 24.1 MiB; this is a small repeatability check without
 a client comparator. Its metrics scrape ran before container shutdown but
-after the torrent was paused, when `runtime_initialized=0`. That exposed the
-remaining ordering bug; the runner now scrapes after the seed window and
-before pause. Backend selection remains unverified until a run confirms it.
+after the torrent was paused, when `runtime_initialized=0`. That was not an
+ordering failure: the metric observed the separate `StorageRuntime`, not the
+live peer-transfer `MountScheduler`. The following 1a748ba3 repeat moved the
+scrape before pause and still could not identify the backend for the same
+reason. Current instrumentation now reports live scheduler groups and their
+backend capabilities directly; a clean run is still needed to record the
+selected backend on a new source revision.
 See the [report](../certification/reports/client-performance-backend-observation-3e7a15ed-20261021-repeat.md),
 [samples](../certification/reports/client-performance-backend-observation-3e7a15ed-20261021-repeat-samples.csv),
 and [profile](../certification/reports/client-performance-backend-observation-3e7a15ed-20261021-repeat-memory-profile.json).
+
+The [1a748ba3 follow-up](../certification/reports/client-performance-backend-confirm-1a748ba3-20261021.md)
+captured before pausing and measured 2.47 CPU-s/GiB, 24.3 MiB cgroup
+anonymous peak, 42.4 MiB PSS, and 42.8 MiB RSS. It passed the same hash at
+3.82 MiB/s, but ran once on a shared host with a 1-minute load peak of 11.92
+and has no comparator. Its `runtime_initialized=0` reading is only the legacy
+global runtime gauge; the peer scheduler backend was not exported by that
+source. See its [samples](../certification/reports/client-performance-backend-confirm-1a748ba3-20261021-samples.csv)
+and [memory profile](../certification/reports/client-performance-backend-confirm-1a748ba3-20261021-memory-profile.json).
 
 ### Download assembly and parsing
 
