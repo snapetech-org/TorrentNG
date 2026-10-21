@@ -1,0 +1,913 @@
+diff --git a/crates/rt-engine/src/torrent_task.rs b/crates/rt-engine/src/torrent_task.rs
+index a1637a7..8dbb0a7 100644
+--- a/crates/rt-engine/src/torrent_task.rs
++++ b/crates/rt-engine/src/torrent_task.rs
+@@ -2,7 +2,7 @@
+ ///
+ /// One tokio task per torrent owns: tracker announce loop, peer connection
+ /// management, piece picker, and storage writes.
+-use std::collections::{HashMap, HashSet};
++use std::collections::{HashMap, HashSet, VecDeque};
+ use std::hash::{Hash, Hasher};
+ use std::io::IoSlice;
+ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+@@ -1500,6 +1500,56 @@ enum TransferCompletion {
+ type TransferJobFuture =
+     Pin<Box<dyn std::future::Future<Output = TransferCompletion> + Send + 'static>>;
+ 
++/// Bounded actor-owned I/O, including completions not yet applied to the
++/// picker. Inline writes and checkpoint barriers must keep polling these
++/// futures: they may own the very file lock, lane slot, or write fence that
++/// the inline operation needs. A backend finishing does not poll its caller.
++///
++/// Retain completed results until the actor handles them normally. Applying
++/// them inside a checkpoint would re-enter state transitions and could start
++/// a second checkpoint. No per-block Tokio task is needed.
++#[derive(Default)]
++struct TransferJobs {
++    pending: futures::stream::FuturesUnordered<TransferJobFuture>,
++    completed: VecDeque<TransferCompletion>,
++}
++
++impl TransferJobs {
++    fn len(&self) -> usize {
++        self.pending.len() + self.completed.len()
++    }
++
++    fn is_empty(&self) -> bool {
++        self.pending.is_empty() && self.completed.is_empty()
++    }
++
++    fn push(&mut self, job: TransferJobFuture) {
++        self.pending.push(job);
++    }
++
++    async fn next(&mut self) -> Option<TransferCompletion> {
++        match self.completed.pop_front() {
++            Some(completion) => Some(completion),
++            None => self.pending.next().await,
++        }
++    }
++
++    async fn run_until<F: std::future::Future>(&mut self, operation: F) -> F::Output {
++        tokio::pin!(operation);
++        loop {
++            tokio::select! {
++                biased;
++                result = &mut operation => return result,
++                Some(completion) = self.pending.next(), if !self.pending.is_empty() => {
++                    // Moving a result here does not free an admission slot:
++                    // len() counts both queues until the actor consumes it.
++                    self.completed.push_back(completion);
++                }
++            }
++        }
++    }
++}
++
+ impl LeasedBlockEvent {
+     fn new(block: BlockEvent, memory_lease: MemoryLease) -> anyhow::Result<Self> {
+         let payload_bytes = u64::try_from(block.data.len())?;
+@@ -2943,7 +2993,7 @@ pub struct TorrentTask {
+     completed_piece_verify_from_disk: u64,
+     prepared_files: Arc<Mutex<HashSet<u32>>>,
+     prepared_file_locks: Arc<tokio::sync::Mutex<HashMap<u32, Arc<tokio::sync::Mutex<()>>>>>,
+-    transfer_jobs: futures::stream::FuturesUnordered<TransferJobFuture>,
++    transfer_jobs: TransferJobs,
+     pending_transfer_blocks: HashMap<(u32, u32), u64>,
+     pending_transfer_pieces: HashMap<u32, PendingPieceWork>,
+     next_transfer_generation: u64,
+@@ -3338,7 +3388,7 @@ impl TorrentTask {
+             completed_piece_verify_from_disk: 0,
+             prepared_files: Arc::new(Mutex::new(HashSet::new())),
+             prepared_file_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+-            transfer_jobs: futures::stream::FuturesUnordered::new(),
++            transfer_jobs: TransferJobs::default(),
+             pending_transfer_blocks: HashMap::new(),
+             pending_transfer_pieces: HashMap::new(),
+             next_transfer_generation: 0,
+@@ -5881,31 +5931,33 @@ impl TorrentTask {
+             data_offset = end;
+             match shared_payload_lease.as_ref() {
+                 Some(lease) => {
+-                    scheduled_write_with_shared_payload_lease(
+-                        &self.storage,
+-                        IoClass::PeerWrite,
+-                        &path,
+-                        region.file_offset,
+-                        block.data.slice(start..end),
+-                        true,
+-                        Arc::clone(lease),
+-                    )
+-                    .await?;
++                    self.transfer_jobs
++                        .run_until(scheduled_write_with_shared_payload_lease(
++                            &self.storage,
++                            IoClass::PeerWrite,
++                            &path,
++                            region.file_offset,
++                            block.data.slice(start..end),
++                            true,
++                            Arc::clone(lease),
++                        ))
++                        .await?;
+                 }
+                 None => {
+                     self.resources.record_payload_copy(
+                         PayloadCopyPath::PeerFileSegment,
+                         region_data.len() as u64,
+                     );
+-                    scheduled_write(
+-                        &self.storage,
+-                        IoClass::PeerWrite,
+-                        &path,
+-                        region.file_offset,
+-                        bytes::Bytes::copy_from_slice(region_data),
+-                        true,
+-                    )
+-                    .await?;
++                    self.transfer_jobs
++                        .run_until(scheduled_write(
++                            &self.storage,
++                            IoClass::PeerWrite,
++                            &path,
++                            region.file_offset,
++                            bytes::Bytes::copy_from_slice(region_data),
++                            true,
++                        ))
++                        .await?;
+                 }
+             }
+         }
+@@ -5958,27 +6010,29 @@ impl TorrentTask {
+             let region_data = data.slice(start..end);
+             match payload_lease.as_ref() {
+                 Some(lease) => {
+-                    scheduled_write_with_shared_payload_lease(
+-                        &self.storage,
+-                        IoClass::PeerWrite,
+-                        &path,
+-                        region.file_offset,
+-                        region_data,
+-                        true,
+-                        Arc::clone(lease),
+-                    )
+-                    .await?;
++                    self.transfer_jobs
++                        .run_until(scheduled_write_with_shared_payload_lease(
++                            &self.storage,
++                            IoClass::PeerWrite,
++                            &path,
++                            region.file_offset,
++                            region_data,
++                            true,
++                            Arc::clone(lease),
++                        ))
++                        .await?;
+                 }
+                 None => {
+-                    scheduled_write(
+-                        &self.storage,
+-                        IoClass::PeerWrite,
+-                        &path,
+-                        region.file_offset,
+-                        region_data,
+-                        true,
+-                    )
+-                    .await?;
++                    self.transfer_jobs
++                        .run_until(scheduled_write(
++                            &self.storage,
++                            IoClass::PeerWrite,
++                            &path,
++                            region.file_offset,
++                            region_data,
++                            true,
++                        ))
++                        .await?;
+                 }
+             }
+         }
+@@ -5992,15 +6046,16 @@ impl TorrentTask {
+         path: &std::path::Path,
+         len: u64,
+     ) -> anyhow::Result<()> {
+-        prepare_file_once_with_locks(
+-            &self.storage,
+-            &self.prepared_files,
+-            &self.prepared_file_locks,
+-            file_index,
+-            path,
+-            len,
+-        )
+-        .await?;
++        self.transfer_jobs
++            .run_until(prepare_file_once_with_locks(
++                &self.storage,
++                &self.prepared_files,
++                &self.prepared_file_locks,
++                file_index,
++                path,
++                len,
++            ))
++            .await?;
+         Ok(())
+     }
+ 
+@@ -7046,7 +7101,11 @@ impl TorrentTask {
+         if !force && self.storage.io_config().durability_mode == rt_storage::DurabilityMode::Fast {
+             return (BarrierOutcome::SkippedFast, None);
+         }
+-        match self.storage.sync_all_open_files_with_evidence().await {
++        match self
++            .transfer_jobs
++            .run_until(self.storage.sync_all_open_files_with_evidence())
++            .await
++        {
+             Ok(evidence) => (BarrierOutcome::Synced, Some(evidence)),
+             Err(e) if e.is_operation_unsupported() => {
+                 self.fsync_unsupported = true;
+@@ -12407,6 +12466,168 @@ mod tests {
+         );
+     }
+ 
++    #[tokio::test]
++    async fn checkpoint_drives_pending_write_before_waiting_for_its_fence() {
++        let fx = crash_fixture(vec![7; 8], 4, 211).await;
++        fx.write_payload();
++        let mut task = crash_task(&fx, quiet_runtime(), StorageIoConfig::default()).await;
++        // Park a real write after it takes the checkpoint's read fence but
++        // before storage admission. Only polling the actor-owned future can
++        // release that fence, even after lane capacity becomes available.
++        let mut permits = Vec::new();
++        while let Some(permit) = task.storage.try_acquire(IoClass::PeerWrite) {
++            permits.push(permit);
++        }
++        assert!(!permits.is_empty());
++        let storage = task.storage.clone();
++        let path = fx.payload_path();
++        task.transfer_jobs.push(Box::pin(async move {
++            let result = storage
++                .write_at(
++                    IoClass::PeerWrite,
++                    &path,
++                    0,
++                    bytes::Bytes::from_static(b"abcd"),
++                    false,
++                )
++                .await
++                .map_err(|error| error.to_string());
++            TransferCompletion::AggregatePieceWritten {
++                piece: 0,
++                generation: 1,
++                result,
++            }
++        }));
++        assert!(task.transfer_jobs.next().now_or_never().is_none());
++        drop(permits);
++
++        let (barrier, evidence) =
++            tokio::time::timeout(Duration::from_secs(2), task.run_barrier(true))
++                .await
++                .expect("checkpoint stopped polling the write that owns its fence");
++        assert_eq!(barrier, BarrierOutcome::Synced);
++        drop(evidence);
++        assert_eq!(&std::fs::read(fx.payload_path()).unwrap()[..4], b"abcd");
++        assert_eq!(
++            task.transfer_jobs.len(),
++            1,
++            "completion still belongs to the actor"
++        );
++        assert!(matches!(
++            task.transfer_jobs.next().await,
++            Some(TransferCompletion::AggregatePieceWritten { result: Ok(()), .. })
++        ));
++        assert!(task.transfer_jobs.is_empty());
++    }
++
++    #[tokio::test]
++    async fn inline_prepare_drives_pending_owner_of_the_same_file_lock() {
++        let fx = crash_fixture(vec![7; 8], 4, 212).await;
++        let mut task = crash_task(&fx, quiet_runtime(), StorageIoConfig::default()).await;
++        let file_lock = Arc::new(tokio::sync::Mutex::new(()));
++        task.prepared_file_locks
++            .lock()
++            .await
++            .insert(0, Arc::clone(&file_lock));
++        let guard = file_lock.lock_owned().await;
++        task.transfer_jobs.push(Box::pin(async move {
++            drop(guard);
++            TransferCompletion::AggregatePieceWritten {
++                piece: 0,
++                generation: 1,
++                result: Ok(()),
++            }
++        }));
++        tokio::time::timeout(
++            Duration::from_secs(2),
++            task.prepare_file_once(0, &fx.payload_path(), 8),
++        )
++        .await
++        .expect("inline preparation stopped polling the file lock owner")
++        .unwrap();
++        assert!(lock_prepared_files(&task.prepared_files).contains(&0));
++        assert_eq!(task.transfer_jobs.len(), 1);
++    }
++
++    #[tokio::test]
++    async fn inline_write_drives_pending_owner_of_storage_capacity() {
++        let fx = crash_fixture(vec![7; 8], 4, 213).await;
++        let mut task = crash_task(&fx, quiet_runtime(), StorageIoConfig::default()).await;
++        task.prepare_file_once(0, &fx.payload_path(), 8)
++            .await
++            .unwrap();
++        let mut permits = Vec::new();
++        while let Some(permit) = task.storage.try_acquire(IoClass::PeerWrite) {
++            permits.push(permit);
++        }
++        assert!(!permits.is_empty());
++        task.transfer_jobs.push(Box::pin(async move {
++            drop(permits);
++            TransferCompletion::AggregatePieceWritten {
++                piece: 0,
++                generation: 1,
++                result: Ok(()),
++            }
++        }));
++        tokio::time::timeout(
++            Duration::from_secs(2),
++            task.write_block(&BlockEvent {
++                piece: 0,
++                offset: 0,
++                data: bytes::Bytes::from_static(b"abcd"),
++            }),
++        )
++        .await
++        .expect("inline write stopped polling the storage capacity owner")
++        .unwrap();
++        assert_eq!(&std::fs::read(fx.payload_path()).unwrap()[..4], b"abcd");
++        assert_eq!(task.transfer_jobs.len(), 1);
++    }
++
++    #[tokio::test]
++    async fn interrupted_inline_io_retains_completions_and_their_payload_leases() {
++        let resources = ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default());
++        let lease = Arc::new(
++            resources
++                .try_acquire(MemoryClass::PieceAssembly, 4)
++                .unwrap(),
++        );
++        let mut jobs = TransferJobs::default();
++        jobs.push(Box::pin(async move {
++            TransferCompletion::PieceVerified {
++                piece: 0,
++                generation: 1,
++                result: VerifyResult::Valid,
++                assembled: Some((bytes::Bytes::from_static(b"abcd"), Some(lease))),
++            }
++        }));
++        assert!(jobs
++            .run_until(std::future::pending::<()>())
++            .now_or_never()
++            .is_none());
++        assert_eq!(
++            jobs.len(),
++            1,
++            "buffered completion still consumes the bounded job slot"
++        );
++        assert!(!jobs.is_empty());
++        assert_eq!(
++            resources.snapshot().classes[MemoryClass::PieceAssembly as usize].used_bytes,
++            4
++        );
++        let completion = jobs.next().await.unwrap();
++        assert!(jobs.is_empty());
++        assert!(matches!(
++            completion,
++            TransferCompletion::PieceVerified { .. }
++        ));
++        drop(completion);
++        assert_eq!(
++            resources.snapshot().classes[MemoryClass::PieceAssembly as usize].used_bytes,
++            0
++        );
++    }
++
+     #[tokio::test]
+     async fn failed_block_write_releases_picker_request() {
+         let temp = tempfile::tempdir().unwrap();
+diff --git a/crates/rt-engine/src/torrent_task/peer_transfer.rs b/crates/rt-engine/src/torrent_task/peer_transfer.rs
+index ebda413..eed88a2 100644
+--- a/crates/rt-engine/src/torrent_task/peer_transfer.rs
++++ b/crates/rt-engine/src/torrent_task/peer_transfer.rs
+@@ -14,6 +14,36 @@ type PeerShutdownHandle = (
+     Arc<UploadAccountingState>,
+ );
+ 
++/// Borrow the peer bitmap while excluding pieces owned by another hybrid
++/// connection. Ordinary v1 downloads may still share a piece across peers.
++/// Keep packed-bit iteration and avoid allocating a filtered bitmap per block.
++struct PeerRequestPieces<'a> {
++    available: &'a PieceBitmap,
++    ledger: &'a TransferLedger<Arc<PieceMap>>,
++    conn: ConnectionId,
++}
++
++impl PieceAvailability for PeerRequestPieces<'_> {
++    fn has_piece(&self, piece: usize) -> bool {
++        self.available.has_piece(piece)
++            && self.ledger.can_request_peer_piece(self.conn, piece as u32)
++    }
++
++    fn for_each_set_piece(&self, piece_count: usize, visitor: &mut dyn FnMut(usize)) {
++        self.for_each_set_piece_while(piece_count, &mut |piece| {
++            visitor(piece);
++            true
++        });
++    }
++
++    fn for_each_set_piece_while(&self, piece_count: usize, visitor: &mut dyn FnMut(usize) -> bool) {
++        self.available
++            .for_each_set_piece_while(piece_count, &mut |piece| {
++                !self.ledger.can_request_peer_piece(self.conn, piece as u32) || visitor(piece)
++            });
++    }
++}
++
+ impl TorrentTask {
+     pub(super) fn discard_registered_peer(&mut self, peer: SocketAddr) {
+         let Some(handle) = self.active_peers.remove(&peer) else {
+@@ -780,9 +810,14 @@ impl TorrentTask {
+         let plane = handle.plane;
+         let download_rate = handle.download_rate;
+         let download_rate_started = handle.download_rate_window_started;
++        let available = PeerRequestPieces {
++            available: &handle.peer_has,
++            ledger: &self.transfer_ledger,
++            conn: transfer_conn,
++        };
+         let useful_fresh = self
+             .picker
+-            .useful_missing_for_peer(&handle.peer_has, PEER_REQUEST_PIPELINE_ADAPTIVE_MAX);
++            .useful_missing_for_peer(&available, PEER_REQUEST_PIPELINE_ADAPTIVE_MAX);
+         let useful_missing = if useful_fresh >= PEER_REQUEST_PIPELINE_ADAPTIVE_MAX
+             || !self.picker.endgame_active()
+             || other_sources_outstanding == 0
+@@ -790,7 +825,7 @@ impl TorrentTask {
+             useful_fresh
+         } else {
+             useful_fresh.saturating_add(self.picker.useful_endgame_duplicate_work_for_peer(
+-                &handle.peer_has,
++                &available,
+                 &handle.requested,
+                 PEER_REQUEST_PIPELINE_ADAPTIVE_MAX.saturating_sub(useful_fresh),
+             ))
+@@ -871,11 +906,15 @@ impl TorrentTask {
+                 return;
+             };
+             while handle.outstanding < request_pipeline {
+-                let (req, mode) = match picker.pick(&handle.peer_has) {
++                let available = PeerRequestPieces {
++                    available: &handle.peer_has,
++                    ledger: transfer_ledger,
++                    conn: transfer_conn,
++                };
++                let (req, mode) = match picker.pick(&available) {
+                     Some(req) => (req, ReserveMode::Exclusive),
+                     None => {
+-                        let Some(req) = picker.pick_endgame(&handle.peer_has, &handle.requested)
+-                        else {
++                        let Some(req) = picker.pick_endgame(&available, &handle.requested) else {
+                             break;
+                         };
+                         (req, ReserveMode::Endgame)
+@@ -2136,3 +2175,87 @@ impl TorrentTask {
+             .unwrap_or((0, 0))
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn partial_piece_selection_respects_hybrid_ownership_without_restricting_v1() {
++        for hybrid in [false, true] {
++            let piece_length = u64::from(MAX_BLOCK_SIZE) * 2;
++            let path = SafeRelPath::from_name("selection.bin", false).unwrap();
++            let v1 = Arc::new(
++                PieceMap::new(
++                    piece_length,
++                    vec![FileSpan {
++                        file_index: 0,
++                        path: path.clone(),
++                        content_offset: 0,
++                        length: piece_length * 2,
++                    }],
++                )
++                .unwrap(),
++            );
++            let mut ledger = TransferLedger::new_bounded(Arc::clone(&v1), 4);
++            if hybrid {
++                let v2 = Arc::new(
++                    V2PieceMap::new(
++                        piece_length,
++                        vec![V2FileSpan {
++                            file_index: 0,
++                            path,
++                            piece_offset: 0,
++                            length: piece_length * 2,
++                            pad: false,
++                        }],
++                    )
++                    .unwrap(),
++                );
++                assert!(ledger.attach_hybrid_geometry(Arc::new(HybridGeometry::new(v1, v2))));
++            }
++            let mut picker = PiecePicker::new(2, piece_length as u32, piece_length as u32);
++            picker.availability.add_have(0);
++            picker.availability.add_have(1);
++            let bitmap = PieceBitmap::from_bools(&[true, true]);
++            let first = ledger.try_connect(4).unwrap();
++            let second = ledger.try_connect(4).unwrap();
++            let request = picker.pick(&bitmap).unwrap();
++            ledger
++                .reserve_peer(
++                    first,
++                    BlockExtent::new(request.piece, request.begin, request.length),
++                    &ReserveMode::Exclusive,
++                )
++                .unwrap();
++            let candidates = PeerRequestPieces {
++                available: &bitmap,
++                ledger: &ledger,
++                conn: second,
++            };
++            assert_eq!(
++                picker.useful_missing_for_peer(&candidates, 8),
++                if hybrid { 2 } else { 3 }
++            );
++            let next = picker.pick(&candidates).unwrap();
++            assert_eq!(request.piece == next.piece, !hybrid);
++            ledger
++                .reserve_peer(
++                    second,
++                    BlockExtent::new(next.piece, next.begin, next.length),
++                    &ReserveMode::Exclusive,
++                )
++                .expect("selection must satisfy the ownership rule");
++            if hybrid {
++                let next_first = picker
++                    .pick(&PeerRequestPieces {
++                        available: &bitmap,
++                        ledger: &ledger,
++                        conn: first,
++                    })
++                    .unwrap();
++                assert_eq!(next_first.piece, request.piece);
++            }
++        }
++    }
++}
+diff --git a/crates/rt-engine/src/transfer/hybrid.rs b/crates/rt-engine/src/transfer/hybrid.rs
+index ce2dadf..9dee108 100644
+--- a/crates/rt-engine/src/transfer/hybrid.rs
++++ b/crates/rt-engine/src/transfer/hybrid.rs
+@@ -170,6 +170,12 @@ impl HybridLedger {
+         self.ledger.reserve_piece_affine(conn, block)
+     }
+ 
++    /// Selection must apply the same piece ownership rule as reservation,
++    /// otherwise a peer repeatedly selects another connection's partial piece.
++    pub fn can_request_canonical_piece(&self, conn: ConnectionId, piece: u32) -> bool {
++        self.is_live(conn) && !self.ledger.piece_has_foreign_activity(conn, piece)
++    }
++
+     pub fn commit_v1(
+         &mut self,
+         conn: ConnectionId,
+diff --git a/crates/rt-engine/src/transfer/live.rs b/crates/rt-engine/src/transfer/live.rs
+index 78f0c34..583a0eb 100644
+--- a/crates/rt-engine/src/transfer/live.rs
++++ b/crates/rt-engine/src/transfer/live.rs
+@@ -407,6 +407,13 @@ impl<G: PieceGeometry> LiveTransferLedger<G> {
+         }
+     }
+ 
++    pub fn can_request_peer_piece(&self, conn: ConnectionId, piece: u32) -> bool {
++        match &self.inner {
++            LiveLedgerInner::V1(_) => true,
++            LiveLedgerInner::Hybrid(ledger) => ledger.can_request_canonical_piece(conn, piece),
++        }
++    }
++
+     pub fn commit(
+         &mut self,
+         conn: ConnectionId,
+diff --git a/crates/rt-piece-picker/src/availability.rs b/crates/rt-piece-picker/src/availability.rs
+index 15e26eb..e23701b 100644
+--- a/crates/rt-piece-picker/src/availability.rs
++++ b/crates/rt-piece-picker/src/availability.rs
+@@ -213,9 +213,26 @@ impl Availability {
+     /// reservoir sampling across its actually available requestable pieces
+     /// instead of testing every torrent candidate against the peer bitmap.
+     pub fn rarest_matching_random_from_peer<A, F, R>(
++        &self,
++        peer_has: &A,
++        predicate: F,
++        rng: &mut R,
++    ) -> Option<usize>
++    where
++        A: PieceAvailability + ?Sized,
++        F: FnMut(usize) -> bool,
++        R: Rng + ?Sized,
++    {
++        self.rarest_matching_from_peer_with_preference(peer_has, predicate, None, rng)
++    }
++
++    /// Prefer an already-started piece among equally rare candidates. Rarer
++    /// pieces still win, and newly opened pieces retain random tie breaking.
++    pub fn rarest_matching_from_peer_with_preference<A, F, R>(
+         &self,
+         peer_has: &A,
+         mut predicate: F,
++        preferred: Option<usize>,
+         rng: &mut R,
+     ) -> Option<usize>
+     where
+@@ -223,12 +240,24 @@ impl Availability {
+         F: FnMut(usize) -> bool,
+         R: Rng + ?Sized,
+     {
+-        for bucket in self
++        let preferred = preferred.filter(|&piece| {
++            self.candidate_positions
++                .get(piece)
++                .is_some_and(|&pos| pos != NO_POSITION)
++                && self.count(piece) > 0
++                && peer_has.has_piece(piece)
++                && predicate(piece)
++        });
++        for (count, bucket) in self
+             .buckets
+             .iter()
++            .enumerate()
+             .skip(1)
+-            .filter(|bucket| !bucket.is_empty())
++            .filter(|(_, bucket)| !bucket.is_empty())
+         {
++            if let Some(piece) = preferred.filter(|&piece| self.count(piece) as usize == count) {
++                return Some(piece);
++            }
+             for _ in 0..bucket.len().min(RANDOM_CANDIDATE_PROBES) {
+                 let piece = bucket[rng.random_range(0..bucket.len())] as usize;
+                 if peer_has.has_piece(piece) && predicate(piece) {
+@@ -237,7 +266,12 @@ impl Availability {
+             }
+ 
+             if bucket.len() >= SPARSE_FALLBACK_BUCKET_MIN {
+-                return self.rarest_matching_from_peer_set(peer_has, &mut predicate, rng);
++                let selected = self.rarest_matching_from_peer_set(peer_has, &mut predicate, rng)?;
++                return Some(
++                    preferred
++                        .filter(|&piece| self.count(piece) == self.count(selected))
++                        .unwrap_or(selected),
++                );
+             }
+ 
+             let mut selected = None;
+diff --git a/crates/rt-piece-picker/src/picker.rs b/crates/rt-piece-picker/src/picker.rs
+index 7aea221..cc665f7 100644
+--- a/crates/rt-piece-picker/src/picker.rs
++++ b/crates/rt-piece-picker/src/picker.rs
+@@ -250,6 +250,10 @@ pub struct PiecePicker {
+     /// In-progress pieces (piece index → state).
+     in_progress: std::collections::HashMap<usize, PieceState>,
+     in_progress_bytes: usize,
++    /// Continue an admitted piece instead of drawing a new random piece for
++    /// each block. This is a hint only: peer availability, priority, rarity,
++    /// and sequential policy are rechecked on every pick.
++    continuation: Option<usize>,
+     /// Priority pieces (selected before rarest-first or sequential order).
+     ///
+     /// Keep this as packed flags rather than a `Vec<usize>`. A high-priority
+@@ -342,6 +346,7 @@ impl PiecePicker {
+             enabled: PieceFlags::new(piece_count, true),
+             in_progress: std::collections::HashMap::new(),
+             in_progress_bytes: 0,
++            continuation: None,
+             priority: PieceFlags::new(piece_count, false),
+             priority_count: 0,
+             sequential: false,
+@@ -497,7 +502,7 @@ impl PiecePicker {
+ 
+         // Priority pieces first.
+         if let Some(piece) = self
+-            .priority_piece(|piece| self.piece_is_requestable(piece) && peer_has.has_piece(piece))
++            .priority_piece(|piece| self.piece_can_be_picked(piece) && peer_has.has_piece(piece))
+         {
+             return self.pick_block_from(piece);
+         }
+@@ -507,7 +512,7 @@ impl PiecePicker {
+                 .sequential_start_piece
+                 .min(self.piece_count.saturating_sub(1));
+             if let Some(piece) = self.availability.candidate_min_by_key(|piece| {
+-                if !self.piece_is_requestable(piece) || !peer_has.has_piece(piece) {
++                if !self.piece_can_be_picked(piece) || !peer_has.has_piece(piece) {
+                     return None;
+                 }
+                 Some(self.sequential_distance(piece, start))
+@@ -526,7 +531,7 @@ impl PiecePicker {
+     /// Pick from a source that is known to have every piece but is not counted
+     /// in peer availability, such as a BEP19 webseed.
+     pub fn pick_from_seed(&mut self) -> Option<BlockRequest> {
+-        if let Some(piece) = self.priority_piece(|piece| self.piece_is_requestable(piece)) {
++        if let Some(piece) = self.priority_piece(|piece| self.piece_can_be_picked(piece)) {
+             return self.pick_block_from(piece);
+         }
+         if self.sequential {
+@@ -534,17 +539,21 @@ impl PiecePicker {
+                 .sequential_start_piece
+                 .min(self.piece_count.saturating_sub(1));
+             if let Some(piece) = self.availability.candidate_min_by_key(|piece| {
+-                self.piece_is_requestable(piece)
++                self.piece_can_be_picked(piece)
+                     .then(|| self.sequential_distance(piece, start))
+             }) {
+                 return self.pick_block_from(piece);
+             }
+             return None;
+         }
+-        let piece = self.availability.candidate_matching_random(
+-            |piece| self.piece_is_requestable(piece),
+-            &mut rand::rng(),
+-        )?;
++        let piece = self
++            .partial_piece(|piece| self.piece_is_requestable(piece))
++            .or_else(|| {
++                self.availability.candidate_matching_random(
++                    |piece| self.piece_can_be_picked(piece),
++                    &mut rand::rng(),
++                )
++            })?;
+         self.pick_block_from(piece)
+     }
+ 
+@@ -575,6 +584,9 @@ impl PiecePicker {
+         if self.priority_count == 0 {
+             return None;
+         }
++        if let Some(piece) = self.partial_piece(|piece| self.priority.get(piece) && accept(piece)) {
++            return Some(piece);
++        }
+         self.availability.candidate_matching_random(
+             |piece| self.priority.get(piece) && accept(piece),
+             &mut rand::rng(),
+@@ -591,6 +603,28 @@ impl PiecePicker {
+                 .is_none_or(|state| state.next_unrequested().is_some())
+     }
+ 
++    fn piece_can_be_picked(&self, piece: usize) -> bool {
++        self.piece_is_requestable(piece)
++            && (self.in_progress.contains_key(&piece)
++                || self.can_admit_piece_state(self.piece_length_for(piece)))
++    }
++
++    /// Common case is one O(1) continuation lookup. After a peer/policy change,
++    /// inspect only admitted partial state, never the whole torrent.
++    fn partial_piece(&self, accept: impl Fn(usize) -> bool) -> Option<usize> {
++        if let Some(piece) = self
++            .continuation
++            .filter(|&piece| self.in_progress.contains_key(&piece) && accept(piece))
++        {
++            return Some(piece);
++        }
++        self.in_progress
++            .keys()
++            .copied()
++            .filter(|&piece| accept(piece))
++            .min_by_key(|&piece| (self.availability.count(piece), piece))
++    }
++
+     fn sequential_distance(&self, piece: usize, start: usize) -> usize {
+         if piece >= start {
+             piece - start
+@@ -608,9 +642,12 @@ impl PiecePicker {
+         &self,
+         peer_has: &A,
+     ) -> Option<usize> {
+-        self.availability.rarest_matching_random_from_peer(
++        let preferred = self
++            .partial_piece(|piece| self.piece_is_requestable(piece) && peer_has.has_piece(piece));
++        self.availability.rarest_matching_from_peer_with_preference(
+             peer_has,
+-            |piece| self.piece_is_requestable(piece),
++            |piece| self.piece_can_be_picked(piece),
++            preferred,
+             &mut rand::rng(),
+         )
+     }
+@@ -719,6 +756,9 @@ impl PiecePicker {
+             })
+         };
+         self.refresh_candidate(piece);
++        if request.is_some() {
++            self.continuation = Some(piece);
++        }
+         request
+     }
+ 
+@@ -1594,6 +1634,93 @@ mod tests {
+         assert_eq!(req.piece, 2);
+     }
+ 
++    #[test]
++    fn equal_rarity_download_finishes_admitted_pieces_before_opening_more() {
++        let length = MAX_BLOCK_SIZE * 64;
++        let mut picker = PiecePicker::new(756, length, length);
++        let peers = peer_has_all(756);
++        for piece in 0..756 {
++            picker.availability.add_have(piece);
++        }
++        let mut completed = 0;
++        for _ in 0..4 * 64 {
++            let request = picker.pick(&peers).unwrap();
++            assert_eq!(
++                picker.in_progress.len(),
++                1,
++                "one serial source needs one assembly"
++            );
++            if picker.block_received_pending(request.piece as usize, request.begin) {
++                picker.mark_have(request.piece as usize);
++                completed += 1;
++            }
++        }
++        assert_eq!(completed, 4);
++    }
++
++    #[test]
++    fn continuation_respects_rarer_pieces_and_priority_changes() {
++        let length = MAX_BLOCK_SIZE * 4;
++        let mut picker = PiecePicker::new(3, length, length);
++        for piece in 0..3 {
++            picker.availability.add_have(piece);
++        }
++        let first = picker.pick(&[true, false, false]).unwrap();
++        picker.block_received_pending(first.piece as usize, first.begin);
++        picker.availability.add_have(0);
++        // A rarer newly available piece preempts an unfinished common one.
++        assert_eq!(picker.pick(&[true, true, false]).unwrap().piece, 1);
++        picker.set_priority([2]);
++        assert_eq!(picker.pick(&[true, true, true]).unwrap().piece, 2);
++        picker.set_piece_enabled(2, false);
++        assert_eq!(picker.pick(&[true, true, true]).unwrap().piece, 1);
++    }
++
++    #[test]
++    fn alternating_disjoint_peers_continue_their_partial_pieces() {
++        let length = MAX_BLOCK_SIZE * 4;
++        let mut picker = PiecePicker::new(4, length, length);
++        for piece in 0..4 {
++            picker.availability.add_have(piece);
++        }
++        let peers = [[true, true, false, false], [false, false, true, true]];
++        let first = picker.pick(&peers[0]).unwrap();
++        let second = picker.pick(&peers[1]).unwrap();
++        for _ in 0..3 {
++            assert_eq!(picker.pick(&peers[0]).unwrap().piece, first.piece);
++            assert_eq!(picker.pick(&peers[1]).unwrap().piece, second.piece);
++        }
++        assert_eq!(picker.in_progress.len(), 2);
++    }
++
++    #[test]
++    fn seed_continues_partial_piece_without_peer_availability() {
++        let length = MAX_BLOCK_SIZE * 3;
++        let mut picker = PiecePicker::new(100, length, length);
++        let first = picker.pick_from_seed().unwrap();
++        for _ in 0..2 {
++            assert_eq!(picker.pick_from_seed().unwrap().piece, first.piece);
++        }
++        assert_eq!(picker.in_progress.len(), 1);
++        assert_ne!(picker.pick_from_seed().unwrap().piece, first.piece);
++    }
++
++    #[test]
++    fn full_state_budget_still_picks_existing_partial_work() {
++        let length = MAX_BLOCK_SIZE * 3;
++        let mut picker = PiecePicker::new(100, length, length);
++        for piece in 0..100 {
++            picker.availability.add_have(piece);
++        }
++        let first = picker.pick(&peer_has_all(100)).unwrap();
++        // Exercise admission without allocating 64 MiB of bookkeeping.
++        picker.in_progress_bytes = MAX_IN_PROGRESS_PIECE_STATE_BYTES;
++        assert_eq!(picker.pick(&peer_has_all(100)).unwrap().piece, first.piece);
++        assert_eq!(picker.pick(&peer_has_all(100)).unwrap().piece, first.piece);
++        assert!(picker.pick(&peer_has_all(100)).is_none());
++        assert_eq!(picker.in_progress.len(), 1);
++    }
++
+     #[test]
+     fn invalid_priority_piece_is_ignored() {
+         let mut p = picker_1piece(MAX_BLOCK_SIZE);

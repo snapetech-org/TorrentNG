@@ -14,6 +14,36 @@ type PeerShutdownHandle = (
     Arc<UploadAccountingState>,
 );
 
+/// Borrow the peer bitmap while excluding pieces owned by another hybrid
+/// connection. Ordinary v1 downloads may still share a piece across peers.
+/// Keep packed-bit iteration and avoid allocating a filtered bitmap per block.
+struct PeerRequestPieces<'a> {
+    available: &'a PieceBitmap,
+    ledger: &'a TransferLedger<Arc<PieceMap>>,
+    conn: ConnectionId,
+}
+
+impl PieceAvailability for PeerRequestPieces<'_> {
+    fn has_piece(&self, piece: usize) -> bool {
+        self.available.has_piece(piece)
+            && self.ledger.can_request_peer_piece(self.conn, piece as u32)
+    }
+
+    fn for_each_set_piece(&self, piece_count: usize, visitor: &mut dyn FnMut(usize)) {
+        self.for_each_set_piece_while(piece_count, &mut |piece| {
+            visitor(piece);
+            true
+        });
+    }
+
+    fn for_each_set_piece_while(&self, piece_count: usize, visitor: &mut dyn FnMut(usize) -> bool) {
+        self.available
+            .for_each_set_piece_while(piece_count, &mut |piece| {
+                !self.ledger.can_request_peer_piece(self.conn, piece as u32) || visitor(piece)
+            });
+    }
+}
+
 impl TorrentTask {
     pub(super) fn discard_registered_peer(&mut self, peer: SocketAddr) {
         let Some(handle) = self.active_peers.remove(&peer) else {
@@ -780,9 +810,14 @@ impl TorrentTask {
         let plane = handle.plane;
         let download_rate = handle.download_rate;
         let download_rate_started = handle.download_rate_window_started;
+        let available = PeerRequestPieces {
+            available: &handle.peer_has,
+            ledger: &self.transfer_ledger,
+            conn: transfer_conn,
+        };
         let useful_fresh = self
             .picker
-            .useful_missing_for_peer(&handle.peer_has, PEER_REQUEST_PIPELINE_ADAPTIVE_MAX);
+            .useful_missing_for_peer(&available, PEER_REQUEST_PIPELINE_ADAPTIVE_MAX);
         let useful_missing = if useful_fresh >= PEER_REQUEST_PIPELINE_ADAPTIVE_MAX
             || !self.picker.endgame_active()
             || other_sources_outstanding == 0
@@ -790,7 +825,7 @@ impl TorrentTask {
             useful_fresh
         } else {
             useful_fresh.saturating_add(self.picker.useful_endgame_duplicate_work_for_peer(
-                &handle.peer_has,
+                &available,
                 &handle.requested,
                 PEER_REQUEST_PIPELINE_ADAPTIVE_MAX.saturating_sub(useful_fresh),
             ))
@@ -871,11 +906,15 @@ impl TorrentTask {
                 return;
             };
             while handle.outstanding < request_pipeline {
-                let (req, mode) = match picker.pick(&handle.peer_has) {
+                let available = PeerRequestPieces {
+                    available: &handle.peer_has,
+                    ledger: transfer_ledger,
+                    conn: transfer_conn,
+                };
+                let (req, mode) = match picker.pick(&available) {
                     Some(req) => (req, ReserveMode::Exclusive),
                     None => {
-                        let Some(req) = picker.pick_endgame(&handle.peer_has, &handle.requested)
-                        else {
+                        let Some(req) = picker.pick_endgame(&available, &handle.requested) else {
                             break;
                         };
                         (req, ReserveMode::Endgame)
@@ -2134,5 +2173,89 @@ impl TorrentTask {
         reg.get(&self.info_hash_hex)
             .map(|entry| (entry.stats.uploaded, entry.stats.downloaded))
             .unwrap_or((0, 0))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn partial_piece_selection_respects_hybrid_ownership_without_restricting_v1() {
+        for hybrid in [false, true] {
+            let piece_length = u64::from(MAX_BLOCK_SIZE) * 2;
+            let path = SafeRelPath::from_name("selection.bin", false).unwrap();
+            let v1 = Arc::new(
+                PieceMap::new(
+                    piece_length,
+                    vec![FileSpan {
+                        file_index: 0,
+                        path: path.clone(),
+                        content_offset: 0,
+                        length: piece_length * 2,
+                    }],
+                )
+                .unwrap(),
+            );
+            let mut ledger = TransferLedger::new_bounded(Arc::clone(&v1), 4);
+            if hybrid {
+                let v2 = Arc::new(
+                    V2PieceMap::new(
+                        piece_length,
+                        vec![V2FileSpan {
+                            file_index: 0,
+                            path,
+                            piece_offset: 0,
+                            length: piece_length * 2,
+                            pad: false,
+                        }],
+                    )
+                    .unwrap(),
+                );
+                assert!(ledger.attach_hybrid_geometry(Arc::new(HybridGeometry::new(v1, v2))));
+            }
+            let mut picker = PiecePicker::new(2, piece_length as u32, piece_length as u32);
+            picker.availability.add_have(0);
+            picker.availability.add_have(1);
+            let bitmap = PieceBitmap::from_bools(&[true, true]);
+            let first = ledger.try_connect(4).unwrap();
+            let second = ledger.try_connect(4).unwrap();
+            let request = picker.pick(&bitmap).unwrap();
+            ledger
+                .reserve_peer(
+                    first,
+                    BlockExtent::new(request.piece, request.begin, request.length),
+                    &ReserveMode::Exclusive,
+                )
+                .unwrap();
+            let candidates = PeerRequestPieces {
+                available: &bitmap,
+                ledger: &ledger,
+                conn: second,
+            };
+            assert_eq!(
+                picker.useful_missing_for_peer(&candidates, 8),
+                if hybrid { 2 } else { 3 }
+            );
+            let next = picker.pick(&candidates).unwrap();
+            assert_eq!(request.piece == next.piece, !hybrid);
+            ledger
+                .reserve_peer(
+                    second,
+                    BlockExtent::new(next.piece, next.begin, next.length),
+                    &ReserveMode::Exclusive,
+                )
+                .expect("selection must satisfy the ownership rule");
+            if hybrid {
+                let next_first = picker
+                    .pick(&PeerRequestPieces {
+                        available: &bitmap,
+                        ledger: &ledger,
+                        conn: first,
+                    })
+                    .unwrap();
+                assert_eq!(next_first.piece, request.piece);
+            }
+        }
     }
 }

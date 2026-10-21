@@ -407,6 +407,13 @@ impl<G: PieceGeometry> LiveTransferLedger<G> {
         }
     }
 
+    pub fn can_request_peer_piece(&self, conn: ConnectionId, piece: u32) -> bool {
+        match &self.inner {
+            LiveLedgerInner::V1(_) => true,
+            LiveLedgerInner::Hybrid(ledger) => ledger.can_request_canonical_piece(conn, piece),
+        }
+    }
+
     pub fn commit(
         &mut self,
         conn: ConnectionId,

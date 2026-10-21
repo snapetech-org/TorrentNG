@@ -1,0 +1,1949 @@
+/// Piece selection strategy: rarest-first with optional sequential mode.
+///
+/// Maintains a `wanted` bitset (pieces we still need) and delegates
+/// ordering to the `Availability` map. Priority pieces (e.g., file head/tail
+/// for streaming) bypass rarest-first and are selected first.
+use crate::availability::Availability;
+use crate::flags::PieceFlags;
+use rand::RngExt;
+
+/// Maximum block size enforced by the picker (mirrors BEP 3).
+pub const MAX_BLOCK_SIZE: u32 = 16 * 1024;
+
+/// Maximum number of distinct piece states retained while requests are in
+/// flight or partial data is being restored. This matches the fast-resume
+/// partial-piece admission limit so live state cannot exceed what can be
+/// persisted and loaded safely.
+pub const MAX_IN_PROGRESS_PIECES: usize = 16_384;
+
+/// Maximum estimated backing storage for all in-progress piece states in one
+/// picker. The estimate counts per-block request counters and packed received
+/// flags so a large protocol-legal piece length cannot multiply into an
+/// unbounded per-torrent allocation when many partial pieces are restored.
+pub const MAX_IN_PROGRESS_PIECE_STATE_BYTES: usize = 64 * 1024 * 1024;
+/// Default peer count used by the standalone piece-index estimate.
+pub const DEFAULT_ESTIMATED_MAX_PEERS: usize = 200;
+
+/// A single block request (piece + byte range).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BlockRequest {
+    pub piece: u32,
+    pub begin: u32,
+    pub length: u32,
+}
+
+/// Read-only piece availability supplied by a peer. Keeping this as a small
+/// trait lets engine-owned packed bitmaps participate in piece selection
+/// without expanding them into one `bool` per piece for every request fill.
+pub trait PieceAvailability {
+    fn has_piece(&self, piece: usize) -> bool;
+
+    /// Visit set pieces in ascending order. Implementations backed by packed
+    /// bitmaps should override this to skip unset words. The default keeps
+    /// small or test-only availability sources source-compatible.
+    fn for_each_set_piece(&self, piece_count: usize, visitor: &mut dyn FnMut(usize)) {
+        for piece in 0..piece_count {
+            if self.has_piece(piece) {
+                visitor(piece);
+            }
+        }
+    }
+
+    /// Visit set pieces in ascending order until the visitor returns `false`.
+    /// Packed implementations should override this so callers that have
+    /// reached a work limit do not walk the rest of a large peer bitfield.
+    fn for_each_set_piece_while(&self, piece_count: usize, visitor: &mut dyn FnMut(usize) -> bool) {
+        for piece in 0..piece_count {
+            if self.has_piece(piece) && !visitor(piece) {
+                break;
+            }
+        }
+    }
+}
+
+impl PieceAvailability for [bool] {
+    fn has_piece(&self, piece: usize) -> bool {
+        self.get(piece).copied().unwrap_or(false)
+    }
+}
+
+impl PieceAvailability for Vec<bool> {
+    fn has_piece(&self, piece: usize) -> bool {
+        self.as_slice().has_piece(piece)
+    }
+}
+
+impl<const N: usize> PieceAvailability for [bool; N] {
+    fn has_piece(&self, piece: usize) -> bool {
+        self.as_slice().has_piece(piece)
+    }
+}
+
+/// Tracks the download state of a single piece.
+#[derive(Debug, Clone)]
+struct PieceState {
+    piece_length: u32,
+    received_count: u32,
+    /// Distinct blocks that are neither received nor currently requested.
+    fresh_blocks: usize,
+    /// Blocks that have been requested but not yet received.
+    requested: Vec<u16>,
+    /// Packed received-block bitmap (one bit per block).
+    received: Vec<u8>,
+    /// First block that may still be requested. Advancing this cursor avoids
+    /// rescanning the already requested prefix for every block in a piece.
+    next_unrequested_hint: usize,
+}
+
+impl PieceState {
+    fn new(piece_length: u32) -> Self {
+        let n_blocks = n_blocks(piece_length);
+        PieceState {
+            piece_length,
+            received_count: 0,
+            fresh_blocks: n_blocks,
+            requested: vec![0; n_blocks],
+            received: vec![0; n_blocks.div_ceil(u8::BITS as usize)],
+            next_unrequested_hint: 0,
+        }
+    }
+
+    fn next_unrequested(&self) -> Option<usize> {
+        let start = self.next_unrequested_hint.min(self.requested.len());
+        (start..self.requested.len())
+            .find(|&block_idx| self.requested[block_idx] == 0 && !self.block_received(block_idx))
+    }
+
+    fn advance_next_unrequested(&mut self) {
+        while self.next_unrequested_hint < self.requested.len()
+            && (self.requested[self.next_unrequested_hint] != 0
+                || self.block_received(self.next_unrequested_hint))
+        {
+            self.next_unrequested_hint += 1;
+        }
+    }
+
+    fn next_requested_not_received(&self, exclude: &[BlockRequest], piece: usize) -> Option<usize> {
+        self.requested
+            .iter()
+            .enumerate()
+            .find_map(|(block_idx, &requested)| {
+                if requested == 0 || self.block_received(block_idx) {
+                    return None;
+                }
+                let candidate = self.block_request_for(piece, block_idx);
+                (!exclude.contains(&candidate)).then_some(block_idx)
+            })
+    }
+
+    fn mark_requested(&mut self, block_idx: usize) {
+        let was_fresh = self
+            .requested
+            .get(block_idx)
+            .is_some_and(|requested| *requested == 0)
+            && !self.block_received(block_idx);
+        if was_fresh {
+            self.fresh_blocks = self.fresh_blocks.saturating_sub(1);
+        }
+        if let Some(r) = self.requested.get_mut(block_idx) {
+            *r = r.saturating_add(1);
+            if block_idx == self.next_unrequested_hint {
+                self.advance_next_unrequested();
+            }
+        }
+    }
+
+    fn mark_received(&mut self, block_idx: usize) {
+        let was_fresh = self
+            .requested
+            .get(block_idx)
+            .is_some_and(|requested| *requested == 0)
+            && !self.block_received(block_idx);
+        if self.set_block_received(block_idx) {
+            self.received_count = self.received_count.saturating_add(1);
+            if was_fresh {
+                self.fresh_blocks = self.fresh_blocks.saturating_sub(1);
+            }
+        }
+        if let Some(r) = self.requested.get_mut(block_idx) {
+            *r = 0; // clear requests — no longer outstanding
+        }
+        if block_idx == self.next_unrequested_hint {
+            self.advance_next_unrequested();
+        }
+    }
+
+    fn is_complete(&self) -> bool {
+        self.received_count as usize == n_blocks(self.piece_length)
+    }
+
+    fn block_received(&self, block_idx: usize) -> bool {
+        if block_idx >= self.requested.len() {
+            return false;
+        }
+        self.received
+            .get(block_idx / u8::BITS as usize)
+            .is_some_and(|byte| byte & (1u8 << (block_idx % u8::BITS as usize)) != 0)
+    }
+
+    fn set_block_received(&mut self, block_idx: usize) -> bool {
+        if block_idx >= self.requested.len() {
+            return false;
+        }
+        let Some(byte) = self.received.get_mut(block_idx / u8::BITS as usize) else {
+            return false;
+        };
+        let mask = 1u8 << (block_idx % u8::BITS as usize);
+        let newly_received = *byte & mask == 0;
+        *byte |= mask;
+        newly_received
+    }
+
+    fn received_blocks_limited(&self, maximum: usize) -> Vec<u32> {
+        let mut blocks = Vec::with_capacity(maximum.min(self.received_count as usize));
+        for (byte_index, byte) in self.received.iter().copied().enumerate() {
+            let mut pending = byte;
+            while pending != 0 && blocks.len() < maximum {
+                let bit = pending.trailing_zeros() as usize;
+                blocks.push((byte_index * u8::BITS as usize + bit) as u32);
+                pending &= pending.wrapping_sub(1);
+            }
+            if blocks.len() == maximum {
+                break;
+            }
+        }
+        blocks
+    }
+
+    fn block_request_for(&self, piece: usize, block_idx: usize) -> BlockRequest {
+        let begin = block_idx as u32 * MAX_BLOCK_SIZE;
+        let remaining = self.piece_length.saturating_sub(begin);
+        let length = remaining.min(MAX_BLOCK_SIZE);
+        BlockRequest {
+            piece: piece as u32,
+            begin,
+            length,
+        }
+    }
+}
+
+fn n_blocks(piece_length: u32) -> usize {
+    piece_length.div_ceil(MAX_BLOCK_SIZE) as usize
+}
+
+fn piece_state_memory_bytes(piece_length: u32) -> usize {
+    let blocks = n_blocks(piece_length);
+    std::mem::size_of::<PieceState>()
+        .saturating_add(blocks.saturating_mul(std::mem::size_of::<u16>()))
+        .saturating_add(blocks.div_ceil(u8::BITS as usize))
+}
+
+/// The piece picker.
+pub struct PiecePicker {
+    piece_count: usize,
+    default_piece_length: u32,
+    last_piece_length: u32,
+    /// Pieces we still need.
+    wanted: PieceFlags,
+    /// Pieces eligible to request. Disabled pieces are skipped without being advertised as complete.
+    enabled: PieceFlags,
+    /// In-progress pieces (piece index → state).
+    in_progress: std::collections::HashMap<usize, PieceState>,
+    in_progress_bytes: usize,
+    /// Continue an admitted piece instead of drawing a new random piece for
+    /// each block. This is a hint only: peer availability, priority, rarity,
+    /// and sequential policy are rechecked on every pick.
+    continuation: Option<usize>,
+    /// Priority pieces (selected before rarest-first or sequential order).
+    ///
+    /// Keep this as packed flags rather than a `Vec<usize>`. A high-priority
+    /// file can span every piece in a large torrent, and retaining one usize
+    /// per piece would make a policy reload allocate hundreds of MiB.
+    priority: PieceFlags,
+    /// Number of set priority flags; zero lets `pick` skip the priority scan.
+    priority_count: usize,
+    sequential: bool,
+    sequential_start_piece: usize,
+    pub availability: Availability,
+    /// Count of pieces where `wanted && enabled`, maintained incrementally
+    /// so completion checks and the `pick`/`pick_endgame` fast path for a
+    /// fully-seeded torrent are O(1) instead of a full scan. This is the
+    /// common steady-state for a long-term seeder.
+    outstanding_wanted: usize,
+}
+
+impl PiecePicker {
+    /// Estimate backing storage for the persistent per-torrent piece index.
+    /// This includes four packed bitsets, availability counts and positions,
+    /// candidate entries, vector growth slack, the configured availability
+    /// bucket ladder, and bookkeeping slack. Runtime accounting can be more
+    /// precise through `memory_bytes`, which uses current vector capacities.
+    pub fn memory_bytes_for_piece_count(piece_count: usize) -> usize {
+        Self::memory_bytes_for_piece_count_with_max_peers(piece_count, DEFAULT_ESTIMATED_MAX_PEERS)
+    }
+
+    /// Estimate the persistent picker index for a configured peer ceiling.
+    /// Each active rarity bucket retains at most four times its live length in
+    /// capacity; empty buckets release their backing allocation. The outer
+    /// bucket vector is bounded by the maximum availability count.
+    pub fn memory_bytes_for_piece_count_with_max_peers(
+        piece_count: usize,
+        max_peers: usize,
+    ) -> usize {
+        let bitset_bytes = piece_count
+            .div_ceil(u64::BITS as usize)
+            .saturating_mul(std::mem::size_of::<u64>());
+        bitset_bytes
+            .saturating_mul(4)
+            // Four dense arrays plus up to four slots of bucket-vector
+            // capacity per live piece (a one-element Vec can reserve four).
+            .saturating_add(piece_count.saturating_mul(8 * std::mem::size_of::<u32>()))
+            .saturating_add(
+                max_peers
+                    .saturating_add(1)
+                    .saturating_mul(2 * std::mem::size_of::<Vec<u32>>()),
+            )
+            .saturating_add(64 * 1024)
+    }
+
+    /// Estimate this picker's currently allocated index and partial-piece
+    /// state. Capacities are included so memory-pressure decisions account
+    /// for retained vector slack as well as live elements.
+    pub fn memory_bytes(&self) -> usize {
+        let piece_state_bytes = self
+            .in_progress
+            .values()
+            .map(|state| {
+                std::mem::size_of::<PieceState>()
+                    .saturating_add(
+                        state
+                            .requested
+                            .capacity()
+                            .saturating_mul(std::mem::size_of::<u16>()),
+                    )
+                    .saturating_add(state.received.capacity())
+            })
+            .fold(0usize, usize::saturating_add);
+        std::mem::size_of::<Self>()
+            .saturating_add(self.wanted.memory_bytes())
+            .saturating_add(self.enabled.memory_bytes())
+            .saturating_add(self.priority.memory_bytes())
+            .saturating_add(self.availability.memory_bytes())
+            .saturating_add(
+                self.in_progress
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<(usize, PieceState)>()),
+            )
+            .saturating_add(piece_state_bytes)
+    }
+
+    pub fn new(piece_count: usize, default_piece_length: u32, last_piece_length: u32) -> Self {
+        PiecePicker {
+            piece_count,
+            default_piece_length,
+            last_piece_length,
+            wanted: PieceFlags::new(piece_count, true),
+            enabled: PieceFlags::new(piece_count, true),
+            in_progress: std::collections::HashMap::new(),
+            in_progress_bytes: 0,
+            continuation: None,
+            priority: PieceFlags::new(piece_count, false),
+            priority_count: 0,
+            sequential: false,
+            sequential_start_piece: 0,
+            availability: Availability::new(piece_count),
+            outstanding_wanted: piece_count,
+        }
+    }
+
+    /// Update the O(1) remaining-piece count when wanted/enabled state
+    /// changes. Candidate-index membership is refreshed separately after the
+    /// full piece state has been updated.
+    fn adjust_outstanding(&mut self, was_outstanding: bool, is_outstanding: bool) {
+        if is_outstanding && !was_outstanding {
+            self.outstanding_wanted = self.outstanding_wanted.saturating_add(1);
+        } else if was_outstanding && !is_outstanding {
+            self.outstanding_wanted = self.outstanding_wanted.saturating_sub(1);
+        }
+    }
+
+    fn refresh_candidate(&mut self, piece: usize) {
+        if self.piece_is_requestable(piece) {
+            self.availability.reinstate(piece);
+        } else {
+            self.availability.retire(piece);
+        }
+    }
+
+    /// Mark a piece as already complete (from fastresume).
+    pub fn mark_have(&mut self, piece: usize) {
+        if piece < self.piece_count {
+            let old_wanted = self.wanted.get(piece);
+            let enabled = self.enabled.get(piece);
+            self.wanted.set(piece, false);
+            self.remove_in_progress(piece);
+            self.adjust_outstanding(old_wanted && enabled, false);
+            self.refresh_candidate(piece);
+        }
+    }
+
+    /// Mark a piece as needed again after verification failed.
+    pub fn reject_piece(&mut self, piece: usize) {
+        if piece < self.piece_count {
+            let old_wanted = self.wanted.get(piece);
+            let enabled = self.enabled.get(piece);
+            self.wanted.set(piece, true);
+            self.remove_in_progress(piece);
+            self.adjust_outstanding(old_wanted && enabled, enabled);
+            self.refresh_candidate(piece);
+        }
+    }
+
+    pub fn set_piece_enabled(&mut self, piece: usize, enabled: bool) {
+        if piece < self.piece_count {
+            let wanted = self.wanted.get(piece);
+            let old_enabled = self.enabled.get(piece);
+            self.enabled.set(piece, enabled);
+            if !enabled {
+                self.remove_in_progress(piece);
+            }
+            self.adjust_outstanding(wanted && old_enabled, wanted && enabled);
+            self.refresh_candidate(piece);
+        }
+    }
+
+    pub fn restore_partial_piece(&mut self, piece: usize, received_blocks: &[u32]) {
+        if piece >= self.piece_count
+            || received_blocks.is_empty()
+            || !self.wanted.get(piece)
+            || !self.enabled.get(piece)
+            || self.in_progress.contains_key(&piece)
+            || !self.can_admit_piece_state(self.piece_length_for(piece))
+        {
+            return;
+        }
+        let piece_length = self.piece_length_for(piece);
+        let state_bytes = piece_state_memory_bytes(piece_length);
+        let mut state = PieceState::new(piece_length);
+        for block_idx in received_blocks {
+            state.mark_received(*block_idx as usize);
+        }
+        state.advance_next_unrequested();
+        // A partial-piece record contains bytes that were received but never
+        // hash-verified. If it happens to list every block (for example after
+        // a truncated or stale fastresume write), do not turn it into a
+        // completed piece. The torrent actor must request the piece again and
+        // verify it before advertising it as available.
+        if !state.is_complete() {
+            self.in_progress_bytes = self.in_progress_bytes.saturating_add(state_bytes);
+            self.in_progress.insert(piece, state);
+            self.refresh_candidate(piece);
+        }
+    }
+
+    /// Set priority pieces (head/tail of each file for fast preview).
+    pub fn set_priority<I>(&mut self, pieces: I)
+    where
+        I: IntoIterator<Item = usize>,
+    {
+        let mut priority = PieceFlags::new(self.piece_count, false);
+        for piece in pieces {
+            priority.set(piece, true);
+        }
+        self.priority_count = priority.iter().filter(|set| *set).count();
+        self.priority = priority;
+    }
+
+    /// Replace the packed priority flags without first expanding them into a
+    /// list of piece indexes. The engine uses this when applying a durable
+    /// file policy to a large torrent.
+    pub fn set_priority_mask(&mut self, priority: Vec<bool>) {
+        if priority.len() == self.piece_count {
+            self.priority = PieceFlags::from_bools(&priority);
+            self.priority_count = priority.iter().filter(|set| **set).count();
+        } else {
+            self.priority.fill(false);
+            self.priority_count = 0;
+        }
+    }
+
+    pub fn set_sequential(&mut self, enabled: bool) {
+        self.sequential = enabled;
+    }
+
+    /// Set the first piece considered by sequential mode.
+    pub fn set_sequential_from_piece(&mut self, piece: usize) {
+        self.sequential_start_piece = piece.min(self.piece_count.saturating_sub(1));
+    }
+
+    pub fn sequential(&self) -> bool {
+        self.sequential
+    }
+
+    pub fn piece_count(&self) -> usize {
+        self.piece_count
+    }
+
+    pub fn have_piece(&self, piece: usize) -> bool {
+        piece < self.piece_count && !self.wanted.get(piece)
+    }
+
+    /// Pick the next block to request from a peer with given bitfield.
+    ///
+    /// Returns `None` if nothing is available from this peer right now.
+    pub fn pick<A: PieceAvailability + ?Sized>(&mut self, peer_has: &A) -> Option<BlockRequest> {
+        // Fast path: nothing left to request (e.g. a fully-seeded torrent,
+        // the common steady state for a long-term seeder). Every branch
+        // below requires a wanted+enabled piece, so this is exact, not an
+        // approximation.
+        if self.outstanding_wanted == 0 {
+            return None;
+        }
+
+        // Priority pieces first.
+        if let Some(piece) = self
+            .priority_piece(|piece| self.piece_can_be_picked(piece) && peer_has.has_piece(piece))
+        {
+            return self.pick_block_from(piece);
+        }
+
+        if self.sequential {
+            let start = self
+                .sequential_start_piece
+                .min(self.piece_count.saturating_sub(1));
+            if let Some(piece) = self.availability.candidate_min_by_key(|piece| {
+                if !self.piece_can_be_picked(piece) || !peer_has.has_piece(piece) {
+                    return None;
+                }
+                Some(self.sequential_distance(piece, start))
+            }) {
+                return self.pick_block_from(piece);
+            }
+            return None;
+        }
+
+        // Rarest-first among wanted pieces the peer has. See
+        // `rarest_requestable_piece` for the bucket-walk this delegates to.
+        let piece = self.rarest_requestable_piece(peer_has)?;
+        self.pick_block_from(piece)
+    }
+
+    /// Pick from a source that is known to have every piece but is not counted
+    /// in peer availability, such as a BEP19 webseed.
+    pub fn pick_from_seed(&mut self) -> Option<BlockRequest> {
+        if let Some(piece) = self.priority_piece(|piece| self.piece_can_be_picked(piece)) {
+            return self.pick_block_from(piece);
+        }
+        if self.sequential {
+            let start = self
+                .sequential_start_piece
+                .min(self.piece_count.saturating_sub(1));
+            if let Some(piece) = self.availability.candidate_min_by_key(|piece| {
+                self.piece_can_be_picked(piece)
+                    .then(|| self.sequential_distance(piece, start))
+            }) {
+                return self.pick_block_from(piece);
+            }
+            return None;
+        }
+        let piece = self
+            .partial_piece(|piece| self.piece_is_requestable(piece))
+            .or_else(|| {
+                self.availability.candidate_matching_random(
+                    |piece| self.piece_can_be_picked(piece),
+                    &mut rand::rng(),
+                )
+            })?;
+        self.pick_block_from(piece)
+    }
+
+    /// Pick a duplicate outstanding block for endgame mode.
+    ///
+    /// This returns `Some` only after all enabled wanted pieces have no fresh
+    /// unrequested blocks left. The caller supplies blocks already outstanding
+    /// with the peer so we do not duplicate the same block to one peer.
+    pub fn pick_endgame<A: PieceAvailability + ?Sized>(
+        &mut self,
+        peer_has: &A,
+        already_requested_by_peer: &[BlockRequest],
+    ) -> Option<BlockRequest> {
+        if !self.endgame_active() {
+            return None;
+        }
+
+        let piece = self.next_endgame_piece(peer_has, already_requested_by_peer)?;
+        let state = self.in_progress.get_mut(&piece)?;
+        let block_idx = state.next_requested_not_received(already_requested_by_peer, piece)?;
+        state.mark_requested(block_idx);
+        Some(state.block_request_for(piece, block_idx))
+    }
+
+    /// First active priority candidate accepted by `accept`. With no
+    /// priority flags set (the default) this is O(1) instead of a scan.
+    fn priority_piece(&self, accept: impl Fn(usize) -> bool) -> Option<usize> {
+        if self.priority_count == 0 {
+            return None;
+        }
+        if let Some(piece) = self.partial_piece(|piece| self.priority.get(piece) && accept(piece)) {
+            return Some(piece);
+        }
+        self.availability.candidate_matching_random(
+            |piece| self.priority.get(piece) && accept(piece),
+            &mut rand::rng(),
+        )
+    }
+
+    fn piece_is_requestable(&self, piece: usize) -> bool {
+        piece < self.piece_count
+            && self.wanted.get(piece)
+            && self.enabled.get(piece)
+            && self
+                .in_progress
+                .get(&piece)
+                .is_none_or(|state| state.next_unrequested().is_some())
+    }
+
+    fn piece_can_be_picked(&self, piece: usize) -> bool {
+        self.piece_is_requestable(piece)
+            && (self.in_progress.contains_key(&piece)
+                || self.can_admit_piece_state(self.piece_length_for(piece)))
+    }
+
+    /// Common case is one O(1) continuation lookup. After a peer/policy change,
+    /// inspect only admitted partial state, never the whole torrent.
+    fn partial_piece(&self, accept: impl Fn(usize) -> bool) -> Option<usize> {
+        if let Some(piece) = self
+            .continuation
+            .filter(|&piece| self.in_progress.contains_key(&piece) && accept(piece))
+        {
+            return Some(piece);
+        }
+        self.in_progress
+            .keys()
+            .copied()
+            .filter(|&piece| accept(piece))
+            .min_by_key(|&piece| (self.availability.count(piece), piece))
+    }
+
+    fn sequential_distance(&self, piece: usize, start: usize) -> usize {
+        if piece >= start {
+            piece - start
+        } else {
+            self.piece_count.saturating_sub(start).saturating_add(piece)
+        }
+    }
+
+    /// Rarest-first selection among wanted, requestable pieces the peer has.
+    ///
+    /// Walks compact active-candidate buckets from the rarest nonzero count
+    /// upward and chooses uniformly among peer-available ties. This avoids
+    /// a full torrent scan and per-piece tree allocations on each request.
+    fn rarest_requestable_piece<A: PieceAvailability + ?Sized>(
+        &self,
+        peer_has: &A,
+    ) -> Option<usize> {
+        let preferred = self
+            .partial_piece(|piece| self.piece_is_requestable(piece) && peer_has.has_piece(piece));
+        self.availability.rarest_matching_from_peer_with_preference(
+            peer_has,
+            |piece| self.piece_can_be_picked(piece),
+            preferred,
+            &mut rand::rng(),
+        )
+    }
+
+    fn next_endgame_piece<A: PieceAvailability + ?Sized>(
+        &self,
+        peer_has: &A,
+        already_requested_by_peer: &[BlockRequest],
+    ) -> Option<usize> {
+        let is_candidate = |piece: usize| {
+            piece < self.piece_count
+                && self.wanted.get(piece)
+                && self.enabled.get(piece)
+                && peer_has.has_piece(piece)
+                && self.in_progress.get(&piece).is_some_and(|state| {
+                    state
+                        .next_requested_not_received(already_requested_by_peer, piece)
+                        .is_some()
+                })
+        };
+
+        // Endgame pieces have no fresh blocks left, so they are absent from
+        // the active-candidate index. Inspect only the bounded in-progress
+        // set instead of walking the whole torrent.
+        if self.priority_count > 0 {
+            if let Some(piece) = self
+                .in_progress
+                .keys()
+                .copied()
+                .filter(|piece| self.priority.get(*piece) && is_candidate(*piece))
+                .min()
+            {
+                return Some(piece);
+            }
+        }
+
+        if self.sequential {
+            let start = self
+                .sequential_start_piece
+                .min(self.piece_count.saturating_sub(1));
+            return self
+                .in_progress
+                .keys()
+                .copied()
+                .filter(|piece| is_candidate(*piece) && !self.priority.get(*piece))
+                .min_by_key(|piece| self.sequential_distance(*piece, start));
+        }
+
+        let mut rng = rand::rng();
+        let mut selected = None;
+        let mut selected_count = u32::MAX;
+        let mut tied = 0usize;
+        for piece in self.in_progress.keys().copied() {
+            if self.priority.get(piece) || !is_candidate(piece) {
+                continue;
+            }
+            let count = self.availability.count(piece);
+            if count < selected_count {
+                selected = Some(piece);
+                selected_count = count;
+                tied = 1;
+            } else if count == selected_count {
+                tied = tied.saturating_add(1);
+                if rng.random_range(0..tied) == 0 {
+                    selected = Some(piece);
+                }
+            }
+        }
+        selected
+    }
+
+    pub fn endgame_active(&self) -> bool {
+        self.outstanding_wanted != 0 && self.availability.candidate_count() == 0
+    }
+
+    fn piece_length_for(&self, piece: usize) -> u32 {
+        if piece + 1 == self.piece_count {
+            self.last_piece_length
+        } else {
+            self.default_piece_length
+        }
+    }
+
+    fn pick_block_from(&mut self, piece: usize) -> Option<BlockRequest> {
+        if piece >= self.piece_count {
+            return None;
+        }
+        let pl = self.piece_length_for(piece);
+        let is_new = !self.in_progress.contains_key(&piece);
+        if is_new && !self.can_admit_piece_state(pl) {
+            return None;
+        }
+        if is_new {
+            self.in_progress_bytes = self
+                .in_progress_bytes
+                .saturating_add(piece_state_memory_bytes(pl));
+        }
+        let request = {
+            let state = self
+                .in_progress
+                .entry(piece)
+                .or_insert_with(|| PieceState::new(pl));
+            state.next_unrequested().map(|block_idx| {
+                state.mark_requested(block_idx);
+                state.block_request_for(piece, block_idx)
+            })
+        };
+        self.refresh_candidate(piece);
+        if request.is_some() {
+            self.continuation = Some(piece);
+        }
+        request
+    }
+
+    /// Record a received block without marking its piece available yet.
+    ///
+    /// Transfer actors use this while storage and hash completions are
+    /// pending. Keeping the fully received piece in `in_progress` prevents
+    /// duplicate requests while preserving the verified-have boundary.
+    /// Returns true when every block has arrived.
+    pub fn block_received_pending(&mut self, piece: usize, begin: u32) -> bool {
+        let block_idx = (begin / MAX_BLOCK_SIZE) as usize;
+        let complete = self.in_progress.get_mut(&piece).is_some_and(|state| {
+            state.mark_received(block_idx);
+            state.is_complete()
+        });
+        self.refresh_candidate(piece);
+        complete
+    }
+
+    /// Record a received block and immediately publish its piece as complete.
+    ///
+    /// This is for callers whose verification is synchronous with receipt.
+    /// Actors with asynchronous verification must use
+    /// [`Self::block_received_pending`] and call [`Self::mark_have`] only
+    /// after a successful integrity result.
+    pub fn block_received(&mut self, piece: usize, begin: u32) -> bool {
+        let complete = self.block_received_pending(piece, begin);
+        if complete {
+            self.mark_have(piece);
+        }
+        complete
+    }
+
+    /// Return whether the picker still has partial state for a piece.
+    ///
+    /// Network paths can have duplicate endgame responses in flight. Once the
+    /// first response completes a piece, later responses must not recreate an
+    /// in-memory assembly or be counted as new progress.
+    pub fn is_piece_in_progress(&self, piece: usize) -> bool {
+        self.in_progress.contains_key(&piece)
+    }
+
+    /// Whether any enabled, wanted piece still has a fresh block that has not
+    /// been requested. Source schedulers use this to sleep until ownership
+    /// changes instead of polling a torrent whose request windows are full.
+    pub fn has_fresh_requestable(&self) -> bool {
+        self.availability.candidate_count() != 0
+    }
+
+    /// Count fresh blocks available from one peer, stopping once `maximum`
+    /// useful blocks have been found. Requests held by any peer and received
+    /// blocks do not count as fresh work.
+    pub fn useful_missing_for_peer<A: PieceAvailability + ?Sized>(
+        &self,
+        peer_has: &A,
+        maximum: usize,
+    ) -> usize {
+        if maximum == 0 || self.outstanding_wanted == 0 {
+            return 0;
+        }
+
+        let mut useful = 0usize;
+        peer_has.for_each_set_piece_while(self.piece_count, &mut |piece| {
+            if !self.wanted.get(piece) || !self.enabled.get(piece) {
+                return true;
+            }
+
+            let fresh = match self.in_progress.get(&piece) {
+                Some(state) => state.fresh_blocks,
+                None => {
+                    let piece_length = self.piece_length_for(piece);
+                    if !self.can_admit_piece_state(piece_length) {
+                        return true;
+                    }
+                    n_blocks(piece_length)
+                }
+            };
+            useful = useful.saturating_add(fresh.min(maximum.saturating_sub(useful)));
+            useful < maximum
+        });
+        useful
+    }
+
+    /// Count distinct outstanding blocks held by other peers that this peer
+    /// could duplicate in endgame. The caller supplies unique coordinates;
+    /// the picker admits duplicates only after every fresh candidate is gone.
+    pub fn endgame_duplicate_work_for_peer<A: PieceAvailability + ?Sized>(
+        &self,
+        peer_has: &A,
+        requested_by_peer: &[BlockRequest],
+        other_peer_requests: &[BlockRequest],
+        maximum: usize,
+    ) -> usize {
+        if maximum == 0 || !self.endgame_active() {
+            return 0;
+        }
+        let mut useful = 0usize;
+        for request in other_peer_requests {
+            let piece = request.piece as usize;
+            if piece >= self.piece_count
+                || !peer_has.has_piece(piece)
+                || !self.wanted.get(piece)
+                || !self.enabled.get(piece)
+                || requested_by_peer
+                    .iter()
+                    .any(|own| own.piece == request.piece && own.begin == request.begin)
+            {
+                continue;
+            }
+            let block = (request.begin / MAX_BLOCK_SIZE) as usize;
+            let Some(state) = self.in_progress.get(&piece) else {
+                continue;
+            };
+            if state.block_received(block)
+                || state
+                    .requested
+                    .get(block)
+                    .is_none_or(|requested| *requested == 0)
+            {
+                continue;
+            }
+            useful += 1;
+            if useful >= maximum {
+                break;
+            }
+        }
+        useful
+    }
+
+    /// Count useful endgame blocks directly from the picker's per-block
+    /// request counts. This avoids rebuilding and sorting the same request
+    /// coordinates from every peer on each refill. Blocks already requested
+    /// by this peer are excluded even when other peers also own duplicates;
+    /// this peer already has that work in its request window.
+    pub fn useful_endgame_duplicate_work_for_peer<A: PieceAvailability + ?Sized>(
+        &self,
+        peer_has: &A,
+        requested_by_peer: &[BlockRequest],
+        maximum: usize,
+    ) -> usize {
+        if maximum == 0 || !self.endgame_active() {
+            return 0;
+        }
+
+        // Count picker-owned blocks first, then subtract the current peer's
+        // outstanding blocks. A peer's request list is unique by
+        // coordinate, so this is linear in picker state plus this peer's
+        // bounded request window instead of comparing every block against
+        // every request on every refill.
+        let scan_limit = maximum.saturating_add(requested_by_peer.len());
+        let mut useful = 0usize;
+        peer_has.for_each_set_piece_while(self.piece_count, &mut |piece| {
+            if !self.wanted.get(piece) || !self.enabled.get(piece) {
+                return true;
+            }
+            let Some(state) = self.in_progress.get(&piece) else {
+                return true;
+            };
+
+            for (block_idx, &requested) in state.requested.iter().enumerate() {
+                if requested == 0 || state.block_received(block_idx) {
+                    continue;
+                }
+                useful = useful.saturating_add(1);
+                if useful >= scan_limit {
+                    return false;
+                }
+            }
+            true
+        });
+        if useful >= scan_limit {
+            return maximum;
+        }
+
+        let own_outstanding = requested_by_peer
+            .iter()
+            .filter(|request| {
+                let piece = request.piece as usize;
+                if piece >= self.piece_count
+                    || !peer_has.has_piece(piece)
+                    || !self.wanted.get(piece)
+                    || !self.enabled.get(piece)
+                {
+                    return false;
+                }
+                let Some(state) = self.in_progress.get(&piece) else {
+                    return false;
+                };
+                let block = (request.begin / MAX_BLOCK_SIZE) as usize;
+                state.requested.get(block).is_some_and(|count| *count > 0)
+                    && !state.block_received(block)
+            })
+            .count();
+        useful.saturating_sub(own_outstanding).min(maximum)
+    }
+
+    /// Return whether a block has already been accepted for an in-progress
+    /// piece. Endgame requests may be sent to multiple peers; a late duplicate
+    /// must not overwrite the first response or turn a conflicting duplicate
+    /// into a whole-piece rejection.
+    pub fn is_block_received(&self, piece: usize, begin: u32) -> bool {
+        let block_idx = (begin / MAX_BLOCK_SIZE) as usize;
+        self.in_progress
+            .get(&piece)
+            .is_some_and(|state| state.block_received(block_idx))
+    }
+
+    /// Cancel an outstanding block request (e.g., peer disconnected).
+    pub fn cancel_request(&mut self, piece: usize, begin: u32) {
+        let block_idx = (begin / MAX_BLOCK_SIZE) as usize;
+        if let Some(state) = self.in_progress.get_mut(&piece) {
+            let was_received = state.block_received(block_idx);
+            if let Some(r) = state.requested.get_mut(block_idx) {
+                let was_last_request = *r == 1;
+                *r = r.saturating_sub(1);
+                if was_last_request && !was_received {
+                    state.fresh_blocks = state.fresh_blocks.saturating_add(1);
+                }
+                if *r == 0 && !was_received {
+                    state.next_unrequested_hint = state.next_unrequested_hint.min(block_idx);
+                }
+            }
+        }
+        self.refresh_candidate(piece);
+    }
+
+    /// Drop all outstanding block request bookkeeping without discarding
+    /// blocks already received for a partial piece.
+    pub fn reset_outstanding_requests(&mut self) {
+        for state in self.in_progress.values_mut() {
+            state.requested.fill(0);
+            state.fresh_blocks =
+                n_blocks(state.piece_length).saturating_sub(state.received_count as usize);
+            state.next_unrequested_hint = 0;
+            state.advance_next_unrequested();
+        }
+        let pieces: Vec<_> = self.in_progress.keys().copied().collect();
+        for piece in pieces {
+            self.refresh_candidate(piece);
+        }
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.outstanding_wanted == 0
+    }
+
+    pub fn remaining_pieces(&self) -> usize {
+        self.outstanding_wanted
+    }
+
+    pub fn bytes_left(&self) -> u64 {
+        let mut left: u64 = (0..self.piece_count)
+            .filter(|&piece| self.wanted.get(piece) && self.enabled.get(piece))
+            .map(|piece| self.piece_length_for(piece) as u64)
+            .sum();
+        // Subtract bytes already received for in-progress pieces so progress
+        // is visible before the first piece finishes hashing.
+        for (&piece, state) in &self.in_progress {
+            if piece < self.piece_count && self.wanted.get(piece) && self.enabled.get(piece) {
+                let mut received_bytes = 0_u64;
+                let block_count = n_blocks(state.piece_length);
+                for (byte_index, byte) in state.received.iter().copied().enumerate() {
+                    let mut pending = byte;
+                    while pending != 0 {
+                        let bit = pending.trailing_zeros() as usize;
+                        let block_idx = byte_index * u8::BITS as usize + bit;
+                        if block_idx < block_count {
+                            received_bytes = received_bytes.saturating_add(u64::from(
+                                state
+                                    .piece_length
+                                    .saturating_sub(block_idx as u32 * MAX_BLOCK_SIZE)
+                                    .min(MAX_BLOCK_SIZE),
+                            ));
+                        }
+                        pending &= pending.wrapping_sub(1);
+                    }
+                }
+                left = left.saturating_sub(received_bytes);
+            }
+        }
+        left
+    }
+
+    pub fn have_pieces(&self) -> Vec<bool> {
+        self.wanted.iter().map(|wanted| !wanted).collect()
+    }
+
+    pub fn partial_pieces(&self) -> Vec<(u32, Vec<u32>)> {
+        self.partial_pieces_limited(usize::MAX)
+    }
+
+    /// Snapshot received block hints with a per-piece allocation bound.
+    ///
+    /// Fastresume treats these indexes as an optimization, not as verified
+    /// truth. Callers that persist them can therefore omit excess hints and
+    /// let the torrent re-request those blocks after restart.
+    pub fn partial_pieces_limited(&self, max_blocks_per_piece: usize) -> Vec<(u32, Vec<u32>)> {
+        let mut partials: Vec<_> = self
+            .in_progress
+            .iter()
+            .filter_map(|(piece, state)| {
+                let blocks = state.received_blocks_limited(max_blocks_per_piece);
+                (!blocks.is_empty()).then_some((*piece as u32, blocks))
+            })
+            .collect();
+        partials.sort_by_key(|(piece, _)| *piece);
+        partials
+    }
+
+    fn can_admit_piece_state(&self, piece_length: u32) -> bool {
+        self.in_progress.len() < MAX_IN_PROGRESS_PIECES
+            && self
+                .in_progress_bytes
+                .checked_add(piece_state_memory_bytes(piece_length))
+                .is_some_and(|next| next <= MAX_IN_PROGRESS_PIECE_STATE_BYTES)
+    }
+
+    fn remove_in_progress(&mut self, piece: usize) {
+        if let Some(state) = self.in_progress.remove(&piece) {
+            self.in_progress_bytes = self
+                .in_progress_bytes
+                .saturating_sub(piece_state_memory_bytes(state.piece_length));
+        }
+    }
+}
+
+impl PieceAvailability for PiecePicker {
+    fn has_piece(&self, piece: usize) -> bool {
+        self.have_piece(piece)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn picker_1piece(piece_len: u32) -> PiecePicker {
+        PiecePicker::new(1, piece_len, piece_len)
+    }
+
+    fn picker_4pieces(piece_len: u32, last_len: u32) -> PiecePicker {
+        PiecePicker::new(4, piece_len, last_len)
+    }
+
+    fn peer_has_all(piece_count: usize) -> Vec<bool> {
+        vec![true; piece_count]
+    }
+
+    #[test]
+    fn picks_block_from_single_piece() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE);
+        p.availability.add_have(0);
+        let req = p.pick(&peer_has_all(1)).unwrap();
+        assert_eq!(req.piece, 0);
+        assert_eq!(req.begin, 0);
+        assert_eq!(req.length, MAX_BLOCK_SIZE);
+    }
+
+    #[test]
+    fn picks_second_block_after_first() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE * 2);
+        p.availability.add_have(0);
+        let all = peer_has_all(1);
+        let r1 = p.pick(&all).unwrap();
+        let r2 = p.pick(&all).unwrap();
+        assert_ne!(r1.begin, r2.begin);
+        // No third block
+        assert!(p.pick(&all).is_none());
+    }
+
+    #[test]
+    fn useful_missing_counts_only_fresh_peer_owned_enabled_blocks() {
+        let mut picker = PiecePicker::new(3, MAX_BLOCK_SIZE * 2, MAX_BLOCK_SIZE);
+        for piece in 0..3 {
+            picker.availability.add_have(piece);
+        }
+        picker.set_piece_enabled(1, false);
+        picker.mark_have(2);
+        let peer_has = peer_has_all(3);
+
+        assert_eq!(picker.useful_missing_for_peer(&peer_has, 10), 2);
+        assert_eq!(picker.useful_missing_for_peer(&peer_has, 1), 1);
+
+        let request = picker.pick(&peer_has).unwrap();
+        assert_eq!(picker.useful_missing_for_peer(&peer_has, 10), 1);
+        picker.block_received_pending(request.piece as usize, request.begin);
+        assert_eq!(picker.useful_missing_for_peer(&peer_has, 10), 1);
+
+        let last = picker.pick(&peer_has).unwrap();
+        assert_eq!(picker.useful_missing_for_peer(&peer_has, 10), 0);
+        picker.cancel_request(last.piece as usize, last.begin);
+        assert_eq!(picker.useful_missing_for_peer(&peer_has, 10), 1);
+        let reissued = picker.pick(&peer_has).unwrap();
+        assert_eq!(picker.useful_missing_for_peer(&peer_has, 10), 0);
+        picker.reset_outstanding_requests();
+        assert_eq!(picker.useful_missing_for_peer(&peer_has, 10), 1);
+        assert_eq!(reissued.piece, 0);
+    }
+
+    #[test]
+    fn useful_missing_preserves_peer_specific_endgame_duplicates() {
+        let mut picker = picker_1piece(MAX_BLOCK_SIZE * 2);
+        picker.availability.add_have(0);
+        let peer_has = peer_has_all(1);
+        let first = picker.pick(&peer_has).unwrap();
+        let second = picker.pick(&peer_has).unwrap();
+        let other_peer_requests = [first, second];
+
+        assert_eq!(picker.useful_missing_for_peer(&peer_has, 4), 0);
+        assert_eq!(
+            picker.endgame_duplicate_work_for_peer(&peer_has, &[], &other_peer_requests, 4,),
+            2
+        );
+
+        let duplicate = picker.pick_endgame(&peer_has, &[]).unwrap();
+        assert_eq!(
+            picker.endgame_duplicate_work_for_peer(
+                &peer_has,
+                &[duplicate],
+                &other_peer_requests,
+                4,
+            ),
+            1
+        );
+        picker.block_received_pending(0, duplicate.begin);
+        assert_eq!(
+            picker.endgame_duplicate_work_for_peer(&peer_has, &[], &other_peer_requests, 4,),
+            1
+        );
+    }
+
+    #[test]
+    fn endgame_refill_counts_picker_owned_requests_without_a_peer_scan() {
+        let mut picker = picker_1piece(MAX_BLOCK_SIZE * 3);
+        picker.availability.add_have(0);
+        let peer_has = peer_has_all(1);
+        let requests: Vec<_> = (0..3).map(|_| picker.pick(&peer_has).unwrap()).collect();
+
+        assert!(picker.endgame_active());
+        assert_eq!(
+            picker.useful_endgame_duplicate_work_for_peer(&peer_has, &[], 2),
+            2
+        );
+        assert_eq!(
+            picker.useful_endgame_duplicate_work_for_peer(&peer_has, &requests[..1], 4),
+            2,
+            "the candidate's own block is skipped without collecting other peers' requests"
+        );
+
+        picker.block_received_pending(0, requests[1].begin);
+        assert_eq!(
+            picker.useful_endgame_duplicate_work_for_peer(&peer_has, &requests[..1], 4),
+            1,
+            "received blocks stop counting as useful duplicate work"
+        );
+
+        let duplicate = picker.pick_endgame(&peer_has, &[]).unwrap();
+        assert_eq!(
+            picker.useful_endgame_duplicate_work_for_peer(
+                &peer_has,
+                std::slice::from_ref(&duplicate),
+                4
+            ),
+            1,
+            "a block already requested by this peer is excluded even when it has another owner"
+        );
+    }
+
+    #[test]
+    fn received_block_bitmap_packs_bits_across_byte_boundaries() {
+        let piece_length = MAX_BLOCK_SIZE * 9;
+        let mut state = PieceState::new(piece_length);
+
+        assert_eq!(state.received.len(), 2);
+        assert_eq!(
+            piece_state_memory_bytes(piece_length),
+            std::mem::size_of::<PieceState>() + 9 * std::mem::size_of::<u16>() + 2
+        );
+        state.mark_received(7);
+        state.mark_received(8);
+        state.mark_received(8);
+        state.mark_received(15);
+
+        assert!(state.block_received(7));
+        assert!(state.block_received(8));
+        assert!(!state.block_received(15));
+        assert_eq!(state.received_count, 2);
+        assert_eq!(state.received_blocks_limited(usize::MAX), vec![7, 8]);
+
+        for block in 0..9 {
+            state.mark_received(block);
+        }
+        assert!(state.is_complete());
+    }
+
+    #[test]
+    fn piece_complete_after_all_blocks_received() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE * 2);
+        p.availability.add_have(0);
+        let all = peer_has_all(1);
+        let r1 = p.pick(&all).unwrap();
+        let r2 = p.pick(&all).unwrap();
+        assert!(!p.block_received(0, r1.begin));
+        assert!(p.block_received(0, r2.begin));
+        assert!(p.is_complete());
+    }
+
+    #[test]
+    fn pending_verification_does_not_publish_piece_as_have() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE * 2);
+        p.availability.add_have(0);
+        let all = peer_has_all(1);
+        let first = p.pick(&all).unwrap();
+        let second = p.pick(&all).unwrap();
+
+        assert!(!p.block_received_pending(0, first.begin));
+        assert!(p.block_received_pending(0, second.begin));
+        assert!(!p.is_complete());
+        assert!(!p.have_piece(0));
+        assert!(p.is_piece_in_progress(0));
+        assert!(p.is_block_received(0, first.begin));
+        assert!(p.is_block_received(0, second.begin));
+        assert!(p.pick(&all).is_none());
+
+        p.mark_have(0);
+        assert!(p.is_complete());
+        assert!(p.have_piece(0));
+        assert!(!p.is_piece_in_progress(0));
+    }
+
+    #[test]
+    fn completed_piece_no_longer_accepts_late_blocks() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE);
+        p.availability.add_have(0);
+        let all = peer_has_all(1);
+        let request = p.pick(&all).unwrap();
+        assert!(p.is_piece_in_progress(0));
+        assert!(!p.is_block_received(0, request.begin));
+        assert!(p.block_received(0, request.begin));
+        assert!(!p.is_piece_in_progress(0));
+        assert!(!p.is_block_received(0, request.begin));
+    }
+
+    #[test]
+    fn received_block_is_detected_during_endgame() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE * 2);
+        p.availability.add_have(0);
+        let all = peer_has_all(1);
+        let first = p.pick(&all).unwrap();
+        let _second = p.pick(&all).unwrap();
+        assert!(!p.block_received(0, first.begin));
+        assert!(p.is_block_received(0, first.begin));
+    }
+
+    #[test]
+    fn mark_have_removes_from_wanted() {
+        let mut p = picker_4pieces(MAX_BLOCK_SIZE, MAX_BLOCK_SIZE);
+        p.mark_have(0);
+        p.mark_have(1);
+        assert_eq!(p.remaining_pieces(), 2);
+    }
+
+    #[test]
+    fn reject_piece_makes_completed_piece_wanted_again() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE);
+        p.mark_have(0);
+        assert!(p.is_complete());
+        p.reject_piece(0);
+        assert!(!p.is_complete());
+        assert_eq!(p.remaining_pieces(), 1);
+    }
+
+    #[test]
+    fn mark_have_does_not_reenable_a_policy_disabled_piece() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE);
+        p.availability.add_have(0);
+        p.set_piece_enabled(0, false);
+
+        p.mark_have(0);
+        assert!(p.is_complete());
+        assert_eq!(p.have_pieces(), vec![true]);
+
+        p.reject_piece(0);
+        assert!(p.is_complete());
+        assert!(p.pick(&peer_has_all(1)).is_none());
+    }
+
+    #[test]
+    fn bytes_left_sums_wanted_piece_lengths() {
+        let mut p = picker_4pieces(10, 4);
+        assert_eq!(p.bytes_left(), 34);
+        p.mark_have(0);
+        p.mark_have(3);
+        assert_eq!(p.bytes_left(), 20);
+    }
+
+    #[test]
+    fn bytes_left_subtracts_partially_received_blocks() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE * 3 + 1);
+        p.availability.add_have(0);
+        let all = peer_has_all(1);
+        let req = p.pick(&all).unwrap();
+        let begin = req.begin;
+        p.block_received(0, begin); // 1 block of ~16KB received
+                                    // piece length = MAX_BLOCK_SIZE*3+1 = 49153, one block = 16384
+        let expected = (MAX_BLOCK_SIZE * 3 + 1) as u64 - MAX_BLOCK_SIZE as u64;
+        assert_eq!(p.bytes_left(), expected);
+    }
+
+    #[test]
+    fn bytes_left_counts_a_short_final_block_exactly() {
+        let piece_length = MAX_BLOCK_SIZE * 2 + 1;
+        let mut p = picker_1piece(piece_length);
+        p.availability.add_have(0);
+        let all = peer_has_all(1);
+        let first = p.pick(&all).unwrap();
+        let second = p.pick(&all).unwrap();
+        let tail = p.pick(&all).unwrap();
+        assert_eq!(tail.length, 1);
+
+        p.block_received(0, first.begin);
+        p.block_received(0, second.begin);
+        assert_eq!(p.bytes_left(), 1);
+
+        p.block_received(0, tail.begin);
+        assert_eq!(p.bytes_left(), 0);
+    }
+
+    #[test]
+    fn have_pieces_is_inverse_of_wanted() {
+        let mut p = picker_4pieces(10, 4);
+        p.mark_have(1);
+        p.mark_have(3);
+        assert_eq!(p.have_pieces(), vec![false, true, false, true]);
+    }
+
+    #[test]
+    fn partial_piece_snapshot_restores_received_blocks() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE * 2);
+        p.availability.add_have(0);
+        let all = peer_has_all(1);
+        let first = p.pick(&all).unwrap();
+        let second = p.pick(&all).unwrap();
+        assert!(!p.block_received(0, first.begin));
+        assert_eq!(p.partial_pieces(), vec![(0, vec![0])]);
+
+        let mut restored = picker_1piece(MAX_BLOCK_SIZE * 2);
+        restored.availability.add_have(0);
+        restored.restore_partial_piece(0, &[0]);
+        assert_eq!(restored.in_progress[&0].next_unrequested_hint, 1);
+        let next = restored.pick(&all).unwrap();
+        assert_eq!(next.begin, second.begin);
+    }
+
+    #[test]
+    fn partial_piece_snapshot_can_bound_received_blocks() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE * 4);
+        p.restore_partial_piece(0, &[0, 1, 2]);
+
+        assert_eq!(p.partial_pieces_limited(2), vec![(0, vec![0, 1])]);
+        assert_eq!(p.partial_pieces(), vec![(0, vec![0, 1, 2])]);
+    }
+
+    #[test]
+    fn complete_partial_record_does_not_mark_piece_have() {
+        let mut picker = picker_1piece(MAX_BLOCK_SIZE * 2);
+        picker.availability.add_have(0);
+
+        picker.restore_partial_piece(0, &[0, 1]);
+
+        assert!(!picker.is_complete());
+        assert_eq!(picker.partial_pieces(), Vec::<(u32, Vec<u32>)>::new());
+        assert_eq!(picker.pick(&peer_has_all(1)).unwrap().begin, 0);
+    }
+
+    #[test]
+    fn reinstated_piece_is_requestable_again_via_rarest_first() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE);
+        p.availability.add_have(0);
+        let all = peer_has_all(1);
+        let req = p.pick(&all).unwrap();
+        assert!(p.block_received(0, req.begin));
+        assert!(p.is_complete());
+        // Completing the piece must retire it from the rarest-first bucket
+        // walk, not just from `wanted`.
+        assert!(p.pick(&all).is_none());
+
+        p.reject_piece(0);
+        assert!(!p.is_complete());
+        // reject_piece must reinstate it into its bucket so rarest-first
+        // finds it again, not just flip `wanted` back to true.
+        let req2 = p.pick(&all).unwrap();
+        assert_eq!(req2.piece, 0);
+    }
+
+    #[test]
+    fn mark_and_reject_update_recheck_accounting() {
+        let mut p = picker_4pieces(10, 4);
+        p.mark_have(0);
+        p.mark_have(1);
+        assert_eq!(p.bytes_left(), 14);
+        p.reject_piece(1);
+        assert_eq!(p.have_pieces(), vec![true, false, false, false]);
+        assert_eq!(p.bytes_left(), 24);
+    }
+
+    #[test]
+    fn cancel_request_makes_block_available_again() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE * 2);
+        p.availability.add_have(0);
+        let all = peer_has_all(1);
+        let r1 = p.pick(&all).unwrap();
+        assert_eq!(p.in_progress[&0].next_unrequested_hint, 1);
+        let _r2 = p.pick(&all).unwrap();
+        assert_eq!(p.in_progress[&0].next_unrequested_hint, 2);
+        // Cancel r1 and pick again — should re-offer r1's block
+        p.cancel_request(0, r1.begin);
+        assert_eq!(p.in_progress[&0].next_unrequested_hint, 0);
+        let r3 = p.pick(&all).unwrap();
+        assert_eq!(r3.begin, r1.begin);
+    }
+
+    #[test]
+    fn reset_outstanding_requests_makes_blocks_available_again() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE * 2);
+        p.availability.add_have(0);
+        let all = peer_has_all(1);
+        let r1 = p.pick(&all).unwrap();
+        let r2 = p.pick(&all).unwrap();
+        assert_eq!(p.in_progress[&0].next_unrequested_hint, 2);
+        assert!(p.pick(&all).is_none());
+
+        p.reset_outstanding_requests();
+        assert_eq!(p.in_progress[&0].next_unrequested_hint, 0);
+
+        let again = p.pick(&all).unwrap();
+        let next = p.pick(&all).unwrap();
+        assert_eq!(again.begin, r1.begin);
+        assert_eq!(next.begin, r2.begin);
+    }
+
+    #[test]
+    fn reset_outstanding_requests_preserves_partial_piece_progress() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE * 2);
+        p.availability.add_have(0);
+        let all = peer_has_all(1);
+        let first = p.pick(&all).unwrap();
+        let second = p.pick(&all).unwrap();
+        assert!(!p.block_received(0, first.begin));
+
+        p.reset_outstanding_requests();
+
+        let next = p.pick(&all).unwrap();
+        assert_eq!(next.begin, second.begin);
+        assert_eq!(p.partial_pieces(), vec![(0, vec![0])]);
+    }
+
+    #[test]
+    fn seed_picker_does_not_require_peer_availability() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE * 2);
+        let r1 = p.pick_from_seed().unwrap();
+        let r2 = p.pick_from_seed().unwrap();
+        assert_eq!(r1.begin, 0);
+        assert_eq!(r2.begin, MAX_BLOCK_SIZE);
+        assert!(p.pick_from_seed().is_none());
+    }
+
+    #[test]
+    fn fresh_requestability_tracks_seed_dispatch_cancel_and_completion() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE * 2);
+        assert!(p.has_fresh_requestable());
+
+        let first = p.pick_from_seed().unwrap();
+        assert!(p.has_fresh_requestable());
+        let second = p.pick_from_seed().unwrap();
+        assert!(!p.has_fresh_requestable());
+        assert!(p.pick_from_seed().is_none());
+
+        p.cancel_request(first.piece as usize, first.begin);
+        assert!(p.has_fresh_requestable());
+        p.cancel_request(second.piece as usize, second.begin);
+        p.mark_have(0);
+        assert!(!p.has_fresh_requestable());
+    }
+
+    #[test]
+    fn active_candidate_index_tracks_fresh_work_and_cancellation() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE * 2);
+        p.availability.add_have(0);
+        let all = peer_has_all(1);
+
+        let first = p.pick(&all).unwrap();
+        assert_eq!(p.availability.candidate_count(), 1);
+        let _second = p.pick(&all).unwrap();
+        assert_eq!(p.availability.candidate_count(), 0);
+        assert!(p.pick(&all).is_none());
+
+        p.cancel_request(first.piece as usize, first.begin);
+        assert_eq!(p.availability.candidate_count(), 1);
+        assert_eq!(p.pick(&all).unwrap(), first);
+    }
+
+    #[test]
+    fn completing_a_piece_removes_it_from_active_candidates() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE);
+        p.availability.add_have(0);
+        let request = p.pick(&peer_has_all(1)).unwrap();
+        assert_eq!(p.availability.candidate_count(), 0);
+
+        assert!(p.block_received(request.piece as usize, request.begin));
+
+        assert_eq!(p.availability.candidate_count(), 0);
+        assert!(p.is_complete());
+        assert!(p.pick(&peer_has_all(1)).is_none());
+    }
+
+    #[test]
+    fn endgame_duplicates_outstanding_blocks_after_fresh_work_is_exhausted() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE * 2);
+        p.availability.add_have(0);
+        let all = peer_has_all(1);
+        let r1 = p.pick(&all).unwrap();
+        let r2 = p.pick(&all).unwrap();
+
+        assert!(p.pick(&all).is_none());
+        let duplicate = p.pick_endgame(&all, &[]).unwrap();
+        assert!(duplicate == r1 || duplicate == r2);
+    }
+
+    #[test]
+    fn endgame_does_not_duplicate_same_block_to_same_peer() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE * 2);
+        p.availability.add_have(0);
+        let all = peer_has_all(1);
+        let r1 = p.pick(&all).unwrap();
+        let r2 = p.pick(&all).unwrap();
+
+        let duplicate = p.pick_endgame(&all, &[r1]).unwrap();
+        assert_eq!(duplicate, r2);
+        assert!(p.pick_endgame(&all, &[r1, r2]).is_none());
+    }
+
+    #[test]
+    fn no_pick_when_peer_has_nothing() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE);
+        p.availability.add_have(0);
+        let no_has = vec![false];
+        assert!(p.pick(&no_has).is_none());
+    }
+
+    #[test]
+    fn disabled_piece_is_not_requested_or_advertised_complete() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE);
+        p.availability.add_have(0);
+        p.set_piece_enabled(0, false);
+        assert!(p.pick(&peer_has_all(1)).is_none());
+        assert!(p.is_complete());
+        assert_eq!(p.have_pieces(), vec![false]);
+        assert_eq!(p.bytes_left(), 0);
+    }
+
+    #[test]
+    fn priority_pieces_selected_first() {
+        let mut p = picker_4pieces(MAX_BLOCK_SIZE, MAX_BLOCK_SIZE);
+        // All pieces available from peer
+        for i in 0..4 {
+            p.availability.add_have(i);
+        }
+        // Piece 3 has lowest availability (set it manually)
+        // Set priority to piece 2
+        p.set_priority(vec![2]);
+        let req = p.pick(&peer_has_all(4)).unwrap();
+        assert_eq!(req.piece, 2);
+    }
+
+    #[test]
+    fn equal_rarity_download_finishes_admitted_pieces_before_opening_more() {
+        let length = MAX_BLOCK_SIZE * 64;
+        let mut picker = PiecePicker::new(756, length, length);
+        let peers = peer_has_all(756);
+        for piece in 0..756 {
+            picker.availability.add_have(piece);
+        }
+        let mut completed = 0;
+        for _ in 0..4 * 64 {
+            let request = picker.pick(&peers).unwrap();
+            assert_eq!(
+                picker.in_progress.len(),
+                1,
+                "one serial source needs one assembly"
+            );
+            if picker.block_received_pending(request.piece as usize, request.begin) {
+                picker.mark_have(request.piece as usize);
+                completed += 1;
+            }
+        }
+        assert_eq!(completed, 4);
+    }
+
+    #[test]
+    fn continuation_respects_rarer_pieces_and_priority_changes() {
+        let length = MAX_BLOCK_SIZE * 4;
+        let mut picker = PiecePicker::new(3, length, length);
+        for piece in 0..3 {
+            picker.availability.add_have(piece);
+        }
+        let first = picker.pick(&[true, false, false]).unwrap();
+        picker.block_received_pending(first.piece as usize, first.begin);
+        picker.availability.add_have(0);
+        // A rarer newly available piece preempts an unfinished common one.
+        assert_eq!(picker.pick(&[true, true, false]).unwrap().piece, 1);
+        picker.set_priority([2]);
+        assert_eq!(picker.pick(&[true, true, true]).unwrap().piece, 2);
+        picker.set_piece_enabled(2, false);
+        assert_eq!(picker.pick(&[true, true, true]).unwrap().piece, 1);
+    }
+
+    #[test]
+    fn alternating_disjoint_peers_continue_their_partial_pieces() {
+        let length = MAX_BLOCK_SIZE * 4;
+        let mut picker = PiecePicker::new(4, length, length);
+        for piece in 0..4 {
+            picker.availability.add_have(piece);
+        }
+        let peers = [[true, true, false, false], [false, false, true, true]];
+        let first = picker.pick(&peers[0]).unwrap();
+        let second = picker.pick(&peers[1]).unwrap();
+        for _ in 0..3 {
+            assert_eq!(picker.pick(&peers[0]).unwrap().piece, first.piece);
+            assert_eq!(picker.pick(&peers[1]).unwrap().piece, second.piece);
+        }
+        assert_eq!(picker.in_progress.len(), 2);
+    }
+
+    #[test]
+    fn seed_continues_partial_piece_without_peer_availability() {
+        let length = MAX_BLOCK_SIZE * 3;
+        let mut picker = PiecePicker::new(100, length, length);
+        let first = picker.pick_from_seed().unwrap();
+        for _ in 0..2 {
+            assert_eq!(picker.pick_from_seed().unwrap().piece, first.piece);
+        }
+        assert_eq!(picker.in_progress.len(), 1);
+        assert_ne!(picker.pick_from_seed().unwrap().piece, first.piece);
+    }
+
+    #[test]
+    fn full_state_budget_still_picks_existing_partial_work() {
+        let length = MAX_BLOCK_SIZE * 3;
+        let mut picker = PiecePicker::new(100, length, length);
+        for piece in 0..100 {
+            picker.availability.add_have(piece);
+        }
+        let first = picker.pick(&peer_has_all(100)).unwrap();
+        // Exercise admission without allocating 64 MiB of bookkeeping.
+        picker.in_progress_bytes = MAX_IN_PROGRESS_PIECE_STATE_BYTES;
+        assert_eq!(picker.pick(&peer_has_all(100)).unwrap().piece, first.piece);
+        assert_eq!(picker.pick(&peer_has_all(100)).unwrap().piece, first.piece);
+        assert!(picker.pick(&peer_has_all(100)).is_none());
+        assert_eq!(picker.in_progress.len(), 1);
+    }
+
+    #[test]
+    fn invalid_priority_piece_is_ignored() {
+        let mut p = picker_1piece(MAX_BLOCK_SIZE);
+        p.availability.add_have(0);
+        p.set_priority(vec![usize::MAX, 0]);
+
+        assert_eq!(p.pick(&peer_has_all(1)).unwrap().piece, 0);
+    }
+
+    #[test]
+    fn sequential_mode_picks_lowest_piece_before_rarest() {
+        let mut p = picker_4pieces(MAX_BLOCK_SIZE, MAX_BLOCK_SIZE);
+        p.availability.add_have(0);
+        p.availability.add_have(1);
+        p.availability.add_have(1);
+        p.availability.add_have(2);
+        p.availability.add_have(2);
+        p.availability.add_have(3);
+        p.availability.add_have(3);
+        p.set_sequential(true);
+
+        let req = p.pick(&peer_has_all(4)).unwrap();
+
+        assert_eq!(req.piece, 0);
+    }
+
+    #[test]
+    fn sequential_from_piece_starts_at_configured_piece() {
+        let mut p = picker_4pieces(MAX_BLOCK_SIZE, MAX_BLOCK_SIZE);
+        p.set_sequential(true);
+        p.set_sequential_from_piece(2);
+
+        let req = p.pick(&peer_has_all(4)).unwrap();
+
+        assert_eq!(req.piece, 2);
+    }
+
+    #[test]
+    fn seed_picker_respects_sequential_from_piece() {
+        let mut p = picker_4pieces(MAX_BLOCK_SIZE, MAX_BLOCK_SIZE);
+        p.set_sequential(true);
+        p.set_sequential_from_piece(3);
+
+        let req = p.pick_from_seed().unwrap();
+
+        assert_eq!(req.piece, 3);
+    }
+
+    #[test]
+    fn endgame_pick_order_respects_sequential_from_piece() {
+        let mut p = picker_4pieces(MAX_BLOCK_SIZE, MAX_BLOCK_SIZE);
+        p.set_sequential(true);
+        p.set_sequential_from_piece(2);
+        let all = peer_has_all(4);
+        let requested: Vec<_> = (0..4).map(|_| p.pick(&all).unwrap()).collect();
+        assert_eq!(
+            requested.iter().map(|req| req.piece).collect::<Vec<_>>(),
+            vec![2, 3, 0, 1]
+        );
+
+        let duplicate = p.pick_endgame(&all, &[]).unwrap();
+
+        assert_eq!(duplicate.piece, 2);
+    }
+
+    #[test]
+    fn last_piece_may_be_shorter() {
+        // 3 full pieces + 1 half piece
+        let full = MAX_BLOCK_SIZE;
+        let half = MAX_BLOCK_SIZE / 2;
+        let mut p = PiecePicker::new(4, full, half);
+        for i in 0..4 {
+            p.availability.add_have(i);
+        }
+        // Mark first 3 pieces done
+        p.mark_have(0);
+        p.mark_have(1);
+        p.mark_have(2);
+        // Only piece 3 (half length) remains
+        let req = p.pick(&peer_has_all(4)).unwrap();
+        assert_eq!(req.piece, 3);
+        assert_eq!(req.length, half);
+    }
+
+    #[test]
+    fn in_progress_piece_states_are_bounded() {
+        let mut picker =
+            PiecePicker::new(MAX_IN_PROGRESS_PIECES + 1, MAX_BLOCK_SIZE, MAX_BLOCK_SIZE);
+
+        for piece in 0..MAX_IN_PROGRESS_PIECES {
+            assert!(picker.pick_block_from(piece).is_some());
+        }
+
+        assert!(picker.pick_block_from(MAX_IN_PROGRESS_PIECES).is_none());
+        picker.restore_partial_piece(MAX_IN_PROGRESS_PIECES, &[0]);
+        assert!(!picker.is_piece_in_progress(MAX_IN_PROGRESS_PIECES));
+        assert_eq!(picker.in_progress.len(), MAX_IN_PROGRESS_PIECES);
+    }
+
+    #[test]
+    fn in_progress_piece_state_bytes_are_bounded() {
+        let piece_length = u32::MAX;
+        let state_bytes = piece_state_memory_bytes(piece_length);
+        let admitted = MAX_IN_PROGRESS_PIECE_STATE_BYTES / state_bytes;
+        let mut picker = PiecePicker::new(admitted + 1, piece_length, piece_length);
+
+        for piece in 0..admitted {
+            picker.restore_partial_piece(piece, &[0]);
+        }
+        picker.restore_partial_piece(admitted, &[0]);
+
+        assert_eq!(picker.in_progress.len(), admitted);
+        assert!(picker.in_progress_bytes <= MAX_IN_PROGRESS_PIECE_STATE_BYTES);
+        assert!(!picker.is_piece_in_progress(admitted));
+    }
+
+    #[test]
+    fn piece_index_memory_estimate_accounts_for_dense_state() {
+        let empty = PiecePicker::memory_bytes_for_piece_count(0);
+        let one = PiecePicker::memory_bytes_for_piece_count(1);
+        let many = PiecePicker::memory_bytes_for_piece_count(16_000_000);
+
+        assert!(empty >= 64 * 1024);
+        assert!(one >= empty);
+        assert!(many > one);
+        assert!(many >= 16_000_000 * std::mem::size_of::<u32>());
+    }
+
+    /// Large-scale correctness check for the availability-bucketed rarest
+    /// picker (see `rarest_requestable_piece` / `Availability::rarest_matching`).
+    ///
+    /// Uses a piece count well past anything a linear-scan bug would pass
+    /// unnoticed at small scale, a swarm with several overlapping,
+    /// deterministic per-peer bitfields (so availability counts vary and
+    /// buckets actually differ in size), and a downloading peer that has
+    /// every piece so the rarest-first branch alone decides every pick.
+    /// After each pick the block is immediately marked received, which
+    /// exercises piece retirement (see `Availability::retire`) on every
+    /// single iteration — the scenario where a naive bucket implementation
+    /// would silently degrade back toward O(piece_count) as a download
+    /// nears completion.
+    ///
+    /// Asserts the three ways bucket bookkeeping could go wrong: a piece
+    /// never returned, a piece returned more than once while still
+    /// in-flight, and a violation of the rarest-first ordering guarantee
+    /// (availability counts of successive picks must be non-decreasing,
+    /// since nothing else changes availability mid-run).
+    #[test]
+    fn rarest_first_bucket_walk_is_correct_at_scale() {
+        const PIECE_COUNT: usize = 12_000;
+        let mut p = PiecePicker::new(PIECE_COUNT, MAX_BLOCK_SIZE, MAX_BLOCK_SIZE);
+
+        // Overlapping synthetic peers: peer 0 has every piece (guarantees
+        // full coverage so every piece is eventually requestable), the
+        // rest have deterministic sparser subsets so availability counts
+        // vary across a handful of rarity buckets (1..=5).
+        let moduli = [1usize, 2, 3, 5, 7];
+        for &modulus in &moduli {
+            for piece in (0..PIECE_COUNT).step_by(modulus) {
+                p.availability.add_have(piece);
+            }
+        }
+
+        let peer_has_everything = vec![true; PIECE_COUNT];
+
+        let mut seen = std::collections::HashSet::with_capacity(PIECE_COUNT);
+        let mut last_count = 0u32;
+        for _ in 0..PIECE_COUNT {
+            let req = p
+                .pick(&peer_has_everything)
+                .expect("every piece has availability >= 1 from peer 0's full bitfield");
+
+            let piece = req.piece as usize;
+            assert!(
+                seen.insert(piece),
+                "piece {piece} was returned more than once while outstanding"
+            );
+
+            let count = p.availability.count(piece);
+            assert!(
+                count >= last_count,
+                "rarest-first ordering violated: piece {piece} (count {count}) picked after a piece with count {last_count}"
+            );
+            last_count = count;
+
+            // Immediately complete the piece so the next pick has to walk
+            // past an ever-growing set of retired pieces if retirement is
+            // broken — this is the regression this test is meant to catch.
+            assert!(p.block_received(piece, req.begin));
+        }
+
+        assert_eq!(seen.len(), PIECE_COUNT);
+        assert!(p.is_complete());
+        assert!(p.pick(&peer_has_everything).is_none());
+    }
+
+    #[test]
+    fn memory_estimate_covers_the_real_constructed_footprint() {
+        // The estimate includes packed flags, counts, bucket membership
+        // positions, active-candidate positions, and worst-case entries.
+        let estimate = PiecePicker::memory_bytes_for_piece_count(1_000_000);
+        let picker = PiecePicker::new(1_000_000, MAX_BLOCK_SIZE, MAX_BLOCK_SIZE);
+        assert!(estimate >= picker.memory_bytes());
+        assert!(estimate >= 4 * 1_000_000usize.div_ceil(64) * 8 + 20_000_000);
+    }
+
+    #[test]
+    fn picker_flags_are_packed_not_one_byte_per_piece() {
+        let picker = PiecePicker::new(1_000_000, 16 * 1024, 16 * 1024);
+        assert_eq!(picker.wanted.memory_bytes(), 125_000);
+        assert_eq!(picker.priority_count, 0);
+    }
+
+    #[test]
+    fn default_priority_never_scans_pieces() {
+        let mut picker = PiecePicker::new(8, 16 * 1024, 16 * 1024);
+        picker.availability.add_bitfield(&[0xFF]);
+        assert!(picker.priority_piece(|_| true).is_none());
+        picker.set_priority([5]);
+        assert_eq!(picker.priority_count, 1);
+        assert_eq!(picker.priority_piece(|_| true), Some(5));
+        picker.set_priority_mask(vec![false; 8]);
+        assert_eq!(picker.priority_count, 0);
+        assert!(picker.priority_piece(|_| true).is_none());
+    }
+}

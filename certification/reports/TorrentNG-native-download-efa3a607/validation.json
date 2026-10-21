@@ -1,0 +1,67 @@
+{
+  "base_commit": "efa3a607e0ea93399529343dab6b231162ebfaef",
+  "final_commit": "c7b586a0aa8d990c658fbcfa775791d95897ff5c",
+  "branch": "codex/native-download-efa3a607",
+  "commits": [
+    "c7b586a0aa8d990c658fbcfa775791d95897ff5c fix(engine): filter hybrid ownership before choosing partial pieces",
+    "5127d18bf1ea191e46a3c14dc9e63587fbacf7a7 fix(engine): keep download I/O live and continue partial pieces"
+  ],
+  "pushed": false,
+  "source_files": {
+    "crates/rt-engine/src/torrent_task.rs": "d540bb7e4e0e350a380793d3efb1562a494b527f33b27546bc262f77b532ef69",
+    "crates/rt-engine/src/torrent_task/peer_transfer.rs": "3efd04537312c3ca0b2dbea49a3b5b5e4f41e575c45aec1b5c5e15186a18bede",
+    "crates/rt-engine/src/transfer/hybrid.rs": "9d4b0edc6d5360c60ff632de826e342f9675df8d8028e3ecfb207d8f1d279225",
+    "crates/rt-engine/src/transfer/live.rs": "4577b7bf267791058b7343de0c21fd172f172a509ca5c7ba197c9182bda394cc",
+    "crates/rt-piece-picker/src/availability.rs": "278792a0e0fc5288f81f941163980924a061e1a3c913601312ef895463dcd517",
+    "crates/rt-piece-picker/src/picker.rs": "2acc9232a428e73254300e5dc52ac875423bd438cac193e037296127c1d27d61"
+  },
+  "tests": {
+    "rt-engine": 767,
+    "rt-piece-picker": 80
+  },
+  "original_checkpoint_regression": "failed with a two-second timeout, as expected",
+  "patch_validation": "applies to base and reconstructs the exact final Git tree",
+  "format_and_whitespace": "pass",
+  "daemon_build": {
+    "status": "pass",
+    "rust": "1.94.0",
+    "target": "x86_64-unknown-linux-gnu",
+    "release_lto": false,
+    "release_codegen_units": 16,
+    "sha256": "c74bd0ff65e2727d2da65504948361fc13e5f9683847b56f5272bf172fd6dd5b"
+  },
+  "native_download": {
+    "status": "PASS",
+    "measurement": "correctness only",
+    "pieces": 756,
+    "piece_bytes": 1048576,
+    "binary_sha256": "c74bd0ff65e2727d2da65504948361fc13e5f9683847b56f5272bf172fd6dd5b",
+    "payload_sha256": "d9006b23b6f88d7a407f6583788a9c368448eea18e3622add9a20f2948c98241",
+    "sent_bytes": 792952832,
+    "distinct_requested_pieces": 756,
+    "verified_have_count": 756
+  },
+  "request_order_evidence": {
+    "baseline-wire-756": {
+      "requests": 8960,
+      "first_64_requests_distinct_pieces": 64,
+      "requested_bytes": 146800640
+    },
+    "exact-baseline-wire-756": {
+      "requests": 48707,
+      "first_64_requests_distinct_pieces": 63,
+      "requested_bytes": 798015488
+    },
+    "fixed-wire-756": {
+      "requests": 48398,
+      "first_64_requests_distinct_pieces": 1,
+      "requested_bytes": 792952832
+    }
+  },
+  "limits": [
+    "No CPU/RAM comparator rerun.",
+    "The saved qBittorrent stall was not reproduced locally; its exact cause remains unconfirmed.",
+    "The 35-second partial baseline stopped at its configured deadline, not because of a reproduced stall.",
+    "Original fixture repeats a piece; final fixture has unique data per block. These are correctness runs, not matched performance trials."
+  ]
+}

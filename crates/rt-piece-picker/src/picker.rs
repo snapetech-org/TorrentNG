@@ -250,6 +250,10 @@ pub struct PiecePicker {
     /// In-progress pieces (piece index → state).
     in_progress: std::collections::HashMap<usize, PieceState>,
     in_progress_bytes: usize,
+    /// Continue an admitted piece instead of drawing a new random piece for
+    /// each block. This is a hint only: peer availability, priority, rarity,
+    /// and sequential policy are rechecked on every pick.
+    continuation: Option<usize>,
     /// Priority pieces (selected before rarest-first or sequential order).
     ///
     /// Keep this as packed flags rather than a `Vec<usize>`. A high-priority
@@ -342,6 +346,7 @@ impl PiecePicker {
             enabled: PieceFlags::new(piece_count, true),
             in_progress: std::collections::HashMap::new(),
             in_progress_bytes: 0,
+            continuation: None,
             priority: PieceFlags::new(piece_count, false),
             priority_count: 0,
             sequential: false,
@@ -497,7 +502,7 @@ impl PiecePicker {
 
         // Priority pieces first.
         if let Some(piece) = self
-            .priority_piece(|piece| self.piece_is_requestable(piece) && peer_has.has_piece(piece))
+            .priority_piece(|piece| self.piece_can_be_picked(piece) && peer_has.has_piece(piece))
         {
             return self.pick_block_from(piece);
         }
@@ -507,7 +512,7 @@ impl PiecePicker {
                 .sequential_start_piece
                 .min(self.piece_count.saturating_sub(1));
             if let Some(piece) = self.availability.candidate_min_by_key(|piece| {
-                if !self.piece_is_requestable(piece) || !peer_has.has_piece(piece) {
+                if !self.piece_can_be_picked(piece) || !peer_has.has_piece(piece) {
                     return None;
                 }
                 Some(self.sequential_distance(piece, start))
@@ -526,7 +531,7 @@ impl PiecePicker {
     /// Pick from a source that is known to have every piece but is not counted
     /// in peer availability, such as a BEP19 webseed.
     pub fn pick_from_seed(&mut self) -> Option<BlockRequest> {
-        if let Some(piece) = self.priority_piece(|piece| self.piece_is_requestable(piece)) {
+        if let Some(piece) = self.priority_piece(|piece| self.piece_can_be_picked(piece)) {
             return self.pick_block_from(piece);
         }
         if self.sequential {
@@ -534,17 +539,21 @@ impl PiecePicker {
                 .sequential_start_piece
                 .min(self.piece_count.saturating_sub(1));
             if let Some(piece) = self.availability.candidate_min_by_key(|piece| {
-                self.piece_is_requestable(piece)
+                self.piece_can_be_picked(piece)
                     .then(|| self.sequential_distance(piece, start))
             }) {
                 return self.pick_block_from(piece);
             }
             return None;
         }
-        let piece = self.availability.candidate_matching_random(
-            |piece| self.piece_is_requestable(piece),
-            &mut rand::rng(),
-        )?;
+        let piece = self
+            .partial_piece(|piece| self.piece_is_requestable(piece))
+            .or_else(|| {
+                self.availability.candidate_matching_random(
+                    |piece| self.piece_can_be_picked(piece),
+                    &mut rand::rng(),
+                )
+            })?;
         self.pick_block_from(piece)
     }
 
@@ -575,6 +584,9 @@ impl PiecePicker {
         if self.priority_count == 0 {
             return None;
         }
+        if let Some(piece) = self.partial_piece(|piece| self.priority.get(piece) && accept(piece)) {
+            return Some(piece);
+        }
         self.availability.candidate_matching_random(
             |piece| self.priority.get(piece) && accept(piece),
             &mut rand::rng(),
@@ -589,6 +601,28 @@ impl PiecePicker {
                 .in_progress
                 .get(&piece)
                 .is_none_or(|state| state.next_unrequested().is_some())
+    }
+
+    fn piece_can_be_picked(&self, piece: usize) -> bool {
+        self.piece_is_requestable(piece)
+            && (self.in_progress.contains_key(&piece)
+                || self.can_admit_piece_state(self.piece_length_for(piece)))
+    }
+
+    /// Common case is one O(1) continuation lookup. After a peer/policy change,
+    /// inspect only admitted partial state, never the whole torrent.
+    fn partial_piece(&self, accept: impl Fn(usize) -> bool) -> Option<usize> {
+        if let Some(piece) = self
+            .continuation
+            .filter(|&piece| self.in_progress.contains_key(&piece) && accept(piece))
+        {
+            return Some(piece);
+        }
+        self.in_progress
+            .keys()
+            .copied()
+            .filter(|&piece| accept(piece))
+            .min_by_key(|&piece| (self.availability.count(piece), piece))
     }
 
     fn sequential_distance(&self, piece: usize, start: usize) -> usize {
@@ -608,9 +642,12 @@ impl PiecePicker {
         &self,
         peer_has: &A,
     ) -> Option<usize> {
-        self.availability.rarest_matching_random_from_peer(
+        let preferred = self
+            .partial_piece(|piece| self.piece_is_requestable(piece) && peer_has.has_piece(piece));
+        self.availability.rarest_matching_from_peer_with_preference(
             peer_has,
-            |piece| self.piece_is_requestable(piece),
+            |piece| self.piece_can_be_picked(piece),
+            preferred,
             &mut rand::rng(),
         )
     }
@@ -719,6 +756,9 @@ impl PiecePicker {
             })
         };
         self.refresh_candidate(piece);
+        if request.is_some() {
+            self.continuation = Some(piece);
+        }
         request
     }
 
@@ -1592,6 +1632,93 @@ mod tests {
         p.set_priority(vec![2]);
         let req = p.pick(&peer_has_all(4)).unwrap();
         assert_eq!(req.piece, 2);
+    }
+
+    #[test]
+    fn equal_rarity_download_finishes_admitted_pieces_before_opening_more() {
+        let length = MAX_BLOCK_SIZE * 64;
+        let mut picker = PiecePicker::new(756, length, length);
+        let peers = peer_has_all(756);
+        for piece in 0..756 {
+            picker.availability.add_have(piece);
+        }
+        let mut completed = 0;
+        for _ in 0..4 * 64 {
+            let request = picker.pick(&peers).unwrap();
+            assert_eq!(
+                picker.in_progress.len(),
+                1,
+                "one serial source needs one assembly"
+            );
+            if picker.block_received_pending(request.piece as usize, request.begin) {
+                picker.mark_have(request.piece as usize);
+                completed += 1;
+            }
+        }
+        assert_eq!(completed, 4);
+    }
+
+    #[test]
+    fn continuation_respects_rarer_pieces_and_priority_changes() {
+        let length = MAX_BLOCK_SIZE * 4;
+        let mut picker = PiecePicker::new(3, length, length);
+        for piece in 0..3 {
+            picker.availability.add_have(piece);
+        }
+        let first = picker.pick(&[true, false, false]).unwrap();
+        picker.block_received_pending(first.piece as usize, first.begin);
+        picker.availability.add_have(0);
+        // A rarer newly available piece preempts an unfinished common one.
+        assert_eq!(picker.pick(&[true, true, false]).unwrap().piece, 1);
+        picker.set_priority([2]);
+        assert_eq!(picker.pick(&[true, true, true]).unwrap().piece, 2);
+        picker.set_piece_enabled(2, false);
+        assert_eq!(picker.pick(&[true, true, true]).unwrap().piece, 1);
+    }
+
+    #[test]
+    fn alternating_disjoint_peers_continue_their_partial_pieces() {
+        let length = MAX_BLOCK_SIZE * 4;
+        let mut picker = PiecePicker::new(4, length, length);
+        for piece in 0..4 {
+            picker.availability.add_have(piece);
+        }
+        let peers = [[true, true, false, false], [false, false, true, true]];
+        let first = picker.pick(&peers[0]).unwrap();
+        let second = picker.pick(&peers[1]).unwrap();
+        for _ in 0..3 {
+            assert_eq!(picker.pick(&peers[0]).unwrap().piece, first.piece);
+            assert_eq!(picker.pick(&peers[1]).unwrap().piece, second.piece);
+        }
+        assert_eq!(picker.in_progress.len(), 2);
+    }
+
+    #[test]
+    fn seed_continues_partial_piece_without_peer_availability() {
+        let length = MAX_BLOCK_SIZE * 3;
+        let mut picker = PiecePicker::new(100, length, length);
+        let first = picker.pick_from_seed().unwrap();
+        for _ in 0..2 {
+            assert_eq!(picker.pick_from_seed().unwrap().piece, first.piece);
+        }
+        assert_eq!(picker.in_progress.len(), 1);
+        assert_ne!(picker.pick_from_seed().unwrap().piece, first.piece);
+    }
+
+    #[test]
+    fn full_state_budget_still_picks_existing_partial_work() {
+        let length = MAX_BLOCK_SIZE * 3;
+        let mut picker = PiecePicker::new(100, length, length);
+        for piece in 0..100 {
+            picker.availability.add_have(piece);
+        }
+        let first = picker.pick(&peer_has_all(100)).unwrap();
+        // Exercise admission without allocating 64 MiB of bookkeeping.
+        picker.in_progress_bytes = MAX_IN_PROGRESS_PIECE_STATE_BYTES;
+        assert_eq!(picker.pick(&peer_has_all(100)).unwrap().piece, first.piece);
+        assert_eq!(picker.pick(&peer_has_all(100)).unwrap().piece, first.piece);
+        assert!(picker.pick(&peer_has_all(100)).is_none());
+        assert_eq!(picker.in_progress.len(), 1);
     }
 
     #[test]

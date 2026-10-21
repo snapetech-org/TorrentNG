@@ -1,0 +1,63 @@
+--- a/crates/rt-engine/src/torrent_task.rs
++++ b/crates/rt-engine/src/torrent_task.rs
+@@ -12408,6 +12408,60 @@
+     }
+ 
+     #[tokio::test]
++    async fn checkpoint_drives_pending_write_before_waiting_for_its_fence() {
++        let fx = crash_fixture(vec![7; 8], 4, 211).await;
++        fx.write_payload();
++        let mut task = crash_task(&fx, quiet_runtime(), StorageIoConfig::default()).await;
++        // Park a real write after it takes the checkpoint's read fence but
++        // before storage admission. Only polling the actor-owned future can
++        // release that fence, even after lane capacity becomes available.
++        let mut permits = Vec::new();
++        while let Some(permit) = task.storage.try_acquire(IoClass::PeerWrite) {
++            permits.push(permit);
++        }
++        assert!(!permits.is_empty());
++        let storage = task.storage.clone();
++        let path = fx.payload_path();
++        task.transfer_jobs.push(Box::pin(async move {
++            let result = storage
++                .write_at(
++                    IoClass::PeerWrite,
++                    &path,
++                    0,
++                    bytes::Bytes::from_static(b"abcd"),
++                    false,
++                )
++                .await
++                .map_err(|error| error.to_string());
++            TransferCompletion::AggregatePieceWritten {
++                piece: 0,
++                generation: 1,
++                result,
++            }
++        }));
++        assert!(task.transfer_jobs.next().now_or_never().is_none());
++        drop(permits);
++
++        let (barrier, evidence) =
++            tokio::time::timeout(Duration::from_secs(2), task.run_barrier(true))
++                .await
++                .expect("checkpoint stopped polling the write that owns its fence");
++        assert_eq!(barrier, BarrierOutcome::Synced);
++        drop(evidence);
++        assert_eq!(&std::fs::read(fx.payload_path()).unwrap()[..4], b"abcd");
++        assert_eq!(
++            task.transfer_jobs.len(),
++            1,
++            "completion still belongs to the actor"
++        );
++        assert!(matches!(
++            task.transfer_jobs.next().await,
++            Some(TransferCompletion::AggregatePieceWritten { result: Ok(()), .. })
++        ));
++        assert!(task.transfer_jobs.is_empty());
++    }
++
++    #[tokio::test]
+     async fn failed_block_write_releases_picker_request() {
+         let temp = tempfile::tempdir().unwrap();
+         let save_root = temp.path().join("not-a-directory");

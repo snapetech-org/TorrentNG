@@ -2,7 +2,7 @@
 ///
 /// One tokio task per torrent owns: tracker announce loop, peer connection
 /// management, piece picker, and storage writes.
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::io::IoSlice;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
@@ -1500,6 +1500,56 @@ enum TransferCompletion {
 type TransferJobFuture =
     Pin<Box<dyn std::future::Future<Output = TransferCompletion> + Send + 'static>>;
 
+/// Bounded actor-owned I/O, including completions not yet applied to the
+/// picker. Inline writes and checkpoint barriers must keep polling these
+/// futures: they may own the very file lock, lane slot, or write fence that
+/// the inline operation needs. A backend finishing does not poll its caller.
+///
+/// Retain completed results until the actor handles them normally. Applying
+/// them inside a checkpoint would re-enter state transitions and could start
+/// a second checkpoint. No per-block Tokio task is needed.
+#[derive(Default)]
+struct TransferJobs {
+    pending: futures::stream::FuturesUnordered<TransferJobFuture>,
+    completed: VecDeque<TransferCompletion>,
+}
+
+impl TransferJobs {
+    fn len(&self) -> usize {
+        self.pending.len() + self.completed.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.pending.is_empty() && self.completed.is_empty()
+    }
+
+    fn push(&mut self, job: TransferJobFuture) {
+        self.pending.push(job);
+    }
+
+    async fn next(&mut self) -> Option<TransferCompletion> {
+        match self.completed.pop_front() {
+            Some(completion) => Some(completion),
+            None => self.pending.next().await,
+        }
+    }
+
+    async fn run_until<F: std::future::Future>(&mut self, operation: F) -> F::Output {
+        tokio::pin!(operation);
+        loop {
+            tokio::select! {
+                biased;
+                result = &mut operation => return result,
+                Some(completion) = self.pending.next(), if !self.pending.is_empty() => {
+                    // Moving a result here does not free an admission slot:
+                    // len() counts both queues until the actor consumes it.
+                    self.completed.push_back(completion);
+                }
+            }
+        }
+    }
+}
+
 impl LeasedBlockEvent {
     fn new(block: BlockEvent, memory_lease: MemoryLease) -> anyhow::Result<Self> {
         let payload_bytes = u64::try_from(block.data.len())?;
@@ -2943,7 +2993,7 @@ pub struct TorrentTask {
     completed_piece_verify_from_disk: u64,
     prepared_files: Arc<Mutex<HashSet<u32>>>,
     prepared_file_locks: Arc<tokio::sync::Mutex<HashMap<u32, Arc<tokio::sync::Mutex<()>>>>>,
-    transfer_jobs: futures::stream::FuturesUnordered<TransferJobFuture>,
+    transfer_jobs: TransferJobs,
     pending_transfer_blocks: HashMap<(u32, u32), u64>,
     pending_transfer_pieces: HashMap<u32, PendingPieceWork>,
     next_transfer_generation: u64,
@@ -3338,7 +3388,7 @@ impl TorrentTask {
             completed_piece_verify_from_disk: 0,
             prepared_files: Arc::new(Mutex::new(HashSet::new())),
             prepared_file_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            transfer_jobs: futures::stream::FuturesUnordered::new(),
+            transfer_jobs: TransferJobs::default(),
             pending_transfer_blocks: HashMap::new(),
             pending_transfer_pieces: HashMap::new(),
             next_transfer_generation: 0,
@@ -5881,31 +5931,33 @@ impl TorrentTask {
             data_offset = end;
             match shared_payload_lease.as_ref() {
                 Some(lease) => {
-                    scheduled_write_with_shared_payload_lease(
-                        &self.storage,
-                        IoClass::PeerWrite,
-                        &path,
-                        region.file_offset,
-                        block.data.slice(start..end),
-                        true,
-                        Arc::clone(lease),
-                    )
-                    .await?;
+                    self.transfer_jobs
+                        .run_until(scheduled_write_with_shared_payload_lease(
+                            &self.storage,
+                            IoClass::PeerWrite,
+                            &path,
+                            region.file_offset,
+                            block.data.slice(start..end),
+                            true,
+                            Arc::clone(lease),
+                        ))
+                        .await?;
                 }
                 None => {
                     self.resources.record_payload_copy(
                         PayloadCopyPath::PeerFileSegment,
                         region_data.len() as u64,
                     );
-                    scheduled_write(
-                        &self.storage,
-                        IoClass::PeerWrite,
-                        &path,
-                        region.file_offset,
-                        bytes::Bytes::copy_from_slice(region_data),
-                        true,
-                    )
-                    .await?;
+                    self.transfer_jobs
+                        .run_until(scheduled_write(
+                            &self.storage,
+                            IoClass::PeerWrite,
+                            &path,
+                            region.file_offset,
+                            bytes::Bytes::copy_from_slice(region_data),
+                            true,
+                        ))
+                        .await?;
                 }
             }
         }
@@ -5958,27 +6010,29 @@ impl TorrentTask {
             let region_data = data.slice(start..end);
             match payload_lease.as_ref() {
                 Some(lease) => {
-                    scheduled_write_with_shared_payload_lease(
-                        &self.storage,
-                        IoClass::PeerWrite,
-                        &path,
-                        region.file_offset,
-                        region_data,
-                        true,
-                        Arc::clone(lease),
-                    )
-                    .await?;
+                    self.transfer_jobs
+                        .run_until(scheduled_write_with_shared_payload_lease(
+                            &self.storage,
+                            IoClass::PeerWrite,
+                            &path,
+                            region.file_offset,
+                            region_data,
+                            true,
+                            Arc::clone(lease),
+                        ))
+                        .await?;
                 }
                 None => {
-                    scheduled_write(
-                        &self.storage,
-                        IoClass::PeerWrite,
-                        &path,
-                        region.file_offset,
-                        region_data,
-                        true,
-                    )
-                    .await?;
+                    self.transfer_jobs
+                        .run_until(scheduled_write(
+                            &self.storage,
+                            IoClass::PeerWrite,
+                            &path,
+                            region.file_offset,
+                            region_data,
+                            true,
+                        ))
+                        .await?;
                 }
             }
         }
@@ -5992,15 +6046,16 @@ impl TorrentTask {
         path: &std::path::Path,
         len: u64,
     ) -> anyhow::Result<()> {
-        prepare_file_once_with_locks(
-            &self.storage,
-            &self.prepared_files,
-            &self.prepared_file_locks,
-            file_index,
-            path,
-            len,
-        )
-        .await?;
+        self.transfer_jobs
+            .run_until(prepare_file_once_with_locks(
+                &self.storage,
+                &self.prepared_files,
+                &self.prepared_file_locks,
+                file_index,
+                path,
+                len,
+            ))
+            .await?;
         Ok(())
     }
 
@@ -7046,7 +7101,11 @@ impl TorrentTask {
         if !force && self.storage.io_config().durability_mode == rt_storage::DurabilityMode::Fast {
             return (BarrierOutcome::SkippedFast, None);
         }
-        match self.storage.sync_all_open_files_with_evidence().await {
+        match self
+            .transfer_jobs
+            .run_until(self.storage.sync_all_open_files_with_evidence())
+            .await
+        {
             Ok(evidence) => (BarrierOutcome::Synced, Some(evidence)),
             Err(e) if e.is_operation_unsupported() => {
                 self.fsync_unsupported = true;
@@ -12403,6 +12462,168 @@ mod tests {
         assert!(task._file_policy_memory_lease.is_none());
         assert_eq!(
             resources.snapshot().classes[MemoryClass::Metadata as usize].used_bytes,
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn checkpoint_drives_pending_write_before_waiting_for_its_fence() {
+        let fx = crash_fixture(vec![7; 8], 4, 211).await;
+        fx.write_payload();
+        let mut task = crash_task(&fx, quiet_runtime(), StorageIoConfig::default()).await;
+        // Park a real write after it takes the checkpoint's read fence but
+        // before storage admission. Only polling the actor-owned future can
+        // release that fence, even after lane capacity becomes available.
+        let mut permits = Vec::new();
+        while let Some(permit) = task.storage.try_acquire(IoClass::PeerWrite) {
+            permits.push(permit);
+        }
+        assert!(!permits.is_empty());
+        let storage = task.storage.clone();
+        let path = fx.payload_path();
+        task.transfer_jobs.push(Box::pin(async move {
+            let result = storage
+                .write_at(
+                    IoClass::PeerWrite,
+                    &path,
+                    0,
+                    bytes::Bytes::from_static(b"abcd"),
+                    false,
+                )
+                .await
+                .map_err(|error| error.to_string());
+            TransferCompletion::AggregatePieceWritten {
+                piece: 0,
+                generation: 1,
+                result,
+            }
+        }));
+        assert!(task.transfer_jobs.next().now_or_never().is_none());
+        drop(permits);
+
+        let (barrier, evidence) =
+            tokio::time::timeout(Duration::from_secs(2), task.run_barrier(true))
+                .await
+                .expect("checkpoint stopped polling the write that owns its fence");
+        assert_eq!(barrier, BarrierOutcome::Synced);
+        drop(evidence);
+        assert_eq!(&std::fs::read(fx.payload_path()).unwrap()[..4], b"abcd");
+        assert_eq!(
+            task.transfer_jobs.len(),
+            1,
+            "completion still belongs to the actor"
+        );
+        assert!(matches!(
+            task.transfer_jobs.next().await,
+            Some(TransferCompletion::AggregatePieceWritten { result: Ok(()), .. })
+        ));
+        assert!(task.transfer_jobs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn inline_prepare_drives_pending_owner_of_the_same_file_lock() {
+        let fx = crash_fixture(vec![7; 8], 4, 212).await;
+        let mut task = crash_task(&fx, quiet_runtime(), StorageIoConfig::default()).await;
+        let file_lock = Arc::new(tokio::sync::Mutex::new(()));
+        task.prepared_file_locks
+            .lock()
+            .await
+            .insert(0, Arc::clone(&file_lock));
+        let guard = file_lock.lock_owned().await;
+        task.transfer_jobs.push(Box::pin(async move {
+            drop(guard);
+            TransferCompletion::AggregatePieceWritten {
+                piece: 0,
+                generation: 1,
+                result: Ok(()),
+            }
+        }));
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            task.prepare_file_once(0, &fx.payload_path(), 8),
+        )
+        .await
+        .expect("inline preparation stopped polling the file lock owner")
+        .unwrap();
+        assert!(lock_prepared_files(&task.prepared_files).contains(&0));
+        assert_eq!(task.transfer_jobs.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn inline_write_drives_pending_owner_of_storage_capacity() {
+        let fx = crash_fixture(vec![7; 8], 4, 213).await;
+        let mut task = crash_task(&fx, quiet_runtime(), StorageIoConfig::default()).await;
+        task.prepare_file_once(0, &fx.payload_path(), 8)
+            .await
+            .unwrap();
+        let mut permits = Vec::new();
+        while let Some(permit) = task.storage.try_acquire(IoClass::PeerWrite) {
+            permits.push(permit);
+        }
+        assert!(!permits.is_empty());
+        task.transfer_jobs.push(Box::pin(async move {
+            drop(permits);
+            TransferCompletion::AggregatePieceWritten {
+                piece: 0,
+                generation: 1,
+                result: Ok(()),
+            }
+        }));
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            task.write_block(&BlockEvent {
+                piece: 0,
+                offset: 0,
+                data: bytes::Bytes::from_static(b"abcd"),
+            }),
+        )
+        .await
+        .expect("inline write stopped polling the storage capacity owner")
+        .unwrap();
+        assert_eq!(&std::fs::read(fx.payload_path()).unwrap()[..4], b"abcd");
+        assert_eq!(task.transfer_jobs.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn interrupted_inline_io_retains_completions_and_their_payload_leases() {
+        let resources = ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default());
+        let lease = Arc::new(
+            resources
+                .try_acquire(MemoryClass::PieceAssembly, 4)
+                .unwrap(),
+        );
+        let mut jobs = TransferJobs::default();
+        jobs.push(Box::pin(async move {
+            TransferCompletion::PieceVerified {
+                piece: 0,
+                generation: 1,
+                result: VerifyResult::Valid,
+                assembled: Some((bytes::Bytes::from_static(b"abcd"), Some(lease))),
+            }
+        }));
+        assert!(jobs
+            .run_until(std::future::pending::<()>())
+            .now_or_never()
+            .is_none());
+        assert_eq!(
+            jobs.len(),
+            1,
+            "buffered completion still consumes the bounded job slot"
+        );
+        assert!(!jobs.is_empty());
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::PieceAssembly as usize].used_bytes,
+            4
+        );
+        let completion = jobs.next().await.unwrap();
+        assert!(jobs.is_empty());
+        assert!(matches!(
+            completion,
+            TransferCompletion::PieceVerified { .. }
+        ));
+        drop(completion);
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::PieceAssembly as usize].used_bytes,
             0
         );
     }

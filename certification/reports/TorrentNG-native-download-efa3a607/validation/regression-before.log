@@ -1,0 +1,37 @@
+   Compiling rt-path v0.1.0 (/workspace/scratch/64035e61355e/torrentng-current-efa3a607/crates/rt-path)
+   Compiling rt-bencode v0.1.0 (/workspace/scratch/64035e61355e/torrentng-current-efa3a607/crates/rt-bencode)
+   Compiling rt-hash v0.1.0 (/workspace/scratch/64035e61355e/torrentng-current-efa3a607/crates/rt-hash)
+   Compiling rt-metrics v0.1.0 (/workspace/scratch/64035e61355e/torrentng-current-efa3a607/crates/rt-metrics)
+   Compiling rt-piece-map v0.1.0 (/workspace/scratch/64035e61355e/torrentng-current-efa3a607/crates/rt-piece-map)
+   Compiling rt-logging v0.1.0 (/workspace/scratch/64035e61355e/torrentng-current-efa3a607/crates/rt-logging)
+   Compiling rt-storage v0.1.0 (/workspace/scratch/64035e61355e/torrentng-current-efa3a607/crates/rt-storage)
+   Compiling rt-peer-wire v0.1.0 (/workspace/scratch/64035e61355e/torrentng-current-efa3a607/crates/rt-peer-wire)
+   Compiling rt-config v0.1.0 (/workspace/scratch/64035e61355e/torrentng-current-efa3a607/crates/rt-config)
+   Compiling rt-db v0.1.0 (/workspace/scratch/64035e61355e/torrentng-current-efa3a607/crates/rt-db)
+   Compiling rt-metainfo v0.1.0 (/workspace/scratch/64035e61355e/torrentng-current-efa3a607/crates/rt-metainfo)
+   Compiling rt-dht v0.1.0 (/workspace/scratch/64035e61355e/torrentng-current-efa3a607/crates/rt-dht)
+   Compiling rt-tracker v0.1.0 (/workspace/scratch/64035e61355e/torrentng-current-efa3a607/crates/rt-tracker)
+   Compiling rt-utp v0.1.0 (/workspace/scratch/64035e61355e/torrentng-current-efa3a607/crates/rt-utp)
+   Compiling rt-piece-picker v0.1.0 (/workspace/scratch/64035e61355e/torrentng-current-efa3a607/crates/rt-piece-picker)
+   Compiling rt-fastresume v0.1.0 (/workspace/scratch/64035e61355e/torrentng-current-efa3a607/crates/rt-fastresume)
+   Compiling rt-peer-manager v0.1.0 (/workspace/scratch/64035e61355e/torrentng-current-efa3a607/crates/rt-peer-manager)
+   Compiling rt-session v0.1.0 (/workspace/scratch/64035e61355e/torrentng-current-efa3a607/crates/rt-session)
+   Compiling rt-engine v0.1.0 (/workspace/scratch/64035e61355e/torrentng-current-efa3a607/crates/rt-engine)
+    Finished `test` profile [unoptimized] target(s) in 1m 06s
+     Running unittests src/lib.rs (/workspace/scratch/64035e61355e/audit-native-fix/test-target/debug/deps/rt_engine-38cf9688043a7bdc)
+
+running 1 test
+
+thread 'torrent_task::tests::checkpoint_drives_pending_write_before_waiting_for_its_fence' (2117) panicked at crates/rt-engine/src/torrent_task.rs:12437:17:
+checkpoint stopped polling the write that owns its fence: Elapsed(())
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test torrent_task::tests::checkpoint_drives_pending_write_before_waiting_for_its_fence ... FAILED
+
+failures:
+
+failures:
+    torrent_task::tests::checkpoint_drives_pending_write_before_waiting_for_its_fence
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 763 filtered out; finished in 2.02s
+
+error: test failed, to rerun pass `-p rt-engine --lib`

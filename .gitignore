@@ -30,6 +30,9 @@ certification/reports/*
 !certification/reports/TorrentNG-native-architecture-7c2dd48.zip
 !certification/reports/TorrentNG-native-architecture-7c2dd48/
 !certification/reports/TorrentNG-native-architecture-7c2dd48/**
+!certification/reports/TorrentNG-native-download-efa3a607.zip
+!certification/reports/TorrentNG-native-download-efa3a607/
+!certification/reports/TorrentNG-native-download-efa3a607/**
 !certification/reports/TorrentNG-client-benchmark-20261021T152853Z.md
 !certification/reports/TorrentNG-client-benchmark-20261021T152853Z-samples.csv
 !certification/reports/TorrentNG-client-benchmark-20261021T152853Z-memory-profile.json

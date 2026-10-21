@@ -170,6 +170,12 @@ impl HybridLedger {
         self.ledger.reserve_piece_affine(conn, block)
     }
 
+    /// Selection must apply the same piece ownership rule as reservation,
+    /// otherwise a peer repeatedly selects another connection's partial piece.
+    pub fn can_request_canonical_piece(&self, conn: ConnectionId, piece: u32) -> bool {
+        self.is_live(conn) && !self.ledger.piece_has_foreign_activity(conn, piece)
+    }
+
     pub fn commit_v1(
         &mut self,
         conn: ConnectionId,

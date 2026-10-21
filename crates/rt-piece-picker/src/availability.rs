@@ -215,7 +215,7 @@ impl Availability {
     pub fn rarest_matching_random_from_peer<A, F, R>(
         &self,
         peer_has: &A,
-        mut predicate: F,
+        predicate: F,
         rng: &mut R,
     ) -> Option<usize>
     where
@@ -223,12 +223,41 @@ impl Availability {
         F: FnMut(usize) -> bool,
         R: Rng + ?Sized,
     {
-        for bucket in self
+        self.rarest_matching_from_peer_with_preference(peer_has, predicate, None, rng)
+    }
+
+    /// Prefer an already-started piece among equally rare candidates. Rarer
+    /// pieces still win, and newly opened pieces retain random tie breaking.
+    pub fn rarest_matching_from_peer_with_preference<A, F, R>(
+        &self,
+        peer_has: &A,
+        mut predicate: F,
+        preferred: Option<usize>,
+        rng: &mut R,
+    ) -> Option<usize>
+    where
+        A: PieceAvailability + ?Sized,
+        F: FnMut(usize) -> bool,
+        R: Rng + ?Sized,
+    {
+        let preferred = preferred.filter(|&piece| {
+            self.candidate_positions
+                .get(piece)
+                .is_some_and(|&pos| pos != NO_POSITION)
+                && self.count(piece) > 0
+                && peer_has.has_piece(piece)
+                && predicate(piece)
+        });
+        for (count, bucket) in self
             .buckets
             .iter()
+            .enumerate()
             .skip(1)
-            .filter(|bucket| !bucket.is_empty())
+            .filter(|(_, bucket)| !bucket.is_empty())
         {
+            if let Some(piece) = preferred.filter(|&piece| self.count(piece) as usize == count) {
+                return Some(piece);
+            }
             for _ in 0..bucket.len().min(RANDOM_CANDIDATE_PROBES) {
                 let piece = bucket[rng.random_range(0..bucket.len())] as usize;
                 if peer_has.has_piece(piece) && predicate(piece) {
@@ -237,7 +266,12 @@ impl Availability {
             }
 
             if bucket.len() >= SPARSE_FALLBACK_BUCKET_MIN {
-                return self.rarest_matching_from_peer_set(peer_has, &mut predicate, rng);
+                let selected = self.rarest_matching_from_peer_set(peer_has, &mut predicate, rng)?;
+                return Some(
+                    preferred
+                        .filter(|&piece| self.count(piece) == self.count(selected))
+                        .unwrap_or(selected),
+                );
             }
 
             let mut selected = None;
