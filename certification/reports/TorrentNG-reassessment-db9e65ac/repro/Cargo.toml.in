@@ -1,0 +1,17 @@
+[package]
+name="tng-current-audit-probe"
+version="0.1.0"
+edition="2021"
+[dependencies]
+rt-storage={ path="__REPO__/crates/rt-storage" }
+rt-path={ path="__REPO__/crates/rt-path" }
+rt-metrics={ path="__REPO__/crates/rt-metrics" }
+rt-peer-wire={ path="__REPO__/crates/rt-peer-wire" }
+tokio={ version="=1.52.3",features=["full"] }
+bytes={ version="=1.11.1" }
+libc={ version="=0.2.186" }
+tokio-util={ version="=0.7.18",features=["codec"] }
+[profile.release]
+opt-level=3
+lto=false
+codegen-units=8

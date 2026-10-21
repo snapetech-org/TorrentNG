@@ -1,0 +1,39 @@
+{
+  "commit": "db9e65ac5807d7b3e3d80842d9e447b331fa81c5",
+  "tree": "080ef904c33f57b12ed94062859f745b1e33ecfe",
+  "clean": true,
+  "uname": {
+    "system": "Linux",
+    "node": "8b68ec06a876",
+    "release": "6.18.55",
+    "version": "#1 SMP Wed Oct 14 19:45:18 UTC 2026",
+    "machine": "x86_64",
+    "processor": "x86_64"
+  },
+  "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+  "full_daemon_benchmark_run_here": false,
+  "dependency_versions_match_repo_lock": true,
+  "probe_target": "x86_64-unknown-linux-gnu",
+  "probe_profile": "release opt-level 3, LTO disabled, codegen-units 8",
+  "backend": "pread forced",
+  "payload": "warm 16 MiB file, repeated 16 KiB storage calls, sequential single caller, no network",
+  "resource_governor": "ResourceGovernorConfig::default(); no tracing subscriber",
+  "timing_scope": "steady read loop only; CLOCK_PROCESS_CPUTIME_ID including workers; allocator counting enabled",
+  "strace": "blocked: PTRACE_TRACEME operation not permitted",
+  "validation": "22 current RateTree tests and 3 focused candidate frame-pool tests passed; codec credit repro executed; not a full workspace test run",
+  "reviewed_source_sha256": {
+    "crates/rt-storage/src/scheduler.rs": "e58516889464d3fd370fafff514d645d3d684bd90674b0cc182e37613590418a",
+    "crates/rt-storage/src/frame.rs": "af9ee6c05ada629e2311882886a32a9001b85f006ebe175a460b6b17e9ddb267",
+    "crates/rt-storage/src/backend.rs": "9da5a66d09a7fa82634c8697353476377ffd095b196e6c404114ec94be7785c9",
+    "crates/rt-storage/src/handle_cache.rs": "093a20874a1086df9cd16924e3792b4c5c665443500dd42019b8cdf641015eff",
+    "crates/rt-engine/src/network_budget.rs": "2c133c684283bb4012d305883263b3667f077168227d5151c52a2da396139da7",
+    "crates/rt-engine/src/transfer/rate.rs": "c7a87e852f4dc0f0a7dacb7b99a248bd147b3f716c5324ac96504b5269b3d4f3",
+    "crates/rt-engine/src/torrent_task.rs": "08067bfce0b0bbc3a8bd1f0b10af92e807228db7eae891928de1244c4c0f606c",
+    "crates/rt-engine/src/torrent_task/peer_transfer.rs": "1c1ef4fcba4d9683f5f78c52f6f1695e62c2629fc1d4545ed481c8177b331752",
+    "crates/rt-peer-wire/src/codec.rs": "7e389648043a285ff64a2ab5aaa03674bca4446138e66b971a6bca1cf2ac9cbb",
+    "crates/rt-peer-wire/src/message.rs": "9b3528a014d75925388e1ddc085a8c710d5d64524eadf6fc0a5efa798a7223f0",
+    "deploy/native/Dockerfile": "da305cf5c5b0e5e129e6baffee4a588ca76b0eabd57ed3c8fa6b7fde37eb187d",
+    "docs/TORRENTNG_DEEP_AUDIT_0F726A89.md": "f737fb5627ddc2dc44a11f1fa91cb6dc6029bb8554de245a533543175292fa2c",
+    "docs/CLIENT_PERFORMANCE_BENCHMARK.md": "d913062ed9654a3ffc897db3a389dcc4d7d29d33ed81ba81ac27c148c65550da"
+  }
+}

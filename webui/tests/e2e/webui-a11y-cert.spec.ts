@@ -272,9 +272,13 @@ test('torrent workspace has no serious automated accessibility violations', asyn
   }))).toEqual([])
 })
 
-test('multi-selection workspace has no serious automated accessibility violations', async ({ page }) => {
+test('multi-selection workspace has no serious automated accessibility violations', async ({ page, isMobile }) => {
   await page.getByLabel(/Select TorrentNG a11y fixture 001/i).first().click()
   await page.getByLabel(/Select TorrentNG a11y fixture 002/i).first().click()
+  if (isMobile) {
+    await page.getByRole('row', { name: /TorrentNG a11y fixture 001/i }).focus()
+    await page.keyboard.press('Enter')
+  }
   await expect(page.getByRole('complementary', { name: 'Selection workspace' })).toBeVisible()
 
   const results = await new AxeBuilder({ page })

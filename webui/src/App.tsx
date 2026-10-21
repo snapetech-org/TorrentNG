@@ -209,14 +209,10 @@ function loadDetailAutoDisplay(): boolean {
 function loadDetailPosition(): DetailPosition {
   try {
     const value = localStorage.getItem(DETAIL_POSITION_KEY)
-    return isDetailPosition(value) ? value : defaultDetailPosition()
+    return isDetailPosition(value) ? value : 'right'
   } catch {
-    return defaultDetailPosition()
+    return 'right'
   }
-}
-
-function defaultDetailPosition(): DetailPosition {
-  return typeof window !== 'undefined' && window.innerWidth <= 720 ? 'bottom' : 'right'
 }
 
 function isSettingsSection(value: string | null): value is SettingsSection {
@@ -568,7 +564,7 @@ export function App() {
     clearSelection()
   }
 
-  function handleSelect(hash: string, mode: SelectionMode = 'toggle') {
+  function handleSelect(hash: string, mode: SelectionMode = 'toggle', fromCheckbox = false) {
     const targetIndex = torrents.findIndex(item => item.hash === hash)
     const anchorIndex = selectionAnchor ? torrents.findIndex(item => item.hash === selectionAnchor) : -1
     const hasRangeAnchor = targetIndex >= 0 && anchorIndex >= 0
@@ -606,7 +602,11 @@ export function App() {
       setSelectionAnchor(hash)
     }
 
+    const hideMobileDetailForBulkSelection = fromCheckbox
+      && typeof window !== 'undefined'
+      && window.innerWidth <= 720
     setDetailHash(current => {
+      if (hideMobileDetailForBulkSelection) return null
       const shouldOpen = detailAutoDisplay || Boolean(current)
       if (!shouldOpen || nextSelected.size === 0) return null
       return current && nextSelected.has(current) ? current : [...nextSelected][0]

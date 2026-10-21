@@ -16,6 +16,9 @@ webui/playwright-report/
 .claude/worktrees/
 benchmarks/report-*.md
 certification/reports/*
+!certification/reports/TorrentNG-reassessment-db9e65ac.zip
+!certification/reports/TorrentNG-reassessment-db9e65ac/
+!certification/reports/TorrentNG-reassessment-db9e65ac/**
 !certification/reports/storage-hardware-local-nvme-20261002.md
 !certification/reports/soak-24h-tng145-current-20261002.md
 !certification/reports/soak-final-tng145-current-20261003.md

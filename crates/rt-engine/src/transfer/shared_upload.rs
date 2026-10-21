@@ -323,6 +323,10 @@ impl SharedUploadConnection {
         lock(&self.state).obligations.next_request()
     }
 
+    pub(crate) fn peek_request(&self) -> Option<BlockExtent> {
+        lock(&self.state).obligations.peek_request()
+    }
+
     pub(crate) fn requeue_front(&self, block: BlockExtent) -> bool {
         lock(&self.state).obligations.requeue_front(block)
     }
