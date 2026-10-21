@@ -47,6 +47,7 @@ Supported features vary by client; the compatibility guides list the limits.
 - [DEPLOYMENT.md](DEPLOYMENT.md) - compatible-client WebUI/API deployment.
 - [CONFIGURATION.md](CONFIGURATION.md) - TorrentNG client and compatible-client
   WebUI/API service configuration.
+- [OIDC authentication](OIDC_AUTHENTICATION.md) - exact provider callback, admission policy, operator-session behavior, recovery, Apple setup, and troubleshooting.
 - [CRASH_SAFETY.md](CRASH_SAFETY.md) - how the TorrentNG client survives power
   loss and crashes: the durability barrier, completion gate, host-crash
   recovery, allocation audit, read-back verification, storage trust ratings,
