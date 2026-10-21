@@ -67,8 +67,6 @@ pub use plan::{
     ImportPlanRequest, MovePlanRequest, PlanIssue, PlannedStorageAction, StoragePlan,
     StoragePlanExecution, StoragePlanStep,
 };
-#[cfg(target_os = "linux")]
-pub use scheduler::FileRangeSendResult;
 pub use scheduler::{
     active_storage_backend_snapshot, preallocation_mode_for_topology, ActiveStorageBackend,
     ActiveStorageBackendSnapshot, DurabilityBarrierEvidence, DurabilityMode, FilePoolStats,
