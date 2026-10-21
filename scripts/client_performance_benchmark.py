@@ -222,6 +222,91 @@ def parse_cgroup_cpu_usage_usec(text):
     return None
 
 
+def parse_torrentng_storage_backend_metrics(text):
+    """Read the selected storage backend and its fixed-buffer capabilities."""
+    boolean_metrics = {
+        "torrentng_storage_runtime_initialized": "runtime_initialized",
+        "torrentng_storage_backend_fixed_buffers_supported": "fixed_buffers_supported",
+        "torrentng_storage_backend_registered_files_supported": "registered_files_supported",
+        "torrentng_storage_backend_fixed_buffer_worker_copy": "fixed_buffer_worker_copy",
+        "torrentng_storage_backend_frame_pool_slots_supported": "frame_pool_slots_supported",
+    }
+    integer_metrics = {
+        "torrentng_storage_backend_max_batch_len": "max_batch_len",
+        "torrentng_storage_backend_fixed_buffer_bytes": "fixed_buffer_bytes",
+    }
+    observation = {}
+    seen = False
+    for line in text.splitlines():
+        if not line or line.startswith("#") or " " not in line:
+            continue
+        name, raw_value = line.rsplit(None, 1)
+        metric_name, separator, labels = name.partition("{")
+        try:
+            value = float(raw_value)
+        except ValueError:
+            continue
+        if not math.isfinite(value):
+            continue
+        if metric_name in boolean_metrics:
+            observation[boolean_metrics[metric_name]] = value >= 0.5
+            seen = True
+        elif metric_name in integer_metrics:
+            observation[integer_metrics[metric_name]] = int(value)
+            seen = True
+        elif (
+            metric_name == "torrentng_storage_backend_selected"
+            and separator and labels.endswith("}")
+        ):
+            backend = re.search(r'(?:^|,)backend="([^"]+)"', labels[:-1])
+            if backend and value >= 0.5:
+                observation["selected_backend"] = backend.group(1)
+                seen = True
+        elif (
+            metric_name == "torrentng_storage_backend_fixed_buffer_strategy"
+            and separator and labels.endswith("}")
+        ):
+            strategy = re.search(r'(?:^|,)strategy="([^"]+)"', labels[:-1])
+            if strategy and value >= 0.5:
+                observation["fixed_buffer_strategy"] = strategy.group(1)
+                seen = True
+    return observation if seen else None
+
+
+def describe_torrentng_storage_backend(observation):
+    if observation is None:
+        return "not observed (TorrentNG was not included in this run)"
+    if observation.get("error"):
+        return f"unavailable ({observation['error']})"
+    metrics = observation.get("metrics")
+    if metrics is None:
+        return "unavailable (storage backend metrics were not exported)"
+    if metrics.get("runtime_initialized") is False:
+        return "storage runtime was not initialized at the post-transfer scrape"
+
+    def yes_no(value):
+        return "yes" if value is True else "no" if value is False else "n/a"
+
+    backend = metrics.get("selected_backend") or "unknown"
+    fixed_buffers = yes_no(metrics.get("fixed_buffers_supported"))
+    registered_files = yes_no(metrics.get("registered_files_supported"))
+    details = [
+        f"backend={backend}; fixed buffers={fixed_buffers}; "
+        f"registered files={registered_files}"
+    ]
+    if "max_batch_len" in metrics:
+        details.append(f"max batch={metrics['max_batch_len']}")
+    if "fixed_buffer_bytes" in metrics:
+        details.append(f"fixed buffer bytes={metrics['fixed_buffer_bytes']}")
+    if metrics.get("fixed_buffer_strategy"):
+        details.append(f"buffer strategy={metrics['fixed_buffer_strategy']}")
+    if "fixed_buffer_worker_copy" in metrics:
+        details.append(f"worker copy={yes_no(metrics['fixed_buffer_worker_copy'])}")
+    if "frame_pool_slots_supported" in metrics:
+        details.append(f"frame-pool slots={yes_no(metrics['frame_pool_slots_supported'])}")
+    return ", ".join(details)
+
+
 def parse_proc_net_dev(text):
     """Sum RX/TX bytes on non-loopback interfaces in one network namespace."""
     received = 0
@@ -468,6 +553,7 @@ class Benchmark:
         self.torrentng_pids = {}
         self.cgroup_paths = {}
         self.engine_memory_metrics = []
+        self.storage_backend_observation = None
         self.process_memory_snapshots = []
         self.process_identity_snapshots = []
         self.process_gap_open = set()
@@ -1473,6 +1559,26 @@ class Benchmark:
         ]
         return max(values) if values else None
 
+    def _capture_storage_backend_observation(self):
+        if not any(row.get("client") == "torrentngd" for row in self.results):
+            self.storage_backend_observation = None
+            return None
+        observation = {
+            "observed_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(
+                timespec="milliseconds",
+            ),
+            "phase": "after_all_transfer_windows",
+        }
+        try:
+            body = self._torrentng_request("/metrics").decode("utf-8", "replace")
+            observation["metrics"] = parse_torrentng_storage_backend_metrics(body)
+            if observation["metrics"] is None:
+                observation["error"] = "storage backend metrics were not exported"
+        except (OSError, urllib.error.URLError, urllib.error.HTTPError, ValueError) as error:
+            observation["error"] = type(error).__name__
+        self.storage_backend_observation = observation
+        return observation
+
     def _write_memory_profile(self):
         samples = []
         for row in self.samples:
@@ -1520,7 +1626,7 @@ class Benchmark:
             })
         self.memory_profile.parent.mkdir(parents=True, exist_ok=True)
         self.memory_profile.write_text(json.dumps({
-            "schema_version": 5,
+            "schema_version": 6,
             "source_commit": self.source_commit,
             "source_tree": self.source_tree,
             "source_dirty": self.source_dirty,
@@ -1534,12 +1640,17 @@ class Benchmark:
                 "diagnostics_enabled": getattr(self, "diagnostics", False),
                 "healthchecks_disabled_for_all_measured_clients": True,
                 "process_tree_sample_interval_seconds": PROCESS_TREE_SAMPLE_SECONDS,
+                "storage_backend_observation": (
+                    "when TorrentNG is included, one authenticated /metrics scrape "
+                    "after all transfer windows"
+                ),
             },
             "host": self.host,
             "memory_samples": samples,
             "process_memory_snapshots": self.process_memory_snapshots,
             "process_identity_snapshots": self.process_identity_snapshots,
             "engine_metrics_snapshots": self.engine_memory_metrics,
+            "storage_backend_observation": getattr(self, "storage_backend_observation", None),
             "notes": {
                 "docker_stats": "Docker-reported container working set, sampled at the configured interval.",
                 "cgroup_memory_current": "Container cgroup total, including anon and file cache.",
@@ -1554,6 +1665,11 @@ class Benchmark:
                 "process_memory_snapshots": "Diagnostic-only TorrentNG /proc status, thread names, smaps totals, and the 20 largest resident mappings captured with cgroup samples.",
                 "process_identity_snapshots": "Diagnostic-only process IDs, names, RSS, and anonymous RSS captured when TorrentNG cgroup anonymous memory exceeds its process anonymous RSS by more than 1 MiB. Command-line arguments are not recorded.",
                 "engine_metrics": "Diagnostic-only TorrentNG resource-governor leases, estimated peer-buffer capacities, storage-pool gauges, and optional allocator metrics sampled during transfer and at phase boundaries.",
+                "storage_backend_observation": (
+                    "When TorrentNG is included, one authenticated /metrics scrape "
+                    "after all transfer windows records the selected backend and "
+                    "fixed-buffer capabilities without adding scrapes to measured intervals."
+                ),
                 "jemalloc_metrics": "Jemalloc allocator gauges are present only when the jemalloc-allocator feature is selected. They describe Jemalloc's allocator state, not total process allocations or RSS.",
                 "source_fingerprint": "SHA-256 derived from commit/tree, a normalized full-index Git diff, and all non-ignored untracked file paths and contents at benchmark start.",
                 "process_memory": "Linux /proc status RSS and anonymous RSS are process-level readings; detailed smaps samples are diagnostic-only and allocator gauges do not replace process RSS.",
@@ -2392,6 +2508,7 @@ class Benchmark:
             )
 
     def _write_report(self, meta, client_images):
+        self._capture_storage_backend_observation()
         self._write_memory_profile()
         load_end = os.getloadavg()
         load_peak = max((float(row[10]) for row in self.samples), default=self.load_start[0])
@@ -2467,6 +2584,8 @@ class Benchmark:
             f"- TorrentNG build mode: {'prebuilt ' + self.prebuilt_image + ' (source, fingerprint, and allocator verified)' if self.skip_build else 'built from this checkout; image labels verified'}",
             f"- Requested TorrentNG runtime/storage worker overrides: {runtime_overrides}",
             f"- Requested TorrentNG memory-cap overrides: {memory_cap_overrides}",
+            "- TorrentNG storage backend (one post-transfer `/metrics` scrape): "
+            + describe_torrentng_storage_backend(self.storage_backend_observation),
             "- Measurement instrumentation: healthchecks disabled for all measured clients; "
             f"process-tree RSS/PSS sampled every {PROCESS_TREE_SAMPLE_SECONDS:g}s; "
             f"diagnostic metrics and detailed TorrentNG smaps {'enabled' if self.diagnostics else 'disabled'}.",
@@ -2621,9 +2740,11 @@ class Benchmark:
             "and block read/write bytes per GiB are listed separately. Each client has an idle baseline "
             f"sampled for {IDLE_SAMPLE_SECONDS:g} seconds before adding a torrent. "
             "Cgroup anonymous/file memory and process-tree RSS/PSS are collected for every client. "
-            "TorrentNG engine metrics and detailed smaps are captured only when "
-            "TNG_CLIENT_BENCH_DIAGNOSTICS=1; diagnostic runs include additional measurement work "
-            "and must not be compared as clean resource trials. Jemalloc counters appear only "
+            "TorrentNG engine memory metrics and detailed smaps are captured only when "
+            "TNG_CLIENT_BENCH_DIAGNOSTICS=1; when TorrentNG is included, every transfer run "
+            "captures backend selection once after the measured windows. Diagnostic runs "
+            "include additional measurement work and must not be compared as clean resource trials. "
+            "Jemalloc counters appear only "
             "when that allocator is selected and do not represent total process allocations.",
             f"- Public download uses the current public Debian swarm with a {DOWNLOAD_TIMEOUT}s "
             "completion timeout. Controlled seeding "
@@ -3272,7 +3393,7 @@ Environment:
   TNG_CLIENT_BENCH_IDLE_WARMUP_SECS=30 (idle mode only)
   TNG_CLIENT_BENCH_IDLE_MEASURE_SECS=60 (idle mode only; minimum 10)
   TNG_CLIENT_BENCH_PROCESS_TREE_SAMPLE_SECS=15 (all clients; also accepts the legacy idle variable)
-  TNG_CLIENT_BENCH_DIAGNOSTICS=1 (enable TorrentNG /metrics, detailed smaps, and spike attribution; diagnostic runs are not clean comparisons)
+  TNG_CLIENT_BENCH_DIAGNOSTICS=1 (enable periodic TorrentNG metrics, detailed smaps, and spike attribution; diagnostic runs are not clean comparisons)
   TNG_CLIENT_BENCH_PEER_BIND=0.0.0.0
   TNG_CLIENT_BENCH_MIMALLOC_PURGE_DELAY=0
   TNG_CLIENT_BENCH_MIMALLOC_ALLOW_THP=0

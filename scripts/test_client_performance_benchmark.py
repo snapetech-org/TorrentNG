@@ -131,6 +131,65 @@ class CgroupCounterTests(unittest.TestCase):
         )
         self.assertIsNone(benchmark.parse_cgroup_cpu_usage_usec("user_usec 10\n"))
 
+    def test_storage_backend_metrics_capture_uring_and_fixed_buffer_capabilities(self) -> None:
+        metrics = benchmark.parse_torrentng_storage_backend_metrics(
+            '# HELP torrentng_storage_runtime_initialized initialized\n'
+            'torrentng_storage_runtime_initialized 1\n'
+            'torrentng_storage_backend_selected{backend="uring"} 1\n'
+            'torrentng_storage_backend_fixed_buffers_supported 1\n'
+            'torrentng_storage_backend_registered_files_supported 1\n'
+            'torrentng_storage_backend_max_batch_len 32\n'
+            'torrentng_storage_backend_fixed_buffer_bytes 262144\n'
+            'torrentng_storage_backend_fixed_buffer_strategy{strategy="frame_pool_slots"} 1\n'
+            'torrentng_storage_backend_fixed_buffer_worker_copy 0\n'
+            'torrentng_storage_backend_frame_pool_slots_supported 1\n'
+        )
+
+        self.assertEqual(metrics, {
+            "runtime_initialized": True,
+            "selected_backend": "uring",
+            "fixed_buffers_supported": True,
+            "registered_files_supported": True,
+            "max_batch_len": 32,
+            "fixed_buffer_bytes": 262144,
+            "fixed_buffer_strategy": "frame_pool_slots",
+            "fixed_buffer_worker_copy": False,
+            "frame_pool_slots_supported": True,
+        })
+        self.assertIn("backend=", benchmark.describe_torrentng_storage_backend({"metrics": metrics}))
+
+    def test_storage_backend_metrics_capture_uninitialized_runtime(self) -> None:
+        metrics = benchmark.parse_torrentng_storage_backend_metrics(
+            "torrentng_storage_runtime_initialized 0\n"
+        )
+
+        self.assertEqual(metrics, {"runtime_initialized": False})
+        self.assertIn(
+            "not initialized",
+            benchmark.describe_torrentng_storage_backend({"metrics": metrics}),
+        )
+
+    def test_post_transfer_storage_backend_scrape_runs_only_for_torrentng(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance.results = [{"client": "torrentngd"}]
+        instance._torrentng_request = mock.Mock(return_value=(
+            b'torrentng_storage_runtime_initialized 1\n'
+            b'torrentng_storage_backend_selected{backend="pread"} 1\n'
+            b'torrentng_storage_backend_fixed_buffers_supported 0\n'
+            b'torrentng_storage_backend_registered_files_supported 0\n'
+        ))
+
+        observation = instance._capture_storage_backend_observation()
+
+        self.assertEqual(observation["phase"], "after_all_transfer_windows")
+        self.assertEqual(observation["metrics"]["selected_backend"], "pread")
+        instance._torrentng_request.assert_called_once_with("/metrics")
+
+        instance.results = [{"client": "qbittorrent"}]
+        instance._torrentng_request.reset_mock()
+        self.assertIsNone(instance._capture_storage_backend_observation())
+        instance._torrentng_request.assert_not_called()
+
     def test_network_namespace_parser_sums_non_loopback_interfaces(self) -> None:
         received, transmitted = benchmark.parse_proc_net_dev(
             "Inter-| Receive | Transmit\n"

@@ -82,7 +82,12 @@ record the full workload and environment.
 The implementation disables container healthchecks symmetrically, samples
 process-tree RSS/PSS for every client, and keeps detailed TorrentNG `/metrics`,
 `smaps`, and process-spike attribution behind
-`TNG_CLIENT_BENCH_DIAGNOSTICS=1`. Storage completion ownership is carried by
+`TNG_CLIENT_BENCH_DIAGNOSTICS=1`. When TorrentNG is included, each transfer run
+performs one authenticated `/metrics` scrape after all measured transfer windows
+and records the selected storage backend, fixed-buffer and registered-file
+support, and buffer strategy in its report/profile. This makes io_uring findings
+attributable without adding metric scrapes during scored work. Storage completion
+ownership is carried by
 the actual Pread or io_uring job, removing the forwarding Tokio task and
 second completion channel while retaining operation guards through completion
 and invalidating the peer-read cache after writes. Upload admission grants
