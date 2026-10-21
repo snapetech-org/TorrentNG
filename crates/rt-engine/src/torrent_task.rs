@@ -2115,7 +2115,6 @@ impl UploadContext {
     }
 }
 
-#[derive(Clone)]
 struct UploadReadContext {
     save_root: PathBuf,
     piece_map: Arc<PieceMap>,
@@ -8611,6 +8610,21 @@ async fn run_peer_loop(
             };
         }
     };
+    // These fields are stable for the peer's lifetime. Keep one shared
+    // context for every in-flight block instead of cloning the path, storage
+    // scheduler, resource governor, rate handle, and read-admission handle
+    // each time the peer loop refills its upload queue.
+    let upload_read_context = Arc::new(UploadReadContext {
+        save_root: upload.save_root.clone(),
+        piece_map: upload.piece_map.clone(),
+        hybrid_v2: upload.hybrid_v2.clone(),
+        plane: upload.plane,
+        storage: upload.storage.clone(),
+        resources: upload.resources.clone(),
+        upload_control: upload.upload_control.clone(),
+        upload_rate: upload.upload_rate.clone(),
+        read_admission: upload_obligations.read_admission(),
+    });
     // BEP 10 extension ids are negotiated per peer. The id in our outgoing
     // handshake is the id this loop receives from the peer; responses must
     // use the peer's advertised id rather than our local id.
@@ -8783,7 +8797,12 @@ async fn run_peer_loop(
                         for reject in upload_obligations.on_local_choke() {
                             send_upload_obligation_reject(&mut peer_io, &upload, reject).await?;
                         }
-                        start_upload_reads(&mut upload_reads, &upload_obligations, &upload)?;
+                        start_upload_reads(
+                            &mut upload_reads,
+                            &upload_obligations,
+                            &upload,
+                            &upload_read_context,
+                        )?;
                         if !upload.fast_negotiated {
                             // A local choke invalidates reads that were
                             // admitted under the previous upload state. Drop
@@ -8797,7 +8816,12 @@ async fn run_peer_loop(
                         upload_choked = false;
                         upload_obligations.on_local_unchoke();
                         peer_io.send(Message::Unchoke).await?;
-                        start_upload_reads(&mut upload_reads, &upload_obligations, &upload)?;
+                        start_upload_reads(
+                            &mut upload_reads,
+                            &upload_obligations,
+                            &upload,
+                            &upload_read_context,
+                        )?;
                     }
                     PeerCommand::Shutdown => {
                         upload.upload_control.cancel();
@@ -9177,6 +9201,7 @@ async fn run_peer_loop(
                                 &mut upload_reads,
                                 &upload_obligations,
                                 &upload,
+                                &upload_read_context,
                             )?,
                             InboundDecision::Reject(_) => {
                                 reject_upload_request(&mut peer_io, &upload, request).await?;
@@ -9493,7 +9518,12 @@ async fn run_peer_loop(
                         .await?;
                     }
                 }
-                start_upload_reads(&mut upload_reads, &upload_obligations, &upload)?;
+                start_upload_reads(
+                    &mut upload_reads,
+                    &upload_obligations,
+                    &upload,
+                    &upload_read_context,
+                )?;
             }
             _ = timeout_tick.tick() => {
                 if last_activity.elapsed() > PEER_IDLE_TIMEOUT {
@@ -9856,18 +9886,8 @@ fn start_upload_reads(
     upload_reads: &mut UploadReadTasks,
     obligations: &SharedUploadPeer,
     upload: &UploadContext,
+    read_context: &Arc<UploadReadContext>,
 ) -> anyhow::Result<()> {
-    let read_context = UploadReadContext {
-        save_root: upload.save_root.clone(),
-        piece_map: upload.piece_map.clone(),
-        hybrid_v2: upload.hybrid_v2.clone(),
-        plane: upload.plane,
-        storage: upload.storage.clone(),
-        resources: upload.resources.clone(),
-        upload_control: upload.upload_control.clone(),
-        upload_rate: upload.upload_rate.clone(),
-        read_admission: obligations.read_admission(),
-    };
     while upload_reads.len() < MAX_PENDING_UPLOAD_READS {
         let Some(block) = obligations.next_request() else {
             break;
@@ -9878,7 +9898,7 @@ fn start_upload_reads(
             anyhow::bail!("accepted upload obligation has no matching wire extent");
         };
         let request = UploadRequest::new(block, wire_block);
-        let read_context_for_future = read_context.clone();
+        let read_context_for_future = Arc::clone(read_context);
         let read = async move {
             let result = match timeout(
                 PEER_UPLOAD_READ_TIMEOUT,

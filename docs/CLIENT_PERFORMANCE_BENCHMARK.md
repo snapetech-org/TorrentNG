@@ -586,8 +586,69 @@ TorrentNG's public phase timed out at 5.08%, and Transmission timed out at
 99.88% after the 60-second cap. Those public rows are excluded; the benchmark
 command returned 1 because of those timeouts even though all controlled seed
 hashes passed. This one sequential run has low confidence for a general client
-ranking and does not prove the CPU/RAM target is met. Repeat with randomized
-client order and add a separate diagnostic profile before drawing a causal
-conclusion. See the [report](../certification/reports/client-performance-benchmark-f6cce154-20261021-cpu-ram.md),
+ranking and does not prove the CPU/RAM target is met. Randomized client-order
+repeats remain open. A later separate diagnostic profile and its current
+source follow-up are summarized below. See the [report](../certification/reports/client-performance-benchmark-f6cce154-20261021-cpu-ram.md),
 [samples](../certification/reports/client-performance-benchmark-f6cce154-20261021-cpu-ram-samples.csv),
 and [memory profile](../certification/reports/client-performance-benchmark-f6cce154-20261021-cpu-ram-memory-profile.json).
+
+## Diagnostic CPU profile and upload-read context candidate (`c6984493`, 2026-10-21)
+
+A separate instrumented TorrentNG-only seed used the same verified Debian ISO,
+the `pread` backend, and a qBittorrent receiver capped at 4 MiB/s. The seed
+passed its final SHA-256 at 3.82 MiB/s. The benchmark's cgroup counters report
+2.77 CPU-s/GiB and 24.7 MiB peak anonymous memory; process-tree RSS/PSS peaked
+at 43.0/42.6 MiB. Its public probe reached 3.38% before the 60-second timeout
+and is excluded. These are diagnostic-run values, not a clean score or a
+comparison with other clients.
+
+Linux `perf` recorded 807 user-cycle samples over the controlled transfer, with
+no lost samples. The largest self-sample groups were `__unlock` on Tokio workers
+(11.60%), `memcpy` (9.55%), `__libc_free` (6.70%), the peer-loop closure
+(5.33%), `nontrivial_free` (4.23%), `MountScheduler` destruction (3.17%), Tokio
+timer-entry destruction (3.05%), `AtomicWaker::register_by_ref` (2.52%), and
+`RateAdmissionGrant::settle` (2.25%). These are sampled stack weights, not
+independent additive costs or proof of a single root cause.
+
+The inclusive call tree attributed 5.56% to `start_upload_reads`, 3.17% to
+dropping `UploadReadContext`/`MountScheduler`, and 1.91% to cloning
+`MountScheduler`. Inspection showed that every queue refill built a new read
+context and cloned it for each scheduled block, including calls where the
+in-flight queue was already full. The current candidate builds one context per
+peer, shares it with in-flight reads through `Arc`, and removes `Clone` from
+the context type so future code cannot accidentally restore those deep clones.
+The 30-second read timeout remains in place to preserve stalled-admission
+handling. The candidate has passed the requested bulk correctness pass and one
+five-client seed measurement. Its measured result did not establish a CPU gain.
+
+## Five-client CPU/RAM pass after upload-context sharing (`c6984493`, 2026-10-21)
+
+The source-bound candidate was built from the same checkout with the shared
+upload-read context change. Client order was qBittorrent, Transmission,
+TorrentNG, Deluge, then rTorrent. All five controlled seeds passed SHA-256 at
+3.82–3.94 MiB/s through the common 4 MiB/s receiver cap. The host's sampled
+one-minute load peaked at 17.21 on 32 logical CPUs.
+
+| Client | Seed CPU (s/GiB) ↓ | Peak cgroup anonymous (MiB) ↓ | Seed process-tree RSS / PSS (MiB) | Seed rate (MiB/s) |
+|---|---:|---:|---:|---:|
+| TorrentNG | 2.54 | 24.4 | 39.3 / 38.8 | 3.82 |
+| qBittorrent | 1.87 | 16.9 | 779.1 / n/a | 3.94 |
+| Transmission | 1.37 | 23.6 | 37.0 / n/a | 3.82 |
+| Deluge | 2.41 | 86.8 | 887.7 / n/a | 3.94 |
+| rTorrent | 0.57 | 1.8 | 6.8 / 6.8 | 3.94 |
+
+TorrentNG still used more CPU per GiB than every comparator: 36% more than
+qBittorrent, 85% more than Transmission, 5% more than Deluge, and 4.5 times
+rTorrent. Its anonymous peak was 7.5 MiB above qBittorrent, 0.8 MiB above
+Transmission, 62.4 MiB below Deluge, and 22.6 MiB above rTorrent. Against the
+previous `f6cce154` pass, TorrentNG was numerically 0.08 CPU-s/GiB higher and
+0.8 MiB lower in anonymous memory. The one-pass result and higher host load do
+not establish a change caused by the refactor; no CPU gain is demonstrated.
+
+The public phases for Transmission, TorrentNG, and Deluge timed out and are
+excluded. qBittorrent and rTorrent completed their public downloads, but those
+live-swarm observations are not part of the controlled comparison. The full
+report, samples, and memory profile are
+[`report`](../certification/reports/client-performance-benchmark-context-sharing-candidate-20261021.md),
+[`samples`](../certification/reports/client-performance-benchmark-context-sharing-candidate-20261021-samples.csv),
+and [`memory profile`](../certification/reports/client-performance-benchmark-context-sharing-candidate-20261021-memory-profile.json).

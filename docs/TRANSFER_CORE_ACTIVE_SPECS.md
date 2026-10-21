@@ -92,9 +92,33 @@ TorrentNG's public phase timed out at 5.08% and Transmission's at 99.88%; those
 rows are excluded. The benchmark command returned 1 for these public timeouts,
 not for the controlled seeds. The live transfer backend was `pread`, so this
 run does not exercise io_uring-specific costs. Repeated randomized client
-order, stack-attributed profiling, cross-torrent memory pressure, and protected
-hardware evidence remain open. See the detailed results and artifacts in
+order, cross-torrent memory pressure, and protected hardware evidence remain
+open. A later diagnostic profile on `c6984493` is summarized below. See the
+detailed results and artifacts in
 [`CLIENT_PERFORMANCE_BENCHMARK.md`](CLIENT_PERFORMANCE_BENCHMARK.md).
+
+## Diagnostic CPU profile and upload-read context candidate (`c6984493`, 2026-10-21)
+
+A separate instrumented one-peer seed passed SHA-256 at 3.82 MiB/s with the
+portable `pread` backend. It measured 2.77 CPU-s/GiB, 24.7 MiB peak cgroup
+anonymous memory, and process-tree RSS/PSS of 43.0/42.6 MiB. The public probe
+timed out at 3.38%; it is not comparative download evidence. The perf sample is
+diagnostic and should not be compared with the clean five-client scores above.
+
+The profile collected 807 user-cycle samples with no losses. The inclusive
+call tree attributed 5.56% to `start_upload_reads`, 3.17% to dropping
+`UploadReadContext`/`MountScheduler`, and 1.91% to cloning `MountScheduler`.
+The source created a new context on every upload queue refill and cloned it for
+each scheduled read, even when no read could be admitted because the queue was
+full. The current candidate creates one non-`Clone` context per peer and shares
+it with in-flight reads through `Arc`. The per-read timeout and request
+ordering remain unchanged. The full workspace passed on Rust 1.94 and 1.88
+(2,341 passed, 0 failed, 12 ignored on each), strict Clippy passed on both,
+formatting passed, and Python discovery passed 357 tests. One five-client
+candidate pass measured 2.54 CPU-s/GiB and 24.4 MiB peak anonymous memory for
+TorrentNG. The previous clean pass measured 2.46 and 25.2; this single run
+under higher host load does not demonstrate a CPU or RAM improvement. Results
+are recorded in [`CLIENT_PERFORMANCE_BENCHMARK.md`](CLIENT_PERFORMANCE_BENCHMARK.md).
 
 ## Earlier bulk validation — implementation source `3758d021` (2026-10-20)
 

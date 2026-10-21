@@ -233,11 +233,55 @@ path was exercised; the audit's conditional io_uring findings were not. The
 process-wide cache budget and frame-pool trimming are present, but this
 single-torrent run does not qualify cross-torrent memory reclamation. Public
 swarm probes timed out for TorrentNG and Transmission and are excluded from
-the comparison. Randomized repeats, stack-attributed profiling, and
-multi-torrent memory-pressure measurements remain open. See the [full
+the comparison. A separate profile on source `c6984493` is now available;
+randomized repeats and multi-torrent memory-pressure measurements remain
+open. See the [full
 report](../certification/reports/client-performance-benchmark-f6cce154-20261021-cpu-ram.md),
 [samples](../certification/reports/client-performance-benchmark-f6cce154-20261021-cpu-ram-samples.csv),
 and [memory profile](../certification/reports/client-performance-benchmark-f6cce154-20261021-cpu-ram-memory-profile.json).
+
+### Diagnostic profile and profile-guided source candidate (`c6984493`, 2026-10-21)
+
+An instrumented one-peer seed on `c6984493307a5fb01c9182067bdcbf2512af3f49`
+passed SHA-256 with 3.82 MiB/s goodput. It recorded 2.77 CPU-s/GiB, 24.7 MiB
+cgroup anonymous peak, and 43.0/42.6 MiB process-tree RSS/PSS. This is a
+diagnostic run, not a clean score; the public probe timed out at 3.38% and is
+excluded. The backend was portable `pread`.
+
+`perf record -F 99 -e cycles:u --call-graph dwarf` collected 807 samples with
+no losses. Self samples included 11.60% in `__unlock` on Tokio workers, 9.55%
+in `memcpy`, 6.70% in `__libc_free`, 5.33% in the peer-loop closure, 3.17% in
+`MountScheduler` destruction, 3.05% in Tokio timer-entry destruction, and
+2.25% in `RateAdmissionGrant::settle`. The inclusive tree assigned 5.56% to
+`start_upload_reads`, 3.17% to dropping `UploadReadContext`/`MountScheduler`,
+and 1.91% to cloning `MountScheduler`. These sampled weights guide the next
+experiment but do not establish that any one cost explains the client CPU gap.
+
+The source candidate now creates one `UploadReadContext` per peer, shares it
+among in-flight reads through `Arc`, and removes `Clone` from that context.
+Before this change, every upload-queue refill created a context and cloned it
+per scheduled request, even when the queue was already full. The per-read
+timeout remains to preserve stalled-admission handling. The bulk correctness
+pass and one five-client seed measurement are complete; the measurement did
+not establish a CPU gain, as detailed below.
+
+### Five-client remeasurement after context sharing (`c6984493`, 2026-10-21)
+
+All five controlled seeds passed SHA-256 at 3.82–3.94 MiB/s. TorrentNG used
+**2.54 CPU-s/GiB** and reached **24.4 MiB** cgroup anonymous memory, with
+39.3/38.8 MiB process-tree RSS/PSS. qBittorrent measured 1.87/16.9, Transmission
+1.37/23.6, Deluge 2.41/86.8, and rTorrent 0.57/1.8 for CPU-s/GiB and
+anonymous peak. TorrentNG remains slower in CPU per GiB than all four and has
+mixed RAM results.
+
+Compared with the preceding `f6cce154` single pass (2.46 CPU-s/GiB, 25.2 MiB
+anonymous peak), the candidate was 0.08 CPU-s/GiB higher and 0.8 MiB lower in
+anonymous memory. This pass ran on a shared host with one-minute load peaking at
+17.21; it cannot attribute either difference to context sharing. The public
+phases for Transmission, TorrentNG, and Deluge timed out and are excluded. See
+the [full report](../certification/reports/client-performance-benchmark-context-sharing-candidate-20261021.md),
+[samples](../certification/reports/client-performance-benchmark-context-sharing-candidate-20261021-samples.csv),
+and [memory profile](../certification/reports/client-performance-benchmark-context-sharing-candidate-20261021-memory-profile.json).
 
 ### Download assembly and parsing
 
@@ -252,9 +296,10 @@ hybrid, padding, cancellation, and crash-checkpoint behavior.
 1. Run the rate scheduler regressions and the private two-seeder download
    reproduction. The scheduler regressions and full workspace tests now pass;
    the private fixture remains open.
-2. Profile an exact-source hash-verified seed separately from scored runs;
-   identify thread CPU, backend selection, handoffs, context switches, and
-   relevant syscalls.
+2. Completed a sampled user-cycle profile for exact source `c6984493`, with
+   backend selection and hash verification. The current experiment targets
+   repeated upload-read-context construction and cloning; thread/system CPU,
+   context-switch, syscall, and worker-dispatch counts remain unmeasured.
 3. Compare the current and fused storage paths with the same backend, fixture,
    cache state, and receiver, recording CPU/GiB, goodput, memory series, and
    worker dispatch counts.
