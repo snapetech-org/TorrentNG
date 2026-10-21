@@ -1363,7 +1363,9 @@ impl PeerReadCache {
                     (end <= entry.data.len()).then_some((index, relative, end, entry.data.len()))
                 })
                 .min_by_key(|(_, _, _, range_bytes)| *range_bytes)
-                .map(|(index, relative, end, range_bytes)| (index, relative, end == range_bytes))?;
+                .map(|(index, relative, end, range_bytes)| {
+                    (index, relative, len > 0 && end == range_bytes)
+                })?;
             let entry = &mut entries[index];
             entry.last_used = Instant::now();
             (
