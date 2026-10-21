@@ -6,6 +6,8 @@ from __future__ import annotations
 import base64
 import csv
 import datetime as dt
+import errno
+import fcntl
 import hashlib
 import http.cookiejar
 import json
@@ -55,6 +57,10 @@ CONTROLLED_DOWNLOAD_SEED_UPLOAD_BPS = int(os.environ.get(
     "TNG_CLIENT_BENCH_DOWNLOAD_SEED_UPLOAD_BPS", 4 * 1024 * 1024,
 ))
 MAX_PEERS = int(os.environ.get("TNG_CLIENT_BENCH_MAX_PEERS", "32"))
+BUILD_CACHE_MAX_USED_SPACE = "16GB"
+BUILD_CACHE_RESERVED_SPACE = "2GB"
+BUILD_CACHE_MOUNT_MAX_USED_SPACE = "12GB"
+PERSISTENT_BUILDX_BUILDER = "tngbench-client-build-cache-v1"
 DOWNLOAD_TIMEOUT = int(os.environ.get("TNG_CLIENT_BENCH_TIMEOUT_SECS", "1800"))
 SEED_TIMEOUT = int(os.environ.get("TNG_CLIENT_BENCH_SEED_TIMEOUT_SECS", "900"))
 SEED_NO_PEER_TIMEOUT = int(os.environ.get("TNG_CLIENT_BENCH_NO_PEER_TIMEOUT_SECS", "90"))
@@ -137,6 +143,17 @@ def optional_positive_int(name):
     return parsed
 
 
+def default_build_cpu_count():
+    """Use spare host CPUs for builds, bounded to avoid starving benchmark setup."""
+    cpu_count = max(1, os.cpu_count() or 1)
+    try:
+        one_minute_load = os.getloadavg()[0]
+    except (AttributeError, OSError):
+        one_minute_load = 0.0
+    available = max(1, cpu_count - math.ceil(one_minute_load))
+    return min(8, cpu_count, available)
+
+
 def optional_nonnegative_int(name):
     value = os.environ.get(name, "").strip()
     if not value:
@@ -154,7 +171,7 @@ def env_enabled(name):
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
 
 
-def render_benchmark_compose_override(compose_environment):
+def render_benchmark_compose_override(compose_environment, *, internal_network=False):
     lines = ["services:"]
     for client in (*CLIENTS, "seed_leecher"):
         lines.append(f"  {client}:")
@@ -165,6 +182,8 @@ def render_benchmark_compose_override(compose_environment):
                 for key, value in compose_environment.items()
             )
         lines.extend(["    healthcheck:", "      disable: true"])
+    if internal_network:
+        lines.extend(["networks:", "  interop:", "    internal: true"])
     return "\n".join(lines) + "\n"
 
 
@@ -554,14 +573,17 @@ class HttpClient:
 class Benchmark:
     def __init__(self):
         self.mode = os.environ.get("TNG_CLIENT_BENCH_MODE", "transfer").strip().lower()
-        if self.mode not in ("transfer", "idle", "controlled-download"):
+        if self.mode not in ("transfer", "idle", "controlled-download", "controlled-seed"):
             raise RuntimeError(
-                "TNG_CLIENT_BENCH_MODE must be transfer, idle, or controlled-download"
+                "TNG_CLIENT_BENCH_MODE must be transfer, idle, controlled-download, "
+                "or controlled-seed"
             )
         self.diagnostics = env_enabled("TNG_CLIENT_BENCH_DIAGNOSTICS")
         self.skip_build = env_enabled("TNG_CLIENT_BENCH_SKIP_BUILD")
-        self.build_cpus = optional_positive_int("TNG_CLIENT_BENCH_BUILD_CPUS") or min(
-            2, os.cpu_count() or 1,
+        self.keep_built_image = env_enabled("TNG_CLIENT_BENCH_KEEP_IMAGE")
+        self.build_cpus = (
+            optional_positive_int("TNG_CLIENT_BENCH_BUILD_CPUS")
+            or default_build_cpu_count()
         )
         allocator = os.environ.get("TNG_CLIENT_BENCH_ALLOCATOR", "system").strip().lower()
         allocator_features = {
@@ -704,6 +726,14 @@ class Benchmark:
             self.malloc_conf = None
         self.compose_override_path = None
         self.buildx_builder = None
+        self.buildx_lock = None
+        self.build_cache_status = None
+        cache_root = (
+            Path.home() / ".cache" / "torrentng" / "client-performance-benchmark"
+        )
+        if cache_root.is_symlink():
+            raise RuntimeError(f"refusing symlink build cache directory: {cache_root}")
+        self.build_cache_dir = cache_root.resolve()
         self.env = os.environ.copy()
         self.ports = {}
         used_ports = set()
@@ -732,7 +762,14 @@ class Benchmark:
         self.seed_source = None
         self.seed_cache_eviction = {}
         seed_source = os.environ.get("TNG_CLIENT_BENCH_SEED_SOURCE")
-        self.seed_source_override = Path(seed_source).expanduser().resolve() if seed_source else None
+        seed_source_path = Path(seed_source).expanduser() if seed_source else None
+        if seed_source_path is not None and seed_source_path.is_symlink():
+            raise RuntimeError(f"refusing symlink seed source: {seed_source_path}")
+        self.seed_source_override = seed_source_path.resolve() if seed_source_path else None
+        seed_sha256 = os.environ.get("TNG_CLIENT_BENCH_SEED_SHA256", "").strip().lower()
+        if seed_sha256 and not re.fullmatch(r"[0-9a-f]{64}", seed_sha256):
+            raise RuntimeError("TNG_CLIENT_BENCH_SEED_SHA256 must be 64 hexadecimal characters")
+        self.seed_sha256_override = seed_sha256 or None
         self.seed_leecher_version = "unknown"
         self.seed_leecher_image = "not started"
         configured_order_seed = optional_nonnegative_int(
@@ -937,14 +974,21 @@ class Benchmark:
             compose_environment["TOKIO_WORKER_THREADS"] = str(self.tokio_worker_threads)
         self.compose_override_path = self.workdir / "compose.benchmark.yml"
         self.compose_override_path.write_text(
-            render_benchmark_compose_override(compose_environment),
+            render_benchmark_compose_override(
+                compose_environment,
+                internal_network=self.mode == "controlled-seed",
+            ),
         )
         self._prepare_qbit_config()
         self._prepare_torrentng_config(
-            dht_enabled=False if self.mode in ("idle", "controlled-download") else None,
+            dht_enabled=False if self.mode in (
+                "idle", "controlled-download", "controlled-seed",
+            ) else None,
         )
         self._prepare_rtorrent_config(
-            dht_enabled=False if self.mode in ("idle", "controlled-download") else None,
+            dht_enabled=False if self.mode in (
+                "idle", "controlled-download", "controlled-seed",
+            ) else None,
         )
         self.csv_path.parent.mkdir(parents=True, exist_ok=True)
         with self.csv_path.open("w", newline="") as handle:
@@ -2178,6 +2222,44 @@ class Benchmark:
             "info_hash": hash_match.group(1).lower(), "sha256": checksum,
         }
 
+    def _verify_pinned_seed_source(self):
+        source = self.seed_source_override
+        if source is None or not source.is_file() or source.is_symlink():
+            raise RuntimeError(
+                "controlled-seed mode requires an existing regular "
+                "TNG_CLIENT_BENCH_SEED_SOURCE file"
+            )
+        if self.seed_sha256_override is None:
+            raise RuntimeError(
+                "controlled-seed mode requires TNG_CLIENT_BENCH_SEED_SHA256"
+            )
+        if source.stat().st_size < 1:
+            raise RuntimeError("the pinned local seed fixture must not be empty")
+        actual = self._sha256(source)
+        if actual != self.seed_sha256_override:
+            raise RuntimeError(
+                f"local seed fixture SHA-256 does not match its pin: {actual}"
+            )
+        self.seed_source = source
+        return source
+
+    def _pinned_seed_metadata(self, tracker_ip):
+        source = self._verify_pinned_seed_source()
+        size = source.stat().st_size
+        torrent_path = self.workdir / "torrents" / "pinned-local-seed.torrent"
+        info_hash = make_private_torrent(
+            source, f"http://{tracker_ip}:6969/announce", torrent_path,
+        )
+        return {
+            "filename": source.name,
+            "torrent_url": "task-local private torrent generated from pinned fixture",
+            "torrent_path": torrent_path,
+            "iso_name": source.name,
+            "size": size,
+            "info_hash": info_hash,
+            "sha256": self.seed_sha256_override,
+        }
+
     def _start_tracker(self):
         self.compose("up", "-d", "opentracker", quiet=True)
         cid = self.service_id("opentracker")
@@ -2426,7 +2508,7 @@ class Benchmark:
                         raise RuntimeError("qBittorrent completed but the leecher file is absent or short")
                     actual = self._sha256(candidate)
                     if actual != checksum:
-                        raise RuntimeError("controlled leecher SHA-256 did not match Debian")
+                        raise RuntimeError("controlled leecher SHA-256 did not match the fixture pin")
                     return time.monotonic() - started, rows, actual
                 time.sleep(INTERVAL)
             raise TimeoutError(f"controlled seed transfer exceeded {SEED_TIMEOUT}s")
@@ -2528,57 +2610,68 @@ class Benchmark:
             shutil.rmtree(leecher_dir)
 
     def _run_one(self, client, meta, tracker_ip, private_path):
-        print(f"\n==> {LABELS[client]}: public download", flush=True)
+        phase = "controlled private seed" if self.mode == "controlled-seed" else "public download"
+        print(f"\n==> {LABELS[client]}: {phase}", flush=True)
         self.compose("up", "-d", client, quiet=True, timeout=900)
         self.sessions[client] = HttpClient(self.api_url(client)) if client != "rtorrent" else None
         self._wait_ready(client)
         self._configure(client)
+        if self.mode == "controlled-seed":
+            self._set_idle_dht(client, False)
+            if self._read_idle_dht(client) is not False:
+                raise RuntimeError(f"{LABELS[client]} DHT did not remain disabled")
+            if self._read_idle_pex(client) is not False:
+                raise RuntimeError(f"{LABELS[client]} peer exchange did not remain disabled")
         self._remember_container(client)
         self._sample_idle(client)
         self._capture_engine_memory_metrics(client, "idle")
         version = self._version(client)
         torrent = meta["torrent_path"]
         save_path = "/downloads/rtorrent" if client == "rtorrent" else f"/downloads/{client}/public"
-        public_result = "FAIL"
-        download_error = ""
+        public_result = "NOT RUN" if self.mode == "controlled-seed" else "FAIL"
+        download_error = (
+            "public-swarm interoperability is a separate run"
+            if self.mode == "controlled-seed" else ""
+        )
         download_elapsed = 0.0
         download_progress = 0.0
         download_bytes = 0
         download_sha = ""
         public_rows = []
-        try:
-            self._add_torrent(client, torrent, save_path)
-            elapsed, status, public_rows = self._wait_complete(
-                client, meta["info_hash"], meta["iso_name"], meta["size"],
-                DOWNLOAD_TIMEOUT, "public_download",
-            )
-            payload = self._data_path(client, meta["iso_name"])
-            if not payload.is_file() or payload.stat().st_size != meta["size"]:
-                raise RuntimeError(f"completed file missing or short: {payload}")
-            actual = self._sha256(payload)
-            if actual != meta["sha256"]:
-                raise RuntimeError(f"Debian SHA-256 mismatch: {actual}")
-            public_result = "PASS"
-            download_elapsed = elapsed
-            download_progress = status["progress"]
-            download_bytes = meta["size"]
-            download_sha = actual
-            if self.seed_source is None:
-                self.seed_source = payload
-        except Exception as error:
-            download_error = f"{type(error).__name__}: {error}"
-            public_rows = self.partial_download_rows.get(client, public_rows)
-            if public_rows:
-                latest = public_rows[-1]
-                download_elapsed = float(latest[3])
-                download_progress = float(latest[4])
-                download_bytes = int(meta["size"] * download_progress)
-        finally:
+        if self.mode != "controlled-seed":
             try:
-                self._pause(client, meta["info_hash"])
-            except Exception:
-                pass
-            self._capture_engine_memory_metrics(client, "after_public_download")
+                self._add_torrent(client, torrent, save_path)
+                elapsed, status, public_rows = self._wait_complete(
+                    client, meta["info_hash"], meta["iso_name"], meta["size"],
+                    DOWNLOAD_TIMEOUT, "public_download",
+                )
+                payload = self._data_path(client, meta["iso_name"])
+                if not payload.is_file() or payload.stat().st_size != meta["size"]:
+                    raise RuntimeError(f"completed file missing or short: {payload}")
+                actual = self._sha256(payload)
+                if actual != meta["sha256"]:
+                    raise RuntimeError(f"fixture SHA-256 mismatch: {actual}")
+                public_result = "PASS"
+                download_elapsed = elapsed
+                download_progress = status["progress"]
+                download_bytes = meta["size"]
+                download_sha = actual
+                if self.seed_source is None:
+                    self.seed_source = payload
+            except Exception as error:
+                download_error = f"{type(error).__name__}: {error}"
+                public_rows = self.partial_download_rows.get(client, public_rows)
+                if public_rows:
+                    latest = public_rows[-1]
+                    download_elapsed = float(latest[3])
+                    download_progress = float(latest[4])
+                    download_bytes = int(meta["size"] * download_progress)
+            finally:
+                try:
+                    self._pause(client, meta["info_hash"])
+                except Exception:
+                    pass
+                self._capture_engine_memory_metrics(client, "after_public_download")
 
         seed_result = "NOT RUN"
         seed_error = ""
@@ -2603,9 +2696,13 @@ class Benchmark:
                     os.link(self.seed_source, seed_payload)
                 except OSError:
                     shutil.copyfile(self.seed_source, seed_payload)
-            local_hash = make_private_torrent(
-                seed_payload, f"http://{tracker_ip}:6969/announce", private_path,
-            )
+            if self.mode == "controlled-seed":
+                local_hash = meta["info_hash"]
+                private_path = meta["torrent_path"]
+            else:
+                local_hash = make_private_torrent(
+                    seed_payload, f"http://{tracker_ip}:6969/announce", private_path,
+                )
             try:
                 seed_elapsed, seed_rows, seed_sha = self._seed_test(
                     client, seed_payload, private_path, local_hash,
@@ -2693,7 +2790,15 @@ class Benchmark:
             "seed_peak_peers": seed["peak_peers"],
             "seed_sha": seed_sha, "seed_error": seed_error,
         })
-        if public_result == "PASS" and seed_result == "PASS":
+        if self.mode == "controlled-seed":
+            print(
+                f"[{LABELS[client]}] controlled seed {seed_result}; "
+                f"{seed_bytes / 1048576:.1f} MiB transferred and SHA-256 verified"
+                if seed_sha else
+                f"[{LABELS[client]}] controlled seed {seed_result}: {seed_error}",
+                flush=True,
+            )
+        elif public_result == "PASS" and seed_result == "PASS":
             print(
                 f"[{LABELS[client]}] download {download_bytes / download_elapsed / 1048576:.2f} MiB/s; "
                 f"seed {seed_bytes / seed_elapsed / 1048576:.2f} MiB/s; both hashes verified",
@@ -2923,8 +3028,8 @@ class Benchmark:
             f"TorrentNG used the recorded prebuilt image {self.prebuilt_image}; "
             "its source, fingerprint, and allocator labels were checked."
             if self.skip_build else
-            "TorrentNG was built from the recorded checkout in a task-scoped BuildKit "
-            "builder; image source and allocator labels were checked."
+            f"TorrentNG was built from the recorded checkout with a {BUILD_CACHE_MAX_USED_SPACE} "
+            "TorrentNG-specific persistent BuildKit cache; image source and allocator labels were checked."
         )
         lines = [
             f"# TorrentNG controlled private download CPU/RAM: {meta['iso_name']}",
@@ -3070,6 +3175,30 @@ class Benchmark:
             f"- The TorrentNG image {self.prebuilt_image} carries matching source, fingerprint, "
             "and allocator labels. Reference images are pinned by digest in deploy/interop/compose.yml."
         )
+        source_description = (
+            "- Fixture source: caller-supplied local file pinned by SHA-256; "
+            "no public Debian metadata or swarm was contacted."
+            if self.mode == "controlled-seed" else
+            f"- Public source: [official Debian torrent directory]({TORRENT_INDEX}); "
+            f"resolved torrent {meta['torrent_url']}"
+        )
+        fixture_hash_label = (
+            "Pinned fixture SHA-256" if self.mode == "controlled-seed"
+            else "Official SHA-256"
+        )
+        seed_method_description = (
+            "Each selected client seeded the same caller-supplied fixture after its "
+            "pinned SHA-256 was checked."
+            if self.mode == "controlled-seed" else
+            "Each selected client seeded the same SHA-256-verified ISO source (the "
+            "first completed public download or an explicitly supplied verified "
+            "seed file), copied into a separate seed path for each client."
+        )
+        build_description = (
+            "not used (prebuilt image)" if self.skip_build else
+            f"{self.build_cpus} logical CPUs via persistent BuildKit cache "
+            f"(maximum {BUILD_CACHE_MAX_USED_SPACE})"
+        )
         lines = [
             f"# TorrentNG and reference client performance: {meta['iso_name']}",
             "",
@@ -3089,12 +3218,13 @@ class Benchmark:
             f"- Config filesystem: {config_device} ({config_type})",
             f"- TorrentNG allocator: {self.allocator} ({self.cargo_features})",
             "- TorrentNG build CPU cap: "
-            + ("not used (prebuilt image)" if self.skip_build else
-               f"{self.build_cpus} logical CPUs via task-scoped BuildKit"),
+            + build_description,
             f"- TorrentNG MALLOC_CONF: {self.malloc_conf if self.malloc_conf is not None else 'not applicable'}",
             f"- TorrentNG mimalloc purge delay: {self.mimalloc_purge_delay if self.allocator == 'mimalloc' and self.mimalloc_purge_delay is not None else ('allocator default' if self.allocator == 'mimalloc' else 'not applicable')}",
             f"- TorrentNG mimalloc THP override: {self.mimalloc_allow_thp if self.allocator == 'mimalloc' and self.mimalloc_allow_thp is not None else ('allocator default' if self.allocator == 'mimalloc' else 'not applicable')}",
             f"- TorrentNG build mode: {'prebuilt ' + self.prebuilt_image + ' (source, fingerprint, and allocator verified)' if self.skip_build else 'built from this checkout; image labels verified'}",
+            f"- TorrentNG benchmark image tag: {self.prebuilt_image if self.skip_build else self.image}",
+            f"- Benchmark mode: {self.mode}",
             f"- Requested TorrentNG runtime/storage worker overrides: {runtime_overrides}",
             f"- Requested TorrentNG memory-cap overrides: {memory_cap_overrides}",
             "- TorrentNG storage backend (one post-transfer `/metrics` scrape): "
@@ -3108,15 +3238,14 @@ class Benchmark:
             f"{self.load_start[0]:.2f}/{self.load_start[1]:.2f}/{self.load_start[2]:.2f} "
             f"at start; {load_end[0]:.2f}/{load_end[1]:.2f}/{load_end[2]:.2f} at end; "
             f"sampled 1m peak {load_peak:.2f}",
-            f"- Public source: [official Debian torrent directory]({TORRENT_INDEX}); "
-            f"resolved torrent {meta['torrent_url']}",
-            f"- ISO: {meta['iso_name']}; {meta['size']:,} bytes; "
+            source_description,
+            f"- Fixture: {meta['iso_name']}; {meta['size']:,} bytes; "
             f"torrent infohash {meta['info_hash']}",
             "- Seed fixture page-cache eviction: "
             f"POSIX_FADV_DONTNEED succeeded for "
             f"{sum(self.seed_cache_eviction.values())}/{len(self.seed_cache_eviction)} "
             "seed phases (best-effort kernel hint).",
-            f"- Official SHA-256: {meta['sha256']}",
+            f"- {fixture_hash_label}: {meta['sha256']}",
             "- Clients selected for this run: " + ", ".join(LABELS[c] for c in CLIENTS),
             f"- Client download and upload limits: {RATE_BPS:,} B/s "
             f"({RATE_BPS / 1048576:.1f} MiB/s); max peers {MAX_PEERS}",
@@ -3124,8 +3253,13 @@ class Benchmark:
             f"({SEED_LEECHER_RATE_BPS / 1048576:.1f} MiB/s), shared across all seeders. "
             "This is 12.5% of the configured per-client upload ceiling. Seed rates are "
             "therefore measured under a controlled receiver load, not as maximum upload capacity.",
-            "- Each public download ran alone, in this order: " +
-            ", ".join(LABELS[c] for c in CLIENTS),
+            (
+                "- Public-swarm downloads: not run in controlled-seed mode; "
+                "interoperability is a separate qualification."
+                if self.mode == "controlled-seed" else
+                "- Each public download ran alone, in this order: "
+                + ", ".join(LABELS[c] for c in CLIENTS)
+            ),
             "- Container image references: " + "; ".join(
                 f"{LABELS[c]}: {client_images.get(c, 'not started')}" for c in CLIENTS
             ) + f"; seed leecher: {client_images.get('seed_leecher', self.seed_leecher_image)}",
@@ -3153,15 +3287,15 @@ class Benchmark:
             "",
             "## Controlled seeding",
             "",
-            "Each client seeded the same SHA-256-verified ISO through a private single-file "
+            "Each client seeded the same SHA-256-verified fixture through a private single-file "
             "torrent on the isolated Compose OpenTracker. A separate qBittorrent "
             "container with BitTorrent encryption disabled and TCP enabled "
-            "downloaded and checked Debian's published SHA-256. This measures a "
+            "downloaded and checked the fixture SHA-256. This measures a "
             "controlled one-seeder/one-leecher transfer, not public swarm demand. "
-            "Seed tests use a separate per-client copy of the same SHA-256-verified "
-            "ISO source, either the first completed public download or the explicitly "
-            "verified seed-source file, and can run "
-            "even if that client's public-swarm download stalls.",
+            + seed_method_description
+            + (" Public-swarm testing was skipped by controlled-seed mode."
+               if self.mode == "controlled-seed" else
+               " Seeding can run even if that client's public-swarm download stalls."),
             "",
             "| Client | Result | Leecher setup (s) | Transfer (s) | Average upload (MiB/s) | Peak sampled (MiB/s) | Mean CPU (%) | Peak CPU (%) | Peak peers | Leecher SHA-256 / failure |",
             "|---|---:|---:|---:|---:|---:|---:|---:|---|",
@@ -3233,16 +3367,27 @@ class Benchmark:
             "",
             "## Method and scope",
             "",
-            "- One current official Debian amd64 netinst v1 torrent per client; clients "
-            "ran sequentially on the same host and local scratch filesystem.",
-            "- Public downloads used the live Debian swarm. All seed tests used the same "
-            "SHA-256-verified ISO source (the first completed public download or an explicitly "
-            "supplied verified seed file), copied into a separate seed path for each client, so "
-            "seed performance is measured independently of public-swarm completion.",
+            (
+                "- One caller-supplied local fixture was verified against its pinned SHA-256; "
+                "a private v1 torrent was generated locally for each client. Clients ran "
+                "sequentially on the same host and local scratch filesystem."
+                if self.mode == "controlled-seed" else
+                "- One current official Debian amd64 netinst v1 torrent per client; clients "
+                "ran sequentially on the same host and local scratch filesystem."
+            ),
+            (
+                "- Public-swarm interoperability was not run. Controlled seeding used the "
+                "pinned local fixture and an isolated task-local tracker."
+                if self.mode == "controlled-seed" else
+                "- Public downloads used the live Debian swarm. All seed tests used the same "
+                "SHA-256-verified ISO source (the first completed public download or an explicitly "
+                "supplied verified seed file), copied into a separate seed path for each client, so "
+                "seed performance is measured independently of public-swarm completion."
+            ),
             f"- Each client was configured for a {RATE_BPS / 1048576:.1f} MiB/s global "
             f"download and upload ceiling and {MAX_PEERS} global/per-torrent peer ceiling.",
             f"- Sampling interval: {INTERVAL:g} seconds. A successful download average is "
-            "verified ISO bytes divided by elapsed wall time; for an incomplete download, "
+            "verified payload bytes divided by elapsed wall time; for an incomplete download, "
             "the reported average uses client completed-byte progress and is paired with "
             "the final percentage. The seed "
             "transfer timer starts after both clients are ready, the leecher is "
@@ -3259,20 +3404,30 @@ class Benchmark:
             "include additional measurement work and must not be compared as clean resource trials. "
             "Jemalloc counters appear only "
             "when that allocator is selected and do not represent total process allocations.",
-            f"- Public download uses the current public Debian swarm with a {DOWNLOAD_TIMEOUT}s "
-            "completion timeout. Controlled seeding "
-            "uses a private task-local tracker and one qBittorrent leecher on the same "
-            "Compose network. The tracker is reset between clients. The no-peer "
-            f"startup limit is {SEED_NO_PEER_TIMEOUT}s; full transfer limit is "
-            f"{SEED_TIMEOUT}s.",
+            (
+                "- Controlled seeding uses a private task-local tracker and one qBittorrent "
+                "leecher on the same Compose network. No public metadata or swarm request "
+                "is made; containers are attached only to an internal Docker network, and "
+                "DHT/PEX are disabled and read back before measurement. The tracker is reset "
+                "between clients. The no-peer startup limit "
+                f"is {SEED_NO_PEER_TIMEOUT}s; full transfer limit is {SEED_TIMEOUT}s."
+                if self.mode == "controlled-seed" else
+                f"- Public download uses the current public Debian swarm with a {DOWNLOAD_TIMEOUT}s "
+                "completion timeout. Controlled seeding uses a private task-local tracker and one "
+                "qBittorrent leecher on the same Compose network. The tracker is reset between "
+                f"clients. The no-peer startup limit is {SEED_NO_PEER_TIMEOUT}s; full transfer "
+                f"limit is {SEED_TIMEOUT}s."
+            ),
             "",
             "## Confidence and limitations",
             "",
             "- Hash validation gives high confidence that successful runs transferred "
-            "the same ISO.",
+            "the same fixture.",
             "- Throughput and resource comparisons have low confidence: "
-            "one sequential public-swarm pass and one seed pass per client, on a shared "
-            "host with the load reported above. Public peer availability changes over time.",
+            + ("one controlled seed pass per client, on a shared host with the load reported above."
+               if self.mode == "controlled-seed" else
+               "one sequential public-swarm pass and one seed pass per client, on a shared "
+               "host with the load reported above. Public peer availability changes over time."),
             "- Results apply to this host, storage, build, image digests, peer ceiling, "
             "rate ceiling, and test window. They do not establish a general ranking, "
             "multi-torrent capacity, or likely public seed demand.",
@@ -3284,7 +3439,9 @@ class Benchmark:
             f"- Preserved source artifacts: {self.artifact_status}",
             f"- Temporary benchmark directory: {self.workdir}",
             f"- Compose cleanup status: **{self.cleanup_status}**",
-            f"- Official [Debian netinst page](https://www.debian.org/CD/netinst/)",
+            *([] if self.mode == "controlled-seed" else [
+                "- Official [Debian netinst page](https://www.debian.org/CD/netinst/)",
+            ]),
             "",
         ])
         self.report.parent.mkdir(parents=True, exist_ok=True)
@@ -3312,40 +3469,145 @@ class Benchmark:
             )
 
     def _create_task_buildx_builder(self):
-        """Keep benchmark build cache inside a removable task-scoped builder."""
+        """Create the locked benchmark builder while retaining its bounded cache."""
         if self.buildx_builder is not None:
             raise RuntimeError("benchmark BuildKit builder already exists")
-        builder = f"{self.project}-build-{os.getpid()}"
-        run_command(
-            [
-                "docker", "buildx", "create", "--driver", "docker-container",
-                "--driver-opt", "cpu-period=100000",
-                "--driver-opt", f"cpu-quota={getattr(self, 'build_cpus', 2) * 100000}",
-                "--name", builder,
-            ],
-            env=self.env, quiet=True, timeout=120,
+        self.build_cache_dir.mkdir(parents=True, exist_ok=True)
+        if self.build_cache_dir.is_symlink():
+            raise RuntimeError(f"refusing symlink build cache directory: {self.build_cache_dir}")
+        lock_path = self.build_cache_dir / "builder.lock"
+        lock_flags = os.O_CREAT | os.O_RDWR
+        if hasattr(os, "O_NOFOLLOW"):
+            lock_flags |= os.O_NOFOLLOW
+        try:
+            lock_fd = os.open(lock_path, lock_flags, 0o600)
+        except OSError as error:
+            if error.errno == errno.ELOOP:
+                raise RuntimeError(
+                    f"refusing symlink BuildKit lock file: {lock_path}"
+                ) from error
+            raise
+        lock = os.fdopen(lock_fd, "r+")
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            lock.close()
+            raise RuntimeError(
+                "another TorrentNG client benchmark is using the persistent build cache"
+            ) from error
+        self.buildx_lock = lock
+        try:
+            config_path = self._write_buildkit_config()
+            builder = PERSISTENT_BUILDX_BUILDER
+            # Recover a builder left by an interrupted run while preserving its named cache.
+            run_command(
+                ["docker", "buildx", "rm", "--force", "--keep-state", builder],
+                env=self.env, check=False, quiet=True, timeout=120,
+            )
+            run_command(
+                [
+                    "docker", "buildx", "create", "--driver", "docker-container",
+                    "--driver-opt", "cpu-period=100000",
+                    "--driver-opt", f"cpu-quota={self.build_cpus * 100000}",
+                    "--buildkitd-config", str(config_path),
+                    "--name", builder,
+                ],
+                env=self.env, quiet=True, timeout=120,
+            )
+            self.buildx_builder = builder
+            return builder
+        except Exception:
+            self._release_build_cache_lock()
+            raise
+
+    def _write_buildkit_config(self):
+        config_path = self.build_cache_dir / "buildkitd.toml"
+        if config_path.is_symlink():
+            raise RuntimeError(f"refusing symlink BuildKit config: {config_path}")
+        config = (
+            "[worker.oci]\n"
+            "  gc = true\n\n"
+            "[[worker.oci.gcpolicy]]\n"
+            '  filters = ["type==exec.cachemount"]\n'
+            '  keepDuration = "720h"\n'
+            f'  reservedSpace = "{BUILD_CACHE_RESERVED_SPACE}"\n'
+            f'  maxUsedSpace = "{BUILD_CACHE_MOUNT_MAX_USED_SPACE}"\n\n'
+            "[[worker.oci.gcpolicy]]\n"
+            '  filters = ["type==source.local", "type==source.git.checkout"]\n'
+            '  keepDuration = "48h"\n'
+            '  reservedSpace = "0"\n'
+            '  maxUsedSpace = "512MB"\n\n'
+            "[[worker.oci.gcpolicy]]\n"
+            '  keepDuration = "1440h"\n'
+            f'  reservedSpace = "{BUILD_CACHE_RESERVED_SPACE}"\n'
+            f'  maxUsedSpace = "{BUILD_CACHE_MAX_USED_SPACE}"\n\n'
+            "[[worker.oci.gcpolicy]]\n"
+            f'  reservedSpace = "{BUILD_CACHE_RESERVED_SPACE}"\n'
+            f'  maxUsedSpace = "{BUILD_CACHE_MAX_USED_SPACE}"\n\n'
+            "[[worker.oci.gcpolicy]]\n"
+            "  all = true\n"
+            f'  reservedSpace = "{BUILD_CACHE_RESERVED_SPACE}"\n'
+            f'  maxUsedSpace = "{BUILD_CACHE_MAX_USED_SPACE}"\n'
         )
-        self.buildx_builder = builder
-        return builder
+        try:
+            current = config_path.read_text()
+        except FileNotFoundError:
+            current = None
+        if current != config:
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=".buildkitd.", suffix=".toml", dir=self.build_cache_dir,
+            )
+            temporary = Path(temporary_name)
+            try:
+                with os.fdopen(descriptor, "w") as handle:
+                    handle.write(config)
+                os.chmod(temporary, 0o600)
+                os.replace(temporary, config_path)
+            finally:
+                temporary.unlink(missing_ok=True)
+        return config_path
+
+    def _release_build_cache_lock(self):
+        lock = getattr(self, "buildx_lock", None)
+        if lock is not None:
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+            finally:
+                lock.close()
+                self.buildx_lock = None
 
     def _remove_task_buildx_builder(self):
-        """Remove the task builder and its BuildKit cache without pruning shared state."""
+        """Remove the builder container but retain its bounded TorrentNG cache volume."""
         if self.buildx_builder is None:
+            self._release_build_cache_lock()
             return None
         builder = self.buildx_builder
-        _, code = run_command(
-            ["docker", "buildx", "rm", "--force", builder],
-            env=self.env, check=False, quiet=True, timeout=120,
-        )
-        if code:
-            return f"task-scoped BuildKit builder/cache cleanup failed for {builder}"
-        self.buildx_builder = None
-        return "task-scoped BuildKit builder and cache removed"
+        try:
+            _, code = run_command(
+                ["docker", "buildx", "rm", "--force", "--keep-state", builder],
+                env=self.env, check=False, quiet=True, timeout=120,
+            )
+            if code:
+                return f"persistent BuildKit builder cleanup failed for {builder}"
+            self.buildx_builder = None
+            return (
+                f"BuildKit builder removed; TorrentNG-specific cache retained "
+                f"(maximum {BUILD_CACHE_MAX_USED_SPACE})"
+            )
+        finally:
+            self._release_build_cache_lock()
 
     def _build_torrentng_image(self):
         builder = self._create_task_buildx_builder()
-        self.compose("build", "--builder", builder, "torrentngd", timeout=3600)
-        self._assert_image_labels(self.image)
+        try:
+            self.compose("build", "--builder", builder, "torrentngd", timeout=3600)
+            self._assert_image_labels(self.image)
+        except Exception:
+            self.build_cache_status = self._remove_task_buildx_builder()
+            raise
+        self.build_cache_status = self._remove_task_buildx_builder()
+        if self.build_cache_status and "cleanup failed" in self.build_cache_status:
+            raise RuntimeError(self.build_cache_status)
 
     def _use_prebuilt_image(self):
         self._assert_image_labels(self.prebuilt_image)
@@ -3722,13 +3984,14 @@ class Benchmark:
 
     def run(self):
         if (RATE_BPS < 1 or MAX_PEERS < 1 or INTERVAL < 1
-                or (self.mode == "transfer" and SEED_LEECHER_RATE_BPS < 1)
+                or (self.mode in ("transfer", "controlled-seed")
+                    and SEED_LEECHER_RATE_BPS < 1)
                 or (self.mode == "controlled-download"
                     and CONTROLLED_DOWNLOAD_SEED_UPLOAD_BPS < 1)):
             raise RuntimeError("rate ceiling, peer ceiling, and sample interval must be positive")
         if self.mode in ("transfer", "controlled-download") and DOWNLOAD_TIMEOUT < 60:
             raise RuntimeError("download timeout must be at least 60 seconds")
-        if self.mode == "transfer" and SEED_TIMEOUT < 60:
+        if self.mode in ("transfer", "controlled-seed") and SEED_TIMEOUT < 60:
             raise RuntimeError("seed timeout must be at least 60 seconds")
         if self.mode == "controlled-download" and (
             self.seed_source_override is None
@@ -3738,6 +4001,10 @@ class Benchmark:
                 "controlled-download mode requires an existing verified "
                 "TNG_CLIENT_BENCH_SEED_SOURCE file"
             )
+        if self.mode == "controlled-seed":
+            if SEED_NO_PEER_TIMEOUT < 10:
+                raise RuntimeError("no-peer timeout must be at least 10 seconds")
+            self._verify_pinned_seed_source()
         if IDLE_SAMPLE_SECONDS < 0:
             raise RuntimeError("idle memory sample duration cannot be negative")
         if (not math.isfinite(PROCESS_TREE_SAMPLE_SECONDS)
@@ -3755,7 +4022,7 @@ class Benchmark:
         if self.mode == "transfer" and SEED_NO_PEER_TIMEOUT < 10:
             raise RuntimeError("no-peer timeout must be at least 10 seconds")
         required_commands = ["docker", "findmnt", "git"]
-        if self.mode != "idle":
+        if self.mode not in ("idle", "controlled-seed"):
             required_commands.append("aria2c")
         for required in required_commands:
             if shutil.which(required) is None:
@@ -3772,13 +4039,16 @@ class Benchmark:
         if self.mode == "idle":
             return self._run_idle_profiles()
         tracker_ip = self._start_tracker()
-        meta = self._torrent_metadata()
-        if self.seed_source_override is not None:
+        if self.mode == "controlled-seed":
+            meta = self._pinned_seed_metadata(tracker_ip)
+        else:
+            meta = self._torrent_metadata()
+        if self.mode != "controlled-seed" and self.seed_source_override is not None:
             source = self.seed_source_override
             if not source.is_file() or source.stat().st_size != meta["size"]:
                 raise RuntimeError(f"seed source is absent or has the wrong size: {source}")
             if self._sha256(source) != meta["sha256"]:
-                raise RuntimeError(f"seed source failed Debian SHA-256 verification: {source}")
+                raise RuntimeError(f"seed source failed SHA-256 verification: {source}")
             self.seed_source = source
         client_images = {}
         if self.mode == "controlled-download":
@@ -3794,7 +4064,8 @@ class Benchmark:
                       file=sys.stderr, flush=True)
                 self.results.append({
                     "client": client, "version": "unavailable",
-                    "public": "FAIL", "seed": "NOT RUN",
+                    "public": "NOT RUN" if self.mode == "controlled-seed" else "FAIL",
+                    "seed": "NOT RUN",
                     "error": f"{type(error).__name__}: {error}",
                 })
             finally:
@@ -3819,9 +4090,15 @@ class Benchmark:
                 self.artifact_status = f"save failed: {type(error).__name__}: {error}"
                 print(f"[artifacts] {self.artifact_status}", file=sys.stderr, flush=True)
         self._write_report(meta, client_images)
+        if self.mode == "controlled-seed":
+            return int(
+                len(self.results) != len(CLIENTS)
+                or any(row.get("seed") != "PASS" for row in self.results)
+            )
         return int(not (
             len(self.results) == len(CLIENTS)
-            and all(r.get("public") == "PASS" and r.get("seed") == "PASS" for r in self.results)
+            and all(row.get("public") == "PASS" and row.get("seed") == "PASS"
+                    for row in self.results)
         ))
 
     def cleanup(self):
@@ -3834,21 +4111,26 @@ class Benchmark:
             self.compose("down", "--volumes", "--remove-orphans",
                          check=False, quiet=True, timeout=180)
             self.cleanup_status = "isolated Compose project, containers, and named volumes removed"
-            _, image_code = run_command(
-                ["docker", "image", "rm", self.image], env=self.env,
-                check=False, quiet=True, timeout=60,
-            )
-            if image_code:
-                self.cleanup_status += "; benchmark image removal failed"
+            if self.keep_built_image and not self.skip_build:
+                self.cleanup_status += f"; benchmark image retained for reuse: {self.image}"
+            elif self.prebuilt_image != self.image:
+                _, image_code = run_command(
+                    ["docker", "image", "rm", self.image], env=self.env,
+                    check=False, quiet=True, timeout=60,
+                )
+                if image_code:
+                    self.cleanup_status += "; benchmark image removal failed"
         except Exception as error:
             self.cleanup_status = f"cleanup error: {type(error).__name__}: {error}"
         try:
             builder_status = self._remove_task_buildx_builder()
             if builder_status:
                 self.cleanup_status += f"; {builder_status}"
+            elif self.build_cache_status:
+                self.cleanup_status += f"; {self.build_cache_status}"
         except Exception as error:
             self.cleanup_status += (
-                f"; task-scoped BuildKit cleanup error: {type(error).__name__}: {error}"
+                f"; BuildKit cache cleanup error: {type(error).__name__}: {error}"
             )
         try:
             if self.workdir.exists() and not self.workdir.is_symlink():
@@ -3895,23 +4177,29 @@ def main():
 
 By default, runs one current Debian amd64 netinst public download and one
 controlled private seed transfer for TorrentNG, qBittorrent, Transmission,
-Deluge, and rTorrent. Set TNG_CLIENT_BENCH_MODE=controlled-download to run
+Deluge, and rTorrent. Set TNG_CLIENT_BENCH_MODE=controlled-seed to skip all
+public metadata and swarm requests and run only private seeding from a
+SHA-256-pinned local fixture. Public-swarm testing remains a separate
+interoperability check. Set TNG_CLIENT_BENCH_MODE=controlled-download to run
 active private download CPU/RAM trials, or TNG_CLIENT_BENCH_MODE=idle to run
 no-torrent network-isolated, attached/DHT-off, and attached/DHT-on profiles. Docker
 Compose builds the current TorrentNG checkout unless a revision-matched
-prebuilt image is selected, using a per-run Buildx builder limited to two CPUs
-by default; its cache is removed during cleanup. Set
-TNG_CLIENT_BENCH_BUILD_CPUS to override the cap. Reference client images are
-pinned by digest in deploy/interop/compose.yml.
+prebuilt image is selected. Cargo, npm, and BuildKit layers reuse a
+TorrentNG-specific cache bounded to 16 GB. The builder is removed after its
+build and before measurement, while its cache volume is retained. Build CPUs default to available host
+capacity, capped at eight; set TNG_CLIENT_BENCH_BUILD_CPUS to override. Reference
+client images are pinned by digest in deploy/interop/compose.yml.
 
 Environment:
-TNG_CLIENT_BENCH_MODE=transfer|controlled-download|idle (default: transfer)
+TNG_CLIENT_BENCH_MODE=transfer|controlled-download|controlled-seed|idle (default: transfer)
   TNG_CLIENT_BENCH_CLIENTS=torrentngd,qbittorrent,... (default: all five)
   TNG_CLIENT_BENCH_ALLOCATOR=system|jemalloc|mimalloc (default: system)
-  TNG_CLIENT_BENCH_BUILD_CPUS=2 (task-scoped BuildKit CPU limit; default: min(2, host CPUs))
+  TNG_CLIENT_BENCH_BUILD_CPUS=8 (BuildKit CPU limit; default: up to 8, reduced by host load)
   TNG_CLIENT_BENCH_SKIP_BUILD=1 (use an image with matching commit, source fingerprint, and allocator labels)
+  TNG_CLIENT_BENCH_KEEP_IMAGE=1 (retain a source-built image tag for later prebuilt-image runs)
   TNG_CLIENT_BENCH_PREBUILT_IMAGE=torrentng/torrentngd:interop
   TNG_CLIENT_BENCH_SEED_SOURCE=/path/to/verified/debian.iso
+  TNG_CLIENT_BENCH_SEED_SHA256=<64 hex chars> (required for controlled-seed mode)
   TNG_CLIENT_BENCH_REPORT=/path/to/report.md
   TNG_CLIENT_BENCH_ARTIFACT_DIR=/persistent/path (verified ISO and .torrent)
   TNG_CLIENT_BENCH_SCRATCH_ROOT=/existing/writable/path (default: /var/tmp)
@@ -3945,9 +4233,16 @@ TNG_CLIENT_BENCH_SEED_SOURCE to compare active download CPU and RAM against one
 fixed private qBittorrent seeder. The seeder upload cap defaults to 4 MiB/s;
 TNG_CLIENT_BENCH_ORDER_SEED selects a repeatable randomized receiver order.
 
+Set TNG_CLIENT_BENCH_MODE=controlled-seed with TNG_CLIENT_BENCH_SEED_SOURCE and
+TNG_CLIENT_BENCH_SEED_SHA256 to measure controlled seeding without contacting
+the public swarm. TNG_CLIENT_BENCH_CLIENTS=torrentngd screens only TorrentNG;
+the default selection remains all five clients. The existing rate caps and
+hash-verified completion requirement are unchanged.
+
 The report and raw CSV remain in the repository; task scratch, the isolated
-Compose project, its volumes, benchmark-tagged images, and task-scoped
-BuildKit cache are removed on exit.""")
+Compose project, its volumes, and benchmark-tagged images are removed on exit.
+The bounded TorrentNG-specific BuildKit cache is retained for later runs. Set
+TNG_CLIENT_BENCH_KEEP_IMAGE=1 to retain the source-built image tag as well.""")
         return 0
     bench = Benchmark()
     status = 1

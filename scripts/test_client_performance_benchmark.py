@@ -2,89 +2,124 @@
 
 from __future__ import annotations
 
+import hashlib
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest import mock
+from unittest.mock import call, mock
 
 sys.path.insert(0, str(Path(__file__).parent))
 import client_performance_benchmark as benchmark
 
 
 class CgroupCounterTests(unittest.TestCase):
-    def test_benchmark_build_uses_a_task_scoped_buildkit_builder(self) -> None:
-        instance = object.__new__(benchmark.Benchmark)
-        instance.project = "tngbench20261020t000000z"
-        instance.env = {}
-        instance.buildx_builder = None
+    def test_benchmark_build_uses_a_bounded_persistent_buildkit_builder(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            instance = object.__new__(benchmark.Benchmark)
+            instance.build_cache_dir = Path(directory)
+            instance.env = {}
+            instance.build_cpus = 2
+            instance.buildx_builder = None
+            instance.buildx_lock = None
 
-        with mock.patch.object(benchmark, "run_command", return_value=("", 0)) as command:
-            builder = instance._create_task_buildx_builder()
+            with mock.patch.object(
+                benchmark, "run_command", return_value=("", 0),
+            ) as command:
+                builder = instance._create_task_buildx_builder()
 
-        self.assertEqual(instance.buildx_builder, builder)
-        self.assertIn("-build-", builder)
-        command.assert_called_once_with(
-            ["docker", "buildx", "create", "--driver", "docker-container",
-             "--driver-opt", "cpu-period=100000",
-             "--driver-opt", "cpu-quota=200000",
-             "--name", builder],
-            env={}, quiet=True, timeout=120,
-        )
+            config = (Path(directory) / "buildkitd.toml").read_text()
+            self.assertEqual(instance.buildx_builder, benchmark.PERSISTENT_BUILDX_BUILDER)
+            self.assertEqual(builder, benchmark.PERSISTENT_BUILDX_BUILDER)
+            self.assertIn('maxUsedSpace = "16GB"', config)
+            self.assertIn('maxUsedSpace = "12GB"', config)
+            self.assertIn('reservedSpace = "0"', config)
+            self.assertEqual(command.call_args_list, [
+                call(
+                    ["docker", "buildx", "rm", "--force", "--keep-state", builder],
+                    env={}, check=False, quiet=True, timeout=120,
+                ),
+                call(
+                    ["docker", "buildx", "create", "--driver", "docker-container",
+                     "--driver-opt", "cpu-period=100000",
+                     "--driver-opt", "cpu-quota=200000",
+                     "--buildkitd-config", str(Path(directory) / "buildkitd.toml"),
+                     "--name", builder],
+                    env={}, quiet=True, timeout=120,
+                ),
+            ])
+            instance._release_build_cache_lock()
 
-    def test_failed_task_builder_creation_does_not_claim_existing_builder(self) -> None:
-        instance = object.__new__(benchmark.Benchmark)
-        instance.project = "tngbench20261020t000000z"
-        instance.env = {}
-        instance.buildx_builder = None
+    def test_failed_persistent_builder_creation_releases_the_cache_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            instance = object.__new__(benchmark.Benchmark)
+            instance.build_cache_dir = Path(directory)
+            instance.env = {}
+            instance.build_cpus = 2
+            instance.buildx_builder = None
+            instance.buildx_lock = None
 
-        with mock.patch.object(
-            benchmark, "run_command", side_effect=RuntimeError("name already exists"),
-        ):
-            with self.assertRaisesRegex(RuntimeError, "name already exists"):
-                instance._create_task_buildx_builder()
+            with mock.patch.object(
+                benchmark, "run_command",
+                side_effect=[("", 1), RuntimeError("builder creation failed")],
+            ):
+                with self.assertRaisesRegex(RuntimeError, "builder creation failed"):
+                    instance._create_task_buildx_builder()
 
-        self.assertIsNone(instance.buildx_builder)
+            self.assertIsNone(instance.buildx_builder)
+            self.assertIsNone(instance.buildx_lock)
 
-    def test_torrentng_build_selects_the_task_scoped_builder(self) -> None:
+    def test_torrentng_build_selects_the_persistent_builder(self) -> None:
         instance = object.__new__(benchmark.Benchmark)
         instance.image = "torrentng/torrentngd:benchmark-test"
-        instance._create_task_buildx_builder = mock.Mock(return_value="task-builder")
+        instance._create_task_buildx_builder = mock.Mock(
+            return_value=benchmark.PERSISTENT_BUILDX_BUILDER,
+        )
+        instance._remove_task_buildx_builder = mock.Mock(
+            return_value="cache retained",
+        )
         instance.compose = mock.Mock()
         instance._assert_image_labels = mock.Mock()
 
         instance._build_torrentng_image()
 
         instance.compose.assert_called_once_with(
-            "build", "--builder", "task-builder", "torrentngd", timeout=3600,
+            "build", "--builder", benchmark.PERSISTENT_BUILDX_BUILDER,
+            "torrentngd", timeout=3600,
         )
         instance._assert_image_labels.assert_called_once_with(instance.image)
+        instance._remove_task_buildx_builder.assert_called_once_with()
 
-    def test_task_builder_cleanup_removes_only_its_builder_and_cache(self) -> None:
+    def test_builder_cleanup_preserves_the_persistent_cache(self) -> None:
         instance = object.__new__(benchmark.Benchmark)
         instance.env = {}
-        instance.buildx_builder = "tngbench-build-1234"
+        instance.buildx_builder = benchmark.PERSISTENT_BUILDX_BUILDER
+        instance.buildx_lock = None
 
         with mock.patch.object(benchmark, "run_command", return_value=("", 0)) as command:
             status = instance._remove_task_buildx_builder()
 
-        self.assertEqual(status, "task-scoped BuildKit builder and cache removed")
+        self.assertIn("cache retained", status)
         self.assertIsNone(instance.buildx_builder)
         command.assert_called_once_with(
-            ["docker", "buildx", "rm", "--force", "tngbench-build-1234"],
+            ["docker", "buildx", "rm", "--force", "--keep-state",
+             benchmark.PERSISTENT_BUILDX_BUILDER],
             env={}, check=False, quiet=True, timeout=120,
         )
 
     def test_task_builder_cleanup_failure_remains_visible(self) -> None:
         instance = object.__new__(benchmark.Benchmark)
         instance.env = {}
-        instance.buildx_builder = "tngbench-build-1234"
+        instance.buildx_builder = benchmark.PERSISTENT_BUILDX_BUILDER
+        instance.buildx_lock = None
         with mock.patch.object(benchmark, "run_command", return_value=("error", 1)):
             status = instance._remove_task_buildx_builder()
 
         self.assertIn("cleanup failed", status)
-        self.assertEqual(instance.buildx_builder, "tngbench-build-1234")
+        self.assertEqual(
+            instance.buildx_builder, benchmark.PERSISTENT_BUILDX_BUILDER,
+        )
 
     def test_transfer_compose_override_disables_healthchecks_symmetrically(self) -> None:
         rendered = benchmark.render_benchmark_compose_override({
@@ -97,6 +132,14 @@ class CgroupCounterTests(unittest.TestCase):
         self.assertIn('      TOKIO_WORKER_THREADS: "2"', rendered)
         self.assertIn("  seed_leecher:\n", rendered)
         self.assertEqual(rendered.count("    healthcheck:"), len(benchmark.CLIENTS) + 1)
+        self.assertNotIn("networks:\n", rendered)
+
+    def test_controlled_seed_compose_network_has_no_external_route(self) -> None:
+        rendered = benchmark.render_benchmark_compose_override(
+            {}, internal_network=True,
+        )
+
+        self.assertIn("networks:\n  interop:\n    internal: true\n", rendered)
 
     def test_idle_profile_schedule_is_seeded_and_balances_all_clients(self) -> None:
         first = object.__new__(benchmark.Benchmark)
@@ -554,6 +597,50 @@ class CgroupCounterTests(unittest.TestCase):
 
             instance._capture_engine_memory_metrics.assert_not_called()
             self.assertEqual(len(instance.samples), 1)
+
+
+class PinnedSeedFixtureTests(unittest.TestCase):
+    def test_seed_only_source_must_match_its_explicit_sha256_pin(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "fixture.bin"
+            source.write_bytes(b"pinned fixture")
+            instance = object.__new__(benchmark.Benchmark)
+            instance.seed_source_override = source
+            instance.seed_sha256_override = hashlib.sha256(b"pinned fixture").hexdigest()
+            instance.seed_source = None
+
+            self.assertEqual(instance._verify_pinned_seed_source(), source)
+            self.assertEqual(instance.seed_source, source)
+
+            instance.seed_sha256_override = "0" * 64
+            with self.assertRaisesRegex(RuntimeError, "does not match its pin"):
+                instance._verify_pinned_seed_source()
+
+    def test_seed_only_metadata_is_generated_from_the_local_pinned_fixture(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "fixture.bin"
+            source.write_bytes(b"pinned fixture")
+            instance = object.__new__(benchmark.Benchmark)
+            instance.seed_source_override = source
+            instance.seed_sha256_override = hashlib.sha256(b"pinned fixture").hexdigest()
+            instance.seed_source = None
+            instance.workdir = Path(directory) / "work"
+            instance.workdir.mkdir()
+
+            with mock.patch.object(
+                benchmark, "make_private_torrent", return_value="local-info-hash",
+            ) as make_torrent:
+                meta = instance._pinned_seed_metadata("172.20.0.2")
+
+            torrent_path = instance.workdir / "torrents" / "pinned-local-seed.torrent"
+            make_torrent.assert_called_once_with(
+                source, "http://172.20.0.2:6969/announce", torrent_path,
+            )
+            self.assertEqual(meta["torrent_path"], torrent_path)
+            self.assertEqual(meta["iso_name"], source.name)
+            self.assertEqual(meta["size"], len(b"pinned fixture"))
+            self.assertEqual(meta["sha256"], instance.seed_sha256_override)
+            self.assertEqual(meta["info_hash"], "local-info-hash")
 
 
 class ControlledDownloadTests(unittest.TestCase):

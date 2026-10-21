@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 FROM rust:1.96-alpine AS build
 
 RUN apk add --no-cache build-base linux-headers musl-dev
@@ -6,14 +8,18 @@ WORKDIR /src
 ARG TORRENTNG_CARGO_FEATURES=system-allocator
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
-RUN cargo build --release --locked --target x86_64-unknown-linux-musl -p torrentngd \
-    --no-default-features --features "$TORRENTNG_CARGO_FEATURES"
+RUN --mount=type=cache,id=torrentng-client-benchmark-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=torrentng-client-benchmark-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=torrentng-client-benchmark-cargo-target,target=/src/target,sharing=locked \
+    cargo build --release --locked --target x86_64-unknown-linux-musl -p torrentngd \
+    --no-default-features --features "$TORRENTNG_CARGO_FEATURES" \
+    && cp /src/target/x86_64-unknown-linux-musl/release/torrentngd /torrentngd
 
 FROM node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9 AS webui-build
 
 WORKDIR /webui
 COPY webui/package.json webui/package-lock.json ./
-RUN npm ci
+RUN --mount=type=cache,id=torrentng-client-benchmark-npm,target=/root/.npm,sharing=locked npm ci
 COPY webui/ ./
 RUN TNG_WEBUI_OUT_DIR=dist npm run build
 
@@ -30,7 +36,7 @@ RUN apk add --no-cache ca-certificates curl jq tini util-linux \
     && mkdir -p /data /downloads /config /var/lib/torrentngd /usr/share/torrentng/webui /run/secrets \
     && chown -R "$TNG_UID:$TNG_GID" /data /downloads /config /var/lib/torrentngd /run/secrets
 
-COPY --from=build /src/target/x86_64-unknown-linux-musl/release/torrentngd /usr/local/bin/torrentngd
+COPY --from=build /torrentngd /usr/local/bin/torrentngd
 COPY --from=webui-build /webui/dist /usr/share/torrentng/webui
 COPY deploy/native/config.toml /etc/torrentngd/config.toml
 COPY deploy/container/identity.sh /usr/local/lib/torrentng/identity.sh

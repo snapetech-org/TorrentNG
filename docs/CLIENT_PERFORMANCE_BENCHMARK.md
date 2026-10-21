@@ -60,6 +60,33 @@ TNG_CLIENT_BENCH_ORDER_SEED=20261021 \
 python3 scripts/client_performance_benchmark.py
 ```
 
+## Controlled seed only
+
+Use `TNG_CLIENT_BENCH_MODE=controlled-seed` to skip the public metadata lookup
+and public swarm download. The harness checks a caller-supplied fixture against
+an explicit SHA-256 pin, generates a private task-local torrent, and measures
+the existing one-seeder/one-leecher workload on an internal Docker network
+with no external route. DHT and peer exchange are disabled before measurement.
+The 4 MiB/s receiver cap,
+transfer windows, and final leecher hash verification stay unchanged. Public
+swarm behavior remains covered by the default transfer mode.
+
+To screen TorrentNG alone, select only its adapter:
+
+```sh
+TNG_CLIENT_BENCH_MODE=controlled-seed \
+TNG_CLIENT_BENCH_CLIENTS=torrentngd \
+TNG_CLIENT_BENCH_SEED_SOURCE=/path/to/pinned-fixture.bin \
+TNG_CLIENT_BENCH_SEED_SHA256="$PINNED_FIXTURE_SHA256" \
+python3 scripts/client_performance_benchmark.py
+```
+
+Set `PINNED_FIXTURE_SHA256` to the fixture's previously recorded SHA-256.
+
+The report records the pinned fixture hash and marks public-swarm checks as
+not run. Run the default transfer mode separately when checking public
+interoperability. The default client selection remains all five clients.
+
 ## 2026-10-21 exact-main CPU/RAM check (`457df452`)
 
 A clean image built from current `main` commit
@@ -349,10 +376,24 @@ Transfer mode needs Python 3, Docker Compose v2, Docker Buildx, `aria2c`,
 unless a matching image is selected, and use reference-client images pinned
 by digest in `deploy/interop/compose.yml`.
 
-The runner builds with a per-run Docker Buildx builder limited to two CPUs by
-default and removes that builder and its cache during cleanup. Override the
-limit with `TNG_CLIENT_BENCH_BUILD_CPUS`. It does not prune or modify the shared
-builder's cache.
+Controlled-seed mode needs Python 3, Docker Compose v2, Docker Buildx, `findmnt`,
+and Git, but it does not need `aria2c`.
+
+The runner uses a TorrentNG-specific Docker Buildx cache for Cargo registry
+and compiled outputs, npm package data, and reusable build layers. BuildKit
+garbage collection bounds that cache at 16 GB, with Cargo and npm cache mounts
+sharing a 12 GB cap. The runner removes the builder container after compilation
+and before measurements, while preserving its cache volume for the next run.
+The default build CPU quota uses available host capacity, reduced by current
+one-minute load and capped at eight CPUs; override it with
+`TNG_CLIENT_BENCH_BUILD_CPUS`. A source-matched prebuilt image can still be
+selected with `TNG_CLIENT_BENCH_SKIP_BUILD=1` to reuse the exact image across
+repeated measurements. Set `TNG_CLIENT_BENCH_KEEP_IMAGE=1` on the first source
+build to retain its benchmark image tag; pass that tag as
+`TNG_CLIENT_BENCH_PREBUILT_IMAGE` with `TNG_CLIENT_BENCH_SKIP_BUILD=1` on later
+passes. The host-side cache lock and BuildKit configuration use
+`~/.cache/torrentng/client-performance-benchmark`; Docker stores bounded build
+state in the builder's managed volume.
 
 ```sh
 python3 scripts/client_performance_benchmark.py
@@ -377,8 +418,10 @@ The default run tests all five clients in sequence. Each public download uses
 the live Debian swarm. Each seed test uses an isolated tracker and one common
 qBittorrent leecher. The report and CSV are written under
 `certification/reports/`; Docker containers, volumes, the benchmark image and
-its task-scoped BuildKit cache, and the task's scratch directory are removed
-when the run exits.
+the task's scratch directory are removed when the run exits. The bounded
+TorrentNG-specific BuildKit cache remains available for later runs. The
+benchmark image is removed by default and retained only when
+`TNG_CLIENT_BENCH_KEEP_IMAGE=1` is set.
 
 ## Storage options
 
