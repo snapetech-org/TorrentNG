@@ -52,6 +52,14 @@ impl OpenFile {
         &self.file
     }
 
+    /// Whether this descriptor still names the current filesystem object at
+    /// `path`. File-range users hold the open descriptor across asynchronous
+    /// socket writes, so they must recheck the path generation at each I/O
+    /// boundary just like the positioned-read path does.
+    pub fn matches_current_path(&self, path: &Path) -> io::Result<bool> {
+        identity_matches_path(path, self.file.identity())
+    }
+
     pub(crate) fn leased_handle(&self) -> Arc<LeasedFileHandle> {
         Arc::new(LeasedFileHandle::new(Arc::clone(&self.file)))
     }

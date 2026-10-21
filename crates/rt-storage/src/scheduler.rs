@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs::File;
 use std::io;
+#[cfg(target_os = "linux")]
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard, Weak};
@@ -32,7 +34,7 @@ use crate::{
     fd_limit::process_handle_cache_capacity,
     file_handle::{LeasedFile, LeasedFileHandle},
     frame::{global_frame_pool, try_global_frame_pool, Frame},
-    handle_cache::HandleCache,
+    handle_cache::{HandleCache, OpenFile},
     io_class::IoClass,
     open::{create_dir_all_no_follow, normalized_storage_path, FileIdentity},
 };
@@ -386,6 +388,17 @@ pub struct StorageIoStats {
 pub enum StorageRead {
     Frame(Frame),
     Bytes(bytes::Bytes),
+}
+
+/// One bounded nonblocking file-to-socket operation on Linux.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileRangeSendResult {
+    /// The syscall sent this many bytes from the requested file range.
+    Sent(usize),
+    /// The socket would block; wait for writability and retry the remaining
+    /// range from the caller's async context.
+    WouldBlock,
 }
 
 impl StorageRead {
@@ -1056,6 +1069,28 @@ fn current_file_identity(
     // identity here would add an fstat to every boundary without strengthening
     // the binding between this descriptor and the path generation.
     verify_path_identity(path, file.identity(), operation)
+}
+
+#[cfg(target_os = "linux")]
+fn verify_open_file_path(
+    path: &Path,
+    file: &OpenFile,
+    operation: &'static str,
+) -> Result<(), StorageError> {
+    match file.matches_current_path(path) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(StorageError::FilesystemStateUncertain {
+            step: operation,
+            reason: format!(
+                "file path {} was replaced during storage I/O",
+                path.display()
+            ),
+        }),
+        Err(error) => Err(StorageError::FilesystemStateUncertain {
+            step: operation,
+            reason: format!("cannot verify file path {}: {error}", path.display()),
+        }),
+    }
 }
 
 fn verify_path_identity(
@@ -4189,9 +4224,41 @@ impl MountScheduler {
         T: Send + 'static,
         F: FnOnce() -> Result<T, StorageError> + Send + 'static,
     {
+        self.run_device_operation_with_paths_priority(
+            class,
+            queued_bytes,
+            additional_paths,
+            IoRequestPriority::normal(),
+            operation,
+        )
+        .await
+    }
+
+    /// Priority-aware form of [`MountScheduler::run_device_operation_with_paths`].
+    /// Urgent peer obligations use the same shared physical-device queue as
+    /// positioned reads, so file-range serving does not bypass choke-critical
+    /// or deadline admission.
+    pub async fn run_device_operation_with_paths_priority<T, F>(
+        &self,
+        class: IoClass,
+        queued_bytes: u64,
+        additional_paths: &[PathBuf],
+        priority: IoRequestPriority,
+        operation: F,
+    ) -> Result<T, StorageError>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> Result<T, StorageError> + Send + 'static,
+    {
         let queues = self.device_queue_set_for_paths(additional_paths);
-        self.run_device_operation_with_queue_set(class, queued_bytes, &queues, operation)
-            .await
+        self.run_device_operation_with_queues_priority(
+            class,
+            queued_bytes,
+            queues.additional_queues.clone(),
+            priority,
+            operation,
+        )
+        .await
     }
 
     pub(crate) fn device_queue_set_for_paths(&self, paths: &[PathBuf]) -> DeviceQueueSet {
@@ -4248,6 +4315,28 @@ impl MountScheduler {
         T: Send + 'static,
         F: FnOnce() -> Result<T, StorageError> + Send + 'static,
     {
+        self.run_device_operation_with_queues_priority(
+            class,
+            queued_bytes,
+            additional_queues,
+            IoRequestPriority::normal(),
+            operation,
+        )
+        .await
+    }
+
+    async fn run_device_operation_with_queues_priority<T, F>(
+        &self,
+        class: IoClass,
+        queued_bytes: u64,
+        additional_queues: Vec<(String, String, Arc<DeviceQueue>)>,
+        priority: IoRequestPriority,
+        operation: F,
+    ) -> Result<T, StorageError>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> Result<T, StorageError> + Send + 'static,
+    {
         let mut queues = additional_queues;
         let mount = format!("storage-root-{}", self.storage_root.0);
         queues.push((
@@ -4262,7 +4351,7 @@ impl MountScheduler {
         let mut submission = self.reserve_mount_submission(queued_bytes)?;
         let mut permits = Vec::with_capacity(queues.len());
         for (_, mount, queue) in queues {
-            match queue.acquire(class, mount).await {
+            match queue.acquire_with_priority(class, mount, priority).await {
                 Ok(permit) => permits.push(permit),
                 Err(error) => {
                     if matches!(error, StorageError::QueueFull { .. }) {
@@ -4433,6 +4522,170 @@ impl MountScheduler {
         self.read_owned_at(class, path, offset, len)
             .await
             .map(StorageRead::into_bytes)
+    }
+
+    /// Open a bounded file range through the scheduler's descriptor catalog.
+    /// The returned lease pins the same no-follow, identity-checked handle
+    /// used by ordinary storage reads. This is used only by the Linux TCP
+    /// upload path, which sends the range directly to a socket.
+    #[cfg(target_os = "linux")]
+    pub async fn open_file_range_lease(
+        &self,
+        path: &Path,
+        offset: u64,
+        length: usize,
+        priority: IoRequestPriority,
+    ) -> Result<Arc<OpenFile>, StorageError> {
+        let range_length = u64::try_from(length).map_err(|_| {
+            StorageError::io(
+                path.display().to_string(),
+                io::Error::new(io::ErrorKind::InvalidInput, "file range length exceeds u64"),
+            )
+        })?;
+        let range_end = checked_file_range_end(path, offset, range_length)?;
+        let peer_read_permit = self.acquire(IoClass::PeerRead).await?;
+        let pool = Arc::clone(&self.file_pool);
+        let path = path.to_path_buf();
+        let additional_paths = [path.clone()];
+        self.run_device_operation_with_paths_priority(
+            IoClass::PeerRead,
+            0,
+            &additional_paths,
+            priority,
+            move || {
+                let _peer_read_permit = peer_read_permit;
+                let file = pool
+                    .catalog
+                    .get_or_open(&path, false, false)
+                    .map_err(|error| StorageError::io(path.display().to_string(), error))?;
+                verify_open_file_path(&path, &file, "file_range_open")?;
+                let file_length = file
+                    .file()
+                    .metadata()
+                    .map_err(|error| StorageError::io(path.display().to_string(), error))?
+                    .len();
+                if range_end > file_length {
+                    let available = file_length.saturating_sub(offset);
+                    return Err(StorageError::ShortIo {
+                        path: path.display().to_string(),
+                        expected: length,
+                        actual: usize::try_from(available).unwrap_or(usize::MAX),
+                    });
+                }
+                Ok(file)
+            },
+        )
+        .await
+    }
+
+    /// Perform exactly one nonblocking `sendfile` attempt through the bounded
+    /// storage worker and physical-device scheduler. A cold file read can
+    /// block this worker, never a Tokio runtime worker. `WouldBlock` is
+    /// returned to the socket owner, which waits for writability before
+    /// retrying. The caller retains both the socket fd and file lease across
+    /// retries and checks cancellation at the connection owner.
+    #[cfg(target_os = "linux")]
+    pub async fn send_file_range_once(
+        &self,
+        path: &Path,
+        file: Arc<OpenFile>,
+        socket: Arc<OwnedFd>,
+        offset: u64,
+        length: usize,
+        priority: IoRequestPriority,
+    ) -> Result<FileRangeSendResult, StorageError> {
+        let range_length = u64::try_from(length).map_err(|_| {
+            StorageError::io(
+                path.display().to_string(),
+                io::Error::new(io::ErrorKind::InvalidInput, "file range length exceeds u64"),
+            )
+        })?;
+        let range_end = checked_file_range_end(path, offset, range_length)?;
+        let peer_read_permit = self.acquire(IoClass::PeerRead).await?;
+        let started = Instant::now();
+        let counters = Arc::clone(&self.counters);
+        let path = path.to_path_buf();
+        let additional_paths = [path.clone()];
+        let result = self
+            .run_device_operation_with_paths_priority(
+                IoClass::PeerRead,
+                0,
+                &additional_paths,
+                priority,
+                move || {
+                    let _peer_read_permit = peer_read_permit;
+                    verify_open_file_path(&path, &file, "file_range_send_before")?;
+                    let file_length = file
+                        .file()
+                        .metadata()
+                        .map_err(|error| StorageError::io(path.display().to_string(), error))?
+                        .len();
+                    if range_end > file_length {
+                        let available = file_length.saturating_sub(offset);
+                        return Err(StorageError::ShortIo {
+                            path: path.display().to_string(),
+                            expected: length,
+                            actual: usize::try_from(available).unwrap_or(usize::MAX),
+                        });
+                    }
+
+                    let mut file_offset = libc::off_t::try_from(offset).map_err(|_| {
+                        StorageError::io(
+                            path.display().to_string(),
+                            io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                "file range offset exceeds off_t",
+                            ),
+                        )
+                    })?;
+                    let result = loop {
+                        // SAFETY: the open file and duplicated socket descriptors
+                        // are owned by this queued closure for the entire syscall.
+                        let sent = unsafe {
+                            libc::sendfile(
+                                socket.as_raw_fd(),
+                                file.file().as_raw_fd(),
+                                &mut file_offset,
+                                length,
+                            )
+                        };
+                        if sent > 0 {
+                            break FileRangeSendResult::Sent(sent as usize);
+                        }
+                        if sent == 0 {
+                            return Err(StorageError::ShortIo {
+                                path: path.display().to_string(),
+                                expected: length,
+                                actual: 0,
+                            });
+                        }
+                        let error = io::Error::last_os_error();
+                        if error.kind() == io::ErrorKind::Interrupted {
+                            continue;
+                        }
+                        if error
+                            .raw_os_error()
+                            .is_some_and(|code| code == libc::EAGAIN || code == libc::EWOULDBLOCK)
+                        {
+                            break FileRangeSendResult::WouldBlock;
+                        }
+                        return Err(StorageError::io(path.display().to_string(), error));
+                    };
+                    verify_open_file_path(&path, &file, "file_range_send_after")?;
+                    Ok(result)
+                },
+            )
+            .await?;
+
+        let class = class_index(IoClass::PeerRead);
+        counters.read_ops_by_class[class].fetch_add(1, Ordering::Relaxed);
+        if let FileRangeSendResult::Sent(bytes) = result {
+            counters.bytes_read_by_class[class].fetch_add(bytes as u64, Ordering::Relaxed);
+        }
+        let latency_ns = latency_ns_since(started);
+        counters.read_latency_ns_by_class[class].fetch_add(latency_ns, Ordering::Relaxed);
+        record_latency_bucket(&counters.read_latency_buckets, latency_ns);
+        Ok(result)
     }
 
     pub async fn read_owned_at(
@@ -6394,6 +6647,11 @@ fn full_preallocate(file: &File, len: u64) -> Result<(), StorageError> {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::AtomicBool;
+
+    #[cfg(target_os = "linux")]
+    use std::os::fd::AsFd;
+    #[cfg(target_os = "linux")]
+    use tokio::io::AsyncReadExt;
 
     use super::*;
     use crate::elevator::DeviceId;
@@ -8450,6 +8708,71 @@ mod tests {
             extents,
             Err(StorageError::Io { source, .. })
                 if source.kind() == io::ErrorKind::InvalidInput
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn sendfile_upload_sends_exact_range_and_rejects_replaced_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("payload.bin");
+        std::fs::write(&path, b"0123456789abcdef").unwrap();
+        let scheduler = MountScheduler::new_for_path(
+            StorageRootId::new(),
+            dir.path(),
+            &SchedulerConfig::default(),
+        );
+        let file = scheduler
+            .open_file_range_lease(&path, 4, 6, IoRequestPriority::normal())
+            .await
+            .unwrap();
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let sender = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (mut receiver, _) = listener.accept().await.unwrap();
+        let socket = Arc::new(sender.as_fd().try_clone_to_owned().unwrap());
+        let mut offset = 4;
+        let mut remaining = 6;
+        while remaining > 0 {
+            sender.writable().await.unwrap();
+            match scheduler
+                .send_file_range_once(
+                    &path,
+                    Arc::clone(&file),
+                    Arc::clone(&socket),
+                    offset,
+                    remaining,
+                    IoRequestPriority::normal(),
+                )
+                .await
+                .unwrap()
+            {
+                FileRangeSendResult::Sent(sent) => {
+                    offset += sent as u64;
+                    remaining -= sent;
+                }
+                FileRangeSendResult::WouldBlock => {}
+            }
+        }
+        let mut received = [0u8; 6];
+        receiver.read_exact(&mut received).await.unwrap();
+        assert_eq!(&received, b"456789");
+
+        let replacement = dir.path().join("replacement.bin");
+        std::fs::write(&replacement, b"replacement").unwrap();
+        std::fs::rename(&replacement, &path).unwrap();
+        assert!(matches!(
+            scheduler
+                .send_file_range_once(&path, file, socket, 4, 6, IoRequestPriority::normal())
+                .await,
+            Err(StorageError::FilesystemStateUncertain {
+                step: "file_range_send_before",
+                ..
+            })
         ));
     }
 

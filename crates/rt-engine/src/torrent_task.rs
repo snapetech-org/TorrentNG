@@ -6,6 +6,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::io::IoSlice;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+#[cfg(target_os = "linux")]
+use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -55,6 +57,8 @@ use rt_peer_wire::{
 use rt_piece_map::{FileSpan, PieceMap, V2FileSpan, V2PieceMap};
 use rt_piece_picker::{Availability, BlockRequest, PieceAvailability, PiecePicker, MAX_BLOCK_SIZE};
 use rt_session::{SessionRegistry, TorrentEntry, TorrentState};
+#[cfg(target_os = "linux")]
+use rt_storage::FileRangeSendResult;
 use rt_storage::{
     scheduler::{scheduled_write, scheduled_write_with_shared_payload_lease},
     HybridV2PieceExpectation, IoClass, IoRequestPriority, MountScheduler, PieceVerifier,
@@ -2189,6 +2193,7 @@ struct UploadReadContext {
     upload_control: RateLimitCancellation,
     upload_rate: UploadRateAdmission,
     read_admission: SharedUploadReadHandle,
+    file_range_enabled: bool,
 }
 
 #[derive(Clone)]
@@ -2199,9 +2204,19 @@ struct UploadRateAdmission {
 
 struct LeasedUploadBlock {
     data: bytes::Bytes,
-    _lease: UploadMemoryLease,
+    file_range: Option<UploadReadSpan>,
+    _lease: Option<UploadMemoryLease>,
     _read_permit: UploadReadPermit,
     rate_grant: Option<RateAdmissionGrant>,
+    choke_critical: bool,
+}
+
+impl LeasedUploadBlock {
+    fn len(&self) -> usize {
+        self.file_range
+            .map(|range| range.length)
+            .unwrap_or_else(|| self.data.len())
+    }
 }
 
 /// A single block has one owner. Only slices of a multi-block backing need
@@ -8356,15 +8371,7 @@ impl PeerIo {
                     // Preserve wire order with any control frame still held
                     // in Framed before bypassing its copying encoder.
                     framed.flush().await?;
-                    let message_len = 9usize
-                        .checked_add(data.len())
-                        .and_then(|len| u32::try_from(len).ok())
-                        .ok_or_else(|| anyhow::anyhow!("piece frame length exceeds u32"))?;
-                    let mut header = [0u8; 13];
-                    header[..4].copy_from_slice(&message_len.to_be_bytes());
-                    header[4] = 7;
-                    header[5..9].copy_from_slice(&piece.to_be_bytes());
-                    header[9..13].copy_from_slice(&begin.to_be_bytes());
+                    let header = piece_frame_header(piece, begin, data.len())?;
                     write_piece_vectored(framed.get_mut(), &header, &data).await?;
                     Ok(())
                 }
@@ -8439,6 +8446,179 @@ impl PeerIo {
         }
     }
 
+    async fn send_upload_blocks(
+        &mut self,
+        blocks: &[(UploadRequest, LeasedUploadBlock)],
+        upload: &UploadReadContext,
+    ) -> Result<usize, (usize, anyhow::Error)> {
+        if blocks.is_empty() {
+            return Ok(0);
+        }
+        if blocks.iter().all(|(_, block)| block.file_range.is_none()) {
+            let frames = blocks
+                .iter()
+                .map(|(request, block)| (request.wire_piece, request.wire_begin, &block.data))
+                .collect::<UploadBatch<_>>();
+            return self.send_pieces(&frames).await;
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            let PeerIo::Tcp(framed) = self else {
+                return Err((
+                    0,
+                    anyhow::anyhow!("file-range upload reached a non-TCP peer"),
+                ));
+            };
+            let deadline = Instant::now() + PEER_SOCKET_WRITE_TIMEOUT;
+            let socket = match framed.get_ref().as_fd().try_clone_to_owned() {
+                Ok(socket) => Arc::new(socket),
+                Err(error) => return Err((0, error.into())),
+            };
+            match timeout(remaining_peer_write_time(deadline), framed.flush()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => return Err((0, error.into())),
+                Err(_) => {
+                    return Err((0, anyhow::anyhow!("peer socket write timed out")));
+                }
+            }
+
+            let stream = framed.get_mut();
+            let mut completed = 0usize;
+            let mut index = 0usize;
+            while index < blocks.len() {
+                let (request, block) = &blocks[index];
+                if let Some(first_range) = block.file_range {
+                    let mut end = index + 1;
+                    let mut range_len = first_range.length;
+                    while end < blocks.len() {
+                        let Some(next) = blocks[end].1.file_range else {
+                            break;
+                        };
+                        let previous = blocks[end - 1]
+                            .1
+                            .file_range
+                            .expect("file-range run has a prior range");
+                        if next.file_ordinal != first_range.file_ordinal
+                            || next.offset != previous.offset + previous.length as u64
+                            || blocks[end].1.choke_critical != block.choke_critical
+                        {
+                            break;
+                        }
+                        let Some(total) = range_len.checked_add(next.length) else {
+                            return Err((
+                                completed,
+                                anyhow::anyhow!("file-range upload batch length overflow"),
+                            ));
+                        };
+                        range_len = total;
+                        end += 1;
+                    }
+                    let Some(file) = upload.piece_map.file_by_ordinal(first_range.file_ordinal)
+                    else {
+                        return Err((
+                            completed,
+                            anyhow::anyhow!("file-range upload is outside the piece map"),
+                        ));
+                    };
+                    let path = file.path.resolve(&upload.save_root);
+                    let priority = if block.choke_critical {
+                        IoRequestPriority::choke_critical(deadline)
+                    } else {
+                        IoRequestPriority::deadline(deadline)
+                    };
+                    let open = timeout(
+                        remaining_peer_write_time(deadline),
+                        upload.storage.open_file_range_lease(
+                            &path,
+                            first_range.offset,
+                            range_len,
+                            priority,
+                        ),
+                    )
+                    .await;
+                    let file_lease = match open {
+                        Ok(Ok(file)) => file,
+                        Ok(Err(error)) => return Err((completed, error.into())),
+                        Err(_) => {
+                            return Err((
+                                completed,
+                                anyhow::anyhow!("peer file-range open timed out"),
+                            ));
+                        }
+                    };
+                    for (request, block) in &blocks[index..end] {
+                        let Some(range) = block.file_range else {
+                            unreachable!("file-range run was checked above")
+                        };
+                        match timeout(
+                            remaining_peer_write_time(deadline),
+                            send_file_range_piece_tcp(
+                                stream,
+                                FileRangePieceWrite {
+                                    path: &path,
+                                    file: Arc::clone(&file_lease),
+                                    socket: Arc::clone(&socket),
+                                    piece: request.wire_piece,
+                                    begin: request.wire_begin,
+                                    range,
+                                    storage: &upload.storage,
+                                    priority,
+                                },
+                            ),
+                        )
+                        .await
+                        {
+                            Ok(Ok(())) => completed += 1,
+                            Ok(Err(error)) => return Err((completed, error)),
+                            Err(_) => {
+                                return Err((
+                                    completed,
+                                    anyhow::anyhow!("peer socket write timed out"),
+                                ));
+                            }
+                        }
+                    }
+                    index = end;
+                } else {
+                    let header = match piece_frame_header(
+                        request.wire_piece,
+                        request.wire_begin,
+                        block.data.len(),
+                    ) {
+                        Ok(header) => header,
+                        Err(error) => return Err((completed, error)),
+                    };
+                    match timeout(
+                        remaining_peer_write_time(deadline),
+                        write_piece_vectored(stream, &header, &block.data),
+                    )
+                    .await
+                    {
+                        Ok(Ok(())) => completed += 1,
+                        Ok(Err(error)) => return Err((completed, error.into())),
+                        Err(_) => {
+                            return Err((
+                                completed,
+                                anyhow::anyhow!("peer socket write timed out"),
+                            ));
+                        }
+                    }
+                    index += 1;
+                }
+            }
+            Ok(completed)
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            Err((
+                0,
+                anyhow::anyhow!("file-range uploads are unavailable on this platform"),
+            ))
+        }
+    }
+
     pub(crate) async fn next(&mut self) -> anyhow::Result<Option<Message>> {
         match self {
             PeerIo::Tcp(framed) => match framed.next().await {
@@ -8452,6 +8632,122 @@ impl PeerIo {
     fn try_next_ready(&mut self) -> Option<anyhow::Result<Option<Message>>> {
         self.next().now_or_never()
     }
+}
+
+fn piece_frame_header(piece: u32, begin: u32, payload_len: usize) -> anyhow::Result<[u8; 13]> {
+    let message_len = 9usize
+        .checked_add(payload_len)
+        .and_then(|length| u32::try_from(length).ok())
+        .ok_or_else(|| anyhow::anyhow!("piece frame length exceeds u32"))?;
+    let mut header = [0u8; 13];
+    header[..4].copy_from_slice(&message_len.to_be_bytes());
+    header[4] = 7;
+    header[5..9].copy_from_slice(&piece.to_be_bytes());
+    header[9..13].copy_from_slice(&begin.to_be_bytes());
+    Ok(header)
+}
+
+fn remaining_peer_write_time(deadline: Instant) -> Duration {
+    deadline.saturating_duration_since(Instant::now())
+}
+
+#[cfg(target_os = "linux")]
+struct ActiveFileRangeWrite {
+    socket: Arc<OwnedFd>,
+    complete: bool,
+}
+
+#[cfg(target_os = "linux")]
+struct FileRangePieceWrite<'a> {
+    path: &'a std::path::Path,
+    file: Arc<rt_storage::handle_cache::OpenFile>,
+    socket: Arc<OwnedFd>,
+    piece: u32,
+    begin: u32,
+    range: UploadReadSpan,
+    storage: &'a MountScheduler,
+    priority: IoRequestPriority,
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for ActiveFileRangeWrite {
+    fn drop(&mut self) {
+        if !self.complete {
+            // A canceled scheduler operation can still be finishing a cold
+            // file read. Shutdown the shared socket description before that
+            // worker can write any late bytes into a live connection.
+            // SAFETY: the owned duplicated socket fd remains live here.
+            unsafe {
+                libc::shutdown(self.socket.as_raw_fd(), libc::SHUT_RDWR);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn send_file_range_piece_tcp(
+    stream: &mut TcpStream,
+    write: FileRangePieceWrite<'_>,
+) -> anyhow::Result<()> {
+    use tokio::io::AsyncWriteExt;
+
+    let FileRangePieceWrite {
+        path,
+        file,
+        socket,
+        piece,
+        begin,
+        range,
+        storage,
+        priority,
+    } = write;
+    anyhow::ensure!(range.length > 0, "file-range upload cannot be empty");
+    let mut active = ActiveFileRangeWrite {
+        socket: Arc::clone(&socket),
+        complete: false,
+    };
+    let header = piece_frame_header(piece, begin, range.length)?;
+    stream.write_all(&header).await?;
+    let mut offset = range.offset;
+    let mut remaining = range.length;
+    let mut would_block_backoff = Duration::from_micros(250);
+    while remaining > 0 {
+        stream.writable().await?;
+        match storage
+            .send_file_range_once(
+                path,
+                Arc::clone(&file),
+                Arc::clone(&socket),
+                offset,
+                remaining,
+                priority,
+            )
+            .await?
+        {
+            FileRangeSendResult::Sent(0) => {
+                anyhow::bail!("file-range send made no progress");
+            }
+            FileRangeSendResult::Sent(sent) => {
+                offset = offset
+                    .checked_add(sent as u64)
+                    .ok_or_else(|| anyhow::anyhow!("file-range send offset overflow"))?;
+                remaining = remaining.saturating_sub(sent);
+                would_block_backoff = Duration::from_micros(250);
+            }
+            FileRangeSendResult::WouldBlock => {
+                // Tokio's readiness flag is not cleared by the raw sendfile
+                // syscall running on the storage worker. Bound retries here
+                // so stale writable readiness cannot turn EAGAIN into a hot
+                // loop; the next worker attempt checks the real socket state.
+                tokio::time::sleep(would_block_backoff).await;
+                would_block_backoff = would_block_backoff
+                    .saturating_mul(2)
+                    .min(Duration::from_millis(4));
+            }
+        }
+    }
+    active.complete = true;
+    Ok(())
 }
 
 async fn write_piece_vectored<W>(
@@ -9005,6 +9301,12 @@ where
         upload_control: upload.upload_control.clone(),
         upload_rate: upload.upload_rate.clone(),
         read_admission: upload_obligations.read_admission(),
+        // Peer-loop unit tests keep exercising the buffered scheduler path
+        // unless they explicitly opt in; the dedicated file-range test below
+        // covers the production Linux TCP fast path.
+        file_range_enabled: cfg!(target_os = "linux")
+            && !cfg!(test)
+            && matches!(&peer_io, PeerIo::Tcp(_)),
     });
     // BEP 10 extension ids are negotiated per peer. The id in our outgoing
     // handshake is the id this loop receives from the peer; responses must
@@ -9903,24 +10205,20 @@ where
                 }
 
                 if !ready_uploads.is_empty() {
-                    let frames = ready_uploads
-                        .iter()
-                        .map(|(request, block)| {
-                            (request.wire_piece, request.wire_begin, &block.data)
-                        })
-                        .collect::<UploadBatch<_>>();
-                    let (completed_frames, send_error) = match peer_io.send_pieces(&frames).await {
+                    let (completed_frames, send_error) = match peer_io
+                        .send_upload_blocks(&ready_uploads, &upload_read_context)
+                        .await
+                    {
                         Ok(completed) => (completed, None),
                         Err((completed, error)) => (completed, Some(error)),
                     };
-                    drop(frames);
                     let completed_frames = completed_frames.min(ready_uploads.len());
                     let mut upload_event_due = false;
                     for (request, mut block) in ready_uploads
                         .into_iter()
                         .take(completed_frames)
                     {
-                        let bytes = block.data.len() as u64;
+                        let bytes = block.len() as u64;
                         if let Some(grant) = block.rate_grant.take() {
                             grant.settle(bytes);
                         }
@@ -10355,9 +10653,11 @@ async fn read_upload_block_with_span(
     );
     Ok(LeasedUploadBlock {
         data,
-        _lease: UploadMemoryLease::Single { _lease: lease },
+        file_range: None,
+        _lease: Some(UploadMemoryLease::Single { _lease: lease }),
         _read_permit,
         rate_grant: None,
+        choke_critical,
     })
 }
 
@@ -10488,6 +10788,10 @@ async fn read_upload_batch_blocks(
         !specs.is_empty() && specs.len() <= MAX_UPLOAD_READ_BATCH_BLOCKS,
         "upload batch has an invalid request count"
     );
+    #[cfg(target_os = "linux")]
+    if upload.file_range_enabled && specs.iter().all(|spec| spec.span.is_some()) {
+        return read_upload_file_range_blocks(upload, specs).await;
+    }
     if specs.len() == 1 || specs.iter().any(|spec| spec.span.is_none()) {
         let mut blocks = UploadBatch::new();
         for spec in specs {
@@ -10594,16 +10898,78 @@ async fn read_upload_batch_blocks(
         let end = offset + length;
         blocks.push(LeasedUploadBlock {
             data: backing.slice(offset..end),
-            _lease: UploadMemoryLease::Shared {
+            file_range: None,
+            _lease: Some(UploadMemoryLease::Shared {
                 _lease: Arc::clone(&shared_lease),
-            },
+            }),
             _read_permit: read_permit,
             rate_grant: None,
+            choke_critical: spec.choke_critical,
         });
         offset = end;
     }
     debug_assert_eq!(offset, total_len);
     Ok(blocks)
+}
+
+#[cfg(target_os = "linux")]
+async fn read_upload_file_range_blocks(
+    upload: &UploadReadContext,
+    specs: &[UploadReadSpec],
+) -> anyhow::Result<UploadBatch<LeasedUploadBlock>> {
+    anyhow::ensure!(
+        upload.file_range_enabled && upload.plane == Plane::V1,
+        "file-range uploads require the enabled v1 fast path"
+    );
+    let first = specs.first().expect("nonempty upload batch checked above");
+    let first_span = first.span.expect("file-range spans checked above");
+    let mut blocks = [BlockExtent::new(0, 0, 1); MAX_UPLOAD_READ_BATCH_BLOCKS];
+    for (index, spec) in specs.iter().enumerate() {
+        let span = spec.span.expect("file-range spans checked above");
+        let request = spec.request;
+        let block = request.canonical_block();
+        anyhow::ensure!(
+            request.wire_block() == block
+                && block.length > 0
+                && block.length <= MAX_BLOCK_SIZE
+                && span.length == block.length as usize
+                && spec.choke_critical == first.choke_critical,
+            "file-range upload has an invalid request or extent"
+        );
+        if index > 0 {
+            let previous = &specs[index - 1];
+            let previous_span = previous.span.expect("file-range spans checked above");
+            anyhow::ensure!(
+                block.piece == previous.request.piece
+                    && span.file_ordinal == first_span.file_ordinal
+                    && previous_span
+                        .offset
+                        .checked_add(previous_span.length as u64)
+                        == Some(span.offset),
+                "file-range upload batch crossed a piece, file, or non-contiguous extent"
+            );
+        }
+        blocks[index] = block;
+    }
+
+    let read_permits = upload
+        .read_admission
+        .acquire_read_batch(&blocks[..specs.len()])
+        .await
+        .map_err(|error| anyhow::anyhow!("global upload read admission failed: {error:?}"))?;
+    let mut result = UploadBatch::new();
+    for (spec, read_permit) in specs.iter().zip(read_permits) {
+        let span = spec.span.expect("file-range spans checked above");
+        result.push(LeasedUploadBlock {
+            data: bytes::Bytes::new(),
+            file_range: Some(span),
+            _lease: None,
+            _read_permit: read_permit,
+            rate_grant: None,
+            choke_critical: spec.choke_critical,
+        });
+    }
+    Ok(result)
 }
 
 async fn upload_read_batch_future(
@@ -10648,7 +11014,7 @@ async fn upload_read_batch_future(
             };
             match result {
                 Ok(mut block) => {
-                    let bytes = block.data.len() as u64;
+                    let bytes = block.len() as u64;
                     let (result, rate_interrupted) = match read_context
                         .upload_rate
                         .network_budget
@@ -11371,6 +11737,7 @@ mod tests {
             upload_control: RateLimitCancellation::default(),
             upload_rate,
             read_admission: upload_registration.read_admission(),
+            file_range_enabled: false,
         };
         let block = read_upload_block(&upload, UploadRequest::new(canonical, wire), false)
             .await
@@ -11378,7 +11745,10 @@ mod tests {
 
         assert_eq!(block.data.as_ref(), b"abc");
         assert_eq!(block.data.len(), wire.length as usize);
-        assert_eq!(block._lease.bytes(), u64::from(canonical.length));
+        assert_eq!(
+            block._lease.as_ref().unwrap().bytes(),
+            u64::from(canonical.length)
+        );
         drop(block);
         assert_eq!(
             resources.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
@@ -17275,6 +17645,7 @@ mod tests {
             upload_control: upload.upload_control.clone(),
             upload_rate: upload.upload_rate.clone(),
             read_admission: upload_registration.read_admission(),
+            file_range_enabled: false,
         };
         let extent = BlockExtent::new(0, 0, 16 * 1024);
         let block = read_upload_block(&read_context, UploadRequest::from_wire(extent), false)
@@ -17336,6 +17707,7 @@ mod tests {
             upload_control: RateLimitCancellation::default(),
             upload_rate,
             read_admission: upload_registration.read_admission(),
+            file_range_enabled: false,
         };
         let first_request = UploadRequest::from_wire(BlockExtent::new(0, 0, MAX_BLOCK_SIZE));
         let second_request =
@@ -17371,6 +17743,205 @@ mod tests {
             read_context.resources.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
             0
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn tcp_upload_sends_verified_file_range_as_a_piece_frame() {
+        let dir = tempfile::tempdir().unwrap();
+        let payload = vec![0x6d; MAX_BLOCK_SIZE as usize];
+        std::fs::write(dir.path().join("payload.bin"), &payload).unwrap();
+        let piece_map = Arc::new(
+            PieceMap::new(
+                u64::from(MAX_BLOCK_SIZE),
+                vec![FileSpan {
+                    file_index: 0,
+                    path: SafeRelPath::from_name("payload.bin", false).unwrap(),
+                    content_offset: 0,
+                    length: u64::from(MAX_BLOCK_SIZE),
+                }],
+            )
+            .unwrap(),
+        );
+        let upload_rate = test_upload_rate_admission(None, 0).await;
+        let registration = upload_rate
+            .network_budget
+            .upload_service()
+            .register(upload_rate.peer, false, MAX_UPLOAD_WORK)
+            .unwrap();
+        let upload = UploadReadContext {
+            save_root: dir.path().to_path_buf(),
+            piece_map,
+            hybrid_v2: None,
+            plane: Plane::V1,
+            storage: MountScheduler::new_for_path(
+                StorageRootId::new(),
+                dir.path(),
+                &SchedulerConfig {
+                    profile: StorageProfile::Unknown,
+                    ..Default::default()
+                },
+            ),
+            resources: ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default()),
+            upload_control: RateLimitCancellation::default(),
+            upload_rate,
+            read_admission: registration.read_admission(),
+            file_range_enabled: true,
+        };
+        let extent = BlockExtent::new(0, 0, MAX_BLOCK_SIZE);
+        let request = UploadRequest::from_wire(extent);
+        let spec = UploadReadSpec {
+            request,
+            span: upload_read_span(&upload, request),
+            choke_critical: false,
+        };
+        let mut blocks = read_upload_batch_blocks(&upload, &[spec]).await.unwrap();
+        assert!(blocks[0].data.is_empty());
+        assert_eq!(blocks[0].len(), payload.len());
+        assert!(blocks[0]._lease.is_none());
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let remote = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let mut peer_io = PeerIo::Tcp(Framed::new(server, PeerCodec::default()));
+        let mut ready = UploadBatch::new();
+        ready.push((request, blocks.pop().unwrap()));
+        assert_eq!(
+            peer_io.send_upload_blocks(&ready, &upload).await.unwrap(),
+            1
+        );
+
+        let mut remote = Framed::new(remote, PeerCodec::default());
+        let message = timeout(Duration::from_secs(2), remote.next())
+            .await
+            .expect("file-range Piece frame should arrive")
+            .expect("peer should remain connected")
+            .expect("Piece frame should decode");
+        assert!(matches!(
+            message,
+            Message::Piece { piece: 0, begin: 0, data } if data.as_ref() == payload.as_slice()
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn tcp_file_range_upload_recovers_from_socket_backpressure() {
+        const BLOCKS: usize = 16;
+        let dir = tempfile::tempdir().unwrap();
+        let block_size = MAX_BLOCK_SIZE as usize;
+        let payload: Vec<u8> = (0..BLOCKS)
+            .flat_map(|index| std::iter::repeat_n(index as u8, block_size))
+            .collect();
+        std::fs::write(dir.path().join("payload.bin"), &payload).unwrap();
+        let piece_map = Arc::new(
+            PieceMap::new(
+                payload.len() as u64,
+                vec![FileSpan {
+                    file_index: 0,
+                    path: SafeRelPath::from_name("payload.bin", false).unwrap(),
+                    content_offset: 0,
+                    length: payload.len() as u64,
+                }],
+            )
+            .unwrap(),
+        );
+        let upload_rate = test_upload_rate_admission(None, 0).await;
+        let registration = upload_rate
+            .network_budget
+            .upload_service()
+            .register(upload_rate.peer, false, MAX_UPLOAD_WORK)
+            .unwrap();
+        let upload = UploadReadContext {
+            save_root: dir.path().to_path_buf(),
+            piece_map,
+            hybrid_v2: None,
+            plane: Plane::V1,
+            storage: MountScheduler::new_for_path(
+                StorageRootId::new(),
+                dir.path(),
+                &SchedulerConfig {
+                    profile: StorageProfile::Unknown,
+                    ..Default::default()
+                },
+            ),
+            resources: ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default()),
+            upload_control: RateLimitCancellation::default(),
+            upload_rate,
+            read_admission: registration.read_admission(),
+            file_range_enabled: true,
+        };
+        let specs: Vec<_> = (0..BLOCKS)
+            .map(|index| {
+                let request = UploadRequest::from_wire(BlockExtent::new(
+                    0,
+                    index as u32 * MAX_BLOCK_SIZE,
+                    MAX_BLOCK_SIZE,
+                ));
+                UploadReadSpec {
+                    request,
+                    span: upload_read_span(&upload, request),
+                    choke_critical: false,
+                }
+            })
+            .collect();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let remote = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let send_buffer: libc::c_int = 4096;
+        // SAFETY: `server` owns a live socket; the option value and length are
+        // valid for SO_SNDBUF.
+        let result = unsafe {
+            libc::setsockopt(
+                server.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                (&send_buffer as *const libc::c_int).cast(),
+                std::mem::size_of_val(&send_buffer) as libc::socklen_t,
+            )
+        };
+        assert_eq!(result, 0, "could not constrain test socket send buffer");
+        let reader = tokio::spawn(async move {
+            sleep(Duration::from_millis(25)).await;
+            let mut remote = Framed::new(remote, PeerCodec::default());
+            for index in 0..BLOCKS {
+                let message = timeout(Duration::from_secs(5), remote.next())
+                    .await
+                    .expect("backpressured Piece frame should arrive")
+                    .expect("remote peer should remain connected")
+                    .expect("Piece frame should decode");
+                match message {
+                    Message::Piece { piece, begin, data } => {
+                        assert_eq!(piece, 0);
+                        assert_eq!(begin, index as u32 * MAX_BLOCK_SIZE);
+                        assert_eq!(data.as_ref(), &vec![index as u8; block_size]);
+                    }
+                    other => panic!("expected Piece frame, received {other:?}"),
+                }
+            }
+        });
+
+        let mut peer_io = PeerIo::Tcp(Framed::new(server, PeerCodec::default()));
+        let started = Instant::now();
+        for batch in specs.chunks(MAX_UPLOAD_READ_BATCH_BLOCKS) {
+            let blocks = read_upload_batch_blocks(&upload, batch).await.unwrap();
+            let mut ready = UploadBatch::new();
+            for (spec, block) in batch.iter().zip(blocks) {
+                ready.push((spec.request, block));
+            }
+            assert_eq!(
+                peer_io.send_upload_blocks(&ready, &upload).await.unwrap(),
+                batch.len()
+            );
+        }
+        assert!(
+            started.elapsed() >= Duration::from_millis(20),
+            "test socket did not apply backpressure"
+        );
+        reader.await.unwrap();
     }
 
     #[tokio::test]
@@ -17418,6 +17989,7 @@ mod tests {
             upload_control: RateLimitCancellation::default(),
             upload_rate,
             read_admission: upload_registration.read_admission(),
+            file_range_enabled: false,
         };
         let requests = [
             BlockExtent::new(0, 0, MAX_BLOCK_SIZE),
@@ -17492,6 +18064,7 @@ mod tests {
             upload_rate,
             upload_control: RateLimitCancellation::default(),
             read_admission: upload_registration.read_admission(),
+            file_range_enabled: false,
         };
 
         let extent = BlockExtent::new(0, 0, 16);
