@@ -1,0 +1,3673 @@
+diff --git a/crates/rt-engine/src/network_budget.rs b/crates/rt-engine/src/network_budget.rs
+index b92d76b..b0ebcfc 100644
+--- a/crates/rt-engine/src/network_budget.rs
++++ b/crates/rt-engine/src/network_budget.rs
+@@ -14,7 +14,7 @@ use rt_utp::{UtpEndpoint, UtpRuntime};
+ use tokio::time::Instant;
+ 
+ use crate::transfer::coords::{ConnectionId, TorrentKey};
+-use crate::transfer::rate::{Grant, RatePeerId, RateTree};
++use crate::transfer::rate::{Grant, RatePeerId, RateTree, CHANGE_ONLY_WAKE};
+ use crate::transfer::shared_upload::SharedUploadService;
+ use crate::transfer::upload_scheduler::UploadReadLimits;
+ 
+@@ -91,13 +91,17 @@ impl GlobalNetworkBudget {
+             tree: Mutex::new(RateTree::new(download_limit_bytes_per_sec, 0)),
+             origin: upload_origin,
+             changed: RateLimitCancellation::default(),
++            demand_changes: Mutex::new(HashMap::new()),
+             next_torrent: AtomicU64::new(1),
++            next_demand: AtomicU64::new(1),
+         });
+         let upload_tree = Arc::new(HierarchicalRateService {
+             tree: Mutex::new(RateTree::new(upload_limit_bytes_per_sec, 0)),
+             origin: upload_origin,
+             changed: RateLimitCancellation::default(),
++            demand_changes: Mutex::new(HashMap::new()),
+             next_torrent: AtomicU64::new(1),
++            next_demand: AtomicU64::new(1),
+         });
+         // The reference actors still expose the former process-global rate
+         // limiter API. Give each direction one stable synthetic peer in the
+@@ -236,6 +240,12 @@ impl GlobalNetworkBudget {
+         self.download_tree.limit_changes()
+     }
+ 
++    /// Wake only one torrent when its fairness waiters may have become
++    /// eligible after another peer makes progress or retires demand.
++    pub(crate) fn download_demand_changes(&self, torrent: TorrentKey) -> RateLimitCancellation {
++        self.download_tree.demand_changes_for(torrent)
++    }
++
+     pub(crate) fn set_upload_limit(&self, limit: Option<u64>) {
+         self.upload_tree.set_global_limit(limit);
+     }
+@@ -278,6 +288,13 @@ impl GlobalNetworkBudget {
+         self.download_tree.remove_peer(peer_id);
+     }
+ 
++    /// Retire a synchronous download refill that no longer has runnable
++    /// demand. The peer registration and any grants already attached to
++    /// requests remain live.
++    pub(crate) fn retire_download_demand(&self, peer_id: RatePeerId) {
++        self.download_tree.retire_sync_demand(peer_id);
++    }
++
+     pub(crate) async fn acquire_upload(
+         &self,
+         peer_id: RatePeerId,
+@@ -835,6 +852,9 @@ impl std::fmt::Debug for SourceRequestPermit {
+ pub(crate) enum RateAdmissionAttempt {
+     Granted(RateAdmissionGrant),
+     Wait(Duration),
++    /// Fairness is blocked on peer progress or demand retirement, with no
++    /// useful clock deadline to poll.
++    WaitForChange,
+ }
+ 
+ /// Live Tokio adapter for the deterministic transfer `RateTree`. The lock is
+@@ -844,7 +864,9 @@ struct HierarchicalRateService {
+     tree: Mutex<RateTree>,
+     origin: Instant,
+     changed: RateLimitCancellation,
++    demand_changes: Mutex<HashMap<TorrentKey, RateLimitCancellation>>,
+     next_torrent: AtomicU64,
++    next_demand: AtomicU64,
+ }
+ 
+ impl HierarchicalRateService {
+@@ -881,6 +903,67 @@ impl HierarchicalRateService {
+         }
+     }
+ 
++    fn new_demand_id(&self) -> u64 {
++        let mut current = self.next_demand.load(Ordering::Relaxed);
++        loop {
++            let next = current
++                .checked_add(1)
++                .expect("transfer rate demand identity space exhausted");
++            match self.next_demand.compare_exchange_weak(
++                current,
++                next,
++                Ordering::Relaxed,
++                Ordering::Relaxed,
++            ) {
++                Ok(_) => return current,
++                Err(observed) => current = observed,
++            }
++        }
++    }
++
++    fn demand_changes_for(&self, torrent: TorrentKey) -> RateLimitCancellation {
++        let mut changes = self
++            .demand_changes
++            .lock()
++            .unwrap_or_else(|poisoned| poisoned.into_inner());
++        changes.entry(torrent).or_default().clone()
++    }
++
++    fn notify_demand_change(&self, torrent: TorrentKey) {
++        let changes = self
++            .demand_changes
++            .lock()
++            .unwrap_or_else(|poisoned| poisoned.into_inner())
++            .get(&torrent)
++            .cloned();
++        if let Some(changes) = changes {
++            changes.cancel();
++        }
++    }
++
++    fn remove_demand_changes(&self, torrent: TorrentKey) {
++        let changes = self
++            .demand_changes
++            .lock()
++            .unwrap_or_else(|poisoned| poisoned.into_inner())
++            .remove(&torrent);
++        if let Some(changes) = changes {
++            changes.cancel();
++        }
++    }
++
++    fn retire_sync_demand(&self, peer_id: RatePeerId) {
++        if self.lock_tree().retire_sync_demand(peer_id) {
++            self.notify_demand_change(peer_id.torrent);
++        }
++    }
++
++    fn retire_demand(&self, peer_id: RatePeerId, demand_id: u64) {
++        if self.lock_tree().retire_demand(peer_id, demand_id) {
++            self.notify_demand_change(peer_id.torrent);
++        }
++    }
++
+     fn set_global_limit(&self, limit: Option<u64>) {
+         self.lock_tree().set_global_limit(limit, self.now());
+         self.changed.cancel();
+@@ -895,6 +978,7 @@ impl HierarchicalRateService {
+     }
+ 
+     fn register_torrent(&self, key: TorrentKey, limit: Option<u64>) {
++        self.demand_changes_for(key);
+         self.lock_tree().add_torrent(key, limit, self.now());
+         self.changed.cancel();
+     }
+@@ -906,21 +990,41 @@ impl HierarchicalRateService {
+ 
+     fn remove_torrent(&self, key: TorrentKey) {
+         self.lock_tree().remove_torrent(key);
++        self.remove_demand_changes(key);
+         self.changed.cancel();
+     }
+ 
+     fn register_peer(&self, peer_id: RatePeerId) {
+         self.lock_tree().add_peer(peer_id, 1);
++        self.notify_demand_change(peer_id.torrent);
+         self.changed.cancel();
+     }
+ 
+     fn remove_peer(&self, peer_id: RatePeerId) {
+         self.lock_tree().remove_peer(peer_id);
++        self.notify_demand_change(peer_id.torrent);
+         self.changed.cancel();
+     }
+ 
+-    fn settle(&self, peer_id: RatePeerId, grant_id: u64, bytes: u64) {
+-        self.lock_tree().settle_grant(peer_id, grant_id, bytes);
++    fn settle_and_refund_unused(
++        &self,
++        peer_id: RatePeerId,
++        grant_id: u64,
++        transferred: u64,
++        unused: u64,
++    ) {
++        let refunded = {
++            let mut tree = self.lock_tree();
++            tree.settle_grant(peer_id, grant_id, transferred);
++            if unused == 0 {
++                0
++            } else {
++                tree.refund_grant(peer_id, grant_id, unused, self.now())
++            }
++        };
++        if refunded > 0 {
++            self.changed.cancel();
++        }
+     }
+ 
+     fn refund(&self, peer_id: RatePeerId, grant_id: u64, bytes: u64) {
+@@ -942,7 +1046,16 @@ impl HierarchicalRateService {
+             anyhow::bail!("zero-byte payload cannot consume rate admission");
+         }
+         let now = self.now();
+-        let (grant, grant_id) = self.lock_tree().try_grant_tracked(peer_id, bytes, now);
++        let (grant, grant_id, wake_fairness_waiters) = {
++            let mut tree = self.lock_tree();
++            let (grant, grant_id) = tree.try_grant_sync_tracked(peer_id, bytes, now);
++            let wake_fairness_waiters =
++                grant == Grant::Granted && tree.has_change_waiters(peer_id.torrent);
++            (grant, grant_id, wake_fairness_waiters)
++        };
++        if wake_fairness_waiters {
++            self.notify_demand_change(peer_id.torrent);
++        }
+         match grant {
+             Grant::Granted => Ok(RateAdmissionAttempt::Granted(RateAdmissionGrant {
+                 scheduler: Arc::clone(self),
+@@ -951,6 +1064,9 @@ impl HierarchicalRateService {
+                 bytes,
+                 active: true,
+             })),
++            Grant::Wait { until } if until == CHANGE_ONLY_WAKE => {
++                Ok(RateAdmissionAttempt::WaitForChange)
++            }
+             Grant::Wait { until } => Ok(RateAdmissionAttempt::Wait(Duration::from_nanos(
+                 until.saturating_sub(self.now()),
+             ))),
+@@ -973,13 +1089,31 @@ impl HierarchicalRateService {
+         if bytes == 0 {
+             anyhow::bail!("zero-byte payload cannot consume rate admission");
+         }
++        let demand_changes = self.demand_changes_for(peer_id.torrent);
++        let demand_id = self.new_demand_id();
++        let _demand = RateDemandGuard {
++            scheduler: Arc::clone(self),
++            peer_id,
++            demand_id,
++        };
+         loop {
+             if cancellation.generation() != generation {
+                 return Ok(None);
+             }
+             let changed_generation = self.changed.generation();
++            let demand_generation = demand_changes.generation();
+             let now = self.now();
+-            let (grant, grant_id) = self.lock_tree().try_grant_tracked(peer_id, bytes, now);
++            let (grant, grant_id, wake_fairness_waiters) = {
++                let mut tree = self.lock_tree();
++                let (grant, grant_id) =
++                    tree.try_grant_demand_tracked(peer_id, demand_id, bytes, now);
++                let wake_fairness_waiters =
++                    grant == Grant::Granted && tree.has_change_waiters(peer_id.torrent);
++                (grant, grant_id, wake_fairness_waiters)
++            };
++            if wake_fairness_waiters {
++                self.notify_demand_change(peer_id.torrent);
++            }
+             match grant {
+                 Grant::Granted => {
+                     let grant = RateAdmissionGrant {
+@@ -1002,11 +1136,20 @@ impl HierarchicalRateService {
+                     peer_id.connection.generation
+                 ),
+                 Grant::Wait { until } => {
+-                    let delay = Duration::from_nanos(until.saturating_sub(self.now()));
+-                    tokio::select! {
+-                        _ = tokio::time::sleep(delay) => {}
+-                        _ = self.changed.wait_for_change(changed_generation) => {}
+-                        _ = cancellation.wait_for_change(generation) => return Ok(None),
++                    if until == CHANGE_ONLY_WAKE {
++                        tokio::select! {
++                            _ = self.changed.wait_for_change(changed_generation) => {}
++                            _ = demand_changes.wait_for_change(demand_generation) => {}
++                            _ = cancellation.wait_for_change(generation) => return Ok(None),
++                        }
++                    } else {
++                        let delay = Duration::from_nanos(until.saturating_sub(self.now()));
++                        tokio::select! {
++                            _ = tokio::time::sleep(delay) => {}
++                            _ = self.changed.wait_for_change(changed_generation) => {}
++                            _ = demand_changes.wait_for_change(demand_generation) => {}
++                            _ = cancellation.wait_for_change(generation) => return Ok(None),
++                        }
+                     }
+                 }
+             }
+@@ -1014,6 +1157,21 @@ impl HierarchicalRateService {
+     }
+ }
+ 
++/// A pending rate demand is owned by one asynchronous request. Dropping or
++/// cancelling that request clears only its own waiter, so another request
++/// from the same connection remains represented in the fairness queue.
++struct RateDemandGuard {
++    scheduler: Arc<HierarchicalRateService>,
++    peer_id: RatePeerId,
++    demand_id: u64,
++}
++
++impl Drop for RateDemandGuard {
++    fn drop(&mut self) {
++        self.scheduler.retire_demand(self.peer_id, self.demand_id);
++    }
++}
++
+ /// Shared upload/download rate credit. Settlement records the bytes that
+ /// crossed the transfer boundary; dropping an unfinished grant refunds its
+ /// reserved credit.
+@@ -1039,12 +1197,11 @@ impl std::fmt::Debug for RateAdmissionGrant {
+ impl RateAdmissionGrant {
+     pub(crate) fn settle(mut self, transferred: u64) {
+         let transferred = transferred.min(self.bytes);
+-        self.scheduler
+-            .settle(self.peer_id, self.grant_id, transferred);
+-        self.scheduler.refund(
++        self.scheduler.settle_and_refund_unused(
+             self.peer_id,
+             self.grant_id,
+-            self.bytes.saturating_sub(transferred),
++            transferred,
++            self.bytes - transferred,
+         );
+         self.active = false;
+     }
+@@ -1335,6 +1492,116 @@ mod tests {
+             .is_empty());
+     }
+ 
++    #[tokio::test(start_paused = true)]
++    async fn retiring_sync_download_demand_unblocks_live_peer_without_removal() {
++        const BLOCK: u64 = 16 * 1024;
++        let budget = GlobalNetworkBudget::new(2, Some(32 * 1024 * 1024), None);
++        let torrent = budget.new_transfer_torrent_key();
++        budget.register_download_torrent(torrent, Some(32 * 1024 * 1024));
++        let active = rate_peer(torrent, 0);
++        let parked = rate_peer(torrent, 1);
++        budget.register_transfer_peer(active);
++        budget.register_transfer_peer(parked);
++
++        while let RateAdmissionAttempt::Granted(grant) =
++            budget.try_acquire_download(active, BLOCK).unwrap()
++        {
++            grant.settle(BLOCK);
++        }
++        assert!(matches!(
++            budget.try_acquire_download(parked, BLOCK).unwrap(),
++            RateAdmissionAttempt::Wait(_) | RateAdmissionAttempt::WaitForChange
++        ));
++
++        let demand_changes = budget.download_demand_changes(torrent);
++        let demand_generation = demand_changes.generation();
++        budget.set_download_limit(None);
++        budget.set_download_torrent_limit(torrent, None);
++        tokio::time::advance(Duration::from_secs(1)).await;
++        assert!(
++            matches!(
++                budget.try_acquire_download(active, BLOCK).unwrap(),
++                RateAdmissionAttempt::WaitForChange
++            ),
++            "a stale live demand should be present until its owner retires it"
++        );
++
++        budget.retire_download_demand(parked);
++        assert_ne!(demand_changes.generation(), demand_generation);
++        let RateAdmissionAttempt::Granted(grant) =
++            budget.try_acquire_download(active, BLOCK).unwrap()
++        else {
++            panic!("retiring parked demand should restore work-conserving service");
++        };
++        grant.settle(BLOCK);
++        let RateAdmissionAttempt::Granted(grant) = budget.try_acquire_download(parked, 1).unwrap()
++        else {
++            panic!("retiring pending demand must keep the peer registration live");
++        };
++        grant.settle(1);
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn cancelling_one_async_rate_demand_keeps_its_sibling_waiter() {
++        let budget = GlobalNetworkBudget::new(3, Some(1), None);
++        let torrent = budget.new_transfer_torrent_key();
++        budget.register_download_torrent(torrent, None);
++        let spender = rate_peer(torrent, 0);
++        let waiting = rate_peer(torrent, 1);
++        budget.register_transfer_peer(spender);
++        budget.register_transfer_peer(waiting);
++
++        let spender_control = RateLimitCancellation::default();
++        budget
++            .acquire_download(
++                spender,
++                32 * 1024,
++                &spender_control,
++                spender_control.generation(),
++            )
++            .await
++            .unwrap()
++            .unwrap()
++            .settle(32 * 1024);
++
++        let first_control = RateLimitCancellation::default();
++        let first_task_control = first_control.clone();
++        let first_generation = first_control.generation();
++        let first_budget = budget.clone();
++        let first_waiter = tokio::spawn(async move {
++            first_budget
++                .acquire_download(waiting, 1, &first_task_control, first_generation)
++                .await
++        });
++        let second_control = RateLimitCancellation::default();
++        let second_generation = second_control.generation();
++        let second_budget = budget.clone();
++        let second_waiter = tokio::spawn(async move {
++            second_budget
++                .acquire_download(waiting, 1, &second_control, second_generation)
++                .await
++        });
++        tokio::task::yield_now().await;
++        tokio::task::yield_now().await;
++        assert_eq!(
++            budget.download_tree.lock_tree().waiting_peers(8),
++            vec![waiting]
++        );
++
++        first_control.cancel();
++        assert!(first_waiter.await.unwrap().unwrap().is_none());
++        assert_eq!(
++            budget.download_tree.lock_tree().waiting_peers(8),
++            vec![waiting],
++            "one cancelled request must not erase its sibling's demand"
++        );
++
++        budget.set_download_limit(None);
++        let grant = second_waiter.await.unwrap().unwrap().unwrap();
++        grant.settle(1);
++        assert!(budget.download_tree.lock_tree().waiting_peers(8).is_empty());
++    }
++
+     #[tokio::test(start_paused = true)]
+     async fn hierarchical_download_tree_shares_torrent_credit_and_reports_advisory() {
+         let budget = GlobalNetworkBudget::new(4, None, None);
+@@ -1437,4 +1704,38 @@ mod tests {
+             .unwrap()
+             .settle(32 * 1024);
+     }
++
++    #[test]
++    fn partial_upload_rate_settlement_refunds_only_the_unsent_bytes() {
++        const BLOCK: u64 = 32 * 1024;
++        let budget = GlobalNetworkBudget::new(4, None, Some(1));
++        let torrent = budget.new_transfer_torrent_key();
++        budget.register_upload_torrent(torrent, None);
++        let peer = rate_peer(torrent, 0);
++        budget.register_transfer_peer(peer);
++
++        let RateAdmissionAttempt::Granted(grant) =
++            budget.upload_tree.try_acquire(peer, BLOCK).unwrap()
++        else {
++            panic!("initial burst should grant a full block");
++        };
++        grant.settle(BLOCK / 2);
++
++        // A one-byte-per-second bucket begins with 64 KiB of burst credit.
++        // Half the 32 KiB grant was sent; the other half must be refundable.
++        let RateAdmissionAttempt::Granted(grant) =
++            budget.upload_tree.try_acquire(peer, 48 * 1024).unwrap()
++        else {
++            panic!("partial settlement should return its unsent half");
++        };
++        grant.settle(48 * 1024);
++
++        assert!(
++            matches!(
++                budget.upload_tree.try_acquire(peer, 1).unwrap(),
++                RateAdmissionAttempt::Wait(_) | RateAdmissionAttempt::WaitForChange
++            ),
++            "the sent half stays charged; only the unsent half is refunded"
++        );
++    }
+ }
+diff --git a/crates/rt-engine/src/torrent_task.rs b/crates/rt-engine/src/torrent_task.rs
+index 91cdc29..219841c 100644
+--- a/crates/rt-engine/src/torrent_task.rs
++++ b/crates/rt-engine/src/torrent_task.rs
+@@ -2115,7 +2115,6 @@ impl UploadContext {
+     }
+ }
+ 
+-#[derive(Clone)]
+ struct UploadReadContext {
+     save_root: PathBuf,
+     piece_map: Arc<PieceMap>,
+@@ -2189,39 +2188,39 @@ enum UploadReadCompletion {
+     },
+ }
+ 
+-type UploadReadFuture =
+-    Pin<Box<dyn std::future::Future<Output = UploadReadCompletion> + Send + 'static>>;
+-
+-fn catch_upload_read(
++async fn catch_upload_read(
+     request: UploadRequest,
+     read: impl std::future::Future<Output = (anyhow::Result<LeasedUploadBlock>, bool)> + Send + 'static,
+-) -> UploadReadFuture {
+-    Box::pin(async move {
+-        match std::panic::AssertUnwindSafe(read).catch_unwind().await {
+-            Ok((result, rate_interrupted)) => UploadReadCompletion::Completed {
+-                request,
+-                result,
+-                rate_interrupted,
+-            },
+-            Err(_) => UploadReadCompletion::Panicked { request },
+-        }
+-    })
++) -> UploadReadCompletion {
++    match std::panic::AssertUnwindSafe(read).catch_unwind().await {
++        Ok((result, rate_interrupted)) => UploadReadCompletion::Completed {
++            request,
++            result,
++            rate_interrupted,
++        },
++        Err(_) => UploadReadCompletion::Panicked { request },
++    }
+ }
+ 
+ /// Own in-flight upload-read futures in the peer loop so dropping the owner
+ /// immediately drops pending I/O and releases its leases.
+-#[derive(Default)]
+-struct UploadReadTasks(futures::stream::FuturesUnordered<UploadReadFuture>);
++struct UploadReadTasks<F>(futures::stream::FuturesUnordered<F>);
+ 
+-impl std::ops::Deref for UploadReadTasks {
+-    type Target = futures::stream::FuturesUnordered<UploadReadFuture>;
++impl<F> Default for UploadReadTasks<F> {
++    fn default() -> Self {
++        Self(futures::stream::FuturesUnordered::new())
++    }
++}
++
++impl<F> std::ops::Deref for UploadReadTasks<F> {
++    type Target = futures::stream::FuturesUnordered<F>;
+ 
+     fn deref(&self) -> &Self::Target {
+         &self.0
+     }
+ }
+ 
+-impl std::ops::DerefMut for UploadReadTasks {
++impl<F> std::ops::DerefMut for UploadReadTasks<F> {
+     fn deref_mut(&mut self) -> &mut Self::Target {
+         &mut self.0
+     }
+@@ -2812,6 +2811,9 @@ pub struct TorrentTask {
+     choker: Choker,
+     /// active peer addresses
+     active_peers: HashMap<SocketAddr, PeerHandle>,
++    /// Peers whose next request is parked on rate admission. Keeping this
++    /// sparse set lets requestability changes retry only affected peers.
++    rate_waiting_peers: HashSet<SocketAddr>,
+     shutting_down_peers: bool,
+     known_tracker_peers: HashSet<SocketAddr>,
+     /// The cache is pre-sized and its reservation covers the hash table's
+@@ -3228,6 +3230,7 @@ impl TorrentTask {
+             transfer_started_at: Instant::now(),
+             choker: Choker::new(DEFAULT_MAX_UNCHOKED),
+             active_peers: HashMap::new(),
++            rate_waiting_peers: HashSet::new(),
+             shutting_down_peers: false,
+             known_tracker_peers,
+             _tracker_peer_cache_memory_lease: tracker_peer_cache_memory_lease,
+@@ -3415,6 +3418,10 @@ impl TorrentTask {
+         reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
+         let global_download_limit_changes = self.network_budget.download_limit_changes();
+         let mut global_download_limit_generation = global_download_limit_changes.generation();
++        let download_demand_changes = self
++            .network_budget
++            .download_demand_changes(self.transfer_rate_torrent);
++        let mut download_demand_generation = download_demand_changes.generation();
+ 
+         loop {
+             tokio::select! {
+@@ -3812,6 +3819,17 @@ impl TorrentTask {
+ 
+                 Some(event) = self.peer_event_rx.recv() => {
+                     let had_fresh_requestable = self.picker.has_fresh_requestable();
++                    let requestability_changed = matches!(
++                        &event,
++                        PeerEvent::Bitfield { .. }
++                            | PeerEvent::Have { .. }
++                            | PeerEvent::RequestSent { .. }
++                            | PeerEvent::Piece { .. }
++                            | PeerEvent::Choked { .. }
++                            | PeerEvent::RequestRejected { .. }
++                            | PeerEvent::RequestTimedOut { .. }
++                            | PeerEvent::Disconnected { .. }
++                    );
+                     let released_request = matches!(
+                         &event,
+                         PeerEvent::Choked { .. }
+@@ -3821,6 +3839,9 @@ impl TorrentTask {
+                     );
+                     if let Some(event) = peer_event_if_active(self.paused, event) {
+                         self.handle_peer_event(event).await;
++                        if requestability_changed {
++                            self.retry_rate_waiting_peers().await;
++                        }
+                         if released_request
+                             && !had_fresh_requestable
+                             && self.webseed_fetch.is_none()
+@@ -3839,8 +3860,22 @@ impl TorrentTask {
+ 
+                 Some(event) = self.peer_disconnect_rx.recv() => {
+                     let had_fresh_requestable = self.picker.has_fresh_requestable();
++                    let requestability_changed = matches!(
++                        &event,
++                        PeerEvent::Bitfield { .. }
++                            | PeerEvent::Have { .. }
++                            | PeerEvent::RequestSent { .. }
++                            | PeerEvent::Piece { .. }
++                            | PeerEvent::Choked { .. }
++                            | PeerEvent::RequestRejected { .. }
++                            | PeerEvent::RequestTimedOut { .. }
++                            | PeerEvent::Disconnected { .. }
++                    );
+                     if let Some(event) = peer_event_if_active(self.paused, event) {
+                         self.handle_peer_event(event).await;
++                        if requestability_changed {
++                            self.retry_rate_waiting_peers().await;
++                        }
+                         if (!had_fresh_requestable
+                             && self.webseed_fetch.is_none()
+                             && self.picker.has_fresh_requestable())
+@@ -3862,6 +3897,7 @@ impl TorrentTask {
+                     let fetch = self.webseed_fetch.take().expect("completed webseed fetch");
+                     if let Some(fetched) = self.finish_webseed_fetch(fetch, result) {
+                         self.handle_webseed_block(fetched.event).await;
++                        self.retry_rate_waiting_peers().await;
+                     }
+                     reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
+                 }
+@@ -3870,6 +3906,7 @@ impl TorrentTask {
+                     if let Some(completion) = completion {
+                         let had_fresh_requestable = self.picker.has_fresh_requestable();
+                         self.handle_transfer_completion(completion).await;
++                        self.retry_rate_waiting_peers().await;
+                         if !had_fresh_requestable
+                             && self.webseed_fetch.is_none()
+                             && self.picker.has_fresh_requestable()
+@@ -3948,6 +3985,16 @@ impl TorrentTask {
+                     }
+                 }
+ 
++                _ = download_demand_changes.wait_for_change(download_demand_generation) => {
++                    download_demand_generation = download_demand_changes.generation();
++                    if !self.paused {
++                        self.retry_rate_waiting_peers().await;
++                        if self.webseed_fetch.is_none() && self.picker.has_fresh_requestable() {
++                            reset_webseed_sleep(&mut webseed_sleep, self.webseed_wake_delay());
++                        }
++                    }
++                }
++
+                 _ = &mut webseed_sleep, if !self.paused && self.webseed_fetch.is_none() && !self.meta.webseeds.is_empty() && !self.picker.is_complete() => {
+                     if self.start_webseed_block() {
+                         // The HTTP request and global rate wait now own their
+@@ -4686,6 +4733,9 @@ impl TorrentTask {
+             }
+         }
+         self.apply_piece_policy(&enabled, priority);
++        // File priorities can make a previously denied peer's only useful
++        // piece disappear. Reconcile those parked rate demands immediately.
++        self.retry_rate_waiting_peers().await;
+         Ok(())
+     }
+ 
+@@ -8531,18 +8581,60 @@ struct PeerLoopExit {
+     outstanding: Vec<BlockRequest>,
+ }
+ 
++struct PeerLoopStart {
++    addr: SocketAddr,
++    peer_id: PeerId,
++    peer_io: PeerIo,
++    peer_event_tx: mpsc::Sender<PeerEvent>,
++    peer_cmd_rx: mpsc::Receiver<PeerCommand>,
++    upload: UploadContext,
++    send_terminal_event_on_peer_channel: bool,
++}
++
+ async fn run_peer_loop(
+     addr: SocketAddr,
+     peer_id: PeerId,
+-    mut peer_io: PeerIo,
++    peer_io: PeerIo,
+     peer_event_tx: mpsc::Sender<PeerEvent>,
+-    mut peer_cmd_rx: mpsc::Receiver<PeerCommand>,
+-    mut upload: UploadContext,
++    peer_cmd_rx: mpsc::Receiver<PeerCommand>,
++    upload: UploadContext,
+     // Production wrappers use the dedicated terminal channel after this
+     // loop returns. The direct loop path can opt into the ordinary event
+     // channel when it owns no separate terminal delivery path.
+     send_terminal_event_on_peer_channel: bool,
+ ) -> PeerLoopExit {
++    run_peer_loop_with_upload_future(
++        PeerLoopStart {
++            addr,
++            peer_id,
++            peer_io,
++            peer_event_tx,
++            peer_cmd_rx,
++            upload,
++            send_terminal_event_on_peer_channel,
++        },
++        upload_read_future,
++    )
++    .await
++}
++
++async fn run_peer_loop_with_upload_future<MakeUploadReadFuture, F>(
++    PeerLoopStart {
++        addr,
++        peer_id,
++        mut peer_io,
++        peer_event_tx,
++        mut peer_cmd_rx,
++        mut upload,
++        send_terminal_event_on_peer_channel,
++    }: PeerLoopStart,
++    make_upload_read_future: MakeUploadReadFuture,
++) -> PeerLoopExit
++where
++    MakeUploadReadFuture:
++        Fn(UploadRequest, Arc<UploadReadContext>, bool) -> F + Copy + Send + 'static,
++    F: std::future::Future<Output = UploadReadCompletion> + Send + 'static,
++{
+     let mut outstanding = Vec::<OutstandingRequest>::new();
+     let upload_service = upload.upload_rate.network_budget.upload_service();
+     let upload_obligations = match upload_service.register(
+@@ -8560,6 +8652,21 @@ async fn run_peer_loop(
+             };
+         }
+     };
++    // These fields are stable for the peer's lifetime. Keep one shared
++    // context for every in-flight block instead of cloning the path, storage
++    // scheduler, resource governor, rate handle, and read-admission handle
++    // each time the peer loop refills its upload queue.
++    let upload_read_context = Arc::new(UploadReadContext {
++        save_root: upload.save_root.clone(),
++        piece_map: upload.piece_map.clone(),
++        hybrid_v2: upload.hybrid_v2.clone(),
++        plane: upload.plane,
++        storage: upload.storage.clone(),
++        resources: upload.resources.clone(),
++        upload_control: upload.upload_control.clone(),
++        upload_rate: upload.upload_rate.clone(),
++        read_admission: upload_obligations.read_admission(),
++    });
+     // BEP 10 extension ids are negotiated per peer. The id in our outgoing
+     // handshake is the id this loop receives from the peer; responses must
+     // use the peer's advertised id rather than our local id.
+@@ -8572,7 +8679,7 @@ async fn run_peer_loop(
+     // peer loop must not await one read inline: a slow device otherwise
+     // prevents it from processing choke/shutdown/input messages. Keep their
+     // futures in the select loop instead of spawning a Tokio task per block.
+-    let mut upload_reads = UploadReadTasks::default();
++    let mut upload_reads = UploadReadTasks::<F>::default();
+     // Protocol obligations are process-owned by generation-safe connection
+     // identity. The socket loop retains the only writer and upload-read futures.
+     let mut upload_request_drops = 0u64;
+@@ -8732,7 +8839,13 @@ async fn run_peer_loop(
+                         for reject in upload_obligations.on_local_choke() {
+                             send_upload_obligation_reject(&mut peer_io, &upload, reject).await?;
+                         }
+-                        start_upload_reads(&mut upload_reads, &upload_obligations, &upload)?;
++                        start_upload_reads(
++                            &mut upload_reads,
++                            &upload_obligations,
++                            &upload,
++                            &upload_read_context,
++                            make_upload_read_future,
++                        )?;
+                         if !upload.fast_negotiated {
+                             // A local choke invalidates reads that were
+                             // admitted under the previous upload state. Drop
+@@ -8746,7 +8859,13 @@ async fn run_peer_loop(
+                         upload_choked = false;
+                         upload_obligations.on_local_unchoke();
+                         peer_io.send(Message::Unchoke).await?;
+-                        start_upload_reads(&mut upload_reads, &upload_obligations, &upload)?;
++                        start_upload_reads(
++                            &mut upload_reads,
++                            &upload_obligations,
++                            &upload,
++                            &upload_read_context,
++                            make_upload_read_future,
++                        )?;
+                     }
+                     PeerCommand::Shutdown => {
+                         upload.upload_control.cancel();
+@@ -9126,6 +9245,8 @@ async fn run_peer_loop(
+                                 &mut upload_reads,
+                                 &upload_obligations,
+                                 &upload,
++                                &upload_read_context,
++                                make_upload_read_future,
+                             )?,
+                             InboundDecision::Reject(_) => {
+                                 reject_upload_request(&mut peer_io, &upload, request).await?;
+@@ -9442,7 +9563,13 @@ async fn run_peer_loop(
+                         .await?;
+                     }
+                 }
+-                start_upload_reads(&mut upload_reads, &upload_obligations, &upload)?;
++                start_upload_reads(
++                    &mut upload_reads,
++                    &upload_obligations,
++                    &upload,
++                    &upload_read_context,
++                    make_upload_read_future,
++                )?;
+             }
+             _ = timeout_tick.tick() => {
+                 if last_activity.elapsed() > PEER_IDLE_TIMEOUT {
+@@ -9801,22 +9928,66 @@ async fn finish_upload_obligation(
+     Ok(())
+ }
+ 
+-fn start_upload_reads(
+-    upload_reads: &mut UploadReadTasks,
++async fn upload_read_future(
++    request: UploadRequest,
++    read_context: Arc<UploadReadContext>,
++    choke_critical: bool,
++) -> UploadReadCompletion {
++    let read_context_for_future = read_context;
++    let read = async move {
++        let result = match timeout(
++            PEER_UPLOAD_READ_TIMEOUT,
++            read_upload_block(&read_context_for_future, request, choke_critical),
++        )
++        .await
++        {
++            Ok(result) => result,
++            Err(_) => Err(anyhow::anyhow!(
++                "upload block read exceeded its peer deadline ({}s)",
++                PEER_UPLOAD_READ_TIMEOUT.as_secs()
++            )),
++        };
++        let (result, rate_interrupted) = match result {
++            Ok(mut block) => {
++                let bytes = block.data.len() as u64;
++                let control_generation = read_context_for_future.upload_control.generation();
++                match read_context_for_future
++                    .upload_rate
++                    .network_budget
++                    .acquire_upload(
++                        read_context_for_future.upload_rate.peer,
++                        bytes,
++                        &read_context_for_future.upload_control,
++                        control_generation,
++                    )
++                    .await
++                {
++                    Ok(Some(grant)) => {
++                        block.rate_grant = Some(grant);
++                        (Ok(block), false)
++                    }
++                    Ok(None) => (Ok(block), true),
++                    Err(error) => (Err(error), false),
++                }
++            }
++            Err(error) => (Err(error), false),
++        };
++        (result, rate_interrupted)
++    };
++    catch_upload_read(request, read).await
++}
++
++fn start_upload_reads<MakeUploadReadFuture, F>(
++    upload_reads: &mut UploadReadTasks<F>,
+     obligations: &SharedUploadPeer,
+     upload: &UploadContext,
+-) -> anyhow::Result<()> {
+-    let read_context = UploadReadContext {
+-        save_root: upload.save_root.clone(),
+-        piece_map: upload.piece_map.clone(),
+-        hybrid_v2: upload.hybrid_v2.clone(),
+-        plane: upload.plane,
+-        storage: upload.storage.clone(),
+-        resources: upload.resources.clone(),
+-        upload_control: upload.upload_control.clone(),
+-        upload_rate: upload.upload_rate.clone(),
+-        read_admission: obligations.read_admission(),
+-    };
++    read_context: &Arc<UploadReadContext>,
++    make_upload_read_future: MakeUploadReadFuture,
++) -> anyhow::Result<()>
++where
++    MakeUploadReadFuture: Fn(UploadRequest, Arc<UploadReadContext>, bool) -> F + Copy,
++    F: std::future::Future<Output = UploadReadCompletion> + Send + 'static,
++{
+     while upload_reads.len() < MAX_PENDING_UPLOAD_READS {
+         let Some(block) = obligations.next_request() else {
+             break;
+@@ -9827,53 +9998,17 @@ fn start_upload_reads(
+             anyhow::bail!("accepted upload obligation has no matching wire extent");
+         };
+         let request = UploadRequest::new(block, wire_block);
+-        let read_context_for_future = read_context.clone();
+-        let read = async move {
+-            let result = match timeout(
+-                PEER_UPLOAD_READ_TIMEOUT,
+-                read_upload_block(&read_context_for_future, request, choke_critical),
+-            )
+-            .await
+-            {
+-                Ok(result) => result,
+-                Err(_) => Err(anyhow::anyhow!(
+-                    "upload block read exceeded its peer deadline ({}s)",
+-                    PEER_UPLOAD_READ_TIMEOUT.as_secs()
+-                )),
+-            };
+-            let (result, rate_interrupted) = match result {
+-                Ok(mut block) => {
+-                    let bytes = block.data.len() as u64;
+-                    let control_generation = read_context_for_future.upload_control.generation();
+-                    match read_context_for_future
+-                        .upload_rate
+-                        .network_budget
+-                        .acquire_upload(
+-                            read_context_for_future.upload_rate.peer,
+-                            bytes,
+-                            &read_context_for_future.upload_control,
+-                            control_generation,
+-                        )
+-                        .await
+-                    {
+-                        Ok(Some(grant)) => {
+-                            block.rate_grant = Some(grant);
+-                            (Ok(block), false)
+-                        }
+-                        Ok(None) => (Ok(block), true),
+-                        Err(error) => (Err(error), false),
+-                    }
+-                }
+-                Err(error) => (Err(error), false),
+-            };
+-            (result, rate_interrupted)
+-        };
+-        upload_reads.push(catch_upload_read(request, read));
++        let read_context_for_future = Arc::clone(read_context);
++        upload_reads.push(make_upload_read_future(
++            request,
++            read_context_for_future,
++            choke_critical,
++        ));
+     }
+     Ok(())
+ }
+ 
+-fn abort_upload_reads(upload_reads: &mut UploadReadTasks) {
++fn abort_upload_reads<F>(upload_reads: &mut UploadReadTasks<F>) {
+     *upload_reads = UploadReadTasks::default();
+ }
+ 
+@@ -10087,6 +10222,9 @@ mod tests {
+             RateAdmissionAttempt::Wait(delay) => {
+                 panic!("unlimited test download peer unexpectedly waited {delay:?}")
+             }
++            RateAdmissionAttempt::WaitForChange => {
++                panic!("unlimited test download peer unexpectedly waited for fairness progress")
++            }
+         }
+     }
+ 
+@@ -13555,6 +13693,9 @@ mod tests {
+             RateAdmissionAttempt::Wait(delay) => {
+                 panic!("startup burst should admit block: {delay:?}")
+             }
++            RateAdmissionAttempt::WaitForChange => {
++                panic!("startup burst unexpectedly waited for fairness progress")
++            }
+         };
+         assert_eq!(
+             budget.download_available_credit_bytes_for(peer),
+@@ -15624,6 +15765,85 @@ mod tests {
+         assert!(task.download_rate_wake.is_none());
+     }
+ 
++    #[tokio::test(start_paused = true)]
++    async fn stale_rate_waiter_retires_after_another_peer_consumes_its_only_piece() {
++        let fx = crash_fixture(vec![7; 4], 4, 206).await;
++        rt_db::upsert_torrent_limits(
++            &fx.db.lock().unwrap(),
++            &rt_db::TorrentLimitRow {
++                info_hash: fx.info_hash.clone(),
++                download_limit: Some(32 * 1024 * 1024),
++                upload_limit: None,
++                max_connections: None,
++                seed_ratio_limit: None,
++                seed_idle_limit: None,
++                sequential_download: false,
++                sequential_download_from_piece: None,
++                first_last_piece_prio: false,
++                force_start: false,
++                super_seeding: false,
++                auto_tmm: false,
++                auto_management: false,
++            },
++        )
++        .unwrap();
++        let (mut task, _cmd_tx) =
++            crash_task_with_mailbox(&fx, quiet_runtime(), StorageIoConfig::default()).await;
++
++        let permits = Arc::new(tokio::sync::Semaphore::new(2));
++        let parked_addr: SocketAddr = "127.0.0.1:6881".parse().unwrap();
++        let active_addr: SocketAddr = "127.0.0.1:6882".parse().unwrap();
++        for peer in [parked_addr, active_addr] {
++            task.register_peer(peer, permits.clone().acquire_owned().await.unwrap())
++                .expect("peer registration should fit the memory budget");
++            if task.active_peers.get_mut(&peer).unwrap().add_peer_have(0) {
++                task.picker.availability.add_have(0);
++            }
++            task.active_peers.get_mut(&peer).unwrap().choked = false;
++        }
++
++        let active_conn = task.active_peers[&active_addr].transfer_conn;
++        let active_rate_peer = TransferPeerId::new(task.transfer_rate_torrent, active_conn);
++        while let RateAdmissionAttempt::Granted(grant) = task
++            .network_budget
++            .try_acquire_download(active_rate_peer, 16 * 1024)
++            .unwrap()
++        {
++            grant.settle(16 * 1024);
++        }
++
++        task.refill_peer_requests(parked_addr).await;
++        assert!(
++            task.rate_waiting_peers.contains(&parked_addr),
++            "the denied peer must be recorded as a live rate waiter"
++        );
++        assert_eq!(task.active_peers.len(), 2);
++
++        let completed = task.picker.pick_from_seed().expect("one available piece");
++        assert!(task
++            .picker
++            .block_received_pending(completed.piece as usize, completed.begin));
++        task.network_budget
++            .set_download_torrent_limit(task.transfer_rate_torrent, None);
++        task.network_budget.set_download_limit(None);
++        assert!(matches!(
++            task.network_budget
++                .try_acquire_download(active_rate_peer, 1)
++                .unwrap(),
++            RateAdmissionAttempt::Wait(_) | RateAdmissionAttempt::WaitForChange
++        ));
++
++        task.retry_rate_waiting_peers().await;
++        assert!(!task.rate_waiting_peers.contains(&parked_addr));
++        assert_eq!(task.active_peers.len(), 2, "neither live peer is removed");
++        assert!(matches!(
++            task.network_budget
++                .try_acquire_download(active_rate_peer, 1)
++                .unwrap(),
++            RateAdmissionAttempt::Granted(_)
++        ));
++    }
++
+     #[tokio::test]
+     async fn peer_request_admission_retries_after_payload_capacity_returns() {
+         let temp = tempfile::tempdir().unwrap();
+diff --git a/crates/rt-engine/src/torrent_task/peer_transfer.rs b/crates/rt-engine/src/torrent_task/peer_transfer.rs
+index b792a15..ebda413 100644
+--- a/crates/rt-engine/src/torrent_task/peer_transfer.rs
++++ b/crates/rt-engine/src/torrent_task/peer_transfer.rs
+@@ -395,6 +395,13 @@ impl TorrentTask {
+                     .active_peers
+                     .get(&peer)
+                     .map(|handle| handle.transfer_conn);
++                if let Some(transfer_conn) = transfer_conn {
++                    self.network_budget
++                        .retire_download_demand(TransferPeerId::new(
++                            self.transfer_rate_torrent,
++                            transfer_conn,
++                        ));
++                }
+                 let outstanding = if let Some(handle) = self.active_peers.get_mut(&peer) {
+                     handle.download_generation = download_generation;
+                     handle.choked = true;
+@@ -553,6 +560,7 @@ impl TorrentTask {
+             PeerEvent::Disconnected {
+                 peer, outstanding, ..
+             } => {
++                self.rate_waiting_peers.remove(&peer);
+                 // The peer loop's view can omit commands still queued in its
+                 // mailbox. Union it with the engine's view so a disconnect
+                 // cannot strand picker reservations, while deduplicating the
+@@ -743,12 +751,20 @@ impl TorrentTask {
+ 
+     pub(super) async fn refill_peer_requests(&mut self, peer: SocketAddr) {
+         let Some(handle) = self.active_peers.get(&peer) else {
++            self.rate_waiting_peers.remove(&peer);
+             return;
+         };
++        let transfer_conn = handle.transfer_conn;
+         if handle.choked {
++            self.network_budget
++                .retire_download_demand(TransferPeerId::new(
++                    self.transfer_rate_torrent,
++                    transfer_conn,
++                ));
++            self.rate_waiting_peers.remove(&peer);
+             return;
+         }
+-        let transfer_conn = handle.transfer_conn;
++        let rate_peer = TransferPeerId::new(self.transfer_rate_torrent, transfer_conn);
+         // The ledger already maintains this torrent-wide count. Subtract the
+         // serial webseed request and this peer's requests to avoid scanning
+         // every active peer on every refill.
+@@ -837,6 +853,7 @@ impl TorrentTask {
+         let mut queue_full = 0u64;
+         let mut memory_retry = false;
+         let mut rate_wait_delay = None;
++        let mut rate_demand_waiting = false;
+         let mut rate_admission_error = None;
+         {
+             let picker = &mut self.picker;
+@@ -849,7 +866,6 @@ impl TorrentTask {
+                 .hybrid_v2
+                 .as_ref()
+                 .and_then(|hybrid| hybrid.geometry.clone());
+-            let rate_peer = TransferPeerId::new(self.transfer_rate_torrent, transfer_conn);
+             let source_admission = network_budget.source_admission_for_torrent(rate_peer.torrent);
+             let Some(handle) = peers.get_mut(&peer) else {
+                 return;
+@@ -942,6 +958,17 @@ impl TorrentTask {
+                             }
+                             drop(memory_lease);
+                             rate_wait_delay = Some(delay);
++                            rate_demand_waiting = true;
++                            break;
++                        }
++                        Ok(RateAdmissionAttempt::WaitForChange) => {
++                            transfer_ledger.on_reject_peer(transfer_conn, block);
++                            picker.cancel_request(req.piece as usize, req.begin);
++                            if transfer_ledger.piece_progress(req.piece).is_none() {
++                                transfer_piece_memory_leases.remove(&req.piece);
++                            }
++                            drop(memory_lease);
++                            rate_demand_waiting = true;
+                             break;
+                         }
+                         Err(error) => {
+@@ -1022,6 +1049,17 @@ impl TorrentTask {
+             self.peer_request_window_reductions =
+                 self.peer_request_window_reductions.saturating_add(1);
+         }
++        if !rate_demand_waiting {
++            // A previous denial can stop being runnable when the peer's
++            // window fills, useful work disappears, or another admission
++            // path makes the refill complete without another rate wait.
++            self.network_budget.retire_download_demand(rate_peer);
++        }
++        if rate_demand_waiting {
++            self.rate_waiting_peers.insert(peer);
++        } else {
++            self.rate_waiting_peers.remove(&peer);
++        }
+         if let Some(wait) = rate_wait_delay {
+             let deadline = Instant::now() + wait;
+             self.download_rate_wake = Some(
+@@ -1046,6 +1084,20 @@ impl TorrentTask {
+         }
+     }
+ 
++    /// Retry only peers that were parked on rate admission after a change to
++    /// the picker or transfer ledger can make their request useful again.
++    pub(super) async fn retry_rate_waiting_peers(&mut self) {
++        if self.paused || self.rate_waiting_peers.is_empty() {
++            return;
++        }
++        let peers: Vec<SocketAddr> = self.rate_waiting_peers.drain().collect();
++        for peer in peers {
++            if self.active_peers.contains_key(&peer) {
++                self.refill_peer_requests(peer).await;
++            }
++        }
++    }
++
+     pub(super) fn ensure_pending_transfer_piece(&mut self, piece: u32) -> &mut PendingPieceWork {
+         if !self.pending_transfer_pieces.contains_key(&piece) {
+             self.next_transfer_generation = self
+@@ -1891,6 +1943,7 @@ impl TorrentTask {
+             return;
+         }
+         self.shutting_down_peers = true;
++        self.rate_waiting_peers.clear();
+         self.close_webseed_transfer_connection();
+         // Accepted transfer writes and hashes own their payload leases and
+         // piece generation until completion. Drain them before resetting the
+diff --git a/crates/rt-engine/src/transfer/rate.rs b/crates/rt-engine/src/transfer/rate.rs
+index 8a9ebf2..e07d54b 100644
+--- a/crates/rt-engine/src/transfer/rate.rs
++++ b/crates/rt-engine/src/transfer/rate.rs
+@@ -28,6 +28,10 @@ use super::Nanos;
+ /// services that span multiple torrent ledgers.
+ pub type RatePeerId = TransferPeerId;
+ 
++/// A fairness-blocked demand has no clock deadline; it wakes when a peer
++/// makes progress, is removed, or retires its pending demand.
++pub const CHANGE_ONLY_WAKE: Nanos = Nanos::MAX;
++
+ const NANOS_PER_SEC: i128 = 1_000_000_000;
+ /// Burst a limited bucket may accumulate: this fraction of a second of rate.
+ const BURST_DIVISOR: u64 = 10;
+@@ -155,6 +159,8 @@ struct TorrentNode {
+     peers: BTreeSet<(u128, RatePeerId)>,
+     /// Waiting peers ordered by progress then retry deadline.
+     waiting: BTreeSet<(u128, Nanos, RatePeerId)>,
++    /// Number of registered peers with at least one event-only waiter.
++    change_waiters: usize,
+ }
+ 
+ struct PeerNode {
+@@ -166,9 +172,24 @@ struct PeerNode {
+     refundable_bytes: u64,
+     /// Limit levels debited by each unsettled grant, keyed by grant identity.
+     outstanding_grants: BTreeMap<u64, OutstandingGrant>,
+-    /// Denied and still wanting service.
++    /// Aggregate fairness-index state across the legacy, synchronous and
++    /// independently-owned asynchronous demand lifetimes below.
+     waiting: bool,
+     wake_at: Nanos,
++    change_waiting: bool,
++    /// Pending demand registered through the pure-core compatibility API.
++    legacy_wake_at: Option<Nanos>,
++    /// One serialized pending demand for synchronous actor refill paths.
++    sync_wake_at: Option<Nanos>,
++    /// Pending asynchronous admissions, each removed by its own owner.
++    demand_wake_at: BTreeMap<u64, Nanos>,
++}
++
++#[derive(Clone, Copy)]
++enum WaitOwner {
++    Legacy,
++    Sync,
++    Demand(u64),
+ }
+ 
+ #[derive(Clone, Copy)]
+@@ -236,12 +257,18 @@ impl RateTree {
+                 .filter(|(_, peer)| peer.torrent == key && peer.waiting)
+                 .map(|(peer_id, peer)| (peer.vfinish, peer.wake_at, *peer_id))
+                 .collect();
++            let change_waiters = self
++                .peers
++                .values()
++                .filter(|peer| peer.torrent == key && peer.change_waiting)
++                .count();
+             self.torrents.insert(
+                 key,
+                 TorrentNode {
+                     bucket,
+                     peers,
+                     waiting,
++                    change_waiters,
+                 },
+             );
+         }
+@@ -314,6 +341,10 @@ impl RateTree {
+                 outstanding_grants: BTreeMap::new(),
+                 waiting: false,
+                 wake_at: 0,
++                change_waiting: false,
++                legacy_wake_at: None,
++                sync_wake_at: None,
++                demand_wake_at: BTreeMap::new(),
+             },
+         );
+         if let Some(node) = self.torrents.get_mut(&peer_id.torrent) {
+@@ -349,6 +380,9 @@ impl RateTree {
+             torrent.bucket.credit_back(refundable_torrent);
+             torrent.peers.remove(&(peer.vfinish, peer_id));
+             if peer.waiting {
++                if peer.change_waiting {
++                    torrent.change_waiters = torrent.change_waiters.saturating_sub(1);
++                }
+                 torrent
+                     .waiting
+                     .remove(&(peer.vfinish, peer.wake_at, peer_id));
+@@ -366,43 +400,96 @@ impl RateTree {
+             .or_else(|| node.peers.first().map(|(vfinish, _)| *vfinish))
+     }
+ 
+-    fn mark_waiting(&mut self, peer_id: RatePeerId, wake_at: Nanos) {
++    fn refresh_waiting_index(&mut self, peer_id: RatePeerId) {
+         let Some(peer) = self.peers.get(&peer_id) else {
+             return;
+         };
+-        let (torrent_key, vfinish, was_waiting, old_wake_at) =
+-            (peer.torrent, peer.vfinish, peer.waiting, peer.wake_at);
++        let torrent_key = peer.torrent;
++        let vfinish = peer.vfinish;
++        let was_waiting = peer.waiting;
++        let old_wake_at = peer.wake_at;
++        let was_change_waiting = peer.change_waiting;
++        let mut next_wake_at = peer.legacy_wake_at;
++        for wake_at in peer
++            .sync_wake_at
++            .into_iter()
++            .chain(peer.demand_wake_at.values().copied())
++        {
++            next_wake_at = Some(next_wake_at.map_or(wake_at, |current| current.min(wake_at)));
++        }
++        let is_waiting = next_wake_at.is_some();
++        let wake_at = next_wake_at.unwrap_or(0);
++        let is_change_waiting = peer.legacy_wake_at == Some(CHANGE_ONLY_WAKE)
++            || peer.sync_wake_at == Some(CHANGE_ONLY_WAKE)
++            || peer
++                .demand_wake_at
++                .values()
++                .any(|wake_at| *wake_at == CHANGE_ONLY_WAKE);
++
+         if was_waiting {
+             if let Some(torrent) = self.torrents.get_mut(&torrent_key) {
++                if was_change_waiting {
++                    torrent.change_waiters = torrent.change_waiters.saturating_sub(1);
++                }
+                 torrent.waiting.remove(&(vfinish, old_wake_at, peer_id));
+             }
+             self.wake_queue.remove(&(old_wake_at, peer_id));
+         }
++        if is_waiting {
++            if let Some(torrent) = self.torrents.get_mut(&torrent_key) {
++                if is_change_waiting {
++                    torrent.change_waiters = torrent.change_waiters.saturating_add(1);
++                }
++                torrent.waiting.insert((vfinish, wake_at, peer_id));
++            }
++            self.wake_queue.insert((wake_at, peer_id));
++        }
+         if let Some(peer) = self.peers.get_mut(&peer_id) {
+-            peer.waiting = true;
++            peer.waiting = is_waiting;
+             peer.wake_at = wake_at;
++            peer.change_waiting = is_change_waiting;
+         }
+-        if let Some(torrent) = self.torrents.get_mut(&torrent_key) {
+-            torrent.waiting.insert((vfinish, wake_at, peer_id));
+-        }
+-        self.wake_queue.insert((wake_at, peer_id));
+     }
+ 
+-    fn clear_waiting(&mut self, peer_id: RatePeerId) {
+-        let Some(peer) = self.peers.get(&peer_id) else {
++    fn set_waiting_for(&mut self, peer_id: RatePeerId, owner: WaitOwner, wake_at: Nanos) {
++        let Some(peer) = self.peers.get_mut(&peer_id) else {
+             return;
+         };
+-        if !peer.waiting {
+-            return;
+-        }
+-        let (torrent_key, vfinish, wake_at) = (peer.torrent, peer.vfinish, peer.wake_at);
+-        if let Some(torrent) = self.torrents.get_mut(&torrent_key) {
+-            torrent.waiting.remove(&(vfinish, wake_at, peer_id));
++        match owner {
++            WaitOwner::Legacy => peer.legacy_wake_at = Some(wake_at),
++            WaitOwner::Sync => peer.sync_wake_at = Some(wake_at),
++            WaitOwner::Demand(demand_id) => {
++                peer.demand_wake_at.insert(demand_id, wake_at);
++            }
+         }
+-        self.wake_queue.remove(&(wake_at, peer_id));
+-        if let Some(peer) = self.peers.get_mut(&peer_id) {
+-            peer.waiting = false;
++        self.refresh_waiting_index(peer_id);
++    }
++
++    fn clear_waiting_for(&mut self, peer_id: RatePeerId, owner: WaitOwner) -> bool {
++        let Some(peer) = self.peers.get_mut(&peer_id) else {
++            return false;
++        };
++        let removed = match owner {
++            WaitOwner::Legacy => peer.legacy_wake_at.take().is_some(),
++            WaitOwner::Sync => peer.sync_wake_at.take().is_some(),
++            WaitOwner::Demand(demand_id) => peer.demand_wake_at.remove(&demand_id).is_some(),
++        };
++        if removed {
++            self.refresh_waiting_index(peer_id);
+         }
++        removed
++    }
++
++    /// Retire the serialized synchronous refill demand without unregistering
++    /// the live peer or touching any outstanding grant.
++    pub fn retire_sync_demand(&mut self, peer_id: RatePeerId) -> bool {
++        self.clear_waiting_for(peer_id, WaitOwner::Sync)
++    }
++
++    /// Retire one asynchronous admission's demand without clearing sibling
++    /// waiters owned by concurrent requests from the same peer.
++    pub fn retire_demand(&mut self, peer_id: RatePeerId, demand_id: u64) -> bool {
++        self.clear_waiting_for(peer_id, WaitOwner::Demand(demand_id))
+     }
+ 
+     fn update_peer_vfinish(&mut self, peer_id: RatePeerId, vfinish: u128) {
+@@ -440,6 +527,39 @@ impl RateTree {
+         peer_id: RatePeerId,
+         bytes: u64,
+         now: Nanos,
++    ) -> (Grant, Option<u64>) {
++        self.try_grant_for(peer_id, bytes, now, WaitOwner::Legacy)
++    }
++
++    /// Runtime refill attempt with one persistent, serialized demand lifetime
++    /// per peer. The owner retires it when the peer is choked or has no useful
++    /// request to admit.
++    pub fn try_grant_sync_tracked(
++        &mut self,
++        peer_id: RatePeerId,
++        bytes: u64,
++        now: Nanos,
++    ) -> (Grant, Option<u64>) {
++        self.try_grant_for(peer_id, bytes, now, WaitOwner::Sync)
++    }
++
++    /// Runtime asynchronous attempt with an independently-owned demand ID.
++    pub fn try_grant_demand_tracked(
++        &mut self,
++        peer_id: RatePeerId,
++        demand_id: u64,
++        bytes: u64,
++        now: Nanos,
++    ) -> (Grant, Option<u64>) {
++        self.try_grant_for(peer_id, bytes, now, WaitOwner::Demand(demand_id))
++    }
++
++    fn try_grant_for(
++        &mut self,
++        peer_id: RatePeerId,
++        bytes: u64,
++        now: Nanos,
++        wait_owner: WaitOwner,
+     ) -> (Grant, Option<u64>) {
+         let Some(peer) = self.peers.get(&peer_id) else {
+             return (Grant::Unknown, None);
+@@ -485,15 +605,20 @@ impl RateTree {
+                 let lag = FAIRNESS_LAG_BYTES * VTIME_SCALE / u128::from(weight);
+                 if vfinish > floor.saturating_add(lag) {
+                     ready = false;
+-                    // Retry when the lowest-progress peer can next run rather
+-                    // than waking every connection on a fixed fairness tick.
+-                    wake = wake.max(laggard_wake.max(now.saturating_add(1)));
++                    // A live laggard with a future refill deadline gives us a
++                    // real timer. Once that deadline is due, wait for demand
++                    // progress or retirement instead of re-arming at now+1ns.
++                    wake = if laggard_wake > now && laggard_wake != CHANGE_ONLY_WAKE {
++                        wake.max(laggard_wake)
++                    } else {
++                        CHANGE_ONLY_WAKE
++                    };
+                 }
+             }
+         }
+ 
+         if !ready {
+-            self.mark_waiting(peer_id, wake);
++            self.set_waiting_for(peer_id, wait_owner, wake);
+             return (Grant::Wait { until: wake }, None);
+         }
+ 
+@@ -502,7 +627,7 @@ impl RateTree {
+             .torrents
+             .get(&torrent_key)
+             .and_then(|torrent| torrent.bucket.limit.map(|_| torrent.bucket.epoch));
+-        self.clear_waiting(peer_id);
++        self.clear_waiting_for(peer_id, wait_owner);
+         self.global.debit(bytes);
+         self.torrents
+             .get_mut(&torrent_key)
+@@ -656,7 +781,16 @@ impl RateTree {
+     /// Earliest retry deadline among waiting peers, for a single timer;
+     /// `None` when nobody is waiting.
+     pub fn next_wake(&self) -> Option<Nanos> {
+-        self.wake_queue.first().map(|(wake_at, _)| *wake_at)
++        self.wake_queue
++            .iter()
++            .find_map(|(wake_at, _)| (*wake_at != CHANGE_ONLY_WAKE).then_some(*wake_at))
++    }
++
++    /// Whether progress in `torrent` should notify parked fairness waiters.
++    pub fn has_change_waiters(&self, torrent: TorrentKey) -> bool {
++        self.torrents
++            .get(&torrent)
++            .is_some_and(|node| node.change_waiters > 0)
+     }
+ 
+     /// Return at most `limit` peers whose deadlines are due. The entries stay
+@@ -1129,20 +1263,23 @@ mod tests {
+         };
+         assert_eq!(tree.next_wake(), Some(laggard_wake));
+ 
+-        let fairness_wake = laggard_wake.saturating_add(1);
+         assert_eq!(
+             tree.try_grant(peer(1, 1), BLOCK, laggard_wake),
+             Grant::Wait {
+-                until: fairness_wake
++                until: CHANGE_ONLY_WAKE
+             },
+-            "fairness waits for the laggard instead of polling on a fixed tick"
++            "fairness waits for peer progress instead of polling on a timer"
+         );
+         assert_eq!(tree.next_wake(), Some(laggard_wake));
++        assert!(tree.has_change_waiters(torrent));
+         assert_eq!(
+             tree.try_grant(peer(1, 2), BLOCK, laggard_wake),
+             Grant::Granted
+         );
+-        assert_eq!(tree.next_wake(), Some(fairness_wake));
++        assert!(matches!(
++            tree.try_grant(peer(1, 1), BLOCK, laggard_wake),
++            Grant::Wait { .. }
++        ));
+ 
+         tree.remove_peer(peer(1, 1));
+         assert_eq!(tree.next_wake(), None);
+@@ -1152,6 +1289,85 @@ mod tests {
+             .contains(&(vfinish, peer(1, 2))));
+     }
+ 
++    #[test]
++    fn retiring_a_live_sync_demand_unblocks_funded_peers_without_disconnect() {
++        let torrent = TorrentKey(1);
++        let active = peer(1, 1);
++        let parked = peer(1, 2);
++        let mut tree = RateTree::new(Some(32 * 1024 * 1024), 0);
++        tree.add_torrent(torrent, Some(32 * 1024 * 1024), 0);
++        tree.add_peer(active, 1);
++        tree.add_peer(parked, 1);
++
++        while let (Grant::Granted, Some(grant_id)) = tree.try_grant_sync_tracked(active, BLOCK, 0) {
++            assert_eq!(tree.settle_grant(active, grant_id, BLOCK), BLOCK);
++        }
++        assert!(matches!(
++            tree.try_grant_sync_tracked(parked, BLOCK, 0).0,
++            Grant::Wait { .. }
++        ));
++        assert!(tree.waiting_peers(8).contains(&parked));
++
++        // Make rate credit available while both peers remain registered. The
++        // parked peer must stop participating once its owner retires demand.
++        tree.set_global_limit(None, 1_000_000_000);
++        tree.set_torrent_limit(torrent, None, 1_000_000_000);
++        assert!(matches!(
++            tree.try_grant_sync_tracked(active, BLOCK, 1_000_000_000).0,
++            Grant::Wait { .. }
++        ));
++        assert!(tree.retire_sync_demand(parked));
++        for _ in 0..1_000 {
++            let (grant, grant_id) = tree.try_grant_sync_tracked(active, BLOCK, 1_000_000_000);
++            assert_eq!(grant, Grant::Granted);
++            assert_eq!(tree.settle_grant(active, grant_id.unwrap(), BLOCK), BLOCK);
++        }
++        assert!(tree.peers.contains_key(&parked));
++        assert!(!tree.waiting_peers(8).contains(&parked));
++    }
++
++    #[test]
++    fn retiring_one_demand_keeps_another_demand_for_the_same_peer() {
++        let torrent = TorrentKey(1);
++        let peer_id = peer(1, 1);
++        let mut tree = RateTree::new(Some(1), 0);
++        tree.add_torrent(torrent, Some(1), 0);
++        tree.add_peer(peer_id, 1);
++        assert_eq!(tree.try_grant(peer_id, BLOCK + 1, 0), Grant::Granted);
++
++        assert!(matches!(
++            tree.try_grant_demand_tracked(peer_id, 10, 1, 0).0,
++            Grant::Wait { .. }
++        ));
++        assert!(matches!(
++            tree.try_grant_demand_tracked(peer_id, 11, 1, 0).0,
++            Grant::Wait { .. }
++        ));
++        assert!(tree.retire_demand(peer_id, 10));
++        assert_eq!(tree.waiting_peers(8), vec![peer_id]);
++        assert!(tree.retire_demand(peer_id, 11));
++        assert!(tree.waiting_peers(8).is_empty());
++    }
++
++    #[test]
++    fn a_timer_wait_does_not_hide_a_sibling_event_only_demand() {
++        let torrent = TorrentKey(1);
++        let peer_id = peer(1, 1);
++        let mut tree = RateTree::new(None, 0);
++        tree.add_torrent(torrent, None, 0);
++        tree.add_peer(peer_id, 1);
++
++        tree.set_waiting_for(peer_id, WaitOwner::Demand(10), CHANGE_ONLY_WAKE);
++        tree.set_waiting_for(peer_id, WaitOwner::Demand(11), 100);
++
++        assert!(tree.has_change_waiters(torrent));
++        assert_eq!(tree.next_wake(), Some(100));
++        assert!(tree.retire_demand(peer_id, 10));
++        assert!(!tree.has_change_waiters(torrent));
++        assert_eq!(tree.next_wake(), Some(100));
++        assert_eq!(tree.waiting_peers(1), vec![peer_id]);
++    }
++
+     #[test]
+     fn unknown_and_removed_peers_are_reported() {
+         let mut tree = RateTree::new(None, 0);
+diff --git a/crates/rt-peer-wire/src/codec.rs b/crates/rt-peer-wire/src/codec.rs
+index 796896f..006cb30 100644
+--- a/crates/rt-peer-wire/src/codec.rs
++++ b/crates/rt-peer-wire/src/codec.rs
+@@ -8,6 +8,34 @@ use crate::{
+     message::{Message, MAX_MESSAGE_LEN},
+ };
+ 
++const RETAINED_BUFFER_CAPACITY: usize = 64 * 1024;
++
++fn ensure_peer_buffer_reservation(
++    resources: &ResourceGovernor,
++    lease: &mut Option<MemoryLease>,
++    reserved_bytes: &mut u64,
++    required_bytes: u64,
++) -> Result<(), WireError> {
++    if required_bytes <= *reserved_bytes {
++        return Ok(());
++    }
++
++    let additional = required_bytes - *reserved_bytes;
++    if let Some(lease) = lease.as_mut() {
++        if !lease.try_grow(additional) {
++            return Err(WireError::PeerBufferAllocationDenied(required_bytes));
++        }
++    } else {
++        *lease = Some(
++            resources
++                .try_acquire(MemoryClass::PeerBuffer, required_bytes)
++                .ok_or(WireError::PeerBufferAllocationDenied(required_bytes))?,
++        );
++    }
++    *reserved_bytes = required_bytes;
++    Ok(())
++}
++
+ /// BEP 3 length-prefixed peer message codec.
+ ///
+ /// The default codec is useful for protocol-only callers. Engine-owned TCP
+@@ -17,7 +45,19 @@ use crate::{
+ #[derive(Default)]
+ pub struct PeerCodec {
+     resources: Option<ResourceGovernor>,
+-    memory_leases: Vec<MemoryLease>,
++    memory: Option<Box<PeerCodecMemory>>,
++    /// `BytesMut::split_to` can leave an empty tail with zero visible capacity
++    /// while still retaining the original backing allocation.
++    read_buffer_high_water_bytes: usize,
++}
++
++#[derive(Default)]
++struct PeerCodecMemory {
++    read_memory_lease: Option<MemoryLease>,
++    write_memory_lease: Option<MemoryLease>,
++    /// Keep one high-water allowance for a parsed message that the caller may
++    /// still own after the framed read buffer has been trimmed.
++    read_copy_high_water_bytes: u64,
+     read_reserved_bytes: u64,
+     write_reserved_bytes: u64,
+ }
+@@ -31,30 +71,63 @@ impl PeerCodec {
+     }
+ 
+     fn reserve_capacity(&mut self, src: &mut BytesMut, required: usize) -> Result<(), WireError> {
+-        // `BytesMut::reserve` may grow from the current allocation by more
+-        // than the exact requested length. Charge twice the larger of the
+-        // current capacity and requested frame size: once for the retained
+-        // wire buffer and once for Message::parse's owned Bitfield/Extended
+-        // payload copy.
++        // Charge for the larger of the current capacity and requested frame
++        // size, plus a same-sized allowance for Message::parse's owned
++        // Bitfield/Extended payload copy. The copy allowance stays at its
++        // high-water mark because the emitted Message may outlive this codec
++        // call; only the actual empty read buffer is trimmed later.
+         let accounted_capacity = src.capacity().max(required);
+-        if let Some(resources) = self.resources.clone() {
+-            let required_bytes = u64::try_from(accounted_capacity)
++        self.read_buffer_high_water_bytes =
++            self.read_buffer_high_water_bytes.max(accounted_capacity);
++        let resources = self.resources.clone();
++        let mut capacity_bytes = 0;
++        if let Some(resources) = resources.as_ref() {
++            let memory = self
++                .memory
++                .get_or_insert_with(|| Box::new(PeerCodecMemory::default()));
++            capacity_bytes = u64::try_from(accounted_capacity)
+                 .ok()
+-                .and_then(|bytes| bytes.checked_mul(2))
+                 .ok_or(WireError::PeerBufferLengthOverflow)?;
+-            if required_bytes > self.read_reserved_bytes {
+-                let additional = required_bytes - self.read_reserved_bytes;
+-                let lease = resources
+-                    .try_acquire(MemoryClass::PeerBuffer, additional)
+-                    .ok_or(WireError::PeerBufferAllocationDenied(required_bytes))?;
+-                self.memory_leases.push(lease);
+-                self.read_reserved_bytes = required_bytes;
+-            }
++            let copy_high_water = memory.read_copy_high_water_bytes.max(capacity_bytes);
++            let required_bytes = copy_high_water
++                .checked_add(capacity_bytes)
++                .ok_or(WireError::PeerBufferLengthOverflow)?;
++            ensure_peer_buffer_reservation(
++                resources,
++                &mut memory.read_memory_lease,
++                &mut memory.read_reserved_bytes,
++                required_bytes,
++            )?;
++            memory.read_copy_high_water_bytes = copy_high_water;
+         }
+ 
+         if required > src.capacity() {
+             src.reserve(required.saturating_sub(src.len()));
+         }
++        self.read_buffer_high_water_bytes = self.read_buffer_high_water_bytes.max(src.capacity());
++
++        // Account for allocator growth beyond the requested capacity before
++        // another frame can be admitted on this connection.
++        if let Some(resources) = resources.as_ref() {
++            let actual_capacity =
++                u64::try_from(src.capacity()).map_err(|_| WireError::PeerBufferLengthOverflow)?;
++            if actual_capacity > capacity_bytes {
++                let memory = self
++                    .memory
++                    .get_or_insert_with(|| Box::new(PeerCodecMemory::default()));
++                let copy_high_water = memory.read_copy_high_water_bytes.max(actual_capacity);
++                let required_bytes = copy_high_water
++                    .checked_add(actual_capacity)
++                    .ok_or(WireError::PeerBufferLengthOverflow)?;
++                ensure_peer_buffer_reservation(
++                    resources,
++                    &mut memory.read_memory_lease,
++                    &mut memory.read_reserved_bytes,
++                    required_bytes,
++                )?;
++                memory.read_copy_high_water_bytes = copy_high_water;
++            }
++        }
+         Ok(())
+     }
+ 
+@@ -65,28 +138,77 @@ impl PeerCodec {
+     ) -> Result<(), WireError> {
+         // The write buffer is retained by `Framed` while a slow peer drains
+         // it. Charge a conservative growth allowance before BytesMut can
+-        // allocate; the read and write buffers share one codec but have
+-        // independent retained-capacity leases.
++        // allocate. Its lease can return to the warm-buffer size after the
++        // output buffer is empty.
+         let accounted_capacity = dst.capacity().max(required);
+         if let Some(resources) = self.resources.clone() {
++            let memory = self
++                .memory
++                .get_or_insert_with(|| Box::new(PeerCodecMemory::default()));
+             let required_bytes = u64::try_from(accounted_capacity)
+                 .ok()
+                 .and_then(|bytes| bytes.checked_mul(2))
+                 .ok_or(WireError::PeerBufferLengthOverflow)?;
+-            if required_bytes > self.write_reserved_bytes {
+-                let additional = required_bytes - self.write_reserved_bytes;
+-                let lease = resources
+-                    .try_acquire(MemoryClass::PeerBuffer, additional)
+-                    .ok_or(WireError::PeerBufferAllocationDenied(required_bytes))?;
+-                self.memory_leases.push(lease);
+-                self.write_reserved_bytes = required_bytes;
+-            }
++            ensure_peer_buffer_reservation(
++                &resources,
++                &mut memory.write_memory_lease,
++                &mut memory.write_reserved_bytes,
++                required_bytes,
++            )?;
+         }
+         if required > dst.capacity() {
+             dst.reserve(required.saturating_sub(dst.len()));
+         }
+         Ok(())
+     }
++
++    fn trim_idle_read_buffer(&mut self, src: &mut BytesMut) {
++        if !src.is_empty() || self.read_buffer_high_water_bytes <= RETAINED_BUFFER_CAPACITY {
++            return;
++        }
++
++        *src = BytesMut::with_capacity(RETAINED_BUFFER_CAPACITY);
++        self.read_buffer_high_water_bytes = src.capacity();
++        let Some(buffer_bytes) = u64::try_from(src.capacity()).ok() else {
++            return;
++        };
++        let Some(memory) = self.memory.as_mut() else {
++            return;
++        };
++        let Some(required_bytes) = memory.read_copy_high_water_bytes.checked_add(buffer_bytes)
++        else {
++            return;
++        };
++        if required_bytes < memory.read_reserved_bytes {
++            if let Some(lease) = memory.read_memory_lease.as_mut() {
++                lease.shrink_to(required_bytes);
++                memory.read_reserved_bytes = required_bytes;
++            }
++        }
++    }
++
++    fn trim_idle_write_buffer(&mut self, dst: &mut BytesMut) {
++        if !dst.is_empty() || dst.capacity() <= RETAINED_BUFFER_CAPACITY {
++            return;
++        }
++
++        *dst = BytesMut::with_capacity(RETAINED_BUFFER_CAPACITY);
++        let Some(required_bytes) = u64::try_from(dst.capacity())
++            .ok()
++            .and_then(|bytes| bytes.checked_mul(2))
++        else {
++            return;
++        };
++        let Some(memory) = self.memory.as_mut() else {
++            return;
++        };
++        if required_bytes < memory.write_reserved_bytes {
++            if let Some(lease) = memory.write_memory_lease.as_mut() {
++                lease.shrink_to(required_bytes);
++                memory.write_reserved_bytes = required_bytes;
++            }
++        }
++    }
+ }
+ 
+ impl Decoder for PeerCodec {
+@@ -94,6 +216,8 @@ impl Decoder for PeerCodec {
+     type Error = WireError;
+ 
+     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
++        self.trim_idle_read_buffer(src);
++        self.read_buffer_high_water_bytes = self.read_buffer_high_water_bytes.max(src.capacity());
+         if src.len() < 4 {
+             self.reserve_capacity(src, 4)?;
+             return Ok(None);
+@@ -108,8 +232,8 @@ impl Decoder for PeerCodec {
+             return Ok(None);
+         }
+         src.advance(4);
+-        let payload = src.split_to(len as usize);
+-        let msg = Message::parse(&payload)?;
++        let payload = src.split_to(len as usize).freeze();
++        let msg = Message::parse_owned(payload)?;
+         Ok(Some(msg))
+     }
+ }
+@@ -118,6 +242,7 @@ impl Encoder<Message> for PeerCodec {
+     type Error = WireError;
+ 
+     fn encode(&mut self, item: Message, dst: &mut BytesMut) -> Result<(), Self::Error> {
++        self.trim_idle_write_buffer(dst);
+         let encoded_len = item
+             .encoded_len()
+             .ok_or(WireError::MessageTooLarge(u32::MAX))?;
+@@ -135,9 +260,21 @@ impl Encoder<Message> for PeerCodec {
+ mod tests {
+     use super::*;
+     use bytes::BufMut;
++    use bytes::Bytes;
+     use bytes::BytesMut;
+     use tokio_util::codec::{Decoder, Encoder};
+ 
++    fn peer_buffer_governor(cap_bytes: u64) -> ResourceGovernor {
++        let mut class_caps = [0; rt_metrics::MEMORY_CLASS_COUNT];
++        class_caps[MemoryClass::PeerBuffer as usize] = cap_bytes;
++        ResourceGovernor::new(rt_metrics::ResourceGovernorConfig {
++            total_cap_bytes: cap_bytes,
++            class_caps_bytes: class_caps,
++            pressure_constrained_pct: 75,
++            pressure_critical_pct: 90,
++        })
++    }
++
+     fn encode_msg(msg: Message) -> BytesMut {
+         let mut buf = BytesMut::new();
+         PeerCodec::default().encode(msg, &mut buf).unwrap();
+@@ -209,6 +346,27 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn codec_piece_decode_reuses_frame_payload() {
++        let message = Message::Piece {
++            piece: 7,
++            begin: 16_384,
++            data: Bytes::from(vec![0x42u8; 4096]),
++        };
++        let mut frame = encode_msg(message);
++        let frame_start = frame.as_ptr();
++
++        let decoded = PeerCodec::default().decode(&mut frame).unwrap().unwrap();
++        let Message::Piece { data, .. } = decoded else {
++            panic!("expected Piece message");
++        };
++
++        // Four length bytes, one message id, and two u32 coordinates precede
++        // the payload. Pointer identity proves the codec did not copy it.
++        assert_eq!(data.as_ptr(), frame_start.wrapping_add(13));
++        assert!(frame.is_empty());
++    }
++
+     #[test]
+     fn codec_piece_frame_matches_generic_encode() {
+         // The Encoder builds the frame directly in `dst` instead of going
+@@ -332,4 +490,84 @@ mod tests {
+             1
+         );
+     }
++
++    #[test]
++    fn empty_read_buffer_shrinks_but_keeps_live_message_copy_credit() {
++        let payload = vec![0x5a; RETAINED_BUFFER_CAPACITY * 8];
++        let mut wire = BytesMut::with_capacity(RETAINED_BUFFER_CAPACITY * 16);
++        PeerCodec::default()
++            .encode(
++                Message::Extended {
++                    ext_id: 7,
++                    payload: payload.clone(),
++                },
++                &mut wire,
++            )
++            .unwrap();
++        let mut input = BytesMut::from(&wire[..4]);
++
++        let governor = peer_buffer_governor(8 * 1024 * 1024);
++        let mut codec = PeerCodec::with_resources(governor.clone());
++        // Framed first presents the length prefix. The codec admits the
++        // declared frame before the rest of the bytes are read into the
++        // retained buffer.
++        assert!(codec.decode(&mut input).unwrap().is_none());
++        assert!(input.capacity() > RETAINED_BUFFER_CAPACITY);
++        input.extend_from_slice(&wire[4..]);
++
++        let decoded = codec.decode(&mut input).unwrap().unwrap();
++        assert!(input.is_empty());
++        let used_before_trim = governor.snapshot().total_used_bytes;
++        assert!(used_before_trim > RETAINED_BUFFER_CAPACITY as u64);
++
++        assert!(codec.decode(&mut input).unwrap().is_none());
++
++        assert!(
++            input.capacity() <= RETAINED_BUFFER_CAPACITY,
++            "trimmed read buffer retained {} bytes",
++            input.capacity()
++        );
++        let used_after_trim = governor.snapshot().total_used_bytes;
++        assert!(used_after_trim < used_before_trim);
++        let memory = codec.memory.as_ref().expect("read lease state");
++        assert_eq!(used_after_trim, memory.read_reserved_bytes);
++        assert!(used_after_trim >= memory.read_copy_high_water_bytes);
++        assert_eq!(
++            decoded,
++            Message::Extended { ext_id: 7, payload },
++            "the parsed message owns its bytes after the read buffer is replaced"
++        );
++    }
++
++    #[test]
++    fn empty_write_buffer_shrinks_on_the_next_encode() {
++        let governor = peer_buffer_governor(8 * 1024 * 1024);
++        let mut codec = PeerCodec::with_resources(governor.clone());
++        let mut output = BytesMut::with_capacity(RETAINED_BUFFER_CAPACITY * 16);
++        codec
++            .encode(
++                Message::Extended {
++                    ext_id: 7,
++                    payload: vec![0x33; RETAINED_BUFFER_CAPACITY * 8],
++                },
++                &mut output,
++            )
++            .unwrap();
++        let used_before_trim = governor.snapshot().total_used_bytes;
++        assert!(used_before_trim > RETAINED_BUFFER_CAPACITY as u64);
++
++        // Framed has drained the previous output before it asks the codec to
++        // encode another message.
++        output.clear();
++        codec.encode(Message::Choke, &mut output).unwrap();
++
++        assert_eq!(output.len(), 5);
++        assert!(output.capacity() <= RETAINED_BUFFER_CAPACITY);
++        assert!(governor.snapshot().total_used_bytes < used_before_trim);
++        let memory = codec.memory.as_ref().expect("write lease state");
++        assert_eq!(
++            governor.snapshot().total_used_bytes,
++            memory.write_reserved_bytes
++        );
++    }
+ }
+diff --git a/crates/rt-peer-wire/src/message.rs b/crates/rt-peer-wire/src/message.rs
+index 5fdacc5..e6b1cd2 100644
+--- a/crates/rt-peer-wire/src/message.rs
++++ b/crates/rt-peer-wire/src/message.rs
+@@ -394,6 +394,33 @@ impl Message {
+             _ => Err(WireError::UnknownMessageId(id)),
+         }
+     }
++
++    /// Parse an owned peer-wire payload. Piece blocks keep a slice of the
++    /// completed frame instead of allocating and copying a second payload
++    /// buffer. Other message variants retain the existing parsing behavior.
++    pub(crate) fn parse_owned(payload: Bytes) -> Result<Self, WireError> {
++        if payload.first() != Some(&7) {
++            return Self::parse(&payload);
++        }
++        if payload.len() < 9 {
++            return Err(WireError::InvalidMessage("Piece body too short".into()));
++        }
++
++        let piece = u32::from_be_bytes(payload[1..5].try_into().unwrap());
++        let begin = u32::from_be_bytes(payload[5..9].try_into().unwrap());
++        let data_len = payload.len() - 9;
++        if data_len > MAX_BLOCK_SIZE as usize {
++            return Err(WireError::InvalidMessage(format!(
++                "Piece block {data_len} bytes exceeds MAX_BLOCK_SIZE {MAX_BLOCK_SIZE}"
++            )));
++        }
++
++        Ok(Message::Piece {
++            piece,
++            begin,
++            data: payload.slice(9..),
++        })
++    }
+ }
+ 
+ type HashExchange = ([u8; 32], u32, u32, u32, u32, Vec<[u8; 32]>);
+diff --git a/crates/rt-storage/src/backend.rs b/crates/rt-storage/src/backend.rs
+index 95a576a..33349f6 100644
+--- a/crates/rt-storage/src/backend.rs
++++ b/crates/rt-storage/src/backend.rs
+@@ -27,6 +27,7 @@ use std::os::unix::io::AsRawFd;
+ use std::os::windows::fs::FileExt;
+ #[cfg(target_os = "linux")]
+ use std::sync::atomic::{AtomicBool, Ordering};
++use std::sync::atomic::{AtomicU8, Ordering as AtomicOrdering};
+ use std::sync::{mpsc, Arc, Mutex, MutexGuard};
+ use std::thread;
+ 
+@@ -38,6 +39,7 @@ use crate::file_handle::LeasedFileHandle;
+ use crate::frame::Frame;
+ #[cfg(target_os = "linux")]
+ use crate::frame::{RegisteredFrameSlot, RegisteredFrameSlots};
++use crate::StorageError;
+ 
+ fn lock_job_receiver<T>(receiver: &Mutex<T>) -> MutexGuard<'_, T> {
+     match receiver.lock() {
+@@ -285,6 +287,32 @@ impl SelectedDiskBackend {
+         &self.selection
+     }
+ 
++    pub(crate) fn uses_pread_workers(&self) -> bool {
++        matches!(&self.inner, SelectedDiskBackendInner::Pread(_))
++    }
++
++    /// Execute one complete path-backed operation in the portable disk
++    /// worker queue. io_uring keeps its own submission/completion lifecycle.
++    pub(crate) async fn run_prepared_pread<T, F>(&self, f: F) -> Result<T, StorageError>
++    where
++        T: Send + 'static,
++        F: FnOnce() -> Result<T, StorageError> + Send + 'static,
++    {
++        match &self.inner {
++            SelectedDiskBackendInner::Pread(backend) => backend.run_prepared(f).await,
++            #[cfg(target_os = "linux")]
++            SelectedDiskBackendInner::Uring(_) => Err(StorageError::io(
++                "prepared pread",
++                io::Error::other("prepared path operation requires the portable backend"),
++            )),
++            #[cfg(test)]
++            SelectedDiskBackendInner::Injected(_) => Err(StorageError::io(
++                "prepared pread",
++                io::Error::other("prepared path operation is unavailable for injected backends"),
++            )),
++        }
++    }
++
+     /// Construct a scheduler backend around a scripted test implementation.
+     /// The adapter is test-only so production cannot bypass the selected
+     /// backend or descriptor ownership rules.
+@@ -1152,6 +1180,12 @@ impl UringWorker {
+         let id = self.next_id;
+         self.next_id = self.next_id.wrapping_add(1).max(1);
+         match job {
++            Job::Prepared(_) => {
++                return Err(io::Error::new(
++                    io::ErrorKind::Unsupported,
++                    "prepared operations must use the portable disk worker pool",
++                ));
++            }
+             Job::Read {
+                 file,
+                 mut frame,
+@@ -1574,6 +1608,7 @@ impl BackendFile {
+ }
+ 
+ enum Job {
++    Prepared(PreparedJob),
+     Read {
+         file: BackendFile,
+         frame: Frame,
+@@ -1595,6 +1630,25 @@ enum Job {
+     },
+ }
+ 
++type PreparedJob = Box<dyn FnOnce() + Send + 'static>;
++
++const PREPARED_JOB_QUEUED: u8 = 0;
++const PREPARED_JOB_STARTED: u8 = 1;
++const PREPARED_JOB_CANCELLED: u8 = 2;
++
++struct PreparedJobCancelGuard(Arc<AtomicU8>);
++
++impl Drop for PreparedJobCancelGuard {
++    fn drop(&mut self) {
++        let _ = self.0.compare_exchange(
++            PREPARED_JOB_QUEUED,
++            PREPARED_JOB_CANCELLED,
++            AtomicOrdering::AcqRel,
++            AtomicOrdering::Acquire,
++        );
++    }
++}
++
+ fn read_exact_with(
+     mut buf: &mut [u8],
+     mut offset: u64,
+@@ -1653,6 +1707,17 @@ fn read_exact_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
+     })
+ }
+ 
++#[cfg(any(unix, windows))]
++pub(crate) fn read_frame_leased(
++    file: &LeasedFileHandle,
++    mut frame: Frame,
++    offset: u64,
++) -> io::Result<Frame> {
++    read_exact_at(file.as_file(), frame.as_mut_slice(), offset)?;
++    frame.mark_initialized();
++    Ok(frame)
++}
++
+ #[cfg(windows)]
+ fn read_exact_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
+     read_exact_with(buf, offset, |buffer, position| {
+@@ -1808,6 +1873,53 @@ impl PreadBackend {
+         rx
+     }
+ 
++    /// Run a complete prepared storage operation on the same bounded worker
++    /// pool that performs positioned I/O. This lets the scheduler keep path
++    /// normalization, descriptor lookup, cache checks, the read, and final
++    /// identity validation behind one queue and one completion.
++    pub(crate) async fn run_prepared<T, F>(&self, f: F) -> Result<T, StorageError>
++    where
++        T: Send + 'static,
++        F: FnOnce() -> Result<T, StorageError> + Send + 'static,
++    {
++        let (reply, result) = oneshot::channel();
++        let state = Arc::new(AtomicU8::new(PREPARED_JOB_QUEUED));
++        let worker_state = Arc::clone(&state);
++        let job: PreparedJob = Box::new(move || {
++            if worker_state
++                .compare_exchange(
++                    PREPARED_JOB_QUEUED,
++                    PREPARED_JOB_STARTED,
++                    AtomicOrdering::AcqRel,
++                    AtomicOrdering::Acquire,
++                )
++                .is_err()
++            {
++                return;
++            }
++            let _ = reply.send(f());
++        });
++        let _cancel_guard = PreparedJobCancelGuard(state);
++        match self.tx.try_send(Job::Prepared(job)) {
++            Ok(()) => {}
++            Err(mpsc::TrySendError::Full(_)) => {
++                return Err(StorageError::QueueFull {
++                    mount: "disk-backend".to_string(),
++                });
++            }
++            Err(mpsc::TrySendError::Disconnected(_)) => {
++                return Err(StorageError::io(
++                    "disk-backend",
++                    io::Error::new(
++                        io::ErrorKind::BrokenPipe,
++                        "portable disk worker pool is closed",
++                    ),
++                ));
++            }
++        }
++        result.await.map_err(|_| StorageError::Cancelled)?
++    }
++
+     fn worker(rx: Arc<Mutex<mpsc::Receiver<Job>>>) {
+         loop {
+             // Lock only to dequeue; the actual syscall runs unlocked so
+@@ -1820,6 +1932,7 @@ impl PreadBackend {
+                 return; // sender dropped → shutdown
+             };
+             match job {
++                Job::Prepared(job) => job(),
+                 Job::Read {
+                     file,
+                     mut frame,
+@@ -1936,6 +2049,7 @@ fn fail_job_on_full(result: Result<(), mpsc::TrySendError<Job>>) {
+ fn fail_job(job: Job, kind: io::ErrorKind, message: &'static str) {
+     let error = || io::Error::new(kind, message);
+     match job {
++        Job::Prepared(_) => {}
+         Job::Read {
+             reply, mut owner, ..
+         } => {
+@@ -1965,6 +2079,18 @@ mod tests {
+     use crate::handle_cache::HandleCache;
+     use std::time::Duration;
+ 
++    struct PreparedDropProbe {
++        dropped: Arc<std::sync::atomic::AtomicBool>,
++        notify: Arc<tokio::sync::Notify>,
++    }
++
++    impl Drop for PreparedDropProbe {
++        fn drop(&mut self) {
++            self.dropped.store(true, AtomicOrdering::Release);
++            self.notify.notify_one();
++        }
++    }
++
+     #[test]
+     fn queued_job_retains_descriptor_lease_after_caller_cancellation() {
+         let dir = tempfile::tempdir().unwrap();
+@@ -2101,6 +2227,56 @@ mod tests {
+         assert_eq!(frame.as_slice(), b"hello");
+     }
+ 
++    #[tokio::test]
++    async fn prepared_storage_operation_runs_on_bounded_disk_worker() {
++        let backend = PreadBackend::new_with_queue_depth(1, 1);
++        let worker_name = backend
++            .run_prepared(|| {
++                Ok(std::thread::current()
++                    .name()
++                    .unwrap_or_default()
++                    .to_string())
++            })
++            .await
++            .unwrap();
++        assert!(worker_name.starts_with("tng-disk-"));
++    }
++
++    #[tokio::test]
++    async fn prepared_operation_keeps_owners_until_started_work_finishes() {
++        let backend = Arc::new(PreadBackend::new_with_queue_depth(1, 1));
++        let (started_tx, started_rx) = oneshot::channel();
++        let (release_tx, release_rx) = std::sync::mpsc::channel();
++        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
++        let drop_notify = Arc::new(tokio::sync::Notify::new());
++        let operation_dropped = Arc::clone(&dropped);
++        let operation_notify = Arc::clone(&drop_notify);
++
++        let operation = tokio::spawn(async move {
++            let probe = PreparedDropProbe {
++                dropped: operation_dropped,
++                notify: operation_notify,
++            };
++            backend
++                .run_prepared(move || {
++                    let _probe = probe;
++                    let _ = started_tx.send(());
++                    release_rx.recv().unwrap();
++                    Ok(())
++                })
++                .await
++        });
++
++        started_rx.await.unwrap();
++        operation.abort();
++        assert!(operation.await.is_err());
++        assert!(!dropped.load(AtomicOrdering::Acquire));
++
++        release_tx.send(()).unwrap();
++        drop_notify.notified().await;
++        assert!(dropped.load(AtomicOrdering::Acquire));
++    }
++
+     #[tokio::test]
+     async fn pread_past_eof_errors() {
+         let dir = tempfile::tempdir().unwrap();
+diff --git a/crates/rt-storage/src/frame.rs b/crates/rt-storage/src/frame.rs
+index 3a53905..3dea404 100644
+--- a/crates/rt-storage/src/frame.rs
++++ b/crates/rt-storage/src/frame.rs
+@@ -90,6 +90,35 @@ impl FramePool {
+         self.lock_inner().retained_bytes
+     }
+ 
++    /// Drop idle reusable buffers until at least `target_bytes` have been
++    /// released, or the pool is empty. Live frames and byte owners are never
++    /// affected. The returned count is allocation capacity removed from the
++    /// pool; the process allocator may retain freed pages independently.
++    pub(crate) fn trim_retained(&self, target_bytes: u64) -> u64 {
++        if target_bytes == 0 {
++            return 0;
++        }
++        let mut dropped = Vec::new();
++        let mut released = 0u64;
++        {
++            let mut inner = self.lock_inner();
++            while released < target_bytes {
++                let Some(class) = inner.free.iter().position(|buffers| !buffers.is_empty()) else {
++                    break;
++                };
++                let Some(buffer) = inner.free[class].pop() else {
++                    continue;
++                };
++                let bytes = buffer.capacity() as u64;
++                inner.retained_bytes = inner.retained_bytes.saturating_sub(bytes);
++                released = released.saturating_add(bytes);
++                dropped.push(buffer);
++            }
++        }
++        drop(dropped);
++        released
++    }
++
+     pub fn denied_allocations(&self) -> u64 {
+         self.denied.load(Ordering::Relaxed)
+     }
+@@ -580,6 +609,23 @@ mod tests {
+         assert_eq!(pool.in_use_bytes(), 0);
+     }
+ 
++    #[test]
++    fn trimming_releases_idle_buffers_but_keeps_live_frames_charged() {
++        let pool = FramePool::new(512 * 1024);
++        let live = pool.try_acquire(16 * 1024).unwrap();
++        drop(pool.try_acquire(16 * 1024).unwrap());
++        drop(pool.try_acquire(64 * 1024).unwrap());
++        let in_use_before = pool.in_use_bytes();
++
++        let released = pool.trim_retained(16 * 1024);
++
++        assert!(released >= 16 * 1024);
++        assert_eq!(pool.retained_bytes(), 64 * 1024);
++        assert_eq!(pool.in_use_bytes(), in_use_before);
++        drop(live);
++        assert_eq!(pool.in_use_bytes(), 0);
++    }
++
+     #[test]
+     fn cap_accounts_for_pooled_backing_capacity() {
+         let pool = FramePool::new(16 * 1024);
+diff --git a/crates/rt-storage/src/scheduler.rs b/crates/rt-storage/src/scheduler.rs
+index fff0ae6..0e0d3af 100644
+--- a/crates/rt-storage/src/scheduler.rs
++++ b/crates/rt-storage/src/scheduler.rs
+@@ -22,13 +22,16 @@ use sha1::{Digest, Sha1};
+ #[cfg(any(unix, windows))]
+ use crate::open::identity_matches_path;
+ use crate::{
+-    backend::{BackendJobOwnership, BackendRequest, SelectedDiskBackend},
++    backend::{
++        read_frame_leased, BackendJobOwnership, BackendKind, BackendRequest, DiskBackend,
++        FixedBufferStrategy, SelectedDiskBackend,
++    },
+     device::{detect_storage_topology, StorageTopology},
+     elevator::elevator_class_weight,
+     error::StorageError,
+     fd_limit::process_handle_cache_capacity,
+     file_handle::LeasedFileHandle,
+-    frame::{global_frame_pool, Frame},
++    frame::{global_frame_pool, try_global_frame_pool, Frame},
+     handle_cache::HandleCache,
+     io_class::IoClass,
+     open::{create_dir_all_no_follow, normalized_storage_path, FileIdentity},
+@@ -350,6 +353,11 @@ pub struct StorageIoStats {
+     pub peer_read_cache_entries: usize,
+     /// Payload bytes currently retained across all peer-read cache ranges.
+     pub peer_read_cache_bytes: u64,
++    /// Backing allocation bytes held by peer-read cache owners process-wide,
++    /// including returned slices that outlive their cache entry.
++    pub peer_read_cache_global_backing_bytes: u64,
++    /// Process-wide cache backing allocation budget.
++    pub peer_read_cache_global_budget_bytes: u64,
+     pub peer_read_cache_hits: u64,
+     pub peer_read_cache_misses: u64,
+     pub peer_read_cache_evictions: u64,
+@@ -443,6 +451,8 @@ impl Default for StorageIoStats {
+             preallocation_shrink_refused: 0,
+             peer_read_cache_entries: 0,
+             peer_read_cache_bytes: 0,
++            peer_read_cache_global_backing_bytes: 0,
++            peer_read_cache_global_budget_bytes: 0,
+             peer_read_cache_hits: 0,
+             peer_read_cache_misses: 0,
+             peer_read_cache_evictions: 0,
+@@ -516,8 +526,17 @@ impl FilePool {
+         create: bool,
+     ) -> Result<Arc<LeasedFileHandle>, StorageError> {
+         let key = normalized_key(path);
++        self.get_or_open_normalized(&key, mode, create)
++    }
++
++    fn get_or_open_normalized(
++        &self,
++        key: &Path,
++        mode: OpenMode,
++        create: bool,
++    ) -> Result<Arc<LeasedFileHandle>, StorageError> {
+         self.catalog
+-            .get_or_open_leased(&key, mode == OpenMode::Write, create)
++            .get_or_open_leased(key, mode == OpenMode::Write, create)
+             .map_err(|error| StorageError::io(key.display().to_string(), error))
+     }
+ 
+@@ -691,6 +710,64 @@ struct SharedSchedulerResources {
+     hash_pool: Arc<BlockingPool>,
+ }
+ 
++/// Selected backend capabilities for a backend used by live mount schedulers.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct ActiveStorageBackend {
++    /// Identity of the shared worker/backend resource group in this process.
++    pub scheduler_group_id: u64,
++    pub selected: BackendKind,
++    pub fixed_buffers_supported: bool,
++    pub registered_files_supported: bool,
++    pub max_batch_len: usize,
++    pub fixed_buffer_len: usize,
++    pub fixed_buffer_strategy: FixedBufferStrategy,
++}
++
++/// Passive snapshot of backend owners currently held by live schedulers.
++#[derive(Debug, Clone, Default, PartialEq, Eq)]
++pub struct ActiveStorageBackendSnapshot {
++    pub scheduler_groups: usize,
++    pub backends: Vec<ActiveStorageBackend>,
++}
++
++fn active_storage_backend(backend: &SelectedDiskBackend) -> ActiveStorageBackend {
++    ActiveStorageBackend {
++        scheduler_group_id: 0,
++        selected: backend.kind(),
++        fixed_buffers_supported: backend.supports_fixed_buffers(),
++        registered_files_supported: backend.supports_registered_files(),
++        max_batch_len: backend.max_batch_len(),
++        fixed_buffer_len: backend.fixed_buffer_len(),
++        fixed_buffer_strategy: backend.fixed_buffer_strategy(),
++    }
++}
++
++/// Snapshot the backend groups already retained by live `MountScheduler`s.
++/// This never initializes a backend; metrics can therefore observe the actual
++/// transfer owner without constructing a separate `StorageRuntime`.
++pub fn active_storage_backend_snapshot() -> ActiveStorageBackendSnapshot {
++    let active: Vec<_> = {
++        let resources = lock_recover(&SHARED_SCHEDULER_RESOURCES);
++        resources.values().filter_map(Weak::upgrade).collect()
++    };
++    let mut backends = Vec::with_capacity(active.len());
++    for resource in &active {
++        let mut backend = active_storage_backend(&resource.disk_backend);
++        backend.scheduler_group_id = resource.id;
++        backends.push(backend);
++    }
++    backends.sort_by(|left, right| {
++        left.selected
++            .as_str()
++            .cmp(right.selected.as_str())
++            .then_with(|| left.scheduler_group_id.cmp(&right.scheduler_group_id))
++    });
++    ActiveStorageBackendSnapshot {
++        scheduler_groups: active.len(),
++        backends,
++    }
++}
++
+ #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+ struct SharedSchedulerKey {
+     file_pool_size: usize,
+@@ -1113,6 +1190,7 @@ pub struct MountScheduler {
+     write_admission_gate: Arc<AsyncRwLock<()>>,
+     write_sequence: Arc<AtomicU64>,
+     peer_read_cache: Arc<Mutex<PeerReadCache>>,
++    peer_read_cache_manager: Arc<PeerReadCacheManager>,
+     peer_read_cache_epoch: Arc<AtomicU64>,
+     /// Where each recently read file's next sequential read would start, so
+     /// readahead only expands streams that actually continue.
+@@ -1166,6 +1244,8 @@ struct StorageCounters {
+     sparse_seek_fallbacks: AtomicU64,
+     #[cfg(test)]
+     operation_dispatches: Mutex<Vec<StorageDispatchTestSnapshot>>,
++    #[cfg(test)]
++    prepared_pread_operations: AtomicU64,
+ }
+ 
+ impl Default for StorageCounters {
+@@ -1207,6 +1287,8 @@ impl Default for StorageCounters {
+             sparse_seek_fallbacks: AtomicU64::new(0),
+             #[cfg(test)]
+             operation_dispatches: Mutex::new(Vec::new()),
++            #[cfg(test)]
++            prepared_pread_operations: AtomicU64::new(0),
+         }
+     }
+ }
+@@ -1217,7 +1299,6 @@ struct PeerReadCacheEntry {
+     offset: u64,
+     data: bytes::Bytes,
+     last_used: Instant,
+-    _lease: Option<MemoryLease>,
+ }
+ 
+ /// Bounded multi-range cache for peer upload reads. A single hot file may
+@@ -1228,6 +1309,7 @@ struct PeerReadCache {
+     files: HashMap<PathBuf, Vec<PeerReadCacheEntry>>,
+     entries: usize,
+     cached_bytes: usize,
++    registered_with_manager: bool,
+ }
+ 
+ impl PeerReadCache {
+@@ -1328,10 +1410,10 @@ impl PeerReadCache {
+         entry: PeerReadCacheEntry,
+         max_entries: usize,
+         max_bytes: usize,
+-    ) -> bool {
++    ) -> Option<bool> {
+         let entry_bytes = entry.data.len();
+         if max_entries == 0 || max_bytes == 0 || entry_bytes > max_bytes {
+-            return false;
++            return None;
+         }
+         if let Some(index) = self.files.get(&path).and_then(|entries| {
+             entries
+@@ -1346,14 +1428,244 @@ impl PeerReadCache {
+             || self.cached_bytes.saturating_add(entry_bytes) > max_bytes
+         {
+             if !self.evict_oldest() {
+-                return false;
++                return None;
+             }
+             evicted = true;
+         }
+         self.files.entry(path).or_default().push(entry);
+         self.entries = self.entries.saturating_add(1);
+         self.cached_bytes = self.cached_bytes.saturating_add(entry_bytes);
+-        evicted
++        Some(evicted)
++    }
++}
++
++const MAX_GLOBAL_PEER_READ_CACHE_BYTES: u64 = 16 * 1024 * 1024;
++
++#[derive(Debug, Default)]
++struct PeerReadCacheRegistry {
++    caches: Vec<PeerReadCacheOwner>,
++    cache_ids: HashSet<usize>,
++    cursor: usize,
++}
++
++#[derive(Debug, Clone)]
++struct PeerReadCacheOwner {
++    id: usize,
++    cache: Weak<Mutex<PeerReadCache>>,
++    counters: Weak<StorageCounters>,
++    reclaim_scope_id: Option<usize>,
++}
++
++/// Process-wide peer read-cache budget. Per-torrent byte and entry limits
++/// still apply; this manager caps their combined retained backing memory and
++/// evicts one oldest range per cache turn when memory is needed.
++#[derive(Debug)]
++struct PeerReadCacheManager {
++    budget_bytes: u64,
++    used_bytes: AtomicU64,
++    registry: Mutex<PeerReadCacheRegistry>,
++}
++
++impl PeerReadCacheManager {
++    fn new(budget_bytes: u64) -> Self {
++        Self {
++            budget_bytes,
++            used_bytes: AtomicU64::new(0),
++            registry: Mutex::new(PeerReadCacheRegistry::default()),
++        }
++    }
++
++    fn reserve(self: &Arc<Self>, bytes: u64) -> Option<PeerReadCacheBudgetLease> {
++        if bytes > self.budget_bytes {
++            return None;
++        }
++        loop {
++            let current = self.used_bytes.load(Ordering::Acquire);
++            let next = current.checked_add(bytes)?;
++            if next <= self.budget_bytes {
++                if self
++                    .used_bytes
++                    .compare_exchange_weak(current, next, Ordering::AcqRel, Ordering::Acquire)
++                    .is_ok()
++                {
++                    return Some(PeerReadCacheBudgetLease {
++                        manager: Arc::clone(self),
++                        bytes,
++                    });
++                }
++                continue;
++            }
++
++            let needed = next.saturating_sub(self.budget_bytes);
++            let reclaimed = self.reclaim(needed);
++            let trimmed = try_global_frame_pool()
++                .map(|pool| pool.trim_retained(needed))
++                .unwrap_or(0);
++            if reclaimed == 0 && trimmed == 0 {
++                return None;
++            }
++        }
++    }
++
++    fn register(
++        &self,
++        cache: &Arc<Mutex<PeerReadCache>>,
++        counters: &Arc<StorageCounters>,
++        reclaim_scope_id: Option<usize>,
++    ) {
++        lock_reset_derived_cache(cache).registered_with_manager = true;
++        let id = Arc::as_ptr(cache) as usize;
++        let mut registry = lock_recover(&self.registry);
++        if registry.cache_ids.contains(&id) {
++            if registry.caches.iter().any(|owner| {
++                owner.id == id
++                    && owner
++                        .cache
++                        .upgrade()
++                        .is_some_and(|registered| Arc::ptr_eq(&registered, cache))
++            }) {
++                return;
++            }
++            registry.caches.retain(|owner| owner.id != id);
++            registry.cache_ids.remove(&id);
++        }
++        registry.cache_ids.insert(id);
++        registry.caches.push(PeerReadCacheOwner {
++            id,
++            cache: Arc::downgrade(cache),
++            counters: Arc::downgrade(counters),
++            reclaim_scope_id,
++        });
++        if registry.cursor >= registry.caches.len() {
++            registry.cursor = 0;
++        }
++    }
++
++    fn reclaim(&self, target_bytes: u64) -> u64 {
++        self.reclaim_matching(target_bytes, None)
++    }
++
++    fn reclaim_for_scope(&self, target_bytes: u64, reclaim_scope_id: usize) -> u64 {
++        self.reclaim_matching(target_bytes, Some(reclaim_scope_id))
++    }
++
++    fn reclaim_matching(&self, target_bytes: u64, reclaim_scope_id: Option<usize>) -> u64 {
++        if target_bytes == 0 {
++            return 0;
++        }
++        let before = self.used_bytes.load(Ordering::Acquire);
++        let mut registry = lock_recover(&self.registry);
++        let mut remaining_in_round = registry.caches.len();
++        let mut released_in_round = false;
++        while before.saturating_sub(self.used_bytes.load(Ordering::Acquire)) < target_bytes
++            && !registry.caches.is_empty()
++        {
++            if remaining_in_round == 0 {
++                if !released_in_round {
++                    break;
++                }
++                remaining_in_round = registry.caches.len();
++                released_in_round = false;
++            }
++            let index = registry.cursor % registry.caches.len();
++            let owner = registry.caches[index].clone();
++            remaining_in_round -= 1;
++            if reclaim_scope_id.is_some_and(|id| owner.reclaim_scope_id != Some(id)) {
++                registry.cursor = (index + 1) % registry.caches.len();
++                continue;
++            }
++            let Some(cache_owner) = owner.cache.upgrade() else {
++                registry.caches.remove(index);
++                registry.cache_ids.remove(&owner.id);
++                registry.cursor = if registry.caches.is_empty() {
++                    0
++                } else {
++                    index % registry.caches.len()
++                };
++                continue;
++            };
++            let mut cache = lock_reset_derived_cache(&cache_owner);
++            if cache.entry_count() == 0 {
++                cache.registered_with_manager = false;
++                drop(cache);
++                registry.caches.remove(index);
++                registry.cache_ids.remove(&owner.id);
++                registry.cursor = if registry.caches.is_empty() {
++                    0
++                } else {
++                    index % registry.caches.len()
++                };
++                continue;
++            }
++
++            let used_before = self.used_bytes.load(Ordering::Acquire);
++            let evicted = cache.evict_oldest();
++            if evicted {
++                if let Some(counters) = owner.counters.upgrade() {
++                    counters
++                        .peer_read_cache_evictions
++                        .fetch_add(1, Ordering::Relaxed);
++                }
++            }
++            let became_empty = cache.entry_count() == 0;
++            if became_empty {
++                cache.registered_with_manager = false;
++            }
++            drop(cache);
++
++            if became_empty {
++                registry.caches.remove(index);
++                registry.cache_ids.remove(&owner.id);
++                registry.cursor = if registry.caches.is_empty() {
++                    0
++                } else {
++                    index % registry.caches.len()
++                };
++            } else {
++                registry.cursor = (index + 1) % registry.caches.len();
++            }
++            if self.used_bytes.load(Ordering::Acquire) < used_before {
++                released_in_round = true;
++            }
++        }
++        if registry.caches.is_empty() {
++            registry.cursor = 0;
++        }
++        before.saturating_sub(self.used_bytes.load(Ordering::Acquire))
++    }
++
++    fn used_bytes(&self) -> u64 {
++        self.used_bytes.load(Ordering::Relaxed)
++    }
++}
++
++static GLOBAL_PEER_READ_CACHE_MANAGER: Lazy<Arc<PeerReadCacheManager>> =
++    Lazy::new(|| Arc::new(PeerReadCacheManager::new(MAX_GLOBAL_PEER_READ_CACHE_BYTES)));
++
++#[derive(Debug)]
++struct PeerReadCacheBudgetLease {
++    manager: Arc<PeerReadCacheManager>,
++    bytes: u64,
++}
++
++impl Drop for PeerReadCacheBudgetLease {
++    fn drop(&mut self) {
++        self.manager
++            .used_bytes
++            .fetch_sub(self.bytes, Ordering::AcqRel);
++    }
++}
++
++#[derive(Debug)]
++struct CachedPeerBytes {
++    bytes: bytes::Bytes,
++    _resource_lease: Option<MemoryLease>,
++    _budget_lease: PeerReadCacheBudgetLease,
++}
++
++impl AsRef<[u8]> for CachedPeerBytes {
++    fn as_ref(&self) -> &[u8] {
++        self.bytes.as_ref()
+     }
+ }
+ 
+@@ -1704,6 +2016,205 @@ enum ReadPreparation {
+     },
+ }
+ 
++struct PreparedPread {
++    file_pool: Arc<FilePool>,
++    peer_read_cache: Arc<Mutex<PeerReadCache>>,
++    peer_read_cache_manager: Arc<PeerReadCacheManager>,
++    peer_read_cache_epoch: Arc<AtomicU64>,
++    peer_read_streams: Arc<Mutex<PeerReadStreams>>,
++    counters: Arc<StorageCounters>,
++    resources: Option<ResourceGovernor>,
++    storage_root: StorageRootId,
++    cache_generation: Option<u64>,
++    readahead_bytes: usize,
++    sequential_only: bool,
++    readahead_cache_entries: usize,
++    readahead_cache_bytes: usize,
++    submission: Option<DiskSubmission>,
++}
++
++impl PreparedPread {
++    fn execute(
++        mut self,
++        class: IoClass,
++        path: PathBuf,
++        offset: u64,
++        len: usize,
++        started: Instant,
++    ) -> Result<StorageRead, StorageError> {
++        #[cfg(test)]
++        self.counters
++            .prepared_pread_operations
++            .fetch_add(1, Ordering::Relaxed);
++
++        let key = normalized_key(&path);
++        let file = self
++            .file_pool
++            .get_or_open_normalized(&key, OpenMode::Read, false)?;
++        if class == IoClass::PeerRead && self.readahead_bytes > len {
++            if let Some(bytes) =
++                peer_read_cache_hit(&self.peer_read_cache, &key, file.identity(), offset, len)
++            {
++                lock_recover(&self.peer_read_streams).observe(
++                    &key,
++                    offset,
++                    len,
++                    self.readahead_bytes,
++                    true,
++                );
++                self.counters
++                    .peer_read_cache_hits
++                    .fetch_add(1, Ordering::Relaxed);
++                verify_path_identity(&key, file.identity(), "payload_read")?;
++                self.counters.read_ops_by_class[class_index(class)].fetch_add(1, Ordering::Relaxed);
++                self.counters.bytes_read_by_class[class_index(class)]
++                    .fetch_add(len as u64, Ordering::Relaxed);
++                let latency_ns = latency_ns_since(started);
++                self.counters.read_latency_ns_by_class[class_index(class)]
++                    .fetch_add(latency_ns, Ordering::Relaxed);
++                record_latency_bucket(&self.counters.read_latency_buckets, latency_ns);
++                let mut submission = self.submission.take().ok_or_else(|| {
++                    StorageError::io(
++                        "prepared pread",
++                        io::Error::other("storage admission owner was already released"),
++                    )
++                })?;
++                submission.bind_file_identity(file.identity());
++                submission.operation.bind_byte_range(offset, len as u64);
++                drop(submission);
++                return Ok(StorageRead::Bytes(bytes));
++            }
++            self.counters
++                .peer_read_cache_misses
++                .fetch_add(1, Ordering::Relaxed);
++        }
++
++        let read_len =
++            if class == IoClass::PeerRead && self.readahead_bytes > len {
++                let file_len = file
++                    .metadata()
++                    .map_err(|error| StorageError::io(key.display().to_string(), error))?
++                    .len();
++                let (sequential, recommended_bytes) = lock_recover(&self.peer_read_streams)
++                    .observe(&key, offset, len, self.readahead_bytes, false);
++                if offset >= file_len || (self.sequential_only && !sequential) {
++                    len
++                } else {
++                    (if self.sequential_only {
++                        recommended_bytes
++                    } else {
++                        self.readahead_bytes
++                    })
++                    .min(file_len.saturating_sub(offset) as usize)
++                    .max(len)
++                }
++            } else {
++                len
++            };
++        advise_for_read_class(file.as_ref(), class, offset, read_len, &self.counters);
++
++        let mut submission = self.submission.take().ok_or_else(|| {
++            StorageError::io(
++                "prepared pread",
++                io::Error::other("storage admission owner was already released"),
++            )
++        })?;
++        submission.retain_file(Arc::clone(&file));
++        submission
++            .operation
++            .bind_byte_range(offset, read_len as u64);
++        let requested_charge = queued_disk_charge(len as u64);
++        let read_buffer_charge = queued_disk_charge(read_len as u64);
++        let read_buffer_queued_bytes = read_buffer_charge
++            .checked_sub(requested_charge)
++            .filter(|bytes| *bytes > 0)
++            .map(|bytes| {
++                QueuedDiskBytes::reserve_charged(
++                    self.counters.clone(),
++                    self.resources.as_ref(),
++                    bytes,
++                    format!("storage-root-{}-readahead", self.storage_root.0),
++                )
++            })
++            .transpose()?;
++        if let Some(extra_charge) = read_buffer_queued_bytes.as_ref() {
++            submission
++                .operation
++                .resource_credit
++                .include(extra_charge.resource_credit());
++        }
++        let frame = global_frame_pool()
++            .try_acquire_for_overwrite(read_len)
++            .ok_or_else(|| StorageError::QueueFull {
++                mount: "scheduler-read-frame".to_string(),
++            })?;
++        submission.record_frame_pool_charge(&frame);
++        submission.trace_dispatch("positioned_read", class, 1);
++        let frame = read_frame_leased(file.as_ref(), frame, offset).map_err(|error| {
++            if matches!(
++                error.kind(),
++                io::ErrorKind::UnexpectedEof | io::ErrorKind::WriteZero
++            ) {
++                StorageError::ShortIo {
++                    path: key.display().to_string(),
++                    expected: len,
++                    actual: 0,
++                }
++            } else {
++                StorageError::io(key.display().to_string(), error)
++            }
++        })?;
++        drop(submission);
++        drop(read_buffer_queued_bytes);
++
++        current_file_identity(&key, file.as_ref(), "payload_read")?;
++        self.counters.read_ops_by_class[class_index(class)].fetch_add(1, Ordering::Relaxed);
++        self.counters.bytes_read_by_class[class_index(class)]
++            .fetch_add(len as u64, Ordering::Relaxed);
++        self.counters.backend_read_ops_by_class[class_index(class)].fetch_add(1, Ordering::Relaxed);
++        self.counters.backend_bytes_read_by_class[class_index(class)]
++            .fetch_add(read_len as u64, Ordering::Relaxed);
++        advise_after_read_class(file.as_ref(), class, offset, read_len, &self.counters);
++        let latency_ns = latency_ns_since(started);
++        self.counters.read_latency_ns_by_class[class_index(class)]
++            .fetch_add(latency_ns, Ordering::Relaxed);
++        record_latency_bucket(&self.counters.read_latency_buckets, latency_ns);
++
++        if class == IoClass::PeerRead && read_len > len {
++            let backing_bytes = frame.charged_bytes();
++            let bytes = frame.into_bytes();
++            let Some(cache_generation) = self.cache_generation else {
++                return Err(StorageError::io(
++                    "peer read cache",
++                    io::Error::other("read-ahead completed without a cache generation"),
++                ));
++            };
++            let exact = bytes.slice(..len);
++            let cached_exact = peer_read_cache_store_parts(
++                &self.peer_read_cache,
++                &self.peer_read_cache_manager,
++                &self.peer_read_cache_epoch,
++                self.resources.as_ref(),
++                &self.counters,
++                PeerReadCacheInsert {
++                    generation: cache_generation,
++                    key,
++                    identity: file.identity(),
++                    offset,
++                    data: bytes,
++                    max_entries: self.readahead_cache_entries,
++                    max_bytes: self.readahead_cache_bytes,
++                    backing_bytes,
++                    result_len: len,
++                },
++            );
++            Ok(StorageRead::Bytes(cached_exact.unwrap_or(exact)))
++        } else {
++            Ok(StorageRead::Frame(frame))
++        }
++    }
++}
++
+ impl QueuedDiskBytes {
+     fn reserve(
+         counters: Arc<StorageCounters>,
+@@ -3163,6 +3674,30 @@ impl MountScheduler {
+                 None
+             };
+         let peer_read_elevator = Arc::new(Mutex::new(peer_read_elevator));
++        let peer_read_cache = Arc::new(Mutex::new(PeerReadCache::default()));
++        let peer_read_cache_manager = Arc::clone(&GLOBAL_PEER_READ_CACHE_MANAGER);
++        if let Some(resources) = config.resources.as_ref() {
++            let manager = Arc::clone(&peer_read_cache_manager);
++            resources.register_reclaimer(MemoryClass::PeerBuffer, "rt-storage.peer-read-cache", {
++                let reclaim_scope_id = resources.reclaim_scope_id();
++                move |needed| {
++                    let cache_reclaimed = manager.reclaim_for_scope(needed, reclaim_scope_id);
++                    let frame_reclaimed = try_global_frame_pool()
++                        .map(|pool| pool.trim_retained(needed))
++                        .unwrap_or(0);
++                    cache_reclaimed.max(frame_reclaimed)
++                }
++            });
++            resources.register_reclaimer(
++                MemoryClass::StorageFrame,
++                "rt-storage.frame-pool",
++                |needed| {
++                    try_global_frame_pool()
++                        .map(|pool| pool.trim_retained(needed))
++                        .unwrap_or(0)
++                },
++            );
++        }
+ 
+         MountScheduler {
+             storage_root,
+@@ -3185,7 +3720,8 @@ impl MountScheduler {
+             file_sync_fences: Arc::new(FileSyncFenceRegistry::default()),
+             write_admission_gate: Arc::new(AsyncRwLock::new(())),
+             write_sequence: Arc::new(AtomicU64::new(0)),
+-            peer_read_cache: Arc::new(Mutex::new(PeerReadCache::default())),
++            peer_read_cache,
++            peer_read_cache_manager,
+             peer_read_cache_epoch: Arc::new(AtomicU64::new(0)),
+             peer_read_streams: Arc::new(Mutex::new(PeerReadStreams::default())),
+             peer_read_elevator,
+@@ -3276,6 +3812,8 @@ impl MountScheduler {
+                 .load(Ordering::Relaxed),
+             peer_read_cache_entries,
+             peer_read_cache_bytes,
++            peer_read_cache_global_backing_bytes: self.peer_read_cache_manager.used_bytes(),
++            peer_read_cache_global_budget_bytes: self.peer_read_cache_manager.budget_bytes,
+             peer_read_cache_hits: self.counters.peer_read_cache_hits.load(Ordering::Relaxed),
+             peer_read_cache_misses: self.counters.peer_read_cache_misses.load(Ordering::Relaxed),
+             peer_read_cache_evictions: self
+@@ -3747,6 +4285,43 @@ impl MountScheduler {
+                 return Ok(StorageRead::Bytes(bytes));
+             }
+         }
++
++        if disk_backend.uses_pread_workers() {
++            let mut submission = self.reserve_mount_submission(len as u64)?;
++            submission.start_device_operation(
++                self.acquire_device_operation_with_priority(class, priority)
++                    .await?,
++            );
++            let prepared = PreparedPread {
++                file_pool: pool,
++                peer_read_cache,
++                peer_read_cache_manager: self.peer_read_cache_manager.clone(),
++                peer_read_cache_epoch,
++                peer_read_streams,
++                counters: counters.clone(),
++                resources: self.resources.clone(),
++                storage_root: self.storage_root,
++                cache_generation,
++                readahead_bytes,
++                sequential_only,
++                readahead_cache_entries,
++                readahead_cache_bytes,
++                submission: Some(submission),
++            };
++            let failed_counter = counters.clone();
++            let result = disk_backend
++                .run_prepared_pread(move || prepared.execute(class, path, offset, len, started))
++                .await;
++            if matches!(
++                &result,
++                Err(StorageError::QueueFull { mount })
++                    if mount == "disk-backend" || mount == "scheduler-read-frame"
++            ) {
++                failed_counter.queue_full.fetch_add(1, Ordering::Relaxed);
++            }
++            return result;
++        }
++
+         let submission = self.reserve_mount_submission(len as u64)?;
+         let preparation_counters = counters.clone();
+         let preparation_peer_read_cache = peer_read_cache.clone();
+@@ -3923,17 +4498,22 @@ impl MountScheduler {
+                     .fetch_add(latency_ns, Ordering::Relaxed);
+                 record_latency_bucket(&counters.read_latency_buckets, latency_ns);
+                 if class == IoClass::PeerRead && read_len > len {
++                    let backing_bytes = frame.charged_bytes();
+                     let bytes = frame.into_bytes();
+                     let exact = bytes.slice(..len);
+                     let identity = file.identity();
+-                    self.peer_read_cache_store(
+-                        cache_generation.expect("peer-read cache generation is set"),
++                    let cached_exact = self.peer_read_cache_store(PeerReadCacheInsert {
++                        generation: cache_generation.expect("peer-read cache generation is set"),
+                         key,
+                         identity,
+                         offset,
+-                        bytes,
+-                    );
+-                    Ok(StorageRead::Bytes(exact))
++                        data: bytes,
++                        max_entries: self.io_config.peer_read_cache_entries,
++                        max_bytes: self.io_config.peer_read_cache_bytes,
++                        backing_bytes,
++                        result_len: len,
++                    });
++                    Ok(StorageRead::Bytes(cached_exact.unwrap_or(exact)))
+                 } else {
+                     Ok(StorageRead::Frame(frame))
+                 }
+@@ -3941,52 +4521,19 @@ impl MountScheduler {
+         }
+     }
+ 
+-    fn peer_read_cache_store(
+-        &self,
+-        generation: u64,
+-        key: PathBuf,
+-        identity: FileIdentity,
+-        offset: u64,
+-        data: bytes::Bytes,
+-    ) {
+-        let max_entries = self.io_config.peer_read_cache_entries;
+-        let max_bytes = self.io_config.peer_read_cache_bytes;
+-        if max_entries == 0 || max_bytes == 0 || data.len() > max_bytes {
+-            return;
+-        }
+-        let lease = if let Some(resources) = self.resources.as_ref() {
+-            match resources.try_acquire(MemoryClass::PeerBuffer, data.len() as u64) {
+-                Some(lease) => Some(lease),
+-                None => {
+-                    self.counters.queue_full.fetch_add(1, Ordering::Relaxed);
+-                    return;
+-                }
+-            }
+-        } else {
+-            None
+-        };
+-        let mut cache = lock_reset_derived_cache(&self.peer_read_cache);
+-        if self.peer_read_cache_epoch.load(Ordering::Acquire) != generation {
+-            // A write completed while this read was in flight. Do not
+-            // publish the stale backend bytes into the cache.
+-            return;
+-        }
+-        if cache.insert(
+-            key,
+-            PeerReadCacheEntry {
+-                identity,
+-                offset,
+-                data,
+-                last_used: Instant::now(),
+-                _lease: lease,
++    fn peer_read_cache_store(&self, insert: PeerReadCacheInsert) -> Option<bytes::Bytes> {
++        peer_read_cache_store_parts(
++            &self.peer_read_cache,
++            &self.peer_read_cache_manager,
++            &self.peer_read_cache_epoch,
++            self.resources.as_ref(),
++            &self.counters,
++            PeerReadCacheInsert {
++                max_entries: self.io_config.peer_read_cache_entries,
++                max_bytes: self.io_config.peer_read_cache_bytes,
++                ..insert
+             },
+-            max_entries,
+-            max_bytes,
+-        ) {
+-            self.counters
+-                .peer_read_cache_evictions
+-                .fetch_add(1, Ordering::Relaxed);
+-        }
++        )
+     }
+ 
+     pub async fn write_at(
+@@ -5260,6 +5807,94 @@ fn peer_read_cache_invalidate(cache: &Mutex<PeerReadCache>, epoch: &AtomicU64, k
+     lock_reset_derived_cache(cache).remove_file(key);
+ }
+ 
++struct PeerReadCacheInsert {
++    generation: u64,
++    key: PathBuf,
++    identity: FileIdentity,
++    offset: u64,
++    data: bytes::Bytes,
++    max_entries: usize,
++    max_bytes: usize,
++    backing_bytes: u64,
++    result_len: usize,
++}
++
++fn peer_read_cache_store_parts(
++    cache: &Arc<Mutex<PeerReadCache>>,
++    manager: &Arc<PeerReadCacheManager>,
++    epoch: &AtomicU64,
++    resources: Option<&ResourceGovernor>,
++    counters: &Arc<StorageCounters>,
++    insert: PeerReadCacheInsert,
++) -> Option<bytes::Bytes> {
++    let PeerReadCacheInsert {
++        generation,
++        key,
++        identity,
++        offset,
++        data,
++        max_entries,
++        max_bytes,
++        backing_bytes,
++        result_len,
++    } = insert;
++    if max_entries == 0 || max_bytes == 0 || data.len() > max_bytes || result_len > data.len() {
++        return None;
++    }
++    let budget_lease = manager.reserve(backing_bytes)?;
++    let lease = if let Some(resources) = resources {
++        match resources.try_acquire(MemoryClass::PeerBuffer, backing_bytes) {
++            Some(lease) => Some(lease),
++            None => {
++                counters.queue_full.fetch_add(1, Ordering::Relaxed);
++                return None;
++            }
++        }
++    } else {
++        None
++    };
++    let mut cache_guard = lock_reset_derived_cache(cache);
++    if epoch.load(Ordering::Acquire) != generation {
++        // A write completed while this read was in flight. Do not publish
++        // stale backend bytes into the cache.
++        return None;
++    }
++    let data = bytes::Bytes::from_owner(CachedPeerBytes {
++        bytes: data,
++        _resource_lease: lease,
++        _budget_lease: budget_lease,
++    });
++    let result = data.slice(..result_len);
++    let evicted = cache_guard.insert(
++        key,
++        PeerReadCacheEntry {
++            identity,
++            offset,
++            data,
++            last_used: Instant::now(),
++        },
++        max_entries,
++        max_bytes,
++    );
++    let evicted = evicted?;
++    if evicted {
++        counters
++            .peer_read_cache_evictions
++            .fetch_add(1, Ordering::Relaxed);
++    }
++    let should_register = !cache_guard.registered_with_manager;
++    cache_guard.registered_with_manager = true;
++    drop(cache_guard);
++    if should_register {
++        manager.register(
++            cache,
++            counters,
++            resources.map(ResourceGovernor::reclaim_scope_id),
++        );
++    }
++    Some(result)
++}
++
+ fn advise_for_read_class(
+     file: &File,
+     class: IoClass,
+@@ -5524,6 +6159,219 @@ mod tests {
+     use rt_path::StorageRootId;
+     use rt_piece_map::{FileSpan, PieceMap};
+ 
++    fn insert_manager_test_range(
++        manager: &Arc<PeerReadCacheManager>,
++        cache: &Arc<Mutex<PeerReadCache>>,
++        counters: &Arc<StorageCounters>,
++        key: PathBuf,
++        identity: FileIdentity,
++        payload: &[u8],
++    ) {
++        let budget_lease = manager.reserve(payload.len() as u64).unwrap();
++        let data = bytes::Bytes::from_owner(CachedPeerBytes {
++            bytes: bytes::Bytes::copy_from_slice(payload),
++            _resource_lease: None,
++            _budget_lease: budget_lease,
++        });
++        let inserted = lock_reset_derived_cache(cache).insert(
++            key,
++            PeerReadCacheEntry {
++                identity,
++                offset: 0,
++                data,
++                last_used: Instant::now(),
++            },
++            8,
++            1024,
++        );
++        assert!(inserted.is_some());
++        manager.register(cache, counters, None);
++    }
++
++    #[test]
++    fn global_peer_cache_budget_reclaims_ranges_across_torrents() {
++        let dir = tempfile::tempdir().unwrap();
++        let first_path = dir.path().join("first-cache-owner.bin");
++        let second_path = dir.path().join("second-cache-owner.bin");
++        std::fs::write(&first_path, b"first").unwrap();
++        std::fs::write(&second_path, b"second").unwrap();
++        let first_identity = file_identity(&File::open(&first_path).unwrap()).unwrap();
++        let second_identity = file_identity(&File::open(&second_path).unwrap()).unwrap();
++        let manager = Arc::new(PeerReadCacheManager::new(8));
++        let first_cache = Arc::new(Mutex::new(PeerReadCache::default()));
++        let second_cache = Arc::new(Mutex::new(PeerReadCache::default()));
++        let first_counters = Arc::new(StorageCounters::default());
++        let second_counters = Arc::new(StorageCounters::default());
++
++        insert_manager_test_range(
++            &manager,
++            &first_cache,
++            &first_counters,
++            first_path,
++            first_identity,
++            b"1234",
++        );
++        insert_manager_test_range(
++            &manager,
++            &second_cache,
++            &second_counters,
++            second_path,
++            second_identity,
++            b"5678",
++        );
++        assert_eq!(manager.used_bytes(), 8);
++
++        let new_owner = manager.reserve(6).unwrap();
++
++        assert_eq!(manager.used_bytes(), 6);
++        assert_eq!(lock_reset_derived_cache(&first_cache).entry_count(), 0);
++        assert_eq!(lock_reset_derived_cache(&second_cache).entry_count(), 0);
++        assert_eq!(
++            first_counters
++                .peer_read_cache_evictions
++                .load(Ordering::Relaxed),
++            1
++        );
++        assert_eq!(
++            second_counters
++                .peer_read_cache_evictions
++                .load(Ordering::Relaxed),
++            1
++        );
++        drop(new_owner);
++        assert_eq!(manager.used_bytes(), 0);
++    }
++
++    #[test]
++    fn cache_alias_keeps_both_memory_budgets_until_last_slice_drops() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("cache-alias-owner.bin");
++        std::fs::write(&path, b"payload").unwrap();
++        let identity = file_identity(&File::open(&path).unwrap()).unwrap();
++        let manager = Arc::new(PeerReadCacheManager::new(32));
++        let cache = Arc::new(Mutex::new(PeerReadCache::default()));
++        let counters = Arc::new(StorageCounters::default());
++        let governor = ResourceGovernor::new(rt_metrics::ResourceGovernorConfig {
++            total_cap_bytes: 32,
++            class_caps_bytes: [32; rt_metrics::MEMORY_CLASS_COUNT],
++            ..Default::default()
++        });
++        let epoch = AtomicU64::new(0);
++        let response = peer_read_cache_store_parts(
++            &cache,
++            &manager,
++            &epoch,
++            Some(&governor),
++            &counters,
++            PeerReadCacheInsert {
++                generation: 0,
++                key: path,
++                identity,
++                offset: 0,
++                data: bytes::Bytes::from_static(b"payload"),
++                max_entries: 4,
++                max_bytes: 32,
++                backing_bytes: 7,
++                result_len: 3,
++            },
++        )
++        .expect("bounded cache admission succeeds");
++        assert_eq!(&response[..], b"pay");
++        assert_eq!(manager.reclaim(7), 0);
++        assert_eq!(lock_reset_derived_cache(&cache).entry_count(), 0);
++        assert_eq!(manager.used_bytes(), 7);
++        assert_eq!(
++            governor.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
++            7
++        );
++
++        drop(response);
++        assert_eq!(manager.used_bytes(), 0);
++        assert_eq!(
++            governor.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
++            0
++        );
++    }
++
++    #[test]
++    fn governor_reclaim_does_not_evict_another_governors_cache() {
++        let dir = tempfile::tempdir().unwrap();
++        let first_path = dir.path().join("governor-one.bin");
++        let second_path = dir.path().join("governor-two.bin");
++        std::fs::write(&first_path, b"first").unwrap();
++        std::fs::write(&second_path, b"second").unwrap();
++        let first_identity = file_identity(&File::open(&first_path).unwrap()).unwrap();
++        let second_identity = file_identity(&File::open(&second_path).unwrap()).unwrap();
++        let manager = Arc::new(PeerReadCacheManager::new(8));
++        let first_cache = Arc::new(Mutex::new(PeerReadCache::default()));
++        let second_cache = Arc::new(Mutex::new(PeerReadCache::default()));
++        let first_counters = Arc::new(StorageCounters::default());
++        let second_counters = Arc::new(StorageCounters::default());
++        let config = rt_metrics::ResourceGovernorConfig {
++            total_cap_bytes: 8,
++            class_caps_bytes: [8; rt_metrics::MEMORY_CLASS_COUNT],
++            ..Default::default()
++        };
++        let first_governor = ResourceGovernor::new(config);
++        let second_governor = ResourceGovernor::new(config);
++
++        let first_response = peer_read_cache_store_parts(
++            &first_cache,
++            &manager,
++            &AtomicU64::new(0),
++            Some(&first_governor),
++            &first_counters,
++            PeerReadCacheInsert {
++                generation: 0,
++                key: first_path,
++                identity: first_identity,
++                offset: 0,
++                data: bytes::Bytes::from_static(b"1111"),
++                max_entries: 4,
++                max_bytes: 8,
++                backing_bytes: 4,
++                result_len: 1,
++            },
++        )
++        .unwrap();
++        let second_response = peer_read_cache_store_parts(
++            &second_cache,
++            &manager,
++            &AtomicU64::new(0),
++            Some(&second_governor),
++            &second_counters,
++            PeerReadCacheInsert {
++                generation: 0,
++                key: second_path,
++                identity: second_identity,
++                offset: 0,
++                data: bytes::Bytes::from_static(b"2222"),
++                max_entries: 4,
++                max_bytes: 8,
++                backing_bytes: 4,
++                result_len: 1,
++            },
++        )
++        .unwrap();
++        drop((first_response, second_response));
++
++        assert_eq!(
++            manager.reclaim_for_scope(4, first_governor.reclaim_scope_id()),
++            4
++        );
++        assert_eq!(lock_reset_derived_cache(&first_cache).entry_count(), 0);
++        assert_eq!(lock_reset_derived_cache(&second_cache).entry_count(), 1);
++        assert_eq!(manager.used_bytes(), 4);
++        assert_eq!(
++            first_governor.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
++            0
++        );
++        assert_eq!(
++            second_governor.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
++            4
++        );
++    }
++
+     #[test]
+     fn default_storage_pools_use_bounded_worker_counts() {
+         let config = StorageIoConfig::default();
+@@ -7031,6 +7879,20 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn active_backend_snapshot_reports_live_path_scheduler() {
++        let dir = tempfile::tempdir().unwrap();
++        let config = SchedulerConfig::default();
++        let scheduler = MountScheduler::new_for_path(StorageRootId::new(), dir.path(), &config);
++        let mut expected = active_storage_backend(&scheduler.disk_backend);
++        expected.scheduler_group_id = scheduler.stats().shared_resource_id;
++
++        let snapshot = active_storage_backend_snapshot();
++
++        assert!(snapshot.scheduler_groups > 0);
++        assert!(snapshot.backends.contains(&expected));
++    }
++
+     #[test]
+     fn ssd_has_higher_concurrency() {
+         let hdd = hdd_scheduler();
+@@ -7118,14 +7980,17 @@ mod tests {
+ 
+         let result = scheduled_read(&sched, IoClass::Foreground, &path, 0, 8).await;
+ 
+-        assert!(matches!(
+-            result,
+-            Err(StorageError::ShortIo {
+-                expected: 8,
+-                actual: 0,
+-                ..
+-            })
+-        ));
++        assert!(
++            matches!(
++                result,
++                Err(StorageError::ShortIo {
++                    expected: 8,
++                    actual: 0,
++                    ..
++                })
++            ),
++            "unexpected short positioned read result: {result:?}"
++        );
+     }
+ 
+     #[tokio::test]
+@@ -8115,18 +8980,21 @@ mod tests {
+         std::fs::write(&path, b"fresh").unwrap();
+         let file = File::open(&path).unwrap();
+         let cache = Arc::new(Mutex::new(PeerReadCache::default()));
+-        cache.lock().unwrap().insert(
+-            path.clone(),
+-            PeerReadCacheEntry {
+-                identity: file_identity(&file).unwrap(),
+-                offset: 0,
+-                data: bytes::Bytes::from_static(b"stale"),
+-                last_used: Instant::now(),
+-                _lease: None,
+-            },
+-            1,
+-            1024,
+-        );
++        assert!(cache
++            .lock()
++            .unwrap()
++            .insert(
++                path.clone(),
++                PeerReadCacheEntry {
++                    identity: file_identity(&file).unwrap(),
++                    offset: 0,
++                    data: bytes::Bytes::from_static(b"stale"),
++                    last_used: Instant::now(),
++                },
++                1,
++                1024,
++            )
++            .is_some());
+ 
+         let poisoner = Arc::clone(&cache);
+         assert!(std::thread::spawn(move || {
+@@ -8318,6 +9186,50 @@ mod tests {
+         );
+     }
+ 
++    #[tokio::test]
++    async fn portable_peer_read_fuses_cache_lookup_and_backend_completion() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("prepared-pread.bin");
++        std::fs::write(&path, b"abcdefghijklmnopqrstuvwxyz").unwrap();
++        let mut scheduler = MountScheduler::new(
++            StorageRootId::new(),
++            &SchedulerConfig {
++                profile: StorageProfile::Hdd,
++                storage_io: StorageIoConfig {
++                    peer_read_readahead_bytes: 16,
++                    peer_read_readahead_sequential_only: false,
++                    ..Default::default()
++                },
++                ..Default::default()
++            },
++        );
++        scheduler.disk_backend = Arc::new(SelectedDiskBackend::select(BackendRequest::Pread, 1));
++
++        let first = scheduled_read(&scheduler, IoClass::PeerRead, &path, 0, 4)
++            .await
++            .unwrap();
++        let second = scheduled_read(&scheduler, IoClass::PeerRead, &path, 4, 4)
++            .await
++            .unwrap();
++
++        assert_eq!(&first[..], b"abcd");
++        assert_eq!(&second[..], b"efgh");
++        assert_eq!(
++            scheduler
++                .counters
++                .prepared_pread_operations
++                .load(Ordering::Relaxed),
++            2
++        );
++        let stats = scheduler.stats();
++        assert_eq!(stats.peer_read_cache_misses, 1);
++        assert_eq!(stats.peer_read_cache_hits, 1);
++        assert_eq!(
++            stats.backend_read_ops_by_class[class_index(IoClass::PeerRead)],
++            1
++        );
++    }
++
+     #[tokio::test]
+     async fn peer_read_readahead_cache_retains_disjoint_ranges_for_one_file() {
+         let dir = tempfile::tempdir().unwrap();
+@@ -8492,18 +9404,21 @@ mod tests {
+         let file = File::open(&path).unwrap();
+         let key = path.clone();
+         let cache = Arc::new(Mutex::new(PeerReadCache::default()));
+-        cache.lock().unwrap().insert(
+-            key.clone(),
+-            PeerReadCacheEntry {
+-                identity: file_identity(&file).unwrap(),
+-                offset: 0,
+-                data: bytes::Bytes::from_static(b"stale"),
+-                last_used: Instant::now(),
+-                _lease: None,
+-            },
+-            1,
+-            1024,
+-        );
++        assert!(cache
++            .lock()
++            .unwrap()
++            .insert(
++                key.clone(),
++                PeerReadCacheEntry {
++                    identity: file_identity(&file).unwrap(),
++                    offset: 0,
++                    data: bytes::Bytes::from_static(b"stale"),
++                    last_used: Instant::now(),
++                },
++                1,
++                1024,
++            )
++            .is_some());
+         let epoch = Arc::new(AtomicU64::new(0));
+         let owner_dropped = Arc::new(AtomicBool::new(false));
+         let (caller_ownership, backend_owner) =

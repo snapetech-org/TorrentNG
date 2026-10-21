@@ -1,0 +1,110 @@
+{
+  "storage-probe-results": {
+    "cache-16384": {
+      "cpu_s_per_gib_median": 2.022768864,
+      "cpu_range": [
+        1.8260481440000003,
+        2.108926432
+      ],
+      "allocations_per_read": 12.195556640625,
+      "allocated_bytes_per_read": 16529.51953125,
+      "post_drop_idle_bytes": 933888
+    },
+    "no_cache-16384": {
+      "cpu_s_per_gib_median": 2.0079151200000003,
+      "cpu_range": [
+        1.9795196959999999,
+        2.216668768
+      ],
+      "allocations_per_read": 13,
+      "allocated_bytes_per_read": 1189,
+      "post_drop_idle_bytes": 16384
+    },
+    "small_cache-16384": {
+      "cpu_s_per_gib_median": 1.9160101760000003,
+      "cpu_range": [
+        1.8366908800000001,
+        2.5802477280000002
+      ],
+      "allocations_per_read": 12.239501953125,
+      "allocated_bytes_per_read": 17050.85546875,
+      "post_drop_idle_bytes": 933888
+    },
+    "no_cache-262144": {
+      "cpu_s_per_gib_median": 0.1953472639999999,
+      "cpu_range": [
+        0.18745385599999997,
+        0.267554384
+      ],
+      "allocations_per_read": 13,
+      "allocated_bytes_per_read": 1189,
+      "post_drop_idle_bytes": 262144
+    }
+  },
+  "pool-alignment-results": {
+    "cache-16384": {
+      "cpu_s_per_gib_median": 1.842506476,
+      "cpu_range": [
+        1.7985520760000002,
+        1.9389833959999998
+      ],
+      "allocations_per_read": 12.20416259765625,
+      "allocated_bytes_per_read": 16865.40234375,
+      "post_drop_idle_bytes": 933888
+    },
+    "pool_aligned-16384": {
+      "cpu_s_per_gib_median": 2.0570802680000004,
+      "cpu_range": [
+        1.874385352,
+        2.30678568
+      ],
+      "allocations_per_read": 12.32525634765625,
+      "allocated_bytes_per_read": 1516.0933837890625,
+      "post_drop_idle_bytes": 9060352
+    }
+  },
+  "512k-pool-results": {
+    "baseline-16384": {
+      "cpu_s_per_gib_median": 1.7576952360000002,
+      "cpu_range": [
+        1.7229985920000002,
+        2.040566436
+      ],
+      "allocations_per_read": 12.20416259765625,
+      "allocated_bytes_per_read": 16865.40234375,
+      "post_drop_idle_bytes": 933888
+    },
+    "512k-pool-16384": {
+      "cpu_s_per_gib_median": 1.732434708,
+      "cpu_range": [
+        1.732337876,
+        1.780094188
+      ],
+      "allocations_per_read": 12.17498779296875,
+      "allocated_bytes_per_read": 1537.408203125,
+      "post_drop_idle_bytes": 9846784
+    }
+  },
+  "512k-pool-capped-results": {
+    "baseline-16384": {
+      "cpu_s_per_gib_median": 1.7687302560000002,
+      "cpu_range": [
+        1.693733828,
+        1.982907996
+      ],
+      "allocations_per_read": 12.20416259765625,
+      "allocated_bytes_per_read": 16865.40234375,
+      "post_drop_idle_bytes": 933888
+    },
+    "512k-capped-16384": {
+      "cpu_s_per_gib_median": 1.7041470360000002,
+      "cpu_range": [
+        1.6815192520000002,
+        1.8388722920000002
+      ],
+      "allocations_per_read": 12.17498779296875,
+      "allocated_bytes_per_read": 1537.408203125,
+      "post_drop_idle_bytes": 1982464
+    }
+  }
+}
