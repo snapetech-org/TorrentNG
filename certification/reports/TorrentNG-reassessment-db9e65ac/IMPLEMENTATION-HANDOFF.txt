@@ -1,0 +1,63 @@
+IMPLEMENTATION HANDOFF — db9e65ac, 2026-10-21
+
+Read REVIEW.html or REPORT.txt first. Keep the baseline revision/fingerprint with every measurement. These findings concern current main; the old 0f726a89 source archive is historical.
+
+DO NOT REIMPLEMENT COMPLETED WORK
+bf37a33: demand retirement and event-based fairness wakeups.
+457df45: fused pread preparation/read/completion; global optional cache budget and governor reclaim.
+c83f284: shared per-peer UploadReadContext.
+1ad1528: concrete upload-read futures; FuturesUnordered nodes remain.
+a46bace: coalesced grant settlement and nonzero remainder refund.
+38ffc33: opportunistic empty codec buffer trimming.
+db9e65a: owned TCP Piece parsing.
+
+PRIMARY CPU WORK: BOUND AND BATCH THE UPLOAD READ OPERATION
+Source anchors:
+  torrent_task.rs:9780 read_upload_block; 9931 upload_read_future; 9980 start_upload_reads.
+  torrent_task.rs:8233 send_piece, currently one frame per socket operation.
+  scheduler.rs:4244 read_owned_at_with_priority; 4289 pread admission; 2036 PreparedPread.
+  handle_cache.rs:267 get_or_open_leased; 466 touch.
+
+1. Add a batch admission/dequeue operation for already queued requests from a live peer; preserve each obligation's connection generation and BlockExtent. Collect at most a bounded useful-byte budget (initial experiment 64/256 KiB), do not wait to fill it. Do not cross unrelated files, padding, plane mappings or generations accidentally.
+2. Build one file-backed operation with stable validated file ownership and shared backing credit. Validate the path/generation at the batch boundaries. Keep the file and permits owned by the actual disk job through cancellation of the caller. Do not weaken replacement or no-follow semantics.
+3. Return separate legal wire-sized Bytes views. A cancel removes only that request's delivery obligation; it cannot recycle shared backing while another view remains live. Preserve per-request rate settlement, partial-send refunds and Allowed Fast behavior.
+4. Use a bounded ready-write queue to gather completed frames for vectored writes. Keep control-frame ordering and partial-write cursors. Do not block input/choke/shutdown handling while waiting for unrelated reads to complete.
+5. Reuse operation storage if allocator samples remain dominant; removing the outer Box did not remove the FuturesUnordered node or the worker job. Consider an active-peer slot/slab rather than preallocating sixteen large futures for every idle peer. Consolidate deadline tracking without removing stalled-read or socket timeouts.
+
+Measure allocation EVENTS and bytes, backend jobs/completions, file-path checks, wakeups/context switches, user/system CPU and useful bytes. A high cache-hit ratio is insufficient: this audit's current-code 96.6% hit workload still allocated about twelve times per 16 KiB request.
+
+BOUNDED POOL EXPERIMENT, NOT AN ACCEPTED WIN
+experimental-bounded-512k-pool.patch adds the missing 512 KiB class with at most two retained idle buffers in that class. It leaves existing global byte limits unchanged. It is not applied to main.
+The actual-current-storage probe showed ~91% fewer allocated bytes but nearly unchanged allocation event count. CPU change was small with overlapping ranges. The class-specific cap matters: without it, post-scheduler idle pool retention was ~9.39 MiB; capped it was ~1.89 MiB, versus ~0.89 MiB baseline.
+The two-buffer choice is exploratory. Validate peer bursts, partial completions, frame-cap denial, last-alias lifetimes, zeroing and idle retention on the actual daemon before accepting it. Three focused invariants passed in this audit; the full workspace was not rerun here.
+
+CACHE POLICY WORK
+Source: scheduler.rs:1315 PeerReadCache, 1442 global budget, 5822 peer_read_cache_store_parts.
+Separate a single-consumer forward window from reusable hot ranges. Drop consumed windows when their readers finish. Choose retention from observed reuse and pressure/lull state, not just configured maximum bytes. Coordinate returns with the idle pool so reclaimed cache backing is not simply retained elsewhere. Protect outstanding views and ownership charges. Compare default, no-cache and small bounded-window configurations on sequential, random and multi-peer workloads before changing defaults.
+
+CODEC ACCOUNTING WORK
+Source: codec.rs:60 read_copy_high_water_bytes; 165 trim_idle_read_buffer; message.rs:401 parse_owned.
+Move payload/backing memory leases to returned message owners. Keep backing charges alive through clones/slices, then release when the last owner dies. The connection should retain only its actual buffer/required slack. The included probe leaves 589,830 charged bytes after the payload was dropped and the actual retained read-buffer capacity became 65,536 bytes. This is stale admission credit; do not mislabel it RSS.
+Add tests for a large extension followed by idle, a small Piece view of a large backing allocation, concurrent live messages, cloned views surviving codec drop, and returning the final credit after the last message drops.
+
+SMALL RATE FOLLOW-UP
+Source: network_budget.rs:1082 acquire; 1169 RateDemandGuard::drop.
+Avoid eagerly fetching notification state on the uncontended path. Disarm demand cleanup once a successful grant already cleared it. Preserve independent simultaneous demand IDs, real refill deadlines, event-only fairness wakeups, cancellation races and outstanding-grant refunds. Do not unregister the live peer to cancel a request. Keep this separate from the larger batching experiment.
+
+UNFINISHED DOWNLOAD VALIDATION
+Run a private two-seeder fixture with forced choke/cancel, requestability changes and completion hashes. The 22 current RateTree tests passed independently here, but they are not the full engine or the missing fixture. The public ~5% plateau persisted in committed reports after the fix; neither public swarm variation nor unit tests establish its remaining cause.
+After liveness is established, compare the existing global assembly cap at 0/4/8 MiB. Track write batch size, verification rereads, CPU and peak/retained memory. Preserve v1/v2/hybrid, padding and crash-checkpoint semantics.
+
+MEASUREMENT GATES
+Use a preverified local seed fixture supplied before client order is chosen, so clients early in a randomized order can seed even if public downloads time out. Keep raw profiles and dirty patches with reports; a source fingerprint alone cannot reconstruct an uncommitted candidate.
+Take one clean db9e65a baseline, then alternating baseline/candidate pairs on the same backend/build/allocator/host window. Capture user AND kernel CPU and per-thread attribution in a separate diagnostic run. The existing 807 user-cycle sample summary is too limited to attribute total CPU to allocator or mutex work.
+The deployment Dockerfile builds x86_64-unknown-linux-musl and defaults to system allocation. A matched allocator or libc experiment is useful if call chains support it; benchmark CPU and anonymous/PSS/RSS retention together. Do not change both operation granularity and allocator in one causal test.
+Run the full comparative suite only after a candidate has a repeatable isolated benefit. Include complete controlled downloads and active/post-transfer/multi-torrent memory. Keep the clean source table, dirty candidates and unfinished runs separate.
+
+VALIDATION PERFORMED HERE
+22 tests from the unmodified current RateTree: passed.
+3 focused pool-candidate integration tests: passed.
+Actual current storage and codec probes: executed, raw results included.
+External dependency versions/checksums use the repository Cargo.lock.
+Experimental patch applies cleanly to db9e65a (git apply --check).
+No daemon/client benchmark, full workspace test pass, or syscall trace was obtained here. ptrace was denied; no substitute syscall counts are claimed.

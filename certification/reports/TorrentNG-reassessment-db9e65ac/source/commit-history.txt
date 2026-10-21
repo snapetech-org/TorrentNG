@@ -1,0 +1,18 @@
+db9e65a 2026-10-21T06:43:31-06:00 perf(peer-wire): decode piece payloads without copy
+38ffc33 2026-10-21T06:24:36-06:00 perf(peer-wire): trim idle codec buffers
+8bea49f 2026-10-21T05:51:40-06:00 docs(perf): record benchmark host load limits
+a46bace 2026-10-21T05:50:38-06:00 perf(engine): coalesce rate grant settlement
+1ad1528 2026-10-21T05:14:40-06:00 perf(engine): avoid boxed upload-read futures
+c83f284 2026-10-21T04:15:51-06:00 perf(engine): share upload read context per peer
+c698449 2026-10-21T03:05:08-06:00 docs: update deep audit with current CPU and RAM run
+c35160e 2026-10-21T03:03:48-06:00 perf(benchmark): record current CPU and RAM comparison
+f6cce15 2026-10-21T02:21:33-06:00 docs: record CPU and RAM acceptance priority
+9163f2c 2026-10-21T02:15:27-06:00 docs: fix peer cache release note length
+d997a69 2026-10-21T01:52:21-06:00 fix(metrics): report active peer storage backend
+1a748ba 2026-10-21T01:02:36-06:00 bench: capture storage backend before torrent pause
+3e7a15e 2026-10-21T00:33:29-06:00 bench: record TorrentNG backend observation repeat
+8a27b32 2026-10-21T00:05:56-06:00 bench: capture backend and limit build workers
+e41b3e8 2026-10-21T00:04:07-06:00 bench: capture selected storage backend
+113e8c8 2026-10-21T00:00:24-06:00 docs(perf): record exact-main cpu and memory check
+457df45 2026-10-20T23:21:00-06:00 perf(storage): fuse pread dispatch and bound shared read cache
+bf37a33 2026-10-20T22:03:09-06:00 fix(transfer): retire stale rate demand and integrate audit

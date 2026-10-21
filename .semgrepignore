@@ -1,2 +1,3 @@
 # Historical source snapshots are evidence records, not live project code.
 certification/reports/TorrentNG-deep-audit-*/source/**
+certification/reports/TorrentNG-reassessment-*/source/**

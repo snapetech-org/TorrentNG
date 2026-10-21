@@ -1,0 +1,25 @@
+--- a/crates/rt-storage/src/frame.rs
++++ b/crates/rt-storage/src/frame.rs
+@@ -21,7 +21,7 @@
+ /// Pooled size classes. A request rounds up to the smallest class that
+ /// fits; requests larger than the biggest class get an exact-size,
+ /// non-pooled allocation (still counted against the cap).
+-const SIZE_CLASSES: [usize; 3] = [16 * 1024, 64 * 1024, 256 * 1024];
++const SIZE_CLASSES: [usize; 4] = [16 * 1024, 64 * 1024, 256 * 1024, 512 * 1024];
+ 
+ /// Per-class cap on retained (idle) buffers, to bound resident memory when
+ /// load drops. Excess freed buffers are dropped rather than retained.
+@@ -209,7 +209,12 @@
+             debug_assert!(buf.len() >= SIZE_CLASSES[ci]);
+             let mut guard = self.lock_inner();
+             let retained = buf.capacity() as u64;
+-            if guard.free[ci].len() < MAX_RETAINED_PER_CLASS
++            let class_retention_limit = if SIZE_CLASSES[ci] > 256 * 1024 {
++                2
++            } else {
++                MAX_RETAINED_PER_CLASS
++            };
++            if guard.free[ci].len() < class_retention_limit
+                 && guard.retained_bytes.saturating_add(retained) <= MAX_RETAINED_BYTES
+             {
+                 guard.retained_bytes = guard.retained_bytes.saturating_add(retained);
