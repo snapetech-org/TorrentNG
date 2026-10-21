@@ -10108,6 +10108,7 @@ async fn send_have_state(
     Ok(())
 }
 
+#[cfg(test)]
 async fn read_upload_block(
     upload: &UploadReadContext,
     request: UploadRequest,
