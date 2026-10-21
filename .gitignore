@@ -22,6 +22,9 @@ certification/reports/*
 !certification/reports/TorrentNG-followup-16da409.zip
 !certification/reports/TorrentNG-followup-16da409/
 !certification/reports/TorrentNG-followup-16da409/**
+!certification/reports/TorrentNG-client-benchmark-20261021T152853Z.md
+!certification/reports/TorrentNG-client-benchmark-20261021T152853Z-samples.csv
+!certification/reports/TorrentNG-client-benchmark-20261021T152853Z-memory-profile.json
 !certification/reports/storage-hardware-local-nvme-20261002.md
 !certification/reports/soak-24h-tng145-current-20261002.md
 !certification/reports/soak-final-tng145-current-20261003.md
