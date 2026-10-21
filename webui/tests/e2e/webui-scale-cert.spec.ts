@@ -283,7 +283,9 @@ test('mouse and keyboard selection support additive and range selection', async 
   const row = (number: number) => page.getByRole('row', {
     name: `TorrentNG scale fixture ${number.toString().padStart(5, '0')}`,
   })
-  const checkbox = (number: number) => page.getByLabel(`TorrentNG scale fixture ${number.toString().padStart(5, '0')}`).first()
+  const checkbox = (number: number) => page.getByRole('checkbox', {
+    name: `Select TorrentNG scale fixture ${number.toString().padStart(5, '0')}`,
+  })
   const target = (number: number) => isMobile ? checkbox(number) : row(number)
   const selectedStatus = (count: number) => page.getByRole('status', { name: `${count} selected` }).first()
 
