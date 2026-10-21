@@ -120,6 +120,21 @@ TorrentNG. The previous clean pass measured 2.46 and 25.2; this single run
 under higher host load does not demonstrate a CPU or RAM improvement. Results
 are recorded in [`CLIENT_PERFORMANCE_BENCHMARK.md`](CLIENT_PERFORMANCE_BENCHMARK.md).
 
+### Per-block upload future allocation candidate
+
+The profile's allocator/free samples do not isolate their call sites. Source
+review found an additional avoidable allocation: every upload block was boxed
+as a `dyn Future` before entering the peer-owned `FuturesUnordered`. The current
+candidate stores the concrete future directly, retaining panic capture,
+timeout, cancellation ownership, and request order. This removes one box and
+virtual dispatch per block; the stream still allocates its own future node.
+Bulk workspace validation passed. One controlled seed measured 2.74 CPU-s/GiB
+and 24.2 MiB cgroup anonymous peak for TorrentNG, versus 2.20 CPU-s/GiB and
+18.5 MiB for qBittorrent in the same run. The comparison is low confidence and
+does not isolate the candidate's effect from its parent source. The public
+probe did not complete and is excluded. The change remains provisional with
+no claimed CPU or RAM gain; randomized paired trials are still needed.
+
 ## Earlier bulk validation — implementation source `3758d021` (2026-10-20)
 
 The Rust implementation under test is exact commit `3758d0217dea665fefdfcd6775a3f72d935cf058`; the only working-tree edits during this pass were documentation. The full workspace passed on Rust 1.94.0 and 1.88.0: each run had 2,309 passed, 0 failed, and 12 ignored across 37 result summaries. Release `rt-engine` passed 738/738, including the seeded ownership simulator. All 11 runnable ignored cases passed explicitly: the two release 100k live-catalog cases, seven storage diagnostics, the real-root move/import/delete fixture, and the peer-wire encode probe. The remaining ignored panic-hook child is exercised through its passing parent regression.

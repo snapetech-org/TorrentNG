@@ -2188,39 +2188,39 @@ enum UploadReadCompletion {
     },
 }
 
-type UploadReadFuture =
-    Pin<Box<dyn std::future::Future<Output = UploadReadCompletion> + Send + 'static>>;
-
-fn catch_upload_read(
+async fn catch_upload_read(
     request: UploadRequest,
     read: impl std::future::Future<Output = (anyhow::Result<LeasedUploadBlock>, bool)> + Send + 'static,
-) -> UploadReadFuture {
-    Box::pin(async move {
-        match std::panic::AssertUnwindSafe(read).catch_unwind().await {
-            Ok((result, rate_interrupted)) => UploadReadCompletion::Completed {
-                request,
-                result,
-                rate_interrupted,
-            },
-            Err(_) => UploadReadCompletion::Panicked { request },
-        }
-    })
+) -> UploadReadCompletion {
+    match std::panic::AssertUnwindSafe(read).catch_unwind().await {
+        Ok((result, rate_interrupted)) => UploadReadCompletion::Completed {
+            request,
+            result,
+            rate_interrupted,
+        },
+        Err(_) => UploadReadCompletion::Panicked { request },
+    }
 }
 
 /// Own in-flight upload-read futures in the peer loop so dropping the owner
 /// immediately drops pending I/O and releases its leases.
-#[derive(Default)]
-struct UploadReadTasks(futures::stream::FuturesUnordered<UploadReadFuture>);
+struct UploadReadTasks<F>(futures::stream::FuturesUnordered<F>);
 
-impl std::ops::Deref for UploadReadTasks {
-    type Target = futures::stream::FuturesUnordered<UploadReadFuture>;
+impl<F> Default for UploadReadTasks<F> {
+    fn default() -> Self {
+        Self(futures::stream::FuturesUnordered::new())
+    }
+}
+
+impl<F> std::ops::Deref for UploadReadTasks<F> {
+    type Target = futures::stream::FuturesUnordered<F>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl std::ops::DerefMut for UploadReadTasks {
+impl<F> std::ops::DerefMut for UploadReadTasks<F> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
@@ -8581,18 +8581,60 @@ struct PeerLoopExit {
     outstanding: Vec<BlockRequest>,
 }
 
+struct PeerLoopStart {
+    addr: SocketAddr,
+    peer_id: PeerId,
+    peer_io: PeerIo,
+    peer_event_tx: mpsc::Sender<PeerEvent>,
+    peer_cmd_rx: mpsc::Receiver<PeerCommand>,
+    upload: UploadContext,
+    send_terminal_event_on_peer_channel: bool,
+}
+
 async fn run_peer_loop(
     addr: SocketAddr,
     peer_id: PeerId,
-    mut peer_io: PeerIo,
+    peer_io: PeerIo,
     peer_event_tx: mpsc::Sender<PeerEvent>,
-    mut peer_cmd_rx: mpsc::Receiver<PeerCommand>,
-    mut upload: UploadContext,
+    peer_cmd_rx: mpsc::Receiver<PeerCommand>,
+    upload: UploadContext,
     // Production wrappers use the dedicated terminal channel after this
     // loop returns. The direct loop path can opt into the ordinary event
     // channel when it owns no separate terminal delivery path.
     send_terminal_event_on_peer_channel: bool,
 ) -> PeerLoopExit {
+    run_peer_loop_with_upload_future(
+        PeerLoopStart {
+            addr,
+            peer_id,
+            peer_io,
+            peer_event_tx,
+            peer_cmd_rx,
+            upload,
+            send_terminal_event_on_peer_channel,
+        },
+        upload_read_future,
+    )
+    .await
+}
+
+async fn run_peer_loop_with_upload_future<MakeUploadReadFuture, F>(
+    PeerLoopStart {
+        addr,
+        peer_id,
+        mut peer_io,
+        peer_event_tx,
+        mut peer_cmd_rx,
+        mut upload,
+        send_terminal_event_on_peer_channel,
+    }: PeerLoopStart,
+    make_upload_read_future: MakeUploadReadFuture,
+) -> PeerLoopExit
+where
+    MakeUploadReadFuture:
+        Fn(UploadRequest, Arc<UploadReadContext>, bool) -> F + Copy + Send + 'static,
+    F: std::future::Future<Output = UploadReadCompletion> + Send + 'static,
+{
     let mut outstanding = Vec::<OutstandingRequest>::new();
     let upload_service = upload.upload_rate.network_budget.upload_service();
     let upload_obligations = match upload_service.register(
@@ -8637,7 +8679,7 @@ async fn run_peer_loop(
     // peer loop must not await one read inline: a slow device otherwise
     // prevents it from processing choke/shutdown/input messages. Keep their
     // futures in the select loop instead of spawning a Tokio task per block.
-    let mut upload_reads = UploadReadTasks::default();
+    let mut upload_reads = UploadReadTasks::<F>::default();
     // Protocol obligations are process-owned by generation-safe connection
     // identity. The socket loop retains the only writer and upload-read futures.
     let mut upload_request_drops = 0u64;
@@ -8802,6 +8844,7 @@ async fn run_peer_loop(
                             &upload_obligations,
                             &upload,
                             &upload_read_context,
+                            make_upload_read_future,
                         )?;
                         if !upload.fast_negotiated {
                             // A local choke invalidates reads that were
@@ -8821,6 +8864,7 @@ async fn run_peer_loop(
                             &upload_obligations,
                             &upload,
                             &upload_read_context,
+                            make_upload_read_future,
                         )?;
                     }
                     PeerCommand::Shutdown => {
@@ -9202,6 +9246,7 @@ async fn run_peer_loop(
                                 &upload_obligations,
                                 &upload,
                                 &upload_read_context,
+                                make_upload_read_future,
                             )?,
                             InboundDecision::Reject(_) => {
                                 reject_upload_request(&mut peer_io, &upload, request).await?;
@@ -9523,6 +9568,7 @@ async fn run_peer_loop(
                     &upload_obligations,
                     &upload,
                     &upload_read_context,
+                    make_upload_read_future,
                 )?;
             }
             _ = timeout_tick.tick() => {
@@ -9882,12 +9928,66 @@ async fn finish_upload_obligation(
     Ok(())
 }
 
-fn start_upload_reads(
-    upload_reads: &mut UploadReadTasks,
+async fn upload_read_future(
+    request: UploadRequest,
+    read_context: Arc<UploadReadContext>,
+    choke_critical: bool,
+) -> UploadReadCompletion {
+    let read_context_for_future = read_context;
+    let read = async move {
+        let result = match timeout(
+            PEER_UPLOAD_READ_TIMEOUT,
+            read_upload_block(&read_context_for_future, request, choke_critical),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(anyhow::anyhow!(
+                "upload block read exceeded its peer deadline ({}s)",
+                PEER_UPLOAD_READ_TIMEOUT.as_secs()
+            )),
+        };
+        let (result, rate_interrupted) = match result {
+            Ok(mut block) => {
+                let bytes = block.data.len() as u64;
+                let control_generation = read_context_for_future.upload_control.generation();
+                match read_context_for_future
+                    .upload_rate
+                    .network_budget
+                    .acquire_upload(
+                        read_context_for_future.upload_rate.peer,
+                        bytes,
+                        &read_context_for_future.upload_control,
+                        control_generation,
+                    )
+                    .await
+                {
+                    Ok(Some(grant)) => {
+                        block.rate_grant = Some(grant);
+                        (Ok(block), false)
+                    }
+                    Ok(None) => (Ok(block), true),
+                    Err(error) => (Err(error), false),
+                }
+            }
+            Err(error) => (Err(error), false),
+        };
+        (result, rate_interrupted)
+    };
+    catch_upload_read(request, read).await
+}
+
+fn start_upload_reads<MakeUploadReadFuture, F>(
+    upload_reads: &mut UploadReadTasks<F>,
     obligations: &SharedUploadPeer,
     upload: &UploadContext,
     read_context: &Arc<UploadReadContext>,
-) -> anyhow::Result<()> {
+    make_upload_read_future: MakeUploadReadFuture,
+) -> anyhow::Result<()>
+where
+    MakeUploadReadFuture: Fn(UploadRequest, Arc<UploadReadContext>, bool) -> F + Copy,
+    F: std::future::Future<Output = UploadReadCompletion> + Send + 'static,
+{
     while upload_reads.len() < MAX_PENDING_UPLOAD_READS {
         let Some(block) = obligations.next_request() else {
             break;
@@ -9899,52 +9999,16 @@ fn start_upload_reads(
         };
         let request = UploadRequest::new(block, wire_block);
         let read_context_for_future = Arc::clone(read_context);
-        let read = async move {
-            let result = match timeout(
-                PEER_UPLOAD_READ_TIMEOUT,
-                read_upload_block(&read_context_for_future, request, choke_critical),
-            )
-            .await
-            {
-                Ok(result) => result,
-                Err(_) => Err(anyhow::anyhow!(
-                    "upload block read exceeded its peer deadline ({}s)",
-                    PEER_UPLOAD_READ_TIMEOUT.as_secs()
-                )),
-            };
-            let (result, rate_interrupted) = match result {
-                Ok(mut block) => {
-                    let bytes = block.data.len() as u64;
-                    let control_generation = read_context_for_future.upload_control.generation();
-                    match read_context_for_future
-                        .upload_rate
-                        .network_budget
-                        .acquire_upload(
-                            read_context_for_future.upload_rate.peer,
-                            bytes,
-                            &read_context_for_future.upload_control,
-                            control_generation,
-                        )
-                        .await
-                    {
-                        Ok(Some(grant)) => {
-                            block.rate_grant = Some(grant);
-                            (Ok(block), false)
-                        }
-                        Ok(None) => (Ok(block), true),
-                        Err(error) => (Err(error), false),
-                    }
-                }
-                Err(error) => (Err(error), false),
-            };
-            (result, rate_interrupted)
-        };
-        upload_reads.push(catch_upload_read(request, read));
+        upload_reads.push(make_upload_read_future(
+            request,
+            read_context_for_future,
+            choke_critical,
+        ));
     }
     Ok(())
 }
 
-fn abort_upload_reads(upload_reads: &mut UploadReadTasks) {
+fn abort_upload_reads<F>(upload_reads: &mut UploadReadTasks<F>) {
     *upload_reads = UploadReadTasks::default();
 }
 

@@ -652,3 +652,29 @@ report, samples, and memory profile are
 [`report`](../certification/reports/client-performance-benchmark-context-sharing-candidate-20261021.md),
 [`samples`](../certification/reports/client-performance-benchmark-context-sharing-candidate-20261021-samples.csv),
 and [`memory profile`](../certification/reports/client-performance-benchmark-context-sharing-candidate-20261021-memory-profile.json).
+
+## Per-block upload future allocation candidate (2026-10-21)
+
+The upload-read queue previously boxed a dynamically dispatched future for
+each requested block before inserting it into `FuturesUnordered`. The sampled
+profile recorded substantial allocator/free activity, but did not attribute
+those samples to this allocation specifically. The current candidate keeps the
+same unwind boundary, timeout, queue ownership, and cancellation behavior while
+storing the concrete future type directly in `FuturesUnordered`; this removes
+the outer per-block box and virtual dispatch. `FuturesUnordered` still owns its
+per-future node, so this does not eliminate all per-block allocation.
+
+The candidate passed bulk Rust, Clippy, formatting, and Python validation. Its
+first controlled seed run passed SHA-256, measuring **2.74 CPU-s/GiB**, **24.2
+MiB cgroup anonymous peak**, and **41.8 MiB process-tree RSS peak**. qBittorrent
+in the same run measured **2.20 CPU-s/GiB** and **18.5 MiB anonymous peak**;
+TorrentNG's idle anonymous mean was lower (2.9 vs. 13.8 MiB). This was one run
+on a loaded host, and earlier clients could not seed because no verified source
+was available yet. The TorrentNG public probe also stopped at 5.21% and is
+excluded. The run does not establish whether removing the future box improved
+or regressed CPU/RAM relative to the parent source. No gain is claimed; the
+change remains provisional pending randomized, hash-verified paired trials.
+
+See the [run report](../certification/reports/client-performance-benchmark-upload-future-candidate-20261021-round1.md),
+[samples](../certification/reports/client-performance-benchmark-upload-future-candidate-20261021-round1-samples.csv),
+and [memory profile](../certification/reports/client-performance-benchmark-upload-future-candidate-20261021-round1-memory-profile.json).
