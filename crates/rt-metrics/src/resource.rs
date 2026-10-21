@@ -521,6 +521,33 @@ impl MemoryLease {
         }
         true
     }
+
+    /// Reduce a reservation after its backing allocation has been released.
+    /// Growing remains fallible; shrinking only returns already-held credit.
+    pub fn shrink_to(&mut self, new_bytes: u64) {
+        if new_bytes >= self.bytes {
+            return;
+        }
+
+        let previous_bytes = self.bytes;
+        let released_bytes = previous_bytes - new_bytes;
+        self.bytes = new_bytes;
+        self.governor.release(self.class, released_bytes);
+        if let Some(trace) = self.trace.as_ref() {
+            let snapshot = self.governor.snapshot();
+            tracing::trace!(
+                resource_lease_id = trace.id,
+                resource_lease_class = self.class.as_str(),
+                resource_lease_previous_bytes = previous_bytes,
+                resource_lease_released_bytes = released_bytes,
+                resource_lease_bytes = new_bytes,
+                resource_lease_total_used_bytes_after_shrink = snapshot.total_used_bytes,
+                resource_lease_class_used_bytes_after_shrink =
+                    snapshot.classes[self.class.index()].used_bytes,
+                "resource lease shrunk"
+            );
+        }
+    }
 }
 
 impl Drop for MemoryLease {
@@ -597,6 +624,28 @@ mod tests {
         assert!(!lease.try_grow(20));
         assert_eq!(lease.bytes(), 70);
         assert_eq!(governor.snapshot().total_used_bytes, 70);
+        drop(lease);
+        assert_eq!(governor.snapshot().total_used_bytes, 0);
+    }
+
+    #[test]
+    fn lease_shrink_releases_only_excess_and_can_grow_again() {
+        let governor = ResourceGovernor::new(config());
+        let mut lease = governor.try_acquire(MemoryClass::Metadata, 40).unwrap();
+
+        lease.shrink_to(25);
+        assert_eq!(lease.bytes(), 25);
+        assert_eq!(governor.snapshot().total_used_bytes, 25);
+
+        // A request to grow via shrink_to cannot silently create a new
+        // reservation; growth must continue to use the fallible API.
+        lease.shrink_to(40);
+        assert_eq!(lease.bytes(), 25);
+        assert_eq!(governor.snapshot().total_used_bytes, 25);
+
+        assert!(lease.try_grow(15));
+        assert_eq!(lease.bytes(), 40);
+        assert_eq!(governor.snapshot().total_used_bytes, 40);
         drop(lease);
         assert_eq!(governor.snapshot().total_used_bytes, 0);
     }

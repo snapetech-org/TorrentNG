@@ -8,6 +8,34 @@ use crate::{
     message::{Message, MAX_MESSAGE_LEN},
 };
 
+const RETAINED_BUFFER_CAPACITY: usize = 64 * 1024;
+
+fn ensure_peer_buffer_reservation(
+    resources: &ResourceGovernor,
+    lease: &mut Option<MemoryLease>,
+    reserved_bytes: &mut u64,
+    required_bytes: u64,
+) -> Result<(), WireError> {
+    if required_bytes <= *reserved_bytes {
+        return Ok(());
+    }
+
+    let additional = required_bytes - *reserved_bytes;
+    if let Some(lease) = lease.as_mut() {
+        if !lease.try_grow(additional) {
+            return Err(WireError::PeerBufferAllocationDenied(required_bytes));
+        }
+    } else {
+        *lease = Some(
+            resources
+                .try_acquire(MemoryClass::PeerBuffer, required_bytes)
+                .ok_or(WireError::PeerBufferAllocationDenied(required_bytes))?,
+        );
+    }
+    *reserved_bytes = required_bytes;
+    Ok(())
+}
+
 /// BEP 3 length-prefixed peer message codec.
 ///
 /// The default codec is useful for protocol-only callers. Engine-owned TCP
@@ -17,7 +45,19 @@ use crate::{
 #[derive(Default)]
 pub struct PeerCodec {
     resources: Option<ResourceGovernor>,
-    memory_leases: Vec<MemoryLease>,
+    memory: Option<Box<PeerCodecMemory>>,
+    /// `BytesMut::split_to` can leave an empty tail with zero visible capacity
+    /// while still retaining the original backing allocation.
+    read_buffer_high_water_bytes: usize,
+}
+
+#[derive(Default)]
+struct PeerCodecMemory {
+    read_memory_lease: Option<MemoryLease>,
+    write_memory_lease: Option<MemoryLease>,
+    /// Keep one high-water allowance for a parsed message that the caller may
+    /// still own after the framed read buffer has been trimmed.
+    read_copy_high_water_bytes: u64,
     read_reserved_bytes: u64,
     write_reserved_bytes: u64,
 }
@@ -31,29 +71,62 @@ impl PeerCodec {
     }
 
     fn reserve_capacity(&mut self, src: &mut BytesMut, required: usize) -> Result<(), WireError> {
-        // `BytesMut::reserve` may grow from the current allocation by more
-        // than the exact requested length. Charge twice the larger of the
-        // current capacity and requested frame size: once for the retained
-        // wire buffer and once for Message::parse's owned Bitfield/Extended
-        // payload copy.
+        // Charge for the larger of the current capacity and requested frame
+        // size, plus a same-sized allowance for Message::parse's owned
+        // Bitfield/Extended payload copy. The copy allowance stays at its
+        // high-water mark because the emitted Message may outlive this codec
+        // call; only the actual empty read buffer is trimmed later.
         let accounted_capacity = src.capacity().max(required);
-        if let Some(resources) = self.resources.clone() {
-            let required_bytes = u64::try_from(accounted_capacity)
+        self.read_buffer_high_water_bytes =
+            self.read_buffer_high_water_bytes.max(accounted_capacity);
+        let resources = self.resources.clone();
+        let mut capacity_bytes = 0;
+        if let Some(resources) = resources.as_ref() {
+            let memory = self
+                .memory
+                .get_or_insert_with(|| Box::new(PeerCodecMemory::default()));
+            capacity_bytes = u64::try_from(accounted_capacity)
                 .ok()
-                .and_then(|bytes| bytes.checked_mul(2))
                 .ok_or(WireError::PeerBufferLengthOverflow)?;
-            if required_bytes > self.read_reserved_bytes {
-                let additional = required_bytes - self.read_reserved_bytes;
-                let lease = resources
-                    .try_acquire(MemoryClass::PeerBuffer, additional)
-                    .ok_or(WireError::PeerBufferAllocationDenied(required_bytes))?;
-                self.memory_leases.push(lease);
-                self.read_reserved_bytes = required_bytes;
-            }
+            let copy_high_water = memory.read_copy_high_water_bytes.max(capacity_bytes);
+            let required_bytes = copy_high_water
+                .checked_add(capacity_bytes)
+                .ok_or(WireError::PeerBufferLengthOverflow)?;
+            ensure_peer_buffer_reservation(
+                resources,
+                &mut memory.read_memory_lease,
+                &mut memory.read_reserved_bytes,
+                required_bytes,
+            )?;
+            memory.read_copy_high_water_bytes = copy_high_water;
         }
 
         if required > src.capacity() {
             src.reserve(required.saturating_sub(src.len()));
+        }
+        self.read_buffer_high_water_bytes = self.read_buffer_high_water_bytes.max(src.capacity());
+
+        // Account for allocator growth beyond the requested capacity before
+        // another frame can be admitted on this connection.
+        if let Some(resources) = resources.as_ref() {
+            let actual_capacity =
+                u64::try_from(src.capacity()).map_err(|_| WireError::PeerBufferLengthOverflow)?;
+            if actual_capacity > capacity_bytes {
+                let memory = self
+                    .memory
+                    .get_or_insert_with(|| Box::new(PeerCodecMemory::default()));
+                let copy_high_water = memory.read_copy_high_water_bytes.max(actual_capacity);
+                let required_bytes = copy_high_water
+                    .checked_add(actual_capacity)
+                    .ok_or(WireError::PeerBufferLengthOverflow)?;
+                ensure_peer_buffer_reservation(
+                    resources,
+                    &mut memory.read_memory_lease,
+                    &mut memory.read_reserved_bytes,
+                    required_bytes,
+                )?;
+                memory.read_copy_high_water_bytes = copy_high_water;
+            }
         }
         Ok(())
     }
@@ -65,27 +138,76 @@ impl PeerCodec {
     ) -> Result<(), WireError> {
         // The write buffer is retained by `Framed` while a slow peer drains
         // it. Charge a conservative growth allowance before BytesMut can
-        // allocate; the read and write buffers share one codec but have
-        // independent retained-capacity leases.
+        // allocate. Its lease can return to the warm-buffer size after the
+        // output buffer is empty.
         let accounted_capacity = dst.capacity().max(required);
         if let Some(resources) = self.resources.clone() {
+            let memory = self
+                .memory
+                .get_or_insert_with(|| Box::new(PeerCodecMemory::default()));
             let required_bytes = u64::try_from(accounted_capacity)
                 .ok()
                 .and_then(|bytes| bytes.checked_mul(2))
                 .ok_or(WireError::PeerBufferLengthOverflow)?;
-            if required_bytes > self.write_reserved_bytes {
-                let additional = required_bytes - self.write_reserved_bytes;
-                let lease = resources
-                    .try_acquire(MemoryClass::PeerBuffer, additional)
-                    .ok_or(WireError::PeerBufferAllocationDenied(required_bytes))?;
-                self.memory_leases.push(lease);
-                self.write_reserved_bytes = required_bytes;
-            }
+            ensure_peer_buffer_reservation(
+                &resources,
+                &mut memory.write_memory_lease,
+                &mut memory.write_reserved_bytes,
+                required_bytes,
+            )?;
         }
         if required > dst.capacity() {
             dst.reserve(required.saturating_sub(dst.len()));
         }
         Ok(())
+    }
+
+    fn trim_idle_read_buffer(&mut self, src: &mut BytesMut) {
+        if !src.is_empty() || self.read_buffer_high_water_bytes <= RETAINED_BUFFER_CAPACITY {
+            return;
+        }
+
+        *src = BytesMut::with_capacity(RETAINED_BUFFER_CAPACITY);
+        self.read_buffer_high_water_bytes = src.capacity();
+        let Some(buffer_bytes) = u64::try_from(src.capacity()).ok() else {
+            return;
+        };
+        let Some(memory) = self.memory.as_mut() else {
+            return;
+        };
+        let Some(required_bytes) = memory.read_copy_high_water_bytes.checked_add(buffer_bytes)
+        else {
+            return;
+        };
+        if required_bytes < memory.read_reserved_bytes {
+            if let Some(lease) = memory.read_memory_lease.as_mut() {
+                lease.shrink_to(required_bytes);
+                memory.read_reserved_bytes = required_bytes;
+            }
+        }
+    }
+
+    fn trim_idle_write_buffer(&mut self, dst: &mut BytesMut) {
+        if !dst.is_empty() || dst.capacity() <= RETAINED_BUFFER_CAPACITY {
+            return;
+        }
+
+        *dst = BytesMut::with_capacity(RETAINED_BUFFER_CAPACITY);
+        let Some(required_bytes) = u64::try_from(dst.capacity())
+            .ok()
+            .and_then(|bytes| bytes.checked_mul(2))
+        else {
+            return;
+        };
+        let Some(memory) = self.memory.as_mut() else {
+            return;
+        };
+        if required_bytes < memory.write_reserved_bytes {
+            if let Some(lease) = memory.write_memory_lease.as_mut() {
+                lease.shrink_to(required_bytes);
+                memory.write_reserved_bytes = required_bytes;
+            }
+        }
     }
 }
 
@@ -94,6 +216,8 @@ impl Decoder for PeerCodec {
     type Error = WireError;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        self.trim_idle_read_buffer(src);
+        self.read_buffer_high_water_bytes = self.read_buffer_high_water_bytes.max(src.capacity());
         if src.len() < 4 {
             self.reserve_capacity(src, 4)?;
             return Ok(None);
@@ -118,6 +242,7 @@ impl Encoder<Message> for PeerCodec {
     type Error = WireError;
 
     fn encode(&mut self, item: Message, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        self.trim_idle_write_buffer(dst);
         let encoded_len = item
             .encoded_len()
             .ok_or(WireError::MessageTooLarge(u32::MAX))?;
@@ -137,6 +262,17 @@ mod tests {
     use bytes::BufMut;
     use bytes::BytesMut;
     use tokio_util::codec::{Decoder, Encoder};
+
+    fn peer_buffer_governor(cap_bytes: u64) -> ResourceGovernor {
+        let mut class_caps = [0; rt_metrics::MEMORY_CLASS_COUNT];
+        class_caps[MemoryClass::PeerBuffer as usize] = cap_bytes;
+        ResourceGovernor::new(rt_metrics::ResourceGovernorConfig {
+            total_cap_bytes: cap_bytes,
+            class_caps_bytes: class_caps,
+            pressure_constrained_pct: 75,
+            pressure_critical_pct: 90,
+        })
+    }
 
     fn encode_msg(msg: Message) -> BytesMut {
         let mut buf = BytesMut::new();
@@ -330,6 +466,86 @@ mod tests {
         assert_eq!(
             governor.snapshot().classes[MemoryClass::PeerBuffer as usize].denied_allocations,
             1
+        );
+    }
+
+    #[test]
+    fn empty_read_buffer_shrinks_but_keeps_live_message_copy_credit() {
+        let payload = vec![0x5a; RETAINED_BUFFER_CAPACITY * 8];
+        let mut wire = BytesMut::with_capacity(RETAINED_BUFFER_CAPACITY * 16);
+        PeerCodec::default()
+            .encode(
+                Message::Extended {
+                    ext_id: 7,
+                    payload: payload.clone(),
+                },
+                &mut wire,
+            )
+            .unwrap();
+        let mut input = BytesMut::from(&wire[..4]);
+
+        let governor = peer_buffer_governor(8 * 1024 * 1024);
+        let mut codec = PeerCodec::with_resources(governor.clone());
+        // Framed first presents the length prefix. The codec admits the
+        // declared frame before the rest of the bytes are read into the
+        // retained buffer.
+        assert!(codec.decode(&mut input).unwrap().is_none());
+        assert!(input.capacity() > RETAINED_BUFFER_CAPACITY);
+        input.extend_from_slice(&wire[4..]);
+
+        let decoded = codec.decode(&mut input).unwrap().unwrap();
+        assert!(input.is_empty());
+        let used_before_trim = governor.snapshot().total_used_bytes;
+        assert!(used_before_trim > RETAINED_BUFFER_CAPACITY as u64);
+
+        assert!(codec.decode(&mut input).unwrap().is_none());
+
+        assert!(
+            input.capacity() <= RETAINED_BUFFER_CAPACITY,
+            "trimmed read buffer retained {} bytes",
+            input.capacity()
+        );
+        let used_after_trim = governor.snapshot().total_used_bytes;
+        assert!(used_after_trim < used_before_trim);
+        let memory = codec.memory.as_ref().expect("read lease state");
+        assert_eq!(used_after_trim, memory.read_reserved_bytes);
+        assert!(used_after_trim >= memory.read_copy_high_water_bytes);
+        assert_eq!(
+            decoded,
+            Message::Extended { ext_id: 7, payload },
+            "the parsed message owns its bytes after the read buffer is replaced"
+        );
+    }
+
+    #[test]
+    fn empty_write_buffer_shrinks_on_the_next_encode() {
+        let governor = peer_buffer_governor(8 * 1024 * 1024);
+        let mut codec = PeerCodec::with_resources(governor.clone());
+        let mut output = BytesMut::with_capacity(RETAINED_BUFFER_CAPACITY * 16);
+        codec
+            .encode(
+                Message::Extended {
+                    ext_id: 7,
+                    payload: vec![0x33; RETAINED_BUFFER_CAPACITY * 8],
+                },
+                &mut output,
+            )
+            .unwrap();
+        let used_before_trim = governor.snapshot().total_used_bytes;
+        assert!(used_before_trim > RETAINED_BUFFER_CAPACITY as u64);
+
+        // Framed has drained the previous output before it asks the codec to
+        // encode another message.
+        output.clear();
+        codec.encode(Message::Choke, &mut output).unwrap();
+
+        assert_eq!(output.len(), 5);
+        assert!(output.capacity() <= RETAINED_BUFFER_CAPACITY);
+        assert!(governor.snapshot().total_used_bytes < used_before_trim);
+        let memory = codec.memory.as_ref().expect("write lease state");
+        assert_eq!(
+            governor.snapshot().total_used_bytes,
+            memory.write_reserved_bytes
         );
     }
 }

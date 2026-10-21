@@ -134,6 +134,25 @@ per-scheduler logical cache bytes, process-wide backing bytes, active and idle
 frame bytes, cgroup anonymous memory, PSS, and process RSS separately because
 some counters overlap.
 
+The peer codec also had a per-connection high-water allocation: a consumed
+`BytesMut::split_to` tail can report zero visible capacity while still holding
+the original backing allocation, and empty write buffers stayed at their
+largest frame size until connection close. The codec now tracks the read
+buffer's prior backing high-water and replaces an empty buffer larger than
+64 KiB with a 64 KiB warm buffer on its next decode or encode. Write-buffer
+lease credit shrinks with the released allocation. For reads, the lease keeps
+the high-water allowance for a parsed message that may still be live and
+releases only the read-buffer portion; this avoids returning credit while a
+large parsed bitfield or extension payload remains caller-owned.
+`Message::parse` copies dynamic payloads, so replacing the empty wire buffer
+does not invalidate an emitted message. Trimming is opportunistic on the next
+codec call and uses no timer. Regression sources cover both directions and
+the read-message lifetime. Full workspace tests pass on Rust 1.94 and 1.88
+(2,345 passed, 0 failed, 12 ignored across 37 summaries per toolchain), strict
+workspace Clippy passes on both, and Python unittest discovery passes 357
+tests. The change has no CPU/RAM benchmark yet, so its effect on process RSS
+remains unmeasured.
+
 ### Integrated-candidate validation and CPU/RAM measurement (2026-10-21)
 
 Both full Rust workspace all-target suites passed with 2,339 passed, 0 failed,
