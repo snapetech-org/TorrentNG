@@ -549,3 +549,45 @@ The full reports and raw evidence are
 and [integrated candidate](../certification/reports/torrentng-deep-audit-candidate-20261021.md),
 with adjacent CSV and memory-profile files. Repeat these runs and test
 multi-torrent memory pressure before claiming a CPU or RAM improvement.
+
+## Current-main five-client CPU/RAM pass (`f6cce154`, 2026-10-21)
+
+A clean image with source, fingerprint, and allocator labels matching
+`f6cce1544c8e9f3cf260fdd6474e058b765843a8` ran all five clients in sequence on
+`kspld0`. Each controlled seed used the same official Debian 13.7 ISO, a
+qBittorrent leecher capped at 4 MiB/s, and a final SHA-256 check. All five
+controlled seed transfers passed at 3.82–3.94 MiB/s. The sampled one-minute
+host load peaked at 8.76 on a 32-logical-CPU host.
+
+| Client | Seed CPU (s/GiB) ↓ | Peak cgroup anonymous (MiB) ↓ | Seed process-tree RSS / PSS (MiB) | Seed rate (MiB/s) |
+|---|---:|---:|---:|---:|
+| TorrentNG | 2.46 | 25.2 | 44.0 / 43.7 | 3.82 |
+| qBittorrent | 2.04 | 18.0 | 778.3 / n/a | 3.94 |
+| Transmission | 1.31 | 25.8 | 40.0 / n/a | 3.82 |
+| Deluge | 2.27 | 89.1 | 884.7 / n/a | 3.94 |
+| rTorrent | 0.56 | 1.7 | 6.6 / 6.5 | 3.94 |
+
+TorrentNG used 21% more CPU per GiB than qBittorrent, 88% more than
+Transmission, 8% more than Deluge, and 4.4 times rTorrent. Its anonymous
+memory was 7.2 MiB above qBittorrent, 0.6 MiB below Transmission, 63.9 MiB
+below Deluge, and 23.5 MiB above rTorrent. This is mixed RAM, not a win across
+the field. Process-tree RSS/PSS and cgroup anonymous memory are different
+measures; PSS was unavailable for three comparators, and the qBittorrent and
+Deluge RSS values do not reconcile with their cgroup anonymous readings.
+
+The previous exact-main pass at `457df452` measured TorrentNG at 2.66 CPU-s/GiB
+and 25.2 MiB anonymous peak. This pass is numerically about 8% lower in CPU
+with the same anonymous peak, but one run per source cannot attribute that
+difference to code. The current run observed the live transfer backend as
+`pread`; it did not exercise io_uring. Diagnostic metrics and detailed `smaps`
+sampling were disabled.
+
+TorrentNG's public phase timed out at 5.08%, and Transmission timed out at
+99.88% after the 60-second cap. Those public rows are excluded; the benchmark
+command returned 1 because of those timeouts even though all controlled seed
+hashes passed. This one sequential run has low confidence for a general client
+ranking and does not prove the CPU/RAM target is met. Repeat with randomized
+client order and add a separate diagnostic profile before drawing a causal
+conclusion. See the [report](../certification/reports/client-performance-benchmark-f6cce154-20261021-cpu-ram.md),
+[samples](../certification/reports/client-performance-benchmark-f6cce154-20261021-cpu-ram-samples.csv),
+and [memory profile](../certification/reports/client-performance-benchmark-f6cce154-20261021-cpu-ram-memory-profile.json).

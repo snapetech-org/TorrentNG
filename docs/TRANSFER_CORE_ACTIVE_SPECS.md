@@ -65,14 +65,36 @@ workspace suites passed on Rust 1.94 and 1.88 with 2,341 passed, 0 failed, and
 Clippy passed on both toolchains. All 357 discovered Python tests passed on
 `9163f2c8`, the next commit, which changes only release-note wording. These
 checks establish local correctness for the recorded source; they do not close
-the private two-seeder fairness, current-source matched-client, cross-torrent
-memory-pressure, backend-specific profile, or protected-hardware gates.
+the private two-seeder fairness, repeatable randomized client comparison,
+cross-torrent memory-pressure, backend-specific profile, or protected-hardware
+gates.
 
 The last exact-main five-client comparison remains the one at `457df452` above.
 The later `1a748ba3` TorrentNG-only run measured 2.47 CPU-s/GiB and 24.3 MiB
 cgroup anonymous peak, with 42.4 MiB PSS and 42.8 MiB RSS. It passed the
 controlled seed hash at 3.82 MiB/s, but has no client comparator; it does not
 replace a matched comparison on the current source.
+
+## Current-main CPU/RAM comparison — source `f6cce154` (2026-10-21)
+
+The five-client controlled-seed pass built the exact current main source,
+verified the TorrentNG image labels, and passed all five leecher SHA-256
+checks. TorrentNG measured **2.46 CPU-s/GiB** and **25.2 MiB** cgroup
+anonymous peak, compared with qBittorrent 2.04/18.0, Transmission 1.31/25.8,
+Deluge 2.27/89.1, and rTorrent 0.56/1.7. Process-tree RSS/PSS for TorrentNG
+was 44.0/43.7 MiB; PSS was unavailable for qBittorrent, Transmission, and
+Deluge. The one-pass CPU result remains above every client, and RAM is mixed.
+Compared with the prior `457df452` pass, TorrentNG was numerically about 8%
+lower in CPU with the same anonymous peak, but this is not an attributable
+change or a general ranking.
+
+TorrentNG's public phase timed out at 5.08% and Transmission's at 99.88%; those
+rows are excluded. The benchmark command returned 1 for these public timeouts,
+not for the controlled seeds. The live transfer backend was `pread`, so this
+run does not exercise io_uring-specific costs. Repeated randomized client
+order, stack-attributed profiling, cross-torrent memory pressure, and protected
+hardware evidence remain open. See the detailed results and artifacts in
+[`CLIENT_PERFORMANCE_BENCHMARK.md`](CLIENT_PERFORMANCE_BENCHMARK.md).
 
 ## Earlier bulk validation — implementation source `3758d021` (2026-10-20)
 
