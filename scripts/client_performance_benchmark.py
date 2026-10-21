@@ -396,6 +396,9 @@ class Benchmark:
             raise RuntimeError("TNG_CLIENT_BENCH_MODE must be transfer or idle")
         self.diagnostics = env_enabled("TNG_CLIENT_BENCH_DIAGNOSTICS")
         self.skip_build = env_enabled("TNG_CLIENT_BENCH_SKIP_BUILD")
+        self.build_cpus = optional_positive_int("TNG_CLIENT_BENCH_BUILD_CPUS") or min(
+            2, os.cpu_count() or 1,
+        )
         allocator = os.environ.get("TNG_CLIENT_BENCH_ALLOCATOR", "system").strip().lower()
         allocator_features = {
             "system": "system-allocator",
@@ -2578,6 +2581,9 @@ class Benchmark:
             f"- Scratch filesystem: {self.scratch_device} ({self.scratch_type})",
             f"- Config filesystem: {config_device} ({config_type})",
             f"- TorrentNG allocator: {self.allocator} ({self.cargo_features})",
+            "- TorrentNG build CPU cap: "
+            + ("not used (prebuilt image)" if self.skip_build else
+               f"{self.build_cpus} logical CPUs via task-scoped BuildKit"),
             f"- TorrentNG MALLOC_CONF: {self.malloc_conf if self.malloc_conf is not None else 'not applicable'}",
             f"- TorrentNG mimalloc purge delay: {self.mimalloc_purge_delay if self.allocator == 'mimalloc' and self.mimalloc_purge_delay is not None else ('allocator default' if self.allocator == 'mimalloc' else 'not applicable')}",
             f"- TorrentNG mimalloc THP override: {self.mimalloc_allow_thp if self.allocator == 'mimalloc' and self.mimalloc_allow_thp is not None else ('allocator default' if self.allocator == 'mimalloc' else 'not applicable')}",
@@ -2806,6 +2812,8 @@ class Benchmark:
         run_command(
             [
                 "docker", "buildx", "create", "--driver", "docker-container",
+                "--driver-opt", "cpu-period=100000",
+                "--driver-opt", f"cpu-quota={getattr(self, 'build_cpus', 2) * 100000}",
                 "--name", builder,
             ],
             env=self.env, quiet=True, timeout=120,
@@ -3367,14 +3375,16 @@ controlled private seed transfer for TorrentNG, qBittorrent, Transmission,
 Deluge, and rTorrent. Set TNG_CLIENT_BENCH_MODE=idle to run no-torrent
 network-isolated, attached/DHT-off, and attached/DHT-on profiles. Docker
 Compose builds the current TorrentNG checkout unless a revision-matched
-prebuilt image is selected, using a per-run Buildx builder whose cache is
-removed during cleanup. Reference client images are pinned by digest in
-deploy/interop/compose.yml.
+prebuilt image is selected, using a per-run Buildx builder limited to two CPUs
+by default; its cache is removed during cleanup. Set
+TNG_CLIENT_BENCH_BUILD_CPUS to override the cap. Reference client images are
+pinned by digest in deploy/interop/compose.yml.
 
 Environment:
   TNG_CLIENT_BENCH_MODE=transfer|idle (default: transfer)
   TNG_CLIENT_BENCH_CLIENTS=torrentngd,qbittorrent,... (default: all five)
   TNG_CLIENT_BENCH_ALLOCATOR=system|jemalloc|mimalloc (default: system)
+  TNG_CLIENT_BENCH_BUILD_CPUS=2 (task-scoped BuildKit CPU limit; default: min(2, host CPUs))
   TNG_CLIENT_BENCH_SKIP_BUILD=1 (use an image with matching commit, source fingerprint, and allocator labels)
   TNG_CLIENT_BENCH_PREBUILT_IMAGE=torrentng/torrentngd:interop
   TNG_CLIENT_BENCH_SEED_SOURCE=/path/to/verified/debian.iso

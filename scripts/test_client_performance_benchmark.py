@@ -27,6 +27,8 @@ class CgroupCounterTests(unittest.TestCase):
         self.assertIn("-build-", builder)
         command.assert_called_once_with(
             ["docker", "buildx", "create", "--driver", "docker-container",
+             "--driver-opt", "cpu-period=100000",
+             "--driver-opt", "cpu-quota=200000",
              "--name", builder],
             env={}, quiet=True, timeout=120,
         )

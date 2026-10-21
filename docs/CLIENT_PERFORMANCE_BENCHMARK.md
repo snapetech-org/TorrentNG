@@ -263,9 +263,10 @@ Transfer mode needs Python 3, Docker Compose v2, Docker Buildx, `aria2c`,
 unless a matching image is selected, and use reference-client images pinned
 by digest in `deploy/interop/compose.yml`.
 
-The runner builds with a per-run Docker Buildx builder and removes that builder
-and its cache during cleanup. It does not prune or modify the shared builder's
-cache.
+The runner builds with a per-run Docker Buildx builder limited to two CPUs by
+default and removes that builder and its cache during cleanup. Override the
+limit with `TNG_CLIENT_BENCH_BUILD_CPUS`. It does not prune or modify the shared
+builder's cache.
 
 ```sh
 python3 scripts/client_performance_benchmark.py
