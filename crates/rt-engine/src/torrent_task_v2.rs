@@ -6115,6 +6115,7 @@ async fn run_v2_peer_protocol(
                     return Ok(());
                 };
                 last_activity = Instant::now();
+                let (message, _message_memory_lease) = message.into_accounted_parts()?;
                 match message {
                     Message::Bitfield(bits) => {
                         update_v2_peer_bitmap(&context, &state, |bitmap, changed| {
@@ -6450,6 +6451,7 @@ async fn run_v2_peer_protocol(
                         }
                     }
                     Message::Extended { .. } | Message::KeepAlive => {}
+                    Message::Accounted(_) => unreachable!("accounted message wrapper was unwrapped"),
                 }
             }
             _ = keepalive.tick() => {

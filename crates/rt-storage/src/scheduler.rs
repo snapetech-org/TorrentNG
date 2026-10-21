@@ -1352,20 +1352,33 @@ impl PeerReadCache {
             self.remove_file(path);
             return None;
         }
-        let entries = self.files.get_mut(path)?;
-        let (index, relative) = entries
-            .iter()
-            .enumerate()
-            .filter_map(|(index, entry)| {
-                let relative = usize::try_from(offset.checked_sub(entry.offset)?).ok()?;
-                let end = relative.checked_add(len)?;
-                (end <= entry.data.len()).then_some((index, relative, entry.data.len()))
-            })
-            .min_by_key(|(_, _, range_bytes)| *range_bytes)
-            .map(|(index, relative, _)| (index, relative))?;
-        let entry = &mut entries[index];
-        entry.last_used = Instant::now();
-        Some(entry.data.slice(relative..relative + len))
+        let (index, result, consumes_window_end) = {
+            let entries = self.files.get_mut(path)?;
+            let (index, relative, consumes_window_end) = entries
+                .iter()
+                .enumerate()
+                .filter_map(|(index, entry)| {
+                    let relative = usize::try_from(offset.checked_sub(entry.offset)?).ok()?;
+                    let end = relative.checked_add(len)?;
+                    (end <= entry.data.len()).then_some((index, relative, end, entry.data.len()))
+                })
+                .min_by_key(|(_, _, _, range_bytes)| *range_bytes)
+                .map(|(index, relative, end, range_bytes)| (index, relative, end == range_bytes))?;
+            let entry = &mut entries[index];
+            entry.last_used = Instant::now();
+            (
+                index,
+                entry.data.slice(relative..relative + len),
+                consumes_window_end,
+            )
+        };
+        // A forward window has served all of its bytes once a hit reaches
+        // its end. Remove the cache reference now; returned Bytes may keep
+        // the backing alive only until the current storage consumer finishes.
+        if consumes_window_end {
+            self.remove_entry(path, index);
+        }
+        Some(result)
     }
 
     fn remove_entry(&mut self, path: &Path, index: usize) -> bool {
@@ -9187,6 +9200,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn peer_read_readahead_window_is_removed_after_its_last_bytes_are_served() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("consumed-readahead.bin");
+        std::fs::write(&path, b"abcdefghijklmnop").unwrap();
+        let scheduler = MountScheduler::new(
+            StorageRootId::new(),
+            &SchedulerConfig {
+                profile: StorageProfile::Hdd,
+                storage_io: StorageIoConfig {
+                    peer_read_readahead_bytes: 16,
+                    peer_read_readahead_sequential_only: false,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let first = scheduled_read(&scheduler, IoClass::PeerRead, &path, 0, 4)
+            .await
+            .unwrap();
+        let middle = scheduled_read(&scheduler, IoClass::PeerRead, &path, 4, 4)
+            .await
+            .unwrap();
+        assert_eq!(scheduler.stats().peer_read_cache_entries, 1);
+        let last = scheduled_read(&scheduler, IoClass::PeerRead, &path, 8, 8)
+            .await
+            .unwrap();
+
+        assert_eq!(&first[..], b"abcd");
+        assert_eq!(&middle[..], b"efgh");
+        assert_eq!(&last[..], b"ijklmnop");
+        let stats = scheduler.stats();
+        assert_eq!(stats.peer_read_cache_hits, 2);
+        assert_eq!(stats.peer_read_cache_entries, 0);
+        assert_eq!(stats.peer_read_cache_bytes, 0);
+        assert_eq!(
+            stats.backend_read_ops_by_class[class_index(IoClass::PeerRead)],
+            1
+        );
+    }
+
+    #[tokio::test]
     async fn portable_peer_read_fuses_cache_lookup_and_backend_completion() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("prepared-pread.bin");
@@ -9263,8 +9318,8 @@ mod tests {
         assert_eq!(&disjoint[..], b"mnop");
         assert_eq!(&reused[..], b"efgh");
         let stats = scheduler.stats();
-        assert_eq!(stats.peer_read_cache_entries, 2);
-        assert_eq!(stats.peer_read_cache_bytes, 16);
+        assert_eq!(stats.peer_read_cache_entries, 1);
+        assert_eq!(stats.peer_read_cache_bytes, 8);
         assert_eq!(stats.peer_read_cache_misses, 2);
         assert_eq!(stats.peer_read_cache_hits, 1);
         assert_eq!(

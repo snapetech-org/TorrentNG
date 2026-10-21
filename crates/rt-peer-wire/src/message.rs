@@ -1,6 +1,8 @@
 /// BEP 3 peer wire messages.
 use crate::error::WireError;
 use bytes::{BufMut, Bytes, BytesMut};
+use rt_metrics::MemoryLease;
+use std::{fmt, sync::Arc};
 
 /// Hard cap: 2 MiB per message (largest legal piece block is 16 KiB, but allow some headroom).
 pub const MAX_MESSAGE_LEN: u32 = 2 * 1024 * 1024;
@@ -77,7 +79,35 @@ pub enum Message {
         length: u32,
         proof_layers: u32,
     },
+    /// Codec-created ownership wrapper for a copied decoded payload.
+    #[doc(hidden)]
+    Accounted(AccountedMessage),
 }
+
+/// Holds a decoded message's payload charge through all clones of the message.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct AccountedMessage {
+    message: Arc<Message>,
+    _memory_lease: Arc<MemoryLease>,
+}
+
+impl fmt::Debug for AccountedMessage {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("Accounted")
+            .field(&self.message)
+            .finish()
+    }
+}
+
+impl PartialEq for AccountedMessage {
+    fn eq(&self, other: &Self) -> bool {
+        self.message == other.message
+    }
+}
+
+impl Eq for AccountedMessage {}
 
 impl Message {
     /// Return the complete length of the encoded message, including its
@@ -105,6 +135,7 @@ impl Message {
             Message::Hashes { hashes, .. } => 1usize
                 .checked_add(HASH_EXCHANGE_HEADER_LEN)?
                 .checked_add(hashes.len().checked_mul(32)?)?,
+            Message::Accounted(accounted) => return accounted.message.encoded_len(),
         };
         if message_len > MAX_MESSAGE_LEN as usize {
             return None;
@@ -250,6 +281,7 @@ impl Message {
                 },
                 &[],
             ),
+            Message::Accounted(accounted) => return accounted.message.encode_into(dst),
         }
         Ok(())
     }
@@ -420,6 +452,58 @@ impl Message {
             begin,
             data: payload.slice(9..),
         })
+    }
+
+    /// Estimate heap payload copied by parsing this complete message body.
+    /// The codec acquires this charge before parsing and stores it with the
+    /// resulting Message for its full lifetime.
+    pub(crate) fn copied_payload_bytes(payload: &[u8]) -> usize {
+        match payload.first().copied() {
+            Some(5) => payload.len().saturating_sub(1),
+            Some(20) => payload.len().saturating_sub(2),
+            Some(22) => payload
+                .len()
+                .saturating_sub(1 + HASH_EXCHANGE_HEADER_LEN)
+                .div_ceil(32)
+                .saturating_mul(32),
+            _ => 0,
+        }
+    }
+
+    pub(crate) fn with_memory_lease(self, memory_lease: MemoryLease) -> Self {
+        Self::Accounted(AccountedMessage {
+            message: Arc::new(self),
+            _memory_lease: Arc::new(memory_lease),
+        })
+    }
+
+    /// Unwrap a codec ownership sidecar while keeping its lease alive in the
+    /// returned Arc. Drop the lease after the decoded payload is no longer in
+    /// use; ordinary messages return no lease.
+    pub fn into_accounted_parts(self) -> Result<(Self, Option<Arc<MemoryLease>>), WireError> {
+        match self {
+            Self::Accounted(accounted) => {
+                let AccountedMessage {
+                    message,
+                    _memory_lease,
+                } = accounted;
+                match Arc::try_unwrap(message) {
+                    Ok(message) => Ok((message, Some(_memory_lease))),
+                    Err(shared_message) => {
+                        let duplicate_lease = _memory_lease
+                            .try_duplicate()
+                            .ok_or(WireError::PeerBufferAllocationDenied(
+                                _memory_lease.bytes(),
+                            ))?;
+                        Ok((
+                            (*shared_message).clone(),
+                            Some(Arc::new(duplicate_lease)),
+                        ))
+                    }
+                }
+            }
+            message => Ok((message, None)),
+        }
     }
 }
 
