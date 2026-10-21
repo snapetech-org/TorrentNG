@@ -32,6 +32,7 @@ async fn spawn_server_with_db() -> (SocketAddr, Client, Arc<Db>) {
     let backend = Arc::new(torrentng::backend::rtorrent::RtorrentBackend::new(
         rt.clone(),
     ));
+    let oidc_auth = torrentng::oidc::OidcAuth::new(cfg.auth.oidc.clone());
     let state = AppState {
         cfg,
         rt,
@@ -53,6 +54,7 @@ async fn spawn_server_with_db() -> (SocketAddr, Client, Arc<Db>) {
         )),
         auth_settings_write: Arc::new(tokio::sync::Mutex::new(())),
         local_webui_session_token: Some(format!("tng-benchmark-{}", uuid::Uuid::new_v4().simple())),
+        oidc_auth,
         public_bind: false,
         control_plane_write: Arc::new(tokio::sync::Mutex::new(())),
         request_concurrency: Arc::new(tokio::sync::Semaphore::new(256)),

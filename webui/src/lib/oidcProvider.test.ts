@@ -18,6 +18,15 @@ describe('getOidcProviderPresentation', () => {
     })
   })
 
+  it.each([
+      ['fusionauth', 'FusionAuth', 'fusionauth', 'https://fusionauth.io/docs/lifecycle/authenticate-users/oauth/'],
+      ['onelogin', 'OneLogin', 'onelogin', 'https://developers.onelogin.com/docs/openid-connect/connect-to-onelogin/'],
+      ['pingone', 'PingOne', 'pingone', 'https://docs.pingidentity.com/pingone/applications/p1_edit_application_oidc.html'],
+      ['jumpcloud', 'JumpCloud', 'jumpcloud', 'https://jumpcloud.com/support/sso-with-oidc']
+  ])('returns branded provider presentation for %s', (id, label, icon, setupUrl) => {
+    expect(getOidcProviderPresentation(id)).toMatchObject({ label, icon, setupUrl });
+  });
+
   it('uses generic branding for unknown and prototype property names', () => {
     expect(getOidcProviderPresentation('constructor').icon).toBe('generic')
     expect(getOidcProviderPresentation(null).label).toBe('identity provider')

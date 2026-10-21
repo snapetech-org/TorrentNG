@@ -143,6 +143,7 @@ fn build_test_app_with_existing_db_and_events(
     let cfg = Arc::new(cfg);
     let (tx, _) = broadcast::channel::<Event>(16);
     let metrics = Metrics::new();
+    let oidc_auth = torrentng::oidc::OidcAuth::new(cfg.auth.oidc.clone());
 
     let state = AppState {
         cfg,
@@ -162,6 +163,7 @@ fn build_test_app_with_existing_db_and_events(
         auth_settings_path,
         auth_settings_write: Arc::new(tokio::sync::Mutex::new(())),
         local_webui_session_token,
+        oidc_auth,
         public_bind,
         control_plane_write: Arc::new(tokio::sync::Mutex::new(())),
         request_concurrency: Arc::new(tokio::sync::Semaphore::new(256)),
