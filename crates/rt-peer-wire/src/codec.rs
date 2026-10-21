@@ -528,27 +528,35 @@ mod tests {
         );
         let used_after_trim = governor.snapshot().total_used_bytes;
         let memory = codec.memory.as_ref().expect("read lease state");
-        assert_eq!(
-            used_after_trim,
-            memory.read_reserved_bytes + payload_len as u64
-        );
+        let retained_read_bytes = memory.read_reserved_bytes;
+        assert_eq!(used_after_trim, retained_read_bytes + payload_len as u64);
         assert!(used_after_trim < used_before_trim);
+        assert_eq!(decoded.encoded_len(), Some(wire.len()));
+        assert_eq!(decoded.encode(), wire.to_vec());
 
         let retained_clone = decoded.clone();
-        let (decoded, payload_lease) = decoded.into_accounted_parts();
+        let (decoded, payload_lease) = decoded.into_accounted_parts().unwrap();
+        assert_eq!(
+            governor.snapshot().total_used_bytes,
+            used_after_trim + payload_len as u64,
+            "unwrapping a cloned message creates a separately charged payload copy"
+        );
         assert_eq!(
             decoded,
             Message::Extended { ext_id: 7, payload },
             "the parsed message owns its bytes after the read buffer is replaced"
         );
         assert_eq!(payload_lease.as_ref().unwrap().bytes(), payload_len as u64);
+        drop(decoded);
         drop(payload_lease);
         assert_eq!(governor.snapshot().total_used_bytes, used_after_trim);
+        drop(codec);
+        assert_eq!(governor.snapshot().total_used_bytes, payload_len as u64);
         drop(retained_clone);
         assert_eq!(
             governor.snapshot().total_used_bytes,
-            memory.read_reserved_bytes,
-            "the payload copy charge should be released with the final message clone"
+            0,
+            "the final message clone should release its payload charge after codec drop"
         );
     }
 
