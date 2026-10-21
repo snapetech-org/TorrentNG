@@ -276,8 +276,10 @@ formatted all-target workspace suite passed on Rust 1.94.0 and 1.88.0 with
 2,342 passed, 0 failed, and 12 ignored across 37 summaries on each; strict
 Clippy passed on both, formatting and `git diff --check` passed, and all 357
 Python tests passed. The focused partial-settlement regression also passed on
-both toolchains. No CPU/RAM run was collected for this candidate because
-unrelated builds and game processes kept the shared desktop busy.
+both toolchains. No CPU/RAM run was collected for this candidate: `kspld0`
+reported load averages of 17.09/10.74/9.77 with concurrent game, emulator, and
+build work, and `kspls0` reported 56.63/62.68/67.06 with 12 GiB available
+memory. A matched measurement remains open.
 
 ### Five-client remeasurement after context sharing (`c6984493`, 2026-10-21)
 

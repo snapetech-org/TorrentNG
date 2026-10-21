@@ -694,9 +694,11 @@ workspace Clippy on both toolchains, formatting, `git diff --check`, and all
 357 Python tests. The partial-send regression passed on both toolchains.
 
 The rate-settlement candidate has not yet been measured against its parent
-source. The latest available source-bound seed result is the preceding
+source. I deferred a new comparison because neither available host was quiet:
+`kspld0` reported load averages of 17.09/10.74/9.77 with concurrent game,
+emulator, and build work, while `kspls0` reported 56.63/62.68/67.06 and 12 GiB
+available memory. The latest available source-bound seed result is the preceding
 upload-future candidate: 2.74 CPU-s/GiB and 24.2 MiB cgroup anonymous peak for
 TorrentNG, versus 2.20 CPU-s/GiB and 18.5 MiB for qBittorrent in one run. That
 run predates this rate-settlement edit and cannot establish its effect. No new
-CPU/RAM score was collected while unrelated builds and game processes kept
-`kspld0` busy; the comparison remains open.
+CPU/RAM score was collected; the comparison remains open.
