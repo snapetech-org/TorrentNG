@@ -97,6 +97,18 @@ is retained for reference. Neither report establishes a maximum torrent count.
 See the dated [release evidence](docs/RELEASE_EVIDENCE.md) for what was
 exercised and where.
 
+A corrected comparison on clean main commit `cfb63f91` completed both
+controlled download and seed transfers for TorrentNG, qBittorrent, Transmission,
+Deluge, and rTorrent, with SHA-256 verification. In this one-pass baseline,
+TorrentNG's download used 6.504 CPU-s/GiB and 6.3 MiB anonymous memory, versus
+8.218 CPU-s/GiB and 16.6 MiB for qBittorrent; TorrentNG transferred more slowly
+(3.07 versus 3.83 MiB/s). On the seed workload, TorrentNG used 1.33 CPU-s/GiB
+and 16.6 MiB anonymous memory: lower CPU than qBittorrent and Deluge, higher
+than Transmission and rTorrent, and higher memory than qBittorrent and
+rTorrent. These are single-pass, shared-host observations, not a client
+ranking. The [corrected comparison and raw evidence](certification/reports/TorrentNG-native-download-efa3a607/comparison/round2-corrected-cfb63f91/README.md)
+is the pre-change baseline for the seed-upload optimization.
+
 ## Learn more
 
 - [Install TorrentNG Desktop](docs/DESKTOP.md)
