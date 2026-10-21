@@ -1,0 +1,284 @@
+Scratch: /mnt/disks/gamespool0/tngb/work-controlled-seed-file-range-e9727943
+Config scratch: /mnt/disks/gamespool0/tngb/work-controlled-seed-file-range-e9727943/config
+Compose project: tngbench20261021t232548z
+ Image torrentng/torrentngd:benchmark-20261021t232548z Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 869B done
+#1 DONE 0.0s
+
+#2 [internal] booting buildkit
+#2 pulling image moby/buildkit:buildx-stable-1
+#2 pulling image moby/buildkit:buildx-stable-1 1.3s done
+#2 creating container buildx_buildkit_tngbench-client-build-cache-v10
+#2 creating container buildx_buildkit_tngbench-client-build-cache-v10 0.7s done
+#2 DONE 2.0s
+
+#3 [internal] load build definition from Dockerfile
+#3 transferring dockerfile: 3.29kB done
+#3 DONE 0.0s
+
+#4 resolve image config for docker-image://docker.io/docker/dockerfile:1.7
+#4 ...
+
+#5 [auth] docker/dockerfile:pull token for registry-1.docker.io
+#5 DONE 0.0s
+
+#4 resolve image config for docker-image://docker.io/docker/dockerfile:1.7
+#4 DONE 0.7s
+
+#6 docker-image://docker.io/docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
+#6 resolve docker.io/docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e 0.0s done
+#6 CACHED
+
+#7 [internal] load metadata for docker.io/library/node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9
+#7 ...
+
+#8 [auth] library/alpine:pull token for registry-1.docker.io
+#8 DONE 0.0s
+
+#9 [auth] library/node:pull token for registry-1.docker.io
+#9 DONE 0.0s
+
+#10 [auth] library/rust:pull token for registry-1.docker.io
+#10 DONE 0.0s
+
+#11 [internal] load metadata for docker.io/library/rust:1.96-alpine
+#11 ...
+
+#12 [internal] load metadata for docker.io/library/alpine:3.24.2
+#12 DONE 0.3s
+
+#7 [internal] load metadata for docker.io/library/node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9
+#7 DONE 0.4s
+
+#11 [internal] load metadata for docker.io/library/rust:1.96-alpine
+#11 DONE 0.5s
+
+#13 [internal] load .dockerignore
+#13 transferring context: 221B done
+#13 DONE 0.0s
+
+#14 [internal] load build context
+#14 DONE 0.0s
+
+#15 [stage-2 1/9] FROM docker.io/library/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+#15 resolve docker.io/library/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 0.1s done
+#15 DONE 0.1s
+
+#16 [webui-build 1/6] FROM docker.io/library/node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9
+#16 resolve docker.io/library/node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9
+#16 resolve docker.io/library/node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9 0.1s done
+#16 DONE 0.1s
+
+#15 [stage-2 1/9] FROM docker.io/library/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+#15 CACHED
+
+#17 [build 1/6] FROM docker.io/library/rust:1.96-alpine@sha256:a41f7740f8b45d45795624eec13a8b42263cc700f19f7e4e86e04d3dda08a479
+#17 resolve docker.io/library/rust:1.96-alpine@sha256:a41f7740f8b45d45795624eec13a8b42263cc700f19f7e4e86e04d3dda08a479 0.1s done
+#17 DONE 0.1s
+
+#14 [internal] load build context
+#14 transferring context: 1.35MB 0.0s done
+#14 DONE 0.0s
+
+#18 [build 2/6] RUN apk add --no-cache build-base linux-headers musl-dev
+#18 CACHED
+
+#19 [build 3/6] WORKDIR /src
+#19 CACHED
+
+#20 [build 4/6] COPY Cargo.toml Cargo.lock ./
+#20 CACHED
+
+#21 [build 5/6] COPY crates ./crates
+#21 DONE 0.1s
+
+#22 [stage-2 2/9] RUN apk add --no-cache ca-certificates curl jq tini util-linux     && case "1000" in ''|*[!0-9]*) echo "TNG_UID must be a nonzero numeric ID" >&2; exit 1;; *[1-9]*) :;; *) echo "TNG_UID must be a nonzero numeric ID" >&2; exit 1;; esac     && case "1000" in ''|*[!0-9]*) echo "TNG_GID must be a nonzero numeric ID" >&2; exit 1;; *[1-9]*) :;; *) echo "TNG_GID must be a nonzero numeric ID" >&2; exit 1;; esac     && mkdir -p /data /downloads /config /var/lib/torrentngd /usr/share/torrentng/webui /run/secrets     && chown -R "1000:1000" /data /downloads /config /var/lib/torrentngd /run/secrets
+#22 0.742 ( 1/49) Installing ca-certificates (20261020-r0)
+#22 0.791 ( 2/49) Installing brotli-libs (1.2.0-r1)
+#22 0.839 ( 3/49) Installing c-ares (1.34.9-r0)
+#22 0.882 ( 4/49) Installing libunistring (1.4.2-r0)
+#22 0.935 ( 5/49) Installing libidn2 (2.3.8-r0)
+#22 0.979 ( 6/49) Installing nghttp2-libs (1.70.0-r0)
+#22 1.022 ( 7/49) Installing libpsl (0.21.5-r3)
+#22 1.062 ( 8/49) Installing zstd-libs (1.5.7-r2)
+#22 1.109 ( 9/49) Installing libcurl (8.22.0-r0)
+#22 1.158 (10/49) Installing curl (8.22.0-r0)
+#22 1.202 (11/49) Installing oniguruma (6.9.10-r0)
+#22 1.254 (12/49) Installing jq (1.8.2-r0)
+#22 1.298 (13/49) Installing tini (0.19.0-r3)
+#22 1.340 (14/49) Installing util-linux (2.42.3-r1)
+#22 1.381 (15/49) Installing ncurses-terminfo-base (6.6_p20260516-r0)
+#22 1.421 (16/49) Installing libncursesw (6.6_p20260516-r0)
+#22 1.464 (17/49) Installing dmesg (2.42.3-r1)
+#22 1.511 (18/49) Installing setarch (2.42.3-r1)
+#22 1.559 (19/49) Installing libeconf (0.8.3-r0)
+#22 1.604 (20/49) Installing libblkid (2.42.3-r1)
+#22 1.656 (21/49) Installing libuuid (2.42.3-r1)
+#22 1.699 (22/49) Installing libfdisk (2.42.3-r1)
+#22 1.741 (23/49) Installing libmount (2.42.3-r1)
+#22 1.791 (24/49) Installing libsmartcols (2.42.3-r1)
+#22 1.833 (25/49) Installing skalibs-libs (2.15.0.0-r0)
+#22 1.878 (26/49) Installing utmps-libs (0.1.3.3-r0)
+#22 1.919 (27/49) Installing util-linux-misc (2.42.3-r1)
+#22 1.980 (28/49) Installing linux-pam (1.7.1-r2)
+#22 2.026 (29/49) Installing runuser (2.42.3-r1)
+#22 2.066 (30/49) Installing mount (2.42.3-r1)
+#22 2.107 (31/49) Installing losetup (2.42.3-r1)
+#22 2.153 (32/49) Installing hexdump (2.42.3-r1)
+#22 2.201 (33/49) Installing uuidgen (2.42.3-r1)
+#22 2.243 (34/49) Installing blkid (2.42.3-r1)
+#22 2.285 (35/49) Installing sfdisk (2.42.3-r1)
+#22 2.328 (36/49) Installing mcookie (2.42.3-r1)
+#22 2.372 (37/49) Installing agetty (2.42.3-r1)
+#22 2.419 (38/49) Installing wipefs (2.42.3-r1)
+#22 2.471 (39/49) Installing cfdisk (2.42.3-r1)
+#22 2.520 (40/49) Installing umount (2.42.3-r1)
+#22 2.569 (41/49) Installing flock (2.42.3-r1)
+#22 2.618 (42/49) Installing lsblk (2.42.3-r1)
+#22 2.661 (43/49) Installing libcap-ng (0.8.5-r2)
+#22 2.705 (44/49) Installing setpriv (2.42.3-r1)
+#22 2.755 (45/49) Installing lscpu (2.42.3-r1)
+#22 2.804 (46/49) Installing logger (2.42.3-r1)
+#22 2.851 (47/49) Installing partx (2.42.3-r1)
+#22 2.892 (48/49) Installing fstrim (2.42.3-r1)
+#22 2.942 (49/49) Installing findmnt (2.42.3-r1)
+#22 2.994 Executing busybox-1.37.0-r31.trigger
+#22 2.997 Executing ca-certificates-20261020-r0.trigger
+#22 3.011 OK: 19.9 MiB in 65 packages
+#22 DONE 3.1s
+
+#23 [build 6/6] RUN --mount=type=cache,id=torrentng-client-benchmark-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=torrentng-client-benchmark-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=torrentng-client-benchmark-cargo-target,target=/src/target,sharing=locked     cargo build --release --locked --target x86_64-unknown-linux-musl -p torrentngd     --no-default-features --features "system-allocator"     && cp /src/target/x86_64-unknown-linux-musl/release/torrentngd /torrentngd
+#23 0.289    Compiling rt-storage v0.1.0 (/src/crates/rt-storage)
+#23 ...
+
+#24 [webui-build 3/6] COPY webui/package.json webui/package-lock.json ./
+#24 CACHED
+
+#25 [webui-build 2/6] WORKDIR /webui
+#25 CACHED
+
+#26 [webui-build 4/6] RUN --mount=type=cache,id=torrentng-client-benchmark-npm,target=/root/.npm,sharing=locked npm ci
+#26 CACHED
+
+#27 [webui-build 5/6] COPY webui/ ./
+#27 CACHED
+
+#28 [webui-build 6/6] RUN TNG_WEBUI_OUT_DIR=dist npm run build
+#28 CACHED
+
+#23 [build 6/6] RUN --mount=type=cache,id=torrentng-client-benchmark-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=torrentng-client-benchmark-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=torrentng-client-benchmark-cargo-target,target=/src/target,sharing=locked     cargo build --release --locked --target x86_64-unknown-linux-musl -p torrentngd     --no-default-features --features "system-allocator"     && cp /src/target/x86_64-unknown-linux-musl/release/torrentngd /torrentngd
+#23 3.025    Compiling rt-fastresume v0.1.0 (/src/crates/rt-fastresume)
+#23 3.564    Compiling rt-engine v0.1.0 (/src/crates/rt-engine)
+#23 3.565    Compiling rt-migrate v0.1.0 (/src/crates/rt-migrate)
+#23 25.19    Compiling rt-api-native v0.1.0 (/src/crates/rt-api-native)
+#23 25.19    Compiling rt-api-transmission v0.1.0 (/src/crates/rt-api-transmission)
+#23 25.19    Compiling rt-api-qbit v0.1.0 (/src/crates/rt-api-qbit)
+#23 25.19    Compiling rt-api-deluge v0.1.0 (/src/crates/rt-api-deluge)
+#23 53.26    Compiling torrentngd v0.1.0 (/src/crates/torrentngd)
+#23 369.1     Finished `release` profile [optimized] target(s) in 6m 09s
+#23 DONE 369.3s
+
+#29 [stage-2 3/9] COPY --from=build /torrentngd /usr/local/bin/torrentngd
+#29 DONE 0.1s
+
+#30 [stage-2 4/9] COPY --from=webui-build /webui/dist /usr/share/torrentng/webui
+#30 DONE 0.1s
+
+#31 [stage-2 5/9] COPY deploy/native/config.toml /etc/torrentngd/config.toml
+#31 DONE 0.1s
+
+#32 [stage-2 6/9] COPY deploy/container/identity.sh /usr/local/lib/torrentng/identity.sh
+#32 DONE 0.1s
+
+#33 [stage-2 7/9] COPY deploy/native/vpn-port-sync.sh /usr/local/lib/torrentng/vpn-port-sync.sh
+#33 DONE 0.1s
+
+#34 [stage-2 8/9] COPY deploy/native/entrypoint.sh /entrypoint.sh
+#34 DONE 0.1s
+
+#35 [stage-2 9/9] RUN chmod +x /entrypoint.sh /usr/local/lib/torrentng/vpn-port-sync.sh
+#35 DONE 0.1s
+
+#36 exporting to oci image format
+#36 exporting layers
+#36 exporting layers 1.1s done
+#36 exporting manifest sha256:bec559d1396b34f62caab1363afdc484d851bcff63ab278fa9afd03b41ae5c96 0.0s done
+#36 exporting config sha256:0e846da961efdff8ab9aca86e94049bc563b7a10f741a72d376f3c2843107588 0.0s done
+#36 sending tarball
+#36 sending tarball 0.8s done
+#36 DONE 1.9s
+
+#37 importing to docker
+#37 DONE 0.0s
+
+#38 resolving provenance for metadata file
+#38 DONE 0.0s
+ Image torrentng/torrentngd:benchmark-20261021t232548z Built
+
+==> TorrentNG: controlled private seed
+[TorrentNG seed] 0.0%, leecher 0.00 MiB/s, 0 peers
+[TorrentNG seed] 9.5%, leecher 4.37 MiB/s, 1 peers
+[TorrentNG seed] 21.1%, leecher 3.53 MiB/s, 1 peers
+[TorrentNG seed] 32.1%, leecher 4.41 MiB/s, 1 peers
+[TorrentNG seed] 42.8%, leecher 4.45 MiB/s, 1 peers
+[TorrentNG seed] 54.3%, leecher 4.06 MiB/s, 1 peers
+[TorrentNG seed] 65.0%, leecher 3.28 MiB/s, 1 peers
+[TorrentNG seed] 77.2%, leecher 4.52 MiB/s, 1 peers
+[TorrentNG seed] 88.1%, leecher 4.43 MiB/s, 1 peers
+[TorrentNG seed] 99.0%, leecher 3.94 MiB/s, 1 peers
+[TorrentNG] controlled seed PASS; 756.0 MiB transferred and SHA-256 verified
+
+==> qBittorrent: controlled private seed
+[qBittorrent seed] 0.0%, leecher 0.00 MiB/s, 0 peers
+[qBittorrent seed] 9.7%, leecher 4.55 MiB/s, 1 peers
+[qBittorrent seed] 21.4%, leecher 3.77 MiB/s, 1 peers
+[qBittorrent seed] 32.5%, leecher 4.46 MiB/s, 1 peers
+[qBittorrent seed] 43.1%, leecher 3.59 MiB/s, 1 peers
+[qBittorrent seed] 54.0%, leecher 4.28 MiB/s, 1 peers
+[qBittorrent seed] 65.5%, leecher 3.96 MiB/s, 1 peers
+[qBittorrent seed] 76.9%, leecher 3.56 MiB/s, 1 peers
+[qBittorrent seed] 88.8%, leecher 4.21 MiB/s, 1 peers
+[qBittorrent seed] 99.7%, leecher 3.32 MiB/s, 1 peers
+[qBittorrent] controlled seed PASS; 756.0 MiB transferred and SHA-256 verified
+
+==> Transmission: controlled private seed
+[Transmission seed] 0.0%, leecher 0.00 MiB/s, 0 peers
+[Transmission seed] 7.4%, leecher 4.45 MiB/s, 1 peers
+[Transmission seed] 18.3%, leecher 4.37 MiB/s, 1 peers
+[Transmission seed] 29.1%, leecher 3.41 MiB/s, 1 peers
+[Transmission seed] 41.2%, leecher 4.49 MiB/s, 1 peers
+[Transmission seed] 52.1%, leecher 4.38 MiB/s, 1 peers
+[Transmission seed] 63.7%, leecher 3.98 MiB/s, 1 peers
+[Transmission seed] 74.1%, leecher 3.95 MiB/s, 1 peers
+[Transmission seed] 85.6%, leecher 4.55 MiB/s, 1 peers
+[Transmission seed] 96.4%, leecher 4.05 MiB/s, 1 peers
+[Transmission] controlled seed PASS; 756.0 MiB transferred and SHA-256 verified
+
+==> Deluge: controlled private seed
+[Deluge seed] 0.0%, leecher 0.00 MiB/s, 0 peers
+[Deluge seed] 9.9%, leecher 3.57 MiB/s, 1 peers
+[Deluge seed] 20.7%, leecher 4.32 MiB/s, 1 peers
+[Deluge seed] 32.1%, leecher 3.52 MiB/s, 1 peers
+[Deluge seed] 43.5%, leecher 4.00 MiB/s, 1 peers
+[Deluge seed] 54.5%, leecher 4.27 MiB/s, 1 peers
+[Deluge seed] 65.3%, leecher 3.46 MiB/s, 1 peers
+[Deluge seed] 77.4%, leecher 4.44 MiB/s, 1 peers
+[Deluge seed] 88.6%, leecher 3.17 MiB/s, 1 peers
+[Deluge seed] 99.9%, leecher 3.99 MiB/s, 1 peers
+[Deluge] controlled seed PASS; 756.0 MiB transferred and SHA-256 verified
+
+==> rTorrent: controlled private seed
+[rTorrent seed] 0.0%, leecher 0.00 MiB/s, 0 peers
+[rTorrent seed] 10.5%, leecher 3.41 MiB/s, 1 peers
+[rTorrent seed] 21.3%, leecher 4.48 MiB/s, 1 peers
+[rTorrent seed] 32.2%, leecher 4.29 MiB/s, 1 peers
+[rTorrent seed] 43.1%, leecher 4.43 MiB/s, 1 peers
+[rTorrent seed] 54.3%, leecher 3.17 MiB/s, 1 peers
+[rTorrent seed] 64.8%, leecher 3.84 MiB/s, 1 peers
+[rTorrent seed] 76.9%, leecher 4.18 MiB/s, 1 peers
+[rTorrent seed] 87.0%, leecher 3.98 MiB/s, 1 peers
+[rTorrent seed] 99.4%, leecher 4.30 MiB/s, 1 peers
+[rTorrent] controlled seed PASS; 756.0 MiB transferred and SHA-256 verified
+Report: /mnt/disks/gamespool0/tngb/results/controlled-seed-file-range-e9727943.md
+Samples: /mnt/disks/gamespool0/tngb/results/controlled-seed-file-range-e9727943-samples.csv

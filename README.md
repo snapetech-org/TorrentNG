@@ -109,6 +109,16 @@ rTorrent. These are single-pass, shared-host observations, not a client
 ranking. The [corrected comparison and raw evidence](certification/reports/TorrentNG-native-download-efa3a607/comparison/round2-corrected-cfb63f91/README.md)
 is the pre-change baseline for the seed-upload optimization.
 
+An exploratory Linux TCP file-range seed candidate recorded 4.3 MiB sampled
+anonymous peak versus 16.6 MiB in the clean-source baseline (74% lower), while
+measured CPU was 5.51 versus 1.33 CPU-s/GiB (4.14 times higher). Transfer rate
+stayed near 3.9 MiB/s under the shared 4 MiB/s receiver cap. The candidate was reverted
+because the CPU cost missed our goal; the memory gain and CPU loss are both
+preserved as design evidence for later work. These were single-pass observations
+on a shared host, not a causal estimate or a client ranking. See the
+[candidate results and raw evidence](certification/reports/TorrentNG-native-download-efa3a607/comparison/round3-sendfile-e9727943/README.md)
+and the [three-round whole-client seed comparison](certification/reports/TorrentNG-whole-client-comparison-20261021/README.md).
+
 ## Learn more
 
 - [Install TorrentNG Desktop](docs/DESKTOP.md)
