@@ -292,7 +292,7 @@ class ClientControlRegressions(unittest.TestCase):
     def test_scheduled_hash_must_match_canonical_bencoded_info_value(self) -> None:
         metainfo = b"d8:announce3:url4:infod3:foo3:baree"
         info_dictionary = b"d3:foo3:bare"
-        digest = hashlib.sha1(info_dictionary).hexdigest()
+        digest = hashlib.sha1(info_dictionary, usedforsecurity=False).hexdigest()  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- The test vector uses the mandated BitTorrent v1 info hash.
         client_control._validate_metainfo_hash(metainfo, digest)
         client_control._validate_metainfo_hash(
             metainfo, hashlib.sha256(info_dictionary).hexdigest()

@@ -26,12 +26,16 @@ import sys
 import urllib.parse
 import urllib.error
 import urllib.request
-import xmlrpc.client
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
 from strict_json import StrictJsonError, loads as strict_json_loads
+
+try:
+    from .xmlrpc_safety import xmlrpc_client
+except ImportError:
+    from xmlrpc_safety import xmlrpc_client
 
 
 SCHEMA_VERSION = "transfer-client-observation-v1"
@@ -1167,7 +1171,7 @@ def _deluge_call(client: HttpJson, method: str, params: list[Any], request_id: i
 
 
 def _scgi_call(socket_path: Path, method: str, arguments: list[Any]) -> Any:
-    body = xmlrpc.client.dumps(tuple(arguments), methodname=method, allow_none=True).encode()
+    body = xmlrpc_client.dumps(tuple(arguments), methodname=method, allow_none=True).encode()
     headers = (
         b"CONTENT_LENGTH\0" + str(len(body)).encode() + b"\0"
         + b"SCGI\0" + b"1\0"
@@ -1216,7 +1220,7 @@ def _scgi_call(socket_path: Path, method: str, arguments: list[Any]) -> Any:
     payload = bytes(response[header_end + 4:])
     if body_length is not None and len(payload) != body_length:
         raise AdapterError("rTorrent SCGI response body is incomplete")
-    values, _ = xmlrpc.client.loads(payload)
+    values, _ = xmlrpc_client.loads(payload)
     return values[0] if values else None
 
 

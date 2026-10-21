@@ -1,5 +1,8 @@
 # Client performance benchmark
 
+Install the pinned Python dependencies before running the harness:
+`python3 -m pip install -r scripts/transfer_rebuild/requirements.txt`.
+
 This benchmark compares TorrentNG's native engine with qBittorrent,
 Transmission, Deluge, and rTorrent using an official Debian amd64 netinst
 torrent. It records public download behavior and a separate controlled seed
@@ -27,6 +30,35 @@ and upload-goodput parity are deferred until CPU and RAM are addressed.
 Storage correctness, boundedness, and durability remain required gates. No
 numeric efficiency threshold has been adopted, and this priority is not a
 claim that the current candidate meets it.
+
+## Controlled private download CPU/RAM mode
+
+The harness now supports `TNG_CLIENT_BENCH_MODE=controlled-download`. It serves
+one SHA-256-verified Debian ISO from a fixed qBittorrent seeder on the isolated
+Compose network, then runs each selected receiver by itself against that
+seeder. DHT and peer exchange are disabled, the receiver order is randomized
+from a recorded seed, and the seeder's upload ceiling defaults to 4 MiB/s via
+`TNG_CLIENT_BENCH_DOWNLOAD_SEED_UPLOAD_BPS`. The receiver's configured ceiling
+defaults to 32 MiB/s. Set `TNG_CLIENT_BENCH_SEED_SOURCE` to a local ISO; the
+harness checks its size and official SHA-256 before using it.
+
+Only SHA-256-verified completions are eligible for CPU seconds per GiB.
+Receiver cgroup anonymous memory, process-tree RSS, and PSS are reported
+separately. Disk counters are not scored. To compare TorrentNG piece-assembly
+budgets, run separate TorrentNG-only passes with
+`TNG_CLIENT_BENCH_PIECE_ASSEMBLY_CAP_MB=0`, `4`, and `8`, recording a distinct
+report for each configuration. Those runs test download CPU/RAM trade-offs;
+they do not close the private two-seeder fairness gate, establish a public
+swarm ranking, or replace repeated randomized paired trials.
+
+Example:
+
+```sh
+TNG_CLIENT_BENCH_MODE=controlled-download \
+TNG_CLIENT_BENCH_SEED_SOURCE=/path/to/debian-netinst.iso \
+TNG_CLIENT_BENCH_ORDER_SEED=20261021 \
+python3 scripts/client_performance_benchmark.py
+```
 
 ## 2026-10-21 exact-main CPU/RAM check (`457df452`)
 

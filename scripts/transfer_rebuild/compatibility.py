@@ -14,9 +14,13 @@ import subprocess
 import sys
 import time
 import urllib.parse
-import xmlrpc.client
 from pathlib import Path
 from typing import Any, Callable
+
+try:
+    from .xmlrpc_safety import xmlrpc_client
+except ImportError:
+    from xmlrpc_safety import xmlrpc_client
 
 from adapters import (
     AdapterError,
@@ -575,7 +579,7 @@ def _rtorrent_preflight(
         raise PreflightError("probe info hash already exists; refusing to alter a pre-existing torrent")
 
     def add() -> str:
-        _scgi_call(socket_path, "load.raw", xmlrpc.client.Binary(metainfo))
+        _scgi_call(socket_path, "load.raw", xmlrpc_client.Binary(metainfo))
         _poll(row, lambda value: value is not None, "rTorrent probe torrent to appear")
         _scgi_call(socket_path, "d.directory_base.set", info_hash, save_path)
         return info_hash
@@ -1203,7 +1207,7 @@ def main(argv: list[str] | None = None) -> int:
             args.scratch_parent,
             profile_path=args.profiles,
         )
-    except (AdapterError, OSError, ValueError, subprocess.SubprocessError, xmlrpc.client.Error) as error:
+    except (AdapterError, OSError, ValueError, subprocess.SubprocessError, xmlrpc_client.Error) as error:
         print(f"compatibility preflight: {error}", file=sys.stderr)
         return 2
     if not artifact["ready"]:

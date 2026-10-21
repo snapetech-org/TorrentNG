@@ -306,7 +306,7 @@ def _v1_stream_hashes(
             piece_buffer.extend(data[cursor : cursor + take])
             cursor += take
             if len(piece_buffer) == piece_length:
-                piece_hashes.extend(hashlib.sha1(piece_buffer).digest())
+                piece_hashes.extend(hashlib.sha1(piece_buffer, usedforsecurity=False).digest())  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- BitTorrent v1 piece hashes are protocol-mandated SHA-1 values.
                 piece_buffer.clear()
 
     for entry in entries:
@@ -348,7 +348,7 @@ def _v1_stream_hashes(
         has_payload = has_payload or size > 0
 
     if piece_buffer:
-        piece_hashes.extend(hashlib.sha1(piece_buffer).digest())
+        piece_hashes.extend(hashlib.sha1(piece_buffer, usedforsecurity=False).digest())  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- BitTorrent v1 piece hashes are protocol-mandated SHA-1 values.
     return bytes(piece_hashes), v1_files
 
 
@@ -403,7 +403,7 @@ def _build_torrent(
     metainfo = _bencode(top_level)
     hashes: dict[str, str] = {}
     if kind in {"v1", "hybrid"}:
-        hashes["sha1"] = hashlib.sha1(info_bytes).hexdigest()
+        hashes["sha1"] = hashlib.sha1(info_bytes, usedforsecurity=False).hexdigest()  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- BitTorrent v1 info hashes are protocol-mandated SHA-1 values.
     if kind in {"v2", "hybrid"}:
         info_hash_v2 = hashlib.sha256(info_bytes).digest()
         hashes["sha256"] = info_hash_v2.hex()

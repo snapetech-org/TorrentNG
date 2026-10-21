@@ -74,7 +74,7 @@ class MetainfoRetargetTests(unittest.TestCase):
         after = dict(_top_level_entries(updated))
         self.assertEqual(before[b"info"], info)
         self.assertEqual(after[b"info"], before[b"info"])
-        self.assertEqual(hashes["sha1"], hashlib.sha1(info).hexdigest())
+        self.assertEqual(hashes["sha1"], hashlib.sha1(info, usedforsecurity=False).hexdigest())  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- The fixture assertion computes the mandated BitTorrent v1 info hash.
         self.assertEqual(hashes["sha256"], hashlib.sha256(info).hexdigest())
 
     def test_rejects_public_and_non_benchmark_tracker_endpoints(self) -> None:
@@ -107,7 +107,7 @@ class MetainfoRetargetTests(unittest.TestCase):
             "name": "fixture",
             "piece_length": 16 * 1024,
             "metainfo_kind": "v1",
-            "info_hashes": {"sha1": hashlib.sha1(info).hexdigest()},
+            "info_hashes": {"sha1": hashlib.sha1(info, usedforsecurity=False).hexdigest()},  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- The fixture record carries the mandated BitTorrent v1 info hash.
             "torrent_sha256": hashlib.sha256(source).hexdigest(),
             "fixture_sha256": fixture_sha256,
         }
@@ -143,7 +143,7 @@ class MetainfoRetargetTests(unittest.TestCase):
             "name": "fixture",
             "piece_length": 16 * 1024,
             "metainfo_kind": "v1",
-            "info_hashes": {"sha1": hashlib.sha1(info).hexdigest()},
+            "info_hashes": {"sha1": hashlib.sha1(info, usedforsecurity=False).hexdigest()},  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- The fixture record carries the mandated BitTorrent v1 info hash.
             "torrent_sha256": "0" * 64,
             "fixture_sha256": fixture_record["fixture_sha256"],
         }
@@ -169,7 +169,7 @@ class MetainfoRetargetTests(unittest.TestCase):
             "name": "fixture",
             "piece_length": 16 * 1024,
             "metainfo_kind": "v1",
-            "info_hashes": {"sha1": hashlib.sha1(info).hexdigest()},
+            "info_hashes": {"sha1": hashlib.sha1(info, usedforsecurity=False).hexdigest()},  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- The fixture record carries the mandated BitTorrent v1 info hash.
             "torrent_sha256": hashlib.sha256(source).hexdigest(),
             "fixture_sha256": fixture_record["fixture_sha256"],
         }

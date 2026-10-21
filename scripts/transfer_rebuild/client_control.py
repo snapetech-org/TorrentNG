@@ -13,12 +13,16 @@ import re
 import stat
 import time
 import urllib.parse
-import xmlrpc.client
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 from strict_json import StrictJsonError, loads as strict_json_loads
+
+try:
+    from .xmlrpc_safety import xmlrpc_client
+except ImportError:
+    from xmlrpc_safety import xmlrpc_client
 
 from adapters import (
     AdapterError,
@@ -232,7 +236,7 @@ def _torrent_info_span(data: bytes) -> tuple[int, int]:
 def _validate_metainfo_hash(data: bytes, info_hash: str) -> None:
     start, end = _torrent_info_span(data)
     digest = (
-        hashlib.sha1(data[start:end], usedforsecurity=False).hexdigest()
+        hashlib.sha1(data[start:end], usedforsecurity=False).hexdigest()  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- BitTorrent v1 info hashes are protocol-mandated SHA-1 values.
         if len(info_hash) == 40
         else hashlib.sha256(data[start:end]).hexdigest()
     )
@@ -248,7 +252,7 @@ def _qbit_hash_candidates(data: bytes, info_hash: str) -> list[str]:
     if len(info_hash) == 64:
         candidates = [v2[:40], v2]
     else:
-        candidates = [hashlib.sha1(info, usedforsecurity=False).hexdigest()]
+        candidates = [hashlib.sha1(info, usedforsecurity=False).hexdigest()]  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- BitTorrent v1 info hashes are protocol-mandated SHA-1 values.
         if b"12:meta versioni2e" in info:
             candidates.extend((v2[:40], v2))
     return list(dict.fromkeys(value.lower() for value in candidates))
@@ -464,7 +468,7 @@ class ClientController:
                 if any(str(row[0]).lower() == info_hash.lower() for row in rows):
                     raise ClientControlError("rTorrent fixture info hash already exists")
                 self._guarded(lambda: _scgi_call(
-                    self.socket_path, "load.raw", [xmlrpc.client.Binary(metainfo)]
+                    self.socket_path, "load.raw", [xmlrpc_client.Binary(metainfo)]
                 ))
                 self._wait(lambda: self.status(info_hash) is not None, "rTorrent fixture admission")
                 self._guarded(lambda: _scgi_call(

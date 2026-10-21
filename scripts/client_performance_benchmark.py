@@ -23,9 +23,9 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import xmlrpc.client
 from pathlib import Path
 
+from transfer_rebuild.xmlrpc_safety import xmlrpc_client
 from transfer_rebuild.observe import process_tree, sample_process_tree
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,6 +50,9 @@ TOKEN = "interop-backend-token-20260904"
 RATE_BPS = int(os.environ.get("TNG_CLIENT_BENCH_RATE_BPS", 32 * 1024 * 1024))
 SEED_LEECHER_RATE_BPS = int(os.environ.get(
     "TNG_CLIENT_BENCH_SEED_LEECHER_RATE_BPS", 4 * 1024 * 1024,
+))
+CONTROLLED_DOWNLOAD_SEED_UPLOAD_BPS = int(os.environ.get(
+    "TNG_CLIENT_BENCH_DOWNLOAD_SEED_UPLOAD_BPS", 4 * 1024 * 1024,
 ))
 MAX_PEERS = int(os.environ.get("TNG_CLIENT_BENCH_MAX_PEERS", "32"))
 DOWNLOAD_TIMEOUT = int(os.environ.get("TNG_CLIENT_BENCH_TIMEOUT_SECS", "1800"))
@@ -153,7 +156,7 @@ def env_enabled(name):
 
 def render_benchmark_compose_override(compose_environment):
     lines = ["services:"]
-    for client in CLIENTS:
+    for client in (*CLIENTS, "seed_leecher"):
         lines.append(f"  {client}:")
         if client == "torrentngd" and compose_environment:
             lines.append("    environment:")
@@ -163,6 +166,22 @@ def render_benchmark_compose_override(compose_environment):
             )
         lines.extend(["    healthcheck:", "      disable: true"])
     return "\n".join(lines) + "\n"
+
+
+def seed_leecher_preferences(upload_limit_bps):
+    if upload_limit_bps < 1:
+        raise ValueError("seed leecher upload limit must be positive")
+    return {
+        "encryption": 2,
+        "bittorrent_protocol": 1,
+        "dht": False,
+        "lsd": False,
+        "pex": False,
+        "max_connec": MAX_PEERS,
+        "max_connec_per_torrent": MAX_PEERS,
+        "dl_limit": SEED_LEECHER_RATE_BPS,
+        "up_limit": upload_limit_bps,
+    }
 
 
 def to_bytes(value):
@@ -453,7 +472,7 @@ def make_private_torrent(path, announce, output):
     piece_hashes = []
     with path.open("rb") as handle:
         while data := handle.read(piece_size):
-            piece_hashes.append(hashlib.sha1(data).digest())
+            piece_hashes.append(hashlib.sha1(data, usedforsecurity=False).digest())  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- BitTorrent v1 piece hashes are protocol-mandated SHA-1 values.
     info = {
         b"length": path.stat().st_size,
         b"name": path.name.encode("utf-8"),
@@ -467,20 +486,67 @@ def make_private_torrent(path, announce, output):
         b"creation date": int(time.time()),
         b"info": info,
     }))
-    return hashlib.sha1(bencode(info)).hexdigest()
+    return hashlib.sha1(bencode(info), usedforsecurity=False).hexdigest()  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- BitTorrent v1 info hashes are protocol-mandated SHA-1 values.
+
+
+def _validate_http_url(url):
+    try:
+        parsed = urllib.parse.urlsplit(url)
+    except (TypeError, ValueError) as error:
+        raise ValueError("benchmark HTTP requests require a valid absolute URL") from error
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise ValueError("benchmark HTTP requests only allow credential-free HTTP(S) URLs")
+    return url
+
+
+class _HttpOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, file_pointer, code, message, headers, new_url):
+        try:
+            _validate_http_url(new_url)
+        except ValueError:
+            return None
+        return super().redirect_request(request, file_pointer, code, message, headers, new_url)
+
+
+def _build_http_opener(cookie_jar=None):
+    """Create a urllib opener with HTTP(S) handlers only; file URLs are unavailable."""
+    opener = urllib.request.OpenerDirector()
+    opener.add_handler(urllib.request.ProxyHandler())
+    opener.add_handler(urllib.request.HTTPHandler())
+    opener.add_handler(urllib.request.HTTPSHandler())
+    if cookie_jar is not None:
+        opener.add_handler(urllib.request.HTTPCookieProcessor(cookie_jar))
+    opener.add_handler(_HttpOnlyRedirectHandler())
+    opener.add_handler(urllib.request.HTTPDefaultErrorHandler())
+    opener.add_handler(urllib.request.HTTPErrorProcessor())
+    return opener
+
+
+_PUBLIC_HTTP_OPENER = _build_http_opener()
+
+
+def _open_http(url, *, timeout):
+    request = urllib.request.Request(_validate_http_url(url))
+    return _PUBLIC_HTTP_OPENER.open(request, timeout=timeout)
 
 
 class HttpClient:
     def __init__(self, base_url):
         self.base_url = base_url
         self.jar = http.cookiejar.CookieJar()
-        self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar))
+        self.opener = _build_http_opener(self.jar)
         self.transmission_sid = ""
         self.transmission_style = "hyphen"
 
     def request(self, path, *, data=None, headers=None, timeout=15, method=None):
         request = urllib.request.Request(
-            self.base_url + path, data=data, headers=headers or {}, method=method,
+            _validate_http_url(self.base_url + path),
+            data=data, headers=headers or {}, method=method,
         )
         return self.opener.open(request, timeout=timeout)
 
@@ -488,8 +554,10 @@ class HttpClient:
 class Benchmark:
     def __init__(self):
         self.mode = os.environ.get("TNG_CLIENT_BENCH_MODE", "transfer").strip().lower()
-        if self.mode not in ("transfer", "idle"):
-            raise RuntimeError("TNG_CLIENT_BENCH_MODE must be transfer or idle")
+        if self.mode not in ("transfer", "idle", "controlled-download"):
+            raise RuntimeError(
+                "TNG_CLIENT_BENCH_MODE must be transfer, idle, or controlled-download"
+            )
         self.diagnostics = env_enabled("TNG_CLIENT_BENCH_DIAGNOSTICS")
         self.skip_build = env_enabled("TNG_CLIENT_BENCH_SKIP_BUILD")
         self.build_cpus = optional_positive_int("TNG_CLIENT_BENCH_BUILD_CPUS") or min(
@@ -667,6 +735,16 @@ class Benchmark:
         self.seed_source_override = Path(seed_source).expanduser().resolve() if seed_source else None
         self.seed_leecher_version = "unknown"
         self.seed_leecher_image = "not started"
+        configured_order_seed = optional_nonnegative_int(
+            "TNG_CLIENT_BENCH_ORDER_SEED",
+        )
+        self.transfer_order_seed = (
+            configured_order_seed
+            if configured_order_seed is not None
+            else int(hashlib.sha256(self.stamp.encode("ascii")).hexdigest()[:16], 16)
+        )
+        self.transfer_order = list(CLIENTS)
+        random.Random(self.transfer_order_seed).shuffle(self.transfer_order)
         self.cleanup_status = "pending"
         self.failure = ""
         self._env("INTEROP_WORKDIR", self.workdir)
@@ -843,6 +921,7 @@ class Benchmark:
             directory.mkdir(parents=True, exist_ok=True)
             if client != "rtorrent":
                 (directory / "public").mkdir(exist_ok=True)
+                (directory / "controlled").mkdir(exist_ok=True)
             directory.chmod(0o777)
         (self.workdir / "downloads").chmod(0o777)
         compose_environment = {}
@@ -862,10 +941,10 @@ class Benchmark:
         )
         self._prepare_qbit_config()
         self._prepare_torrentng_config(
-            dht_enabled=False if self.mode == "idle" else None,
+            dht_enabled=False if self.mode in ("idle", "controlled-download") else None,
         )
         self._prepare_rtorrent_config(
-            dht_enabled=False if self.mode == "idle" else None,
+            dht_enabled=False if self.mode in ("idle", "controlled-download") else None,
         )
         self.csv_path.parent.mkdir(parents=True, exist_ok=True)
         with self.csv_path.open("w", newline="") as handle:
@@ -1048,7 +1127,7 @@ class Benchmark:
             data=payload, headers=headers,
         )
         try:
-            with urllib.request.urlopen(request, timeout=15) as response:
+            with self.sessions["transmission"].opener.open(request, timeout=15) as response:
                 return json.loads(response.read())
         except urllib.error.HTTPError as error:
             if error.code != 409:
@@ -1062,7 +1141,7 @@ class Benchmark:
                 self.api_url("transmission") + "/transmission/rpc",
                 data=payload, headers=headers,
             )
-            with urllib.request.urlopen(request, timeout=15) as response:
+            with self.sessions["transmission"].opener.open(request, timeout=15) as response:
                 return json.loads(response.read())
 
     def _deluge(self, method, params=None):
@@ -1095,7 +1174,7 @@ class Benchmark:
         path = self.config_dir / "rtorrent/scgi.sock"
         if not path.exists():
             raise RuntimeError(f"rTorrent SCGI socket does not exist: {path}")
-        body = xmlrpc.client.dumps(params, methodname=method, allow_none=True).encode()
+        body = xmlrpc_client.dumps(params, methodname=method, allow_none=True).encode()
         headers = (
             b"CONTENT_LENGTH\0" + str(len(body)).encode() + b"\0"
             + b"SCGI\0" + b"1\0"
@@ -1113,7 +1192,7 @@ class Benchmark:
                     break
                 chunks.append(part)
         response = b"".join(chunks).split(b"\r\n\r\n", 1)[-1]
-        values, _ = xmlrpc.client.loads(response)
+        values, _ = xmlrpc_client.loads(response)
         return values[0] if values else None
 
     def _wait_ready(self, client):
@@ -1156,7 +1235,7 @@ class Benchmark:
                         self._scgi("system.client_version")
                         return
             except (OSError, urllib.error.URLError, urllib.error.HTTPError,
-                    RuntimeError, ValueError, xmlrpc.client.Error):
+                    RuntimeError, ValueError, xmlrpc_client.Error):
                 pass
             time.sleep(2)
         if client == "rtorrent":
@@ -2022,7 +2101,7 @@ class Benchmark:
             rows.append(self._sample(client, phase, elapsed, status))
             self.partial_download_rows[client] = rows
             if status["progress"] >= 1.0:
-                payload = self._data_path(client, name)
+                payload = self._data_path(client, name, phase=phase)
                 try:
                     actual = payload.stat().st_size if payload.is_file() else 0
                 except OSError:
@@ -2052,7 +2131,11 @@ class Benchmark:
         raise TimeoutError(f"{LABELS[client]} did not complete {phase} within {timeout}s")
 
     def _torrent_metadata(self):
-        index = urllib.request.urlopen(TORRENT_INDEX, timeout=30).read().decode("utf-8", "replace")
+        with _open_http(TORRENT_INDEX, timeout=30) as response:
+            index_bytes = response.read(4 * 1024 * 1024 + 1)
+        if len(index_bytes) > 4 * 1024 * 1024:
+            raise RuntimeError("official Debian torrent directory index exceeds 4 MiB")
+        index = index_bytes.decode("utf-8", "replace")
         names = re.findall(r'href=["\'](debian-[^"\']+-amd64-netinst\.iso\.torrent)["\']', index)
         if not names:
             raise RuntimeError(f"official Debian directory has no amd64 netinst torrent: {TORRENT_INDEX}")
@@ -2061,9 +2144,18 @@ class Benchmark:
             return tuple(int(part) for part in match.group(1).split(".")) if match else ()
         filename = max(names, key=version_key)
         url = urllib.parse.urljoin(TORRENT_INDEX, filename)
+        _validate_http_url(url)
         path = self.workdir / "torrents" / filename
-        urllib.request.urlretrieve(url, path)
-        sums = urllib.request.urlopen(SHA256SUMS_URL, timeout=30).read().decode("ascii", "replace")
+        with _open_http(url, timeout=30) as response:
+            torrent_bytes = response.read(8 * 1024 * 1024 + 1)
+        if len(torrent_bytes) > 8 * 1024 * 1024:
+            raise RuntimeError("official Debian torrent metadata exceeds 8 MiB")
+        path.write_bytes(torrent_bytes)
+        with _open_http(SHA256SUMS_URL, timeout=30) as response:
+            sums_bytes = response.read(4 * 1024 * 1024 + 1)
+        if len(sums_bytes) > 4 * 1024 * 1024:
+            raise RuntimeError("official Debian SHA256SUMS exceeds 4 MiB")
+        sums = sums_bytes.decode("ascii", "replace")
         iso_name = filename[:-8]
         checksum = None
         for line in sums.splitlines():
@@ -2119,10 +2211,12 @@ class Benchmark:
         except Exception as error:
             return f"unavailable ({type(error).__name__})"
 
-    def _data_path(self, client, iso_name):
+    def _data_path(self, client, iso_name, phase="public_download"):
         base = self.workdir / "downloads" / client
         if client != "rtorrent":
-            base = base / "public"
+            base = base / (
+                "controlled" if phase == "controlled_download" else "public"
+            )
         path = base / iso_name
         if path.is_file():
             return path
@@ -2175,7 +2269,10 @@ class Benchmark:
                 temporary.unlink(missing_ok=True)
         self.artifact_status = f"verified ISO and torrent saved under {self.artifact_dir}"
 
-    def _start_seed_leecher(self, torrent_path, seeder):
+    def _start_seed_leecher(
+        self, torrent_path, seeder, *, skip_check=False,
+        upload_limit_bps=RATE_BPS,
+    ):
         client = "seed_leecher"
         # Reuse the same controlled infohash with a fresh helper state for each seeder.
         client_config = self.config_dir / "qbittorrent-seed" / seeder
@@ -2206,23 +2303,15 @@ class Benchmark:
                 time.sleep(2)
         if not ready:
             raise RuntimeError("timed out waiting for the qBittorrent seed leecher")
-        preferences = {
-            "encryption": 2,
-            "bittorrent_protocol": 1,
-            "dht": False,
-            "lsd": False,
-            "pex": False,
-            "max_connec": MAX_PEERS,
-            "max_connec_per_torrent": MAX_PEERS,
-            "dl_limit": SEED_LEECHER_RATE_BPS,
-            "up_limit": RATE_BPS,
-        }
+        preferences = seed_leecher_preferences(upload_limit_bps)
         self._qbit_json(
             client, "/api/v2/app/setPreferences",
             data=urllib.parse.urlencode({"json": json.dumps(preferences)}).encode(),
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
-        self._add_torrent(client, torrent_path, "/downloads")
+        self._add_torrent(
+            client, torrent_path, "/downloads", skip_check=skip_check,
+        )
 
     def _seed_leecher_status(self, info_hash):
         rows = self._qbit_json(
@@ -2260,7 +2349,7 @@ class Benchmark:
                 "/api/qb/v2/torrents/reannounce", data=body,
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
-        elif client == "qbittorrent":
+        elif client in ("qbittorrent", "seed_leecher"):
             body = urllib.parse.urlencode({"hashes": info_hash}).encode()
             self.http(
                 client, "/api/v2/torrents/reannounce", data=body,
@@ -2424,6 +2513,7 @@ class Benchmark:
         download_root = self.workdir / "downloads" / client
         payloads = [download_root / iso_name] if client == "rtorrent" else [
             download_root / "public" / iso_name,
+            download_root / "controlled" / iso_name,
             download_root / "seed" / iso_name,
         ]
         retained_source = self.seed_source.resolve() if self.seed_source is not None else None
@@ -2616,6 +2706,317 @@ class Benchmark:
                 f"({download_error or seed_error})",
                 flush=True,
             )
+
+    def _run_controlled_download_one(
+        self, client, meta, torrent_path, info_hash, seed_payload,
+    ):
+        print(f"\n==> {LABELS[client]}: controlled private download", flush=True)
+        self.compose("up", "-d", client, quiet=True, timeout=900)
+        self.sessions[client] = HttpClient(self.api_url(client)) if client != "rtorrent" else None
+        self._wait_ready(client)
+        self._configure(client)
+        self._remember_container(client)
+        self._sample_idle(client)
+        self._capture_engine_memory_metrics(client, "idle")
+        version = self._version(client)
+        self.seed_cache_eviction[client] = evict_file_cache(seed_payload)
+
+        save_path = (
+            "/downloads/rtorrent"
+            if client == "rtorrent"
+            else f"/downloads/{client}/controlled"
+        )
+        rows = []
+        status = self._empty_status()
+        result = "FAIL"
+        error_text = ""
+        actual_sha = ""
+        elapsed = 0.0
+        self.partial_download_rows[client] = rows
+        try:
+            self._add_torrent(client, torrent_path, save_path)
+            elapsed, status, rows = self._wait_complete(
+                client, info_hash, meta["iso_name"], meta["size"],
+                DOWNLOAD_TIMEOUT, "controlled_download",
+            )
+            payload = self._data_path(
+                client, meta["iso_name"], phase="controlled_download",
+            )
+            actual_sha = self._sha256(payload)
+            if actual_sha != meta["sha256"]:
+                raise RuntimeError(
+                    f"controlled download SHA-256 mismatch: {actual_sha}"
+                )
+            result = "PASS"
+        except Exception as error:
+            error_text = f"{type(error).__name__}: {error}"
+            rows = self.partial_download_rows.get(client, rows)
+            if rows:
+                latest = rows[-1]
+                elapsed = float(latest[3])
+                status = {
+                    "progress": float(latest[4]),
+                    "down": int(latest[5]),
+                    "up": int(latest[6]),
+                    "peers": int(latest[7]),
+                    "total": meta["size"],
+                }
+        finally:
+            self._finish_transfer_window(
+                client, info_hash, "after_controlled_download",
+            )
+
+        download = self._summary(rows, "controlled_download")
+        if not rows:
+            for field in (
+                "peak_cgroup_anon", "peak_cgroup_current", "peak_cgroup_file",
+                "peak_process_tree_rss", "peak_process_tree_pss",
+            ):
+                download[field] = None
+        verified_bytes = meta["size"] if result == "PASS" else 0
+        observed_bytes = int(meta["size"] * float(status["progress"]))
+        row = {
+            "client": client,
+            "version": version,
+            "controlled_download": result,
+            "controlled_download_error": error_text,
+            "controlled_download_sha": actual_sha,
+            "controlled_download_progress": float(status["progress"]),
+            "controlled_download_seconds": elapsed,
+            "controlled_download_observed_bytes": observed_bytes,
+            "controlled_download_verified_bytes": verified_bytes,
+            "controlled_download_mib_s": (
+                verified_bytes / elapsed / 1048576 if elapsed and verified_bytes else None
+            ),
+            "controlled_download_mean_cpu": download["mean_cpu"],
+            "controlled_download_peak_cpu": download["peak_cpu"],
+            "controlled_download_cgroup_cpu_seconds": download["cgroup_cpu_seconds"],
+            "controlled_download_cpu_seconds_per_gib": per_gib(
+                download["cgroup_cpu_seconds"], verified_bytes,
+            ),
+            "controlled_download_peak_cgroup_anon": download["peak_cgroup_anon"],
+            "controlled_download_peak_cgroup_current": download["peak_cgroup_current"],
+            "controlled_download_peak_cgroup_file": download["peak_cgroup_file"],
+            "controlled_download_peak_process_tree_rss": download["peak_process_tree_rss"],
+            "controlled_download_peak_process_tree_pss": download["peak_process_tree_pss"],
+            "controlled_download_peak_peers": download["peak_peers"],
+        }
+        self.results.append(row)
+        if result == "PASS":
+            print(
+                f"[{LABELS[client]}] verified {verified_bytes / 1073741824:.3f} GiB; "
+                f"{row['controlled_download_mib_s']:.2f} MiB/s, "
+                f"{row['controlled_download_cpu_seconds_per_gib']:.3f} CPU-s/GiB",
+                flush=True,
+            )
+        else:
+            print(
+                f"[{LABELS[client]}] controlled download {result} at "
+                f"{row['controlled_download_progress']:.2%}: {error_text}",
+                file=sys.stderr, flush=True,
+            )
+        return row
+
+    def _run_controlled_download_mode(self, tracker_ip, meta, client_images):
+        if self.seed_source is None:
+            raise RuntimeError("controlled-download mode requires a verified seed source")
+        seed_payload = self.workdir / "leecher" / meta["iso_name"]
+        if seed_payload.resolve() != self.seed_source.resolve():
+            try:
+                os.link(self.seed_source, seed_payload)
+            except OSError:
+                shutil.copyfile(self.seed_source, seed_payload)
+        if (
+            seed_payload.stat().st_size != meta["size"]
+            or self._sha256(seed_payload) != meta["sha256"]
+        ):
+            raise RuntimeError("private download seeder payload failed SHA-256 verification")
+
+        torrent_path = self.workdir / "torrents" / "controlled-download.torrent"
+        info_hash = make_private_torrent(
+            seed_payload, f"http://{tracker_ip}:6969/announce", torrent_path,
+        )
+        self._start_seed_leecher(
+            torrent_path,
+            "controlled-download",
+            skip_check=True,
+            upload_limit_bps=CONTROLLED_DOWNLOAD_SEED_UPLOAD_BPS,
+        )
+        self._wait_seed_leecher_tracker(info_hash)
+        self.seed_cache_eviction["controlled_download"] = evict_file_cache(seed_payload)
+
+        try:
+            for index, client in enumerate(self.transfer_order):
+                try:
+                    self._run_controlled_download_one(
+                        client, meta, torrent_path, info_hash, seed_payload,
+                    )
+                except Exception as error:
+                    error_text = f"{type(error).__name__}: {error}"
+                    self.results.append({
+                        "client": client,
+                        "version": "unavailable",
+                        "controlled_download": "FAIL",
+                        "controlled_download_error": error_text,
+                        "controlled_download_sha": "",
+                        "controlled_download_progress": 0.0,
+                        "controlled_download_seconds": 0.0,
+                        "controlled_download_observed_bytes": 0,
+                        "controlled_download_verified_bytes": 0,
+                        "controlled_download_mib_s": None,
+                        "controlled_download_mean_cpu": 0.0,
+                        "controlled_download_peak_cpu": 0.0,
+                        "controlled_download_cgroup_cpu_seconds": None,
+                        "controlled_download_cpu_seconds_per_gib": None,
+                        "controlled_download_peak_cgroup_anon": None,
+                        "controlled_download_peak_cgroup_current": None,
+                        "controlled_download_peak_cgroup_file": None,
+                        "controlled_download_peak_process_tree_rss": None,
+                        "controlled_download_peak_process_tree_pss": None,
+                        "controlled_download_peak_peers": 0,
+                    })
+                    print(
+                        f"[{LABELS[client]}] {error_text}",
+                        file=sys.stderr, flush=True,
+                    )
+                finally:
+                    cid = self.service_id(client)
+                    if cid:
+                        image, _ = run_command(
+                            ["docker", "inspect", "-f", "{{.Config.Image}}", cid],
+                            env=self.env, check=False, quiet=True,
+                        )
+                        client_images[client] = image.strip()
+                    _, stop_code = self.compose(
+                        "stop", client, check=False, quiet=True, timeout=60,
+                    )
+                    if stop_code == 0:
+                        self._release_client_payloads(client, meta["iso_name"])
+                    if index + 1 < len(self.transfer_order):
+                        self.compose("restart", "opentracker", quiet=True, timeout=60)
+                        self._reannounce("seed_leecher", info_hash)
+                        self._wait_seed_leecher_tracker(info_hash)
+        finally:
+            self.compose("stop", "seed_leecher", check=False, quiet=True, timeout=60)
+
+        client_images["seed_leecher"] = self.seed_leecher_image
+        self._write_controlled_download_report(meta, client_images)
+        return int(
+            len(self.results) != len(self.transfer_order)
+            or any(row.get("controlled_download") != "PASS" for row in self.results)
+        )
+
+    def _write_controlled_download_report(self, meta, client_images):
+        self._write_memory_profile()
+        load_end = os.getloadavg()
+        load_peak = max(
+            (float(row[10]) for row in self.samples), default=self.load_start[0],
+        )
+
+        def value(value, digits=2):
+            return f"{value:.{digits}f}" if value is not None else "n/a"
+
+        def mib(value):
+            return f"{value / 1048576:.1f}" if value is not None else "n/a"
+
+        image_description = (
+            f"TorrentNG used the recorded prebuilt image {self.prebuilt_image}; "
+            "its source, fingerprint, and allocator labels were checked."
+            if self.skip_build else
+            "TorrentNG was built from the recorded checkout in a task-scoped BuildKit "
+            "builder; image source and allocator labels were checked."
+        )
+        lines = [
+            f"# TorrentNG controlled private download CPU/RAM: {meta['iso_name']}",
+            "",
+            f"- Started (UTC): {self.started}",
+            f"- TorrentNG source commit: {self.source_commit}",
+            f"- TorrentNG source tree: {self.source_tree}",
+            f"- TorrentNG worktree dirty: {'yes' if self.source_dirty else 'no'}",
+            f"- TorrentNG source fingerprint SHA-256: {self.source_fingerprint_sha256}",
+            f"- Host: {self.host}; {self.cpu_count} logical CPUs; "
+            f"{self.mem_total / 1073741824:.1f} GiB RAM; "
+            f"{self.mem_available / 1073741824:.1f} GiB available at start; "
+            f"Linux {self.kernel} ({self.machine})",
+            f"- Host load average (1/5/15m): "
+            f"{self.load_start[0]:.2f}/{self.load_start[1]:.2f}/{self.load_start[2]:.2f} "
+            f"at start; {load_end[0]:.2f}/{load_end[1]:.2f}/{load_end[2]:.2f} at end; "
+            f"sampled 1m peak {load_peak:.2f}",
+            f"- Fixture: private v1 torrent `{meta['iso_name']}`, {meta['size']:,} bytes; "
+            f"infohash {meta['info_hash']}; SHA-256 {meta['sha256']}",
+            f"- Receiver rate cap: {RATE_BPS:,} B/s "
+            f"({RATE_BPS / 1048576:.1f} MiB/s); fixed seeder upload cap: "
+            f"{CONTROLLED_DOWNLOAD_SEED_UPLOAD_BPS:,} B/s "
+            f"({CONTROLLED_DOWNLOAD_SEED_UPLOAD_BPS / 1048576:.1f} MiB/s); "
+            f"maximum peers {MAX_PEERS}",
+            f"- Piece assembly cap: "
+            f"{self.piece_assembly_cap_mb if self.piece_assembly_cap_mb is not None else 'config default'} MiB",
+            f"- Client order seed: {self.transfer_order_seed}; order: "
+            + ", ".join(LABELS[client] for client in self.transfer_order),
+            f"- Process-tree RSS/PSS sampling interval: {PROCESS_TREE_SAMPLE_SECONDS:g}s; "
+            f"cgroup sampling interval: {INTERVAL:g}s",
+            f"- TorrentNG storage backend: "
+            f"{describe_torrentng_storage_backend(self.storage_backend_observation)}",
+            "- " + image_description,
+            "- Container images: " + "; ".join(
+                f"{LABELS[client]}: {client_images.get(client, 'not started')}"
+                for client in self.transfer_order
+            ) + f"; fixed qBittorrent seeder: {client_images.get('seed_leecher', 'not started')}",
+            f"- Fixed seeder version: qBittorrent {self.seed_leecher_version}",
+            "",
+            "## Controlled download results",
+            "",
+            "Only completed transfers with a matching SHA-256 are eligible for CPU/GiB "
+            "comparison. The receiver cgroup is measured; qBittorrent's fixed seeder "
+            "runs in its own container and is excluded from receiver CPU/RAM.",
+            "",
+            "| Client | Result | Verified GiB | Time (s) | Average (MiB/s) | CPU (s/GiB) ↓ | Peak cgroup anonymous RAM (MiB) ↓ | Process-tree RSS peak (MiB) | Process-tree PSS peak (MiB) | SHA-256 / failure |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+        ]
+        by_client = {row["client"]: row for row in self.results}
+        for client in self.transfer_order:
+            row = by_client.get(client, {})
+            verified = row.get("controlled_download_verified_bytes", 0)
+            lines.append(
+                f"| {LABELS[client]} | {row.get('controlled_download', 'FAIL')} | "
+                f"{value(verified / 1073741824, 3)} | "
+                f"{value(row.get('controlled_download_seconds'))} | "
+                f"{value(row.get('controlled_download_mib_s'))} | "
+                f"{value(row.get('controlled_download_cpu_seconds_per_gib'), 3)} | "
+                f"{mib(row.get('controlled_download_peak_cgroup_anon'))} | "
+                f"{mib(row.get('controlled_download_peak_process_tree_rss'))} | "
+                f"{mib(row.get('controlled_download_peak_process_tree_pss'))} | "
+                f"{row.get('controlled_download_sha') or row.get('controlled_download_error', 'n/a')} |"
+            )
+        lines.extend([
+            "",
+            "## Method and limits",
+            "",
+            "- A single SHA-256-verified Debian ISO is served by one pinned qBittorrent "
+            f"seeder capped at {CONTROLLED_DOWNLOAD_SEED_UPLOAD_BPS:,} B/s through the "
+            "task's private Compose network. Each receiver runs alone, "
+            "with DHT and peer exchange disabled. The tracker is restarted between clients "
+            "and the seeder reannounces before the next receiver starts.",
+            "- The benchmark starts its measured CPU/RAM window after the receiver is "
+            "ready and the fixed seeder is announcing. CPU seconds per GiB use the "
+            "receiver's cgroup v2 CPU counter and only hash-verified payload bytes. "
+            "Anonymous memory is the receiver cgroup peak; process-tree RSS/PSS are "
+            "sampled independently and can miss short spikes at the configured interval.",
+            "- This run measures active private downloads, not the public swarm. The "
+            "qBittorrent seeder's CPU/RAM is excluded from client rows. Disk counters are "
+            "not used as a score. One pass on a shared host is exploratory and does not "
+            "establish an overall client ranking or a general performance claim.",
+            "",
+            "## Artifacts and cleanup",
+            "",
+            f"- Raw time-series samples: [{self.csv_path.name}]({self.csv_path.name})",
+            f"- Cgroup resource profile: [{self.memory_profile.name}]({self.memory_profile.name})",
+            f"- Temporary benchmark directory: {self.workdir}",
+            f"- Compose cleanup status: **{self.cleanup_status}**",
+            "",
+        ])
+        self.report.parent.mkdir(parents=True, exist_ok=True)
+        self.report.write_text("\n".join(lines))
 
     def _write_report(self, meta, client_images):
         self._write_memory_profile()
@@ -3321,10 +3722,22 @@ class Benchmark:
 
     def run(self):
         if (RATE_BPS < 1 or MAX_PEERS < 1 or INTERVAL < 1
-                or (self.mode == "transfer" and SEED_LEECHER_RATE_BPS < 1)):
+                or (self.mode == "transfer" and SEED_LEECHER_RATE_BPS < 1)
+                or (self.mode == "controlled-download"
+                    and CONTROLLED_DOWNLOAD_SEED_UPLOAD_BPS < 1)):
             raise RuntimeError("rate ceiling, peer ceiling, and sample interval must be positive")
-        if self.mode == "transfer" and (DOWNLOAD_TIMEOUT < 60 or SEED_TIMEOUT < 60):
-            raise RuntimeError("download and seed timeouts must be at least 60 seconds")
+        if self.mode in ("transfer", "controlled-download") and DOWNLOAD_TIMEOUT < 60:
+            raise RuntimeError("download timeout must be at least 60 seconds")
+        if self.mode == "transfer" and SEED_TIMEOUT < 60:
+            raise RuntimeError("seed timeout must be at least 60 seconds")
+        if self.mode == "controlled-download" and (
+            self.seed_source_override is None
+            or not self.seed_source_override.is_file()
+        ):
+            raise RuntimeError(
+                "controlled-download mode requires an existing verified "
+                "TNG_CLIENT_BENCH_SEED_SOURCE file"
+            )
         if IDLE_SAMPLE_SECONDS < 0:
             raise RuntimeError("idle memory sample duration cannot be negative")
         if (not math.isfinite(PROCESS_TREE_SAMPLE_SECONDS)
@@ -3342,7 +3755,7 @@ class Benchmark:
         if self.mode == "transfer" and SEED_NO_PEER_TIMEOUT < 10:
             raise RuntimeError("no-peer timeout must be at least 10 seconds")
         required_commands = ["docker", "findmnt", "git"]
-        if self.mode == "transfer":
+        if self.mode != "idle":
             required_commands.append("aria2c")
         for required in required_commands:
             if shutil.which(required) is None:
@@ -3368,6 +3781,10 @@ class Benchmark:
                 raise RuntimeError(f"seed source failed Debian SHA-256 verification: {source}")
             self.seed_source = source
         client_images = {}
+        if self.mode == "controlled-download":
+            return self._run_controlled_download_mode(
+                tracker_ip, meta, client_images,
+            )
         for client in CLIENTS:
             private_path = self.workdir / "torrents" / f"private-seed-{client}.torrent"
             try:
@@ -3478,8 +3895,9 @@ def main():
 
 By default, runs one current Debian amd64 netinst public download and one
 controlled private seed transfer for TorrentNG, qBittorrent, Transmission,
-Deluge, and rTorrent. Set TNG_CLIENT_BENCH_MODE=idle to run no-torrent
-network-isolated, attached/DHT-off, and attached/DHT-on profiles. Docker
+Deluge, and rTorrent. Set TNG_CLIENT_BENCH_MODE=controlled-download to run
+active private download CPU/RAM trials, or TNG_CLIENT_BENCH_MODE=idle to run
+no-torrent network-isolated, attached/DHT-off, and attached/DHT-on profiles. Docker
 Compose builds the current TorrentNG checkout unless a revision-matched
 prebuilt image is selected, using a per-run Buildx builder limited to two CPUs
 by default; its cache is removed during cleanup. Set
@@ -3487,7 +3905,7 @@ TNG_CLIENT_BENCH_BUILD_CPUS to override the cap. Reference client images are
 pinned by digest in deploy/interop/compose.yml.
 
 Environment:
-  TNG_CLIENT_BENCH_MODE=transfer|idle (default: transfer)
+TNG_CLIENT_BENCH_MODE=transfer|controlled-download|idle (default: transfer)
   TNG_CLIENT_BENCH_CLIENTS=torrentngd,qbittorrent,... (default: all five)
   TNG_CLIENT_BENCH_ALLOCATOR=system|jemalloc|mimalloc (default: system)
   TNG_CLIENT_BENCH_BUILD_CPUS=2 (task-scoped BuildKit CPU limit; default: min(2, host CPUs))
@@ -3500,6 +3918,7 @@ Environment:
   TNG_CLIENT_BENCH_WORKDIR=/new/path (must not already exist)
   TNG_CLIENT_BENCH_RATE_BPS=33554432 (download and upload ceiling)
   TNG_CLIENT_BENCH_SEED_LEECHER_RATE_BPS=4194304 (shared seed receiver ceiling)
+  TNG_CLIENT_BENCH_DOWNLOAD_SEED_UPLOAD_BPS=4194304 (fixed source ceiling in controlled-download mode)
   TNG_CLIENT_BENCH_MAX_PEERS=32
   TNG_CLIENT_BENCH_TIMEOUT_SECS=1800
   TNG_CLIENT_BENCH_SEED_TIMEOUT_SECS=900
@@ -3520,6 +3939,11 @@ Environment:
   TNG_CLIENT_BENCH_STORAGE_PEER_READ_CACHE_ENTRIES=16
   TNG_CLIENT_BENCH_PIECE_ASSEMBLY_CAP_MB=0
   TNG_CLIENT_BENCH_PEER_BUFFER_CAP_MB=16
+
+Set TNG_CLIENT_BENCH_MODE=controlled-download with a SHA-256-verified
+TNG_CLIENT_BENCH_SEED_SOURCE to compare active download CPU and RAM against one
+fixed private qBittorrent seeder. The seeder upload cap defaults to 4 MiB/s;
+TNG_CLIENT_BENCH_ORDER_SEED selects a repeatable randomized receiver order.
 
 The report and raw CSV remain in the repository; task scratch, the isolated
 Compose project, its volumes, benchmark-tagged images, and task-scoped

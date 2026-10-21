@@ -95,7 +95,8 @@ class CgroupCounterTests(unittest.TestCase):
             with self.subTest(client=client):
                 self.assertIn(f"  {client}:\n", rendered)
         self.assertIn('      TOKIO_WORKER_THREADS: "2"', rendered)
-        self.assertEqual(rendered.count("    healthcheck:"), len(benchmark.CLIENTS))
+        self.assertIn("  seed_leecher:\n", rendered)
+        self.assertEqual(rendered.count("    healthcheck:"), len(benchmark.CLIENTS) + 1)
 
     def test_idle_profile_schedule_is_seeded_and_balances_all_clients(self) -> None:
         first = object.__new__(benchmark.Benchmark)
@@ -553,6 +554,40 @@ class CgroupCounterTests(unittest.TestCase):
 
             instance._capture_engine_memory_metrics.assert_not_called()
             self.assertEqual(len(instance.samples), 1)
+
+
+class ControlledDownloadTests(unittest.TestCase):
+    def test_controlled_download_reads_its_own_payload_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            instance = object.__new__(benchmark.Benchmark)
+            instance.workdir = Path(directory)
+            root = Path(directory) / "downloads" / "torrentngd"
+            public = root / "public" / "debian.iso"
+            controlled = root / "controlled" / "debian.iso"
+            public.parent.mkdir(parents=True)
+            controlled.parent.mkdir(parents=True)
+            public.write_bytes(b"public")
+            controlled.write_bytes(b"controlled")
+
+            self.assertEqual(
+                instance._data_path("torrentngd", "debian.iso"), public,
+            )
+            self.assertEqual(
+                instance._data_path(
+                    "torrentngd", "debian.iso", phase="controlled_download",
+                ),
+                controlled,
+            )
+
+    def test_fixed_downloader_seeder_upload_limit_is_explicit(self) -> None:
+        preferences = benchmark.seed_leecher_preferences(4 * 1024 * 1024)
+
+        self.assertEqual(preferences["up_limit"], 4 * 1024 * 1024)
+        self.assertEqual(preferences["dl_limit"], benchmark.SEED_LEECHER_RATE_BPS)
+        self.assertFalse(preferences["dht"])
+        self.assertFalse(preferences["pex"])
+        with self.assertRaisesRegex(ValueError, "must be positive"):
+            benchmark.seed_leecher_preferences(0)
 
 
 class SeedFixtureTests(unittest.TestCase):

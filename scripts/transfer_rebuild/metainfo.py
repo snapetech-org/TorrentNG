@@ -122,7 +122,7 @@ def _decode_string_value(encoded: bytes, label: str) -> bytes:
 def _info_hashes(info_value: bytes) -> dict[str, str]:
     if not info_value.startswith(b"d") or _value_end(info_value, 0) != len(info_value):
         raise MetainfoError("metainfo info field is not one complete dictionary")
-    info_sha1 = hashlib.sha1(info_value).hexdigest()
+    info_sha1 = hashlib.sha1(info_value, usedforsecurity=False).hexdigest()  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- BitTorrent v1 info hashes are protocol-mandated SHA-1 values.
     info_sha256 = hashlib.sha256(info_value).digest()
     return {
         "sha1": info_sha1,
