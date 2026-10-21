@@ -160,6 +160,20 @@ Full reports, time-series samples, and memory profiles:
 [clean-main baseline](../certification/reports/torrentng-deep-audit-baseline-20261021.md)
 and [integrated candidate](../certification/reports/torrentng-deep-audit-candidate-20261021.md).
 
+The next exact-main five-client pass built clean `457df452` and verified all
+controlled seed payloads. TorrentNG used **2.66 CPU-s/GiB** and peaked at
+**25.2 MiB** cgroup anonymous memory, compared with CPU/memory of 2.02/18.0
+for qBittorrent, 1.33/24.8 for Transmission, 2.43/85.1 for Deluge, and
+0.55/1.9 for rTorrent. The run used one receiver capped at 4 MiB/s and was a
+single sequential pass on a shared host; it shows that CPU parity is still
+unproven and memory is mixed, not a client ranking. The public phases for
+TorrentNG, Transmission, and Deluge timed out and are excluded. The current
+host also had no `perf`, `bpftrace`, `strace`, `samply`, or `valgrind` command
+available, so this pass gives aggregate CPU without stack attribution. See
+the [exact-main report](../certification/reports/client-performance-benchmark-457df452-20261021T0525-cpu-ram.md)
+and its [samples](../certification/reports/client-performance-benchmark-457df452-20261021T0525-cpu-ram-samples.csv)
+and [memory profile](../certification/reports/client-performance-benchmark-457df452-20261021T0525-cpu-ram-memory-profile.json).
+
 ### Download assembly and parsing
 
 The handoff proposes a bounded global incomplete-piece budget and parsing that
@@ -184,6 +198,7 @@ hybrid, padding, cancellation, and crash-checkpoint behavior.
 5. Re-run the comparative client suite only after the selected candidate passes
    correctness and shows improvement beyond run variation.
 
-The original archived audit did not run a full-daemon benchmark. The later
-single-pair run adds preliminary source-level evidence but still does not
-establish a CPU speedup, RAM improvement, or universal client ranking.
+The original archived audit did not run a full-daemon benchmark. Later
+single-pair and exact-main client runs add preliminary source-level evidence,
+but still do not establish a repeatable CPU speedup, a broad RAM advantage, or
+a universal client ranking.

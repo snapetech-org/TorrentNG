@@ -18,6 +18,44 @@ sequential pass on a loaded host. TorrentNG, Transmission, and Deluge did not
 finish the 60-second public-swarm phase, so those rows are not download
 rankings.
 
+## 2026-10-21 exact-main CPU/RAM check (`457df452`)
+
+A clean image built from current `main` commit
+`457df452aeef4afc6f0e16777d05662b94945dc5`. All five clients completed the
+controlled seed transfer and passed Debian's SHA-256 check. They ran
+sequentially with a single qBittorrent leecher capped at 4 MiB/s; average
+upload rates were 3.82–3.94 MiB/s. The table reports cgroup CPU time per
+verified GiB and peak cgroup anonymous memory, which excludes charged file
+cache.
+
+| Client | Seed CPU (s/GiB) ↓ | Peak anonymous memory (MiB) ↓ | Seed process-tree RSS peak (MiB) |
+|---|---:|---:|---:|
+| TorrentNG | 2.66 | 25.2 | 42.6 |
+| qBittorrent | 2.02 | 18.0 | 779.8 |
+| Transmission | 1.33 | 24.8 | 39.1 |
+| Deluge | 2.43 | 85.1 | 889.3 |
+| rTorrent | 0.55 | 1.9 | 6.9 |
+
+In this pass, TorrentNG used 32% more CPU per GiB than qBittorrent, twice
+Transmission, 9% more than Deluge, and 4.8 times rTorrent. Its anonymous
+memory was close to Transmission, 7.2 MiB above qBittorrent, below Deluge, and
+well above rTorrent. The process-tree RSS figures for qBittorrent and Deluge
+are much larger than their anonymous cgroup readings; PSS was unavailable for
+those clients, so those RSS values should not be used as a memory ranking.
+
+The desktop had 32 logical CPUs; its one-minute load peak was 13.33, with
+1/5/15-minute averages of 4.87/6.39/9.52 at start and 4.66/5.14/6.56 at end.
+This was one sequential pass, so the small CPU and memory differences have low
+confidence and are not a general client ranking. The benchmark command exited
+1 because the 60-second public phases for TorrentNG, Transmission, and Deluge
+did not finish; those public results are excluded. qBittorrent and rTorrent
+completed the public transfer, but that live-swarm phase is not a controlled
+comparison. The report records pinned image digests, exact source, raw
+samples, memory profile, and cleanup status:
+[`report`](../certification/reports/client-performance-benchmark-457df452-20261021T0525-cpu-ram.md),
+[`samples`](../certification/reports/client-performance-benchmark-457df452-20261021T0525-cpu-ram-samples.csv),
+[`memory profile`](../certification/reports/client-performance-benchmark-457df452-20261021T0525-cpu-ram-memory-profile.json).
+
 ## 2026-10-20 hot-path follow-up
 
 The uploaded source review and verified evidence archive are preserved at

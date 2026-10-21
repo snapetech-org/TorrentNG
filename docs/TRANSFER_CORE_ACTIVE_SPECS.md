@@ -44,6 +44,19 @@ or establish a whole-client ranking. See the
 [`deep-audit benchmark report`](../certification/reports/torrentng-deep-audit-candidate-20261021.md)
 and its [clean-main baseline](../certification/reports/torrentng-deep-audit-baseline-20261021.md).
 
+A separate exact-main five-client pass built clean commit
+`457df452aeef4afc6f0e16777d05662b94945dc5` and hash-verified all controlled
+seed payloads. TorrentNG measured **2.66 CPU-s/GiB** and **25.2 MiB** peak
+cgroup anonymous memory, compared with qBittorrent 2.02/18.0, Transmission
+1.33/24.8, Deluge 2.43/85.1, and rTorrent 0.55/1.9. Average seed rates were
+similar because one common receiver was capped at 4 MiB/s. This one-pass result
+shows no CPU lead and mixed memory results; it does not establish a ranking.
+Three public phases timed out at 60 seconds, so the overall command exited 1,
+but all controlled seed hashes passed. The run, raw samples, and memory profile
+are linked in [`CLIENT_PERFORMANCE_BENCHMARK.md`](CLIENT_PERFORMANCE_BENCHMARK.md).
+Repeated randomized client order and a current-source matched PERF-110 run
+remain open.
+
 ## Earlier bulk validation — implementation source `3758d021` (2026-10-20)
 
 The Rust implementation under test is exact commit `3758d0217dea665fefdfcd6775a3f72d935cf058`; the only working-tree edits during this pass were documentation. The full workspace passed on Rust 1.94.0 and 1.88.0: each run had 2,309 passed, 0 failed, and 12 ignored across 37 result summaries. Release `rt-engine` passed 738/738, including the seeded ownership simulator. All 11 runnable ignored cases passed explicitly: the two release 100k live-catalog cases, seven storage diagnostics, the real-root move/import/delete fixture, and the peer-wire encode probe. The remaining ignored panic-hook child is exercised through its passing parent regression.
