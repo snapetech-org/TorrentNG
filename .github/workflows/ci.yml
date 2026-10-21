@@ -7,9 +7,10 @@ on:
     branches: ["master", "main"]
   workflow_dispatch:
 
+# Preserve every main-push and PR result for the commit it checked.
 concurrency:
-  group: torrentng-ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: torrentng-ci-${{ github.run_id }}-${{ github.run_attempt }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
