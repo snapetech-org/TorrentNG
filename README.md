@@ -104,6 +104,7 @@ exercised and where.
 - [Run the TorrentNG Engine](docs/NATIVE_DEPLOYMENT.md)
 - [Install on Unraid](deploy/unraid/README.md)
 - [Configuration](docs/CONFIGURATION.md)
+- [OIDC sign-in setup and operations](docs/OIDC_AUTHENTICATION.md) · [shared provider catalog](https://github.com/snapetech-org/seerrng/blob/main/docs/maintainers/oidc-provider-catalog.md)
 - [Migration and export](docs/MIGRATION.md)
 - [Client performance benchmark](docs/CLIENT_PERFORMANCE_BENCHMARK.md) · [dated comparison and memory investigation](certification/reports/native-memory-optimization-20261014-agentvm.md)
 - [API and compatibility limits](docs/API.md) · [client matrices](docs/CLIENT_COMPATIBILITY_MATRICES.md)
