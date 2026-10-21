@@ -480,6 +480,13 @@ impl MemoryLease {
         self.bytes
     }
 
+    /// Acquire a second reservation for another independently allocated copy
+    /// of the same resource. The returned lease has its own lifetime and
+    /// releases only its duplicate charge when dropped.
+    pub fn try_duplicate(&self) -> Option<MemoryLease> {
+        self.governor.try_acquire(self.class, self.bytes)
+    }
+
     /// Trace-only identity for correlating a reservation with operation and
     /// release evidence. Leases created without TRACE logging intentionally
     /// carry no identity and incur no identity allocation.

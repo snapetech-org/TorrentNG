@@ -2101,6 +2101,7 @@ async fn read_remote_metadata_handshake(
         let msg = tokio::time::timeout(Duration::from_secs(15), peer_io.next())
             .await??
             .ok_or_else(|| anyhow::anyhow!("peer closed before extension handshake"))?;
+        let (msg, _message_memory_lease) = msg.into_accounted_parts()?;
         if let Message::Extended {
             ext_id: EXT_HANDSHAKE_ID,
             payload,
@@ -2132,6 +2133,7 @@ async fn read_metadata_piece(
         let msg = tokio::time::timeout(Duration::from_secs(15), peer_io.next())
             .await??
             .ok_or_else(|| anyhow::anyhow!("peer closed during metadata transfer"))?;
+        let (msg, _message_memory_lease) = msg.into_accounted_parts()?;
         let Message::Extended { ext_id, payload } = msg else {
             continue;
         };
@@ -2359,6 +2361,7 @@ async fn read_v2_hashes_response(
         let msg = tokio::time::timeout(Duration::from_secs(15), peer_io.next())
             .await??
             .ok_or_else(|| anyhow::anyhow!("peer closed during v2 piece-layer transfer"))?;
+        let (msg, _message_memory_lease) = msg.into_accounted_parts()?;
         match msg {
             Message::Hashes {
                 pieces_root: response_root,
