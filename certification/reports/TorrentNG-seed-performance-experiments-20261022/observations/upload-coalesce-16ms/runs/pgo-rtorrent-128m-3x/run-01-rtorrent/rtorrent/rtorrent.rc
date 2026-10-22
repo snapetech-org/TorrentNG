@@ -1,0 +1,8 @@
+directory.default.set = /tmp/torrentng-seed-goal-20261022/coalesce16-pgo-rtorrent-128m-3x/run-01-rtorrent/rtorrent/download
+session.path.set = /tmp/torrentng-seed-goal-20261022/coalesce16-pgo-rtorrent-128m-3x/run-01-rtorrent/rtorrent/session
+network.bind_address.ipv4.set = 127.0.0.1
+network.listen.port.range.set = 47263-47263
+network.listen.port.random.set = no
+dht.mode.set = disable
+protocol.pex.set = no
+network.scgi.open_port = 127.0.0.1:33925

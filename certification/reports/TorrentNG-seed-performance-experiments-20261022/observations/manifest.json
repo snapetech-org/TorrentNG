@@ -3,8 +3,8 @@
   "files": [
     {
       "path": "README.md",
-      "bytes": 896,
-      "sha256": "2dc05919000555d2c94fe29497d3214e818199f0e1d51ffa5da948c93efcfc9d"
+      "bytes": 1391,
+      "sha256": "1c42cafd00d65e83196a2427979fc088d4075da904be094ee8073e631a0deb30"
     },
     {
       "path": "batch-distribution-16m/logs/run-01-batches-batches.client.log",
@@ -1560,6 +1560,1236 @@
       "path": "screen-stream-cache-64m-3x/summary.json",
       "bytes": 174922,
       "sha256": "9f5f3e7370dfa1dbea5c54e6b7f20f51eb60dd16c1bef653c84c6ace4a80d459"
+    },
+    {
+      "path": "upload-coalesce-16ms/README.md",
+      "bytes": 1332,
+      "sha256": "6c54d398475700b618ed622be9b23f8e57c8295d56d11cd0dc323756416fb0ba"
+    },
+    {
+      "path": "upload-coalesce-16ms/executables/README.md",
+      "bytes": 542,
+      "sha256": "e8fe86bb03fa4f9d5736397866f464579d595f880f0451225d9b3e1ed806d178"
+    },
+    {
+      "path": "upload-coalesce-16ms/executables/SHA256SUMS.uncompressed",
+      "bytes": 442,
+      "sha256": "a02371efed437a507da5e2138c9f35f1648a51a70f0a29ddb5d50c5a26e77394"
+    },
+    {
+      "path": "upload-coalesce-16ms/executables/coalesce16-pgo.torrentngd.gz",
+      "bytes": 9242636,
+      "sha256": "c92ea307fb54ce65ac8b5dcbb2386e5af580ead655d4f10778478af5aa39a632"
+    },
+    {
+      "path": "upload-coalesce-16ms/executables/coalesce16-release.torrentngd.gz",
+      "bytes": 8779142,
+      "sha256": "1bb16b4cec1424082dba20942fbf90a27555b4a31ce28e6418cbc0de7fa191a0"
+    },
+    {
+      "path": "upload-coalesce-16ms/executables/coalesce8-pgo.torrentngd.gz",
+      "bytes": 9242611,
+      "sha256": "b14d05e8d6f45c88f83808ee3ac67704b43779c1c5e186b1f45dfb56e4891c48"
+    },
+    {
+      "path": "upload-coalesce-16ms/executables/coalesce8-release.torrentngd.gz",
+      "bytes": 8779140,
+      "sha256": "2249524c972e19c86f665f9862040ce782841a6f25f6fbbbc8776c4174044dcc"
+    },
+    {
+      "path": "upload-coalesce-16ms/experiment.patch",
+      "bytes": 348,
+      "sha256": "5cafcfe1b4ed75858893da3b1a4e622dbcfb71f9eb03e8c373fb1425bfa40462"
+    },
+    {
+      "path": "upload-coalesce-16ms/pgo-64m-3x/fixture.torrent",
+      "bytes": 1377,
+      "sha256": "c3dcc6124dcd3bbb0bc2ead7b754361db71ddef1a98e0094f851cb255e4cf7d7"
+    },
+    {
+      "path": "upload-coalesce-16ms/pgo-64m-3x/summary.json",
+      "bytes": 128443,
+      "sha256": "1cd807845d154f843afcf7153f91d1a5c65996aa575feead8b4cd869ae9b5d33"
+    },
+    {
+      "path": "upload-coalesce-16ms/pgo-64m-3x/summary.source.json",
+      "bytes": 130429,
+      "sha256": "a9a8133a815edaeeafc2570dc10d9800a48a4dc55c2e7742aa8f6ae35ac0a54a"
+    },
+    {
+      "path": "upload-coalesce-16ms/pgo-rtorrent-128m-3x/fixture.torrent",
+      "bytes": 2658,
+      "sha256": "36c0df549c2aa04cea953575429878979f00ed214f59e94a52b9b9032f290dbc"
+    },
+    {
+      "path": "upload-coalesce-16ms/pgo-rtorrent-128m-3x/summary.json",
+      "bytes": 223835,
+      "sha256": "581e5a90d4ce351661e553e2a79305959e4ec88e088856a18feab4f568d7565e"
+    },
+    {
+      "path": "upload-coalesce-16ms/pgo-rtorrent-128m-3x/summary.source.json",
+      "bytes": 225322,
+      "sha256": "6b1232c739cf2fae8480f094bfb237495e3d7163b64d8a77592d0554a9ed732b"
+    },
+    {
+      "path": "upload-coalesce-16ms/release-128m-3x/fixture.torrent",
+      "bytes": 2658,
+      "sha256": "36c0df549c2aa04cea953575429878979f00ed214f59e94a52b9b9032f290dbc"
+    },
+    {
+      "path": "upload-coalesce-16ms/release-128m-3x/summary.json",
+      "bytes": 160108,
+      "sha256": "42a8de22102c3e71ac74a8929234e2918c3032c82964f213835661958e5af84a"
+    },
+    {
+      "path": "upload-coalesce-16ms/release-128m-3x/summary.source.json",
+      "bytes": 162034,
+      "sha256": "290e043b17e68f1b0a6bc1810b6a5d9bddc31189d1ebd1c74d4c06d974342e0d"
+    },
+    {
+      "path": "upload-coalesce-16ms/release-64m-3x/fixture.torrent",
+      "bytes": 1377,
+      "sha256": "c3dcc6124dcd3bbb0bc2ead7b754361db71ddef1a98e0094f851cb255e4cf7d7"
+    },
+    {
+      "path": "upload-coalesce-16ms/release-64m-3x/summary.json",
+      "bytes": 128293,
+      "sha256": "0d35dc0627583924acf5886898facc0f640a684b3aab8575031bb88b4c44de48"
+    },
+    {
+      "path": "upload-coalesce-16ms/release-64m-3x/summary.source.json",
+      "bytes": 129883,
+      "sha256": "1a6eb4c97d2fc4531f69eb70b16519837f16dd4c1c124e0b52d8f60ca779cea6"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/fixture/fixture.torrent",
+      "bytes": 1377,
+      "sha256": "c3dcc6124dcd3bbb0bc2ead7b754361db71ddef1a98e0094f851cb255e4cf7d7"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-01-coalesce16-pgo/coalesce16-pgo/client.log",
+      "bytes": 457,
+      "sha256": "567464566bd5c8d4932fe1124b911dfeb8b078fb6f63022427b566dfcd7a8d0c"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-01-coalesce16-pgo/coalesce16-pgo/config.toml",
+      "bytes": 452,
+      "sha256": "8df1c7b210fe88640a96b1f9915d5eff018c16192d87186d6ed1b5297275bff7"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-01-coalesce16-pgo/coalesce16-pgo/diagnostics/after-seed-recheck-pid-3208107.smaps.gz",
+      "bytes": 2276,
+      "sha256": "49da5a2383c4fd7fecaab51bdb86ceca58a54b40e81bb15edb8f46f47a9fe75c"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-01-coalesce16-pgo/coalesce16-pgo/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "16ccd78c39dd30901dcfdf43ea19913bdea7eb38bf26dc9dd1b477145ee9ac7c"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-01-coalesce16-pgo/coalesce16-pgo/diagnostics/after-transfer-pid-3208107.smaps.gz",
+      "bytes": 2291,
+      "sha256": "53dc5a21daabbd6f1bff6f05af8b966dd4637a59f49ddeb1bece15ec120e3ec8"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-01-coalesce16-pgo/coalesce16-pgo/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63169,
+      "sha256": "ffad2f18123f24d65bc7e3432ead519cbe5b87a4c08afbc5e2e03b53fb2d0a6f"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-01-coalesce16-pgo/coalesce16-pgo/diagnostics/before-torrent-add-pid-3208107.smaps.gz",
+      "bytes": 1993,
+      "sha256": "9b26677edfe34f6d00867f35a51fcb8ad14f16046ed77b1f171ac8ee5d1caf3f"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-01-coalesce16-pgo/coalesce16-pgo/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "a57bfd27a7cc080d8a53d945dbb960ddf364c7963f8737f9e677de4562e9ba4e"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-01-coalesce8-pgo/coalesce8-pgo/client.log",
+      "bytes": 457,
+      "sha256": "c2988eacef407d7f223400c76f9e5b03ceb466fa2c601052053038c97ee616f8"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-01-coalesce8-pgo/coalesce8-pgo/config.toml",
+      "bytes": 448,
+      "sha256": "d5184b6a8eaab736e9a2964c1248d3fb798793f7dbd101131a7ec36edddc0f3a"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-01-coalesce8-pgo/coalesce8-pgo/diagnostics/after-seed-recheck-pid-3202557.smaps.gz",
+      "bytes": 2278,
+      "sha256": "761218ebb7507767d5307d2815672c6af466b0a88ed020d40724b25f1536a45b"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-01-coalesce8-pgo/coalesce8-pgo/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "7951d64129c216ee58c08a8f9ef1691bf7212d22b9052aafe6fa179025855d82"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-01-coalesce8-pgo/coalesce8-pgo/diagnostics/after-transfer-pid-3202557.smaps.gz",
+      "bytes": 2284,
+      "sha256": "443b08cdc125a3de63cb9781319c051c7e66aa9250cef19d0711a40066113122"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-01-coalesce8-pgo/coalesce8-pgo/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63169,
+      "sha256": "e6422b9dc3f186855b962a056c7a57c4cb8b3df0b65de9d4ec3f20dcf0df1da5"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-01-coalesce8-pgo/coalesce8-pgo/diagnostics/before-torrent-add-pid-3202557.smaps.gz",
+      "bytes": 1989,
+      "sha256": "ed458316fcbae250ad2dab452418438fa036dc56b1b1f6b4b239f74e2fc2993f"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-01-coalesce8-pgo/coalesce8-pgo/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "2c966a867872097f39b954077911c096d514230e9c8a186f1cb496a4635bd742"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-02-coalesce16-pgo/coalesce16-pgo/client.log",
+      "bytes": 457,
+      "sha256": "10260c63a23bed57242dc5370486bd5881b03c303f35c48851d9d1479cb84a34"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-02-coalesce16-pgo/coalesce16-pgo/config.toml",
+      "bytes": 452,
+      "sha256": "61aa356f1267b40649d9b07b7781ce50a89e95132921b7667ba9bd9859166f92"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-02-coalesce16-pgo/coalesce16-pgo/diagnostics/after-seed-recheck-pid-3213024.smaps.gz",
+      "bytes": 2282,
+      "sha256": "a90a88a81a8d2fd63e306fa5f5d24fbce3138fcb1ca4b75a645d952e62732306"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-02-coalesce16-pgo/coalesce16-pgo/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "efc701717f5fd7c512293ce593e86c0d383731f962b58b52a4659c28376c11ee"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-02-coalesce16-pgo/coalesce16-pgo/diagnostics/after-transfer-pid-3213024.smaps.gz",
+      "bytes": 2296,
+      "sha256": "032b4db514e0f0e7c4773e19e0010a00866c384aa99d4c4ba27e73ef0cff63d2"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-02-coalesce16-pgo/coalesce16-pgo/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63169,
+      "sha256": "5ad97f849340246f5ab3bf02ee19b78e3b8e27b5eab4c39166d7f8e04b14adf6"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-02-coalesce16-pgo/coalesce16-pgo/diagnostics/before-torrent-add-pid-3213024.smaps.gz",
+      "bytes": 1985,
+      "sha256": "884fa37b89fef50a773a0c9cf32607ed87c4bd3fe54cbcda87c217b410ad7bbb"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-02-coalesce16-pgo/coalesce16-pgo/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "68508a20a7dfb772fdcb7c92d25c59aa4b98409ebd4622a9f0b7fced8fe77877"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-02-coalesce8-pgo/coalesce8-pgo/client.log",
+      "bytes": 457,
+      "sha256": "373f6d2b3481b08c1b67cb3f56eaeda9e8874f44e039f26141bfdd94c51fac9d"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-02-coalesce8-pgo/coalesce8-pgo/config.toml",
+      "bytes": 448,
+      "sha256": "7ee496d996b603ecb979165fb17f5076ff30a19ee0acffbd31d97944daf577f4"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-02-coalesce8-pgo/coalesce8-pgo/diagnostics/after-seed-recheck-pid-3210113.smaps.gz",
+      "bytes": 2278,
+      "sha256": "8a6a91ea0a51473a6f3e502aeb35662431808e22237c86892d94e678348e9841"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-02-coalesce8-pgo/coalesce8-pgo/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "5c2e8ab9d6440c415178ab99c7848a289a9421bad8c55b5dc1ded0e204eb474a"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-02-coalesce8-pgo/coalesce8-pgo/diagnostics/after-transfer-pid-3210113.smaps.gz",
+      "bytes": 2251,
+      "sha256": "87ddf666733aa7060168c640b2986e9e17b0fd43be607b503869e3dd8768667e"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-02-coalesce8-pgo/coalesce8-pgo/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63171,
+      "sha256": "7d86e3838a5a3ea6fe5145cac2283ba2d8fcaef6b234a32959fe6127111a3df2"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-02-coalesce8-pgo/coalesce8-pgo/diagnostics/before-torrent-add-pid-3210113.smaps.gz",
+      "bytes": 1983,
+      "sha256": "f3423ea4374c8b96055ceebc16ff55bd4a23764496bee32f0225784431c690eb"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-02-coalesce8-pgo/coalesce8-pgo/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "045d726c205731e0d0c29d000c62b3854c6f4496d8482a943ee68fe8e6a5fc5a"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-03-coalesce16-pgo/coalesce16-pgo/client.log",
+      "bytes": 457,
+      "sha256": "c9d61137ce849dc3f80f6f1c5a75868ad1a6f7c8e2f4c39a713021d71ecc1fec"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-03-coalesce16-pgo/coalesce16-pgo/config.toml",
+      "bytes": 452,
+      "sha256": "4cd5e82e0653477c0a64df2781fd156f80a85410aa46eb469eb214fb43198c0c"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-03-coalesce16-pgo/coalesce16-pgo/diagnostics/after-seed-recheck-pid-3224111.smaps.gz",
+      "bytes": 2480,
+      "sha256": "3d9d286194ddd4020a50bffeb3349e4a1f12bd0e19c7c9006ba8dede46d5b2e0"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-03-coalesce16-pgo/coalesce16-pgo/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55640,
+      "sha256": "955214a397f388cc7ad03c34d4b8e4cf7a3ec4fbbb655ba8d8371546ae606269"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-03-coalesce16-pgo/coalesce16-pgo/diagnostics/after-transfer-pid-3224111.smaps.gz",
+      "bytes": 2404,
+      "sha256": "76dc4bb26217259e5ede41666ed1ad4a2e4091d4fd42d18eae6ed38c76ed4d27"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-03-coalesce16-pgo/coalesce16-pgo/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63174,
+      "sha256": "a66b3ea2d8820ec28ca1f8b946d91a502ceb1789f64ef370bcd061be1d7af386"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-03-coalesce16-pgo/coalesce16-pgo/diagnostics/before-torrent-add-pid-3224111.smaps.gz",
+      "bytes": 1983,
+      "sha256": "8c2d521ee7a64b681d24d6526fd9f29e43e0ff997666fd2f502a03c2769e71cf"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-03-coalesce16-pgo/coalesce16-pgo/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "4becad9f10166acb82cc7c2e50bc0adf5020480428203064b7964eac505f7556"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-03-coalesce8-pgo/coalesce8-pgo/client.log",
+      "bytes": 457,
+      "sha256": "cf14b0b5be5cf556c3eddf5ee4e20168168c9c2a7cc755d54ba745b0d288c000"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-03-coalesce8-pgo/coalesce8-pgo/config.toml",
+      "bytes": 448,
+      "sha256": "b8a7308bb3fc5d470277b8afe8f681f7a69183eb678f581f7adb7def92e67b22"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-03-coalesce8-pgo/coalesce8-pgo/diagnostics/after-seed-recheck-pid-3219100.smaps.gz",
+      "bytes": 2487,
+      "sha256": "ab0f6f4651f903d5072c8d968143b62336857d12f6aa303d22481341973c026c"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-03-coalesce8-pgo/coalesce8-pgo/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55640,
+      "sha256": "ce6b49c64ff5c9aceb7b24784c018997ae2f22f3b5b0f993e4e2c341d587abb1"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-03-coalesce8-pgo/coalesce8-pgo/diagnostics/after-transfer-pid-3219100.smaps.gz",
+      "bytes": 2415,
+      "sha256": "c95853ac7068118bbd44a9b7aed2c4c6716ec8e65839af07ea6e95f1ecbafbfe"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-03-coalesce8-pgo/coalesce8-pgo/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63170,
+      "sha256": "1a416db84c1ecd835af283a823c6bf70343f15c3b24827a5a4fb0136ec99a094"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-03-coalesce8-pgo/coalesce8-pgo/diagnostics/before-torrent-add-pid-3219100.smaps.gz",
+      "bytes": 1990,
+      "sha256": "28a379d802f7bd23144264d54acf9166a84edbc7da8347aa4a6dfb2a966052ef"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-64m-3x/run-03-coalesce8-pgo/coalesce8-pgo/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "bb703336e50c6405596e2e935616498e962b719be4ee876bd38d0633cc8c1140"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/fixture/fixture.torrent",
+      "bytes": 2658,
+      "sha256": "36c0df549c2aa04cea953575429878979f00ed214f59e94a52b9b9032f290dbc"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-01-coalesce16-pgo/coalesce16-pgo/client.log",
+      "bytes": 457,
+      "sha256": "d9f4ff5b399b65aaaa959eb6f181f3110bfd32e123510789c2fa3ca05daa375d"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-01-coalesce16-pgo/coalesce16-pgo/config.toml",
+      "bytes": 458,
+      "sha256": "15ff61535b50e64de2c4f0b1ab9250e0b57447da85ff7c7cec59b1b806ef376e"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-01-coalesce16-pgo/coalesce16-pgo/diagnostics/after-seed-recheck-pid-3243226.smaps.gz",
+      "bytes": 2305,
+      "sha256": "7b7b211085d61f2fd37d6996be12474582a2bf86b7208fe86707fac08cc35e9f"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-01-coalesce16-pgo/coalesce16-pgo/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "024070c3b009ea0cc13ffa0abe85777586da14e93b5e56b34ac02b7008ea8164"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-01-coalesce16-pgo/coalesce16-pgo/diagnostics/after-transfer-pid-3243226.smaps.gz",
+      "bytes": 2321,
+      "sha256": "5eb25b27c836f686bc6ee92aacc1b6144c51b10dafb40f2cbbf429752d6aaf23"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-01-coalesce16-pgo/coalesce16-pgo/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "125683b4600efe3c40498058f9cd0c9057dd4129521b92e4d61f7ae32fcf7e6d"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-01-coalesce16-pgo/coalesce16-pgo/diagnostics/before-torrent-add-pid-3243226.smaps.gz",
+      "bytes": 1975,
+      "sha256": "68e07098de121558c87b96f57fce287bd28cbf811b18be76a57c9e9bfc4f6d3a"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-01-coalesce16-pgo/coalesce16-pgo/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "fccee29af78ffe1b730e4eb2474bbe7d07522f192da574e6695b99a5b96833b8"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-01-coalesce8-pgo/coalesce8-pgo/client.log",
+      "bytes": 457,
+      "sha256": "9fa7d8fab9df1342ad208c4d4f23d3565806d7556ac1a52a3194470cc5971c7b"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-01-coalesce8-pgo/coalesce8-pgo/config.toml",
+      "bytes": 454,
+      "sha256": "1e9503879586608af4617ad90cdd9908a5dcd47c2a0f9e165f5576c0525a07a7"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-01-coalesce8-pgo/coalesce8-pgo/diagnostics/after-seed-recheck-pid-3238107.smaps.gz",
+      "bytes": 2297,
+      "sha256": "0e9fee919b082292abd54c2db57987171b7bdaf38bef91c026f846b25f80c3d2"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-01-coalesce8-pgo/coalesce8-pgo/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "544b8d165c9c55254213a980e4866863e13ce0c806f94a821870574b1d21464a"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-01-coalesce8-pgo/coalesce8-pgo/diagnostics/after-transfer-pid-3238107.smaps.gz",
+      "bytes": 2309,
+      "sha256": "1e0839c6382502ac74bca3d2e5a72efd7ba7a3ac17f076bd8ccfe14829cc003f"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-01-coalesce8-pgo/coalesce8-pgo/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "e6a3b53178099a15bc3c8daff75da49ac9b1b3287558b24ab199d195b6609b06"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-01-coalesce8-pgo/coalesce8-pgo/diagnostics/before-torrent-add-pid-3238107.smaps.gz",
+      "bytes": 1989,
+      "sha256": "a76733bb0d541947816aee1d08a7fd5af31d9c2a303d82ade86c25671b6e4895"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-01-coalesce8-pgo/coalesce8-pgo/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "e3f308bbaf2813ce6a889d155c4b854eabfbc4354adf52dbc8e2fc0ce9f038f9"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-01-rtorrent/rtorrent/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-01-rtorrent/rtorrent/rtorrent.rc",
+      "bytes": 450,
+      "sha256": "e3acb8cbb14ff11b1b2ffbd4ecf4ac9f654e0c14774a19e9d3199ba70f51ffd4"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-02-coalesce16-pgo/coalesce16-pgo/client.log",
+      "bytes": 457,
+      "sha256": "0c70c5d0254e04521b4ed15c03bcd356b526fb099517c2d9fe9c9e6995b8672e"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-02-coalesce16-pgo/coalesce16-pgo/config.toml",
+      "bytes": 458,
+      "sha256": "03b20818274b66e73f68d1057edbaf57964b212da5f73352952357c51cde2fdd"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-02-coalesce16-pgo/coalesce16-pgo/diagnostics/after-seed-recheck-pid-3262483.smaps.gz",
+      "bytes": 2294,
+      "sha256": "b63faaf5e1655ee1dcb05ea2dd46b4ed6486a064b4672fdec7e3e8f15df630b9"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-02-coalesce16-pgo/coalesce16-pgo/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "84a2f996a8cc9a8d18e189fa207023c212b3dc319a9cf27aa3de7cd6c4faaa1f"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-02-coalesce16-pgo/coalesce16-pgo/diagnostics/after-transfer-pid-3262483.smaps.gz",
+      "bytes": 2304,
+      "sha256": "afbbec252d7771919456a6ae942356d00d9e5c42ff9e78d28477afc0cd45323b"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-02-coalesce16-pgo/coalesce16-pgo/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "eed8ce662d6bd1c59f2e3761864be6e66da6c2fe28e8cb4f76c417d0867d53f8"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-02-coalesce16-pgo/coalesce16-pgo/diagnostics/before-torrent-add-pid-3262483.smaps.gz",
+      "bytes": 1982,
+      "sha256": "6c24ff062726b911238a21d8ef3daba6368e4303b5381e396880d93f18df2da5"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-02-coalesce16-pgo/coalesce16-pgo/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "d309944aa00b3fba6e68e7fe936540b37febceb7538ad6dba65b4c0ff952b89c"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-02-coalesce8-pgo/coalesce8-pgo/client.log",
+      "bytes": 457,
+      "sha256": "b1cb063ffa07b4b091d63e53964c102fb57f4b1756d149116dc00516a913b8e6"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-02-coalesce8-pgo/coalesce8-pgo/config.toml",
+      "bytes": 454,
+      "sha256": "38815701616a6760c20ec27f6b1a79ec5a743f72ea62477fe89050e191ce3698"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-02-coalesce8-pgo/coalesce8-pgo/diagnostics/after-seed-recheck-pid-3265999.smaps.gz",
+      "bytes": 2289,
+      "sha256": "d81b3272aa83291d9083eaf52625f554a5b514d1679e0e8c60919da1a0fe6426"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-02-coalesce8-pgo/coalesce8-pgo/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "699f39b8af9ba7febe66f6c80eb5e2dfd5b5226804698e24e70d500099d6027f"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-02-coalesce8-pgo/coalesce8-pgo/diagnostics/after-transfer-pid-3265999.smaps.gz",
+      "bytes": 2306,
+      "sha256": "bae921dc8820738ee58cc07eb34b3986c3a07a09f686238cdb7517a85ff4315f"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-02-coalesce8-pgo/coalesce8-pgo/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "c49a578a3b729bb9bcaf66215d1f0961414542c6f64c3f05a16d992a71c32045"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-02-coalesce8-pgo/coalesce8-pgo/diagnostics/before-torrent-add-pid-3265999.smaps.gz",
+      "bytes": 1979,
+      "sha256": "02a164905935ab3e766e80aec4ec7de9839cb3878987ec877de9904ac5b5cffb"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-02-coalesce8-pgo/coalesce8-pgo/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "9101b72f9a38122c301bc6b386fccc69292f1fa5bddf0959ba61ab0501741676"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-02-rtorrent/rtorrent/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-02-rtorrent/rtorrent/rtorrent.rc",
+      "bytes": 450,
+      "sha256": "e3c55a5a6f9754e7ceee33696d8a656b46a470585eb709719144a72e56559fff"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-03-coalesce16-pgo/coalesce16-pgo/client.log",
+      "bytes": 457,
+      "sha256": "ebc33f7259cde2ed3cca18f9bfc02620715d4df9e2203ec1126c9cdacdfd9648"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-03-coalesce16-pgo/coalesce16-pgo/config.toml",
+      "bytes": 458,
+      "sha256": "d7e0286c3cb824342ff5a71a66a0a993f7da3396ee33b288c80093a6a7ac766b"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-03-coalesce16-pgo/coalesce16-pgo/diagnostics/after-seed-recheck-pid-3273240.smaps.gz",
+      "bytes": 2283,
+      "sha256": "2dd885f36bc0e759916a80bd15b921d6d7a438781cb642c985da2dc1aaecb868"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-03-coalesce16-pgo/coalesce16-pgo/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "4efb25477fdb501c3d5045b9173699cfccd9ca8dc690f283b3c81db52575de72"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-03-coalesce16-pgo/coalesce16-pgo/diagnostics/after-transfer-pid-3273240.smaps.gz",
+      "bytes": 2270,
+      "sha256": "cb8a0ad35d28cd03fb3c97245567d8efb8d40971730ba742435478496300ddcd"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-03-coalesce16-pgo/coalesce16-pgo/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "bd109bc9c5099ff1e13dc2cfc6823c01f28e480587d38e2327317491cd3ef3e3"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-03-coalesce16-pgo/coalesce16-pgo/diagnostics/before-torrent-add-pid-3273240.smaps.gz",
+      "bytes": 1972,
+      "sha256": "f04f5025376634a1feaca0ebded29dd2324816e29ab08e27e87bfcf380fb1b9a"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-03-coalesce16-pgo/coalesce16-pgo/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "1046377f78ddc00887bb983d115c44fc4e8770fa72662779efc4213a6adf0bdd"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-03-coalesce8-pgo/coalesce8-pgo/client.log",
+      "bytes": 457,
+      "sha256": "4769f3a0d4d5a881508f28c2706feb33b7effd162a4948b1e1a62e759cf0d3ed"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-03-coalesce8-pgo/coalesce8-pgo/config.toml",
+      "bytes": 454,
+      "sha256": "201e82123f234f2b9c575a3650011a3a093f56ed8cb382bda2cd0ad0b329e894"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-03-coalesce8-pgo/coalesce8-pgo/diagnostics/after-seed-recheck-pid-3276244.smaps.gz",
+      "bytes": 2279,
+      "sha256": "12850fff40439ee7f0b6aace9faea81f77484c644d6272067ce07f5bb9d6932d"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-03-coalesce8-pgo/coalesce8-pgo/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "8fe3720670f9031c1adaf345b9da34af31ad4751fe2e91fbe69ad22a9d331aad"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-03-coalesce8-pgo/coalesce8-pgo/diagnostics/after-transfer-pid-3276244.smaps.gz",
+      "bytes": 2311,
+      "sha256": "c3a4c268b52ab010c31b99b7d6a305152cbbbfcfbdc17c4d37fd15f65e575e7d"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-03-coalesce8-pgo/coalesce8-pgo/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "a949f3b37c9e9806af4eded1fb32ac7b24f4346807ecf4ccb87274a78c493c7f"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-03-coalesce8-pgo/coalesce8-pgo/diagnostics/before-torrent-add-pid-3276244.smaps.gz",
+      "bytes": 1996,
+      "sha256": "b2be7d51cc595aadcefe33b755f5c233a5f5a3a540eb4c35b6c86b9072fd57c2"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-03-coalesce8-pgo/coalesce8-pgo/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "01afc410c38b6e9c35a97ebce09678d5c05fdc38d593a9a908c16595b5c89382"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-03-rtorrent/rtorrent/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/pgo-rtorrent-128m-3x/run-03-rtorrent/rtorrent/rtorrent.rc",
+      "bytes": 450,
+      "sha256": "797bea3dd2d7e2f05a28e22cec69b30b4185770c75c50aca96ab50f5edb51d6b"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/fixture/fixture.torrent",
+      "bytes": 2658,
+      "sha256": "36c0df549c2aa04cea953575429878979f00ed214f59e94a52b9b9032f290dbc"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-01-coalesce16/coalesce16/client.log",
+      "bytes": 457,
+      "sha256": "bf9db384666a26008ecac39872035b47e141cafcfa962c757a19bee6660fdad6"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-01-coalesce16/coalesce16/config.toml",
+      "bytes": 446,
+      "sha256": "c80dd26e024d6dfc96bd73b8f101f9f986b9878973a7eaeaa7956a4984d49b47"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-01-coalesce16/coalesce16/diagnostics/after-seed-recheck-pid-3284835.smaps.gz",
+      "bytes": 2285,
+      "sha256": "5c851aa084377626c6637dc863ee37ba858789fee800481fe1645c2fcbb128be"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-01-coalesce16/coalesce16/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "12c7d96f988bfe21ecf4170e05424ca07c31efce45a69e44500be3a02c2f1e9a"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-01-coalesce16/coalesce16/diagnostics/after-transfer-pid-3284835.smaps.gz",
+      "bytes": 2318,
+      "sha256": "deede670b8cf60426d8723965e797d8db135192baf7b13b5b31ed74f704bee83"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-01-coalesce16/coalesce16/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63219,
+      "sha256": "9435203dbca7b50497cda972107f5749e59049af6f75e9fb9e695f728b3dea2e"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-01-coalesce16/coalesce16/diagnostics/before-torrent-add-pid-3284835.smaps.gz",
+      "bytes": 1987,
+      "sha256": "480a24b5e83f8e732529c66c3c93e87a60f26e70c65b03b1aff9ee0b45a9420e"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-01-coalesce16/coalesce16/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "f29b1f377513971e4b6f41c0bc9981d7477b588adef7fa2ad3b196583aeb6f4a"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-01-coalesce8/coalesce8/client.log",
+      "bytes": 457,
+      "sha256": "143d556f6c74cbd2568c70d081a834bd4f72ad5a426ede47fdf9792f88f4c9c1"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-01-coalesce8/coalesce8/config.toml",
+      "bytes": 442,
+      "sha256": "cd4d6ba6b1927cf21bcadd2ff84c811304652cefe8f3680a2ca667e0bc37683b"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-01-coalesce8/coalesce8/diagnostics/after-seed-recheck-pid-3289326.smaps.gz",
+      "bytes": 2301,
+      "sha256": "b81da3becc0e575da3ef0ecb102b3d0617eca72d62c48c869e467764c15ccc0d"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-01-coalesce8/coalesce8/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "4f55dcc583e314f7907d3fb378dd49701f5191341d9ea977c0b6e61c9cc9642f"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-01-coalesce8/coalesce8/diagnostics/after-transfer-pid-3289326.smaps.gz",
+      "bytes": 2305,
+      "sha256": "42c0b151e02c404d175c89e9d1e4326504bc7b3812df9ced91d9f719518007e6"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-01-coalesce8/coalesce8/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "579b422720fbaf997b32e692df4790aaf1b9748bd91fe4f16489d26ed7abf7aa"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-01-coalesce8/coalesce8/diagnostics/before-torrent-add-pid-3289326.smaps.gz",
+      "bytes": 1985,
+      "sha256": "f5600a471231f34b8ed72d895115cb6251c20623b1f1a01cf93ec65a0d2cfff1"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-01-coalesce8/coalesce8/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "9e90e5b9ff7e165c6af646c2e37141a4b68ae3138d1730aff1566e869218370b"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-02-coalesce16/coalesce16/client.log",
+      "bytes": 457,
+      "sha256": "f7016618176eeba04d6e676eb79b687b3f4ad5566cf02284122ed038bd7a710b"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-02-coalesce16/coalesce16/config.toml",
+      "bytes": 446,
+      "sha256": "e3448ef94816cad2245d1bb8adca9882c937e5496658d225aa55bf88fcff0fb7"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-02-coalesce16/coalesce16/diagnostics/after-seed-recheck-pid-3293717.smaps.gz",
+      "bytes": 2310,
+      "sha256": "99a3e51afd3f387799dbf9318fd28cb809ea3a46eb3bf8e1eb3813efd174ad38"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-02-coalesce16/coalesce16/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "4b7741abc6f04cccee98fe3282efcb9abe79ffdcc6207f174864e900ceaafde1"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-02-coalesce16/coalesce16/diagnostics/after-transfer-pid-3293717.smaps.gz",
+      "bytes": 2318,
+      "sha256": "c8f82ac1fa864a7ae76d556ffab8c28f5cae50d693fed90316e7c55e5c377f98"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-02-coalesce16/coalesce16/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "bc1340c78b1e9d5c5ee53ad2e3424927c64d71921f2e28be71a15878b8e22533"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-02-coalesce16/coalesce16/diagnostics/before-torrent-add-pid-3293717.smaps.gz",
+      "bytes": 1997,
+      "sha256": "f2899982c8f5891277480e8a3f7f1cb0fc5754654704d28af3b8f3a03675439a"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-02-coalesce16/coalesce16/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "12e06feea02d62bfd37154260e4a5acd677496cb9b2371b503cc49b5cdf49f92"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-02-coalesce8/coalesce8/client.log",
+      "bytes": 457,
+      "sha256": "9ff18d660b9d3040c3bfc558cc1ef362a0b2fab019672437bc791e8cb4cc6107"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-02-coalesce8/coalesce8/config.toml",
+      "bytes": 442,
+      "sha256": "522aa971b43420efdd720c78b53f796bb1d97c0142c14eb41cbaf24a2dff1261"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-02-coalesce8/coalesce8/diagnostics/after-seed-recheck-pid-3297413.smaps.gz",
+      "bytes": 2317,
+      "sha256": "3e52b1115064bbdcd4558f506dd5a51178661d67dc25f48a2d2baea053c4930e"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-02-coalesce8/coalesce8/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "8380ba428ca481cb87a8d0811af3cd54848710194181639e1c27ef2b9d8fc675"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-02-coalesce8/coalesce8/diagnostics/after-transfer-pid-3297413.smaps.gz",
+      "bytes": 2293,
+      "sha256": "6e57cc9f65e50716069178c3ad513b0c93daacbc5bdbabea9b94a5c1113a434b"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-02-coalesce8/coalesce8/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "03e3d94456068b170e46945d077181fb2a5e4401ba8198387a8369a2772d7fa2"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-02-coalesce8/coalesce8/diagnostics/before-torrent-add-pid-3297413.smaps.gz",
+      "bytes": 2004,
+      "sha256": "b97753b9ec37a5309e17fc9b444b1f8cc6a2457dc2feb03db436c2132ef2e226"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-02-coalesce8/coalesce8/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "4da571d29d002a2c78dc238312736236bb839bb584388feefedb873432373c30"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-03-coalesce16/coalesce16/client.log",
+      "bytes": 457,
+      "sha256": "feb149691460375e53c23bab698675356a87239caa9501ed5cc232f05984ea39"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-03-coalesce16/coalesce16/config.toml",
+      "bytes": 446,
+      "sha256": "62dca656cfb2e6a55dc198f29db4f8a5c855e0b1c4ae9e5f62437009de7268eb"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-03-coalesce16/coalesce16/diagnostics/after-seed-recheck-pid-3301581.smaps.gz",
+      "bytes": 2288,
+      "sha256": "afd7d0198dab05faef1e20c51d8a6efb6d7e595172feacad269e89829c5f1dcc"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-03-coalesce16/coalesce16/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "f8160d0bb087fe66483fe319b0ac4e18a01ad31b3c525ea4621a0f3c95c0dbe4"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-03-coalesce16/coalesce16/diagnostics/after-transfer-pid-3301581.smaps.gz",
+      "bytes": 2260,
+      "sha256": "b4c9fff630255032fecd7d3eaf02c023fd2ab894520f209468faa936c31c1c5b"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-03-coalesce16/coalesce16/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63219,
+      "sha256": "377e6794b2b2455d4200faa61a8fb801f4c73cbc74c91aa39325955b2ad2f9df"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-03-coalesce16/coalesce16/diagnostics/before-torrent-add-pid-3301581.smaps.gz",
+      "bytes": 1991,
+      "sha256": "1bb229bff8aa8a28872898680c822227a147b89e6ce2ea6f80ed6721167cecfb"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-03-coalesce16/coalesce16/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "949c5c20980f5c66f002ad795a96147f705e6b1224e1d4dad92b84da4f56e34f"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-03-coalesce8/coalesce8/client.log",
+      "bytes": 457,
+      "sha256": "0f3f3bb86a45f69360c5d146382352dc8e502d3efc24d8a23979d18344fd4527"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-03-coalesce8/coalesce8/config.toml",
+      "bytes": 442,
+      "sha256": "0a0ca4b073cdc5037de31bce02fc1519591bbcff16afe889f61ca3e432798582"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-03-coalesce8/coalesce8/diagnostics/after-seed-recheck-pid-3305198.smaps.gz",
+      "bytes": 2299,
+      "sha256": "f25c6bae76db2054db962f7e9138246c0fddff68126b897482493f088ab47878"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-03-coalesce8/coalesce8/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "48d267fdacf38f540acde6949d1bf9418712e1c9e74fd2579a568a097569ea6b"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-03-coalesce8/coalesce8/diagnostics/after-transfer-pid-3305198.smaps.gz",
+      "bytes": 2321,
+      "sha256": "6a7eb4e402b9731a4c3a42d48b0a824cf05d37e0b671fb930d4b605871ebeaf0"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-03-coalesce8/coalesce8/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63219,
+      "sha256": "aa1833997acea0f9e7eea2958c4f7696929add1038135a413d9d7469bc63fda7"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-03-coalesce8/coalesce8/diagnostics/before-torrent-add-pid-3305198.smaps.gz",
+      "bytes": 1991,
+      "sha256": "a7a35f3ce498df08188b24cbef3ac6ce498752cf468dd6e2cda83923754413a3"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-128m-3x/run-03-coalesce8/coalesce8/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "0397fff540121fdec4f647bf2c36b5d23d15d4c102106a61d9ba6c5356bcaa23"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/fixture/fixture.torrent",
+      "bytes": 1377,
+      "sha256": "c3dcc6124dcd3bbb0bc2ead7b754361db71ddef1a98e0094f851cb255e4cf7d7"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-01-coalesce16/coalesce16/client.log",
+      "bytes": 457,
+      "sha256": "0558c53297e55922672658bbfb7405ea248982e016942930b0b27b69d76a8eb2"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-01-coalesce16/coalesce16/config.toml",
+      "bytes": 428,
+      "sha256": "93f85d1bda29433734ff80f1312bbbbffea1861495afb7a90191b4cbda9a694f"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-01-coalesce16/coalesce16/diagnostics/after-seed-recheck-pid-3157287.smaps.gz",
+      "bytes": 2286,
+      "sha256": "945930aeba374786182ecd712a772997cebc1e5411be950e6ec0c6521301ed9b"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-01-coalesce16/coalesce16/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "6cdf842b51db627bc17704f0e72415f6447dcbae9ac68ea252f28aaf17ec51b3"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-01-coalesce16/coalesce16/diagnostics/after-transfer-pid-3157287.smaps.gz",
+      "bytes": 2269,
+      "sha256": "80c2cf2ed1584c5ac5a7b6244e0c0016b9c06c6462d6e451073a965cd9878ca4"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-01-coalesce16/coalesce16/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63173,
+      "sha256": "03d2784d0483b69ec2c263ac1343678e22c30f17cba91b61cbbedee46b9a66a3"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-01-coalesce16/coalesce16/diagnostics/before-torrent-add-pid-3157287.smaps.gz",
+      "bytes": 1983,
+      "sha256": "6643ed9a9ad89fd121bfb412650aad6160e1cdbb8fd2e5c7b6007140e2475acc"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-01-coalesce16/coalesce16/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "e50a60d4aacfa0f3fd4870a5285fcb30f6a6c8b25ccaa791a520a2f2fef48a14"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-01-coalesce8/coalesce8/client.log",
+      "bytes": 457,
+      "sha256": "4949b679e2e963f9d47c3293e3c066e787845fc433ac74482016cf4c99d5198e"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-01-coalesce8/coalesce8/config.toml",
+      "bytes": 424,
+      "sha256": "eef5d2f6daa9b7692579bf87ce34b6dd94a6924e46347237d859d510bdb227ba"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-01-coalesce8/coalesce8/diagnostics/after-seed-recheck-pid-3148136.smaps.gz",
+      "bytes": 2270,
+      "sha256": "1d6139ccedc1bb485e7a2294230162e3e2d09b280837b6a1c3199795305fd492"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-01-coalesce8/coalesce8/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "a0ad55f3f568a13ebe0b91df2774dfd1e78a36abad519fe5b0b57356f67035d3"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-01-coalesce8/coalesce8/diagnostics/after-transfer-pid-3148136.smaps.gz",
+      "bytes": 2293,
+      "sha256": "c080ef6e585faea5317c9d03089157e2dbd1cf133962e10869a4039c1c730d52"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-01-coalesce8/coalesce8/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63173,
+      "sha256": "b2a4b6eefc23a475e116d14961697da5082b94bc38bd93db606c8cb91d847310"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-01-coalesce8/coalesce8/diagnostics/before-torrent-add-pid-3148136.smaps.gz",
+      "bytes": 1978,
+      "sha256": "19c2064c0d93030a0203d69d7dca429ec124c521be7c848beb1fe505b1492926"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-01-coalesce8/coalesce8/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "62c5ad8cd060b3fef26229c2f564ca970035209afc35d32de7a307518ca71349"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-02-coalesce16/coalesce16/client.log",
+      "bytes": 457,
+      "sha256": "4d9bf8cad720afdef0122a0f2adc1085840b4f439c612d09d948f4a12d17e8c7"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-02-coalesce16/coalesce16/config.toml",
+      "bytes": 428,
+      "sha256": "c0cc59470a7e8ad758eaffb2cd3fdf988beae642f2bfe268cb6697d0bace27cc"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-02-coalesce16/coalesce16/diagnostics/after-seed-recheck-pid-3162827.smaps.gz",
+      "bytes": 2459,
+      "sha256": "d380162762912b2f3c431d25b96303b584807e2c287e5a451e7bfcfa5d3aaa69"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-02-coalesce16/coalesce16/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55640,
+      "sha256": "df3d0be19f328f4bdc3f76b65247e0b5ecfb906412d7b3967077c6e3677e1fd7"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-02-coalesce16/coalesce16/diagnostics/after-transfer-pid-3162827.smaps.gz",
+      "bytes": 2408,
+      "sha256": "9ac0f9278448826e83d5b74824ea596ef8dc7393def62c78abf6ccf10f73c14b"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-02-coalesce16/coalesce16/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63174,
+      "sha256": "a3ce7ae09f09d99984d027a44de8418b14c0bfabd61d1e2fc11881793401c330"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-02-coalesce16/coalesce16/diagnostics/before-torrent-add-pid-3162827.smaps.gz",
+      "bytes": 1992,
+      "sha256": "816b3d00f4f381dd8642711e329b1d1a922ce9a2525434240b4dbdcce1eff913"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-02-coalesce16/coalesce16/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "3b6938bc1247d17cbb46f1ea0c27cace4bdad332d56e43fa3590a121784b980c"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-02-coalesce8/coalesce8/client.log",
+      "bytes": 457,
+      "sha256": "4c7f2d9baf48717bb4afde08ea8ddfbd4912e5f072e3f1899a12974f9404c6e5"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-02-coalesce8/coalesce8/config.toml",
+      "bytes": 424,
+      "sha256": "28c2205e53c3c600e4cc0487c5a871a851972c59088758cc1429adecd841c7a1"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-02-coalesce8/coalesce8/diagnostics/after-seed-recheck-pid-3160583.smaps.gz",
+      "bytes": 2434,
+      "sha256": "042b1b99bb21ba81536b89c505283bf3bc6bdd7dcf95ca799488128b8b5e5239"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-02-coalesce8/coalesce8/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55640,
+      "sha256": "ae0824b567b5458778536098ea2001705cb4a790c105db49afa2c54aed6c9a66"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-02-coalesce8/coalesce8/diagnostics/after-transfer-pid-3160583.smaps.gz",
+      "bytes": 2376,
+      "sha256": "0bb273989a93abb066a05a8c6bb7bebb9608e5c8528ddb5bfbef356c70b8321d"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-02-coalesce8/coalesce8/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63174,
+      "sha256": "fb10e864db31c7be79a183da7c8b03a0337b1d78c9f758acff1359f88edc1ccb"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-02-coalesce8/coalesce8/diagnostics/before-torrent-add-pid-3160583.smaps.gz",
+      "bytes": 1987,
+      "sha256": "b5a01eee342ccf2ff47743040959ed6ae5cbbfc2b9d14456ab914ae0535a4705"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-02-coalesce8/coalesce8/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "98a3307d68ce31c867bb929cb4ebf7e24213153fbff6c27a500989bc6ee99716"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-03-coalesce16/coalesce16/client.log",
+      "bytes": 457,
+      "sha256": "eb4f77cf25c461b4cedbb360bf5ea478b7fcf105287a72143066b148e9479d6b"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-03-coalesce16/coalesce16/config.toml",
+      "bytes": 428,
+      "sha256": "cef93fba96086e35c363b7023d4b5161c0f38a68a93fea7092d8885a9a136a52"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-03-coalesce16/coalesce16/diagnostics/after-seed-recheck-pid-3167389.smaps.gz",
+      "bytes": 2465,
+      "sha256": "8402404575d04ea9e6a21601f24c59debee64964c4184488c223594b00793292"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-03-coalesce16/coalesce16/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55640,
+      "sha256": "8dea7cc1948cb6ebc8f599b44a523a90937197eaebae95b4fda62d6c163de3b5"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-03-coalesce16/coalesce16/diagnostics/after-transfer-pid-3167389.smaps.gz",
+      "bytes": 2405,
+      "sha256": "98d1c6047aea4278345d180d3b28b1ccaa03f13b54225e26b775ec40e2cdf3b1"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-03-coalesce16/coalesce16/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63174,
+      "sha256": "9490d89c7fab8514ded9b378de9d7178fb8388ff8556d2e8e905ed98a52572d6"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-03-coalesce16/coalesce16/diagnostics/before-torrent-add-pid-3167389.smaps.gz",
+      "bytes": 1986,
+      "sha256": "4f7c33311b17094b39ccea26b5f5a92a6e3feef2e6214d6504282cb0fb35e593"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-03-coalesce16/coalesce16/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "6ce0c67cd4a221871ec6495851a26f3b655a29b99f2f51392e2870170f107fd7"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-03-coalesce8/coalesce8/client.log",
+      "bytes": 457,
+      "sha256": "dd7d5f9d032c30ce56529658ff1bc74719e2f53b5d810139a5b165027d7674cb"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-03-coalesce8/coalesce8/config.toml",
+      "bytes": 424,
+      "sha256": "3e318e1dd927ac2636750972b6e127f77ef96fa280d49810f14eb7eaf7695267"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-03-coalesce8/coalesce8/diagnostics/after-seed-recheck-pid-3164997.smaps.gz",
+      "bytes": 2490,
+      "sha256": "d84b9d771ebef9f3161af897fe5dd4b8cce7cc37761c39440b5f0e1565020836"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-03-coalesce8/coalesce8/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55640,
+      "sha256": "7756acc429199486971801c4923959c415e8274fc75f770a6180b23fde0a7382"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-03-coalesce8/coalesce8/diagnostics/after-transfer-pid-3164997.smaps.gz",
+      "bytes": 2417,
+      "sha256": "2947e0bc25271173e9f418d0128360074d665ae6984be60ec858525fd207e8a7"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-03-coalesce8/coalesce8/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63174,
+      "sha256": "a5e95dccba2a3eef8111e05a595a624190347c21be970b3b224076c2e63c1bd5"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-03-coalesce8/coalesce8/diagnostics/before-torrent-add-pid-3164997.smaps.gz",
+      "bytes": 1984,
+      "sha256": "786cf8ff96c6f87772f6e0b2a47ebbb57d7ce99782e2463f1256709d8bf00af9"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/release-64m-3x/run-03-coalesce8/coalesce8/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "474839937e0c9f21125a83942cee36dfe4282c847871cdbc1f3333f62d305893"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/trace-16ms-16m/fixture/fixture.torrent",
+      "bytes": 416,
+      "sha256": "ed235ed21bc21c5b29fdf4aebfadcce4f595f8ba8ce7923f05e1c3913a3ca8e5"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/trace-16ms-16m/run-01-coalesce16/coalesce16/client.log",
+      "bytes": 182217,
+      "sha256": "4a5478b2cc60ba71f53d4d72fcb990c75de22362b8efe4c67c05b11b5573ca08"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/trace-16ms-16m/run-01-coalesce16/coalesce16/config.toml",
+      "bytes": 418,
+      "sha256": "551263d9a8f4e0c611dc76d98c009f15fdffb4d27b41d51537eca4a58299d9fe"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/trace-16ms-16m/run-01-coalesce16/coalesce16/diagnostics/after-seed-recheck-pid-3120602.smaps.gz",
+      "bytes": 2269,
+      "sha256": "6e4008abe6ba9ca33339142e765d271110b34491213784307e502c69174e9616"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/trace-16ms-16m/run-01-coalesce16/coalesce16/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "2fc247cffcb2c2da6bf787dad32222a28006509039fb425e45c08af846deea4d"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/trace-16ms-16m/run-01-coalesce16/coalesce16/diagnostics/after-transfer-pid-3120602.smaps.gz",
+      "bytes": 2298,
+      "sha256": "fd41cb99fb37d6e8057550531ba79fad7a9b64ea33a6a034d7ac548fb920c5e5"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/trace-16ms-16m/run-01-coalesce16/coalesce16/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63163,
+      "sha256": "afd682119658bb05e0b14e277f5c3622bfbe4a2122ccd958db6de942fb7f36da"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/trace-16ms-16m/run-01-coalesce16/coalesce16/diagnostics/before-torrent-add-pid-3120602.smaps.gz",
+      "bytes": 1962,
+      "sha256": "5594cee3807197d894ff5689b1587262d4dcb8b3aff3f24b93b84cdca18f5971"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/trace-16ms-16m/run-01-coalesce16/coalesce16/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "0b5f7067dfd0cb0ead04f683a9413c67a16310645de329e7e382486f4e878e3d"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/trace-8ms-16m/fixture/fixture.torrent",
+      "bytes": 416,
+      "sha256": "ed235ed21bc21c5b29fdf4aebfadcce4f595f8ba8ce7923f05e1c3913a3ca8e5"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/trace-8ms-16m/run-01-coalesce8/coalesce8/client.log",
+      "bytes": 248070,
+      "sha256": "e4fdd14147784e3c6cf4f0ade3c1a3ed127c128065410f10986d9e3a2171d132"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/trace-8ms-16m/run-01-coalesce8/coalesce8/config.toml",
+      "bytes": 412,
+      "sha256": "2cecb0a894b4c3fb8a5308c7b003f6fc5b62218f66b943b7cd9b8b64f20fa6dc"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/trace-8ms-16m/run-01-coalesce8/coalesce8/diagnostics/after-seed-recheck-pid-3322796.smaps.gz",
+      "bytes": 2285,
+      "sha256": "063651bd97b0ba8e5154cb330870592700b07c9376928dfbbbcbdafe12cfdf87"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/trace-8ms-16m/run-01-coalesce8/coalesce8/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "0e7047ac35f00640046eee76f90e402d4e076d00c7be8b5c0474f3ca30243415"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/trace-8ms-16m/run-01-coalesce8/coalesce8/diagnostics/after-transfer-pid-3322796.smaps.gz",
+      "bytes": 2320,
+      "sha256": "0ab04a4873ba0dd7394d443a7f504c78aebb30cca4b3861e882382f1e3f5ed96"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/trace-8ms-16m/run-01-coalesce8/coalesce8/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63163,
+      "sha256": "4cf7eeb57862cfdbcdc0772425e73ceea5f5bd9ff7d9195c582acf66b936f92f"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/trace-8ms-16m/run-01-coalesce8/coalesce8/diagnostics/before-torrent-add-pid-3322796.smaps.gz",
+      "bytes": 1973,
+      "sha256": "e84e714104b563c45b3556f109f3bcdbac1b82d3e449015e11d98577a2b04a4d"
+    },
+    {
+      "path": "upload-coalesce-16ms/runs/trace-8ms-16m/run-01-coalesce8/coalesce8/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "ebfb1982b7b02d5818a2ac75feccf2b868c934ad64208ad1096253e5e216c64d"
+    },
+    {
+      "path": "upload-coalesce-16ms/trace-16ms-16m/fixture.torrent",
+      "bytes": 416,
+      "sha256": "ed235ed21bc21c5b29fdf4aebfadcce4f595f8ba8ce7923f05e1c3913a3ca8e5"
+    },
+    {
+      "path": "upload-coalesce-16ms/trace-16ms-16m/summary.json",
+      "bytes": 18653,
+      "sha256": "e0656dc86a3a643cf036c5b6211b34e0c2cdc29c6398251277c7224243629cb4"
+    },
+    {
+      "path": "upload-coalesce-16ms/trace-16ms-16m/summary.source.json",
+      "bytes": 18883,
+      "sha256": "6b8414cdd6f0a415c039d8c87a7b23080a3729311a06d1cfddacc8df1165afca"
+    },
+    {
+      "path": "upload-coalesce-16ms/trace-8ms-16m/fixture.torrent",
+      "bytes": 416,
+      "sha256": "ed235ed21bc21c5b29fdf4aebfadcce4f595f8ba8ce7923f05e1c3913a3ca8e5"
+    },
+    {
+      "path": "upload-coalesce-16ms/trace-8ms-16m/summary.json",
+      "bytes": 18621,
+      "sha256": "9ae71d1d54c9af4119f50a971c49e97bfc9afe78071b1bf9fcae629424a0eb4a"
+    },
+    {
+      "path": "upload-coalesce-16ms/trace-8ms-16m/summary.source.json",
+      "bytes": 18851,
+      "sha256": "66b9f074c4f655c7aedbb903a18fcfe7678a1438db847a1b5b98b0c87704f841"
     }
   ],
   "source_profile": {

@@ -1,0 +1,6 @@
+diff --git a/crates/rt-engine/src/torrent_task.rs b/crates/rt-engine/src/torrent_task.rs
+--- a/crates/rt-engine/src/torrent_task.rs
++++ b/crates/rt-engine/src/torrent_task.rs
+@@ -122,1 +122,1 @@
+-const UPLOAD_READ_COALESCE_MAX_DELAY: Duration = Duration::from_millis(8);
++const UPLOAD_READ_COALESCE_MAX_DELAY: Duration = Duration::from_millis(16);

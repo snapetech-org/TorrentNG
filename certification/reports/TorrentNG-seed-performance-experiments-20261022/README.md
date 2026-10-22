@@ -1,15 +1,15 @@
 # Native seed performance follow-up — 2026-10-22
 
-**Status:** experimental screening only. The current release defaults remain in place. PGO remains the strongest measured candidate. The io_uring startup fix makes the requested backend selectable on constrained hosts, but matched screening found a CPU regression and only a small memory reduction, so it is not promoted as a performance win.
+**Status:** the measured 16 ms upload-read coalescing window is now the release-source default. Same-source paired screens improved median CPU and memory at both 64 MiB and 128 MiB in the normal release build. PGO remains opt-in; its 64 MiB screen showed an anonymous-memory tradeoff, while its 128 MiB screen improved all three medians. The io_uring startup fix makes the requested backend selectable, but its matched screen still showed a CPU regression and only a small memory reduction.
 
 The objective remains to meet or beat current rTorrent in both process CPU and memory. These local tests do not reach that objective. The last published whole-client comparison remains the reference: TorrentNG at 1.90 CPU seconds and 19.82 MiB PSS versus rTorrent at 0.73 seconds and 10.74 MiB PSS.
 
 ## Method
 
-- Source checkout: `7ba8bb6a5b3505d4d263e35c649e24a9f0761d44`; no production Rust source changes were made during these screens.
+- Earlier PGO and io_uring screens used source checkout `7ba8bb6a5b3505d4d263e35c649e24a9f0761d44`. Coalescing screens used `4341f2819ee4bd10160f153c13c67d27346ce19b` as their common source base and changed only `UPLOAD_READ_COALESCE_MAX_DELAY` from 8 ms to 16 ms in the candidate.
 - Host: `kspld0`, AMD Ryzen 9 9950X3D.
-- Rust toolchain: `rustc 1.97.0 (2d8144b78 2026-07-07)`, LLVM 22.1.6.
-- Workload: private loopback seed, one 16 KiB block size, a 32-block request window, 4 MiB/s paced receiver, tracker/DHT/PEX disabled, and the portable `pread` storage backend for TorrentNG.
+- The earlier screens used `rustc 1.97.0 (2d8144b78 2026-07-07)`, LLVM 22.1.6. Coalescing release binaries used Rust 1.94.0; coalescing PGO binaries used Rust 1.97.0.
+- Workload: private loopback seed, one 16 KiB block size, a 32-block request window, 4 MiB/s paced receiver, and tracker/DHT/PEX disabled. The 128 MiB coalescing comparisons pinned `pread`. At 64 MiB, storage backend `auto` selected the same backend within each paired round, but varied across rounds (release: `pread`, `uring`, `uring`; PGO: `pread`, `pread`, `uring`).
 - Payloads were deterministic (probe seed `20261022`) and SHA-256 verified. The 64, 128, and 256 MiB fixtures have hashes `b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901`, `7fae01c69f5254b9fbf3cdf6db292cc5da49ee3fa4bfbb995de8aa3b66dd6e67`, and `937d7bd20b42ad9d0130419a685ce1e481f4330ab2a211dde1e16403c7854f81` respectively. Raw summaries and logs are kept under [`observations/`](observations/); oversized generated payload copies are omitted and can be regenerated from the seed and size documented there.
 - CPU is process CPU time from first payload to payload completion, normalized per GiB. PSS and anonymous memory are active-window peaks. Transfer duration is a validity check, not a performance score.
 
@@ -43,6 +43,25 @@ The opt-in [`build_native_pgo_release.sh`](../../../scripts/build_native_pgo_rel
 An earlier three-client, three-round 64 MiB screen measured PGO at 4.007 CPU-s/GiB and 15.63 MiB PSS, against baseline at 6.529 and 18.80 MiB, and rTorrent at 2.310 and 8.33 MiB. PGO remained about 1.74× rTorrent CPU and 1.88× its PSS. A separate one-round 256 MiB comparison likewise left PGO above rTorrent: 3.565 versus 2.112 CPU-s/GiB and 16.25 versus 8.29 MiB PSS. Those observations show PGO is useful, but does not meet the goal.
 
 The transfer-only PGO profile did not beat the full profile in its one-round 64 MiB screen: 3.832 versus 3.527 CPU-s/GiB and 18.22 versus 13.21 MiB PSS. PGO is not enabled by the product release profile. The archived profile now supports rebuilding and screening the candidate, but clean binary hashes vary and the profile lacks download/multi-peer training coverage. Keep the build opt-in until a clean-build artifact passes repeated qualification.
+
+## Upload request coalescing: 8 ms to 16 ms
+
+The peer loop originally waited up to 8 ms to collect pipelined upload requests. A matched diagnostic trace showed the request burst usually dispatched three contiguous 16 KiB blocks together. Raising only the maximum wait to 16 ms let the same pattern fill four-block reads and vectored writes. Both 16 MiB traces verified the same payload and completed the 4 MiB/s payload window in 4.0001 seconds; debug logging was enabled, so the traces are for batch attribution, not CPU scoring.
+
+| Build and fixture | 8 ms CPU-s/GiB | 16 ms CPU-s/GiB | 8 ms peak PSS | 16 ms peak PSS | 8 ms peak anonymous | 16 ms peak anonymous |
+|---|---:|---:|---:|---:|---:|---:|
+| Release, 64 MiB, 3 pairs | 5.96 | **5.10** (-14.4%) | 18.80 MiB | **18.56 MiB** (-1.3%) | 6.09 MiB | **5.80 MiB** (-4.8%) |
+| Release, 128 MiB, 3 pairs | 4.57 | **4.09** (-10.6%) | 19.21 MiB | **18.90 MiB** (-1.6%) | 6.61 MiB | **6.24 MiB** (-5.6%) |
+| Full-profile PGO, 64 MiB, 3 pairs | 3.95 | **3.46** (-12.4%) | 16.34 MiB | **16.24 MiB** (-0.6%) | **6.09 MiB** | 6.42 MiB (+5.5%) |
+| Full-profile PGO, 128 MiB, 3 pairs | 3.41 | **3.32** (-2.6%) | 16.65 MiB | **16.19 MiB** (-2.8%) | 6.55 MiB | **6.19 MiB** (-5.5%) |
+
+All 27 transfers in the four scored comparisons passed SHA-256 verification and ran for the same offered-rate window. The PGO screens used same-source binaries and archived profile SHA-256 `45c1f0352f9fe9f1622b783ced1a48a93269cc2eb79ce77549468e35401fc4ed`. That profile predates the io_uring worker-selection fix; the candidate build emitted three known profile-mismatch warnings for storage-backend functions. Treat those PGO values as a paired screen, not a clean profile qualification. The 64 MiB screens happened to use the same treatment order in all three repeats; the 128 MiB release screen used the reverse order, while the three-client PGO screen varied order as listed in its summary. These small screens are evidence for retaining the bounded change, not a final qualification across storage backends.
+
+The same-fixture 128 MiB PGO comparison included source-built rTorrent 0.16.25: it used 2.32 CPU-s/GiB, 7.90 MiB peak PSS, and 3.04 MiB peak anonymous memory. The 16 ms TorrentNG build remained about **1.43× rTorrent CPU, 2.05× PSS, and 2.04× anonymous memory**. This is a measured step, not parity. The earlier retained full-profile PGO result (3.68 CPU-s/GiB, 15.80 MiB PSS, 6.08 MiB anonymous) remains in the report; the new PGO screen improves CPU but does not beat those historical absolute memory minima. The 64 MiB PGO anonymous-memory increase is retained as a size-dependent tradeoff.
+
+The 16 MiB diagnostic trace counted 350 storage reads for 1,024 blocks at 8 ms (`320×3`, `8×4`, `10×2`, `12×1`) and 257 at 16 ms (`255×4`, `2×2`), a **26.6% reduction**. This supports the mechanism but does not replace the whole-client measurements. The 16 ms setting is now in the release source. Exact 8 ms and 16 ms binaries, original and normalized summaries, logs, metrics, compressed smaps, and the one-line patch are preserved under [`observations/upload-coalesce-16ms/`](observations/upload-coalesce-16ms/).
+
+Validation after the source change: `cargo +1.94.0 fmt --all -- --check`, the focused `peer_loop_flushes_small_upload_batches_after_the_short_deadline` test, and all 769 `rt-engine` tests passed.
 
 ## Source-level candidates and reversions
 

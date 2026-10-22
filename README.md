@@ -146,13 +146,23 @@ rTorrent. PSS improved 18.3% against TorrentNG's previous best configuration;
 CPU did not improve, and remains about 2.60× rTorrent's. The final summary and
 its evidence limits are in the [CPU/RAM results note](certification/reports/TorrentNG-CPU-RAM-final-summary-20261022.md),
 with the [full report and verified run summaries](certification/reports/TorrentNG-native-cpu-ram-20261022.md).
-Follow-up local screens found a promising but not yet release-qualified PGO build
-and recorded the CPU/memory tradeoffs of reverted candidates in the
-[seed performance experiments report](certification/reports/TorrentNG-seed-performance-experiments-20261022/README.md).
-The follow-up io_uring comparison now verifies the selected backend: at a
-64 MiB fixture it used about 13% more CPU than `pread` for roughly 2.5% lower
-PSS. We kept the worker-startup fix and the result, but left the measured PGO
-and release defaults unchanged.
+Follow-up matched local screens found a release-default improvement: increasing
+the upload-read coalescing window from 8 ms to 16 ms reduced median CPU by
+10.6% and also reduced PSS and anonymous memory on the 128 MiB release fixture.
+The paired 64 MiB release screen moved in the same direction. The matching PGO
+128 MiB screen reduced median CPU by 2.6%, PSS by 2.8%, and anonymous memory by
+5.5%; its 64 MiB screen had a 5.5% anonymous-memory increase, which is recorded
+alongside the gains. The 16 ms change is retained in the release source, and
+the exact 8 ms baseline, 16 ms candidate, raw summaries, logs, and diagnostics
+remain in the [seed performance experiments report](certification/reports/TorrentNG-seed-performance-experiments-20261022/README.md).
+
+The current matched 128 MiB comparison still leaves the 16 ms PGO candidate at
+about 1.43× rTorrent 0.16.25 CPU, 2.05× its PSS, and 2.04× its anonymous memory.
+The earlier full-profile PGO result remains preserved as the historical memory
+best. PGO is still opt-in. The separate io_uring screen confirmed the requested
+backend but measured about 13% more CPU than `pread` for roughly 2.5% lower PSS;
+that tradeoff and the worker-startup correction are documented in the same
+report.
 
 ## Learn more
 

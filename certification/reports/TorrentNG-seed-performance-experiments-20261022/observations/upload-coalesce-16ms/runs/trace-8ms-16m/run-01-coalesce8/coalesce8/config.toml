@@ -1,0 +1,18 @@
+[daemon]
+api_bind = "127.0.0.1:48799"
+session_dir = "/tmp/torrentng-seed-goal-20261022/coalesce-8ms-trace/run-01-coalesce8/coalesce8/session"
+log_level = "warn"
+
+[network]
+listen_port = 55079
+max_peers = 8
+max_incoming_handshakes = 32
+
+[storage]
+download_dir = "/tmp/torrentng-seed-goal-20261022/coalesce-8ms-trace/run-01-coalesce8/coalesce8/download"
+
+[dht]
+enabled = false
+
+[auth]
+api_tokens_file = "REDACTED"

@@ -119,7 +119,7 @@ const MAX_READY_UPLOAD_INTAKE_MESSAGES: usize = MAX_UPLOAD_READ_BATCH_BLOCKS;
 // draining never combines those refills, so every cache hit still enters the
 // disk queue. Bound collection latency, and never wait for more requests than
 // this peer has demonstrated it can keep outstanding.
-const UPLOAD_READ_COALESCE_MAX_DELAY: Duration = Duration::from_millis(8);
+const UPLOAD_READ_COALESCE_MAX_DELAY: Duration = Duration::from_millis(16);
 
 pub(crate) async fn connect_utp_with_deadline(
     network_budget: &GlobalNetworkBudget,
