@@ -620,8 +620,7 @@ jobs:
           cargo audit --file crates/torrentng-desktop/Cargo.lock
 
       - name: Audit compatible-client service Rust dependencies
-        working-directory: sidecar
-        run: cargo audit
+        run: cargo audit --file sidecar/Cargo.lock
 
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7

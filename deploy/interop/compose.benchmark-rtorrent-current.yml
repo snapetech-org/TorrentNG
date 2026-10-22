@@ -10,6 +10,7 @@ services:
         LIBTORRENT_COMMIT: 6ad3fecf3e7e7aa86855445587b532a91256f344
         RTORRENT_VERSION: v0.16.25
         RTORRENT_COMMIT: 15ccae27deb9aa1dc8e46ea0ed218a673ccc5732
+    user: "${PUID:-1000}:${PGID:-1000}"
     entrypoint: ["/usr/local/bin/rtorrent"]
     command:
       - "-n"

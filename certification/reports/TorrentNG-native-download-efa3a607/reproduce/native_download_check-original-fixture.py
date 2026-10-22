@@ -59,9 +59,10 @@ def check(args):
     download = output / "download"
     download.mkdir()
     piece = hashlib.shake_256(b"native-download-piece-v1").digest(PIECE)
+    # BEP 3 requires SHA-1 for torrent piece hashes; this is protocol identity, not security.
     info = {b"length": PIECE * args.pieces, b"name": b"payload.bin", b"piece length": PIECE,
-            b"pieces": hashlib.sha1(piece).digest() * args.pieces, b"private": 1}
-    info_hash = hashlib.sha1(bencode(info)).digest()
+            b"pieces": hashlib.sha1(piece, usedforsecurity=False).digest() * args.pieces, b"private": 1}  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- BEP 3 mandates SHA-1 for the torrent piece hash.
+    info_hash = hashlib.sha1(bencode(info), usedforsecurity=False).digest()  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- BEP 3 defines the torrent info-hash as SHA-1.
     api_port = port()
     config = output / "config.toml"
     config.write_text(f'''[daemon]
@@ -92,9 +93,12 @@ filter = "warn,rt_engine::torrent_task=debug"
                TNG_STORAGE_BACKEND="pread", RUST_LOG="warn,rt_engine::torrent_task=debug")
 
     def api(path, body=None):
+        if not path.startswith("/") or path.startswith("//") or "\\" in path:
+            raise ValueError("API route must stay on the local benchmark server")
         request = urllib.request.Request(f"http://127.0.0.1:{api_port}" + path,
             data=json.dumps(body).encode() if body is not None else None,
             headers={"Authorization": "Bearer " + TOKEN, "Content-Type": "application/json"})
+        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- The host is a generated ephemeral port on 127.0.0.1 and the route is constrained above.
         with urllib.request.urlopen(request, timeout=5) as response:
             payload = response.read()
             return json.loads(payload) if payload else None
