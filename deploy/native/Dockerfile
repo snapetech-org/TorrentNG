@@ -15,7 +15,7 @@ RUN --mount=type=cache,id=torrentng-client-benchmark-cargo-registry,target=/usr/
     --no-default-features --features "$TORRENTNG_CARGO_FEATURES" \
     && cp /src/target/x86_64-unknown-linux-musl/release/torrentngd /torrentngd
 
-FROM node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9 AS webui-build
+FROM node:22.23.4-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d AS webui-build
 
 WORKDIR /webui
 COPY webui/package.json webui/package-lock.json ./

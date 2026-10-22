@@ -34,7 +34,7 @@ COPY sidecar/src ./src
 RUN touch src/lib.rs src/main.rs && cargo build --release
 
 # Stage 2: Build WebUI
-FROM node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9 AS webui-build
+FROM node:22.23.4-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d AS webui-build
 WORKDIR /src
 COPY webui/package.json webui/package-lock.json ./
 RUN npm ci --ignore-scripts
