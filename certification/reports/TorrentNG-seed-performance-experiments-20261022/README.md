@@ -1,6 +1,6 @@
 # Native seed performance follow-up — 2026-10-22
 
-**Status:** experimental screening only. The current release defaults remain in place. No source hot-path candidate in this screen has a sufficiently consistent whole-client win to promote. PGO is the strongest new candidate and needs a repeatable release-build recipe plus the full matched rTorrent comparison before it can change shipped defaults.
+**Status:** experimental screening only. The current release defaults remain in place. PGO remains the strongest measured candidate. The io_uring startup fix makes the requested backend selectable on constrained hosts, but matched screening found a CPU regression and only a small memory reduction, so it is not promoted as a performance win.
 
 The objective remains to meet or beat current rTorrent in both process CPU and memory. These local tests do not reach that objective. The last published whole-client comparison remains the reference: TorrentNG at 1.90 CPU seconds and 19.82 MiB PSS versus rTorrent at 0.73 seconds and 10.74 MiB PSS.
 
@@ -54,7 +54,33 @@ Every rejected or inconsistent source candidate is kept as a patch under [`exper
 | Cache-hit single-lookup refactor | One round looked faster, but the three-round median was 5.801 CPU-s/GiB versus 3.780 for the PGO control; PSS was essentially tied. | Reverted as inconsistent; keep [`cache-hit-single-hash.patch`](experiments/cache-hit-single-hash.patch). |
 | Active stream kept outside the cache map | At 64 MiB under `opt-level=s`, the three-round median improved CPU 16.3% and PSS was tied. At 256 MiB, the single candidate round used 9.8% more CPU with effectively tied PSS. In a refreshed PGO comparison, it was 6.7% slower and used 0.46 MiB more PSS than the PGO control. | Reverted as size/profile dependent; keep [`stream-cache-active.patch`](experiments/stream-cache-active.patch). |
 | Wait for a fourth request before dispatch | The runtime setting disabled the read elevator, so the probe did not exercise batching and is not a scored result. | Do not infer a gain; preserve [`fourth-request-probe.patch`](experiments/fourth-request-probe.patch) for a corrected test. |
-| Compare `pread` with io_uring | The requested io_uring arm reported the runtime backend selected as `pread`. | Invalid comparison; do not claim an io_uring result. |
+| io_uring startup and queue-sized ring | The earlier requested arm actually selected `pread`. Direct worker startup now selects io_uring at queue depth 64. A three-round verified comparison found higher CPU with slightly lower PSS and anonymous memory. | Keep the startup correction and explicit backend available; do not promote io_uring as a performance winner or change the default queue depth. Results and invalid attempts are retained under [`observations/io-uring-queue-depth-64/`](observations/io-uring-queue-depth-64/). |
+
+### io_uring startup attribution and measured tradeoff
+
+The old `TNG_STORAGE_BACKEND=uring` screen was not an io_uring result: its runtime gauge showed `pread`. A focused reproduction found that selection allocated and registered a probe ring, then the real worker failed with `ENOMEM`; starting the worker directly at queue depth 64 succeeded. The selector now starts the actual worker and falls back to `pread` only if that startup fails. The benchmark harness accepts a bounded `--storage-io-queue-depth` setting and records the active backend label, preventing another silent fallback from being scored as io_uring. Queue depth and release defaults were not changed.
+
+Three randomized 64 MiB rounds compared the same release binary with `pread` and io_uring, using queue depth 64 for both. All six transfers matched fixture SHA-256 `b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901`, and the diagnostic gauge confirmed the requested backend in every round.
+
+| Backend | CPU-s/GiB median | Peak PSS median | Peak anonymous median |
+|---|---:|---:|---:|
+| `pread` | **4.46** | 19.11 MiB | 6.41 MiB |
+| io_uring, queue depth 64 | 5.02 (+12.5%) | **18.62 MiB** (-2.5%) | **6.09 MiB** (-5.0%) |
+
+The CPU cost is higher, while the memory reductions are small and these screens do not establish a general performance win. The one-round cross-client screen and follow-up PGO screen on the same 64 MiB fixture were:
+
+| Build | Backend | CPU-s/GiB | Peak PSS | Peak anonymous |
+|---|---|---:|---:|---:|
+| Release | `pread` | 5.91 | 19.01 MiB | 6.51 MiB |
+| Release | io_uring, queue depth 64 | 8.42 | 18.58 MiB | 6.01 MiB |
+| rTorrent 0.16.25 | — | 3.46 | 7.90 MiB | 3.04 MiB |
+| Updated-source PGO | `pread` | 4.03 | 16.18 MiB | 6.49 MiB |
+| Updated-source PGO | io_uring, queue depth 64 | 6.15 | 15.97 MiB | 5.87 MiB |
+| rTorrent 0.16.25 | — | 2.28 | 7.90 MiB | 3.04 MiB |
+
+The updated-source PGO build emitted profile-mismatch warnings for the changed backend functions, so those two rows are screening evidence only. Neither screen displaces the retained full-profile PGO result of 3.68 CPU-s/GiB / 15.80 MiB PSS at 128 MiB.
+
+The first three-client attempt is preserved but invalid: the harness correctly removed inherited loader variables, and rTorrent then exited 127 because `libtorrent.so.53` was not found. The valid retry passed the pinned `LD_LIBRARY_PATH` explicitly. The exact output binary hashes, selected-backend snapshots, process maps, logs, and original plus relocated summaries are in the evidence directory above. The code and harness correction were committed on `main` as `85dc7800`.
 
 The experiments also keep evidence that did not fit a clean score: an initial rTorrent launch failed because its loader could not find `libtorrent.so.53`; the later valid runs use a pinned `LD_LIBRARY_PATH`. Failed and diagnostic summaries remain in the observations directory and are excluded from performance claims.
 

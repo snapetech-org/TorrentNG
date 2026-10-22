@@ -1,0 +1,19 @@
+[daemon]
+api_bind = "127.0.0.1:34075"
+session_dir = "/tmp/torrentng-seed-goal-20261022/screen-uring-vs-pread-rtorrent-64m-r1/run-01-uring64/uring64/session"
+log_level = "warn"
+
+[network]
+listen_port = 47511
+max_peers = 8
+max_incoming_handshakes = 32
+
+[storage]
+download_dir = "/tmp/torrentng-seed-goal-20261022/screen-uring-vs-pread-rtorrent-64m-r1/run-01-uring64/uring64/download"
+io_queue_depth = 64
+
+[dht]
+enabled = false
+
+[auth]
+api_tokens_file = "/tmp/torrentng-seed-goal-20261022/screen-uring-vs-pread-rtorrent-64m-r1/run-01-uring64/uring64/api-token"

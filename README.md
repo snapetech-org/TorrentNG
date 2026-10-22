@@ -149,6 +149,10 @@ with the [full report and verified run summaries](certification/reports/TorrentN
 Follow-up local screens found a promising but not yet release-qualified PGO build
 and recorded the CPU/memory tradeoffs of reverted candidates in the
 [seed performance experiments report](certification/reports/TorrentNG-seed-performance-experiments-20261022/README.md).
+The follow-up io_uring comparison now verifies the selected backend: at a
+64 MiB fixture it used about 13% more CPU than `pread` for roughly 2.5% lower
+PSS. We kept the worker-startup fix and the result, but left the measured PGO
+and release defaults unchanged.
 
 ## Learn more
 

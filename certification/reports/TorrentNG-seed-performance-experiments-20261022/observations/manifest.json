@@ -27,6 +27,426 @@
       "sha256": "f567e1fd0b664ca7a65c762b72a657b339d396de281a36769640f245a592e912"
     },
     {
+      "path": "io-uring-queue-depth-64/backend-smoke-16m/fixture/fixture.torrent",
+      "bytes": 416,
+      "sha256": "ed235ed21bc21c5b29fdf4aebfadcce4f595f8ba8ce7923f05e1c3913a3ca8e5"
+    },
+    {
+      "path": "io-uring-queue-depth-64/backend-smoke-16m/run-01-uring/uring/client.log",
+      "bytes": 457,
+      "sha256": "daa61e7e61d78692c4fc70feb79524b0b1b03529d25db2577a740e535eb00001"
+    },
+    {
+      "path": "io-uring-queue-depth-64/backend-smoke-16m/run-01-uring/uring/config.toml",
+      "bytes": 507,
+      "sha256": "e665122277df7ea5304c25d13ed58c01eed5e18554880d6422e21197bd346bac"
+    },
+    {
+      "path": "io-uring-queue-depth-64/backend-smoke-16m/run-01-uring/uring/diagnostics/after-seed-recheck-pid-2965580.smaps.gz",
+      "bytes": 2448,
+      "sha256": "a38e8ad0efdfc3a3423a41904d36ba5d322b6f0666342bcc75429751c5fb1e17"
+    },
+    {
+      "path": "io-uring-queue-depth-64/backend-smoke-16m/run-01-uring/uring/diagnostics/after-transfer-pid-2965580.smaps.gz",
+      "bytes": 2449,
+      "sha256": "58299db1efe3e4e63408b59f5a57fa46ceea933f8c4d4fb2ee7280801788d6ed"
+    },
+    {
+      "path": "io-uring-queue-depth-64/backend-smoke-16m/run-01-uring/uring/diagnostics/before-torrent-add-pid-2965580.smaps.gz",
+      "bytes": 2011,
+      "sha256": "6535a21b429ab41fba3cf4c63c4a4579b238d78c8ffc1af7a25dc19874ed899c"
+    },
+    {
+      "path": "io-uring-queue-depth-64/backend-smoke-16m/summary.json",
+      "bytes": 18163,
+      "sha256": "b9af78954e787ecd3708d62a12cff4e7585d3ae17d0f3feb7447bb1256d43fa2"
+    },
+    {
+      "path": "io-uring-queue-depth-64/backend-smoke-16m/summary.source.json",
+      "bytes": 18567,
+      "sha256": "a0e068c350f48fd4d7f72181321101bcdc2e7030d2350ce811b06dc23bc60ec7"
+    },
+    {
+      "path": "io-uring-queue-depth-64/initial-invalid-r1/fixture/fixture.torrent",
+      "bytes": 1377,
+      "sha256": "c3dcc6124dcd3bbb0bc2ead7b754361db71ddef1a98e0094f851cb255e4cf7d7"
+    },
+    {
+      "path": "io-uring-queue-depth-64/initial-invalid-r1/run-01-rtorrent/rtorrent/client.log",
+      "bytes": 188,
+      "sha256": "26cb6752a4413fdfd2db8d2b1b5ac6594748156a5812784b047ba71e475f9d5d"
+    },
+    {
+      "path": "io-uring-queue-depth-64/initial-invalid-r1/run-01-rtorrent/rtorrent/rtorrent.rc",
+      "bytes": 462,
+      "sha256": "3c8ed9af861bcde65aa2ea46cd4fa89ae62562fa491bae06a7c8c757e575deef"
+    },
+    {
+      "path": "io-uring-queue-depth-64/initial-invalid-r1/run-01-uring64/uring64/client.log",
+      "bytes": 457,
+      "sha256": "cb548383921be9b333fd979edcf94f9410e87177aa99e6241ea22fafca161288"
+    },
+    {
+      "path": "io-uring-queue-depth-64/initial-invalid-r1/run-01-uring64/uring64/config.toml",
+      "bytes": 558,
+      "sha256": "b8aa6253832c2dd62874d773139b264946b16cf18e59e71e4d3255d4d5cf908c"
+    },
+    {
+      "path": "io-uring-queue-depth-64/initial-invalid-r1/run-01-uring64/uring64/diagnostics/after-first-payload-8s-pid-2977105.smaps.gz",
+      "bytes": 2433,
+      "sha256": "d9d1c85615fa83c4489a8ad20cd3cf3b071db89bd559ca06d0abacc91fd38eeb"
+    },
+    {
+      "path": "io-uring-queue-depth-64/initial-invalid-r1/run-01-uring64/uring64/diagnostics/after-seed-recheck-pid-2977105.smaps.gz",
+      "bytes": 2450,
+      "sha256": "c730de69128d8a227047ab5898f9a67b2adf92b24c13dcff6196ffbe5de01282"
+    },
+    {
+      "path": "io-uring-queue-depth-64/initial-invalid-r1/run-01-uring64/uring64/diagnostics/after-transfer-pid-2977105.smaps.gz",
+      "bytes": 2435,
+      "sha256": "a3e699744422924bd3febf0787ada38444df9645f843f04623e76c37568aebda"
+    },
+    {
+      "path": "io-uring-queue-depth-64/initial-invalid-r1/run-01-uring64/uring64/diagnostics/before-torrent-add-pid-2977105.smaps.gz",
+      "bytes": 2041,
+      "sha256": "e033e2d3fe7652430f56b7f7f96298ab332993d73b9985bf3bdd36ae30e2c3ee"
+    },
+    {
+      "path": "io-uring-queue-depth-64/initial-invalid-r1/summary.json",
+      "bytes": 26539,
+      "sha256": "2607d1d636cf4b1a1ceb0b080d59975ce3b5fd3ffd864cd3f6c48736d478e290"
+    },
+    {
+      "path": "io-uring-queue-depth-64/initial-invalid-r1/summary.source.json",
+      "bytes": 27316,
+      "sha256": "db114abdb8278158e3b669105a5be8eba18610579d17144a78cf638005bd702b"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pgo-pread-uring-rtorrent-64m-r1/fixture/fixture.torrent",
+      "bytes": 1377,
+      "sha256": "c3dcc6124dcd3bbb0bc2ead7b754361db71ddef1a98e0094f851cb255e4cf7d7"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pgo-pread-uring-rtorrent-64m-r1/run-01-pgo-pread/pgo-pread/client.log",
+      "bytes": 457,
+      "sha256": "f82b3cdcfe72bf24652dd88fc381235d8f2c19f8def260661f903622bf0cedc3"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pgo-pread-uring-rtorrent-64m-r1/run-01-pgo-pread/pgo-pread/config.toml",
+      "bytes": 528,
+      "sha256": "67c47b68dae8d0e13dfeff10422010b54a07cc7e94e8662d55fa2a6955bdd798"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pgo-pread-uring-rtorrent-64m-r1/run-01-pgo-pread/pgo-pread/diagnostics/after-seed-recheck-pid-3027436.smaps.gz",
+      "bytes": 2296,
+      "sha256": "d2438c271a4d687d5088383066be531a6b60cc4346db24e8195110e37977f278"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pgo-pread-uring-rtorrent-64m-r1/run-01-pgo-pread/pgo-pread/diagnostics/after-transfer-pid-3027436.smaps.gz",
+      "bytes": 2320,
+      "sha256": "a5f2dc3d4164c311c4badef0a1c46e5aa673eaabf62d4f8e3b675cd2671af500"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pgo-pread-uring-rtorrent-64m-r1/run-01-pgo-pread/pgo-pread/diagnostics/before-torrent-add-pid-3027436.smaps.gz",
+      "bytes": 2000,
+      "sha256": "78a571d59d4b868663ddf7b4844308e63934d4265934c5533f19b4d058d50ac3"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pgo-pread-uring-rtorrent-64m-r1/run-01-pgo-uring64/pgo-uring64/client.log",
+      "bytes": 457,
+      "sha256": "8ea9ca865acb608864e74baa6727de4a1098a6fd310ff63ad699ba53d03d664e"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pgo-pread-uring-rtorrent-64m-r1/run-01-pgo-uring64/pgo-uring64/config.toml",
+      "bytes": 540,
+      "sha256": "6cd0bc5592844baec31bdc27549bb7c83f1064f3efc3f3f296b7d297a771acbc"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pgo-pread-uring-rtorrent-64m-r1/run-01-pgo-uring64/pgo-uring64/diagnostics/after-seed-recheck-pid-3022041.smaps.gz",
+      "bytes": 2457,
+      "sha256": "2f7c9abaf15a39daec274351483f10536f12d6e4289bf71c8d7d76d866e0c988"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pgo-pread-uring-rtorrent-64m-r1/run-01-pgo-uring64/pgo-uring64/diagnostics/after-transfer-pid-3022041.smaps.gz",
+      "bytes": 2410,
+      "sha256": "8269c835f9602f759825a2f89412be319f6c4eee8b4d7ce0e9cb8c21fbca3449"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pgo-pread-uring-rtorrent-64m-r1/run-01-pgo-uring64/pgo-uring64/diagnostics/before-torrent-add-pid-3022041.smaps.gz",
+      "bytes": 2013,
+      "sha256": "61856ef9800ac5eba37896cd7c37b3c04f46f9703e1ed4a55f4bdfd08ccf4ecf"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pgo-pread-uring-rtorrent-64m-r1/run-01-rtorrent/rtorrent/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pgo-pread-uring-rtorrent-64m-r1/run-01-rtorrent/rtorrent/rtorrent.rc",
+      "bytes": 434,
+      "sha256": "940738fdccafa1e7f4c147b033aa0cfd647164fc6b70a3858808d48e39820773"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pgo-pread-uring-rtorrent-64m-r1/summary.json",
+      "bytes": 58771,
+      "sha256": "4a1395f91e984a84f9b778cdb0638308720a07cbca3b379f4c187ce05dc0f8f1"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pgo-pread-uring-rtorrent-64m-r1/summary.source.json",
+      "bytes": 59623,
+      "sha256": "d33b2d9d177f17b86f63cb634306feb0058011cdaed5942064ad9bc6f5e1dff7"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/fixture/fixture.torrent",
+      "bytes": 1377,
+      "sha256": "c3dcc6124dcd3bbb0bc2ead7b754361db71ddef1a98e0094f851cb255e4cf7d7"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-01-pread/pread/client.log",
+      "bytes": 457,
+      "sha256": "9ddfcf43b177ae6410a3552608ea26cc48f195168e928554a52b26c54c8b8a52"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-01-pread/pread/config.toml",
+      "bytes": 519,
+      "sha256": "1fe1ad6b74d7603dc7e34b7433cc6e692dac441d4f2024323a8ee08a617fdd46"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-01-pread/pread/diagnostics/after-seed-recheck-pid-2988954.smaps.gz",
+      "bytes": 2380,
+      "sha256": "76c0d022f98b2be4c9dd804bb7689af0899bf4abc76219217733122cffe424aa"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-01-pread/pread/diagnostics/after-transfer-pid-2988954.smaps.gz",
+      "bytes": 2404,
+      "sha256": "46cb1e696cdfcb2b9f021c7b35a24c6436a87060a6b3b076a39f73ff56be1dd4"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-01-pread/pread/diagnostics/before-torrent-add-pid-2988954.smaps.gz",
+      "bytes": 2009,
+      "sha256": "941c9e459506aa2155eb6998980125c0c58ca2553ce217207dcd856bfb8bac89"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-01-uring64/uring64/client.log",
+      "bytes": 457,
+      "sha256": "adcc05295c437f3113560897ab613c1a61d651de7f8be72af44e3e7d2bdbf6fb"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-01-uring64/uring64/config.toml",
+      "bytes": 531,
+      "sha256": "fe4c7c74585aae314d255f20500ce2205455ca2bdfcb627817e0a45fd758d88c"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-01-uring64/uring64/diagnostics/after-seed-recheck-pid-2987365.smaps.gz",
+      "bytes": 2443,
+      "sha256": "c25fe427a2696f5247f5be677409d16f3d20e3885de8677cf033986d73aed41c"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-01-uring64/uring64/diagnostics/after-transfer-pid-2987365.smaps.gz",
+      "bytes": 2434,
+      "sha256": "fc5f4c69b40ff8a042dbed4631f4c59c6edb8b459830f0b988e24d1afed67ec1"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-01-uring64/uring64/diagnostics/before-torrent-add-pid-2987365.smaps.gz",
+      "bytes": 2036,
+      "sha256": "4e5b7fc011d118d5c48f1c5aa5b220769763869eb3085374353c45fb6fe1031a"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-02-pread/pread/client.log",
+      "bytes": 457,
+      "sha256": "2b39de0c1fbba7ef760ee67bf8b914f1367e51bd1b9113256bc6d234b96300af"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-02-pread/pread/config.toml",
+      "bytes": 519,
+      "sha256": "5fffeda8c77e134de48ec9d2d7efba7f315f9ce149b9f10868ed19937ceaec80"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-02-pread/pread/diagnostics/after-seed-recheck-pid-2993618.smaps.gz",
+      "bytes": 2340,
+      "sha256": "c559a7b7d3fe7bc98a424d0e80b73752b85395d9d14284230c424af2e30915da"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-02-pread/pread/diagnostics/after-transfer-pid-2993618.smaps.gz",
+      "bytes": 2363,
+      "sha256": "40d50ab316c9afd6f2f0c828ca6c0e0c2723f1fb22db7bcd6fe69105bcaf526d"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-02-pread/pread/diagnostics/before-torrent-add-pid-2993618.smaps.gz",
+      "bytes": 2035,
+      "sha256": "10149a36b34ef67864ad77d0db7e2743b96f5ee041c86e1cb0d2671aa4346432"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-02-uring64/uring64/client.log",
+      "bytes": 457,
+      "sha256": "89e22304a746fca0389a8e1dc5e24bc7c78e9e6e307e2b1706f843b9dc4ef2f8"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-02-uring64/uring64/config.toml",
+      "bytes": 531,
+      "sha256": "d22b8c2788126beacfedc42a9d2143967ee102486f40cd917d314f10842f3176"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-02-uring64/uring64/diagnostics/after-seed-recheck-pid-2990946.smaps.gz",
+      "bytes": 2453,
+      "sha256": "8cc0f78cf866b92dea8864ec59e2d760cba5af59f6b9f8bb6f925a2a061e18fe"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-02-uring64/uring64/diagnostics/after-transfer-pid-2990946.smaps.gz",
+      "bytes": 2426,
+      "sha256": "827c25de346fa048cc704768d2c3dedcf18c29495a2994ed58ed9bdc605bac12"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-02-uring64/uring64/diagnostics/before-torrent-add-pid-2990946.smaps.gz",
+      "bytes": 2024,
+      "sha256": "0edc19f07a06b7733c1ebaed92c7a58faf8137465da537e484a28bdd1ad3b632"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-03-pread/pread/client.log",
+      "bytes": 457,
+      "sha256": "35ec99ef0b780a1db0c796d000ca4d7238fcecd7c106879224e96e7ddc1ab82b"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-03-pread/pread/config.toml",
+      "bytes": 519,
+      "sha256": "e23839a4e8b6d6703bcc247f96eb32970b998c899a67ff0ea16efadd237a5c23"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-03-pread/pread/diagnostics/after-seed-recheck-pid-2995110.smaps.gz",
+      "bytes": 2410,
+      "sha256": "66799edb915e0d34df7d9e92764d32bba031fbaee7ef4915233e0d4fb75a12f2"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-03-pread/pread/diagnostics/after-transfer-pid-2995110.smaps.gz",
+      "bytes": 2378,
+      "sha256": "d88fba85f9d5c2114fcd9500b93464b567477604729669d48b5f14bb8e2d928d"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-03-pread/pread/diagnostics/before-torrent-add-pid-2995110.smaps.gz",
+      "bytes": 2029,
+      "sha256": "4eb582eac67114ca05230072f07f43ac8a89990cf30179403dfaceab3dcd7f3e"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-03-uring64/uring64/client.log",
+      "bytes": 457,
+      "sha256": "44510c5901885dd5d04f618860e7d925001c351fa97edeffdb83e1e2043a7faa"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-03-uring64/uring64/config.toml",
+      "bytes": 531,
+      "sha256": "b408578bf409231602b7575cbe056e3916b0f236bcbc9a40bcc612bea68e5c01"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-03-uring64/uring64/diagnostics/after-seed-recheck-pid-2997232.smaps.gz",
+      "bytes": 2469,
+      "sha256": "638dadac81937973b01919378f8af23adfa0c2eed4796cc0f4dac5f6f2de463b"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-03-uring64/uring64/diagnostics/after-transfer-pid-2997232.smaps.gz",
+      "bytes": 2462,
+      "sha256": "9970d2f5f8f5f7eedb4c44c7d1dfb9ca62f0e6966650ea035b065a4f26c025e3"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/run-03-uring64/uring64/diagnostics/before-torrent-add-pid-2997232.smaps.gz",
+      "bytes": 2027,
+      "sha256": "fca074859d93c3f90847a05827d42d769db667e427d5a0ff960d637881acab98"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/summary.json",
+      "bytes": 127361,
+      "sha256": "9442790c60366453d6941d559692eeb0411736a09fa75a5bded375fc38f242c9"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-64m-r3/summary.source.json",
+      "bytes": 129953,
+      "sha256": "de452a434311fe3cb7c39f01404c731875d11029ffba1a4552551a1f02798fbc"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-rtorrent-64m-r1/fixture/fixture.torrent",
+      "bytes": 1377,
+      "sha256": "c3dcc6124dcd3bbb0bc2ead7b754361db71ddef1a98e0094f851cb255e4cf7d7"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-rtorrent-64m-r1/run-01-pread/pread/client.log",
+      "bytes": 457,
+      "sha256": "aace9a7bb52446cb8839f362d7f02f26cd4a2629bc5439607ac95f7c5fff0139"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-rtorrent-64m-r1/run-01-pread/pread/config.toml",
+      "bytes": 546,
+      "sha256": "6f68bfa66604fb5bbb2e50bf98b3cc4f5d0ba3063b3b209c30aece857d5a25d4"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-rtorrent-64m-r1/run-01-pread/pread/diagnostics/after-first-payload-8s-pid-2984477.smaps.gz",
+      "bytes": 2362,
+      "sha256": "c56eed64c475ce38914eaf416b52713294981988e5ab79d1f717b319326df32c"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-rtorrent-64m-r1/run-01-pread/pread/diagnostics/after-seed-recheck-pid-2984477.smaps.gz",
+      "bytes": 2349,
+      "sha256": "089a2c38160e5a59b1af493d840986c13f2c43d168082d0a5b367453bb94f35a"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-rtorrent-64m-r1/run-01-pread/pread/diagnostics/after-transfer-pid-2984477.smaps.gz",
+      "bytes": 2365,
+      "sha256": "aa577c32bf0a07afebb7055fb0304df6df922852a6aac5a3fa2fa6b44969af2f"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-rtorrent-64m-r1/run-01-pread/pread/diagnostics/before-torrent-add-pid-2984477.smaps.gz",
+      "bytes": 2031,
+      "sha256": "9241924c848d9b7dbfc20b398d6c185097d0fc84c4b57c99bc9c0e89e5026fea"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-rtorrent-64m-r1/run-01-rtorrent/rtorrent/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-rtorrent-64m-r1/run-01-rtorrent/rtorrent/rtorrent.rc",
+      "bytes": 462,
+      "sha256": "3e10333b46b9beccb2eb5b552746e1976422dfba344bc89fe5a763698d233eda"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-rtorrent-64m-r1/run-01-uring64/uring64/client.log",
+      "bytes": 457,
+      "sha256": "78a959d62525f732f7f0a2127db1e4a8cd75cbd5b05a08ef4ec6e6394a59e794"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-rtorrent-64m-r1/run-01-uring64/uring64/config.toml",
+      "bytes": 558,
+      "sha256": "93237bd30eb8105047b55129090bb15d06b228c6f35dabb5f9ddaeaddecd63eb"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-rtorrent-64m-r1/run-01-uring64/uring64/diagnostics/after-first-payload-8s-pid-2981009.smaps.gz",
+      "bytes": 2431,
+      "sha256": "f8c4761fd83689d6d877e970d303fb91d946799e7ffb79e5c8f7051fa1c70b51"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-rtorrent-64m-r1/run-01-uring64/uring64/diagnostics/after-seed-recheck-pid-2981009.smaps.gz",
+      "bytes": 2447,
+      "sha256": "035ae48830ed82836193454a39c54c70a89715e06899e9a15d4cd79c54c7e9b0"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-rtorrent-64m-r1/run-01-uring64/uring64/diagnostics/after-transfer-pid-2981009.smaps.gz",
+      "bytes": 2432,
+      "sha256": "b324718fa4c41855fd5c549f217f7051e87e927df41f82d5d015ed58afc630ac"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-rtorrent-64m-r1/run-01-uring64/uring64/diagnostics/before-torrent-add-pid-2981009.smaps.gz",
+      "bytes": 2028,
+      "sha256": "0438f3399129358ad25c2d8c272e83d52cf225979257d7666588895f0d48ac62"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-rtorrent-64m-r1/summary.json",
+      "bytes": 67022,
+      "sha256": "f707570eee61668c570dfd87493cf3dab6ee6d3ff67e82ccd8c419fe567118c6"
+    },
+    {
+      "path": "io-uring-queue-depth-64/pread-uring-rtorrent-64m-r1/summary.source.json",
+      "bytes": 68648,
+      "sha256": "c83d50138002bbd3d98e559ea3f9c8b3616d96fce295a5ccb49f892525373043"
+    },
+    {
       "path": "pgo-cache-hit-training-64m/logs/run-01-training-training.client.log",
       "bytes": 2315,
       "sha256": "b2f92901321db37cf6bf47d81b423c9af7a57423acbac6f98f08f0cb65f08107"

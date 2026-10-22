@@ -1,0 +1,19 @@
+[daemon]
+api_bind = "127.0.0.1:40511"
+session_dir = "/tmp/torrentng-seed-goal-20261022/paired-uring-vs-pread-64m-r3/run-03-uring64/uring64/session"
+log_level = "warn"
+
+[network]
+listen_port = 33501
+max_peers = 8
+max_incoming_handshakes = 32
+
+[storage]
+download_dir = "/tmp/torrentng-seed-goal-20261022/paired-uring-vs-pread-64m-r3/run-03-uring64/uring64/download"
+io_queue_depth = 64
+
+[dht]
+enabled = false
+
+[auth]
+api_tokens_file = "/tmp/torrentng-seed-goal-20261022/paired-uring-vs-pread-64m-r3/run-03-uring64/uring64/api-token"
