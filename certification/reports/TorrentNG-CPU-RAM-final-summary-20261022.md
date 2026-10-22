@@ -8,7 +8,8 @@ build:
 | Build | CPU seconds per transfer ↓ | Process PSS (MiB) ↓ |
 |---|---:|---:|
 | Previous best TorrentNG configuration | 1.88 | 24.26 |
-| **TorrentNG defaults at `0070ef7`** | **1.90** | **19.82** |
+| Consolidated TorrentNG source, opt-3 | 1.92 | 23.12 |
+| **TorrentNG defaults at `0070ef7` (opt-s)** | **1.90** | **19.82** |
 | rTorrent | 0.73 | 10.74 |
 
 The compact defaults reduced TorrentNG PSS by **18.3%** from its previous best
@@ -17,20 +18,16 @@ memory improvement rather than a CPU improvement. Against rTorrent, TorrentNG
 still used about **2.60× the CPU** and **1.85× the PSS** in this comparison.
 CPU parity remains unsolved.
 
-The final validation summary reported 769 engine tests, 32 daemon tests in
-each of three API configurations, Clippy checks, and 12 benchmark transfers
-passing. The associated final-results ZIP was not present in this checkout's
-`~/Downloads`: the only TorrentNG ZIP there is a four-file source snapshot,
-and its files match the current source byte for byte. The exact fixture,
-per-run samples, and binary identities for the final three-run table therefore
-are not independently archived here.
-
-The detailed [native CPU/RAM report](TorrentNG-native-cpu-ram-20261022.md)
-contains separate preliminary 128 MiB and Rust 1.97 256 MiB screens. The
-256 MiB matrix is explicitly incomplete: 11 of 12 cells passed; its final
-rTorrent cell hit `ENOSPC`, with a separate recovery sample reported apart.
-Those raw screens are useful evidence, but they are not the missing raw bundle
-for the final-default table above.
+The final report records three randomized 256 MiB rounds for each of four
+variants, with all **12/12 transfers verified**, plus source/binary identities,
+build metadata, compact run summaries, mapping totals, 769 engine tests, 32
+daemon tests in each of three API configurations, and Clippy results. The
+older 11/12 matrix that hit `ENOSPC` is retained as history and explicitly
+excluded from the final comparison. The detailed
+[native CPU/RAM report](TorrentNG-native-cpu-ram-20261022.md) links the
+consolidated evidence. Raw process timestamps, machine paths, payloads, and
+binaries are intentionally omitted; compact summaries and hashes are checked
+in.
 
 ## What improved and what did not
 
@@ -45,6 +42,10 @@ for the final-default table above.
 - Size-optimized release settings and the leaner default API feature set
   reduce the default image footprint. Transmission and Deluge APIs remain
   available through `full-compat` or their individual Cargo features.
+- The opt-s build's `.text` section was 30.8% smaller than opt-3. Its median
+  executable-mapping PSS was 11.09 MiB versus 15.71 MiB for old-best, while
+  anonymous PSS was similar (5.79 versus 5.91 MiB). The PSS win mostly came
+  from mapped code pages, not smaller runtime heaps or payload buffers.
 - The immediate rate-grant path avoids persistent waiter bookkeeping for
   uncontended grants while retaining the existing cancellation, fairness,
   settlement, and refund paths.
@@ -73,4 +74,4 @@ matched screen improves CPU without giving back the memory gain.
 
 The [seed-read probe report](TorrentNG-seed-read-path-probe-20261022.md) and
 the [detailed benchmark report](TorrentNG-native-cpu-ram-20261022.md) preserve
-the current evidence and its limits.
+the current evidence, raw-summary links, and rejected experiments.

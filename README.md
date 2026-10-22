@@ -144,7 +144,8 @@ The final compact-default comparison reported three-run medians of 1.90 CPU
 seconds and 19.82 MiB PSS for TorrentNG, versus 0.73 seconds and 10.74 MiB for
 rTorrent. PSS improved 18.3% against TorrentNG's previous best configuration;
 CPU did not improve, and remains about 2.60× rTorrent's. The final summary and
-its evidence limits are in the [CPU/RAM results note](certification/reports/TorrentNG-CPU-RAM-final-summary-20261022.md).
+its evidence limits are in the [CPU/RAM results note](certification/reports/TorrentNG-CPU-RAM-final-summary-20261022.md),
+with the [full report and verified run summaries](certification/reports/TorrentNG-native-cpu-ram-20261022.md).
 
 ## Learn more
 
