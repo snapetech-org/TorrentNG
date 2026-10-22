@@ -122,6 +122,24 @@ The next review archive repeated the `sendfile` recommendation and added no new
 patch. Its source and older benchmark snapshots are recorded in the
 [archive assessment](certification/reports/TorrentNG-download-review-20261021/README.md).
 
+On 2026-10-22, a private local screen against source-built rTorrent/libtorrent
+v0.16.25 measured active-window CPU at 1.28 CPU-s/GiB for TorrentNG and 0.50
+for rTorrent, with active goodput of 3.53 and 3.85 MiB/s. Anonymous seed-memory
+peaks were 14.5 MiB and 3.4 MiB. rTorrent's first payload appeared about 63
+seconds after its peer connected; the run did not record the peer's interest,
+choke, or request state. This was one exploratory pair, not a ranking. See the
+[current-source screen report](certification/reports/TorrentNG-current-rtorrent-screen-20261022.md).
+
+A separate hot-file probe found that a single mapped view, read in 16 KiB
+blocks, used 56% less CPU per GiB than a reused-buffer `pread` path across three
+paired samples, but the absolute saving was 0.060 CPU-s/GiB. That is about 8%
+of the 0.78 CPU-s/GiB gap in the separate screen, only a magnitude comparison.
+The probe excludes scheduler, socket, and cold-file costs, so mapped reads
+alone will not close the gap. A prototype is worth pursuing only if it can also
+remove repeated scheduler or buffer-ownership work; the [method and raw
+measurements](certification/reports/TorrentNG-seed-read-path-probe-20261022.md)
+are recorded separately.
+
 ## Learn more
 
 - [Install TorrentNG Desktop](docs/DESKTOP.md)
