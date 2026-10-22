@@ -9,6 +9,7 @@ Completion time is recorded as a validity check, not a performance target.
 from __future__ import annotations
 
 import argparse
+import ctypes.util
 import hashlib
 import json
 import os
@@ -31,6 +32,7 @@ BLOCK = 16 * 1024
 PIECE = 1024 * 1024
 RATE = 4 * 1024 * 1024
 WINDOW = 32
+PROFILE_FREQUENCY_HZ = 1000
 TOKEN = "native-seed-probe-local-token"
 PEER_ID = b"-TNG0001-CPU-RAM0001"
 CONTROL_ENV_EXACT = {
@@ -130,8 +132,59 @@ def pacing_delay(deadline, now):
     return max(0.0, deadline - now)
 
 
+def build_profile_preload(output):
+    """Build a temporary preload that permits this probe and its children to ptrace the client."""
+    profiler = ctypes.util.find_library("profiler")
+    if profiler is None:
+        raise RuntimeError("gperftools libprofiler was not found")
+    helper = output / "profile-ptrace.so"
+    source = r"""
+#define _GNU_SOURCE
+#include <sys/prctl.h>
+#include <linux/prctl.h>
+#include <unistd.h>
+__attribute__((constructor)) static void allow_probe_debugger(void) {
+    (void)prctl(PR_SET_PTRACER, getppid(), 0, 0, 0);
+}
+"""
+    result = subprocess.run(
+        ["cc", "-shared", "-fPIC", "-O2", "-x", "c", "-o", str(helper), "-"],
+        input=source,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"could not build temporary profile helper: {result.stderr.strip()}")
+    return f"{profiler}:{helper}"
+
+
+def gdb_profile_control(pid, action, profile_path, log_path):
+    """Start/stop gperftools in the client, with GDB attaching only at transfer boundaries."""
+    if action == "start":
+        expression = f"call (int)ProfilerStart({json.dumps(str(profile_path))})"
+    elif action == "stop":
+        expression = "call (void)ProfilerStop()"
+    else:
+        raise ValueError(f"unsupported profile action: {action}")
+    result = subprocess.run(
+        ["gdb", "--quiet", "--batch", "--nx", "-iex", "set debuginfod enabled off",
+         "--pid", str(pid), "--ex", "set confirm off", "--ex", expression],
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    log_path.write_text(result.stdout + result.stderr)
+    if result.returncode != 0:
+        raise RuntimeError(f"GDB could not {action} transfer-window profile: {result.stdout}{result.stderr}")
+    if action == "start" and not re.search(r"\$\d+\s*=\s*1\b", result.stdout):
+        raise RuntimeError(f"gperftools did not confirm profile start: {result.stdout}{result.stderr}")
+
+
 def leecher(port, ih, size, target, expected, timeout, sample_process,
-            diagnostic_callback=None, register_peer=None, peer_state_callback=None):
+            diagnostic_callback=None, register_peer=None, peer_state_callback=None,
+            cpu_profile_callback=None):
     started, deadline = time.monotonic(), time.monotonic() + timeout
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     with sock:
@@ -212,13 +265,15 @@ def leecher(port, ih, size, target, expected, timeout, sample_process,
                     absolute, expected_len = item
                     data = body[9:]
                     if len(data) != expected_len: raise RuntimeError("short piece block")
-                    output.seek(absolute); output.write(data)
-                    done.add(absolute // BLOCK)
-                    bytes_received += len(data)
                     now = time.monotonic()
                     if first_payload_time is None:
                         first_payload_time = now
+                        if cpu_profile_callback is not None:
+                            cpu_profile_callback("start")
                         first_payload_sample = sample_process()
+                    output.seek(absolute); output.write(data)
+                    done.add(absolute // BLOCK)
+                    bytes_received += len(data)
                     wait_until = pacing_deadline(first_payload_time, bytes_received)
                     delay = pacing_delay(wait_until, time.monotonic())
                     if delay: time.sleep(delay)
@@ -226,6 +281,8 @@ def leecher(port, ih, size, target, expected, timeout, sample_process,
                             and time.monotonic() >= first_payload_time + 8):
                         mid_transfer_diagnostics = diagnostic_callback("after-first-payload-8s")
             payload_complete_time = time.monotonic()
+            if cpu_profile_callback is not None:
+                cpu_profile_callback("stop")
             payload_complete_sample = sample_process()
     post_leecher_sample = sample_process()
     digest = hashlib.sha256()
@@ -590,13 +647,19 @@ def cleanup_run_payloads(run_dir, client_name):
     return removed
 
 
-def start_client(client, run_dir, fixture_dir, torrent, ih, ready_timeout, env_overrides=None):
+def start_client(client, run_dir, fixture_dir, torrent, ih, ready_timeout, env_overrides=None,
+                 profile_preload=None, profile_path=None):
     name, kind, binary = client
     work = run_dir / name; work.mkdir()
     download = work / "download"; download.mkdir()
     shutil.copyfile(fixture_dir / "payload.bin", download / "payload.bin")
     peer_port, api_port = free_port(), free_port()
     env, inherited_controls = sanitize_client_environment(os.environ, env_overrides)
+    if profile_preload is not None and kind == "torrentngd":
+        if "LD_PRELOAD" in (env_overrides or {}):
+            raise ValueError("--cpu-profile cannot be combined with an explicit LD_PRELOAD override")
+        env["LD_PRELOAD"] = profile_preload
+        env["CPUPROFILE_FREQUENCY"] = str(PROFILE_FREQUENCY_HZ)
     config = work / ("config.toml" if kind == "torrentngd" else "rtorrent.rc")
     scgi_endpoint = None
     if kind == "torrentngd":
@@ -634,6 +697,7 @@ def start_client(client, run_dir, fixture_dir, torrent, ih, ready_timeout, env_o
             "scgi_endpoint": scgi_endpoint,
             "proc_pid": proc_pid,
             "binary_sha256": hashlib.sha256(Path(binary).read_bytes()).hexdigest(),
+            "cpu_profile_path": str(profile_path) if profile_path is not None else None,
             "environment_overrides": dict(env_overrides or {}),
             "inherited_measurement_controls": inherited_controls,
             "diagnostics_dir": str(diagnostics_dir), "pre_add_diagnostics": pre_add_diagnostics,
@@ -661,6 +725,8 @@ def parse_args():
     p.add_argument("--ready-timeout", type=int, default=600, help="seed verification timeout seconds")
     p.add_argument("--diagnostics", action="store_true",
         help="capture an extra TorrentNG /metrics and smaps snapshot 8 seconds into transfer; marks diagnostic runs")
+    p.add_argument("--cpu-profile", action="store_true",
+        help="opt-in gperftools stack profile for one TorrentNG run, bounded to first payload through completion")
     p.add_argument("--peer-debug", action="store_true",
         help="on rTorrent runs, capture read-only SCGI/choke/peer state after handshake and at timeout")
     return p.parse_args()
@@ -701,8 +767,23 @@ def main():
     fixture_dir = output / "fixture"
     _, torrent, ih, digest = make_fixture(fixture_dir, args.size, args.seed)
     rng, runs, round_orders = random.Random(args.order_seed), [], []
+    if args.cpu_profile:
+        if len(args.client) != 1 or args.client[0][1] != "torrentngd" or args.repeats != 1:
+            raise SystemExit("--cpu-profile requires exactly one TorrentNG client and --repeats 1")
+        if shutil.which("gdb") is None or shutil.which("cc") is None:
+            raise SystemExit("--cpu-profile requires gdb and cc")
+        try:
+            profile_preload = build_profile_preload(output)
+        except (OSError, RuntimeError) as error:
+            raise SystemExit(str(error)) from error
+    else:
+        profile_preload = None
     report = {"format": "native-seed-cpu-ram-v1", "status": "running",
-        "diagnostic_run": bool(args.diagnostics or args.peer_debug), "peer_debug": bool(args.peer_debug),
+        "diagnostic_run": bool(args.diagnostics or args.peer_debug or args.cpu_profile), "peer_debug": bool(args.peer_debug),
+        "cpu_profile": ({"method": "gperftools, started/stopped by GDB at payload boundaries",
+                         "sampling_window": "first valid Piece block through final block completion",
+                         "frequency_hz": PROFILE_FREQUENCY_HZ,
+                         "client": args.client[0][0]} if args.cpu_profile else None),
         "fixture_bytes": args.size,
         "fixture_sha256": digest, "info_hash": ih.hex(), "offered_rate_bytes_per_second": RATE,
         "block_bytes": BLOCK, "request_window": WINDOW, "dht": False, "pex": False,
@@ -720,8 +801,9 @@ def main():
         for index in order:
             client = args.client[index]; run_dir = output / f"run-{round_index + 1:02d}-{client[0]}"; run_dir.mkdir()
             active, stop = [], threading.Event()
+            profile_path = run_dir / "payload-window.prof" if args.cpu_profile else None
             item = start_client(client, run_dir, fixture_dir, torrent, ih, args.ready_timeout,
-                                env_overrides.get(client[0], {}))
+                                env_overrides.get(client[0], {}), profile_preload, profile_path)
             successful_run, run_record = False, None
             def sample_loop():
                 while not stop.is_set(): active.append(process_sample(item["proc_pid"])); stop.wait(1)
@@ -738,6 +820,11 @@ def main():
                         item["api_port"], item["proc_pid"], Path(item["diagnostics_dir"]), label)
                 if client[1] == "torrentngd":
                     peer_registration = lambda address: add_torrent_peer(item["api_port"], ih.hex(), address)
+                profile_control = None
+                if profile_path is not None:
+                    profile_control = lambda action: gdb_profile_control(
+                        item["proc_pid"], action, profile_path,
+                        run_dir / f"profile-{action}.gdb.log")
                 peer_state_callback = None
                 if args.peer_debug and client[1] == "rtorrent":
                     item["peer_state_snapshots"] = []
@@ -750,7 +837,8 @@ def main():
                     peer_state_callback = capture_rtorrent_state
                 transfer = leecher(item["peer_port"], ih, args.size, run_dir / "downloaded.bin", digest,
                                    args.timeout, lambda: process_sample(item["proc_pid"]),
-                                   during_transfer_capture, peer_registration, peer_state_callback)
+                                   during_transfer_capture, peer_registration, peer_state_callback,
+                                   profile_control)
                 stop.set(); sampler.join()
                 post_transfer_diagnostics = None
                 if client[1] == "torrentngd":
@@ -799,6 +887,9 @@ def main():
                     "payload_cleanup": ({"policy": "keep_payloads", "status": "retained-by-option"}
                                         if args.keep_payloads else
                                         {"policy": "after-verified-transfer-and-client-shutdown", "status": "pending"})}
+                if profile_path is not None:
+                    run_record["cpu_profile"] = {"path": profile_path.relative_to(output).as_posix(),
+                                                  "bytes": profile_path.stat().st_size}
                 runs.append(run_record)
                 report["runs"] = runs
                 write_summary(output, report)

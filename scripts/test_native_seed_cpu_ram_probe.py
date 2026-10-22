@@ -11,6 +11,7 @@ import subprocess
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -113,6 +114,29 @@ class ProbeTests(unittest.TestCase):
         environment = probe.apply_client_environment({"PATH": "/bin", "TOKIO_WORKER_THREADS": "2"},
                                                      overrides["verify-oneworker"])
         self.assertEqual(environment, {"PATH": "/bin", "TOKIO_WORKER_THREADS": "1"})
+
+    @patch.object(probe.subprocess, "run")
+    def test_cpu_profile_control_uses_gdb_and_quotes_profile_path(self, run):
+        run.side_effect = [
+            subprocess.CompletedProcess([], 0, stdout="$1 = 1\n", stderr=""),
+            subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            profile = root / 'profile with "quotes".prof'
+            start_log = root / "start.log"
+            stop_log = root / "stop.log"
+            probe.gdb_profile_control(1234, "start", profile, start_log)
+            probe.gdb_profile_control(1234, "stop", profile, stop_log)
+            start_command = run.call_args_list[0].args[0]
+            stop_command = run.call_args_list[1].args[0]
+            self.assertIn("--pid", start_command)
+            self.assertIn("1234", start_command)
+            self.assertIn("ProfilerStart(", start_command[-1])
+            self.assertIn(r'\"quotes\"', start_command[-1])
+            self.assertEqual(stop_command[-1], "call (void)ProfilerStop()")
+            self.assertIn("$1 = 1", start_log.read_text())
+            self.assertEqual(stop_log.read_text(), "")
 
     def test_child_environment_strips_controls_and_records_only_safe_values(self):
         source = {
