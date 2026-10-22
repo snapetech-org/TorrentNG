@@ -715,8 +715,22 @@ async fn read_sparse_range(
         return recheck_read_owned(scheduler, path, offset, len as usize).await;
     }
 
-    let mut out = Vec::with_capacity(len as usize);
     let range_end = offset.saturating_add(len);
+    // A single dense extent can use the owned read directly. Avoid assembling
+    // a second full-range Vec and copying the read into it.
+    if extents.len() == 1 {
+        let extent = extents[0];
+        if extent.offset <= offset
+            && extent
+                .offset
+                .checked_add(extent.len)
+                .is_some_and(|extent_end| extent_end >= range_end)
+        {
+            return recheck_read_owned(scheduler, path, offset, len as usize).await;
+        }
+    }
+
+    let mut out = Vec::with_capacity(len as usize);
     let mut cursor = offset;
     for extent in extents {
         if extent.offset > cursor {
@@ -1063,6 +1077,33 @@ mod tests {
             verifier.verify_hybrid_piece(0, &expectation).await,
             VerifyResult::Valid
         );
+    }
+
+    #[tokio::test]
+    async fn read_sparse_range_returns_dense_file_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dense-range.bin");
+        let content: Vec<u8> = (0..1024 * 1024).map(|index| (index % 251) as u8).collect();
+        std::fs::write(&path, &content).unwrap();
+        let scheduler = ssd_scheduler();
+
+        let read = read_sparse_range(&scheduler, &path, 0, content.len() as u64)
+            .await
+            .unwrap();
+
+        assert_eq!(read.as_ref(), content.as_slice());
+    }
+
+    #[tokio::test]
+    async fn read_sparse_range_reports_truncated_dense_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("truncated-dense-range.bin");
+        std::fs::write(&path, [0x5au8; 64 * 1024]).unwrap();
+        let scheduler = ssd_scheduler();
+
+        let result = read_sparse_range(&scheduler, &path, 0, 128 * 1024).await;
+
+        assert!(matches!(result, Err(StorageError::ShortIo { .. })));
     }
 
     #[tokio::test]

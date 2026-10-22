@@ -1,0 +1,26 @@
+{
+  "kernel": "6.18.55",
+  "platform": "Linux-6.18.55-x86_64-with-glibc2.39",
+  "machine": "x86_64",
+  "cpu_model": "AMD EPYC 9V74 80-Core Processor",
+  "available_cpu_affinity": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+  ],
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "cargo": "cargo 1.99.1 (5f94df478 2026-08-27)",
+  "source_commit": "a8154943f9bd489d79e84ab13423befb576d2789",
+  "profile": {
+    "opt_level": 3,
+    "lto": "thin",
+    "codegen_units": 1,
+    "allocator": "system"
+  }
+}

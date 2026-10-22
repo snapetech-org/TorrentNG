@@ -1,0 +1,824 @@
+#!/usr/bin/env python3
+"""Local whole-client CPU/RAM probe for private, verified torrent seeding.
+
+Runs isolated native TorrentNG/rTorrent processes against the same deterministic
+single-file BEP 3 fixture. A bounded TCP leecher requests 16 KiB blocks in a
+32-block window, paces offered load to 4 MiB/s, and verifies the full SHA-256.
+Completion time is recorded as a validity check, not a performance target.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import random
+import re
+import signal
+import shutil
+import socket
+import struct
+import subprocess
+import tempfile
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+BLOCK = 16 * 1024
+PIECE = 1024 * 1024
+RATE = 4 * 1024 * 1024
+WINDOW = 32
+TOKEN = "native-seed-probe-local-token"
+PEER_ID = b"-TNG0001-CPU-RAM0001"
+CONTROL_ENV_EXACT = {
+    "TOKIO_WORKER_THREADS", "RUST_LOG", "RUST_LOG_STYLE", "GLIBC_TUNABLES",
+    "LD_PRELOAD", "LD_AUDIT", "LD_LIBRARY_PATH", "LD_PROFILE", "LD_DEBUG",
+    "LD_BIND_NOW", "CPUPROFILE", "CPUPROFILE_FREQUENCY", "HEAPPROFILE",
+    "HEAP_PROFILE_ALLOCATION_INTERVAL", "LLVM_PROFILE_FILE", "GCOV_PREFIX",
+    "PERF_RECORD", "PYTHONMALLOC", "MALLOC_ARENA_MAX", "MALLOC_CONF",
+    "MALLOC_TRIM_THRESHOLD_", "MALLOC_MMAP_THRESHOLD_", "MALLOC_PERTURB_",
+}
+CONTROL_ENV_PREFIXES = ("MALLOC_", "JEMALLOC_", "MIMALLOC_", "TNG_", "TORRENTNG")
+SAFE_CONTROL_VALUES = {
+    "TOKIO_WORKER_THREADS", "MALLOC_ARENA_MAX", "MALLOC_CONF",
+    "MALLOC_TRIM_THRESHOLD_", "MALLOC_MMAP_THRESHOLD_", "MALLOC_PERTURB_",
+    "GLIBC_TUNABLES", "LD_PRELOAD", "RUST_LOG",
+}
+DIAGNOSTIC_METRICS = {
+    "torrentng_storage_peer_read_cache_entries",
+    "torrentng_storage_peer_read_cache_bytes",
+    "torrentng_storage_peer_read_cache_global_backing_bytes",
+    "torrentng_storage_peer_read_cache_global_budget_bytes",
+    "torrentng_storage_peer_read_cache_hits_total",
+    "torrentng_storage_peer_read_cache_misses_total",
+    "torrentng_storage_peer_read_cache_evictions_total",
+    "torrentng_storage_frame_bytes_in_use",
+    "torrentng_storage_frame_bytes_retained",
+    "torrentng_storage_frame_bytes_cap",
+}
+
+
+def bencode(v):
+    if isinstance(v, int): return b"i" + str(v).encode() + b"e"
+    if isinstance(v, bytes): return str(len(v)).encode() + b":" + v
+    if isinstance(v, list): return b"l" + b"".join(map(bencode, v)) + b"e"
+    if isinstance(v, dict): return b"d" + b"".join(bencode(k) + bencode(v[k]) for k in sorted(v)) + b"e"
+    raise TypeError(v)
+
+
+def make_fixture(folder: Path, size: int, seed: int):
+    folder.mkdir()
+    payload = folder / "payload.bin"
+    key, digest, hashes, pending = seed.to_bytes(8, "big"), hashlib.sha256(), bytearray(), bytearray()
+    remaining = size
+    counter = 0
+    with payload.open("wb") as out:
+        while remaining:
+            data = hashlib.shake_256(b"native-seed-cpu-ram-v1\0" + key + counter.to_bytes(8, "big")).digest(min(PIECE, remaining))
+            out.write(data); digest.update(data); pending.extend(data)
+            remaining -= len(data); counter += 1
+            while len(pending) >= PIECE:
+                hashes.extend(hashlib.sha1(pending[:PIECE], usedforsecurity=False).digest()); del pending[:PIECE]
+    if pending: hashes.extend(hashlib.sha1(pending, usedforsecurity=False).digest())
+    info = {b"length": size, b"name": b"payload.bin", b"piece length": PIECE,
+            b"pieces": bytes(hashes), b"private": 1}
+    torrent = bencode({b"info": info})
+    (folder / "fixture.torrent").write_bytes(torrent)
+    info_hash = hashlib.sha1(bencode(info), usedforsecurity=False).digest()
+    return payload, torrent, info_hash, digest.hexdigest()
+
+
+def recv_exact(sock, count, deadline):
+    buf = bytearray()
+    while len(buf) < count:
+        if time.monotonic() >= deadline:
+            raise TimeoutError("peer response deadline expired")
+        try:
+            data = sock.recv(count - len(buf))
+        except socket.timeout:
+            continue
+        if not data: raise RuntimeError("peer closed connection")
+        buf.extend(data)
+    return bytes(buf)
+
+
+def send_msg(sock, msg_id, payload=b""):
+    sock.sendall(struct.pack(">I", len(payload) + 1) + bytes((msg_id,)) + payload)
+
+
+def update_available_pieces(body, pieces, available):
+    if not body: return available
+    if body[0] == 5:
+        bits = body[1:]
+        if len(bits) == (pieces + 7) // 8:
+            available = {piece for piece in range(pieces)
+                         if bits[piece // 8] & (0x80 >> (piece % 8))}
+    elif body[0] == 4 and len(body) == 5:
+        piece = struct.unpack(">I", body[1:])[0]
+        if 0 <= piece < pieces: available.add(piece)
+    return available
+
+
+def pacing_deadline(first_payload_time, bytes_received):
+    return first_payload_time + bytes_received / RATE
+
+
+def leecher(port, ih, size, target, expected, timeout, sample_process,
+            diagnostic_callback=None, register_peer=None, peer_state_callback=None):
+    started, deadline = time.monotonic(), time.monotonic() + timeout
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    with sock:
+        sock.settimeout(10)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        sock.bind(("127.0.0.1", 0))
+        leecher_address = sock.getsockname()
+        if register_peer is not None:
+            register_peer(leecher_address)
+        sock.connect(("127.0.0.1", port))
+        with target.open("w+b") as output:
+            connection_started = time.monotonic()
+            connection_sample = sample_process()
+            first_payload_time = None
+            first_payload_sample = None
+            payload_complete_sample = None
+            bytes_received = 0
+            mid_transfer_diagnostics = None
+            output.truncate(size)
+            sock.settimeout(1)
+            client_messages = []
+            handshake = b"\x13BitTorrent protocol" + bytes(8) + ih + PEER_ID
+            sock.sendall(handshake)
+            client_messages.append({"type": "handshake", "bytes_hex": handshake.hex()})
+            hello = recv_exact(sock, 68, deadline)
+            if hello[:20] != b"\x13BitTorrent protocol" or hello[28:48] != ih:
+                raise RuntimeError("peer handshake mismatch")
+            blocks = (size + BLOCK - 1) // BLOCK
+            pieces = (size + PIECE - 1) // PIECE
+            empty_bitfield = bytes((pieces + 7) // 8)
+            bitfield_frame = struct.pack(">I", len(empty_bitfield) + 1) + b"\x05" + empty_bitfield
+            interested_frame = b"\0\0\0\x01\x02"
+            sock.sendall(bitfield_frame + interested_frame)
+            client_messages.extend((
+                {"type": "bitfield", "bytes_hex": bitfield_frame.hex()},
+                {"type": "interested", "bytes_hex": interested_frame.hex()},
+            ))
+            outstanding, done, available = {}, set(), set()
+            next_block, unchoked, full_bitfield = 0, False, False
+            server_messages = []
+            peer_state_snapshots = []
+            while len(done) < blocks:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"transfer stopped after {len(done)} blocks; unchoked={unchoked}; "
+                        f"available_pieces={len(available)}/{pieces}; server_message_ids={server_messages[:32]}")
+                if unchoked and full_bitfield:
+                    while len(outstanding) < WINDOW and next_block < blocks:
+                        absolute = next_block * BLOCK
+                        piece, offset = divmod(absolute, PIECE)
+                        length = min(BLOCK, size - absolute)
+                        send_msg(sock, 6, struct.pack(">III", piece, offset, length))
+                        outstanding[(piece, offset)] = (absolute, length)
+                        next_block += 1
+                try:
+                    length = struct.unpack(">I", recv_exact(sock, 4, deadline))[0]
+                except TimeoutError as error:
+                    if peer_state_callback is not None:
+                        peer_state_snapshots.append(peer_state_callback())
+                    raise TimeoutError(f"no peer message after {len(done)} blocks; unchoked={unchoked}; "
+                        f"available_pieces={len(available)}/{pieces}; server_message_ids={server_messages[:32]}; "
+                        f"client_messages={client_messages}; "
+                        f"rtorrent_state={json.dumps(peer_state_snapshots, separators=(',', ':'))}") from error
+                if length == 0: continue
+                if length > BLOCK + 9: raise RuntimeError(f"oversized peer message: {length}")
+                body = recv_exact(sock, length, deadline)
+                server_messages.append(body[0])
+                if peer_state_callback is not None and not peer_state_snapshots:
+                    peer_state_snapshots.append(peer_state_callback())
+                if body[0] == 1: unchoked = True
+                elif body[0] == 0: unchoked = False
+                elif body[0] in (4, 5):
+                    available = update_available_pieces(body, pieces, available)
+                    full_bitfield = len(available) == pieces
+                elif body[0] == 7:
+                    piece, offset = struct.unpack(">II", body[1:9])
+                    item = outstanding.pop((piece, offset), None)
+                    if item is None: continue
+                    absolute, expected_len = item
+                    data = body[9:]
+                    if len(data) != expected_len: raise RuntimeError("short piece block")
+                    output.seek(absolute); output.write(data)
+                    done.add(absolute // BLOCK)
+                    bytes_received += len(data)
+                    now = time.monotonic()
+                    if first_payload_time is None:
+                        first_payload_time = now
+                        first_payload_sample = sample_process()
+                    wait_until = pacing_deadline(first_payload_time, bytes_received)
+                    if now < wait_until: time.sleep(wait_until - time.monotonic())
+                    if (diagnostic_callback is not None and mid_transfer_diagnostics is None
+                            and time.monotonic() >= first_payload_time + 8):
+                        mid_transfer_diagnostics = diagnostic_callback("after-first-payload-8s")
+            payload_complete_time = time.monotonic()
+            payload_complete_sample = sample_process()
+    post_leecher_sample = sample_process()
+    digest = hashlib.sha256()
+    with target.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    actual = digest.hexdigest()
+    if actual != expected: raise RuntimeError("download SHA-256 differs from fixture")
+    return {"bytes": size, "sha256": actual, "verified": True,
+            "elapsed_seconds": time.monotonic() - started,
+            "first_payload_delay_seconds": first_payload_time - connection_started,
+            "payload_elapsed_seconds": payload_complete_time - first_payload_time,
+            "offered_rate_bytes_per_second": RATE,
+            "connection_start_sample": connection_sample,
+            "leecher_address": list(leecher_address),
+            "first_payload_sample": first_payload_sample,
+            "payload_complete_sample": payload_complete_sample,
+            "post_leecher_sample": post_leecher_sample,
+            "initial_client_messages": client_messages,
+            "peer_state_snapshots": peer_state_snapshots,
+            "mid_transfer_diagnostics": mid_transfer_diagnostics}
+
+
+def process_sample(root_pid):
+    parents = {}
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit(): continue
+        try:
+            status = (entry / "status").read_text().splitlines()
+            parents[int(entry.name)] = int(next(line.split()[1] for line in status
+                                                if line.startswith("PPid:")))
+        except (OSError, StopIteration, ValueError):
+            continue
+    if root_pid not in parents:
+        raise RuntimeError(f"resolved client proc PID {root_pid} disappeared during sampling")
+    pids, todo = set(), [root_pid]
+    while todo:
+        pid = todo.pop()
+        if pid in pids: continue
+        pids.add(pid)
+        todo.extend(child for child, parent in parents.items() if parent == pid and child not in pids)
+    cpu = rss = pss = anon = 0
+    for pid in pids:
+        try:
+            raw = Path(f"/proc/{pid}/stat").read_text(); f = raw[raw.rfind(")") + 2:].split()
+            cpu += int(f[11]) + int(f[12])
+            status = Path(f"/proc/{pid}/status").read_text().splitlines()
+            rss += next(int(x.split()[1]) for x in status if x.startswith("VmRSS:")) * 1024
+            lines = Path(f"/proc/{pid}/smaps_rollup").read_text().splitlines()
+            vals = {}
+            for line in lines:
+                key, separator, value = line.partition(":")
+                if separator and key in {"Pss", "Anonymous"}:
+                    vals[key] = int(value.split()[0]) * 1024
+            pss += vals.get("Pss", 0); anon += vals.get("Anonymous", 0)
+        except (OSError, StopIteration, ValueError) as error:
+            if pid == root_pid:
+                raise RuntimeError(f"cannot read resolved client proc PID {pid}: {error}") from error
+    return {"time": time.time(), "monotonic": time.monotonic(), "pids": sorted(pids), "cpu_ticks_user_system": cpu,
+            "rss_bytes": rss, "pss_bytes": pss, "anonymous_bytes": anon}
+
+
+def collect_diagnostics(api_port, root_pid, directory, label):
+    """Write detailed process maps and the selected TorrentNG metrics outside CPU windows."""
+    directory.mkdir(parents=True, exist_ok=True)
+    result = {"label": label, "captured_unix": time.time(),
+              "process": process_sample(root_pid), "smaps": [], "metrics": {}}
+    smaps_totals = {}
+    for pid in result["process"]["pids"]:
+        source = Path(f"/proc/{pid}/smaps")
+        try:
+            raw = source.read_text(errors="replace")
+        except OSError as error:
+            result["smaps"].append({"pid": pid, "error": str(error)})
+            continue
+        destination = directory / f"{label}-pid-{pid}.smaps"
+        destination.write_text(raw)
+        totals = {key: 0 for key in ("Size", "Rss", "Pss", "Anonymous", "Private_Clean",
+                                      "Private_Dirty", "Shared_Clean", "Shared_Dirty", "Swap")}
+        for line in raw.splitlines():
+            key, separator, value = line.partition(":")
+            if separator and key in totals:
+                parts = value.split()
+                try: totals[key] += int(parts[0]) * (1024 if len(parts) > 1 and parts[1] == "kB" else 1)
+                except (IndexError, ValueError): pass
+        smaps_totals[pid] = totals
+        result["smaps"].append({"pid": pid, "path": str(destination), "totals_bytes": totals})
+    result["smaps_totals_bytes"] = {
+        key: sum(item[key] for item in smaps_totals.values())
+        for key in ("Size", "Rss", "Pss", "Anonymous", "Private_Clean", "Private_Dirty",
+                    "Shared_Clean", "Shared_Dirty", "Swap")
+    }
+    metrics_path = directory / f"{label}.metrics.prom"
+    try:
+        request = urllib.request.Request(f"http://127.0.0.1:{api_port}/metrics",
+            headers={"Authorization": f"Bearer {TOKEN}"})
+        with urllib.request.urlopen(request, timeout=15) as response:
+            metrics_text = response.read().decode("utf-8", errors="replace")
+        metrics_path.write_text(metrics_text)
+        result["metrics"] = parse_selected_metrics(metrics_text)
+        result["metrics_path"] = str(metrics_path)
+    except (OSError, urllib.error.URLError, UnicodeError) as error:
+        result["metrics_error"] = str(error)
+    return result
+
+
+def parse_selected_metrics(metrics_text):
+    selected = {}
+    for line in metrics_text.splitlines():
+        if not line or line.startswith("#"): continue
+        fields = line.split()
+        if len(fields) < 2: continue
+        metric_name = fields[0].split("{", 1)[0]
+        if metric_name in DIAGNOSTIC_METRICS:
+            try: selected[metric_name] = float(fields[1])
+            except ValueError: selected[metric_name] = fields[1]
+    return selected
+
+
+def free_port():
+    with socket.socket() as sock: sock.bind(("127.0.0.1", 0)); return sock.getsockname()[1]
+
+
+def host_proc_pid(namespace_pid, executable):
+    """Map a child PID from this process namespace to host-visible /proc."""
+    self_status = Path("/proc/self/status").read_text()
+    host_self = int(os.readlink("/proc/self"))
+    namespace = os.readlink("/proc/self/ns/pid")
+    expected = os.path.realpath(executable)
+    matches = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit(): continue
+        pid = int(entry.name)
+        try:
+            status = Path(f"/proc/{pid}/status").read_text().splitlines()
+            parent_pid = int(next(line.split()[1] for line in status if line.startswith("PPid:")))
+            if parent_pid != host_self: continue
+            nspid = next(line.split()[1:] for line in status if line.startswith("NSpid:"))
+            child_ns = os.readlink(f"/proc/{pid}/ns/pid")
+            child_executable = os.path.realpath(f"/proc/{pid}/exe")
+            command_line = (Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")[0])
+            command_binary = os.path.realpath(os.fsdecode(command_line))
+        except (OSError, StopIteration):
+            continue
+        if (nspid and int(nspid[-1]) == namespace_pid and child_ns == namespace
+                and child_executable == expected and command_binary == expected):
+            matches.append(pid)
+    if len(matches) != 1:
+        raise RuntimeError(f"expected one host /proc PID for child {namespace_pid} ({expected}); found {matches}")
+    return matches[0]
+
+
+def scgi(endpoint, method, *params):
+    from xmlrpc.client import dumps, loads
+    body = dumps(params, methodname=method, allow_none=True).encode()
+    headers = scgi_headers(len(body))
+    packet = str(len(headers)).encode() + b":" + headers + b"," + body
+    family = socket.AF_UNIX if isinstance(endpoint, (str, Path)) else socket.AF_INET
+    with socket.socket(family, socket.SOCK_STREAM) as sock:
+        sock.settimeout(10)
+        sock.connect(str(endpoint) if family == socket.AF_UNIX else endpoint)
+        sock.sendall(packet)
+        response = bytearray()
+        while True:
+            data = sock.recv(65536)
+            if not data: break
+            response.extend(data)
+    values, _ = loads(bytes(response).split(b"\r\n\r\n", 1)[-1])
+    return values[0] if values else None
+
+
+def scgi_headers(body_length):
+    return (b"CONTENT_LENGTH\0" + str(body_length).encode() + b"\0SCGI\0" + b"1\0"
+            + b"REQUEST_METHOD\0POST\0REQUEST_URI\0/RPC2\0CONTENT_TYPE\0text/xml\0")
+
+
+def add_torrent(api_port, torrent, save_path):
+    boundary = "native-seed-probe-boundary"
+    parts = [("savepath", save_path.encode(), None), ("paused", b"false", None),
+             ("torrents", torrent, "fixture.torrent")]
+    body = bytearray()
+    for name, value, filename in parts:
+        body.extend(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"".encode())
+        if filename: body.extend(f"; filename=\"{filename}\"\r\nContent-Type: application/x-bittorrent".encode())
+        body.extend(b"\r\n\r\n" + value + b"\r\n")
+    body.extend(f"--{boundary}--\r\n".encode())
+    req = urllib.request.Request(f"http://127.0.0.1:{api_port}/api/qb/v2/torrents/add", data=body,
+        headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": f"multipart/form-data; boundary={boundary}"})
+    with urllib.request.urlopen(req, timeout=30) as response:
+        if response.status >= 300: raise RuntimeError(f"torrent add HTTP {response.status}")
+
+
+def add_torrent_peer(api_port, info_hash, peer_address):
+    body = urllib.parse.urlencode({"hashes": info_hash, "peers": f"{peer_address[0]}:{peer_address[1]}"}).encode()
+    request = urllib.request.Request(f"http://127.0.0.1:{api_port}/api/qb/v2/torrents/addPeers", data=body,
+        headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/x-www-form-urlencoded"})
+    with urllib.request.urlopen(request, timeout=15) as response:
+        if response.status >= 300: raise RuntimeError(f"manual peer add HTTP {response.status}")
+
+
+def api_json(api_port, path):
+    request = urllib.request.Request(f"http://127.0.0.1:{api_port}{path}",
+        headers={"Authorization": f"Bearer {TOKEN}"})
+    with urllib.request.urlopen(request, timeout=15) as response:
+        return json.loads(response.read())
+
+
+def torrentng_seed_ready(row):
+    if not isinstance(row, dict): return False
+    try: complete = float(row.get("progress", 0)) >= 1.0
+    except (TypeError, ValueError): return False
+    state = str(row.get("state", "")).strip().lower()
+    return complete and state in {"uploading", "seeding", "stalledup", "forcedup"}
+
+
+def rtorrent_seed_ready(row):
+    if not isinstance(row, list) or len(row) != 5: return False
+    try:
+        complete, active, size, received = (int(value) for value in row[1:])
+    except (TypeError, ValueError): return False
+    return complete == 1 and active == 1 and size > 0 and received >= size
+
+
+def rtorrent_debug_snapshot(endpoint, info_hash):
+    """Read-only SCGI state for explaining an idle/unchoked peer handshake."""
+    result = {"captured_unix": time.time(), "info_hash": info_hash}
+
+    def read(method, *params):
+        try:
+            return scgi(endpoint, method, *params)
+        except Exception as error:
+            return {"error": f"{type(error).__name__}: {error}"}
+
+    for method in ("d.connection_current", "d.up.max", "d.up.rate", "d.peers_connected",
+                   "d.peers_not_connected", "d.group"):
+        result[method] = read(method, info_hash)
+    group = result.get("d.group")
+    if isinstance(group, int):
+        for method in ("choke_group.up.max", "choke_group.up.total", "choke_group.up.queued",
+                       "choke_group.up.unchoked"):
+            result[method] = read(method, group)
+    for method in ("throttle.max_uploads", "throttle.max_uploads.global",
+                   "throttle.max_uploads.div", "throttle.global_up.max_rate"):
+        result[method] = read(method)
+    result["peers"] = read("p.multicall", info_hash, "", "p.id=", "p.address=", "p.port=",
+                           "p.client_version=", "p.is_incoming=", "p.completed_percent=",
+                           "p.up_rate=", "p.down_rate=", "p.is_snubbed=", "p.is_preferred=")
+    return result
+
+
+def rtorrent_config_text(download, session, peer_port, scgi_port):
+    return (f"directory.default.set = {download}\n"
+            f"session.path.set = {session}\n"
+            "network.bind_address.ipv4.set = 127.0.0.1\n"
+            f"network.listen.port.range.set = {peer_port}-{peer_port}\n"
+            "network.listen.port.random.set = no\n"
+            "dht.mode.set = disable\n"
+            "protocol.pex.set = no\n"
+            f"network.scgi.open_port = 127.0.0.1:{scgi_port}\n")
+
+
+def wait_seed_ready(kind, proc, api_port, scgi_path, ih, timeout):
+    if kind == "torrentngd":
+        def ready():
+            rows = api_json(api_port, f"/api/qb/v2/torrents/info?hashes={ih.hex()}")
+            row = next((item for item in rows if str(item.get("hash", "")).lower() == ih.hex()), None)
+            return row if torrentng_seed_ready(row) else None
+    else:
+        def ready():
+            rows = scgi(scgi_path, "d.multicall2", "", "main", "d.hash=", "d.complete=",
+                        "d.is_active=", "d.size_bytes=", "d.completed_bytes=") or []
+            row = next((item for item in rows if str(item[0]).lower() == ih.hex()), None)
+            return row if rtorrent_seed_ready(row) else None
+    wait_for(ready, proc, timeout, description=f"{kind} fully checked and seeding")
+
+
+def wait_for(check, proc, timeout, description):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if proc.poll() is not None: raise RuntimeError(f"client exited ({proc.returncode}); inspect client.log")
+        try:
+            result = check()
+            if result:
+                if hasattr(result, "close"): result.close()
+                return result
+        except (OSError, urllib.error.URLError): pass
+        time.sleep(.2)
+    raise TimeoutError(f"client not ready: {description}")
+
+
+def parse_client(value):
+    name, spec = value.split("=", 1); kind, binary = spec.split(":", 1)
+    if kind not in {"torrentngd", "rtorrent"}: raise argparse.ArgumentTypeError("kind must be torrentngd or rtorrent")
+    binary = str(Path(binary).resolve())
+    if not Path(binary).is_file() or not os.access(binary, os.X_OK): raise argparse.ArgumentTypeError(f"not executable: {binary}")
+    return name, kind, binary
+
+
+def parse_client_env(value):
+    label, separator, assignment = value.partition(":")
+    key, equals, contents = assignment.partition("=")
+    if not separator or not label or not equals or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+        raise argparse.ArgumentTypeError("expected LABEL:ENV_NAME=VALUE")
+    return label, key, contents
+
+
+def client_env_overrides(entries, labels):
+    known_labels, overrides = set(labels), {}
+    for label, key, value in entries:
+        if label not in known_labels:
+            raise ValueError(f"--client-env references unknown client label: {label}")
+        per_client = overrides.setdefault(label, {})
+        if key in per_client:
+            raise ValueError(f"duplicate --client-env for {label}:{key}")
+        per_client[key] = value
+    return overrides
+
+
+def apply_client_environment(env, overrides):
+    env.update(overrides)
+    return env
+
+
+def is_measurement_control_env(key):
+    return key in CONTROL_ENV_EXACT or key.startswith(CONTROL_ENV_PREFIXES)
+
+
+def inherited_measurement_controls(environment):
+    names = sorted(key for key in environment if is_measurement_control_env(key))
+    values = {key: environment[key] for key in names if key in SAFE_CONTROL_VALUES}
+    return {"names": names, "safe_values": values}
+
+
+def sanitize_client_environment(base_environment, overrides=None):
+    """Strip inherited measurement controls, then apply explicit per-client settings."""
+    inherited = inherited_measurement_controls(base_environment)
+    child_environment = {key: value for key, value in base_environment.items()
+                         if not is_measurement_control_env(key)}
+    apply_client_environment(child_environment, overrides or {})
+    return child_environment, inherited
+
+
+def validate_client_count(client_count, repeats, allow_single):
+    if client_count < 2 and not (client_count == 1 and allow_single and repeats == 1):
+        raise ValueError("need at least two clients, or one client with --allow-single-client and --repeats 1")
+
+
+def cleanup_run_payloads(run_dir, client_name):
+    """Remove generated payload copies, refusing paths that escape this run directory."""
+    root = Path(run_dir).resolve(strict=True)
+    candidates = (root / "downloaded.bin", root / client_name / "download" / "payload.bin")
+    removed = []
+    for path in candidates:
+        resolved = path.resolve(strict=False)
+        if not resolved.is_relative_to(root):
+            raise ValueError(f"refusing to clean a payload outside run directory: {path}")
+        if path.is_symlink():
+            raise ValueError(f"refusing to clean a symlink payload path: {path}")
+        if path.is_file():
+            path.unlink()
+            removed.append(path.relative_to(root).as_posix())
+    return removed
+
+
+def start_client(client, run_dir, fixture_dir, torrent, ih, ready_timeout, env_overrides=None):
+    name, kind, binary = client
+    work = run_dir / name; work.mkdir()
+    download = work / "download"; download.mkdir()
+    shutil.copyfile(fixture_dir / "payload.bin", download / "payload.bin")
+    peer_port, api_port = free_port(), free_port()
+    env, inherited_controls = sanitize_client_environment(os.environ, env_overrides)
+    config = work / ("config.toml" if kind == "torrentngd" else "rtorrent.rc")
+    scgi_endpoint = None
+    if kind == "torrentngd":
+        token_file = work / "api-token"; token_file.write_text(TOKEN + "\n"); token_file.chmod(0o600)
+        config.write_text(f'''[daemon]\napi_bind = "127.0.0.1:{api_port}"\nsession_dir = "{work}/session"\nlog_level = "warn"\n\n[network]\nlisten_port = {peer_port}\nmax_peers = 8\nmax_incoming_handshakes = 32\n\n[storage]\ndownload_dir = "{download}"\n\n[dht]\nenabled = false\n\n[auth]\napi_tokens_file = "{token_file}"\n''')
+        env["TORRENTNGD_CONFIG"] = str(config); command = [binary]
+    else:
+        scgi_port = free_port()
+        scgi_endpoint = ("127.0.0.1", scgi_port)
+        (work / "session").mkdir()
+        config.write_text(rtorrent_config_text(download, work / "session", peer_port, scgi_port))
+        command = [binary, "-n", "-o", f"import={config}", "-o", "system.daemon.set=true"]
+    logfile = (work / "client.log").open("wb")
+    proc = subprocess.Popen(command, cwd=work, env=env, stdout=logfile, stderr=subprocess.STDOUT, start_new_session=True)
+    try:
+        diagnostics_dir = work / "diagnostics"
+        pre_add_diagnostics = None
+        post_seed_diagnostics = None
+        if kind == "torrentngd":
+            wait_for(lambda: socket.create_connection(("127.0.0.1", api_port), .2), proc, 60, "TorrentNG API")
+            proc_pid = host_proc_pid(proc.pid, binary)
+            pre_add_diagnostics = collect_diagnostics(api_port, proc_pid, diagnostics_dir, "before-torrent-add")
+            add_torrent(api_port, torrent, str(download))
+            wait_seed_ready(kind, proc, api_port, None, ih, ready_timeout)
+            post_seed_diagnostics = collect_diagnostics(api_port, proc_pid, diagnostics_dir, "after-seed-recheck")
+        else:
+            wait_for(lambda: socket.create_connection(scgi_endpoint, .2), proc, 60, "rTorrent SCGI")
+            proc_pid = host_proc_pid(proc.pid, binary)
+            scgi(scgi_endpoint, "load.normal", "", str(fixture_dir / "fixture.torrent"))
+            scgi(scgi_endpoint, "d.directory.set", ih.hex(), str(download))
+            scgi(scgi_endpoint, "d.start", ih.hex())
+            wait_seed_ready(kind, proc, None, scgi_endpoint, ih, ready_timeout)
+        return {"process": proc, "log": logfile, "peer_port": peer_port, "api_port": api_port,
+            "config": str(config), "command": command, "binary": binary,
+            "scgi_endpoint": scgi_endpoint,
+            "proc_pid": proc_pid,
+            "binary_sha256": hashlib.sha256(Path(binary).read_bytes()).hexdigest(),
+            "environment_overrides": dict(env_overrides or {}),
+            "inherited_measurement_controls": inherited_controls,
+            "diagnostics_dir": str(diagnostics_dir), "pre_add_diagnostics": pre_add_diagnostics,
+            "post_seed_diagnostics": post_seed_diagnostics}
+    except BaseException:
+        proc.terminate(); proc.wait(timeout=10); logfile.close(); raise
+
+
+def parse_args():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--client", action="append", type=parse_client, required=True, metavar="NAME=KIND:BIN",
+        help="repeat for each pinned baseline/candidate, e.g. rt=rtorrent:/path/rtorrent")
+    p.add_argument("--client-env", action="append", type=parse_client_env, default=[], metavar="LABEL:KEY=VALUE",
+        help="set an environment variable for one named client, e.g. verify-oneworker:TOKIO_WORKER_THREADS=1")
+    p.add_argument("--allow-single-client", action="store_true",
+        help="allow one unpaired client for a recovery run; requires --repeats 1")
+    p.add_argument("--keep-payloads", action="store_true",
+        help="retain per-run seed and downloaded payload copies after a successful verified transfer")
+    p.add_argument("--size", type=int, default=128 * 1024**2, help="payload bytes, 16 MiB to 4 GiB")
+    p.add_argument("--seed", type=int, default=20261022)
+    p.add_argument("--output", help="new result directory; default is a fresh temporary directory")
+    p.add_argument("--warmup", type=int, default=5); p.add_argument("--cooldown", type=int, default=5)
+    p.add_argument("--timeout", type=int, default=900); p.add_argument("--order-seed", type=int, default=1)
+    p.add_argument("--repeats", type=int, default=1, help="paired randomized rounds")
+    p.add_argument("--ready-timeout", type=int, default=600, help="seed verification timeout seconds")
+    p.add_argument("--diagnostics", action="store_true",
+        help="capture an extra TorrentNG /metrics and smaps snapshot 8 seconds into transfer; marks diagnostic runs")
+    p.add_argument("--peer-debug", action="store_true",
+        help="on rTorrent runs, capture read-only SCGI/choke/peer state after handshake and at timeout")
+    return p.parse_args()
+
+
+def write_summary(output, report):
+    path = output / "summary.json"
+    temporary = output / "summary.json.tmp"
+    temporary.write_text(json.dumps(report, indent=2) + "\n")
+    temporary.replace(path)
+
+
+def main():
+    args = parse_args()
+    if not Path("/proc/self/stat").exists(): raise SystemExit("requires Linux /proc")
+    if not 16 * 1024**2 <= args.size <= 4 * 1024**3: raise SystemExit("--size must be 16 MiB–4 GiB")
+    try:
+        validate_client_count(len(args.client), args.repeats, args.allow_single_client)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    if args.output:
+        output = Path(args.output).resolve()
+        output.mkdir(parents=True, exist_ok=False)
+    else:
+        output = Path(tempfile.mkdtemp(prefix="native-seed-cpu-ram-"))
+    if args.repeats < 1 or args.warmup < 0 or args.cooldown < 0:
+        raise SystemExit("--repeats must be positive; warmup/cooldown must be nonnegative")
+    if args.ready_timeout < 1 or args.timeout < 1:
+        raise SystemExit("timeouts must be positive")
+    if len({client[0] for client in args.client}) != len(args.client):
+        raise SystemExit("--client labels must be unique")
+    try:
+        env_overrides = client_env_overrides(args.client_env, [client[0] for client in args.client])
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    if not 0 <= args.seed < 2**64:
+        raise SystemExit("--seed must be an unsigned 64-bit integer")
+    fixture_dir = output / "fixture"
+    _, torrent, ih, digest = make_fixture(fixture_dir, args.size, args.seed)
+    rng, runs, round_orders = random.Random(args.order_seed), [], []
+    report = {"format": "native-seed-cpu-ram-v1", "status": "running",
+        "diagnostic_run": bool(args.diagnostics or args.peer_debug), "peer_debug": bool(args.peer_debug),
+        "fixture_bytes": args.size,
+        "fixture_sha256": digest, "info_hash": ih.hex(), "offered_rate_bytes_per_second": RATE,
+        "block_bytes": BLOCK, "request_window": WINDOW, "dht": False, "pex": False,
+        "tracker": False, "bind_address": "127.0.0.1", "paired": len(args.client) >= 2,
+        "payload_cleanup_policy": "remove per-run seed and downloaded payload copies after a verified transfer and client shutdown",
+        "keep_payloads": bool(args.keep_payloads), "randomized_orders": round_orders, "runs": runs}
+    report["client_environment_overrides"] = env_overrides
+    report["inherited_measurement_controls"] = inherited_measurement_controls(os.environ)
+    write_summary(output, report)
+    try:
+      for round_index in range(args.repeats):
+        order = list(range(len(args.client))); rng.shuffle(order)
+        round_orders.append([args.client[i][0] for i in order])
+        write_summary(output, report)
+        for index in order:
+            client = args.client[index]; run_dir = output / f"run-{round_index + 1:02d}-{client[0]}"; run_dir.mkdir()
+            active, stop = [], threading.Event()
+            item = start_client(client, run_dir, fixture_dir, torrent, ih, args.ready_timeout,
+                                env_overrides.get(client[0], {}))
+            successful_run, run_record = False, None
+            def sample_loop():
+                while not stop.is_set(): active.append(process_sample(item["proc_pid"])); stop.wait(1)
+            try:
+                idle_before = []
+                for _ in range(args.warmup):
+                    idle_before.append(process_sample(item["proc_pid"])); time.sleep(1)
+                sampler = threading.Thread(target=sample_loop, daemon=True); sampler.start()
+                pre_leecher_sample = process_sample(item["proc_pid"])
+                during_transfer_capture = None
+                peer_registration = None
+                if args.diagnostics and client[1] == "torrentngd":
+                    during_transfer_capture = lambda label: collect_diagnostics(
+                        item["api_port"], item["proc_pid"], Path(item["diagnostics_dir"]), label)
+                if client[1] == "torrentngd":
+                    peer_registration = lambda address: add_torrent_peer(item["api_port"], ih.hex(), address)
+                peer_state_callback = None
+                if args.peer_debug and client[1] == "rtorrent":
+                    item["peer_state_snapshots"] = []
+                    peer_state_path = run_dir / "rtorrent-peer-debug.json"
+                    def capture_rtorrent_state():
+                        snapshot = rtorrent_debug_snapshot(item["scgi_endpoint"], ih.hex())
+                        item["peer_state_snapshots"].append(snapshot)
+                        peer_state_path.write_text(json.dumps(item["peer_state_snapshots"], indent=2) + "\n")
+                        return snapshot
+                    peer_state_callback = capture_rtorrent_state
+                transfer = leecher(item["peer_port"], ih, args.size, run_dir / "downloaded.bin", digest,
+                                   args.timeout, lambda: process_sample(item["proc_pid"]),
+                                   during_transfer_capture, peer_registration, peer_state_callback)
+                stop.set(); sampler.join()
+                post_transfer_diagnostics = None
+                if client[1] == "torrentngd":
+                    post_transfer_diagnostics = collect_diagnostics(
+                        item["api_port"], item["proc_pid"], Path(item["diagnostics_dir"]), "after-transfer")
+                idle_after = []
+                for _ in range(args.cooldown): idle_after.append(process_sample(item["proc_pid"])); time.sleep(1)
+                hz = os.sysconf(os.sysconf_names["SC_CLK_TCK"])
+                connection = transfer["connection_start_sample"]
+                payload_start = transfer["first_payload_sample"]
+                payload_end = transfer["payload_complete_sample"]
+                post_leecher_sample = transfer["post_leecher_sample"]
+                resource_samples = active + [pre_leecher_sample, connection, payload_start,
+                                             payload_end, post_leecher_sample]
+                active_cpu_seconds = (payload_end["cpu_ticks_user_system"] -
+                                      payload_start["cpu_ticks_user_system"]) / hz
+                connection_wait_cpu_seconds = (payload_start["cpu_ticks_user_system"] -
+                                               connection["cpu_ticks_user_system"]) / hz
+                connection_to_payload_cpu_seconds = (payload_end["cpu_ticks_user_system"] -
+                                                     connection["cpu_ticks_user_system"]) / hz
+                connection_setup_cpu_seconds = (connection["cpu_ticks_user_system"] -
+                                                pre_leecher_sample["cpu_ticks_user_system"]) / hz
+                def peak(samples, field): return max((x[field] for x in samples), default=0)
+                run_record = {"round": round_index + 1, "name": client[0], "kind": client[1], "binary": item["binary"],
+                    "binary_sha256": item["binary_sha256"], "command": item["command"], "config_path": item["config"],
+                    "environment_overrides": item["environment_overrides"],
+                    "inherited_measurement_controls": item["inherited_measurement_controls"],
+                    "namespace_pid": item["process"].pid, "proc_pid": item["proc_pid"],
+                    "transfer": transfer, "pre_leecher_sample": pre_leecher_sample,
+                    "cpu_tick_hz": hz,
+                    "payload_cpu_seconds_user_system": active_cpu_seconds,
+                    "connection_to_payload_cpu_seconds_user_system": connection_to_payload_cpu_seconds,
+                    "connection_wait_cpu_seconds": connection_wait_cpu_seconds,
+                    "connection_setup_cpu_seconds": connection_setup_cpu_seconds,
+                    "active_peak_rss_bytes": peak(resource_samples, "rss_bytes"),
+                    "active_peak_pss_bytes": peak(resource_samples, "pss_bytes"),
+                    "active_peak_anonymous_bytes": peak(resource_samples, "anonymous_bytes"),
+                    "idle_before": idle_before, "active_samples": resource_samples,
+                    "idle_after": idle_after, "diagnostic_run": bool(args.diagnostics or args.peer_debug),
+                    "torrentng_diagnostics": ({
+                        "before_torrent_add": item["pre_add_diagnostics"],
+                        "after_seed_recheck": item["post_seed_diagnostics"],
+                        "during_transfer": transfer["mid_transfer_diagnostics"],
+                        "after_transfer": post_transfer_diagnostics,
+                    } if client[1] == "torrentngd" else None),
+                    "payload_cleanup": ({"policy": "keep_payloads", "status": "retained-by-option"}
+                                        if args.keep_payloads else
+                                        {"policy": "after-verified-transfer-and-client-shutdown", "status": "pending"})}
+                runs.append(run_record)
+                report["runs"] = runs
+                write_summary(output, report)
+                successful_run = bool(transfer["verified"])
+            finally:
+                stop.set()
+                try: os.killpg(item["process"].pid, signal.SIGTERM)
+                except ProcessLookupError: pass
+                try: item["process"].wait(timeout=15)
+                except subprocess.TimeoutExpired: os.killpg(item["process"].pid, signal.SIGKILL); item["process"].wait()
+                item["log"].close()
+                if successful_run and not args.keep_payloads:
+                    run_record["payload_cleanup"] = {
+                        "policy": "after-verified-transfer-and-client-shutdown", "status": "deleted",
+                        "paths": cleanup_run_payloads(run_dir, client[0])}
+                    write_summary(output, report)
+    except BaseException as error:
+        report["status"] = "failed"
+        report["error"] = f"{type(error).__name__}: {error}"
+        report["runs"] = runs
+        write_summary(output, report)
+        raise
+    report["status"] = "complete"
+    write_summary(output, report)
+    print(output / "summary.json")
+
+
+if __name__ == "__main__": main()

@@ -1,0 +1,335 @@
+diff --git a/crates/rt-engine/src/torrent_task.rs b/crates/rt-engine/src/torrent_task.rs
+index 8dbb0a7..b4c818f 100644
+--- a/crates/rt-engine/src/torrent_task.rs
++++ b/crates/rt-engine/src/torrent_task.rs
+@@ -103,7 +103,7 @@ use crate::transfer::obligations::{
+ };
+ use crate::transfer::rate::RatePeerId;
+ use crate::transfer::shared_upload::{SharedUploadPeer, SharedUploadReadHandle};
+-use crate::transfer::upload_scheduler::UploadReadPermit;
++use crate::transfer::upload_scheduler::{UploadReadPermit, UploadReadPermits};
+ use crate::transfer::window::{WindowConfig, WindowController, WindowInputs};
+ use crate::{EnginePeerSnapshot, EngineTorrentLimits, EngineWebseedSnapshot, TorrentRuntimeStats};
+ 
+@@ -9916,12 +9916,19 @@ where
+                     drop(frames);
+                     let completed_frames = completed_frames.min(ready_uploads.len());
+                     let mut upload_event_due = false;
+-                    for (request, mut block) in ready_uploads
++                    let mut released_read_permits = UploadReadPermits::new();
++                    for (request, block) in ready_uploads
+                         .into_iter()
+                         .take(completed_frames)
+                     {
+-                        let bytes = block.data.len() as u64;
+-                        if let Some(grant) = block.rate_grant.take() {
++                        let LeasedUploadBlock {
++                            data,
++                            _lease,
++                            _read_permit,
++                            mut rate_grant,
++                        } = block;
++                        let bytes = data.len() as u64;
++                        if let Some(grant) = rate_grant.take() {
+                             grant.settle(bytes);
+                         }
+                         let first_unreported_block = upload_accounting_batch.is_empty();
+@@ -9953,7 +9960,15 @@ where
+                             InboundServed::Sent,
+                         )
+                         .await?;
++                        // The Piece frame has completed and no longer borrows
++                        // this payload. Release its memory lease now, but hold
++                        // the read charge until the whole completed group can
++                        // be returned to the scheduler together.
++                        drop(data);
++                        drop(_lease);
++                        released_read_permits.push(_read_permit);
+                     }
++                    UploadReadPermit::release_batch(released_read_permits);
+                     if upload_event_due
+                         && !send_peer_event(
+                             &peer_event_tx,
+diff --git a/crates/rt-engine/src/transfer/upload_scheduler.rs b/crates/rt-engine/src/transfer/upload_scheduler.rs
+index d3c707e..be3f118 100644
+--- a/crates/rt-engine/src/transfer/upload_scheduler.rs
++++ b/crates/rt-engine/src/transfer/upload_scheduler.rs
+@@ -478,6 +478,56 @@ impl Drop for UploadReadPermit {
+     }
+ }
+ 
++impl UploadReadPermit {
++    /// Release a small group of permits with one scheduler lock and one pump
++    /// when they all belong to the same peer and scheduler. Mixed groups use
++    /// the ordinary RAII path, which preserves per-permit behavior safely.
++    pub(crate) fn release_batch(mut permits: UploadReadPermits) {
++        let Some(first) = permits.first() else {
++            return;
++        };
++        if permits.len() == 1
++            || permits
++                .iter()
++                .any(|permit| permit.peer != first.peer || !permit.inner.ptr_eq(&first.inner))
++        {
++            drop(permits);
++            return;
++        }
++
++        let Some(inner) = first.inner.upgrade() else {
++            drop(permits);
++            return;
++        };
++        let bytes = permits
++            .iter()
++            .fold(0u64, |total, permit| total.saturating_add(permit.bytes));
++        let jobs = permits.len();
++        {
++            let mut state = lock_state(&inner);
++            state.in_flight_jobs = state.in_flight_jobs.saturating_sub(jobs);
++            state.in_flight_bytes = state.in_flight_bytes.saturating_sub(bytes);
++            let remove = if let Some(connection) = state.connections.get_mut(&first.peer) {
++                connection.in_flight_jobs = connection.in_flight_jobs.saturating_sub(jobs);
++                connection.in_flight_bytes = connection.in_flight_bytes.saturating_sub(bytes);
++                connection.closed && connection.in_flight_jobs == 0
++            } else {
++                false
++            };
++            if remove {
++                state.connections.remove(&first.peer);
++            }
++        }
++        // The permits are consumed below; disarm them so their Drop handlers
++        // do not repeat accounting or pump once per member of the batch.
++        for permit in &mut permits {
++            permit.bytes = 0;
++            permit.inner = Weak::new();
++        }
++        pump(&inner);
++    }
++}
++
+ impl Drop for WaiterGuard {
+     fn drop(&mut self) {
+         let (Some(inner), Some(id)) = (self.inner.upgrade(), self.id.take()) else {
+@@ -890,6 +940,221 @@ mod tests {
+         assert_eq!(scheduler.in_flight(), (0, 0));
+     }
+ 
++    #[tokio::test]
++    async fn grouped_release_keeps_charges_until_release_then_wakes_batch_waiter() {
++        let scheduler = UploadReadScheduler::new(UploadReadLimits {
++            max_connections: 1,
++            max_in_flight_jobs: 2,
++            max_in_flight_bytes: 32 * 1024,
++            max_in_flight_per_connection: 2,
++            max_queued_per_connection: 2,
++        });
++        let identity = peer(1, 0);
++        let _connection = scheduler.register_guard(identity).unwrap();
++        let permits = scheduler
++            .acquire_batch(identity, &[block(16 * 1024), block(16 * 1024)])
++            .await
++            .unwrap();
++        let waiting = {
++            let scheduler = scheduler.clone();
++            tokio::spawn(async move {
++                scheduler
++                    .acquire_batch(identity, &[block(16 * 1024), block(16 * 1024)])
++                    .await
++            })
++        };
++        tokio::time::timeout(std::time::Duration::from_secs(2), async {
++            while scheduler.queued() != 2 {
++                tokio::task::yield_now().await;
++            }
++        })
++        .await
++        .expect("second batch should wait for both in-flight jobs");
++        assert_eq!(scheduler.in_flight(), (2, 32 * 1024));
++        assert_eq!(scheduler.pending_connection_count(), 1);
++
++        UploadReadPermit::release_batch(permits);
++
++        let next = tokio::time::timeout(std::time::Duration::from_secs(2), waiting)
++            .await
++            .unwrap()
++            .unwrap()
++            .unwrap();
++        assert_eq!(next.len(), 2);
++        assert_eq!(scheduler.in_flight(), (2, 32 * 1024));
++        drop(next);
++        assert_eq!(scheduler.in_flight(), (0, 0));
++    }
++
++    #[tokio::test]
++    async fn mixed_batch_release_falls_back_across_peers_and_schedulers() {
++        let limits = UploadReadLimits {
++            max_connections: 1,
++            max_in_flight_jobs: 1,
++            max_in_flight_bytes: 16 * 1024,
++            max_in_flight_per_connection: 1,
++            max_queued_per_connection: 1,
++        };
++        let first_scheduler = UploadReadScheduler::new(limits);
++        let second_scheduler = UploadReadScheduler::new(limits);
++        let first_peer = peer(1, 0);
++        let second_peer = peer(2, 0);
++        let _first_connection = first_scheduler.register_guard(first_peer).unwrap();
++        let _second_connection = second_scheduler.register_guard(second_peer).unwrap();
++        let first_permit = first_scheduler
++            .acquire(first_peer, block(16 * 1024))
++            .await
++            .unwrap();
++        let second_permit = second_scheduler
++            .acquire(second_peer, block(16 * 1024))
++            .await
++            .unwrap();
++        let first_waiting = {
++            let scheduler = first_scheduler.clone();
++            tokio::spawn(async move { scheduler.acquire(first_peer, block(16 * 1024)).await })
++        };
++        let second_waiting = {
++            let scheduler = second_scheduler.clone();
++            tokio::spawn(async move { scheduler.acquire(second_peer, block(16 * 1024)).await })
++        };
++        for scheduler in [&first_scheduler, &second_scheduler] {
++            tokio::time::timeout(std::time::Duration::from_secs(2), async {
++                while scheduler.queued() != 1 {
++                    tokio::task::yield_now().await;
++                }
++            })
++            .await
++            .expect("each peer should have a queued request");
++        }
++
++        let mut mixed = UploadReadPermits::new();
++        mixed.push(first_permit);
++        mixed.push(second_permit);
++        UploadReadPermit::release_batch(mixed);
++
++        let first_next = first_waiting.await.unwrap().unwrap();
++        let second_next = second_waiting.await.unwrap().unwrap();
++        assert_eq!(first_scheduler.in_flight(), (1, 16 * 1024));
++        assert_eq!(second_scheduler.in_flight(), (1, 16 * 1024));
++        drop((first_next, second_next));
++        assert_eq!(first_scheduler.in_flight(), (0, 0));
++        assert_eq!(second_scheduler.in_flight(), (0, 0));
++    }
++
++    #[tokio::test]
++    async fn mixed_batch_release_falls_back_between_peers_on_one_scheduler() {
++        let scheduler = UploadReadScheduler::new(UploadReadLimits {
++            max_connections: 2,
++            max_in_flight_jobs: 2,
++            max_in_flight_bytes: 32 * 1024,
++            max_in_flight_per_connection: 1,
++            max_queued_per_connection: 1,
++        });
++        let first_peer = peer(1, 0);
++        let second_peer = peer(2, 0);
++        let _first_connection = scheduler.register_guard(first_peer).unwrap();
++        let _second_connection = scheduler.register_guard(second_peer).unwrap();
++        let first_permit = scheduler
++            .acquire(first_peer, block(16 * 1024))
++            .await
++            .unwrap();
++        let second_permit = scheduler
++            .acquire(second_peer, block(16 * 1024))
++            .await
++            .unwrap();
++        let first_waiting = {
++            let scheduler = scheduler.clone();
++            tokio::spawn(async move { scheduler.acquire(first_peer, block(16 * 1024)).await })
++        };
++        let second_waiting = {
++            let scheduler = scheduler.clone();
++            tokio::spawn(async move { scheduler.acquire(second_peer, block(16 * 1024)).await })
++        };
++        tokio::time::timeout(std::time::Duration::from_secs(2), async {
++            while scheduler.queued() != 2 {
++                tokio::task::yield_now().await;
++            }
++        })
++        .await
++        .expect("both peers should have a queued request");
++
++        let mut mixed = UploadReadPermits::new();
++        mixed.push(first_permit);
++        mixed.push(second_permit);
++        UploadReadPermit::release_batch(mixed);
++
++        let first_next = first_waiting.await.unwrap().unwrap();
++        let second_next = second_waiting.await.unwrap().unwrap();
++        assert_eq!(scheduler.in_flight(), (2, 32 * 1024));
++        drop((first_next, second_next));
++        assert_eq!(scheduler.in_flight(), (0, 0));
++    }
++
++    #[tokio::test]
++    async fn grouped_release_removes_closed_connection_after_last_charge() {
++        let scheduler = UploadReadScheduler::new(UploadReadLimits {
++            max_connections: 1,
++            max_in_flight_jobs: 2,
++            max_in_flight_bytes: 32 * 1024,
++            max_in_flight_per_connection: 2,
++            max_queued_per_connection: 2,
++        });
++        let identity = peer(1, 0);
++        let connection = scheduler.register_guard(identity).unwrap();
++        let permits = scheduler
++            .acquire_batch(identity, &[block(16 * 1024), block(16 * 1024)])
++            .await
++            .unwrap();
++        drop(connection);
++        assert_eq!(scheduler.in_flight(), (2, 32 * 1024));
++        assert!(matches!(
++            scheduler.register(identity),
++            Err(UploadReadAdmissionError::AlreadyRegistered)
++        ));
++
++        UploadReadPermit::release_batch(permits);
++
++        assert_eq!(scheduler.in_flight(), (0, 0));
++        assert_eq!(scheduler.register(identity), Ok(()));
++    }
++
++    #[tokio::test]
++    async fn canceled_waiter_is_cleaned_before_grouped_release() {
++        let scheduler = UploadReadScheduler::new(UploadReadLimits {
++            max_connections: 1,
++            max_in_flight_jobs: 2,
++            max_in_flight_bytes: 32 * 1024,
++            max_in_flight_per_connection: 2,
++            max_queued_per_connection: 2,
++        });
++        let identity = peer(1, 0);
++        let _connection = scheduler.register_guard(identity).unwrap();
++        let permits = scheduler
++            .acquire_batch(identity, &[block(16 * 1024), block(16 * 1024)])
++            .await
++            .unwrap();
++        let waiting = {
++            let scheduler = scheduler.clone();
++            tokio::spawn(async move { scheduler.acquire(identity, block(16 * 1024)).await })
++        };
++        tokio::time::timeout(std::time::Duration::from_secs(2), async {
++            while scheduler.queued() != 1 {
++                tokio::task::yield_now().await;
++            }
++        })
++        .await
++        .expect("single request should queue behind the full batch");
++        waiting.abort();
++        let _ = waiting.await;
++        assert_eq!(scheduler.queued(), 0);
++        assert_eq!(scheduler.in_flight(), (2, 32 * 1024));
++
++        UploadReadPermit::release_batch(permits);
++        assert_eq!(scheduler.in_flight(), (0, 0));
++        assert_eq!(scheduler.queued(), 0);
++        assert_eq!(scheduler.pending_connection_count(), 0);
++    }
++
+     #[tokio::test]
+     async fn dropping_waiter_and_disconnect_release_or_reject_admission() {
+         let scheduler = UploadReadScheduler::new(UploadReadLimits {
