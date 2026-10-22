@@ -53,21 +53,21 @@ jobs:
       - name: Check formatting
         env:
           RUSTUP_TOOLCHAIN: stable
-        run: python3 scripts/validate_development.py --task workspace-format
+        run: cargo fmt --all -- --check
 
       - name: Test shared runner policy
         run: python3 scripts/test_workflow_runner_policy.py
 
       - name: Validate TorrentNG API contract
-        run: python3 scripts/validate_development.py --task api-contract
+        run: python3 scripts/validate_openapi.py
 
       - name: Test protected API target and load-runner boundaries
-        run: python3 scripts/validate_development.py --task python-contract-tests
+        run: python3 -m unittest scripts.test_protected_target scripts.test_backend_burndown_api_load scripts.test_workflow_security scripts.test_release_notes
 
       - name: Test TorrentNG client workspace
         env:
           RUSTUP_TOOLCHAIN: stable
-        run: python3 scripts/validate_development.py --task workspace-tests
+        run: cargo test --workspace --all-targets --locked -- --test-threads=1
 
       - name: Test daemon with full compatibility APIs
         env:
@@ -77,7 +77,7 @@ jobs:
       - name: Lint TorrentNG client workspace
         env:
           RUSTUP_TOOLCHAIN: stable
-        run: python3 scripts/validate_development.py --task workspace-clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Lint daemon with full compatibility APIs
         env:
@@ -86,9 +86,9 @@ jobs:
 
       - name: Run certification script self-tests
         run: |
-          python3 scripts/validate_development.py --task certification-policy-selftest
-          python3 scripts/validate_development.py --task certification-bundle-selftest
-          python3 scripts/validate_development.py --task storage-certification-selftest
+          bash scripts/certification_policy_selftest.sh
+          bash scripts/certification_bundle_selftest.sh
+          bash scripts/storage_certification_selftest.sh
 
   backend-fault-matrix:
     name: Backend fault-containment matrix
@@ -238,7 +238,7 @@ jobs:
         # The scale targets contain wall-clock assertions. Run the MSRV
         # suite serially so unrelated 15k/50k fixtures cannot steal CPU from
         # the endpoint being measured and turn the gate into scheduler noise.
-        run: python3 scripts/validate_development.py --task workspace-tests
+        run: cargo test --workspace --all-targets --locked -- --test-threads=1
 
   msrv-check-sidecar:
     name: Compatible-client service MSRV gate
@@ -282,7 +282,7 @@ jobs:
       - name: Test compatible-client service at declared MSRV
         env:
           RUSTUP_TOOLCHAIN: "1.97.0"
-        run: python3 scripts/validate_development.py --task sidecar-tests
+        run: cargo test --locked --manifest-path sidecar/Cargo.toml -- --test-threads=1
 
   fuzz-smoke:
     timeout-minutes: 30
@@ -430,7 +430,7 @@ jobs:
       - name: Test compatible-client service
         env:
           RUSTUP_TOOLCHAIN: stable
-        run: python3 scripts/validate_development.py --task sidecar-tests
+        run: cargo test --locked --manifest-path sidecar/Cargo.toml -- --test-threads=1
 
   desktop:
     name: Desktop client quality
@@ -472,7 +472,7 @@ jobs:
         run: cargo fmt --manifest-path crates/torrentng-desktop/Cargo.toml -- --check
 
       - name: Lint desktop client
-        run: python3 scripts/validate_development.py --task desktop-clippy
+        run: cargo clippy --all-targets --locked --manifest-path crates/torrentng-desktop/Cargo.toml -- -D warnings
 
       - name: Build engine for the end-to-end test
         run: cargo build --locked -p torrentngd
@@ -480,7 +480,7 @@ jobs:
       # The test finds the daemon at target/debug/torrentngd (built above) and
       # fails, rather than skips, under CI if it is missing.
       - name: Test desktop client (unit + local-engine end-to-end)
-        run: python3 scripts/validate_development.py --task desktop-tests
+        run: cargo test --locked --manifest-path crates/torrentng-desktop/Cargo.toml -- --test-threads=1
 
   webui:
     timeout-minutes: 20
@@ -515,7 +515,7 @@ jobs:
 
       - name: Run WebUI unit tests
         working-directory: webui
-        run: python3 ../scripts/validate_development.py --task webui-tests
+        run: npm test
 
       - name: Install Playwright Chromium
         working-directory: webui
