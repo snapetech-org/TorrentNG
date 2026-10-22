@@ -63,6 +63,23 @@ The 16 MiB diagnostic trace counted 350 storage reads for 1,024 blocks at 8 ms (
 
 Validation after the source change: `cargo +1.94.0 fmt --all -- --check`, the focused `peer_loop_flushes_small_upload_batches_after_the_short_deadline` test, and all 769 `rt-engine` tests passed.
 
+## Fresh PGO profiles trained from the 16 ms source
+
+The older full-profile PGO data predates the io_uring worker-selection fix. I retrained two profiles from exact source commit `6cfc6a9aba79c954624d9d86f6508fb49ec0a894` using Rust 1.97.0 / LLVM 22.1.6, then built each with the pinned PGO release script. Both training transfers were 64 MiB, SHA-256 verified, and pinned to `pread`.
+
+The transfer-window profile reset LLVM counters at the first scheduled upload batch. In a five-pair 128 MiB comparison against the existing 16 ms PGO binary, its median CPU improved by 5.1% and anonymous memory by 4.7%, while median PSS rose by 11.2%:
+
+| PGO profile | CPU-s/GiB median | Peak PSS median | Peak anonymous median |
+|---|---:|---:|---:|
+| Existing profile control | 3.16 | **16.58 MiB** | 6.47 MiB |
+| Fresh transfer-window profile | **3.00** (-5.1%) | 18.44 MiB (+11.2%) | **6.17 MiB** (-4.7%) |
+
+All ten scored transfers passed SHA-256 verification and took the same 32-second payload window. The backend was pinned to `pread`. The five rounds ran control first in three pairs and candidate first in two; this is a useful repeated screen, not a fully balanced order or a new whole-client qualification. The current-source PGO profile improves CPU and anonymous memory but loses on PSS, so it does not replace the existing PGO candidate or the release default. Its exact profile SHA-256 is `80fda6a6a1da618cfc7e6bf364ea90c6e27d87cc7278bcc6c1fbfea151580b82`; the binary SHA-256 is `ce7e769b49af69509f71c031efa22b2af1c1a0e31fc453e848f59ea809513039`.
+
+The second fresh profile counted the full process from startup rather than resetting at the first upload. Its one-pair 128 MiB screen was worse than the existing-profile control on all three resource metrics: 3.42 vs. 3.04 CPU-s/GiB (+12.6%), 16.74 vs. 15.91 MiB PSS (+5.2%), and 6.53 vs. 6.08 MiB anonymous memory (+7.3%). That screen ran the full-profile candidate first, verified both transfers, and is only screening evidence. Its profile SHA-256 is `47d37cf2ba582152f86fc8e3cd9d34998f0f8485fc4433082b10c47fd66de581`; its binary SHA-256 is `635a9cf74459ee3b63dd9279910c44ebe62a2baf68a7ba6118ef2e25fcae66cd`.
+
+The existing 16 ms PGO binary used as the control has SHA-256 `8e8522729bdc06b8590995945e87544741370cb66c70eb13576d54f8e378f006`. The new profile-use builds produced no profile-mismatch warnings; this fixes the stale-profile concern but does not fix the PSS tradeoff. Neither screen included rTorrent, so these runs make no new claim about the comparator gap. The earlier best PGO PSS result remains 15.80 MiB and is preserved above. All new profiles, exact instrumented and optimized binaries, training records, paired summaries, logs, metrics, smaps, and checksums are under [`observations/pgo-current-source-16ms-20261022/`](observations/pgo-current-source-16ms-20261022/).
+
 ## Source-level candidates and reversions
 
 Every rejected or inconsistent source candidate is kept as a patch under [`experiments/`](experiments/) so it can be revisited without losing its result.

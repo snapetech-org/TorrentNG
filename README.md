@@ -162,7 +162,10 @@ The earlier full-profile PGO result remains preserved as the historical memory
 best. PGO is still opt-in. The separate io_uring screen confirmed the requested
 backend but measured about 13% more CPU than `pread` for roughly 2.5% lower PSS;
 that tradeoff and the worker-startup correction are documented in the same
-report.
+report. Fresh PGO profiles trained from the current source lowered CPU in the
+transfer-window screen, but raised PSS by 11.2%; full-process training also
+lost in its one-pair screen. Both candidates and the exact evidence are
+preserved without changing the release or PGO defaults.
 
 ## Learn more
 

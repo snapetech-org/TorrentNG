@@ -1,0 +1,18 @@
+[daemon]
+api_bind = "127.0.0.1:50577"
+session_dir = "/tmp/torrentng-seed-goal-20261022/pgo/current-16ms/paired-128m-2x/run-02-old-profile/old-profile/session"
+log_level = "warn"
+
+[network]
+listen_port = 49787
+max_peers = 8
+max_incoming_handshakes = 32
+
+[storage]
+download_dir = "/tmp/torrentng-seed-goal-20261022/pgo/current-16ms/paired-128m-2x/run-02-old-profile/old-profile/download"
+
+[dht]
+enabled = false
+
+[auth]
+api_tokens_file = "/tmp/torrentng-seed-goal-20261022/pgo/current-16ms/paired-128m-2x/run-02-old-profile/old-profile/api-token"

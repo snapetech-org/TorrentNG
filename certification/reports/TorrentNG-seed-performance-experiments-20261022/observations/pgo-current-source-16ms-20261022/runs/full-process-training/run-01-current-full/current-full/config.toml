@@ -1,0 +1,18 @@
+[daemon]
+api_bind = "127.0.0.1:33555"
+session_dir = "/tmp/torrentng-seed-goal-20261022/pgo/current-16ms/full-training/train-64m/run-01-current-full/current-full/session"
+log_level = "warn"
+
+[network]
+listen_port = 42803
+max_peers = 8
+max_incoming_handshakes = 32
+
+[storage]
+download_dir = "/tmp/torrentng-seed-goal-20261022/pgo/current-16ms/full-training/train-64m/run-01-current-full/current-full/download"
+
+[dht]
+enabled = false
+
+[auth]
+api_tokens_file = "/tmp/torrentng-seed-goal-20261022/pgo/current-16ms/full-training/train-64m/run-01-current-full/current-full/api-token"

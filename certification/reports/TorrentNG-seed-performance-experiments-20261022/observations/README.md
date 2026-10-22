@@ -22,3 +22,9 @@ generated credentials redacted, fixture metainfo, metrics, and compressed
 process smaps. The 16 MiB debug traces retain the per-batch event logs used to
 count storage reads and Piece frames. Generated payload copies and temporary
 session databases/tokens remain excluded.
+
+`pgo-current-source-16ms-20261022/` preserves two clean-source PGO retraining
+approaches. Its five-pair transfer-window profile screen improved CPU and
+anonymous memory but raised PSS; the one-pair full-process profile screen lost
+on all three resource metrics. Both remain opt-in experiments with exact
+profiles, binaries, summaries, logs, metrics, compressed smaps, and checksums.
