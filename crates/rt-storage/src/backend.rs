@@ -84,6 +84,18 @@ const URING_FIXED_BUFFER_SLOTS: usize = 4;
 #[cfg(target_os = "linux")]
 const URING_FIXED_BUFFER_LEN: usize = 256 * 1024;
 
+#[cfg(target_os = "linux")]
+fn uring_entries_for_queue_depth(queue_depth: usize) -> u32 {
+    // Keep enough SQ entries for one maximum-sized backend batch, while
+    // allowing memory-constrained hosts to use a smaller ring than the
+    // 256-entry default. Clamp before rounding so hostile config values cannot
+    // overflow `next_power_of_two`.
+    queue_depth
+        .clamp(URING_BATCH_LIMIT, URING_ENTRIES as usize)
+        .next_power_of_two()
+        .min(URING_ENTRIES as usize) as u32
+}
+
 /// Ownership that must outlive a submitted backend operation. The scheduler
 /// keeps a typed handle to the same state so a successful completion can
 /// return its guards without a forwarding Tokio task or a second channel.
@@ -248,32 +260,25 @@ impl SelectedDiskBackend {
                 queue_depth,
                 "forced by storage backend configuration".to_string(),
             ),
-            // `Auto` now takes the identical probe-and-fallback path as an
-            // explicit `Uring` request: probe, use io_uring when the probe
-            // reports it usable, otherwise fall back to the portable pread
-            // pool. This reuses the same tested fallback logic that the
-            // explicit request already exercised, so a kernel/container
-            // where the probe fails (old kernel, io_uring disabled, no
-            // registered-file support) is unaffected either way. Validated
-            // via the `rt-storage` backend test suite plus a real-device
-            // NVMe/btrfs roundtrip and throughput comparison (see
-            // `scripts/storage_real_device_benchmark.sh`); this is
-            // functional-correctness and parity evidence on the hardware
-            // available in-repo, not the broader target-hardware fleet soak
-            // `docs/STORAGE_NG.md` originally described — operators who need
-            // the conservative baseline can still force `pread` explicitly.
-            BackendRequest::Auto | BackendRequest::Uring => match UringBackend::probe() {
-                Ok(probe) if probe.usable => {
-                    #[cfg(not(target_os = "linux"))]
-                    {
-                        Self::pread(requested, threads, queue_depth, probe.reason)
-                    }
-                    #[cfg(target_os = "linux")]
-                    Self::uring(requested, threads, queue_depth, probe.reason)
+            // Start the worker ring directly instead of allocating a
+            // temporary probe ring first. On constrained hosts, the probe's
+            // registered resources can make the real worker fail with
+            // ENOMEM even when one ring by itself is usable.
+            BackendRequest::Auto | BackendRequest::Uring => {
+                #[cfg(target_os = "linux")]
+                {
+                    Self::uring(requested, threads, queue_depth)
                 }
-                Ok(probe) => Self::pread(requested, threads, queue_depth, probe.reason),
-                Err(reason) => Self::pread(requested, threads, queue_depth, reason),
-            },
+                #[cfg(not(target_os = "linux"))]
+                {
+                    Self::pread(
+                        requested,
+                        threads,
+                        queue_depth,
+                        "io_uring is only available on Linux; using pread fallback".to_string(),
+                    )
+                }
+            }
         }
     }
 
@@ -470,12 +475,7 @@ impl SelectedDiskBackend {
     }
 
     #[cfg(target_os = "linux")]
-    fn uring(
-        requested: BackendRequest,
-        threads: usize,
-        queue_depth: usize,
-        reason: String,
-    ) -> Self {
+    fn uring(requested: BackendRequest, threads: usize, queue_depth: usize) -> Self {
         let backend = match UringBackend::try_new_with_queue_depth(threads, queue_depth) {
             Ok(backend) => backend,
             Err(error) => {
@@ -483,14 +483,18 @@ impl SelectedDiskBackend {
                     requested,
                     threads,
                     queue_depth,
-                    format!("{reason}; io_uring worker startup failed: {error}"),
+                    format!("io_uring worker startup failed: {error}"),
                 );
             }
         };
         let selection = BackendSelection {
             requested,
             selected: BackendKind::Uring,
-            reason,
+            reason: format!(
+                "io_uring worker started; registered_files={} fixed_buffers={}",
+                backend.supports_registered_files(),
+                backend.supports_fixed_buffers()
+            ),
         };
         Self {
             selection,
@@ -677,6 +681,7 @@ impl UringBackend {
     pub fn try_new_with_queue_depth(threads: usize, queue_depth: usize) -> io::Result<Self> {
         let threads = threads.max(1);
         let (tx, rx) = mpsc::sync_channel::<Job>(queue_depth.max(1));
+        let ring_entries = uring_entries_for_queue_depth(queue_depth);
         let rx = Arc::new(Mutex::new(rx));
         let registered_files_supported = Arc::new(AtomicBool::new(false));
         let fixed_buffers_supported = Arc::new(AtomicBool::new(false));
@@ -694,6 +699,7 @@ impl UringBackend {
                             rx,
                             registered_files_supported,
                             fixed_buffers_supported,
+                            ring_entries,
                         ) {
                             Ok(worker) => {
                                 let _ = ready_tx.send(Ok(()));
@@ -795,6 +801,12 @@ impl UringBackend {
         rx
     }
 
+    /// Perform a diagnostic capability check without constructing the storage backend.
+    ///
+    /// Production selection starts the real worker directly. Probing first can
+    /// reserve enough per-process kernel ring resources to prevent that worker
+    /// from starting on constrained hosts, so callers should use the selected
+    /// backend's reported capabilities for operational decisions.
     pub fn probe() -> Result<UringProbe, String> {
         #[cfg(target_os = "linux")]
         {
@@ -810,7 +822,7 @@ impl UringBackend {
                     reason: format!("kernel reports io_uring disabled ({disabled})"),
                 });
             }
-            let ring = match IoUring::new(8) {
+            let ring = match IoUring::new(URING_ENTRIES) {
                 Ok(ring) => ring,
                 Err(e) => {
                     return Ok(UringProbe {
@@ -1029,8 +1041,9 @@ impl UringWorker {
         rx: Arc<Mutex<mpsc::Receiver<Job>>>,
         registered_files_supported: Arc<AtomicBool>,
         fixed_buffers_supported: Arc<AtomicBool>,
+        ring_entries: u32,
     ) -> io::Result<Self> {
-        let ring = IoUring::new(URING_ENTRIES)?;
+        let ring = IoUring::new(ring_entries)?;
         let registered_files = match ring.submitter().register_files_sparse(URING_FILE_SLOTS) {
             Ok(()) => {
                 registered_files_supported.store(true, Ordering::Relaxed);
@@ -2181,7 +2194,7 @@ mod tests {
     }
 
     #[test]
-    fn uring_request_has_clean_probe_fallback() {
+    fn uring_request_has_clean_startup_fallback() {
         let backend = SelectedDiskBackend::select(BackendRequest::Uring, 1);
         assert_eq!(backend.selection().requested, BackendRequest::Uring);
         if backend.kind() == BackendKind::Pread {
@@ -2197,6 +2210,36 @@ mod tests {
             assert!(!probe.fixed_buffers);
             assert!(!probe.registered_files);
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn uring_ring_depth_follows_queue_depth_with_batch_floor_and_cap() {
+        assert_eq!(uring_entries_for_queue_depth(1), URING_BATCH_LIMIT as u32);
+        assert_eq!(uring_entries_for_queue_depth(64), 64);
+        assert_eq!(uring_entries_for_queue_depth(65), 128);
+        assert_eq!(uring_entries_for_queue_depth(128), 128);
+        assert_eq!(uring_entries_for_queue_depth(129), 256);
+        assert_eq!(uring_entries_for_queue_depth(256), 256);
+        assert_eq!(uring_entries_for_queue_depth(usize::MAX), URING_ENTRIES);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn smaller_uring_queue_uses_queue_sized_worker_when_available() {
+        const QUEUE_DEPTH: usize = 64;
+        let backend =
+            SelectedDiskBackend::select_with_queue_depth(BackendRequest::Uring, 1, QUEUE_DEPTH);
+        if backend.kind() == BackendKind::Pread {
+            assert!(!backend.selection().reason.is_empty());
+            return;
+        }
+        assert_eq!(
+            backend.kind(),
+            BackendKind::Uring,
+            "worker did not retain the ring sized from the queue depth: {}",
+            backend.selection().reason
+        );
     }
 
     #[tokio::test]
@@ -2592,6 +2635,7 @@ mod tests {
             Arc::new(Mutex::new(rx)),
             registered_files_supported,
             fixed_buffers_supported,
+            uring_entries_for_queue_depth(URING_ENTRIES as usize),
         ) else {
             return;
         };
@@ -2644,6 +2688,7 @@ mod tests {
             Arc::new(Mutex::new(rx)),
             registered_files_supported,
             fixed_buffers_supported,
+            uring_entries_for_queue_depth(URING_ENTRIES as usize),
         ) else {
             return;
         };
@@ -2698,6 +2743,7 @@ mod tests {
             Arc::new(Mutex::new(rx)),
             registered_files_supported,
             fixed_buffers_supported,
+            uring_entries_for_queue_depth(URING_ENTRIES as usize),
         ) else {
             return;
         };

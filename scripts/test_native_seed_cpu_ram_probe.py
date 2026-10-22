@@ -215,6 +215,27 @@ class ProbeTests(unittest.TestCase):
             probe.validate_pgo_profile_window(valid, 1, False, {"training": {"LLVM_PROFILE_FILE": "/tmp/custom.profraw"}})
         probe.validate_client_count(2, 3, False)
 
+    def test_storage_io_queue_depth_config_is_optional_and_bounded(self):
+        self.assertEqual(probe.storage_io_queue_depth_line(None), "")
+        self.assertEqual(probe.storage_io_queue_depth_line(64), "io_queue_depth = 64\n")
+        self.assertEqual(
+            probe.storage_io_queue_depth_line(probe.MAX_STORAGE_IO_QUEUE_DEPTH),
+            f"io_queue_depth = {probe.MAX_STORAGE_IO_QUEUE_DEPTH}\n",
+        )
+        for invalid in (0, -1, probe.MAX_STORAGE_IO_QUEUE_DEPTH + 1):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                probe.storage_io_queue_depth_line(invalid)
+
+    def test_selected_backend_diagnostic_preserves_backend_label(self):
+        metrics = "\n".join((
+            'torrentng_storage_scheduler_backend_selected{backend="pread",scheduler_group="1"} 0',
+            'torrentng_storage_scheduler_backend_selected{backend="uring",scheduler_group="1"} 1',
+        ))
+        self.assertEqual(
+            probe.parse_selected_metrics(metrics),
+            {"storage_scheduler_selected_backends": ["uring"]},
+        )
+
     def test_payload_cleanup_removes_only_generated_copies_inside_run(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "run-01-client"

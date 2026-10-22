@@ -34,6 +34,7 @@ PIECE = 1024 * 1024
 RATE = 4 * 1024 * 1024
 WINDOW = 32
 PROFILE_FREQUENCY_HZ = 1000
+MAX_STORAGE_IO_QUEUE_DEPTH = 16_384
 TOKEN = "native-seed-probe-local-token"
 PEER_ID = b"-TNG0001-CPU-RAM0001"
 CONTROL_ENV_EXACT = {
@@ -460,14 +461,27 @@ def collect_diagnostics(api_port, root_pid, directory, label):
 
 def parse_selected_metrics(metrics_text):
     selected = {}
+    selected_backends = set()
     for line in metrics_text.splitlines():
         if not line or line.startswith("#"): continue
         fields = line.split()
         if len(fields) < 2: continue
-        metric_name = fields[0].split("{", 1)[0]
+        metric_name, separator, labels = fields[0].partition("{")
+        if metric_name == "torrentng_storage_scheduler_backend_selected":
+            try:
+                active = float(fields[1]) > 0
+            except ValueError:
+                active = False
+            if active and separator:
+                for label in labels.rstrip("}").split(","):
+                    key, equals, value = label.partition("=")
+                    if key == "backend" and equals:
+                        selected_backends.add(value.strip('"'))
         if metric_name in DIAGNOSTIC_METRICS:
             try: selected[metric_name] = float(fields[1])
             except ValueError: selected[metric_name] = fields[1]
+    if selected_backends:
+        selected["storage_scheduler_selected_backends"] = sorted(selected_backends)
     return selected
 
 
@@ -708,6 +722,16 @@ def validate_pgo_profile_window(clients, repeats, cpu_profile, env_overrides):
         raise ValueError("--pgo-profile-window controls LLVM_PROFILE_FILE automatically")
 
 
+def storage_io_queue_depth_line(queue_depth):
+    if queue_depth is None:
+        return ""
+    if not 1 <= queue_depth <= MAX_STORAGE_IO_QUEUE_DEPTH:
+        raise ValueError(
+            f"storage I/O queue depth must be 1–{MAX_STORAGE_IO_QUEUE_DEPTH}"
+        )
+    return f"io_queue_depth = {queue_depth}\n"
+
+
 def cleanup_run_payloads(run_dir, client_name):
     """Remove generated payload copies, refusing paths that escape this run directory."""
     root = Path(run_dir).resolve(strict=True)
@@ -726,7 +750,8 @@ def cleanup_run_payloads(run_dir, client_name):
 
 
 def start_client(client, run_dir, fixture_dir, torrent, ih, ready_timeout, env_overrides=None,
-                 profile_preload=None, profile_path=None, pgo_profile_path=None):
+                 profile_preload=None, profile_path=None, pgo_profile_path=None,
+                 storage_io_queue_depth=None):
     name, kind, binary = client
     work = run_dir / name; work.mkdir()
     download = work / "download"; download.mkdir()
@@ -749,7 +774,8 @@ def start_client(client, run_dir, fixture_dir, torrent, ih, ready_timeout, env_o
     pgo_profile_pid_path = None
     if kind == "torrentngd":
         token_file = work / "api-token"; token_file.write_text(TOKEN + "\n"); token_file.chmod(0o600)
-        config.write_text(f'''[daemon]\napi_bind = "127.0.0.1:{api_port}"\nsession_dir = "{work}/session"\nlog_level = "warn"\n\n[network]\nlisten_port = {peer_port}\nmax_peers = 8\nmax_incoming_handshakes = 32\n\n[storage]\ndownload_dir = "{download}"\n\n[dht]\nenabled = false\n\n[auth]\napi_tokens_file = "{token_file}"\n''')
+        storage_queue_depth = storage_io_queue_depth_line(storage_io_queue_depth)
+        config.write_text(f'''[daemon]\napi_bind = "127.0.0.1:{api_port}"\nsession_dir = "{work}/session"\nlog_level = "warn"\n\n[network]\nlisten_port = {peer_port}\nmax_peers = 8\nmax_incoming_handshakes = 32\n\n[storage]\ndownload_dir = "{download}"\n{storage_queue_depth}\n[dht]\nenabled = false\n\n[auth]\napi_tokens_file = "{token_file}"\n''')
         env["TORRENTNGD_CONFIG"] = str(config)
         if pgo_profile_path is None:
             command = [binary]
@@ -822,6 +848,8 @@ def parse_args():
         help="retain per-run seed and downloaded payload copies after a successful verified transfer")
     p.add_argument("--size", type=int, default=128 * 1024**2, help="payload bytes, 16 MiB to 4 GiB")
     p.add_argument("--seed", type=int, default=20261022)
+    p.add_argument("--storage-io-queue-depth", type=int,
+        help="set [storage].io_queue_depth on TorrentNG clients for backend sizing screens")
     p.add_argument("--output", help="new result directory; default is a fresh temporary directory")
     p.add_argument("--warmup", type=int, default=5); p.add_argument("--cooldown", type=int, default=5)
     p.add_argument("--timeout", type=int, default=900); p.add_argument("--order-seed", type=int, default=1)
@@ -849,6 +877,10 @@ def main():
     args = parse_args()
     if not Path("/proc/self/stat").exists(): raise SystemExit("requires Linux /proc")
     if not 16 * 1024**2 <= args.size <= 4 * 1024**3: raise SystemExit("--size must be 16 MiB–4 GiB")
+    try:
+        storage_io_queue_depth_line(args.storage_io_queue_depth)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
     try:
         validate_client_count(len(args.client), args.repeats, args.allow_single_client)
     except ValueError as error:
@@ -902,6 +934,7 @@ def main():
                                  "sampling_window": "first scheduled upload batch through daemon shutdown",
                                  "client": args.client[0][0]} if args.pgo_profile_window else None),
         "fixture_bytes": args.size, "fixture_seed": args.seed,
+        "storage_io_queue_depth": args.storage_io_queue_depth,
         "fixture_sha256": digest, "info_hash": ih.hex(), "offered_rate_bytes_per_second": RATE,
         "block_bytes": BLOCK, "request_window": WINDOW, "dht": False, "pex": False,
         "tracker": False, "bind_address": "127.0.0.1", "paired": len(args.client) >= 2,
@@ -922,7 +955,7 @@ def main():
             pgo_profile_path = run_dir / "transfer-window.profraw" if args.pgo_profile_window else None
             item = start_client(client, run_dir, fixture_dir, torrent, ih, args.ready_timeout,
                                 env_overrides.get(client[0], {}), profile_preload, profile_path,
-                                pgo_profile_path)
+                                pgo_profile_path, args.storage_io_queue_depth)
             successful_run, run_record = False, None
             def sample_loop():
                 while not stop.is_set(): active.append(process_sample(item["proc_pid"])); stop.wait(1)
