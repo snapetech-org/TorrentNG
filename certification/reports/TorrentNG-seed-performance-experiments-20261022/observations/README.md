@@ -35,9 +35,14 @@ group of per-block upload-rate grants under one rate-tree lock. Two randomized
 candidate was not promoted. Its patch, executable, verified summaries, logs,
 metrics, and process maps remain available for future profiling.
 
-`low-risk-tuning-screen-20261022/` preserves five one-round verified 64 MiB
+`low-risk-tuning-screen-20261022/` preserves six one-round verified 64 MiB
 screens of jemalloc, one-arena and immediate-decay jemalloc refinements,
-host-tuned codegen, and a Rust 1.97 release build, plus a 256 MiB diagnostic
-CPU profile of the current system-allocator baseline. None of the candidates
+host-tuned codegen, Rust 1.97, and `opt-level=3`, plus a 256 MiB diagnostic CPU
+profile of the current system-allocator baseline. None of the candidates
 reduced CPU and PSS together; no release default changed. Exact binaries and
 raw summaries are retained with the results.
+
+`mapped-window-read-probe-20261022/` retains a hot-file microprobe comparing
+64 KiB `pread` batches with 64 KiB and 1 MiB mmap windows. The 1 MiB mapping
+reduced median read-only CPU by 8.6% in three small pairs; scheduler, socket,
+cold-file, and memory costs were not measured.

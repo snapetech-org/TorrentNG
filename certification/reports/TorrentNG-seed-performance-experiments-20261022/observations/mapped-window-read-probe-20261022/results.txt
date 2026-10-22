@@ -1,0 +1,15 @@
+fixture=/tmp/torrentng-seed-goal-20261022/allocator-jemalloc-screen-20261022/run-64m-1x/fixture/payload.bin
+fixture_bytes=67108864
+fixture_sha256=b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901
+compiler=gcc -O3 -Wall -Wextra -Werror
+probe_sha256=317c4d79b8817b68b691c56ccf228980befd0a8c8d0a8e632c1b41a59f71c16
+
+pair=1 method=pread_batch window_bytes=65536 bytes=268435456 cpu_s=0.067086 wall_s=0.067339 cpu_s_per_GiB=0.26834 checksum=34223302340
+pair=1 method=mmap_batch window_bytes=65536 bytes=268435456 cpu_s=0.082443 wall_s=0.083025 cpu_s_per_GiB=0.32977 checksum=34223302340
+pair=1 method=mmap_piece_window window_bytes=1048576 bytes=268435456 cpu_s=0.071518 wall_s=0.086138 cpu_s_per_GiB=0.28607 checksum=34223302340
+pair=2 method=mmap_batch window_bytes=65536 bytes=268435456 cpu_s=0.063798 wall_s=0.064863 cpu_s_per_GiB=0.25519 checksum=34223302340
+pair=2 method=pread_batch window_bytes=65536 bytes=268435456 cpu_s=0.082299 wall_s=0.083111 cpu_s_per_GiB=0.32920 checksum=34223302340
+pair=2 method=mmap_piece_window window_bytes=1048576 bytes=268435456 cpu_s=0.076179 wall_s=0.076486 cpu_s_per_GiB=0.30472 checksum=34223302340
+pair=3 method=pread_batch window_bytes=65536 bytes=268435456 cpu_s=0.078228 wall_s=0.079061 cpu_s_per_GiB=0.31291 checksum=34223302340
+pair=3 method=mmap_batch window_bytes=65536 bytes=268435456 cpu_s=0.072827 wall_s=0.073691 cpu_s_per_GiB=0.29131 checksum=34223302340
+pair=3 method=mmap_piece_window window_bytes=1048576 bytes=268435456 cpu_s=0.068179 wall_s=0.069077 cpu_s_per_GiB=0.27272 checksum=34223302340

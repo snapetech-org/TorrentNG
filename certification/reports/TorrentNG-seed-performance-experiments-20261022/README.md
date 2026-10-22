@@ -97,7 +97,7 @@ Every rejected or inconsistent source candidate is kept as a patch under [`exper
 
 ### Allocator and codegen screens
 
-Five one-round randomized, SHA-256-verified 64 MiB screens compared the system
+Six one-round randomized, SHA-256-verified 64 MiB screens compared the system
 allocator with jemalloc and two jemalloc refinements, a portable build with
 `target-cpu=native`, and Rust 1.94 with Rust 1.97. None lowered CPU and PSS
 together. Jemalloc used 0.8% more CPU and 14.0% more PSS than the
@@ -107,6 +107,26 @@ immediate decay used 6.2% more CPU and 29.7% more PSS. Host-tuned codegen used
 PSS. These are one-round screens, not medians; no build default changed. Exact
 candidate executables and raw summaries are retained under
 [`observations/low-risk-tuning-screen-20261022/`](observations/low-risk-tuning-screen-20261022/).
+
+The `opt-level=3` screen reduced CPU by 10.5% against the compact release but
+raised PSS by 14.9%. In that same round, the PGO control used 4.851 CPU-s/GiB
+and 16.25 MiB PSS, versus 6.259 CPU-s/GiB and 21.48 MiB for `opt-level=3`.
+Host load was high, so this remains exploratory and does not replace any
+previous best. A separate mapped-window probe used 8.6% less CPU than already
+batched 64 KiB `pread` reads in a hot data-only test; the result excludes the
+scheduler and socket path and is not a whole-client gain. Both reports and
+raw evidence are retained under
+[`observations/low-risk-tuning-screen-20261022/`](observations/low-risk-tuning-screen-20261022/)
+and [`observations/mapped-window-read-probe-20261022/`](observations/mapped-window-read-probe-20261022/).
+
+An `opt-level=3` candidate reduced CPU by 10.5% against the compact release in
+one 64 MiB round, but raised PSS by 14.9% and lost to the PGO control on both
+CPU and PSS. Host load was high during that screen, so it remains exploratory.
+The exact binary and run summary are retained. A separate hot-file probe found
+that 1 MiB mmap windows reduced median CPU by 8.6% versus already-batched
+64 KiB `pread` reads; this is a read-stage result, not a whole-client gain.
+The profile and raw measurements are under
+[`observations/mapped-window-read-probe-20261022/`](observations/mapped-window-read-probe-20261022/).
 
 ### io_uring startup attribution and measured tradeoff
 

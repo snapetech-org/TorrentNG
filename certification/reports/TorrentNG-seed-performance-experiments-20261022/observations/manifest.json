@@ -3,8 +3,8 @@
   "files": [
     {
       "path": "README.md",
-      "bytes": 2575,
-      "sha256": "6bdc7994c317d35293a9da9a156c891ecf9bc079f76b3153fda5bab7574ce053"
+      "bytes": 2853,
+      "sha256": "a57a2d498867a2a809a564e1bbb8554509111394f390e8452e540ea1805d65bd"
     },
     {
       "path": "batch-distribution-16m/logs/run-01-batches-batches.client.log",
@@ -3718,13 +3718,13 @@
     },
     {
       "path": "low-risk-tuning-screen-20261022/README.md",
-      "bytes": 4124,
-      "sha256": "276ebf826abcae518028594fa4506100c060e11a3b1b5a996f6e162f3600cfbf"
+      "bytes": 5943,
+      "sha256": "38e9e6bbe051b705435cb0beed108a3c7ffb03dfb064e1b9a6c718ce225bc866"
     },
     {
       "path": "low-risk-tuning-screen-20261022/SHA256SUMS.uncompressed",
-      "bytes": 296,
-      "sha256": "7836048c0d6edbd5628f1d374e3380d3f234fd6490e5edfb64d7100529e12814"
+      "bytes": 428,
+      "sha256": "ffdc268759877d9772739b7ef162a80546b7901c45a69342d6503b34cbcddd23"
     },
     {
       "path": "low-risk-tuning-screen-20261022/executables/torrentngd-jemalloc-rust194.gz",
@@ -3740,6 +3740,11 @@
       "path": "low-risk-tuning-screen-20261022/executables/torrentngd-system-rust197.gz",
       "bytes": 8597595,
       "sha256": "6e88dee6155c0e6b15eb6c290ba01fa78feb8263dca7cd81cc1fee735e0bca8f"
+    },
+    {
+      "path": "low-risk-tuning-screen-20261022/executables/torrentngd-system-rust194-opt-level3.gz",
+      "bytes": 11096392,
+      "sha256": "12c5991efd18e074886c157adf74c2e1292952a8b0d38b9e88fa6b3dc735be17"
     },
     {
       "path": "low-risk-tuning-screen-20261022/profile/current-system-256m-payload-window.prof.gz",
@@ -3775,6 +3780,26 @@
       "path": "low-risk-tuning-screen-20261022/runs/system-vs-native-64m.json",
       "bytes": 59646,
       "sha256": "1be27d98f6a7902af59803ffed597bd8caa3d60473ce8ee99124403803eb3807"
+    },
+    {
+      "path": "low-risk-tuning-screen-20261022/runs/system-vs-opt-level3-64m-1x.json",
+      "bytes": 81349,
+      "sha256": "7e3e022a11cf0686b590b545998d6865ae98b58978c6b520ce18486924bfd68e"
+    },
+    {
+      "path": "mapped-window-read-probe-20261022/README.md",
+      "bytes": 2053,
+      "sha256": "1fe4e7ebde27bedc163f4fa18a5652d4e90d43613f5e57d45f40fb745c831edb"
+    },
+    {
+      "path": "mapped-window-read-probe-20261022/mmap_window_probe.c",
+      "bytes": 3365,
+      "sha256": "597e20c8151eff02f928fa6b624f7a3de2b7b6e634f10faca157a55731d3c7d0"
+    },
+    {
+      "path": "mapped-window-read-probe-20261022/results.txt",
+      "bytes": 1564,
+      "sha256": "24b0588c170bfa0430f9664aa242d8534398d2d8bb6921abd78d345a43f76233"
     }
   ]
 }
