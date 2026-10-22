@@ -34,3 +34,10 @@ group of per-block upload-rate grants under one rate-tree lock. Two randomized
 64 MiB screens did not establish a CPU and PSS improvement together, so the
 candidate was not promoted. Its patch, executable, verified summaries, logs,
 metrics, and process maps remain available for future profiling.
+
+`low-risk-tuning-screen-20261022/` preserves five one-round verified 64 MiB
+screens of jemalloc, one-arena and immediate-decay jemalloc refinements,
+host-tuned codegen, and a Rust 1.97 release build, plus a 256 MiB diagnostic
+CPU profile of the current system-allocator baseline. None of the candidates
+reduced CPU and PSS together; no release default changed. Exact binaries and
+raw summaries are retained with the results.

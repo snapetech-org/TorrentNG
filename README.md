@@ -170,6 +170,11 @@ The follow-up upload-rate admission batching refactor also failed to beat the
 16 ms release on CPU and PSS together in two randomized 64 MiB screens. Its
 patch and verified measurements are retained in the same report for later
 profiling.
+Five one-round 64 MiB screens tested jemalloc, allocator refinements,
+`target-cpu=native`, and Rust 1.97. None improved CPU and PSS together, so the
+current system allocator, portable target, and release toolchain remain in
+place. The exact builds, verified summaries, and diagnostic profile are in the
+[low-risk tuning screen](certification/reports/TorrentNG-seed-performance-experiments-20261022/observations/low-risk-tuning-screen-20261022/README.md).
 
 ## Learn more
 

@@ -95,6 +95,19 @@ Every rejected or inconsistent source candidate is kept as a patch under [`exper
 | Wait for a fourth request before dispatch | The runtime setting disabled the read elevator, so the probe did not exercise batching and is not a scored result. | Do not infer a gain; preserve [`fourth-request-probe.patch`](experiments/fourth-request-probe.patch) for a corrected test. |
 | io_uring startup and queue-sized ring | The earlier requested arm actually selected `pread`. Direct worker startup now selects io_uring at queue depth 64. A three-round verified comparison found higher CPU with slightly lower PSS and anonymous memory. | Keep the startup correction and explicit backend available; do not promote io_uring as a performance winner or change the default queue depth. Results and invalid attempts are retained under [`observations/io-uring-queue-depth-64/`](observations/io-uring-queue-depth-64/). |
 
+### Allocator and codegen screens
+
+Five one-round randomized, SHA-256-verified 64 MiB screens compared the system
+allocator with jemalloc and two jemalloc refinements, a portable build with
+`target-cpu=native`, and Rust 1.94 with Rust 1.97. None lowered CPU and PSS
+together. Jemalloc used 0.8% more CPU and 14.0% more PSS than the
+system allocator; one arena used 0.4% more CPU and 12.0% more PSS, while
+immediate decay used 6.2% more CPU and 29.7% more PSS. Host-tuned codegen used
+9.2% more CPU for 1.2% lower PSS. Rust 1.97 used 1.2% more CPU and 2.5% more
+PSS. These are one-round screens, not medians; no build default changed. Exact
+candidate executables and raw summaries are retained under
+[`observations/low-risk-tuning-screen-20261022/`](observations/low-risk-tuning-screen-20261022/).
+
 ### io_uring startup attribution and measured tradeoff
 
 The old `TNG_STORAGE_BACKEND=uring` screen was not an io_uring result: its runtime gauge showed `pread`. A focused reproduction found that selection allocated and registered a probe ring, then the real worker failed with `ENOMEM`; starting the worker directly at queue depth 64 succeeded. The selector now starts the actual worker and falls back to `pread` only if that startup fails. The benchmark harness accepts a bounded `--storage-io-queue-depth` setting and records the active backend label, preventing another silent fallback from being scored as io_uring. Queue depth and release defaults were not changed.
