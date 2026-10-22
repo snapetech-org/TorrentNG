@@ -1,0 +1,26 @@
+HEAD=a8154943f9bd489d79e84ab13423befb576d2789
+VERIFY_SOURCE_SHA256=29e5b779d6ad025d475e7aa385b50f54d10287d9df522d4797ffd6fcca097a3e  crates/rt-storage/src/verify.rs
+VERIFY_PATCH_FROM_HEAD_SHA256=eebbcaa4010b7bac4e4f0ee55871505e3d3843384c47634dbb613cc44c9d5c26  -
+
+BUILD_PROFILE: opt-level=3 codegen-units=1 strip=debuginfo (Cargo.toml); override=CARGO_PROFILE_RELEASE_LTO=fat (only profile change)
+COMMAND: CARGO_TARGET_DIR=<bench>/target-verify-fat197 CARGO_PROFILE_RELEASE_LTO=fat cargo +1.97.0 build --locked --release --bin torrentngd -j4
+EXIT_STATUS=0
+rustc 1.97.0 (2d8144b78 2026-07-07)
+binary: rustc
+commit-hash: 2d8144b7880597b6e6d3dfd63a9a9efae3f533d3
+commit-date: 2026-07-07
+host: x86_64-unknown-linux-gnu
+release: 1.97.0
+LLVM version: 22.1.6
+
+FAT_BINARY:
+ce889879c020cecb964519611e7176c724be87eaa43a440c2f3df64f9305b587  <bench>/bin/torrentngd-verify-fat197
+bytes=28851920
+   text	   data	    bss	    dec	    hex	filename
+23447959	 499368	   3192	23950519	16d74b7	<bench>/bin/torrentngd-verify-fat197
+
+THIN_BINARY_REFERENCE:
+94a24269b7aefb191be39d7d955c9e25cf93bdacd3914bd6d36756569a356cd0  <bench>/bin/torrentngd-verify-197
+bytes=31302968
+   text	   data	    bss	    dec	    hex	filename
+24738669	 601200	   3184	25343053	182b44d	<bench>/bin/torrentngd-verify-197

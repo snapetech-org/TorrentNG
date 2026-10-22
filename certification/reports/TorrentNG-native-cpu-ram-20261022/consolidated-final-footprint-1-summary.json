@@ -1,0 +1,260 @@
+{
+  "block_bytes": 16384,
+  "dht": false,
+  "diagnostic_run": false,
+  "fixture_bytes": 268435456,
+  "fixture_sha256": "937d7bd20b42ad9d0130419a685ce1e481f4330ab2a211dde1e16403c7854f81",
+  "format": "native-seed-cpu-ram-v1",
+  "offered_rate_bytes_per_second": 4194304,
+  "paired": true,
+  "pex": false,
+  "publication": "Compact benchmark results. Raw process samples, paths, timestamps, environment captures, and API telemetry are omitted.",
+  "randomized_orders": [
+    [
+      "new-size-default",
+      "old-best-oneworker",
+      "rtorrent",
+      "new-opt3-default"
+    ],
+    [
+      "new-size-default",
+      "old-best-oneworker",
+      "new-opt3-default",
+      "rtorrent"
+    ],
+    [
+      "new-opt3-default",
+      "new-size-default",
+      "rtorrent",
+      "old-best-oneworker"
+    ]
+  ],
+  "raw_input_sha256": "6c97dd1e48933d93942a1de45eb6cbc0c006a2a507abb6d4ae35d80f21065d3d",
+  "request_window": 32,
+  "runs": [
+    {
+      "active_peak_anonymous_bytes": 6950912,
+      "active_peak_pss_bytes": 20924416,
+      "active_peak_rss_bytes": 21676032,
+      "binary_sha256": "4aaa587c0953a8a4d73a01c52ea4429cb03699f232d63c6c4fb0d2ef6b407e63",
+      "cpu_tick_hz": 100,
+      "explicit_test_settings": {},
+      "kind": "torrentngd",
+      "name": "new-size-default",
+      "payload_cleanup_status": "deleted",
+      "payload_cpu_seconds_user_system": 1.9,
+      "round": 1,
+      "transfer": {
+        "bytes": 268435456,
+        "sha256": "937d7bd20b42ad9d0130419a685ce1e481f4330ab2a211dde1e16403c7854f81",
+        "verified": true
+      }
+    },
+    {
+      "active_peak_anonymous_bytes": 6348800,
+      "active_peak_pss_bytes": 24784896,
+      "active_peak_rss_bytes": 25542656,
+      "binary_sha256": "94a24269b7aefb191be39d7d955c9e25cf93bdacd3914bd6d36756569a356cd0",
+      "cpu_tick_hz": 100,
+      "explicit_test_settings": {
+        "tokio_workers": "1"
+      },
+      "kind": "torrentngd",
+      "name": "old-best-oneworker",
+      "payload_cleanup_status": "deleted",
+      "payload_cpu_seconds_user_system": 2.14,
+      "round": 1,
+      "transfer": {
+        "bytes": 268435456,
+        "sha256": "937d7bd20b42ad9d0130419a685ce1e481f4330ab2a211dde1e16403c7854f81",
+        "verified": true
+      }
+    },
+    {
+      "active_peak_anonymous_bytes": 2764800,
+      "active_peak_pss_bytes": 11256832,
+      "active_peak_rss_bytes": 13070336,
+      "binary_sha256": "b7828655feb7fa0b15d6a091d2bdbb0656be88a010d0c59d275d086ef40c61a8",
+      "cpu_tick_hz": 100,
+      "explicit_test_settings": {},
+      "kind": "rtorrent",
+      "name": "rtorrent",
+      "payload_cleanup_status": "deleted",
+      "payload_cpu_seconds_user_system": 0.73,
+      "round": 1,
+      "transfer": {
+        "bytes": 268435456,
+        "sha256": "937d7bd20b42ad9d0130419a685ce1e481f4330ab2a211dde1e16403c7854f81",
+        "verified": true
+      }
+    },
+    {
+      "active_peak_anonymous_bytes": 6868992,
+      "active_peak_pss_bytes": 24248320,
+      "active_peak_rss_bytes": 25006080,
+      "binary_sha256": "3078a818a3b65007f7741b26a284e22205ba07996916f56b05ce5cec68ce8fea",
+      "cpu_tick_hz": 100,
+      "explicit_test_settings": {},
+      "kind": "torrentngd",
+      "name": "new-opt3-default",
+      "payload_cleanup_status": "deleted",
+      "payload_cpu_seconds_user_system": 1.75,
+      "round": 1,
+      "transfer": {
+        "bytes": 268435456,
+        "sha256": "937d7bd20b42ad9d0130419a685ce1e481f4330ab2a211dde1e16403c7854f81",
+        "verified": true
+      }
+    },
+    {
+      "active_peak_anonymous_bytes": 6819840,
+      "active_peak_pss_bytes": 20783104,
+      "active_peak_rss_bytes": 21540864,
+      "binary_sha256": "4aaa587c0953a8a4d73a01c52ea4429cb03699f232d63c6c4fb0d2ef6b407e63",
+      "cpu_tick_hz": 100,
+      "explicit_test_settings": {},
+      "kind": "torrentngd",
+      "name": "new-size-default",
+      "payload_cleanup_status": "deleted",
+      "payload_cpu_seconds_user_system": 1.93,
+      "round": 2,
+      "transfer": {
+        "bytes": 268435456,
+        "sha256": "937d7bd20b42ad9d0130419a685ce1e481f4330ab2a211dde1e16403c7854f81",
+        "verified": true
+      }
+    },
+    {
+      "active_peak_anonymous_bytes": 6868992,
+      "active_peak_pss_bytes": 25436160,
+      "active_peak_rss_bytes": 26193920,
+      "binary_sha256": "94a24269b7aefb191be39d7d955c9e25cf93bdacd3914bd6d36756569a356cd0",
+      "cpu_tick_hz": 100,
+      "explicit_test_settings": {
+        "tokio_workers": "1"
+      },
+      "kind": "torrentngd",
+      "name": "old-best-oneworker",
+      "payload_cleanup_status": "deleted",
+      "payload_cpu_seconds_user_system": 1.84,
+      "round": 2,
+      "transfer": {
+        "bytes": 268435456,
+        "sha256": "937d7bd20b42ad9d0130419a685ce1e481f4330ab2a211dde1e16403c7854f81",
+        "verified": true
+      }
+    },
+    {
+      "active_peak_anonymous_bytes": 6348800,
+      "active_peak_pss_bytes": 23916544,
+      "active_peak_rss_bytes": 24674304,
+      "binary_sha256": "3078a818a3b65007f7741b26a284e22205ba07996916f56b05ce5cec68ce8fea",
+      "cpu_tick_hz": 100,
+      "explicit_test_settings": {},
+      "kind": "torrentngd",
+      "name": "new-opt3-default",
+      "payload_cleanup_status": "deleted",
+      "payload_cpu_seconds_user_system": 1.92,
+      "round": 2,
+      "transfer": {
+        "bytes": 268435456,
+        "sha256": "937d7bd20b42ad9d0130419a685ce1e481f4330ab2a211dde1e16403c7854f81",
+        "verified": true
+      }
+    },
+    {
+      "active_peak_anonymous_bytes": 2756608,
+      "active_peak_pss_bytes": 11240448,
+      "active_peak_rss_bytes": 13053952,
+      "binary_sha256": "b7828655feb7fa0b15d6a091d2bdbb0656be88a010d0c59d275d086ef40c61a8",
+      "cpu_tick_hz": 100,
+      "explicit_test_settings": {},
+      "kind": "rtorrent",
+      "name": "rtorrent",
+      "payload_cleanup_status": "deleted",
+      "payload_cpu_seconds_user_system": 0.76,
+      "round": 2,
+      "transfer": {
+        "bytes": 268435456,
+        "sha256": "937d7bd20b42ad9d0130419a685ce1e481f4330ab2a211dde1e16403c7854f81",
+        "verified": true
+      }
+    },
+    {
+      "active_peak_anonymous_bytes": 6676480,
+      "active_peak_pss_bytes": 24281088,
+      "active_peak_rss_bytes": 25038848,
+      "binary_sha256": "3078a818a3b65007f7741b26a284e22205ba07996916f56b05ce5cec68ce8fea",
+      "cpu_tick_hz": 100,
+      "explicit_test_settings": {},
+      "kind": "torrentngd",
+      "name": "new-opt3-default",
+      "payload_cleanup_status": "deleted",
+      "payload_cpu_seconds_user_system": 2.1,
+      "round": 3,
+      "transfer": {
+        "bytes": 268435456,
+        "sha256": "937d7bd20b42ad9d0130419a685ce1e481f4330ab2a211dde1e16403c7854f81",
+        "verified": true
+      }
+    },
+    {
+      "active_peak_anonymous_bytes": 6426624,
+      "active_peak_pss_bytes": 20389888,
+      "active_peak_rss_bytes": 21147648,
+      "binary_sha256": "4aaa587c0953a8a4d73a01c52ea4429cb03699f232d63c6c4fb0d2ef6b407e63",
+      "cpu_tick_hz": 100,
+      "explicit_test_settings": {},
+      "kind": "torrentngd",
+      "name": "new-size-default",
+      "payload_cleanup_status": "deleted",
+      "payload_cpu_seconds_user_system": 1.71,
+      "round": 3,
+      "transfer": {
+        "bytes": 268435456,
+        "sha256": "937d7bd20b42ad9d0130419a685ce1e481f4330ab2a211dde1e16403c7854f81",
+        "verified": true
+      }
+    },
+    {
+      "active_peak_anonymous_bytes": 2764800,
+      "active_peak_pss_bytes": 11277312,
+      "active_peak_rss_bytes": 13090816,
+      "binary_sha256": "b7828655feb7fa0b15d6a091d2bdbb0656be88a010d0c59d275d086ef40c61a8",
+      "cpu_tick_hz": 100,
+      "explicit_test_settings": {},
+      "kind": "rtorrent",
+      "name": "rtorrent",
+      "payload_cleanup_status": "deleted",
+      "payload_cpu_seconds_user_system": 0.68,
+      "round": 3,
+      "transfer": {
+        "bytes": 268435456,
+        "sha256": "937d7bd20b42ad9d0130419a685ce1e481f4330ab2a211dde1e16403c7854f81",
+        "verified": true
+      }
+    },
+    {
+      "active_peak_anonymous_bytes": 6868992,
+      "active_peak_pss_bytes": 25673728,
+      "active_peak_rss_bytes": 26431488,
+      "binary_sha256": "94a24269b7aefb191be39d7d955c9e25cf93bdacd3914bd6d36756569a356cd0",
+      "cpu_tick_hz": 100,
+      "explicit_test_settings": {
+        "tokio_workers": "1"
+      },
+      "kind": "torrentngd",
+      "name": "old-best-oneworker",
+      "payload_cleanup_status": "deleted",
+      "payload_cpu_seconds_user_system": 1.88,
+      "round": 3,
+      "transfer": {
+        "bytes": 268435456,
+        "sha256": "937d7bd20b42ad9d0130419a685ce1e481f4330ab2a211dde1e16403c7854f81",
+        "verified": true
+      }
+    }
+  ],
+  "status": "complete",
+  "tracker": false
+}

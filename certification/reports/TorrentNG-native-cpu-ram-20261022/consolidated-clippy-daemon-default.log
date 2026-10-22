@@ -1,0 +1,70 @@
+    Checking serde_core v1.0.228
+    Checking tracing v0.1.44
+    Checking getrandom v0.2.17
+    Checking httpdate v1.0.3
+    Checking ring v0.17.14
+    Checking subtle v2.6.1
+    Checking serde v1.0.228
+    Checking uuid v1.23.1
+    Checking serde_json v1.0.149
+    Checking rt-path v0.1.0 (<checkout>/crates/rt-path)
+    Checking hyper v1.9.0
+    Checking rustls-webpki v0.103.16
+    Checking rand_core v0.6.4
+    Checking ppv-lite86 v0.2.21
+    Checking rt-metrics v0.1.0 (<checkout>/crates/rt-metrics)
+    Checking mime v0.3.17
+    Checking hyper-util v0.1.20
+    Checking rand_chacha v0.3.1
+    Checking rustls v0.23.46
+    Checking rt-piece-map v0.1.0 (<checkout>/crates/rt-piece-map)
+    Checking toml_datetime v0.6.11
+    Checking tracing-serde v0.2.0
+    Checking serde_spanned v0.6.9
+    Checking tower v0.5.3
+    Checking tokio-util v0.7.18
+    Checking tracing-subscriber v0.3.23
+    Checking tokio-rustls v0.26.4
+    Checking serde_urlencoded v0.7.1
+    Checking toml_edit v0.22.27
+    Checking thiserror v1.0.69
+    Checking rt-storage v0.1.0 (<checkout>/crates/rt-storage)
+    Checking rand v0.8.6
+    Checking byteorder v1.5.0
+    Checking utf-8 v0.7.6
+    Checking data-encoding v2.11.0
+    Checking tungstenite v0.24.0
+    Checking hyper-rustls v0.27.9
+    Checking toml v0.8.23
+    Checking rt-logging v0.1.0 (<checkout>/crates/rt-logging)
+    Checking rt-db v0.1.0 (<checkout>/crates/rt-db)
+    Checking rt-fastresume v0.1.0 (<checkout>/crates/rt-fastresume)
+    Checking rt-metainfo v0.1.0 (<checkout>/crates/rt-metainfo)
+    Checking tower-http v0.6.10
+    Checking encoding_rs v0.8.35
+    Checking spin v0.9.9
+    Checking reqwest v0.12.28
+    Checking pin-project v1.1.13
+    Checking axum-core v0.4.5
+    Checking multer v3.1.0
+    Checking rt-config v0.1.0 (<checkout>/crates/rt-config)
+    Checking tokio-tungstenite v0.24.0
+    Checking rt-peer-wire v0.1.0 (<checkout>/crates/rt-peer-wire)
+    Checking rt-session v0.1.0 (<checkout>/crates/rt-session)
+    Checking rt-peer-manager v0.1.0 (<checkout>/crates/rt-peer-manager)
+    Checking serde_path_to_error v0.1.20
+    Checking matchit v0.7.3
+    Checking rt-engine v0.1.0 (<checkout>/crates/rt-engine)
+    Checking axum v0.7.9
+    Checking tower v0.4.13
+    Checking rt-api-model v0.1.0 (<checkout>/crates/rt-api-model)
+    Checking unicase v2.9.0
+    Checking mime_guess v2.0.5
+    Checking http-range-header v0.4.2
+    Checking base64 v0.23.1
+    Checking tower-http v0.5.2
+    Checking rt-migrate v0.1.0 (<checkout>/crates/rt-migrate)
+    Checking rt-api-qbit v0.1.0 (<checkout>/crates/rt-api-qbit)
+    Checking rt-api-native v0.1.0 (<checkout>/crates/rt-api-native)
+    Checking torrentngd v0.1.0 (<checkout>/crates/torrentngd)
+    Finished `release` profile [optimized] target(s) in 47.90s

@@ -1,0 +1,1204 @@
+{
+  "after_transfer_medians": {
+    "fat-oneworker": {
+      "mapping_totals": {
+        "anonymous": {
+          "anonymous_median_bytes": 6340608,
+          "anonymous_range_bytes": [
+            6287360,
+            6799360
+          ],
+          "pss_median_bytes": 6340608,
+          "pss_range_bytes": [
+            6287360,
+            6799360
+          ],
+          "rss_median_bytes": 6344704,
+          "rss_range_bytes": [
+            6291456,
+            6803456
+          ]
+        },
+        "executable_file": {
+          "anonymous_median_bytes": 0,
+          "anonymous_range_bytes": [
+            0,
+            0
+          ],
+          "pss_median_bytes": 16544768,
+          "pss_range_bytes": [
+            16472064,
+            16549888
+          ],
+          "rss_median_bytes": 17051648,
+          "rss_range_bytes": [
+            16977920,
+            17055744
+          ]
+        },
+        "readonly_file": {
+          "anonymous_median_bytes": 495616,
+          "anonymous_range_bytes": [
+            495616,
+            495616
+          ],
+          "pss_median_bytes": 2271232,
+          "pss_range_bytes": [
+            2270208,
+            2271232
+          ],
+          "rss_median_bytes": 2523136,
+          "rss_range_bytes": [
+            2523136,
+            2523136
+          ]
+        },
+        "writable_file": {
+          "anonymous_median_bytes": 65536,
+          "anonymous_range_bytes": [
+            65536,
+            65536
+          ],
+          "pss_median_bytes": 98304,
+          "pss_range_bytes": [
+            98304,
+            98304
+          ],
+          "rss_median_bytes": 98304,
+          "rss_range_bytes": [
+            98304,
+            98304
+          ]
+        }
+      },
+      "n": 3,
+      "phase": "after_transfer snapshots; not interval peaks"
+    },
+    "thin-arena2": {
+      "mapping_totals": {
+        "anonymous": {
+          "anonymous_median_bytes": 5906432,
+          "anonymous_range_bytes": [
+            5185536,
+            6160384
+          ],
+          "pss_median_bytes": 5906432,
+          "pss_range_bytes": [
+            5185536,
+            6160384
+          ],
+          "rss_median_bytes": 5910528,
+          "rss_range_bytes": [
+            5189632,
+            6164480
+          ]
+        },
+        "executable_file": {
+          "anonymous_median_bytes": 0,
+          "anonymous_range_bytes": [
+            0,
+            0
+          ],
+          "pss_median_bytes": 16259072,
+          "pss_range_bytes": [
+            16259072,
+            16406528
+          ],
+          "rss_median_bytes": 16764928,
+          "rss_range_bytes": [
+            16764928,
+            16912384
+          ]
+        },
+        "readonly_file": {
+          "anonymous_median_bytes": 598016,
+          "anonymous_range_bytes": [
+            598016,
+            598016
+          ],
+          "pss_median_bytes": 2611200,
+          "pss_range_bytes": [
+            2533376,
+            2619392
+          ],
+          "rss_median_bytes": 2863104,
+          "rss_range_bytes": [
+            2785280,
+            2871296
+          ]
+        },
+        "writable_file": {
+          "anonymous_median_bytes": 69632,
+          "anonymous_range_bytes": [
+            69632,
+            69632
+          ],
+          "pss_median_bytes": 102400,
+          "pss_range_bytes": [
+            102400,
+            102400
+          ],
+          "rss_median_bytes": 102400,
+          "rss_range_bytes": [
+            102400,
+            102400
+          ]
+        }
+      },
+      "n": 3,
+      "phase": "after_transfer snapshots; not interval peaks"
+    },
+    "thin-control": {
+      "mapping_totals": {
+        "anonymous": {
+          "anonymous_median_bytes": 5681152,
+          "anonymous_range_bytes": [
+            5668864,
+            7045120
+          ],
+          "pss_median_bytes": 5681152,
+          "pss_range_bytes": [
+            5668864,
+            7045120
+          ],
+          "rss_median_bytes": 5685248,
+          "rss_range_bytes": [
+            5672960,
+            7049216
+          ]
+        },
+        "executable_file": {
+          "anonymous_median_bytes": 0,
+          "anonymous_range_bytes": [
+            0,
+            0
+          ],
+          "pss_median_bytes": 16816128,
+          "pss_range_bytes": [
+            16185344,
+            16877568
+          ],
+          "rss_median_bytes": 17321984,
+          "rss_range_bytes": [
+            16691200,
+            17383424
+          ]
+        },
+        "readonly_file": {
+          "anonymous_median_bytes": 598016,
+          "anonymous_range_bytes": [
+            598016,
+            598016
+          ],
+          "pss_median_bytes": 2504704,
+          "pss_range_bytes": [
+            2504704,
+            2541568
+          ],
+          "rss_median_bytes": 2756608,
+          "rss_range_bytes": [
+            2756608,
+            2793472
+          ]
+        },
+        "writable_file": {
+          "anonymous_median_bytes": 69632,
+          "anonymous_range_bytes": [
+            69632,
+            69632
+          ],
+          "pss_median_bytes": 102400,
+          "pss_range_bytes": [
+            102400,
+            102400
+          ],
+          "rss_median_bytes": 102400,
+          "rss_range_bytes": [
+            102400,
+            102400
+          ]
+        }
+      },
+      "n": 3,
+      "phase": "after_transfer snapshots; not interval peaks"
+    }
+  },
+  "matrix_summary_sha256": "3e952166903a81eda236d5af1b26061033088efe4c26acf1a7727fd91b75a34d",
+  "publication": "Memory-category results only; mapping paths, addresses, per-file details, timestamps, and process IDs omitted.",
+  "raw_input_sha256": "9544c7e44c96132110dfce6766c15b6408280ac61bf5cba197710c8e848894ee",
+  "snapshots": [
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 5353472,
+          "private_clean": 0,
+          "private_dirty": 5353472,
+          "pss": 5353472,
+          "rss": 5357568
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 16236544,
+          "private_dirty": 0,
+          "pss": 16347136,
+          "rss": 16846848
+        },
+        "readonly_file": {
+          "anonymous": 495616,
+          "private_clean": 1724416,
+          "private_dirty": 495616,
+          "pss": 2271232,
+          "rss": 2523136
+        },
+        "writable_file": {
+          "anonymous": 65536,
+          "private_clean": 0,
+          "private_dirty": 98304,
+          "pss": 98304,
+          "rss": 98304
+        }
+      },
+      "phase": "after_seed_recheck",
+      "run": "run-01-fat-oneworker",
+      "source_sha256": "7da9160ac65df6286aa49d41a5f456e9a2f7c81445a1c821224c77bdd8bb5829",
+      "variant": "fat-oneworker"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 6287360,
+          "private_clean": 0,
+          "private_dirty": 6287360,
+          "pss": 6287360,
+          "rss": 6291456
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 16433152,
+          "private_dirty": 0,
+          "pss": 16549888,
+          "rss": 17055744
+        },
+        "readonly_file": {
+          "anonymous": 495616,
+          "private_clean": 1724416,
+          "private_dirty": 495616,
+          "pss": 2271232,
+          "rss": 2523136
+        },
+        "writable_file": {
+          "anonymous": 65536,
+          "private_clean": 0,
+          "private_dirty": 98304,
+          "pss": 98304,
+          "rss": 98304
+        }
+      },
+      "phase": "after_transfer",
+      "run": "run-01-fat-oneworker",
+      "source_sha256": "0484feff998ee4aa3a34a54a22e9fdedc4e45bad0babd2e4f9b2785503834eb3",
+      "variant": "fat-oneworker"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 2670592,
+          "private_clean": 0,
+          "private_dirty": 2670592,
+          "pss": 2670592,
+          "rss": 2674688
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 14364672,
+          "private_dirty": 0,
+          "pss": 14467072,
+          "rss": 14946304
+        },
+        "readonly_file": {
+          "anonymous": 495616,
+          "private_clean": 1724416,
+          "private_dirty": 495616,
+          "pss": 2270208,
+          "rss": 2519040
+        },
+        "writable_file": {
+          "anonymous": 65536,
+          "private_clean": 0,
+          "private_dirty": 98304,
+          "pss": 98304,
+          "rss": 98304
+        }
+      },
+      "phase": "before_torrent_add",
+      "run": "run-01-fat-oneworker",
+      "source_sha256": "fd047d02b88c68e3c175fa69a7942c36c9e473556e3e3d6f0913e0d004e5a13e",
+      "variant": "fat-oneworker"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 5136384,
+          "private_clean": 0,
+          "private_dirty": 5136384,
+          "pss": 5136384,
+          "rss": 5140480
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 16052224,
+          "private_dirty": 0,
+          "pss": 16156672,
+          "rss": 16650240
+        },
+        "readonly_file": {
+          "anonymous": 598016,
+          "private_clean": 1970176,
+          "private_dirty": 598016,
+          "pss": 2619392,
+          "rss": 2871296
+        },
+        "writable_file": {
+          "anonymous": 69632,
+          "private_clean": 0,
+          "private_dirty": 102400,
+          "pss": 102400,
+          "rss": 102400
+        }
+      },
+      "phase": "after_seed_recheck",
+      "run": "run-01-thin-arena2",
+      "source_sha256": "196f4da36c0fa7433c02ec81af8de23ef2eb819c1acd0b1b20a1757bb10b1bc2",
+      "variant": "thin-arena2"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 5185536,
+          "private_clean": 0,
+          "private_dirty": 5185536,
+          "pss": 5185536,
+          "rss": 5189632
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 16289792,
+          "private_dirty": 0,
+          "pss": 16406528,
+          "rss": 16912384
+        },
+        "readonly_file": {
+          "anonymous": 598016,
+          "private_clean": 1970176,
+          "private_dirty": 598016,
+          "pss": 2619392,
+          "rss": 2871296
+        },
+        "writable_file": {
+          "anonymous": 69632,
+          "private_clean": 32768,
+          "private_dirty": 69632,
+          "pss": 102400,
+          "rss": 102400
+        }
+      },
+      "phase": "after_transfer",
+      "run": "run-01-thin-arena2",
+      "source_sha256": "dec3c23d3d729f63a30ef373f46b7d3a430d1b4801494ae167841478b6edbfc2",
+      "variant": "thin-arena2"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 2596864,
+          "private_clean": 0,
+          "private_dirty": 2596864,
+          "pss": 2596864,
+          "rss": 2600960
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 13402112,
+          "private_dirty": 0,
+          "pss": 13498368,
+          "rss": 13971456
+        },
+        "readonly_file": {
+          "anonymous": 598016,
+          "private_clean": 1970176,
+          "private_dirty": 598016,
+          "pss": 2618368,
+          "rss": 2867200
+        },
+        "writable_file": {
+          "anonymous": 69632,
+          "private_clean": 0,
+          "private_dirty": 102400,
+          "pss": 102400,
+          "rss": 102400
+        }
+      },
+      "phase": "before_torrent_add",
+      "run": "run-01-thin-arena2",
+      "source_sha256": "789c1643ccbf88a57870274d84f07ec065d4328c365bec318fe0cd5a1fde9e47",
+      "variant": "thin-arena2"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 5337088,
+          "private_clean": 0,
+          "private_dirty": 5337088,
+          "pss": 5337088,
+          "rss": 5341184
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 16568320,
+          "private_dirty": 0,
+          "pss": 16678912,
+          "rss": 17178624
+        },
+        "readonly_file": {
+          "anonymous": 598016,
+          "private_clean": 1855488,
+          "private_dirty": 598016,
+          "pss": 2504704,
+          "rss": 2756608
+        },
+        "writable_file": {
+          "anonymous": 69632,
+          "private_clean": 0,
+          "private_dirty": 102400,
+          "pss": 102400,
+          "rss": 102400
+        }
+      },
+      "phase": "after_seed_recheck",
+      "run": "run-01-thin-control",
+      "source_sha256": "130718cd2ce7d63d4904c520fd63e19039973f723509905cabc24c7fc270172a",
+      "variant": "thin-control"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 5668864,
+          "private_clean": 0,
+          "private_dirty": 5668864,
+          "pss": 5668864,
+          "rss": 5672960
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 16699392,
+          "private_dirty": 0,
+          "pss": 16816128,
+          "rss": 17321984
+        },
+        "readonly_file": {
+          "anonymous": 598016,
+          "private_clean": 1855488,
+          "private_dirty": 598016,
+          "pss": 2504704,
+          "rss": 2756608
+        },
+        "writable_file": {
+          "anonymous": 69632,
+          "private_clean": 20480,
+          "private_dirty": 81920,
+          "pss": 102400,
+          "rss": 102400
+        }
+      },
+      "phase": "after_transfer",
+      "run": "run-01-thin-control",
+      "source_sha256": "b2ad7548502c61ff823df8ce11de505665cfc36ac600b534b2a8f55a4f5636af",
+      "variant": "thin-control"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 2670592,
+          "private_clean": 0,
+          "private_dirty": 2670592,
+          "pss": 2670592,
+          "rss": 2674688
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 13680640,
+          "private_dirty": 0,
+          "pss": 13783040,
+          "rss": 14262272
+        },
+        "readonly_file": {
+          "anonymous": 598016,
+          "private_clean": 1789952,
+          "private_dirty": 598016,
+          "pss": 2438144,
+          "rss": 2686976
+        },
+        "writable_file": {
+          "anonymous": 69632,
+          "private_clean": 0,
+          "private_dirty": 102400,
+          "pss": 102400,
+          "rss": 102400
+        }
+      },
+      "phase": "before_torrent_add",
+      "run": "run-01-thin-control",
+      "source_sha256": "595dcc4dfe7c8a8bdf22ac759ebe67464351366875b56aa3ccdf67f738218358",
+      "variant": "thin-control"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 5345280,
+          "private_clean": 0,
+          "private_dirty": 5345280,
+          "pss": 5345280,
+          "rss": 5349376
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 16158720,
+          "private_dirty": 0,
+          "pss": 16269312,
+          "rss": 16769024
+        },
+        "readonly_file": {
+          "anonymous": 495616,
+          "private_clean": 1724416,
+          "private_dirty": 495616,
+          "pss": 2271232,
+          "rss": 2523136
+        },
+        "writable_file": {
+          "anonymous": 65536,
+          "private_clean": 0,
+          "private_dirty": 98304,
+          "pss": 98304,
+          "rss": 98304
+        }
+      },
+      "phase": "after_seed_recheck",
+      "run": "run-02-fat-oneworker",
+      "source_sha256": "cbf566b8eaa9d1d948c08f294ec128f6fa903f2016900fb2a8509fc8ff8716e9",
+      "variant": "fat-oneworker"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 6799360,
+          "private_clean": 0,
+          "private_dirty": 6799360,
+          "pss": 6799360,
+          "rss": 6803456
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 16355328,
+          "private_dirty": 0,
+          "pss": 16472064,
+          "rss": 16977920
+        },
+        "readonly_file": {
+          "anonymous": 495616,
+          "private_clean": 1724416,
+          "private_dirty": 495616,
+          "pss": 2271232,
+          "rss": 2523136
+        },
+        "writable_file": {
+          "anonymous": 65536,
+          "private_clean": 20480,
+          "private_dirty": 77824,
+          "pss": 98304,
+          "rss": 98304
+        }
+      },
+      "phase": "after_transfer",
+      "run": "run-02-fat-oneworker",
+      "source_sha256": "69ad41d192efb16fdcda9ff06ba628104ddf91a63c39c0c9079fa77be6cc5c05",
+      "variant": "fat-oneworker"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 2674688,
+          "private_clean": 0,
+          "private_dirty": 2674688,
+          "pss": 2674688,
+          "rss": 2678784
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 14319616,
+          "private_dirty": 0,
+          "pss": 14422016,
+          "rss": 14901248
+        },
+        "readonly_file": {
+          "anonymous": 495616,
+          "private_clean": 1724416,
+          "private_dirty": 495616,
+          "pss": 2270208,
+          "rss": 2519040
+        },
+        "writable_file": {
+          "anonymous": 65536,
+          "private_clean": 0,
+          "private_dirty": 98304,
+          "pss": 98304,
+          "rss": 98304
+        }
+      },
+      "phase": "before_torrent_add",
+      "run": "run-02-fat-oneworker",
+      "source_sha256": "866cff77b541b3fde99a9cb8706811e355bb72daca9cc9146694c4f31d1d5b1b",
+      "variant": "fat-oneworker"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 5103616,
+          "private_clean": 0,
+          "private_dirty": 5103616,
+          "pss": 5103616,
+          "rss": 5107712
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 15880192,
+          "private_dirty": 0,
+          "pss": 15990784,
+          "rss": 16490496
+        },
+        "readonly_file": {
+          "anonymous": 598016,
+          "private_clean": 1961984,
+          "private_dirty": 598016,
+          "pss": 2611200,
+          "rss": 2863104
+        },
+        "writable_file": {
+          "anonymous": 69632,
+          "private_clean": 0,
+          "private_dirty": 102400,
+          "pss": 102400,
+          "rss": 102400
+        }
+      },
+      "phase": "after_seed_recheck",
+      "run": "run-02-thin-arena2",
+      "source_sha256": "f896346b968b31556d6a2615ea0762ce27f104ff8a14330ce36c6fd339a8f3ce",
+      "variant": "thin-arena2"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 6160384,
+          "private_clean": 0,
+          "private_dirty": 6160384,
+          "pss": 6160384,
+          "rss": 6164480
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 16142336,
+          "private_dirty": 0,
+          "pss": 16259072,
+          "rss": 16764928
+        },
+        "readonly_file": {
+          "anonymous": 598016,
+          "private_clean": 1961984,
+          "private_dirty": 598016,
+          "pss": 2611200,
+          "rss": 2863104
+        },
+        "writable_file": {
+          "anonymous": 69632,
+          "private_clean": 20480,
+          "private_dirty": 81920,
+          "pss": 102400,
+          "rss": 102400
+        }
+      },
+      "phase": "after_transfer",
+      "run": "run-02-thin-arena2",
+      "source_sha256": "0b05405d059b5695a7c9d2b44211c8ab4d46a25b75cfc70d689a8bf3a10f88b9",
+      "variant": "thin-arena2"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 2564096,
+          "private_clean": 0,
+          "private_dirty": 2564096,
+          "pss": 2564096,
+          "rss": 2568192
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 13389824,
+          "private_dirty": 0,
+          "pss": 13492224,
+          "rss": 13971456
+        },
+        "readonly_file": {
+          "anonymous": 598016,
+          "private_clean": 1961984,
+          "private_dirty": 598016,
+          "pss": 2610176,
+          "rss": 2859008
+        },
+        "writable_file": {
+          "anonymous": 69632,
+          "private_clean": 0,
+          "private_dirty": 102400,
+          "pss": 102400,
+          "rss": 102400
+        }
+      },
+      "phase": "before_torrent_add",
+      "run": "run-02-thin-arena2",
+      "source_sha256": "d94c8211d0a921567cdecc4956fca9a0fa1607290e31168fbca9648bacc5313d",
+      "variant": "thin-arena2"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 5341184,
+          "private_clean": 0,
+          "private_dirty": 5341184,
+          "pss": 5341184,
+          "rss": 5345280
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 15806464,
+          "private_dirty": 0,
+          "pss": 15917056,
+          "rss": 16416768
+        },
+        "readonly_file": {
+          "anonymous": 598016,
+          "private_clean": 1892352,
+          "private_dirty": 598016,
+          "pss": 2541568,
+          "rss": 2793472
+        },
+        "writable_file": {
+          "anonymous": 69632,
+          "private_clean": 0,
+          "private_dirty": 102400,
+          "pss": 102400,
+          "rss": 102400
+        }
+      },
+      "phase": "after_seed_recheck",
+      "run": "run-02-thin-control",
+      "source_sha256": "4bc634adc77b44c466b8e9020e681a45199c98cb144355da3c4da908502f0423",
+      "variant": "thin-control"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 5681152,
+          "private_clean": 0,
+          "private_dirty": 5681152,
+          "pss": 5681152,
+          "rss": 5685248
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 16068608,
+          "private_dirty": 0,
+          "pss": 16185344,
+          "rss": 16691200
+        },
+        "readonly_file": {
+          "anonymous": 598016,
+          "private_clean": 1892352,
+          "private_dirty": 598016,
+          "pss": 2541568,
+          "rss": 2793472
+        },
+        "writable_file": {
+          "anonymous": 69632,
+          "private_clean": 0,
+          "private_dirty": 102400,
+          "pss": 102400,
+          "rss": 102400
+        }
+      },
+      "phase": "after_transfer",
+      "run": "run-02-thin-control",
+      "source_sha256": "d47571316c2d988ce00979f588e55b109d78a019705a3594921885f0e2fb1214",
+      "variant": "thin-control"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 2674688,
+          "private_clean": 0,
+          "private_dirty": 2674688,
+          "pss": 2674688,
+          "rss": 2678784
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 13385728,
+          "private_dirty": 0,
+          "pss": 13488128,
+          "rss": 13967360
+        },
+        "readonly_file": {
+          "anonymous": 598016,
+          "private_clean": 1892352,
+          "private_dirty": 598016,
+          "pss": 2540544,
+          "rss": 2789376
+        },
+        "writable_file": {
+          "anonymous": 69632,
+          "private_clean": 0,
+          "private_dirty": 102400,
+          "pss": 102400,
+          "rss": 102400
+        }
+      },
+      "phase": "before_torrent_add",
+      "run": "run-02-thin-control",
+      "source_sha256": "5a3556ea5e11e2975f135720a98c2efd0cca30fa3583fc3ac5886b95aebf29eb",
+      "variant": "thin-control"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 5345280,
+          "private_clean": 0,
+          "private_dirty": 5345280,
+          "pss": 5345280,
+          "rss": 5349376
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 16232448,
+          "private_dirty": 0,
+          "pss": 16343040,
+          "rss": 16842752
+        },
+        "readonly_file": {
+          "anonymous": 495616,
+          "private_clean": 1724416,
+          "private_dirty": 495616,
+          "pss": 2271232,
+          "rss": 2523136
+        },
+        "writable_file": {
+          "anonymous": 65536,
+          "private_clean": 0,
+          "private_dirty": 98304,
+          "pss": 98304,
+          "rss": 98304
+        }
+      },
+      "phase": "after_seed_recheck",
+      "run": "run-03-fat-oneworker",
+      "source_sha256": "b9a458295d934b6af0bccfc65a93ed8e4b4698d04731681ccae2233ce39389f0",
+      "variant": "fat-oneworker"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 6340608,
+          "private_clean": 0,
+          "private_dirty": 6340608,
+          "pss": 6340608,
+          "rss": 6344704
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 16429056,
+          "private_dirty": 0,
+          "pss": 16544768,
+          "rss": 17051648
+        },
+        "readonly_file": {
+          "anonymous": 495616,
+          "private_clean": 1724416,
+          "private_dirty": 495616,
+          "pss": 2270208,
+          "rss": 2523136
+        },
+        "writable_file": {
+          "anonymous": 65536,
+          "private_clean": 32768,
+          "private_dirty": 65536,
+          "pss": 98304,
+          "rss": 98304
+        }
+      },
+      "phase": "after_transfer",
+      "run": "run-03-fat-oneworker",
+      "source_sha256": "1b35a230ee93305216af67ab1d8765fc67dffae06c2f69155c73a0de2475054a",
+      "variant": "fat-oneworker"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 2670592,
+          "private_clean": 0,
+          "private_dirty": 2670592,
+          "pss": 2670592,
+          "rss": 2674688
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 14336000,
+          "private_dirty": 0,
+          "pss": 14438400,
+          "rss": 14917632
+        },
+        "readonly_file": {
+          "anonymous": 495616,
+          "private_clean": 1724416,
+          "private_dirty": 495616,
+          "pss": 2270208,
+          "rss": 2519040
+        },
+        "writable_file": {
+          "anonymous": 65536,
+          "private_clean": 0,
+          "private_dirty": 98304,
+          "pss": 98304,
+          "rss": 98304
+        }
+      },
+      "phase": "before_torrent_add",
+      "run": "run-03-fat-oneworker",
+      "source_sha256": "cbde7d8169f2c4773a8f2ef90e7a82d97d20ae82b3e53d94f03dadcc5b7627b4",
+      "variant": "fat-oneworker"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 5107712,
+          "private_clean": 0,
+          "private_dirty": 5107712,
+          "pss": 5107712,
+          "rss": 5111808
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 15912960,
+          "private_dirty": 0,
+          "pss": 16023552,
+          "rss": 16523264
+        },
+        "readonly_file": {
+          "anonymous": 598016,
+          "private_clean": 1884160,
+          "private_dirty": 598016,
+          "pss": 2533376,
+          "rss": 2785280
+        },
+        "writable_file": {
+          "anonymous": 69632,
+          "private_clean": 0,
+          "private_dirty": 102400,
+          "pss": 102400,
+          "rss": 102400
+        }
+      },
+      "phase": "after_seed_recheck",
+      "run": "run-03-thin-arena2",
+      "source_sha256": "dbc3850f52d77f1a0f2f1ad37d8179040220614ed0a22fc58c517382a858b0fd",
+      "variant": "thin-arena2"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 5906432,
+          "private_clean": 0,
+          "private_dirty": 5906432,
+          "pss": 5906432,
+          "rss": 5910528
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 16142336,
+          "private_dirty": 0,
+          "pss": 16259072,
+          "rss": 16764928
+        },
+        "readonly_file": {
+          "anonymous": 598016,
+          "private_clean": 1884160,
+          "private_dirty": 598016,
+          "pss": 2533376,
+          "rss": 2785280
+        },
+        "writable_file": {
+          "anonymous": 69632,
+          "private_clean": 0,
+          "private_dirty": 102400,
+          "pss": 102400,
+          "rss": 102400
+        }
+      },
+      "phase": "after_transfer",
+      "run": "run-03-thin-arena2",
+      "source_sha256": "c7750642df1a3d687219ba3e0f9a6666be573073a66721eebbda2ba4c5507106",
+      "variant": "thin-arena2"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 2568192,
+          "private_clean": 0,
+          "private_dirty": 2568192,
+          "pss": 2568192,
+          "rss": 2572288
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 13459456,
+          "private_dirty": 0,
+          "pss": 13561856,
+          "rss": 14041088
+        },
+        "readonly_file": {
+          "anonymous": 598016,
+          "private_clean": 1818624,
+          "private_dirty": 598016,
+          "pss": 2466816,
+          "rss": 2715648
+        },
+        "writable_file": {
+          "anonymous": 69632,
+          "private_clean": 0,
+          "private_dirty": 102400,
+          "pss": 102400,
+          "rss": 102400
+        }
+      },
+      "phase": "before_torrent_add",
+      "run": "run-03-thin-arena2",
+      "source_sha256": "848c688ade28991ba0b124b57ef7afd4dd87099f3e2fd16e89bae2cfdbae50c1",
+      "variant": "thin-arena2"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 5332992,
+          "private_clean": 0,
+          "private_dirty": 5332992,
+          "pss": 5332992,
+          "rss": 5337088
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 16629760,
+          "private_dirty": 0,
+          "pss": 16740352,
+          "rss": 17240064
+        },
+        "readonly_file": {
+          "anonymous": 598016,
+          "private_clean": 1855488,
+          "private_dirty": 598016,
+          "pss": 2504704,
+          "rss": 2756608
+        },
+        "writable_file": {
+          "anonymous": 69632,
+          "private_clean": 0,
+          "private_dirty": 102400,
+          "pss": 102400,
+          "rss": 102400
+        }
+      },
+      "phase": "after_seed_recheck",
+      "run": "run-03-thin-control",
+      "source_sha256": "5126a0aba97d70a6800d7274332aeb508136d2fe5cab05225d46a413e914fa5b",
+      "variant": "thin-control"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 7045120,
+          "private_clean": 0,
+          "private_dirty": 7045120,
+          "pss": 7045120,
+          "rss": 7049216
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 16760832,
+          "private_dirty": 0,
+          "pss": 16877568,
+          "rss": 17383424
+        },
+        "readonly_file": {
+          "anonymous": 598016,
+          "private_clean": 1855488,
+          "private_dirty": 598016,
+          "pss": 2504704,
+          "rss": 2756608
+        },
+        "writable_file": {
+          "anonymous": 69632,
+          "private_clean": 32768,
+          "private_dirty": 69632,
+          "pss": 102400,
+          "rss": 102400
+        }
+      },
+      "phase": "after_transfer",
+      "run": "run-03-thin-control",
+      "source_sha256": "767077056ce4fc4d21fd96c04de708d76bf170b9b2723a045408c0f306a622ba",
+      "variant": "thin-control"
+    },
+    {
+      "mapped_totals": {
+        "anonymous": {
+          "anonymous": 2658304,
+          "private_clean": 0,
+          "private_dirty": 2658304,
+          "pss": 2658304,
+          "rss": 2662400
+        },
+        "executable_file": {
+          "anonymous": 0,
+          "private_clean": 13742080,
+          "private_dirty": 0,
+          "pss": 13844480,
+          "rss": 14323712
+        },
+        "readonly_file": {
+          "anonymous": 598016,
+          "private_clean": 1789952,
+          "private_dirty": 598016,
+          "pss": 2438144,
+          "rss": 2686976
+        },
+        "writable_file": {
+          "anonymous": 69632,
+          "private_clean": 0,
+          "private_dirty": 102400,
+          "pss": 102400,
+          "rss": 102400
+        }
+      },
+      "phase": "before_torrent_add",
+      "run": "run-03-thin-control",
+      "source_sha256": "fdbce84158e9d616839efd260e558be1ee1f28fcccd444aa54af4c3fdcb0fe7a",
+      "variant": "thin-control"
+    }
+  ],
+  "unit": "bytes"
+}

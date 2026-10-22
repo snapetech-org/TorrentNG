@@ -1,0 +1,1040 @@
+{
+  "group_definitions": {
+    "anonymous": "mapping with no path, [heap], or [stack*]",
+    "application_executable": "executable file-backed mapping whose path equals the launched daemon binary",
+    "file_backed_nonexec": "non-executable file-backed mappings",
+    "other_executable": "other executable file-backed mapping (usually shared libraries)",
+    "special": "other bracketed mappings such as [vdso]"
+  },
+  "publication": "Memory-category results only; mapping paths, addresses, per-file details, timestamps, and process IDs omitted.",
+  "raw_input_sha256": "3a15f8aeb38db76c20bf2ac66fab03169a569e79e4c92be5d04dbb71187b7848",
+  "snapshots": [
+    {
+      "client": "new-size-default",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 2686976,
+          "Pss": 2686976,
+          "Rss": 2686976
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 10051584,
+          "Rss": 10051584
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 749568,
+          "Pss": 2950144,
+          "Rss": 3198976
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 120832,
+          "Rss": 593920
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "before_torrent_add",
+      "round": 1,
+      "source_smaps_sha256": "3e44a7fcbbd335840541edb02c6e6de6d2a93c8182227842de73fb1bbb6f3f9c",
+      "totals_bytes": {
+        "Anonymous": 3436544,
+        "Pss": 15809536,
+        "Rss": 16535552
+      }
+    },
+    {
+      "client": "new-size-default",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 5353472,
+          "Pss": 5353472,
+          "Rss": 5353472
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 11497472,
+          "Rss": 11497472
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 749568,
+          "Pss": 2951168,
+          "Rss": 3203072
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 133120,
+          "Rss": 626688
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "after_seed_recheck",
+      "round": 1,
+      "source_smaps_sha256": "cc37c05b91632c9ad2005c24e407caaa2213c045d74ce7f6e62c93444d9ca355",
+      "totals_bytes": {
+        "Anonymous": 6103040,
+        "Pss": 19935232,
+        "Rss": 20684800
+      }
+    },
+    {
+      "client": "new-size-default",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 6201344,
+          "Pss": 6201344,
+          "Rss": 6201344
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 11628544,
+          "Rss": 11628544
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 749568,
+          "Pss": 2951168,
+          "Rss": 3203072
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 133120,
+          "Rss": 638976
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "after_transfer",
+      "round": 1,
+      "source_smaps_sha256": "702ab0e2625e9cfe64904b9a6db35cf066a9d2c8042bed251924a87724c11673",
+      "totals_bytes": {
+        "Anonymous": 6950912,
+        "Pss": 20914176,
+        "Rss": 21676032
+      }
+    },
+    {
+      "client": "old-best-oneworker",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 2682880,
+          "Pss": 2682880,
+          "Rss": 2682880
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 13533184,
+          "Rss": 13533184
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 667648,
+          "Pss": 2556928,
+          "Rss": 2805760
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 118784,
+          "Rss": 598016
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "before_torrent_add",
+      "round": 1,
+      "source_smaps_sha256": "11af4cefc903fc50f67f1b2c25bd260b97d5a968e5623d340a940a60e31b0863",
+      "totals_bytes": {
+        "Anonymous": 3350528,
+        "Pss": 18891776,
+        "Rss": 19623936
+      }
+    },
+    {
+      "client": "old-best-oneworker",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 5361664,
+          "Pss": 5361664,
+          "Rss": 5361664
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 16142336,
+          "Rss": 16142336
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 667648,
+          "Pss": 2623488,
+          "Rss": 2875392
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 131072,
+          "Rss": 630784
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "after_seed_recheck",
+      "round": 1,
+      "source_smaps_sha256": "daf45ac8991c142673e4655f917dd1beff08a00370cdba4e779e901c8c3e124c",
+      "totals_bytes": {
+        "Anonymous": 6029312,
+        "Pss": 24258560,
+        "Rss": 25014272
+      }
+    },
+    {
+      "client": "old-best-oneworker",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 5681152,
+          "Pss": 5681152,
+          "Rss": 5681152
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 16338944,
+          "Rss": 16338944
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 667648,
+          "Pss": 2623488,
+          "Rss": 2875392
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 137216,
+          "Rss": 643072
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "after_transfer",
+      "round": 1,
+      "source_smaps_sha256": "1f447bab84c4a0e39cf06fb19b84301a6bc84c68b966aea953349153cda4a26e",
+      "totals_bytes": {
+        "Anonymous": 6348800,
+        "Pss": 24780800,
+        "Rss": 25542656
+      }
+    },
+    {
+      "client": "new-opt3-default",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 2678784,
+          "Pss": 2678784,
+          "Rss": 2678784
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 12148736,
+          "Rss": 12148736
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 647168,
+          "Pss": 2651136,
+          "Rss": 2899968
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 114688,
+          "Rss": 593920
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "before_torrent_add",
+      "round": 1,
+      "source_smaps_sha256": "b488b4a18224f20bbfca71e3cd0ce630ea2eeeabd83dfcad05b174bb84274a31",
+      "totals_bytes": {
+        "Anonymous": 3325952,
+        "Pss": 17593344,
+        "Rss": 18325504
+      }
+    },
+    {
+      "client": "new-opt3-default",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 5357568,
+          "Pss": 5357568,
+          "Rss": 5357568
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 15048704,
+          "Rss": 15048704
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 647168,
+          "Pss": 2652160,
+          "Rss": 2904064
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 126976,
+          "Rss": 626688
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "after_seed_recheck",
+      "round": 1,
+      "source_smaps_sha256": "bb790f496cc91f65879e6738831f95d72f564f78dc7b7d153bc1eea4b4dcb5d9",
+      "totals_bytes": {
+        "Anonymous": 6004736,
+        "Pss": 23185408,
+        "Rss": 23941120
+      }
+    },
+    {
+      "client": "new-opt3-default",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 6221824,
+          "Pss": 6221824,
+          "Rss": 6221824
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 15237120,
+          "Rss": 15237120
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 647168,
+          "Pss": 2652160,
+          "Rss": 2904064
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 133120,
+          "Rss": 638976
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "after_transfer",
+      "round": 1,
+      "source_smaps_sha256": "1f9b0672ef45128fa0dd9d096d8b85ee765f731112e14ea31b7db83400bafac7",
+      "totals_bytes": {
+        "Anonymous": 6868992,
+        "Pss": 24244224,
+        "Rss": 25006080
+      }
+    },
+    {
+      "client": "new-size-default",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 2678784,
+          "Pss": 2678784,
+          "Rss": 2678784
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 10121216,
+          "Rss": 10121216
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 749568,
+          "Pss": 2950144,
+          "Rss": 3198976
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 114688,
+          "Rss": 593920
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "before_torrent_add",
+      "round": 2,
+      "source_smaps_sha256": "b4dbc85ae0c54de0c21f3cd64e0c4b51aac35287528fcdff05d99ac7cd99826a",
+      "totals_bytes": {
+        "Anonymous": 3428352,
+        "Pss": 15864832,
+        "Rss": 16596992
+      }
+    },
+    {
+      "client": "new-size-default",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 5341184,
+          "Pss": 5341184,
+          "Rss": 5341184
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 11493376,
+          "Rss": 11493376
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 749568,
+          "Pss": 2946048,
+          "Rss": 3203072
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 116736,
+          "Rss": 626688
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "after_seed_recheck",
+      "round": 2,
+      "source_smaps_sha256": "5b90b26271f1f1598cd4775d5c3fee54c9770706015244321322001c5710c9ac",
+      "totals_bytes": {
+        "Anonymous": 6090752,
+        "Pss": 19897344,
+        "Rss": 20668416
+      }
+    },
+    {
+      "client": "new-size-default",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 6070272,
+          "Pss": 6070272,
+          "Rss": 6070272
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 11624448,
+          "Rss": 11624448
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 749568,
+          "Pss": 2951168,
+          "Rss": 3203072
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 133120,
+          "Rss": 638976
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "after_transfer",
+      "round": 2,
+      "source_smaps_sha256": "69a0af03f28429e7660a6e1cbaaa1174b310ef22d4608e5b3e53a81c1fe499e6",
+      "totals_bytes": {
+        "Anonymous": 6819840,
+        "Pss": 20779008,
+        "Rss": 21540864
+      }
+    },
+    {
+      "client": "old-best-oneworker",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 2682880,
+          "Pss": 2682880,
+          "Rss": 2682880
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 13635584,
+          "Rss": 13635584
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 667648,
+          "Pss": 2561024,
+          "Rss": 2809856
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 114688,
+          "Rss": 593920
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "before_torrent_add",
+      "round": 2,
+      "source_smaps_sha256": "0739377e774899c4ee5f02915adb8ed6af4dbb732f4cb8f1eca1e6414eb272a7",
+      "totals_bytes": {
+        "Anonymous": 3350528,
+        "Pss": 18994176,
+        "Rss": 19726336
+      }
+    },
+    {
+      "client": "old-best-oneworker",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 5353472,
+          "Pss": 5353472,
+          "Rss": 5353472
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 16248832,
+          "Rss": 16248832
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 667648,
+          "Pss": 2627584,
+          "Rss": 2879488
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 126976,
+          "Rss": 626688
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "after_seed_recheck",
+      "round": 2,
+      "source_smaps_sha256": "2c5bfd4f896c0d8bbf0353f4749b97970032045555dce9e786e9845ed0aeb09f",
+      "totals_bytes": {
+        "Anonymous": 6021120,
+        "Pss": 24356864,
+        "Rss": 25112576
+      }
+    },
+    {
+      "client": "old-best-oneworker",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 6201344,
+          "Pss": 6201344,
+          "Rss": 6201344
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 16470016,
+          "Rss": 16470016
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 667648,
+          "Pss": 2627584,
+          "Rss": 2879488
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 133120,
+          "Rss": 638976
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "after_transfer",
+      "round": 2,
+      "source_smaps_sha256": "03b5d9e37b0668b5e19c86a0589dabbb70712892afac03afe90f738a320b86a8",
+      "totals_bytes": {
+        "Anonymous": 6868992,
+        "Pss": 25432064,
+        "Rss": 26193920
+      }
+    },
+    {
+      "client": "new-opt3-default",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 2678784,
+          "Pss": 2678784,
+          "Rss": 2678784
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 12361728,
+          "Rss": 12361728
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 647168,
+          "Pss": 2520064,
+          "Rss": 2768896
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 114688,
+          "Rss": 593920
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "before_torrent_add",
+      "round": 2,
+      "source_smaps_sha256": "b905d5fbb5e3fb6e00564acd3c599ce967fa737b951a3b042aa9f075d22ef6d4",
+      "totals_bytes": {
+        "Anonymous": 3325952,
+        "Pss": 17675264,
+        "Rss": 18407424
+      }
+    },
+    {
+      "client": "new-opt3-default",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 5361664,
+          "Pss": 5361664,
+          "Rss": 5361664
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 15335424,
+          "Rss": 15335424
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 647168,
+          "Pss": 2652160,
+          "Rss": 2904064
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 126976,
+          "Rss": 626688
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "after_seed_recheck",
+      "round": 2,
+      "source_smaps_sha256": "3925b00e4380a287f898590040d89228bacc003545e6ae411ca50afbb918c4c8",
+      "totals_bytes": {
+        "Anonymous": 6008832,
+        "Pss": 23476224,
+        "Rss": 24231936
+      }
+    },
+    {
+      "client": "new-opt3-default",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 5701632,
+          "Pss": 5701632,
+          "Rss": 5701632
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 15425536,
+          "Rss": 15425536
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 647168,
+          "Pss": 2652160,
+          "Rss": 2904064
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 133120,
+          "Rss": 638976
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "after_transfer",
+      "round": 2,
+      "source_smaps_sha256": "1a3279f340f75f4689b0e9e4bc6ecd6d24a4e23537669649f854291dd3cddba2",
+      "totals_bytes": {
+        "Anonymous": 6348800,
+        "Pss": 23912448,
+        "Rss": 24674304
+      }
+    },
+    {
+      "client": "new-opt3-default",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 2674688,
+          "Pss": 2674688,
+          "Rss": 2674688
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 12447744,
+          "Rss": 12447744
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 647168,
+          "Pss": 2585600,
+          "Rss": 2834432
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 114688,
+          "Rss": 593920
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "before_torrent_add",
+      "round": 3,
+      "source_smaps_sha256": "fd68104c81db81a87085af9916dc57d2e39c6951567dc9d37748fad5a2a356f3",
+      "totals_bytes": {
+        "Anonymous": 3321856,
+        "Pss": 17822720,
+        "Rss": 18554880
+      }
+    },
+    {
+      "client": "new-opt3-default",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 5357568,
+          "Pss": 5357568,
+          "Rss": 5357568
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 15331328,
+          "Rss": 15331328
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 647168,
+          "Pss": 2652160,
+          "Rss": 2904064
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 126976,
+          "Rss": 626688
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "after_seed_recheck",
+      "round": 3,
+      "source_smaps_sha256": "a746c537617ff794b669d82072efb1be02b9c360a1ad8b9d807b774d97f88e62",
+      "totals_bytes": {
+        "Anonymous": 6004736,
+        "Pss": 23468032,
+        "Rss": 24223744
+      }
+    },
+    {
+      "client": "new-opt3-default",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 6029312,
+          "Pss": 6029312,
+          "Rss": 6029312
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 15462400,
+          "Rss": 15462400
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 647168,
+          "Pss": 2652160,
+          "Rss": 2904064
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 133120,
+          "Rss": 638976
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "after_transfer",
+      "round": 3,
+      "source_smaps_sha256": "7312339fc1973081e2b7cf76cd3a7422cb2e341a9c61a22187b9e15eb453f2e7",
+      "totals_bytes": {
+        "Anonymous": 6676480,
+        "Pss": 24276992,
+        "Rss": 25038848
+      }
+    },
+    {
+      "client": "new-size-default",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 2686976,
+          "Pss": 2686976,
+          "Rss": 2686976
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 9752576,
+          "Rss": 9752576
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 749568,
+          "Pss": 2900992,
+          "Rss": 3149824
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 114688,
+          "Rss": 593920
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "before_torrent_add",
+      "round": 3,
+      "source_smaps_sha256": "1452f71e7fae3f650a36d7392ce57cc6e59cd9aeae87c29f06a5ecf9691afaa1",
+      "totals_bytes": {
+        "Anonymous": 3436544,
+        "Pss": 15455232,
+        "Rss": 16187392
+      }
+    },
+    {
+      "client": "new-size-default",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 5349376,
+          "Pss": 5349376,
+          "Rss": 5349376
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 11431936,
+          "Rss": 11431936
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 749568,
+          "Pss": 2967552,
+          "Rss": 3219456
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 126976,
+          "Rss": 626688
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "after_seed_recheck",
+      "round": 3,
+      "source_smaps_sha256": "b907dc2a5f0d3cc3153bb018b71d75f9848d474cecced7c9762b68c9ded2c9d7",
+      "totals_bytes": {
+        "Anonymous": 6098944,
+        "Pss": 19875840,
+        "Rss": 20631552
+      }
+    },
+    {
+      "client": "new-size-default",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 5677056,
+          "Pss": 5677056,
+          "Rss": 5677056
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 11608064,
+          "Rss": 11608064
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 749568,
+          "Pss": 2967552,
+          "Rss": 3219456
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 133120,
+          "Rss": 638976
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "after_transfer",
+      "round": 3,
+      "source_smaps_sha256": "92e5b2811894f1cc3ac30a6431242d49c6c7ccc458cc08f452ba81a48696f9c4",
+      "totals_bytes": {
+        "Anonymous": 6426624,
+        "Pss": 20385792,
+        "Rss": 21147648
+      }
+    },
+    {
+      "client": "old-best-oneworker",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 2670592,
+          "Pss": 2670592,
+          "Rss": 2670592
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 13443072,
+          "Rss": 13443072
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 667648,
+          "Pss": 2794496,
+          "Rss": 3043328
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 114688,
+          "Rss": 593920
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "before_torrent_add",
+      "round": 3,
+      "source_smaps_sha256": "4df83758c391ea981106f1a4e8da5c85968fa4eb82fa1a7d2e95bc5dad052725",
+      "totals_bytes": {
+        "Anonymous": 3338240,
+        "Pss": 19022848,
+        "Rss": 19755008
+      }
+    },
+    {
+      "client": "old-best-oneworker",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 5357568,
+          "Pss": 5357568,
+          "Rss": 5357568
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 16277504,
+          "Rss": 16277504
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 667648,
+          "Pss": 2795520,
+          "Rss": 3047424
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 126976,
+          "Rss": 626688
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "after_seed_recheck",
+      "round": 3,
+      "source_smaps_sha256": "7dcfad520651e8d1db1d0a4d09befc2e2e11163fdf99f627b2712529fada735f",
+      "totals_bytes": {
+        "Anonymous": 6025216,
+        "Pss": 24557568,
+        "Rss": 25313280
+      }
+    },
+    {
+      "client": "old-best-oneworker",
+      "groups_bytes": {
+        "anonymous": {
+          "Anonymous": 6201344,
+          "Pss": 6201344,
+          "Rss": 6201344
+        },
+        "application_executable": {
+          "Anonymous": 0,
+          "Pss": 16539648,
+          "Rss": 16539648
+        },
+        "file_backed_nonexec": {
+          "Anonymous": 667648,
+          "Pss": 2795520,
+          "Rss": 3047424
+        },
+        "other_executable": {
+          "Anonymous": 0,
+          "Pss": 133120,
+          "Rss": 638976
+        },
+        "special": {
+          "Anonymous": 0,
+          "Pss": 0,
+          "Rss": 4096
+        }
+      },
+      "phase": "after_transfer",
+      "round": 3,
+      "source_smaps_sha256": "7499923620d3d484351a3639514a90e53e6d017ce02e8f8d7041ec76d8dbf001",
+      "totals_bytes": {
+        "Anonymous": 6868992,
+        "Pss": 25669632,
+        "Rss": 26431488
+      }
+    }
+  ],
+  "unit": "bytes"
+}

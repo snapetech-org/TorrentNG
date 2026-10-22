@@ -1,0 +1,40 @@
+{
+  "clients": {
+    "current-thread-oneworker": {
+      "binary_artifact": "torrentngd-current-thin197",
+      "expected_runtime_behavior": "current-thread Tokio runtime selected only by explicit TOKIO_WORKER_THREADS=1; normal multi-thread runtime remains default",
+      "explicit_test_settings": {
+        "tokio_workers": "1"
+      },
+      "patch_sha256": "375a474eefb810adfb368e98d56e358a354d95788ba958b0b1f9fb3d709204b9",
+      "sha256": "b4b7d2ab72b360d97cadd9b0a6b1a222d0bfa750853bd73becd7373a27890b96",
+      "source_revision": "a8b0c42"
+    },
+    "normal-oneworker": {
+      "binary_artifact": "torrentngd-verify-197",
+      "explicit_test_settings": {
+        "tokio_workers": "1"
+      },
+      "sha256": "94a24269b7aefb191be39d7d955c9e25cf93bdacd3914bd6d36756569a356cd0"
+    },
+    "rtorrent": {
+      "binary_artifact": "rtorrent",
+      "explicit_test_settings": {},
+      "sha256": "b7828655feb7fa0b15d6a091d2bdbb0656be88a010d0c59d275d086ef40c61a8",
+      "version": "0.16.25"
+    }
+  },
+  "diagnostics": false,
+  "fixture_bytes": 268435456,
+  "offered_rate_bytes_per_second": 4194304,
+  "order_seed": 3,
+  "publication": "Build identities and explicit test settings only; machine paths and environment captures omitted.",
+  "purpose": "Final authorized CPU/RAM comparison; no subsequent performance cycle authorized",
+  "repeats": 3,
+  "request_block_bytes": 16384,
+  "request_window": 32,
+  "result": "complete; 9/9 transfers SHA-256 verified; generated run payloads deleted after verification and client shutdown",
+  "runner_sha256": "05cff349eeb248f41290fdd7e889b4d3946020d1137b914fe2f8e8f24812fc74",
+  "seed": 20261022,
+  "summary_sha256": "d9d1d1e73d9053d0dd02dfcf2eda1f14eaa463f8ed96730f2528b24f4cafac77"
+}

@@ -1,0 +1,58 @@
+   Compiling bitflags v2.11.1
+   Compiling rustix v1.1.4
+   Compiling io-uring v0.7.12
+   Compiling rusqlite v0.31.0
+   Compiling rt-storage v0.1.0 (<checkout>/crates/rt-storage)
+   Compiling rt-db v0.1.0 (<checkout>/crates/rt-db)
+   Compiling tower-http v0.6.10
+   Compiling reqwest v0.12.28
+   Compiling rt-fastresume v0.1.0 (<checkout>/crates/rt-fastresume)
+   Compiling rt-engine v0.1.0 (<checkout>/crates/rt-engine)
+   Compiling linux-raw-sys v0.12.1
+   Compiling fastrand v2.4.1
+   Compiling tower-http v0.5.2
+   Compiling tempfile v3.27.0
+   Compiling rt-migrate v0.1.0 (<checkout>/crates/rt-migrate)
+   Compiling rt-api-qbit v0.1.0 (<checkout>/crates/rt-api-qbit)
+   Compiling rt-api-native v0.1.0 (<checkout>/crates/rt-api-native)
+   Compiling torrentngd v0.1.0 (<checkout>/crates/torrentngd)
+    Finished `release` profile [optimized] target(s) in 1m 28s
+     Running unittests src/main.rs (<target-dir>/release/deps/torrentngd-83a90c688c99bab1)
+
+running 33 tests
+test export::tests::help_and_errors ... ok
+test export::tests::parses_full_apply_invocation ... ok
+test export::tests::parses_minimal_dry_run ... ok
+test migrate::tests::a_crashed_source_lowers_trusting_policies_to_verify ... ok
+test migrate::tests::clean_and_unknown_sources_keep_the_requested_policy_silently ... ok
+test migrate::tests::filter_plan_keeps_only_trusted_complete_when_requested ... ok
+test migrate::tests::a_running_source_is_refused_unless_explicitly_allowed ... ok
+test migrate::tests::parses_full_apply_invocation ... ok
+test migrate::tests::help_short_circuits ... ok
+test migrate::tests::parses_minimal_dry_run ... ok
+test migrate::tests::crash_related_flags_parse_and_default_off ... ok
+test migrate::tests::blob_persistence_reports_source_errors_before_import ... ok
+test migrate::tests::rejects_missing_required_and_unknowns ... ok
+test migrate::tests::remap_parsing_validates_format ... ok
+test migrate::tests::confirm_accepts_yes_only ... ok
+test migrate::tests::source_and_policy_aliases ... ok
+test migrate::tests::the_operator_can_explicitly_keep_a_trusting_policy_for_a_crashed_source ... ok
+test tests::bearer_token_accepts_case_insensitive_scheme_without_extra_parts ... ok
+test tests::daemon_auth_allows_webui_but_keeps_api_private ... ok
+test tests::daemon_public_auth_paths_are_exact ... ok
+test tests::panic_hook_child_entrypoint ... ignored, subprocess entrypoint for the panic-hook regression
+test tests::loopback_default_auth_gates_browser_requests_and_preserves_machine_api_access ... ok
+test tests::compatibility_router_mounts_optional_api_surfaces_by_feature ... ok
+test tests::request_id_accepts_bounded_safe_header_values ... ok
+test tests::static_dir_defaults_to_packaged_webui_path ... ok
+test tests::request_uri_limit_counts_path_and_query_bytes ... ok
+test tests::request_log_skips_health_metrics_ws_and_static_assets ... ok
+test tests::tokio_worker_default_is_capped_but_scales_down_for_small_hosts ... ok
+test tests::transparent_huge_pages_are_disabled_by_default_with_explicit_opt_out ... ok
+test tests::tokio_worker_environment_override_is_respected_and_validated ... ok
+test tests::bootstrap_password_is_unique_persistent_and_private ... ok
+test tests::panic_hook_omits_payload_but_keeps_location_in_stderr ... ok
+test migrate::tests::dry_run_and_apply_wire_to_native_db ... ok
+
+test result: ok. 32 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
