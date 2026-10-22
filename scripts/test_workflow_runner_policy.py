@@ -10,10 +10,61 @@ PROTECTED_TRANSFER_WORKFLOW = "transfer-rebuild.yml"
 
 
 class WorkflowRunnerPolicyTests(unittest.TestCase):
+    def test_main_ci_routes_only_trusted_main_jobs_to_the_isolated_pool(self) -> None:
+        source = (WORKFLOW_DIR / "ci.yml").read_text(encoding="utf-8")
+        jobs = [
+            "native-quality",
+            "backend-fault-matrix",
+            "backend-api-load",
+            "msrv-check",
+            "msrv-check-sidecar",
+            "fuzz-smoke",
+            "sidecar",
+            "desktop",
+            "webui",
+            "backup-restore",
+            "security-audit",
+        ]
+        for name in jobs:
+            match = re.search(
+                rf"(?ms)^  {re.escape(name)}:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+                source,
+            )
+            self.assertIsNotNone(match, name)
+            runner = re.search(r"(?m)^    runs-on: (?P<runner>[^\n]+)$", match.group("body"))
+            self.assertIsNotNone(runner, name)
+            expression = runner.group("runner")
+            self.assertIn('"group":"ng-shared-main-jit"', expression, name)
+            self.assertIn("github.event_name == 'push'", expression, name)
+            self.assertIn("github.event_name == 'workflow_dispatch'", expression, name)
+            self.assertIn("github.ref == 'refs/heads/main'", expression, name)
+            self.assertIn("|| 'ubuntu-latest'", expression, name)
+
     def test_other_workflows_use_github_hosted_runners(self) -> None:
         for workflow in WORKFLOW_DIR.glob("*.y*"):
             source = workflow.read_text(encoding="utf-8")
-            if workflow.name in {PUBLIC_JIT_WORKFLOW, PROTECTED_TRANSFER_WORKFLOW}:
+            if workflow.name in {PUBLIC_JIT_WORKFLOW, PROTECTED_TRANSFER_WORKFLOW, "ci.yml"}:
+                continue
+            if workflow.name in {
+                "codeql.yml",
+                "release-notes.yml",
+                "semgrep-community.yml",
+                "trivy-filesystem.yml",
+            }:
+                expressions = re.findall(r"(?m)^\s*runs-on: (?P<runner>[^\n]+)$", source)
+                routed = [expression for expression in expressions if "ng-shared-main-jit" in expression]
+                self.assertTrue(routed, workflow.name)
+                for expression in routed:
+                    self.assertIn('"group":"ng-shared-main-jit"', expression)
+                    self.assertIn("github.event_name == 'push'", expression)
+                    self.assertIn("github.event_name == 'workflow_dispatch'", expression)
+                    self.assertIn("github.ref == 'refs/heads/main'", expression)
+                    self.assertIn("|| 'ubuntu-latest'", expression)
+                if workflow.name in {"codeql.yml", "semgrep-community.yml"}:
+                    self.assertIn("github.event_name == 'schedule'", routed[0])
+                if workflow.name == "semgrep-community.yml":
+                    self.assertIn("docker info", source)
+                    self.assertIn("docker run", source)
                 continue
             self.assertNotRegex(source, r"(?m)^\s*(?:runs-on|labels):.*self-hosted")
             self.assertNotIn("TRUSTED_MAIN_RUNNERS_ENABLED", source)

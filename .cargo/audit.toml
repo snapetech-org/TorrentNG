@@ -1,0 +1,8 @@
+[advisories]
+ignore = [
+  # RUSTSEC-2023-0071 affects observable RSA private-key operations. TorrentNG
+  # uses OpenID Connect only to verify provider signatures with public keys;
+  # it does not decrypt or sign with RSA private keys. RustSec lists no fixed
+  # version, so keep this narrowly documented until upstream supplies one.
+  "RUSTSEC-2023-0071",
+]

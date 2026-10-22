@@ -198,6 +198,29 @@ class WorkflowSecurityTests(unittest.TestCase):
             if workflow_path.name == TRANSFER_HARDWARE_WORKFLOW:
                 self.assert_transfer_hardware_runner_is_opt_in_and_main_only(source)
                 continue
+            if workflow_path.name in {
+                "codeql.yml",
+                "release-notes.yml",
+                "semgrep-community.yml",
+                "trivy-filesystem.yml",
+            }:
+                expressions = re.findall(r"(?m)^\s*runs-on: (?P<runner>[^\n]+)$", source)
+                routed = [expression for expression in expressions if "ng-shared-main-jit" in expression]
+                self.assertTrue(routed, workflow_path.name)
+                for expression in routed:
+                    self.assertIn('"group":"ng-shared-main-jit"', expression)
+                    self.assertIn("github.event_name == 'push'", expression)
+                    self.assertIn("github.event_name == 'workflow_dispatch'", expression)
+                    self.assertIn("github.ref == 'refs/heads/main'", expression)
+                    self.assertIn("|| 'ubuntu-latest'", expression)
+                if workflow_path.name in {"codeql.yml", "semgrep-community.yml"}:
+                    self.assertIn("github.event_name == 'schedule'", routed[0])
+                if workflow_path.name == "semgrep-community.yml":
+                    self.assertIn("docker info", source)
+                    self.assertIn("docker run", source)
+                continue
+            if workflow_path.name == "ci.yml":
+                continue
             self.assertNotRegex(source, r"(?m)^\s*(?:runs-on|labels):.*self-hosted")
             self.assertNotIn("TRUSTED_MAIN_RUNNERS_ENABLED", source)
         windows = (WORKFLOWS / "windows-smoke.yml").read_text(encoding="utf-8")
