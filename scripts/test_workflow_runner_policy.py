@@ -35,6 +35,9 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             self.assertIsNotNone(runner, name)
             expression = runner.group("runner")
             self.assertIn('"group":"ng-shared-main-jit"', expression, name)
+            self.assertIn('"ng-shared-main-torrentng"', expression, name)
+            self.assertIn('"ng-main-run-{0}"', expression, name)
+            self.assertIn("github.run_id", expression, name)
             self.assertIn("github.event_name == 'push'", expression, name)
             self.assertIn("github.event_name == 'workflow_dispatch'", expression, name)
             self.assertIn("github.ref == 'refs/heads/main'", expression, name)
@@ -56,6 +59,8 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                 self.assertTrue(routed, workflow.name)
                 for expression in routed:
                     self.assertIn('"group":"ng-shared-main-jit"', expression)
+                    self.assertIn('"ng-shared-main-torrentng"', expression)
+                    self.assertIn('"ng-main-run-{0}"', expression)
                     self.assertIn("github.event_name == 'push'", expression)
                     self.assertIn("github.event_name == 'workflow_dispatch'", expression)
                     self.assertIn("github.ref == 'refs/heads/main'", expression)
