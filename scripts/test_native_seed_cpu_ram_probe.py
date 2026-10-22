@@ -115,6 +115,21 @@ class ProbeTests(unittest.TestCase):
                                                      overrides["verify-oneworker"])
         self.assertEqual(environment, {"PATH": "/bin", "TOKIO_WORKER_THREADS": "1"})
 
+    @patch.object(probe.time, "clock_gettime_ns")
+    @patch.object(probe, "process_cpu_clock_id")
+    def test_process_tree_cpu_clock_sums_root_and_children(self, get_clock_id, get_time_ns):
+        get_clock_id.side_effect = {10: 100, 11: 101}.__getitem__
+        get_time_ns.side_effect = {100: 1_000_000_000, 101: 250_000_000}.__getitem__
+        self.assertEqual(probe.process_tree_cpu_time_ns(10, {10, 11}), 1_250_000_000)
+
+    def test_cpu_delta_prefers_precise_clock_and_keeps_tick_fallback(self):
+        precise_start = {"cpu_ticks_user_system": 100, "cpu_time_user_system_ns": 10_000}
+        precise_end = {"cpu_ticks_user_system": 200, "cpu_time_user_system_ns": 1_234_010}
+        self.assertAlmostEqual(probe.cpu_seconds_between(precise_start, precise_end, 100), 0.00122401)
+        tick_start = {"cpu_ticks_user_system": 100}
+        tick_end = {"cpu_ticks_user_system": 125}
+        self.assertEqual(probe.cpu_seconds_between(tick_start, tick_end, 100), 0.25)
+
     @patch.object(probe.subprocess, "run")
     def test_cpu_profile_control_uses_gdb_and_quotes_profile_path(self, run):
         run.side_effect = [

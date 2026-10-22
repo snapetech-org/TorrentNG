@@ -9,6 +9,7 @@ Completion time is recorded as a validity check, not a performance target.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import ctypes.util
 import hashlib
 import json
@@ -341,8 +342,52 @@ def process_sample(root_pid):
         except (OSError, StopIteration, ValueError) as error:
             if pid == root_pid:
                 raise RuntimeError(f"cannot read resolved client proc PID {pid}: {error}") from error
+    precise_cpu_ns = process_tree_cpu_time_ns(root_pid, pids)
     return {"time": time.time(), "monotonic": time.monotonic(), "pids": sorted(pids), "cpu_ticks_user_system": cpu,
+            "cpu_time_user_system_ns": precise_cpu_ns,
             "rss_bytes": rss, "pss_bytes": pss, "anonymous_bytes": anon}
+
+
+def process_tree_cpu_time_ns(root_pid, pids):
+    """Read higher-resolution process CPU time, falling back to proc ticks if unavailable."""
+    total = 0
+    sampled = False
+    for pid in pids:
+        try:
+            clock_id = process_cpu_clock_id(pid)
+            if clock_id is None:
+                continue
+            total += time.clock_gettime_ns(clock_id)
+            sampled = True
+        except OSError:
+            if pid == root_pid:
+                return None
+    return total if sampled else None
+
+
+def process_cpu_clock_id(pid):
+    """Resolve a PID's CPU clock through Python when exposed, otherwise glibc."""
+    clock_getcpuclockid = getattr(time, "clock_getcpuclockid", None)
+    if clock_getcpuclockid is not None:
+        return clock_getcpuclockid(pid)
+    try:
+        clock_getcpuclockid = ctypes.CDLL(None).clock_getcpuclockid
+    except (AttributeError, OSError):
+        return None
+    clock_id = ctypes.c_int()
+    error = clock_getcpuclockid(pid, ctypes.byref(clock_id))
+    if error:
+        raise OSError(error, os.strerror(error))
+    return clock_id.value
+
+
+def cpu_seconds_between(start, end, ticks_per_second):
+    """Use precise process CPU clocks when available; retain /proc-tick fallback."""
+    start_ns = start.get("cpu_time_user_system_ns")
+    end_ns = end.get("cpu_time_user_system_ns")
+    if start_ns is not None and end_ns is not None and end_ns >= start_ns:
+        return (end_ns - start_ns) / 1_000_000_000
+    return (end["cpu_ticks_user_system"] - start["cpu_ticks_user_system"]) / ticks_per_second
 
 
 def collect_diagnostics(api_port, root_pid, directory, label):
@@ -779,6 +824,7 @@ def main():
     else:
         profile_preload = None
     report = {"format": "native-seed-cpu-ram-v1", "status": "running",
+        "cpu_measurement": "process CPU clock nanoseconds where available; /proc user+system ticks fallback",
         "diagnostic_run": bool(args.diagnostics or args.peer_debug or args.cpu_profile), "peer_debug": bool(args.peer_debug),
         "cpu_profile": ({"method": "gperftools, started/stopped by GDB at payload boundaries",
                          "sampling_window": "first valid Piece block through final block completion",
@@ -853,14 +899,10 @@ def main():
                 post_leecher_sample = transfer["post_leecher_sample"]
                 resource_samples = active + [pre_leecher_sample, connection, payload_start,
                                              payload_end, post_leecher_sample]
-                active_cpu_seconds = (payload_end["cpu_ticks_user_system"] -
-                                      payload_start["cpu_ticks_user_system"]) / hz
-                connection_wait_cpu_seconds = (payload_start["cpu_ticks_user_system"] -
-                                               connection["cpu_ticks_user_system"]) / hz
-                connection_to_payload_cpu_seconds = (payload_end["cpu_ticks_user_system"] -
-                                                     connection["cpu_ticks_user_system"]) / hz
-                connection_setup_cpu_seconds = (connection["cpu_ticks_user_system"] -
-                                                pre_leecher_sample["cpu_ticks_user_system"]) / hz
+                active_cpu_seconds = cpu_seconds_between(payload_start, payload_end, hz)
+                connection_wait_cpu_seconds = cpu_seconds_between(connection, payload_start, hz)
+                connection_to_payload_cpu_seconds = cpu_seconds_between(connection, payload_end, hz)
+                connection_setup_cpu_seconds = cpu_seconds_between(pre_leecher_sample, connection, hz)
                 def peak(samples, field): return max((x[field] for x in samples), default=0)
                 run_record = {"round": round_index + 1, "name": client[0], "kind": client[1], "binary": item["binary"],
                     "binary_sha256": item["binary_sha256"], "command": item["command"], "config_path": item["config"],
