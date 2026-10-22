@@ -118,6 +118,9 @@ preserved as design evidence for later work. These were single-pass observations
 on a shared host, not a causal estimate or a client ranking. See the
 [candidate results and raw evidence](certification/reports/TorrentNG-native-download-efa3a607/comparison/round3-sendfile-e9727943/README.md)
 and the [three-round whole-client seed comparison](certification/reports/TorrentNG-whole-client-comparison-20261021/README.md).
+The next review archive repeated the `sendfile` recommendation and added no new
+patch. Its source and older benchmark snapshots are recorded in the
+[archive assessment](certification/reports/TorrentNG-download-review-20261021/README.md).
 
 ## Learn more
 
