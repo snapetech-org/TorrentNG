@@ -1,0 +1,39 @@
+
+This GDB supports auto-downloading debuginfo from the following URLs:
+  <https://debuginfod.archlinux.org>
+Enable debuginfod for this session? (y or [n]) [answered N; input not from terminal]
+Debuginfod has been disabled.
+To make this setting permanent, add 'set debuginfod enabled off' to .gdbinit.
+Breakpoint 1 at 0x18a0a1f
+<function, no debug info> _RINvNtCs2QiUFJUqLgS_9rt_engine12torrent_task18start_upload_readsNvB2_24upload_read_batch_futureNCB10_0ECsaq09W7GiIlK_10torrentngd;
+Successfully created breakpoint 1.
+
+Program stopped.
+0x00007ffff7fdf7e0 in ?? () from /lib64/ld-linux-x86-64.so.2
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/usr/lib/libthread_db.so.1".
+[New Thread 0x7ffff79ff6c0 (LWP 2592436) (id 2)]
+[New Thread 0x7ffff77fe6c0 (LWP 2592437) (id 3)]
+[New Thread 0x7ffff75fd6c0 (LWP 2592438) (id 4)]
+{"timestamp":"2026-10-22T19:29:55.054536Z","level":"WARN","fields":{"message":"WebUI index.html not found; API will run but / will return 404","component":"http","operation":"static_webui","static_dir":"/usr/share/torrentng/webui"},"target":"torrentngd"}
+[New Thread 0x7ffff73fc6c0 (LWP 2592447) (id 5)]
+[New Thread 0x7ffff71fb6c0 (LWP 2592448) (id 6)]
+[New Thread 0x7ffff6ffa6c0 (LWP 2592449) (id 7)]
+[Thread 0x7ffff6ffa6c0 (LWP 2592449) (id 7) exited]
+[New Thread 0x7ffff6ffa6c0 (LWP 2592450) (id 8)]
+[New Thread 0x7ffff6df96c0 (LWP 2592451) (id 9)]
+[New Thread 0x7ffff6bf86c0 (LWP 2592452) (id 10)]
+[Switching to thread 2 (Thread 0x7ffff79ff6c0 (LWP 2592436))]
+TORRENTNG_PGO_PROFILE_RESET
+[Thread 0x7ffff75fd6c0 (LWP 2592438) (id 4) exited]
+[New Thread 0x7ffff69f76c0 (LWP 2594296) (id 11)]
+[Thread 0x7ffff6bf86c0 (LWP 2592452) (id 10) exited]
+[Thread 0x7ffff6df96c0 (LWP 2592451) (id 9) exited]
+[Thread 0x7ffff6ffa6c0 (LWP 2592450) (id 8) exited]
+[Thread 0x7ffff71fb6c0 (LWP 2592448) (id 6) exited]
+[Thread 0x7ffff73fc6c0 (LWP 2592447) (id 5) exited]
+{"timestamp":"2026-10-22T19:30:22.834105Z","level":"WARN","fields":{"message":"engine database worker stopped","component":"db","operation":"worker","result":"stopped"},"target":"rt_engine::db_worker"}
+[Thread 0x7ffff77fe6c0 (LWP 2592437) (id 3) exited]
+[Thread 0x7ffff69f76c0 (LWP 2594296) (id 11) exited]
+[Thread 0x7ffff79ff6c0 (LWP 2592436) (id 2) exited]
+[Inferior 1 (process 2592433) exited normally]

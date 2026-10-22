@@ -153,6 +153,19 @@ class ProbeTests(unittest.TestCase):
             self.assertIn("$1 = 1", start_log.read_text())
             self.assertEqual(stop_log.read_text(), "")
 
+    def test_pgo_profile_gdb_script_resets_at_upload_start_and_records_child_pid(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            script = root / "profile-window.gdb"
+            pid_file = root / "torrentngd.pid"
+            probe.write_pgo_profile_window_script(script, pid_file)
+            contents = script.read_text()
+            self.assertIn("rbreak rt_engine::torrent_task::start_upload_reads", contents)
+            self.assertIn("call (void)__llvm_profile_reset_counters()", contents)
+            self.assertIn("TORRENTNG_PGO_PROFILE_RESET", contents)
+            self.assertIn(str(pid_file), contents)
+            self.assertIn("handle SIGTERM nostop noprint pass", contents)
+
     def test_child_environment_strips_controls_and_records_only_safe_values(self):
         source = {
             "PATH": "/bin", "HTTP_PROXY": "http://proxy.invalid",
@@ -188,6 +201,18 @@ class ProbeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             probe.validate_client_count(1, 2, True)
         probe.validate_client_count(1, 1, True)
+
+    def test_pgo_profile_window_requires_one_uninstrumented_controlled_torrentng_run(self):
+        valid = [("training", "torrentngd", "/tmp/instrumented-torrentngd")]
+        probe.validate_pgo_profile_window(valid, 1, False, {})
+        with self.assertRaisesRegex(ValueError, "one TorrentNG client"):
+            probe.validate_pgo_profile_window(valid + [("rt", "rtorrent", "/tmp/rtorrent")], 1, False, {})
+        with self.assertRaisesRegex(ValueError, "--repeats 1"):
+            probe.validate_pgo_profile_window(valid, 3, False, {})
+        with self.assertRaisesRegex(ValueError, "cannot be combined"):
+            probe.validate_pgo_profile_window(valid, 1, True, {})
+        with self.assertRaisesRegex(ValueError, "controls LLVM_PROFILE_FILE"):
+            probe.validate_pgo_profile_window(valid, 1, False, {"training": {"LLVM_PROFILE_FILE": "/tmp/custom.profraw"}})
         probe.validate_client_count(2, 3, False)
 
     def test_payload_cleanup_removes_only_generated_copies_inside_run(self):

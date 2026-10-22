@@ -1,0 +1,110 @@
+diff --git a/crates/rt-engine/src/torrent_task.rs b/crates/rt-engine/src/torrent_task.rs
+index 8dbb0a78..9c66a8a9 100644
+--- a/crates/rt-engine/src/torrent_task.rs
++++ b/crates/rt-engine/src/torrent_task.rs
+@@ -178,6 +178,25 @@ const STOPPED_TRACKER_CONTROL_ANNOUNCE_DEADLINE: Duration = Duration::from_secs(
+ const WEBSEED_RETRY_BASE: Duration = Duration::from_secs(1);
+ const WEBSEED_RETRY_MAX: Duration = Duration::from_secs(300);
+ const MAX_UT_PEX_PEERS: usize = 2_048;
++
++fn observe_upload_pipeline_width(
++    current: usize,
++    observed: usize,
++    probe_expanded: bool,
++) -> (usize, bool) {
++    let maximum = MAX_READY_UPLOAD_INTAKE_MESSAGES;
++    let observed = observed.min(maximum);
++    let mut width = current.max(observed);
++    let mut probe_expanded = probe_expanded;
++    if !probe_expanded && observed == maximum.saturating_sub(1) && width < maximum {
++        // A three-request burst is common on TCP even when the peer has a
++        // larger request window. Leave one bounded slot for a fourth request
++        // so the storage batch can reach its existing four-block limit.
++        width = maximum;
++        probe_expanded = true;
++    }
++    (width, probe_expanded)
++}
+ // BEP 11 payloads arrive from untrusted peers inside a legal peer-wire
+ // message. Keep a flat bencode node bomb from reaching the parser's much
+ // larger generic default before the compact-peer count checks run.
+@@ -9022,6 +9041,7 @@ where
+     let mut upload_dispatch_pending = false;
+     let mut upload_intake_messages = 0usize;
+     let mut upload_pipeline_width = 1usize;
++    let mut upload_pipeline_probe_expanded = false;
+     let mut upload_coalescing_expired = false;
+     let upload_coalescing_flush = sleep(UPLOAD_READ_COALESCE_MAX_DELAY);
+     tokio::pin!(upload_coalescing_flush);
+@@ -9204,6 +9224,7 @@ where
+                         upload_dispatch_pending = false;
+                         upload_intake_messages = 0;
+                         upload_pipeline_width = 1;
++                        upload_pipeline_probe_expanded = false;
+                         start_upload_reads(
+                             &mut upload_reads,
+                             &upload_obligations,
+@@ -9227,6 +9248,7 @@ where
+                         upload_dispatch_pending = false;
+                         upload_intake_messages = 0;
+                         upload_pipeline_width = 1;
++                        upload_pipeline_probe_expanded = false;
+                         start_upload_reads(
+                             &mut upload_reads,
+                             &upload_obligations,
+@@ -9620,11 +9642,15 @@ where
+                         }
+                         match decision {
+                             InboundDecision::Queue => {
+-                                upload_pipeline_width = upload_pipeline_width.max(
+-                                    upload_reads.pending_request_count()
+-                                        .saturating_add(upload_obligations.queued_len())
+-                                        .min(MAX_READY_UPLOAD_INTAKE_MESSAGES),
+-                                );
++                                let observed_pipeline_width = upload_reads
++                                    .pending_request_count()
++                                    .saturating_add(upload_obligations.queued_len());
++                                (upload_pipeline_width, upload_pipeline_probe_expanded) =
++                                    observe_upload_pipeline_width(
++                                        upload_pipeline_width,
++                                        observed_pipeline_width,
++                                        upload_pipeline_probe_expanded,
++                                    );
+                                 if !upload_dispatch_pending {
+                                     upload_dispatch_pending = true;
+                                     upload_intake_messages = 1;
+@@ -9987,12 +10013,14 @@ where
+             }
+             _ = std::future::ready(()), if dispatch_upload_reads_now => {
+                 if upload_coalescing_expired
+-                    && upload_obligations.queued_len() <= 1
+                     && upload_reads.pending_request_count() == 0
++                    && upload_obligations.queued_len() < upload_pipeline_width
+                 {
+-                    // A peer may shrink its window after the initial burst.
+-                    // One solitary deadline flush restores immediate service.
+-                    upload_pipeline_width = 1;
++                    // A peer may expose a wider window than it can sustain.
++                    // After one bounded probe, settle on the request depth we
++                    // actually observed instead of paying the deadline again.
++                    upload_pipeline_width = upload_obligations.queued_len().max(1);
++                    upload_pipeline_probe_expanded = upload_obligations.queued_len() >= 3;
+                 }
+                 upload_dispatch_pending = false;
+                 upload_intake_messages = 0;
+@@ -17890,6 +17918,15 @@ mod tests {
+         (upload, storage)
+     }
+ 
++    #[test]
++    fn upload_pipeline_only_probes_a_fourth_request_after_three_are_observed() {
++        assert_eq!(observe_upload_pipeline_width(1, 1, false), (1, false));
++        assert_eq!(observe_upload_pipeline_width(1, 2, false), (2, false));
++        assert_eq!(observe_upload_pipeline_width(2, 3, false), (4, true));
++        assert_eq!(observe_upload_pipeline_width(3, 3, true), (3, true));
++        assert_eq!(observe_upload_pipeline_width(3, 4, true), (4, true));
++    }
++
+     #[tokio::test]
+     async fn peer_loop_flushes_small_upload_batches_after_the_short_deadline() {
+         let temp = tempfile::tempdir().unwrap();

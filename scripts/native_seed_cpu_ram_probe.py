@@ -183,6 +183,30 @@ def gdb_profile_control(pid, action, profile_path, log_path):
         raise RuntimeError(f"gperftools did not confirm profile start: {result.stdout}{result.stderr}")
 
 
+def write_pgo_profile_window_script(script_path, pid_path):
+    """Run an instrumented daemon under GDB and reset counters at first upload batch."""
+    script = f'''set confirm off
+set pagination off
+set debuginfod enabled off
+handle SIGTERM nostop noprint pass
+rbreak rt_engine::torrent_task::start_upload_reads
+commands 1
+silent
+printf "TORRENTNG_PGO_PROFILE_RESET\\n"
+call (void)__llvm_profile_reset_counters()
+disable 1
+continue
+end
+starti
+python
+import gdb
+open({json.dumps(str(pid_path))}, "w").write(str(gdb.selected_inferior().pid))
+end
+continue
+'''
+    script_path.write_text(script)
+
+
 def leecher(port, ih, size, target, expected, timeout, sample_process,
             diagnostic_callback=None, register_peer=None, peer_state_callback=None,
             cpu_profile_callback=None):
@@ -675,6 +699,15 @@ def validate_client_count(client_count, repeats, allow_single):
         raise ValueError("need at least two clients, or one client with --allow-single-client and --repeats 1")
 
 
+def validate_pgo_profile_window(clients, repeats, cpu_profile, env_overrides):
+    if len(clients) != 1 or clients[0][1] != "torrentngd" or repeats != 1:
+        raise ValueError("--pgo-profile-window requires one TorrentNG client and --repeats 1")
+    if cpu_profile:
+        raise ValueError("--pgo-profile-window cannot be combined with --cpu-profile")
+    if "LLVM_PROFILE_FILE" in env_overrides.get(clients[0][0], {}):
+        raise ValueError("--pgo-profile-window controls LLVM_PROFILE_FILE automatically")
+
+
 def cleanup_run_payloads(run_dir, client_name):
     """Remove generated payload copies, refusing paths that escape this run directory."""
     root = Path(run_dir).resolve(strict=True)
@@ -693,13 +726,19 @@ def cleanup_run_payloads(run_dir, client_name):
 
 
 def start_client(client, run_dir, fixture_dir, torrent, ih, ready_timeout, env_overrides=None,
-                 profile_preload=None, profile_path=None):
+                 profile_preload=None, profile_path=None, pgo_profile_path=None):
     name, kind, binary = client
     work = run_dir / name; work.mkdir()
     download = work / "download"; download.mkdir()
     shutil.copyfile(fixture_dir / "payload.bin", download / "payload.bin")
     peer_port, api_port = free_port(), free_port()
     env, inherited_controls = sanitize_client_environment(os.environ, env_overrides)
+    if pgo_profile_path is not None:
+        if kind != "torrentngd":
+            raise ValueError("transfer-window LLVM profiling requires a TorrentNG client")
+        if "LLVM_PROFILE_FILE" in (env_overrides or {}):
+            raise ValueError("--pgo-profile-window controls LLVM_PROFILE_FILE automatically")
+        env["LLVM_PROFILE_FILE"] = str(pgo_profile_path)
     if profile_preload is not None and kind == "torrentngd":
         if "LD_PRELOAD" in (env_overrides or {}):
             raise ValueError("--cpu-profile cannot be combined with an explicit LD_PRELOAD override")
@@ -707,10 +746,19 @@ def start_client(client, run_dir, fixture_dir, torrent, ih, ready_timeout, env_o
         env["CPUPROFILE_FREQUENCY"] = str(PROFILE_FREQUENCY_HZ)
     config = work / ("config.toml" if kind == "torrentngd" else "rtorrent.rc")
     scgi_endpoint = None
+    pgo_profile_pid_path = None
     if kind == "torrentngd":
         token_file = work / "api-token"; token_file.write_text(TOKEN + "\n"); token_file.chmod(0o600)
         config.write_text(f'''[daemon]\napi_bind = "127.0.0.1:{api_port}"\nsession_dir = "{work}/session"\nlog_level = "warn"\n\n[network]\nlisten_port = {peer_port}\nmax_peers = 8\nmax_incoming_handshakes = 32\n\n[storage]\ndownload_dir = "{download}"\n\n[dht]\nenabled = false\n\n[auth]\napi_tokens_file = "{token_file}"\n''')
-        env["TORRENTNGD_CONFIG"] = str(config); command = [binary]
+        env["TORRENTNGD_CONFIG"] = str(config)
+        if pgo_profile_path is None:
+            command = [binary]
+        else:
+            pgo_profile_pid_path = work / "torrentngd.pid"
+            pgo_profile_script = work / "profile-window.gdb"
+            write_pgo_profile_window_script(pgo_profile_script, pgo_profile_pid_path)
+            command = [shutil.which("gdb"), "--quiet", "--batch", "--nx",
+                       "--command", str(pgo_profile_script), "--args", binary]
     else:
         scgi_port = free_port()
         scgi_endpoint = ("127.0.0.1", scgi_port)
@@ -725,7 +773,17 @@ def start_client(client, run_dir, fixture_dir, torrent, ih, ready_timeout, env_o
         post_seed_diagnostics = None
         if kind == "torrentngd":
             wait_for(lambda: socket.create_connection(("127.0.0.1", api_port), .2), proc, 60, "TorrentNG API")
-            proc_pid = host_proc_pid(proc.pid, binary)
+            if pgo_profile_pid_path is None:
+                proc_pid = host_proc_pid(proc.pid, binary)
+            else:
+                pid_text = wait_for(
+                    lambda: pgo_profile_pid_path.read_text().strip()
+                    if pgo_profile_pid_path.is_file() else None,
+                    proc,
+                    30,
+                    "GDB-launched TorrentNG PID",
+                )
+                proc_pid = int(pid_text)
             pre_add_diagnostics = collect_diagnostics(api_port, proc_pid, diagnostics_dir, "before-torrent-add")
             add_torrent(api_port, torrent, str(download))
             wait_seed_ready(kind, proc, api_port, None, ih, ready_timeout)
@@ -743,6 +801,7 @@ def start_client(client, run_dir, fixture_dir, torrent, ih, ready_timeout, env_o
             "proc_pid": proc_pid,
             "binary_sha256": hashlib.sha256(Path(binary).read_bytes()).hexdigest(),
             "cpu_profile_path": str(profile_path) if profile_path is not None else None,
+            "pgo_profile_pid_path": str(pgo_profile_pid_path) if pgo_profile_pid_path is not None else None,
             "environment_overrides": dict(env_overrides or {}),
             "inherited_measurement_controls": inherited_controls,
             "diagnostics_dir": str(diagnostics_dir), "pre_add_diagnostics": pre_add_diagnostics,
@@ -772,6 +831,8 @@ def parse_args():
         help="capture an extra TorrentNG /metrics and smaps snapshot 8 seconds into transfer; marks diagnostic runs")
     p.add_argument("--cpu-profile", action="store_true",
         help="opt-in gperftools stack profile for one TorrentNG run, bounded to first payload through completion")
+    p.add_argument("--pgo-profile-window", action="store_true",
+        help="reset LLVM PGO counters at the first upload batch for one instrumented TorrentNG run")
     p.add_argument("--peer-debug", action="store_true",
         help="on rTorrent runs, capture read-only SCGI/choke/peer state after handshake and at timeout")
     return p.parse_args()
@@ -823,14 +884,24 @@ def main():
             raise SystemExit(str(error)) from error
     else:
         profile_preload = None
+    if args.pgo_profile_window:
+        try:
+            validate_pgo_profile_window(args.client, args.repeats, args.cpu_profile, env_overrides)
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
+        if shutil.which("gdb") is None:
+            raise SystemExit("--pgo-profile-window requires gdb")
     report = {"format": "native-seed-cpu-ram-v1", "status": "running",
         "cpu_measurement": "process CPU clock nanoseconds where available; /proc user+system ticks fallback",
-        "diagnostic_run": bool(args.diagnostics or args.peer_debug or args.cpu_profile), "peer_debug": bool(args.peer_debug),
+        "diagnostic_run": bool(args.diagnostics or args.peer_debug or args.cpu_profile or args.pgo_profile_window), "peer_debug": bool(args.peer_debug),
         "cpu_profile": ({"method": "gperftools, started/stopped by GDB at payload boundaries",
                          "sampling_window": "first valid Piece block through final block completion",
                          "frequency_hz": PROFILE_FREQUENCY_HZ,
                          "client": args.client[0][0]} if args.cpu_profile else None),
-        "fixture_bytes": args.size,
+        "pgo_profile_window": ({"method": "LLVM_PROFILE_FILE with GDB counter reset",
+                                 "sampling_window": "first scheduled upload batch through daemon shutdown",
+                                 "client": args.client[0][0]} if args.pgo_profile_window else None),
+        "fixture_bytes": args.size, "fixture_seed": args.seed,
         "fixture_sha256": digest, "info_hash": ih.hex(), "offered_rate_bytes_per_second": RATE,
         "block_bytes": BLOCK, "request_window": WINDOW, "dht": False, "pex": False,
         "tracker": False, "bind_address": "127.0.0.1", "paired": len(args.client) >= 2,
@@ -848,8 +919,10 @@ def main():
             client = args.client[index]; run_dir = output / f"run-{round_index + 1:02d}-{client[0]}"; run_dir.mkdir()
             active, stop = [], threading.Event()
             profile_path = run_dir / "payload-window.prof" if args.cpu_profile else None
+            pgo_profile_path = run_dir / "transfer-window.profraw" if args.pgo_profile_window else None
             item = start_client(client, run_dir, fixture_dir, torrent, ih, args.ready_timeout,
-                                env_overrides.get(client[0], {}), profile_preload, profile_path)
+                                env_overrides.get(client[0], {}), profile_preload, profile_path,
+                                pgo_profile_path)
             successful_run, run_record = False, None
             def sample_loop():
                 while not stop.is_set(): active.append(process_sample(item["proc_pid"])); stop.wait(1)
@@ -919,7 +992,8 @@ def main():
                     "active_peak_pss_bytes": peak(resource_samples, "pss_bytes"),
                     "active_peak_anonymous_bytes": peak(resource_samples, "anonymous_bytes"),
                     "idle_before": idle_before, "active_samples": resource_samples,
-                    "idle_after": idle_after, "diagnostic_run": bool(args.diagnostics or args.peer_debug),
+                    "idle_after": idle_after,
+                    "diagnostic_run": bool(args.diagnostics or args.peer_debug or args.cpu_profile or args.pgo_profile_window),
                     "torrentng_diagnostics": ({
                         "before_torrent_add": item["pre_add_diagnostics"],
                         "after_seed_recheck": item["post_seed_diagnostics"],
@@ -938,11 +1012,30 @@ def main():
                 successful_run = bool(transfer["verified"])
             finally:
                 stop.set()
-                try: os.killpg(item["process"].pid, signal.SIGTERM)
-                except ProcessLookupError: pass
+                try:
+                    if pgo_profile_path is not None:
+                        # GDB owns the child process; signal the daemon alone so
+                        # the debugger can reap it and the profile runtime can flush.
+                        os.kill(item["proc_pid"], signal.SIGTERM)
+                    else:
+                        os.killpg(item["process"].pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
                 try: item["process"].wait(timeout=15)
                 except subprocess.TimeoutExpired: os.killpg(item["process"].pid, signal.SIGKILL); item["process"].wait()
                 item["log"].close()
+                if pgo_profile_path is not None and run_record is not None:
+                    log_text = (run_dir / client[0] / "client.log").read_text(errors="replace")
+                    if successful_run and "TORRENTNG_PGO_PROFILE_RESET" not in log_text:
+                        raise RuntimeError("GDB did not reach the first upload batch to reset LLVM profile counters")
+                    if pgo_profile_path.is_file() and pgo_profile_path.stat().st_size > 0:
+                        run_record["pgo_profile"] = {
+                            "path": pgo_profile_path.relative_to(output).as_posix(),
+                            "bytes": pgo_profile_path.stat().st_size,
+                        }
+                    elif successful_run:
+                        raise RuntimeError("instrumented TorrentNG did not write its LLVM PGO profile")
+                    write_summary(output, report)
                 if successful_run and not args.keep_payloads:
                     run_record["payload_cleanup"] = {
                         "policy": "after-verified-transfer-and-client-shutdown", "status": "deleted",
