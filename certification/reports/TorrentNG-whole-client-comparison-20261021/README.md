@@ -1,5 +1,18 @@
 # Whole-client torrent client comparison — 2026-10-21
 
+> **Version caveat:** the rTorrent measurements below used rTorrent **0.9.8** from the pinned `jesec/rtorrent` image. They are historical results, not a comparison against current upstream rTorrent. As of 2026-10-22, the latest tagged stable rTorrent release and its matching libtorrent source tag are both **v0.16.25**. Future runs of the benchmark harness now default to those exact source revisions; use `TNG_CLIENT_BENCH_RTORRENT_PROFILE=legacy` only to reproduce the old image.
+
+The first current-upstream controlled-seed screen is recorded in
+[`TorrentNG-current-rtorrent-screen-20261022.md`](../TorrentNG-current-rtorrent-screen-20261022.md).
+It used a local generated private torrent and internal one-seeder/one-leecher
+swarm, not public swarm traffic. Both clients had a peer by the 3.020-second
+sample, while rTorrent did not show payload until 66.424 seconds. Its sample-
+derived active window used about 0.50 CPU-s/GiB versus TorrentNG's 1.28, but
+TorrentNG started transferring much earlier. This is a single screening pair;
+the post-peer wait is unexplained and no general ranking is established. The
+new harness reports first-peer, first-payload, active-window, and full-transfer
+metrics separately so future results preserve both sides of that tradeoff.
+
 ## Seed workload results
 
 Three complete controlled-seed rounds transferred the same 792,723,456-byte Debian 13.7 netinst ISO through a private one-seeder/one-leecher torrent. The fixture SHA-256 was `a7ef94ac2fb9a7fec454552abd629b7cc9d5155c886165a45649f5ce6167e355`; each receiver's final payload matched it. Each client ran alone. A fixed qBittorrent 5.2.3 leecher received at 4 MiB/s, and client order rotated between rounds.

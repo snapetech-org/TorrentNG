@@ -33,6 +33,15 @@ from transfer_rebuild.observe import process_tree, sample_process_tree
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_FILE = ROOT / "deploy/interop/compose.yml"
+CURRENT_RTORRENT_COMPOSE_FILE = ROOT / "deploy/interop/compose.benchmark-rtorrent-current.yml"
+CURRENT_RTORRENT_IMAGE = "torrentng/rtorrent-benchmark:v0.16.25-15ccae27-lib6ad3fecf"
+CURRENT_RTORRENT_VERSION = "v0.16.25"
+CURRENT_RTORRENT_COMMIT = "15ccae27deb9aa1dc8e46ea0ed218a673ccc5732"
+CURRENT_LIBTORRENT_VERSION = "v0.16.25"
+CURRENT_LIBTORRENT_COMMIT = "6ad3fecf3e7e7aa86855445587b532a91256f344"
+LEGACY_RTORRENT_IMAGE = (
+    "jesec/rtorrent@sha256:994728c59953e5f19c643827024dd06e9ffaf62b8d903a3f1468794415e72e03"
+)
 ALL_CLIENTS = ("torrentngd", "qbittorrent", "transmission", "deluge", "rtorrent")
 CLIENTS = tuple(
     item.strip() for item in os.environ.get("TNG_CLIENT_BENCH_CLIENTS", ",".join(ALL_CLIENTS)).split(",")
@@ -177,6 +186,54 @@ def optional_nonnegative_int(name):
 
 def env_enabled(name):
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def select_rtorrent_profile(value=None):
+    profile = (
+        os.environ.get("TNG_CLIENT_BENCH_RTORRENT_PROFILE", "upstream")
+        if value is None else value
+    ).strip().lower()
+    if profile not in {"upstream", "legacy"}:
+        raise RuntimeError(
+            "TNG_CLIENT_BENCH_RTORRENT_PROFILE must be upstream or legacy"
+        )
+    return profile
+
+
+def rtorrent_config_for_profile(text, profile):
+    profile = select_rtorrent_profile(profile)
+    if profile == "legacy":
+        return text
+    replacements = {
+        "network.port_range.set": "network.listen.port.range.set",
+        "network.port_random.set": "network.listen.port.random.set",
+        "dht.port.set": "dht.override_port.set",
+        # The compatibility alias is registered only when deprecated commands
+        # are enabled. Use the current command in the upstream profile.
+        "schedule2": "schedule",
+    }
+    for old, new in replacements.items():
+        text, count = re.subn(
+            rf"(?m)^{re.escape(old)}(?=\s*=)",
+            new,
+            text,
+            count=0 if old == "schedule2" else 1,
+        )
+        if count < 1:
+            raise RuntimeError(
+                f"rTorrent benchmark config is missing expected setting {old!r}"
+            )
+    # These old options are either absent or registered as logging no-ops in
+    # current upstream rTorrent. Leave the historical profile untouched.
+    for obsolete in ("trackers.use_udp.set", "encoding.add"):
+        text, count = re.subn(
+            rf"(?m)^{re.escape(obsolete)}\s*=.*(?:\n|$)", "", text, count=1,
+        )
+        if count != 1:
+            raise RuntimeError(
+                f"rTorrent benchmark config is missing expected setting {obsolete!r}"
+            )
+    return text
 
 
 def render_benchmark_compose_override(compose_environment, *, internal_network=False):
@@ -691,6 +748,7 @@ class Benchmark:
                 "TNG_CLIENT_BENCH_MODE must be transfer, idle, controlled-download, "
                 "or controlled-seed"
             )
+        self.rtorrent_profile = select_rtorrent_profile()
         self.diagnostics = env_enabled("TNG_CLIENT_BENCH_DIAGNOSTICS")
         self.skip_build = env_enabled("TNG_CLIENT_BENCH_SKIP_BUILD")
         self.keep_built_image = env_enabled("TNG_CLIENT_BENCH_KEEP_IMAGE")
@@ -1045,6 +1103,11 @@ class Benchmark:
                     if service in API_CONTAINER_PORTS:
                         self.api_addresses.pop(service, None)
         command = ["docker", "compose", "-p", self.project, "-f", str(COMPOSE_FILE)]
+        if (
+            "rtorrent" in CLIENTS
+            and getattr(self, "rtorrent_profile", "legacy") == "upstream"
+        ):
+            command.extend(["-f", str(CURRENT_RTORRENT_COMPOSE_FILE)])
         if self.compose_override_path is not None:
             command.extend(["-f", str(self.compose_override_path)])
         command.extend(args)
@@ -1279,6 +1342,9 @@ class Benchmark:
 
     def _prepare_rtorrent_config(self, *, dht_enabled=None):
         base = (ROOT / "deploy/interop/rtorrent.rc").read_text().rstrip()
+        base = rtorrent_config_for_profile(
+            base, getattr(self, "rtorrent_profile", "upstream"),
+        )
         if dht_enabled is not None:
             base, count = re.subn(
                 r"(?m)^dht\.mode\.set\s*=\s*\S+\s*$",
@@ -1299,6 +1365,21 @@ class Benchmark:
         rtorrent_config = self.config_dir / "rtorrent"
         rtorrent_config.mkdir(parents=True, exist_ok=True)
         (rtorrent_config / "session").mkdir(exist_ok=True)
+
+    def _build_rtorrent_image(self):
+        if "rtorrent" in CLIENTS and self.rtorrent_profile == "upstream":
+            self.compose("build", "rtorrent", timeout=1800)
+
+    def _rtorrent_profile_description(self):
+        if "rtorrent" not in CLIENTS:
+            return "not selected"
+        if getattr(self, "rtorrent_profile", "upstream") == "legacy":
+            return f"legacy rTorrent 0.9.8 image {LEGACY_RTORRENT_IMAGE}"
+        return (
+            f"upstream rTorrent {CURRENT_RTORRENT_VERSION} ({CURRENT_RTORRENT_COMMIT}) "
+            f"with libtorrent {CURRENT_LIBTORRENT_VERSION} ({CURRENT_LIBTORRENT_COMMIT}); "
+            f"image {CURRENT_RTORRENT_IMAGE}"
+        )
 
     def _qbit_json(self, client, path, *, data=None, headers=None):
         request_headers = {"Host": "localhost:8080"}
@@ -2758,6 +2839,88 @@ class Benchmark:
             "sampled_seconds": sampled_seconds,
         }
 
+    @staticmethod
+    def _active_payload_window(rows, phase, payload_size_bytes):
+        """Separate startup-to-first-payload delay from the active transfer window."""
+        records = [row for row in rows if row[2] == phase]
+        empty = {
+            "first_peer_observed_seconds": None,
+            "first_payload_observed_seconds": None,
+            "active_payload_bytes": None,
+            "active_transfer_seconds": None,
+            "active_mib_s": None,
+            "active_cpu_seconds_per_gib": None,
+        }
+        first_peer_observed = None
+        for row in records:
+            try:
+                if len(row) > 7 and int(row[7]) > 0:
+                    first_peer_observed = float(row[3])
+                    break
+            except (TypeError, ValueError):
+                continue
+        first_payload_index = None
+        for i, row in enumerate(records):
+            try:
+                if len(row) > 4 and float(row[4]) > 0:
+                    first_payload_index = i
+                    break
+            except (TypeError, ValueError):
+                continue
+        if first_payload_index is None:
+            return {**empty, "first_peer_observed_seconds": first_peer_observed}
+
+        if first_payload_index == 0:
+            # Without a pre-payload sample, the active window's starting
+            # progress and CPU counters are unknown.
+            try:
+                first_payload_observed = float(records[0][3])
+            except (IndexError, TypeError, ValueError):
+                return empty
+            return {
+                **empty,
+                "first_peer_observed_seconds": first_peer_observed,
+                "first_payload_observed_seconds": first_payload_observed,
+            }
+
+        try:
+            first_payload_observed = float(records[first_payload_index][3])
+            start = records[first_payload_index - 1]
+            end = records[-1]
+            start_elapsed = float(start[3])
+            start_progress = float(start[4])
+            end_elapsed = float(end[3])
+            end_progress = float(end[4])
+            active_bytes = max(
+                0, int(payload_size_bytes * (end_progress - start_progress)),
+            )
+            active_seconds = max(0.0, end_elapsed - start_elapsed)
+        except (IndexError, TypeError, ValueError):
+            return empty
+
+        active_cpu_seconds_per_gib = None
+        try:
+            start_cpu = int(start[28])
+            end_cpu = int(end[28])
+            if end_cpu >= start_cpu:
+                active_cpu_seconds_per_gib = per_gib(
+                    (end_cpu - start_cpu) / 1_000_000, active_bytes,
+                )
+        except (IndexError, TypeError, ValueError):
+            pass
+
+        return {
+            "first_peer_observed_seconds": first_peer_observed,
+            "first_payload_observed_seconds": first_payload_observed,
+            "active_payload_bytes": active_bytes,
+            "active_transfer_seconds": active_seconds or None,
+            "active_mib_s": (
+                active_bytes / active_seconds / 1048576
+                if active_seconds > 0 else None
+            ),
+            "active_cpu_seconds_per_gib": active_cpu_seconds_per_gib,
+        }
+
     def _release_client_payloads(self, client, iso_name):
         download_root = self.workdir / "downloads" / client
         payloads = [download_root / iso_name] if client == "rtorrent" else [
@@ -2894,6 +3057,12 @@ class Benchmark:
         down = self._summary(public_rows, "public_download")
         seed = self._summary(seed_rows, "controlled_seed")
         seed_bytes = int(meta["size"] * float(seed_rows[-1][4])) if seed_rows else 0
+        download_active = self._active_payload_window(
+            public_rows, "public_download", meta["size"],
+        )
+        seed_active = self._active_payload_window(
+            seed_rows, "controlled_seed", meta["size"],
+        )
         seed_peer_read_cache_peak_bytes = self._peak_engine_metric(
             client,
             "torrentng_storage_peer_read_cache_bytes",
@@ -2926,6 +3095,20 @@ class Benchmark:
             "download_io_write_mib_per_gib": per_gib(
                 down["cgroup_io_write_bytes"], download_bytes, 1024 ** 2,
             ),
+            "download_first_payload_observed_seconds": download_active[
+                "first_payload_observed_seconds"
+            ],
+            "download_first_peer_observed_seconds": download_active[
+                "first_peer_observed_seconds"
+            ],
+            "download_active_transfer_seconds": download_active[
+                "active_transfer_seconds"
+            ],
+            "download_active_payload_bytes": download_active["active_payload_bytes"],
+            "download_active_mib_s": download_active["active_mib_s"],
+            "download_active_cpu_seconds_per_gib": download_active[
+                "active_cpu_seconds_per_gib"
+            ],
             "idle_mean_memory": idle["mean_memory"],
             "idle_mean_cgroup_anon": idle["mean_cgroup_anon"],
             "download_peak_peers": down["peak_peers"],
@@ -2934,6 +3117,18 @@ class Benchmark:
             "seed_setup_seconds": seed_setup,
             "seed_bytes": seed_bytes,
             "seed_mib_s": seed_bytes / seed_elapsed / 1048576 if seed_elapsed else 0,
+            "seed_first_payload_observed_seconds": seed_active[
+                "first_payload_observed_seconds"
+            ],
+            "seed_first_peer_observed_seconds": seed_active[
+                "first_peer_observed_seconds"
+            ],
+            "seed_active_transfer_seconds": seed_active["active_transfer_seconds"],
+            "seed_active_payload_bytes": seed_active["active_payload_bytes"],
+            "seed_active_mib_s": seed_active["active_mib_s"],
+            "seed_active_cpu_seconds_per_gib": seed_active[
+                "active_cpu_seconds_per_gib"
+            ],
             "seed_peak_mib_s": seed["peak_rate"] / 1048576,
             "seed_mean_cpu": seed["mean_cpu"], "seed_peak_cpu": seed["peak_cpu"],
             "seed_peak_memory": seed["peak_memory"],
@@ -3216,6 +3411,7 @@ class Benchmark:
             f"- TorrentNG source tree: {self.source_tree}",
             f"- TorrentNG worktree dirty: {'yes' if self.source_dirty else 'no'}",
             f"- TorrentNG source fingerprint SHA-256: {self.source_fingerprint_sha256}",
+            f"- rTorrent comparator profile: {self._rtorrent_profile_description()}",
             f"- Host: {self.host}; {self.cpu_count} logical CPUs; "
             f"{self.mem_total / 1073741824:.1f} GiB RAM; "
             f"{self.mem_available / 1073741824:.1f} GiB available at start; "
@@ -3347,10 +3543,10 @@ class Benchmark:
         ) or ("diagnostics disabled" if not self.diagnostics else "no TorrentNG process snapshots")
         image_description = (
             "- The TorrentNG image was built from the recorded checkout. Reference "
-            "images are pinned by digest in deploy/interop/compose.yml."
+            "images are pinned by digest or upstream source revision in the benchmark Compose files."
             if not self.skip_build else
             f"- The TorrentNG image {self.prebuilt_image} carries matching source, fingerprint, "
-            "and allocator labels. Reference images are pinned by digest in deploy/interop/compose.yml."
+            "and allocator labels. Reference images are pinned by digest or upstream source revision."
         )
         source_description = (
             "- Fixture source: caller-supplied local file pinned by SHA-256; "
@@ -3401,6 +3597,7 @@ class Benchmark:
             f"- TorrentNG mimalloc THP override: {self.mimalloc_allow_thp if self.allocator == 'mimalloc' and self.mimalloc_allow_thp is not None else ('allocator default' if self.allocator == 'mimalloc' else 'not applicable')}",
             f"- TorrentNG build mode: {'prebuilt ' + self.prebuilt_image + ' (source, fingerprint, and allocator verified)' if self.skip_build else 'built from this checkout; image labels verified'}",
             f"- TorrentNG benchmark image tag: {self.prebuilt_image if self.skip_build else self.image}",
+            f"- rTorrent comparator profile: {self._rtorrent_profile_description()}",
             f"- Benchmark mode: {self.mode}",
             f"- Requested TorrentNG runtime/storage worker overrides: {runtime_overrides}",
             f"- Requested TorrentNG memory-cap overrides: {memory_cap_overrides}",
@@ -3445,8 +3642,8 @@ class Benchmark:
             "",
             "## Public download",
             "",
-            "| Client | Version | Result | Progress (%) | Time (s) | Average (MiB/s) | Peak sampled (MiB/s) | Mean CPU (%) | Peak CPU (%) | Peak peers | SHA-256 / failure |",
-            "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+            "| Client | Version | Result | Progress (%) | Time (s) | Average (MiB/s) | First peer observed (s) | First payload observed (s) | Active goodput (MiB/s) | Peak sampled (MiB/s) | Mean CPU (%) | Peak CPU (%) | Peak peers | SHA-256 / failure |",
+            "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
         ]
         by_client = {row["client"]: row for row in self.results}
         for client in CLIENTS:
@@ -3455,7 +3652,11 @@ class Benchmark:
                 f"| {LABELS[client]} | {row.get('version', 'n/a')} | "
                 f"{row.get('public', 'NOT RUN')} | {row.get('download_progress', 0):.2%} | "
                 f"{row.get('download_seconds', 0):.1f} | "
-                f"{row.get('download_mib_s', 0):.2f} | {row.get('download_peak_mib_s', 0):.2f} | "
+                f"{row.get('download_mib_s', 0):.2f} | "
+                f"{metric(row.get('download_first_peer_observed_seconds'), 1)} | "
+                f"{metric(row.get('download_first_payload_observed_seconds'), 1)} | "
+                f"{metric(row.get('download_active_mib_s'))} | "
+                f"{row.get('download_peak_mib_s', 0):.2f} | "
                 f"{row.get('download_mean_cpu', 0):.2f} | {row.get('download_peak_cpu', 0):.2f} | "
                 f"{row.get('download_peak_peers', 0)} | "
                 f"{row.get('download_sha') or row.get('download_error') or row.get('error', 'n/a')} |"
@@ -3474,8 +3675,8 @@ class Benchmark:
                if self.mode == "controlled-seed" else
                " Seeding can run even if that client's public-swarm download stalls."),
             "",
-            "| Client | Result | Leecher setup (s) | Transfer (s) | Average upload (MiB/s) | Peak sampled (MiB/s) | Mean CPU (%) | Peak CPU (%) | Peak peers | Leecher SHA-256 / failure |",
-            "|---|---:|---:|---:|---:|---:|---:|---:|---|",
+            "| Client | Result | Leecher setup (s) | Transfer (s) | Average upload (MiB/s) | First peer observed (s) | First payload observed (s) | Active goodput (MiB/s) | Peak sampled (MiB/s) | Mean CPU (%) | Peak CPU (%) | Peak peers | Leecher SHA-256 / failure |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
         ])
         for client in CLIENTS:
             row = by_client.get(client, {})
@@ -3483,6 +3684,9 @@ class Benchmark:
                 f"| {LABELS[client]} | {row.get('seed', 'NOT RUN')} | "
                 f"{row.get('seed_setup_seconds', 0):.1f} | {row.get('seed_seconds', 0):.1f} | "
                 f"{row.get('seed_mib_s', 0):.2f} | "
+                f"{metric(row.get('seed_first_peer_observed_seconds'), 1)} | "
+                f"{metric(row.get('seed_first_payload_observed_seconds'), 1)} | "
+                f"{metric(row.get('seed_active_mib_s'))} | "
                 f"{row.get('seed_peak_mib_s', 0):.2f} | {row.get('seed_mean_cpu', 0):.2f} | "
                 f"{row.get('seed_peak_cpu', 0):.2f} | "
                 f"{row.get('seed_peak_peers', 0)} | "
@@ -3518,19 +3722,21 @@ class Benchmark:
             "",
             "## CPU and block I/O",
             "",
-            "Cgroup v2 CPU time and block I/O counters are reported per GiB of observed payload transfer. Public rows use completed-byte progress unless the payload passed its SHA-256 check; seed rows use the leecher's completed-byte progress and count as successful only after its final SHA-256 passes. Block bytes are summed across devices from `io.stat`, so this measures host block traffic charged to the client cgroup, not logical filesystem reads/writes. A page-cache hit does not count as block I/O. `n/a` means fewer than two samples or unavailable cgroup counters.",
+            "Cgroup v2 CPU time and block I/O counters are reported per GiB of observed payload transfer. Public rows use completed-byte progress unless the payload passed its SHA-256 check; seed rows use the leecher's completed-byte progress and count as successful only after its final SHA-256 passes. The active-window fields separate startup-to-first-payload delay from payload transfer: first payload is the first sampled positive progress, and active CPU/goodput use the sample immediately before it as the baseline. Their timing uncertainty is at most one sampling interval; whole-transfer time and CPU/GiB remain reported separately. Block bytes are summed across devices from `io.stat`, so this measures host block traffic charged to the client cgroup, not logical filesystem reads/writes. A page-cache hit does not count as block I/O. `n/a` means fewer than two samples or unavailable cgroup counters.",
             "",
-            "| Client | Public CPU (s/GiB) | Public block read (MiB/GiB) | Public block write (MiB/GiB) | Seed CPU (s/GiB) | Seed block read (MiB/GiB) | Seed block write (MiB/GiB) |",
-            "|---|---:|---:|---:|---:|---:|---:|",
+            "| Client | Public CPU (s/GiB) | Public active CPU (s/GiB) | Public block read (MiB/GiB) | Public block write (MiB/GiB) | Seed CPU (s/GiB) | Seed active CPU (s/GiB) | Seed block read (MiB/GiB) | Seed block write (MiB/GiB) |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
         ])
         for client in CLIENTS:
             row = by_client.get(client, {})
             lines.append(
                 f"| {LABELS[client]} | "
                 f"{metric(row.get('download_cpu_seconds_per_gib'))} | "
+                f"{metric(row.get('download_active_cpu_seconds_per_gib'))} | "
                 f"{metric(row.get('download_io_read_mib_per_gib'))} | "
                 f"{metric(row.get('download_io_write_mib_per_gib'))} | "
                 f"{metric(row.get('seed_cpu_seconds_per_gib'))} | "
+                f"{metric(row.get('seed_active_cpu_seconds_per_gib'))} | "
                 f"{metric(row.get('seed_io_read_mib_per_gib'))} | "
                 f"{metric(row.get('seed_io_write_mib_per_gib'))} |"
             )
@@ -4047,6 +4253,7 @@ class Benchmark:
             f"- Source tree: {self.source_tree}",
             f"- Source worktree dirty: {str(self.source_dirty).lower()}",
             f"- Source fingerprint SHA-256: {self.source_fingerprint_sha256}",
+            f"- rTorrent comparator profile: {self._rtorrent_profile_description()}",
             f"- Host: {self.host}; {self.cpu_count} logical CPUs; Linux {self.kernel} ({self.machine})",
             f"- Scratch filesystem: {self.scratch_device} ({self.scratch_type})",
             f"- Host load average at start: {self.load_start[0]:.2f}/{self.load_start[1]:.2f}/{self.load_start[2]:.2f}",
@@ -4210,6 +4417,7 @@ class Benchmark:
         print(f"Config scratch: {self.config_dir}", flush=True)
         print(f"Compose project: {self.project}", flush=True)
         self.prepare()
+        self._build_rtorrent_image()
         if "torrentngd" in CLIENTS:
             if self.skip_build:
                 self._use_prebuilt_image()
@@ -4359,7 +4567,8 @@ def main():
 
 By default, runs one current Debian amd64 netinst public download and one
 controlled private seed transfer for TorrentNG, qBittorrent, Transmission,
-Deluge, and rTorrent. Set TNG_CLIENT_BENCH_MODE=controlled-seed to skip all
+Deluge, and upstream rTorrent/libtorrent v0.16.25 built from pinned official
+source commits. Set TNG_CLIENT_BENCH_MODE=controlled-seed to skip all
 public metadata and swarm requests and run only private seeding from a
 SHA-256-pinned local fixture. Public-swarm testing remains a separate
 interoperability check. Set TNG_CLIENT_BENCH_MODE=controlled-download to run
@@ -4370,11 +4579,15 @@ prebuilt image is selected. Cargo, npm, and BuildKit layers reuse a
 TorrentNG-specific cache bounded to 16 GB. The builder is removed after its
 build and before measurement, while its cache volume is retained. Build CPUs default to available host
 capacity, capped at eight; set TNG_CLIENT_BENCH_BUILD_CPUS to override. Reference
-client images are pinned by digest in deploy/interop/compose.yml.
+client images are pinned by digest in deploy/interop/compose.yml; rTorrent defaults
+to the source-built upstream v0.16.25 profile. Use
+TNG_CLIENT_BENCH_RTORRENT_PROFILE=legacy only to reproduce historical runs
+against the old rTorrent 0.9.8 image.
 
 Environment:
 TNG_CLIENT_BENCH_MODE=transfer|controlled-download|controlled-seed|idle (default: transfer)
   TNG_CLIENT_BENCH_CLIENTS=torrentngd,qbittorrent,... (default: all five)
+  TNG_CLIENT_BENCH_RTORRENT_PROFILE=upstream|legacy (default: upstream)
   TNG_CLIENT_BENCH_ALLOCATOR=system|jemalloc|mimalloc (default: system)
   TNG_CLIENT_BENCH_BUILD_CPUS=8 (BuildKit CPU limit; default: up to 8, reduced by host load)
   TNG_CLIENT_BENCH_SKIP_BUILD=1 (use an image with matching commit, source fingerprint, and allocator labels)

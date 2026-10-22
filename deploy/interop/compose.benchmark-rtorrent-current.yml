@@ -1,0 +1,19 @@
+services:
+  rtorrent:
+    image: torrentng/rtorrent-benchmark:v0.16.25-15ccae27-lib6ad3fecf
+    build:
+      context: ../../certification/benchmarks/rtorrent-current
+      dockerfile: Dockerfile
+      args:
+        DEBIAN_SNAPSHOT: 20261021T000000Z
+        LIBTORRENT_VERSION: v0.16.25
+        LIBTORRENT_COMMIT: 6ad3fecf3e7e7aa86855445587b532a91256f344
+        RTORRENT_VERSION: v0.16.25
+        RTORRENT_COMMIT: 15ccae27deb9aa1dc8e46ea0ed218a673ccc5732
+    entrypoint: ["/usr/local/bin/rtorrent"]
+    command:
+      - "-n"
+      - "-o"
+      - "import=/etc/rtorrent/rtorrent.rc"
+      - "-o"
+      - "system.daemon.set=true"

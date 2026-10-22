@@ -221,6 +221,62 @@ class CgroupCounterTests(unittest.TestCase):
 
         self.assertIn("networks:\n  interop:\n    internal: true\n", rendered)
 
+    def test_rtorrent_profile_defaults_to_pinned_upstream_and_keeps_legacy_opt_in(self) -> None:
+        self.assertEqual(benchmark.select_rtorrent_profile("upstream"), "upstream")
+        self.assertEqual(benchmark.select_rtorrent_profile("legacy"), "legacy")
+        with self.assertRaisesRegex(RuntimeError, "must be upstream or legacy"):
+            benchmark.select_rtorrent_profile("latest")
+
+        compose = benchmark.CURRENT_RTORRENT_COMPOSE_FILE.read_text()
+        dockerfile = (benchmark.ROOT / "certification/benchmarks/rtorrent-current/Dockerfile").read_text()
+        self.assertIn(benchmark.CURRENT_RTORRENT_COMMIT, compose)
+        self.assertIn(benchmark.CURRENT_LIBTORRENT_COMMIT, compose)
+        self.assertIn(benchmark.CURRENT_RTORRENT_COMMIT, dockerfile)
+        self.assertIn(benchmark.CURRENT_LIBTORRENT_COMMIT, dockerfile)
+
+    def test_rtorrent_config_adapts_legacy_commands_only_for_upstream(self) -> None:
+        base = (benchmark.ROOT / "deploy/interop/rtorrent.rc").read_text()
+
+        upstream = benchmark.rtorrent_config_for_profile(base, "upstream")
+        self.assertIn("network.listen.port.range.set = 6885-6885", upstream)
+        self.assertIn("network.listen.port.random.set = no", upstream)
+        self.assertIn("dht.override_port.set = 6885", upstream)
+        self.assertIn("schedule = watch_start, 5, 5, ((load.start, \"/watch/*.torrent\"))", upstream)
+        self.assertIn("schedule = untied_directory, 5, 5, ((close_untied))", upstream)
+        self.assertNotIn("network.port_range.set =", upstream)
+        self.assertNotIn("network.port_random.set =", upstream)
+        self.assertNotIn("schedule2 =", upstream)
+        self.assertNotIn("dht.port.set =", upstream)
+        self.assertNotIn("trackers.use_udp.set =", upstream)
+        self.assertNotIn("encoding.add =", upstream)
+        self.assertEqual(benchmark.rtorrent_config_for_profile(base, "legacy"), base)
+
+    def test_compose_includes_source_pinned_rtorrent_profile_by_default(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance.project = "tngbenchtest"
+        instance.env = {}
+        instance.api_addresses = {}
+        instance.compose_override_path = None
+        instance.rtorrent_profile = "upstream"
+
+        with mock.patch.object(benchmark, "run_command", return_value=("", 0)) as command:
+            instance.compose("config", quiet=True)
+
+        self.assertEqual(
+            command.call_args.args[0],
+            ["docker", "compose", "-p", "tngbenchtest", "-f", str(benchmark.COMPOSE_FILE),
+             "-f", str(benchmark.CURRENT_RTORRENT_COMPOSE_FILE), "config"],
+        )
+
+    def test_builds_the_current_rtorrent_profile_before_measurement(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance.rtorrent_profile = "upstream"
+        instance.compose = mock.Mock()
+
+        instance._build_rtorrent_image()
+
+        instance.compose.assert_called_once_with("build", "rtorrent", timeout=1800)
+
     def test_idle_profile_schedule_is_seeded_and_balances_all_clients(self) -> None:
         first = object.__new__(benchmark.Benchmark)
         first.idle_order_seed = 12345
@@ -466,6 +522,60 @@ class CgroupCounterTests(unittest.TestCase):
         self.assertEqual(benchmark.per_gib(2.0, 1024 ** 3), 2.0)
         self.assertEqual(benchmark.per_gib(1024 ** 2, 1024 ** 3, 1024 ** 2), 1.0)
         self.assertIsNone(benchmark.per_gib(None, 1024 ** 3))
+
+    def test_active_payload_window_separates_first_data_delay(self) -> None:
+        rows = [[0] * 39 for _ in range(3)]
+        for row, elapsed, progress, cpu_usec in zip(
+            rows, (0.0, 2.0, 10.0), (0.0, 0.25, 1.0),
+            (1_000_000, 1_200_000, 2_200_000),
+        ):
+            row[2] = "controlled_seed"
+            row[3] = str(elapsed)
+            row[4] = str(progress)
+            row[28] = cpu_usec
+        rows[1][7] = rows[2][7] = 1
+
+        window = benchmark.Benchmark._active_payload_window(
+            rows, "controlled_seed", 1024 ** 3,
+        )
+
+        self.assertEqual(window["first_peer_observed_seconds"], 2.0)
+        self.assertEqual(window["first_payload_observed_seconds"], 2.0)
+        self.assertEqual(window["active_payload_bytes"], 1024 ** 3)
+        self.assertEqual(window["active_transfer_seconds"], 10.0)
+        self.assertAlmostEqual(window["active_mib_s"], 102.4)
+        self.assertAlmostEqual(window["active_cpu_seconds_per_gib"], 1.2)
+
+    def test_active_payload_window_is_unavailable_without_progress(self) -> None:
+        row = [0] * 39
+        row[2] = "public_download"
+        row[3] = "5.0"
+        row[4] = "0.0"
+        row[7] = 1
+
+        window = benchmark.Benchmark._active_payload_window(
+            [row], "public_download", 1024 ** 2,
+        )
+
+        self.assertEqual(window["first_peer_observed_seconds"], 5.0)
+        self.assertIsNone(window["first_payload_observed_seconds"])
+        self.assertIsNone(window["active_mib_s"])
+        self.assertIsNone(window["active_cpu_seconds_per_gib"])
+
+    def test_active_payload_window_is_unavailable_without_pre_payload_sample(self) -> None:
+        rows = [[0] * 39 for _ in range(2)]
+        rows[0][2] = rows[1][2] = "controlled_seed"
+        rows[0][3], rows[0][4], rows[0][28] = "2.0", "0.25", 1_200_000
+        rows[1][3], rows[1][4], rows[1][28] = "10.0", "1.0", 2_200_000
+
+        window = benchmark.Benchmark._active_payload_window(
+            rows, "controlled_seed", 1024 ** 3,
+        )
+
+        self.assertEqual(window["first_payload_observed_seconds"], 2.0)
+        self.assertIsNone(window["active_transfer_seconds"])
+        self.assertIsNone(window["active_mib_s"])
+        self.assertIsNone(window["active_cpu_seconds_per_gib"])
 
     def test_counter_reset_is_reported_as_unavailable(self) -> None:
         first = [0] * 33
