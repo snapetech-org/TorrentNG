@@ -103,6 +103,8 @@ class ProbeTests(unittest.TestCase):
 
     def test_pacing_starts_at_first_payload(self):
         self.assertEqual(probe.pacing_deadline(500.0, 4 * 1024 * 1024), 501.0)
+        self.assertEqual(probe.pacing_delay(501.0, 500.5), 0.5)
+        self.assertEqual(probe.pacing_delay(501.0, 501.000001), 0.0)
 
     def test_client_environment_overrides_validate_labels_and_apply(self):
         parsed = probe.parse_client_env("verify-oneworker:TOKIO_WORKER_THREADS=1")

@@ -126,6 +126,10 @@ def pacing_deadline(first_payload_time, bytes_received):
     return first_payload_time + bytes_received / RATE
 
 
+def pacing_delay(deadline, now):
+    return max(0.0, deadline - now)
+
+
 def leecher(port, ih, size, target, expected, timeout, sample_process,
             diagnostic_callback=None, register_peer=None, peer_state_callback=None):
     started, deadline = time.monotonic(), time.monotonic() + timeout
@@ -216,7 +220,8 @@ def leecher(port, ih, size, target, expected, timeout, sample_process,
                         first_payload_time = now
                         first_payload_sample = sample_process()
                     wait_until = pacing_deadline(first_payload_time, bytes_received)
-                    if now < wait_until: time.sleep(wait_until - time.monotonic())
+                    delay = pacing_delay(wait_until, time.monotonic())
+                    if delay: time.sleep(delay)
                     if (diagnostic_callback is not None and mid_transfer_diagnostics is None
                             and time.monotonic() >= first_payload_time + 8):
                         mid_transfer_diagnostics = diagnostic_callback("after-first-payload-8s")
