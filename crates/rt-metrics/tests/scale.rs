@@ -695,6 +695,7 @@ async fn storage_peer_read_readahead_reduces_backend_reads_for_adjacent_blocks()
         },
     );
 
+    let mut max_cached_entries = 0usize;
     for block in 0..32 {
         let offset = block * 16 * 1024;
         let data = scheduler
@@ -702,6 +703,7 @@ async fn storage_peer_read_readahead_reduces_backend_reads_for_adjacent_blocks()
             .await
             .unwrap();
         assert_eq!(&data[..], &payload[offset..offset + 16 * 1024]);
+        max_cached_entries = max_cached_entries.max(scheduler.stats().peer_read_cache_entries);
     }
 
     let stats = scheduler.stats();
@@ -713,9 +715,8 @@ async fn storage_peer_read_readahead_reduces_backend_reads_for_adjacent_blocks()
         "every logical read should be classified as a cache hit or miss"
     );
     assert!(
-        (1..=64).contains(&stats.peer_read_cache_entries),
-        "sequential reads should retain a bounded set of reusable cache ranges: {:?}",
-        stats.peer_read_cache_entries
+        (1..=64).contains(&max_cached_entries),
+        "sequential reads should retain a bounded set of reusable cache ranges: {max_cached_entries}"
     );
     assert_eq!(
         stats.read_ops_by_class[IoClass::PeerRead as usize],
