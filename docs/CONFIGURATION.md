@@ -50,11 +50,39 @@ TORRENTNGD_CONFIG=/config/config.toml torrentngd
 | `log_level` | `info` | Tracing filter, for example `info` or `rt_engine=trace` |
 | `shutdown_timeout_secs` | `10` | Max seconds to wait for torrent tasks to send stopped announces during shutdown |
 
-The daemon's Tokio worker pool defaults to at most two threads, scaled down
-when the host reports fewer available CPUs. Set `TOKIO_WORKER_THREADS` to a
-positive integer to override the cap for a workload with higher runtime
-concurrency. This setting affects async task scheduling; storage I/O and hash
+The daemon's Tokio worker pool defaults to one thread. Set
+`TOKIO_WORKER_THREADS` to a positive integer to use more runtime workers for a
+workload that benefits from higher async concurrency. The daemon continues to
+use Tokio's multi-thread runtime at every worker count. Storage I/O and hash
 workers have separate limits.
+
+Release builds use size optimization (`opt-level = "s"`), thin LTO, one codegen
+unit, and the system allocator by default. To select the opt-level 3 alternative,
+build with
+`CARGO_PROFILE_RELEASE_OPT_LEVEL=3 cargo build --release -p torrentngd`.
+
+### Compatibility API build features
+
+The default `torrentngd` build includes the native TorrentNG API and the
+qBittorrent-compatible API. Transmission and Deluge API routers are optional
+Cargo features to reduce the default binary footprint. This changes the default
+API surface: deployments using Transmission or Deluge clients should rebuild
+with the matching feature before upgrading. The native API, WebUI, and
+qBittorrent API remain available in every build.
+
+```sh
+# Default: native and qBittorrent APIs
+cargo build --release -p torrentngd
+
+# Add one compatibility API, or both
+cargo build --release -p torrentngd --features compat-transmission
+cargo build --release -p torrentngd --features compat-deluge
+cargo build --release -p torrentngd --features full-compat
+```
+
+`full-compat` enables both optional APIs. These are compile-time build
+features; selecting them does not change the allocator defaults or the
+`TOKIO_WORKER_THREADS` setting.
 
 ### `[network]`
 

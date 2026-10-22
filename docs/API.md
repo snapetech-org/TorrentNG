@@ -13,6 +13,14 @@ arrangements:
 
 All surfaces are served on the same port (default `8080`).
 
+For direct `torrentngd` deployments, the native REST and qBittorrent APIs are
+included by default. Transmission and Deluge RPC routes require the
+`compat-transmission` and `compat-deluge` Cargo features, respectively, or
+`full-compat` for both. The separate compatible-client `torrentng` service
+continues to expose its configured client facades. See
+[Configuration: Compatibility API build features](CONFIGURATION.md#compatibility-api-build-features)
+for build commands and upgrade guidance.
+
 The API strategy is compatibility-first: existing tools can keep speaking the
 client dialect they already support while TorrentNG projects those calls onto
 one shared user-facing model. Endpoint availability does not by itself mean

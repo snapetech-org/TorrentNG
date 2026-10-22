@@ -92,7 +92,9 @@ proptest = "1"
 tempfile = "3"
 
 [profile.release]
-opt-level = 3
+# Keep a compact release image. CARGO_PROFILE_RELEASE_OPT_LEVEL=3 selects
+# the alternative optimization profile.
+opt-level = "s"
 lto = "thin"
 codegen-units = 1
 strip = "debuginfo"

@@ -15,6 +15,9 @@ default = ["system-allocator"]
 system-allocator = []
 jemalloc-allocator = ["dep:tikv-jemallocator", "rt-api-native/jemalloc-stats"]
 mimalloc-allocator = ["dep:mimalloc"]
+compat-transmission = ["dep:rt-api-transmission"]
+compat-deluge = ["dep:rt-api-deluge"]
+full-compat = ["compat-transmission", "compat-deluge"]
 
 [dependencies]
 tokio.workspace = true
@@ -39,8 +42,8 @@ rt-fastresume = { path = "../rt-fastresume" }
 rt-api-native = { path = "../rt-api-native" }
 rt-api-qbit   = { path = "../rt-api-qbit" }
 rt-api-model  = { path = "../rt-api-model" }
-rt-api-transmission = { path = "../rt-api-transmission" }
-rt-api-deluge = { path = "../rt-api-deluge" }
+rt-api-transmission = { path = "../rt-api-transmission", optional = true }
+rt-api-deluge = { path = "../rt-api-deluge", optional = true }
 uuid.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]

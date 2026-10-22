@@ -1,0 +1,14 @@
+Native rTorrent build
+
+Binary: /workspace/scratch/6f513becc57f/torrentng-bench/rtorrent-prefix/bin/rtorrent
+Version: rTorrent 0.16.25
+rTorrent commit: 15ccae27deb9aa1dc8e46ea0ed218a673ccc5732
+libtorrent version: 0.16.25
+libtorrent commit: 6ad3fecf3e7e7aa86855445587b532a91256f344
+Prefix: /workspace/scratch/6f513becc57f/torrentng-bench/rtorrent-prefix
+Configure flags (both): --prefix=/workspace/scratch/6f513becc57f/torrentng-bench/rtorrent-prefix --disable-debug
+rTorrent additional configure flag: --with-xmlrpc-c
+Build: make -j3; make install
+Compiler flags from configure: -g -O2 -DNDEBUG -Wall; C++ standard: -std=c++20
+Runtime linkage: executable RUNPATH points at prefix/lib; ldd resolves prefix/lib/libtorrent.so.53 without LD_LIBRARY_PATH.
+Verification: rtorrent -h reports version 0.16.25.
