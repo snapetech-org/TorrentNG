@@ -1,0 +1,18 @@
+[daemon]
+api_bind = "127.0.0.1:42893"
+session_dir = "<task-scratch>/round-2/run-01-rate-batch/rate-batch/session"
+log_level = "warn"
+
+[network]
+listen_port = 59659
+max_peers = 8
+max_incoming_handshakes = 32
+
+[storage]
+download_dir = "<task-scratch>/round-2/run-01-rate-batch/rate-batch/download"
+
+[dht]
+enabled = false
+
+[auth]
+api_tokens_file  = "<redacted>"

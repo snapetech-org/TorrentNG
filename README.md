@@ -166,6 +166,10 @@ report. Fresh PGO profiles trained from the current source lowered CPU in the
 transfer-window screen, but raised PSS by 11.2%; full-process training also
 lost in its one-pair screen. Both candidates and the exact evidence are
 preserved without changing the release or PGO defaults.
+The follow-up upload-rate admission batching refactor also failed to beat the
+16 ms release on CPU and PSS together in two randomized 64 MiB screens. Its
+patch and verified measurements are retained in the same report for later
+profiling.
 
 ## Learn more
 

@@ -1,0 +1,8 @@
+directory.default.set = <task-scratch>/round-2/run-01-rtorrent/rtorrent/download
+session.path.set = <task-scratch>/round-2/run-01-rtorrent/rtorrent/session
+network.bind_address.ipv4.set = 127.0.0.1
+network.listen.port.range.set = 37589-37589
+network.listen.port.random.set = no
+dht.mode.set = disable
+protocol.pex.set = no
+network.scgi.open_port = 127.0.0.1:54269
