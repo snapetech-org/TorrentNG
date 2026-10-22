@@ -47,6 +47,8 @@ run_gate "qBittorrent Web API facade matrix" cargo test -p rt-api-qbit
 run_gate "Transmission RPC facade matrix" cargo test -p rt-api-transmission
 run_gate "Deluge JSON-RPC facade matrix" cargo test -p rt-api-deluge
 run_gate "rTorrent XMLRPC facade matrix" cargo test -p rt-api-rtorrent
+run_gate "torrentngd default API router assembly" cargo test --locked -p torrentngd --bin torrentngd
+run_gate "torrentngd full-compat API router assembly" cargo test --locked -p torrentngd --bin torrentngd --features full-compat
 
 sed -i "/|---|---|/r $OUT.table" "$OUT"
 rm -f "$OUT.table"

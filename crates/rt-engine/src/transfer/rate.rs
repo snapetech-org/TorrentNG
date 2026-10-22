@@ -190,6 +190,8 @@ enum WaitOwner {
     Legacy,
     Sync,
     Demand(u64),
+    /// A one-shot attempt that must not create or retire a persistent waiter.
+    Probe,
 }
 
 #[derive(Clone, Copy)]
@@ -461,6 +463,7 @@ impl RateTree {
             WaitOwner::Demand(demand_id) => {
                 peer.demand_wake_at.insert(demand_id, wake_at);
             }
+            WaitOwner::Probe => return,
         }
         self.refresh_waiting_index(peer_id);
     }
@@ -473,6 +476,7 @@ impl RateTree {
             WaitOwner::Legacy => peer.legacy_wake_at.take().is_some(),
             WaitOwner::Sync => peer.sync_wake_at.take().is_some(),
             WaitOwner::Demand(demand_id) => peer.demand_wake_at.remove(&demand_id).is_some(),
+            WaitOwner::Probe => false,
         };
         if removed {
             self.refresh_waiting_index(peer_id);
@@ -552,6 +556,18 @@ impl RateTree {
         now: Nanos,
     ) -> (Grant, Option<u64>) {
         self.try_grant_for(peer_id, bytes, now, WaitOwner::Demand(demand_id))
+    }
+
+    /// One-shot runtime attempt that leaves any pre-existing waiter state
+    /// untouched. Callers that receive `Wait` must register a persistent owner
+    /// and retry before sleeping.
+    pub(crate) fn try_grant_probe_tracked(
+        &mut self,
+        peer_id: RatePeerId,
+        bytes: u64,
+        now: Nanos,
+    ) -> (Grant, Option<u64>) {
+        self.try_grant_for(peer_id, bytes, now, WaitOwner::Probe)
     }
 
     fn try_grant_for(
@@ -1346,6 +1362,47 @@ mod tests {
         assert!(tree.retire_demand(peer_id, 10));
         assert_eq!(tree.waiting_peers(8), vec![peer_id]);
         assert!(tree.retire_demand(peer_id, 11));
+        assert!(tree.waiting_peers(8).is_empty());
+    }
+
+    #[test]
+    fn one_shot_probe_preserves_waiter_owners_on_wait_and_grant() {
+        let torrent = TorrentKey(1);
+        let spender = peer(1, 1);
+        let waiting = peer(1, 2);
+        let mut tree = RateTree::new(Some(1), 0);
+        tree.add_torrent(torrent, Some(1), 0);
+        tree.add_peer(spender, 1);
+        tree.add_peer(waiting, 1);
+        assert_eq!(tree.try_grant(spender, BLOCK + 1, 0), Grant::Granted);
+
+        for demand_id in [10, 11] {
+            assert!(matches!(
+                tree.try_grant_demand_tracked(waiting, demand_id, 1, 0).0,
+                Grant::Wait { .. }
+            ));
+        }
+        let pending = tree.peers[&waiting].demand_wake_at.clone();
+        let waiting_peers = tree.waiting_peers(8);
+        assert_eq!(pending.len(), 2);
+
+        assert!(matches!(
+            tree.try_grant_probe_tracked(waiting, 1, 0).0,
+            Grant::Wait { .. }
+        ));
+        assert_eq!(tree.peers[&waiting].demand_wake_at, pending);
+        assert_eq!(tree.waiting_peers(8), waiting_peers);
+
+        tree.set_global_limit(None, 1);
+        tree.set_torrent_limit(torrent, None, 1);
+        let (grant, grant_id) = tree.try_grant_probe_tracked(waiting, 1, 1);
+        assert_eq!(grant, Grant::Granted);
+        assert_eq!(tree.settle_grant(waiting, grant_id.unwrap(), 1), 1);
+        assert_eq!(tree.peers[&waiting].demand_wake_at, pending);
+        assert_eq!(tree.waiting_peers(8), waiting_peers);
+
+        assert!(tree.retire_demand(waiting, 10));
+        assert!(tree.retire_demand(waiting, 11));
         assert!(tree.waiting_peers(8).is_empty());
     }
 

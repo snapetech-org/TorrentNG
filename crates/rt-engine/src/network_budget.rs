@@ -1089,6 +1089,49 @@ impl HierarchicalRateService {
         if bytes == 0 {
             anyhow::bail!("zero-byte payload cannot consume rate admission");
         }
+        if cancellation.generation() != generation {
+            return Ok(None);
+        }
+
+        // Most payload grants are immediately available. Probe before
+        // allocating a demand ID or waiter guard; if the attempt must wait,
+        // the persistent path below snapshots generations and retries under
+        // the tree lock before it can sleep, so this probe cannot lose a wake.
+        let now = self.now();
+        let (grant, grant_id, wake_fairness_waiters) = {
+            let mut tree = self.lock_tree();
+            let (grant, grant_id) = tree.try_grant_probe_tracked(peer_id, bytes, now);
+            let wake_fairness_waiters =
+                grant == Grant::Granted && tree.has_change_waiters(peer_id.torrent);
+            (grant, grant_id, wake_fairness_waiters)
+        };
+        if wake_fairness_waiters {
+            self.notify_demand_change(peer_id.torrent);
+        }
+        match grant {
+            Grant::Granted => {
+                let grant = RateAdmissionGrant {
+                    scheduler: Arc::clone(self),
+                    peer_id,
+                    grant_id: grant_id.expect("granted payload has a reservation identity"),
+                    bytes,
+                    active: true,
+                };
+                if cancellation.generation() != generation {
+                    drop(grant);
+                    return Ok(None);
+                }
+                return Ok(Some(grant));
+            }
+            Grant::Unknown => anyhow::bail!(
+                "rate peer is not registered: torrent={} connection={}.{}",
+                peer_id.torrent.0,
+                peer_id.connection.slot,
+                peer_id.connection.generation
+            ),
+            Grant::Wait { .. } => {}
+        }
+
         let demand_changes = self.demand_changes_for(peer_id.torrent);
         let demand_id = self.new_demand_id();
         let _demand = RateDemandGuard {
@@ -1490,6 +1533,71 @@ mod tests {
             .lock_tree()
             .waiting_peers(8)
             .is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn immediate_rate_grants_skip_demand_registration_and_still_refund() {
+        const BLOCK: u64 = 16 * 1024;
+        let budget = GlobalNetworkBudget::new(1, None, Some(1));
+        let torrent = budget.new_transfer_torrent_key();
+        budget.register_upload_torrent(torrent, None);
+        let demand_change_count = budget.upload_tree.demand_changes.lock().unwrap().len();
+        let peer = rate_peer(torrent, 1);
+        budget.register_transfer_peer(peer);
+        let cancellation = RateLimitCancellation::default();
+        let generation = cancellation.generation();
+
+        let grant = budget
+            .acquire_upload(peer, BLOCK, &cancellation, generation)
+            .await
+            .unwrap()
+            .expect("uncontended registered peer should receive an immediate grant");
+        assert_eq!(budget.upload_tree.next_demand.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            budget.upload_tree.demand_changes.lock().unwrap().len(),
+            demand_change_count
+        );
+        assert_eq!(budget.upload_tree.available_credit_bytes(peer), 0);
+        drop(grant);
+        assert_eq!(budget.upload_tree.available_credit_bytes(peer), BLOCK);
+
+        budget
+            .acquire_upload(peer, BLOCK, &cancellation, generation)
+            .await
+            .unwrap()
+            .expect("dropping the grant must refund its reservation")
+            .settle(BLOCK);
+        assert_eq!(budget.upload_tree.available_credit_bytes(peer), 0);
+
+        cancellation.cancel();
+        let credit_before_cancelled_attempt = {
+            let now = budget.upload_tree.now();
+            budget
+                .upload_tree
+                .lock_tree()
+                .available_credit_bytes(peer, now)
+        };
+        assert!(budget
+            .acquire_upload(peer, 1, &cancellation, generation)
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(budget.upload_tree.next_demand.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            budget.upload_tree.demand_changes.lock().unwrap().len(),
+            demand_change_count
+        );
+        let credit_after_cancelled_attempt = {
+            let now = budget.upload_tree.now();
+            budget
+                .upload_tree
+                .lock_tree()
+                .available_credit_bytes(peer, now)
+        };
+        assert_eq!(
+            credit_after_cancelled_attempt,
+            credit_before_cancelled_attempt
+        );
     }
 
     #[tokio::test(start_paused = true)]

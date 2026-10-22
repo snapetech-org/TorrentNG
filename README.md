@@ -165,6 +165,12 @@ required for the Docker quick start.
 cargo build --release -p torrentngd
 ```
 
+The default Server build includes the native and qBittorrent APIs. To keep
+using Transmission or Deluge RPC against a direct `torrentngd` deployment,
+build with `--features full-compat` (or the matching single API feature).
+See [Configuration](docs/CONFIGURATION.md#compatibility-api-build-features)
+for all build options and the API migration note.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development checks. The current
 release qualification sequence and the hardware-dependent work to run later
 are in the [at-home validation plan](docs/AT_HOME_VALIDATION.md).

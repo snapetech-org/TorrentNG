@@ -13,11 +13,13 @@ use axum::{
     http::{header, HeaderMap, HeaderName, HeaderValue, Request, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
+    Router,
 };
 use tokio::sync::{oneshot, Notify, RwLock, Semaphore};
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
 
+#[cfg(feature = "compat-deluge")]
 use rt_api_deluge::AppState as DelugeState;
 use rt_api_model::{
     api_token_allowed, bearer_token as model_bearer_token, csrf_request_allowed,
@@ -26,6 +28,7 @@ use rt_api_model::{
 };
 use rt_api_native::state::{AppState as TorrentNgApiState, AuthCredentials};
 use rt_api_qbit::state::AppState as QbitState;
+#[cfg(feature = "compat-transmission")]
 use rt_api_transmission::AppState as TransmissionState;
 use rt_config::Config;
 use rt_engine::Engine;
@@ -149,10 +152,18 @@ fn disable_transparent_huge_pages() {
     }
 }
 
-// The workload-matched resource profile kept download goodput near the
-// four-worker result and measured lower RSS with two. Keep the default cap
-// conservative, with TOKIO_WORKER_THREADS available for higher-concurrency hosts.
-const DEFAULT_MAX_TOKIO_WORKER_THREADS: usize = 2;
+// Keep the default runtime footprint small; deployments can explicitly raise
+// the worker count for workloads that benefit from more async concurrency.
+const DEFAULT_MAX_TOKIO_WORKER_THREADS: usize = 1;
+
+const ENABLED_API_SURFACES: &[&str] = &[
+    "native",
+    "qBittorrent",
+    #[cfg(feature = "compat-transmission")]
+    "Transmission",
+    #[cfg(feature = "compat-deluge")]
+    "Deluge",
+];
 
 fn tokio_worker_threads_for(
     override_value: Option<&str>,
@@ -229,10 +240,34 @@ fn main() -> anyhow::Result<()> {
         .enable_all()
         .build()
         .context("failed to build Tokio runtime")?
-        .block_on(torrentngd_main())
+        .block_on(torrentngd_main(worker_threads))
 }
 
-async fn torrentngd_main() -> anyhow::Result<()> {
+fn merge_compatibility_routers(
+    app: Router,
+    transmission_router: Option<Router>,
+    deluge_router: Option<Router>,
+) -> Router {
+    #[cfg(feature = "compat-transmission")]
+    let app = match transmission_router {
+        Some(router) => app.merge(router),
+        None => app,
+    };
+    #[cfg(not(feature = "compat-transmission"))]
+    let _ = transmission_router;
+
+    #[cfg(feature = "compat-deluge")]
+    let app = match deluge_router {
+        Some(router) => app.merge(router),
+        None => app,
+    };
+    #[cfg(not(feature = "compat-deluge"))]
+    let _ = deluge_router;
+
+    app
+}
+
+async fn torrentngd_main(tokio_worker_threads: usize) -> anyhow::Result<()> {
     let argv: Vec<String> = std::env::args().collect();
     match argv.get(1).map(String::as_str) {
         Some("-h" | "--help" | "help") => {
@@ -297,6 +332,8 @@ async fn torrentngd_main() -> anyhow::Result<()> {
         version = env!("CARGO_PKG_VERSION"),
         api_bind = %config.daemon.api_bind,
         listen_port = config.network.listen_port,
+        tokio_worker_threads,
+        compatibility_apis = ?ENABLED_API_SURFACES,
         "torrentngd starting"
     );
 
@@ -349,25 +386,39 @@ async fn torrentngd_main() -> anyhow::Result<()> {
     qbit_state.shutdown = Some(Arc::clone(&shutdown_notify));
     let qbit_router = rt_api_qbit::router::build_qbit_router(qbit_state);
 
-    let mut transmission_state = TransmissionState::with_engine_and_tokens(
-        Arc::clone(&registry),
-        engine_handle.clone(),
-        config.auth.api_tokens.clone(),
-    );
-    if let Err(error) = transmission_state.restore_persisted_state().await {
-        engine_handle.shutdown().await;
-        return Err(anyhow::Error::msg(error).context("restoring Transmission compatibility state"));
-    }
-    transmission_state.shutdown = Some(Arc::clone(&shutdown_notify));
-    let transmission_router = rt_api_transmission::build_transmission_router(transmission_state);
+    #[cfg(feature = "compat-transmission")]
+    let transmission_router = {
+        let mut transmission_state = TransmissionState::with_engine_and_tokens(
+            Arc::clone(&registry),
+            engine_handle.clone(),
+            config.auth.api_tokens.clone(),
+        );
+        if let Err(error) = transmission_state.restore_persisted_state().await {
+            engine_handle.shutdown().await;
+            return Err(
+                anyhow::Error::msg(error).context("restoring Transmission compatibility state")
+            );
+        }
+        transmission_state.shutdown = Some(Arc::clone(&shutdown_notify));
+        Some(rt_api_transmission::build_transmission_router(
+            transmission_state,
+        ))
+    };
+    #[cfg(not(feature = "compat-transmission"))]
+    let transmission_router = None;
 
-    let mut deluge_state = DelugeState::with_engine_and_tokens(
-        Arc::clone(&registry),
-        engine_handle.clone(),
-        config.auth.api_tokens.clone(),
-    );
-    deluge_state.shutdown = Some(Arc::clone(&shutdown_notify));
-    let deluge_router = rt_api_deluge::build_deluge_router(deluge_state);
+    #[cfg(feature = "compat-deluge")]
+    let deluge_router = {
+        let mut deluge_state = DelugeState::with_engine_and_tokens(
+            Arc::clone(&registry),
+            engine_handle.clone(),
+            config.auth.api_tokens.clone(),
+        );
+        deluge_state.shutdown = Some(Arc::clone(&shutdown_notify));
+        Some(rt_api_deluge::build_deluge_router(deluge_state))
+    };
+    #[cfg(not(feature = "compat-deluge"))]
+    let deluge_router = None;
 
     // Merge into a single axum app
     let static_dir = static_dir();
@@ -388,26 +439,25 @@ async fn torrentngd_main() -> anyhow::Result<()> {
         );
     }
 
-    let app = torrentng_api_router
-        .merge(qbit_router)
-        .merge(transmission_router)
-        .merge(deluge_router)
-        .fallback_service(
-            ServeDir::new(&static_dir).not_found_service(ServeFile::new(&static_index)),
-        )
-        .layer(middleware::from_fn(request_uri_guard))
-        .layer(middleware::from_fn(request_log))
-        .layer(middleware::from_fn_with_state(
-            DaemonAuthGate {
-                api_tokens: Arc::new(config.auth.api_tokens.clone()),
-                local_webui_session_token: local_webui_session_token.clone(),
-            },
-            daemon_auth_guard,
-        ))
-        .layer(middleware::from_fn_with_state(
-            Arc::new(Semaphore::new(MAX_CONCURRENT_DAEMON_REQUESTS)),
-            request_concurrency_guard,
-        ));
+    let app = merge_compatibility_routers(
+        torrentng_api_router.merge(qbit_router),
+        transmission_router,
+        deluge_router,
+    )
+    .fallback_service(ServeDir::new(&static_dir).not_found_service(ServeFile::new(&static_index)))
+    .layer(middleware::from_fn(request_uri_guard))
+    .layer(middleware::from_fn(request_log))
+    .layer(middleware::from_fn_with_state(
+        DaemonAuthGate {
+            api_tokens: Arc::new(config.auth.api_tokens.clone()),
+            local_webui_session_token: local_webui_session_token.clone(),
+        },
+        daemon_auth_guard,
+    ))
+    .layer(middleware::from_fn_with_state(
+        Arc::new(Semaphore::new(MAX_CONCURRENT_DAEMON_REQUESTS)),
+        request_concurrency_guard,
+    ));
 
     info!(
         component = "http",
@@ -985,9 +1035,9 @@ fn load_auth_credentials(
 mod tests {
     use super::{
         bearer_token, daemon_auth_guard, daemon_public_auth_path, daemon_public_path,
-        install_panic_payload_redacting_hook, load_or_create_bootstrap_password, request_id,
-        request_uri_is_bounded, skip_request_log, static_dir, tokio_worker_threads_for,
-        DaemonAuthGate, MAX_REQUEST_URI_BYTES,
+        install_panic_payload_redacting_hook, load_or_create_bootstrap_password,
+        merge_compatibility_routers, request_id, request_uri_is_bounded, skip_request_log,
+        static_dir, tokio_worker_threads_for, DaemonAuthGate, MAX_REQUEST_URI_BYTES,
     };
     use axum::{
         body::Body,
@@ -1002,8 +1052,8 @@ mod tests {
 
     #[test]
     fn tokio_worker_default_is_capped_but_scales_down_for_small_hosts() {
-        assert_eq!(tokio_worker_threads_for(None, Some(64)).unwrap(), 2);
-        assert_eq!(tokio_worker_threads_for(None, Some(2)).unwrap(), 2);
+        assert_eq!(tokio_worker_threads_for(None, Some(64)).unwrap(), 1);
+        assert_eq!(tokio_worker_threads_for(None, Some(2)).unwrap(), 1);
         assert_eq!(tokio_worker_threads_for(None, None).unwrap(), 1);
     }
 
@@ -1013,6 +1063,49 @@ mod tests {
         assert_eq!(tokio_worker_threads_for(Some("4"), Some(64)).unwrap(), 4);
         assert!(tokio_worker_threads_for(Some("0"), Some(64)).is_err());
         assert!(tokio_worker_threads_for(Some("many"), Some(64)).is_err());
+    }
+
+    #[tokio::test]
+    async fn compatibility_router_mounts_optional_api_surfaces_by_feature() {
+        async fn probe() -> &'static str {
+            "ok"
+        }
+
+        let core = Router::new()
+            .route("/api/v1/probe", get(probe))
+            .route("/api/qb/v2/probe", get(probe));
+        let transmission = Router::new().route("/transmission/rpc", get(probe));
+        let deluge = Router::new().route("/json", get(probe));
+        let app = merge_compatibility_routers(core, Some(transmission), Some(deluge));
+
+        for path in ["/api/v1/probe", "/api/qb/v2/probe"] {
+            let response = app
+                .clone()
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+        }
+
+        for (path, enabled) in [
+            ("/transmission/rpc", cfg!(feature = "compat-transmission")),
+            ("/json", cfg!(feature = "compat-deluge")),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                if enabled {
+                    StatusCode::OK
+                } else {
+                    StatusCode::NOT_FOUND
+                },
+                "{path}"
+            );
+        }
     }
 
     #[cfg(target_os = "linux")]
