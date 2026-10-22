@@ -1,0 +1,37 @@
+{
+  "format": "native-seed-cpu-ram-v1",
+  "status": "failed",
+  "cpu_measurement": "process CPU clock nanoseconds where available; /proc user+system ticks fallback",
+  "diagnostic_run": false,
+  "peer_debug": false,
+  "cpu_profile": null,
+  "pgo_profile_window": null,
+  "fixture_bytes": 67108864,
+  "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+  "info_hash": "5ceff928c8833b0f7994370f398ba4b14b28034a",
+  "offered_rate_bytes_per_second": 4194304,
+  "block_bytes": 16384,
+  "request_window": 32,
+  "dht": false,
+  "pex": false,
+  "tracker": false,
+  "bind_address": "127.0.0.1",
+  "paired": true,
+  "payload_cleanup_policy": "remove per-run seed and downloaded payload copies after a verified transfer and client shutdown",
+  "keep_payloads": false,
+  "randomized_orders": [
+    [
+      "rtorrent",
+      "baseline",
+      "cache_candidate",
+      "pgo_best"
+    ]
+  ],
+  "runs": [],
+  "client_environment_overrides": {},
+  "inherited_measurement_controls": {
+    "names": [],
+    "safe_values": {}
+  },
+  "error": "RuntimeError: client exited (127); inspect client.log"
+}

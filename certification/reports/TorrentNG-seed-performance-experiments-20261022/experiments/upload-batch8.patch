@@ -1,0 +1,61 @@
+diff --git a/crates/rt-engine/src/torrent_task.rs b/crates/rt-engine/src/torrent_task.rs
+index 8dbb0a78..5ecaa263 100644
+--- a/crates/rt-engine/src/torrent_task.rs
++++ b/crates/rt-engine/src/torrent_task.rs
+@@ -161,10 +161,11 @@ const PEER_SOCKET_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+ // derived from a 64 MiB test fixture capped a continuously used connection at
+ // about 6.4 MiB/s and silently dropped valid requests beyond it.
+ const MAX_PENDING_UPLOAD_READS: usize = 16;
+-// Start with 64 KiB storage reads: four legal 16 KiB wire requests share one
+-// bounded pread while keeping response obligations and rate grants separate.
+-const MAX_UPLOAD_READ_BATCH_BLOCKS: usize = 4;
+-const MAX_UPLOAD_READ_BATCH_BYTES: usize = 64 * 1024;
++// Start with 128 KiB storage reads: up to eight legal 16 KiB wire requests
++// share one bounded pread while keeping response obligations and rate grants
++// separate. Collection remains capped by UPLOAD_READ_COALESCE_MAX_DELAY.
++const MAX_UPLOAD_READ_BATCH_BLOCKS: usize = 8;
++const MAX_UPLOAD_READ_BATCH_BYTES: usize = 128 * 1024;
+ // A 64 MiB fixture at the protocol's 16 KiB block size is 4,096 requests.
+ // Requests are only small coordinates; the response data remains bounded by
+ // MAX_PENDING_UPLOAD_READS and the peer-buffer governor.
+diff --git a/crates/rt-engine/src/transfer/upload_scheduler.rs b/crates/rt-engine/src/transfer/upload_scheduler.rs
+index d3c707ea..29ad27e2 100644
+--- a/crates/rt-engine/src/transfer/upload_scheduler.rs
++++ b/crates/rt-engine/src/transfer/upload_scheduler.rs
+@@ -14,7 +14,7 @@ use tokio::sync::oneshot;
+ use super::coords::{BlockExtent, BLOCK_SIZE};
+ use super::rate::RatePeerId;
+ 
+-const MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS: usize = 4;
++const MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS: usize = 8;
+ 
+ pub(crate) type UploadReadPermits =
+     smallvec::SmallVec<[UploadReadPermit; MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS]>;
+@@ -820,6 +820,27 @@ mod tests {
+         assert_eq!(second.in_flight(), (0, 0));
+     }
+ 
++    #[tokio::test]
++    async fn batch_admission_accepts_eight_bounded_piece_reads() {
++        let scheduler = UploadReadScheduler::new(UploadReadLimits {
++            max_connections: 1,
++            max_in_flight_jobs: 8,
++            max_in_flight_bytes: 128 * 1024,
++            max_in_flight_per_connection: 8,
++            max_queued_per_connection: 8,
++        });
++        let identity = peer(1, 0);
++        let _connection = scheduler.register_guard(identity).unwrap();
++        let blocks = [block(16 * 1024); 8];
++
++        let permits = scheduler.acquire_batch(identity, &blocks).await.unwrap();
++        assert_eq!(permits.len(), 8);
++        assert_eq!(scheduler.in_flight(), (8, 128 * 1024));
++
++        drop(permits);
++        assert_eq!(scheduler.in_flight(), (0, 0));
++    }
++
+     #[tokio::test]
+     async fn batch_permits_release_each_job_and_cancel_without_partial_charge() {
+         let scheduler = UploadReadScheduler::new(UploadReadLimits {

@@ -1,0 +1,92 @@
+diff --git a/crates/rt-storage/src/scheduler.rs b/crates/rt-storage/src/scheduler.rs
+index 712500ec..851a3ba8 100644
+--- a/crates/rt-storage/src/scheduler.rs
++++ b/crates/rt-storage/src/scheduler.rs
+@@ -1432,7 +1432,7 @@ impl PeerReadCache {
+         offset: u64,
+         len: usize,
+     ) -> Option<(FileIdentity, bytes::Bytes, Weak<LeasedFile>)> {
+-        let result = {
++        let (result, removed, removed_bytes, empty) = {
+             let entries = self.files.get_mut(path)?;
+             let (index, relative, end) = entries
+                 .iter()
+@@ -1446,15 +1446,24 @@ impl PeerReadCache {
+                 .map(|(index, relative, end, _)| (index, relative, end))?;
+             let entry = &mut entries[index];
+             entry.last_used = Instant::now();
+-            (
++            let result = (
+                 entry.identity,
+                 entry.data.slice(relative..end),
+                 entry.source.clone(),
+-            )
++            );
++            let (removed, removed_bytes) =
++                consume_peer_read_entries(entries, result.0, offset, len);
++            (result, removed, removed_bytes, entries.is_empty())
+         };
+         // The same requested bytes also consume overlapping windows, even
+-        // when the smallest covering window supplied the returned view.
+-        self.consume(path, result.0, offset, len);
++        // when the smallest covering window supplied the returned view. Keep
++        // retirement on the already-borrowed vector to avoid a second path
++        // hash and map lookup on every cache hit.
++        self.entries = self.entries.saturating_sub(removed);
++        self.cached_bytes = self.cached_bytes.saturating_sub(removed_bytes);
++        if empty {
++            self.files.remove(path);
++        }
+         Some(result)
+     }
+ 
+@@ -1465,17 +1474,7 @@ impl PeerReadCache {
+         let Some(entries) = self.files.get_mut(path) else {
+             return;
+         };
+-        let mut removed = 0;
+-        let mut removed_bytes = 0;
+-        entries.retain_mut(|entry| {
+-            if entry.identity != identity || entry.consume(offset, len) {
+-                removed += 1;
+-                removed_bytes += entry.data.len();
+-                false
+-            } else {
+-                true
+-            }
+-        });
++        let (removed, removed_bytes) = consume_peer_read_entries(entries, identity, offset, len);
+         let empty = entries.is_empty();
+         self.entries = self.entries.saturating_sub(removed);
+         self.cached_bytes = self.cached_bytes.saturating_sub(removed_bytes);
+@@ -1555,6 +1554,30 @@ impl PeerReadCache {
+     }
+ }
+ 
++/// Consume a requested range from every cached window for one file.
++fn consume_peer_read_entries(
++    entries: &mut Vec<PeerReadCacheEntry>,
++    identity: FileIdentity,
++    offset: u64,
++    len: usize,
++) -> (usize, usize) {
++    if len == 0 {
++        return (0, 0);
++    }
++    let mut removed = 0;
++    let mut removed_bytes = 0;
++    entries.retain_mut(|entry| {
++        if entry.identity != identity || entry.consume(offset, len) {
++            removed += 1;
++            removed_bytes += entry.data.len();
++            false
++        } else {
++            true
++        }
++    });
++    (removed, removed_bytes)
++}
++
+ const MAX_GLOBAL_PEER_READ_CACHE_BYTES: u64 = 16 * 1024 * 1024;
+ 
+ #[derive(Debug, Default)]

@@ -1,0 +1,2 @@
+{"timestamp":"2026-10-22T19:52:20.107970Z","level":"WARN","fields":{"message":"WebUI index.html not found; API will run but / will return 404","component":"http","operation":"static_webui","static_dir":"/usr/share/torrentng/webui"},"target":"torrentngd"}
+{"timestamp":"2026-10-22T19:52:47.803281Z","level":"WARN","fields":{"message":"engine database worker stopped","component":"db","operation":"worker","result":"stopped"},"target":"rt_engine::db_worker"}

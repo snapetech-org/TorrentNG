@@ -16,6 +16,10 @@ webui/playwright-report/
 .claude/worktrees/
 benchmarks/report-*.md
 certification/reports/*
+!certification/reports/TorrentNG-seed-performance-experiments-20261022/
+!certification/reports/TorrentNG-seed-performance-experiments-20261022/**
+!certification/reports/TorrentNG-rtorrent-hot-path-review-20261022/
+!certification/reports/TorrentNG-rtorrent-hot-path-review-20261022/**
 !certification/reports/TorrentNG-reassessment-db9e65ac.zip
 !certification/reports/TorrentNG-reassessment-db9e65ac/
 !certification/reports/TorrentNG-reassessment-db9e65ac/**

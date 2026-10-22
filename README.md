@@ -146,6 +146,9 @@ rTorrent. PSS improved 18.3% against TorrentNG's previous best configuration;
 CPU did not improve, and remains about 2.60× rTorrent's. The final summary and
 its evidence limits are in the [CPU/RAM results note](certification/reports/TorrentNG-CPU-RAM-final-summary-20261022.md),
 with the [full report and verified run summaries](certification/reports/TorrentNG-native-cpu-ram-20261022.md).
+Follow-up local screens found a promising but not yet release-qualified PGO build
+and recorded the CPU/memory tradeoffs of reverted candidates in the
+[seed performance experiments report](certification/reports/TorrentNG-seed-performance-experiments-20261022/README.md).
 
 ## Learn more
 

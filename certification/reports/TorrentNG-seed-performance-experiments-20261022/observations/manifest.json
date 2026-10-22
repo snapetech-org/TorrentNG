@@ -1,0 +1,1150 @@
+{
+  "format": "torrentng-seed-experiment-evidence-v1",
+  "files": [
+    {
+      "path": "README.md",
+      "bytes": 896,
+      "sha256": "2dc05919000555d2c94fe29497d3214e818199f0e1d51ffa5da948c93efcfc9d"
+    },
+    {
+      "path": "batch-distribution-16m/logs/run-01-batches-batches.client.log",
+      "bytes": 245966,
+      "sha256": "5f5efee4d3997df8b3d36366876fad474d634eb8893b1d0f2313d9608ccdc59a"
+    },
+    {
+      "path": "batch-distribution-16m/summary.json",
+      "bytes": 13920,
+      "sha256": "2a6b2f61fd19194115f95aa45cea78c16b9ea0a46f491c6949f9492019cfee74"
+    },
+    {
+      "path": "batch-distribution-candidate-16m/logs/run-01-candidate-candidate.client.log",
+      "bytes": 247375,
+      "sha256": "f4749ead32fb013c2b80c80aa59c45b95e97aaf281767e58f8323b4a3c4482cb"
+    },
+    {
+      "path": "batch-distribution-candidate-16m/summary.json",
+      "bytes": 14286,
+      "sha256": "f567e1fd0b664ca7a65c762b72a657b339d396de281a36769640f245a592e912"
+    },
+    {
+      "path": "pgo-cache-hit-training-64m/logs/run-01-training-training.client.log",
+      "bytes": 2315,
+      "sha256": "b2f92901321db37cf6bf47d81b423c9af7a57423acbac6f98f08f0cb65f08107"
+    },
+    {
+      "path": "pgo-cache-hit-training-64m/summary.json",
+      "bytes": 22813,
+      "sha256": "4e0d5576a0174898bffbf0fe87024528c1540da35b2edcd63e7f41976151ce23"
+    },
+    {
+      "path": "pgo-full-training/seed-profile.profdata.gz",
+      "bytes": 5111209,
+      "sha256": "5da15a9dbd24f400a03f1ca0ee9ed561f304cd17998df2517d9268db3eab7d81"
+    },
+    {
+      "path": "pgo-full-training/summary.json",
+      "bytes": 18596,
+      "sha256": "418255d20546c792adcab41b6b2d89e7e761bd396637ded5a30d13ca412387fe"
+    },
+    {
+      "path": "pgo-stream-cache-training-64m/logs/run-01-training-training.client.log",
+      "bytes": 2212,
+      "sha256": "180a5f02c37b95a286745b6ccc0c4436f401e3b6d1cf61c03ccbeea82422661b"
+    },
+    {
+      "path": "pgo-stream-cache-training-64m/summary.json",
+      "bytes": 22843,
+      "sha256": "787ae41898685cdfed0e22fbee8c7d61aeec338dbd11ac3fa59b24c7c2c2af8b"
+    },
+    {
+      "path": "screen-batch8-64m-1x/logs/run-01-baseline-baseline.client.log",
+      "bytes": 457,
+      "sha256": "e6f38aaa2bab6f49e0f98291aa099c024f0042be64f8204e34b3ba4c06ef09da"
+    },
+    {
+      "path": "screen-batch8-64m-1x/logs/run-01-batch8-batch8.client.log",
+      "bytes": 457,
+      "sha256": "e3d1b35a5eb578f608ca6072e5381864528a3fe8a1ef6b433b0b1bec5c7aa5a9"
+    },
+    {
+      "path": "screen-batch8-64m-1x/logs/run-01-rtorrent-rtorrent.client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen-batch8-64m-1x/summary.json",
+      "bytes": 50886,
+      "sha256": "2cae7c3d70d23d6031cc2c5ef7041dc8ef94bf4f8a7e6fa1b5e34b69ccd85b00"
+    },
+    {
+      "path": "screen-cache-hit-64m-1x/logs/run-01-baseline-baseline.client.log",
+      "bytes": 457,
+      "sha256": "1d67c9f4dce124c74914e5a7aef9eea78d0d1d63ffcb0c87311be684fc42cc80"
+    },
+    {
+      "path": "screen-cache-hit-64m-1x/logs/run-01-cache_candidate-cache_candidate.client.log",
+      "bytes": 457,
+      "sha256": "d080e969c355cd24ef53db8404ce60b10339816e32432ca5a9cda8bf2b451bf2"
+    },
+    {
+      "path": "screen-cache-hit-64m-1x/logs/run-01-pgo_best-pgo_best.client.log",
+      "bytes": 457,
+      "sha256": "b864c4327133eb06ab1e9bbb35542abaec8ac9d4e348e0f12d4c451e2a9b20b9"
+    },
+    {
+      "path": "screen-cache-hit-64m-1x/logs/run-01-rtorrent-rtorrent.client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen-cache-hit-64m-1x/summary.json",
+      "bytes": 80470,
+      "sha256": "9ff1dd866afaaa69334a81ce0128058bea1f9fc78d4ce16546216049bbf75bb7"
+    },
+    {
+      "path": "screen-cache-hit-64m-1x-launch-failure/logs/run-01-rtorrent-rtorrent.client.log",
+      "bytes": 188,
+      "sha256": "26cb6752a4413fdfd2db8d2b1b5ac6594748156a5812784b047ba71e475f9d5d"
+    },
+    {
+      "path": "screen-cache-hit-64m-1x-launch-failure/summary.json",
+      "bytes": 1114,
+      "sha256": "cfed76a85fc08c2c6a59c22efb026d4f77eeb4707ce24a5e5e2e3731fab38a75"
+    },
+    {
+      "path": "screen-cache-hit-64m-3x/logs/run-01-baseline-baseline.client.log",
+      "bytes": 457,
+      "sha256": "cea127b5b0cd717c9896d88b9b71630db08ad77d443340c82021775bfe9e3022"
+    },
+    {
+      "path": "screen-cache-hit-64m-3x/logs/run-01-cache_candidate-cache_candidate.client.log",
+      "bytes": 457,
+      "sha256": "e49813a9db522fc7aaf499e3c14ebb76bc6ae7b1156f70ae66bf87ae0aeb9841"
+    },
+    {
+      "path": "screen-cache-hit-64m-3x/logs/run-01-pgo_best-pgo_best.client.log",
+      "bytes": 457,
+      "sha256": "1aa8fc88a70b241253751becc3797c4d79033193f54b51c8f1b013ca613082eb"
+    },
+    {
+      "path": "screen-cache-hit-64m-3x/logs/run-01-rtorrent-rtorrent.client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen-cache-hit-64m-3x/logs/run-02-baseline-baseline.client.log",
+      "bytes": 457,
+      "sha256": "72b0a4ed7c3a01578ab69b7405d850755055ffbcb1c6306caf34828754652a19"
+    },
+    {
+      "path": "screen-cache-hit-64m-3x/logs/run-02-cache_candidate-cache_candidate.client.log",
+      "bytes": 457,
+      "sha256": "920fe844875daa0249c4f80c0861e3bf1a7f91836e1aff56c0e39f3b3a0ad83c"
+    },
+    {
+      "path": "screen-cache-hit-64m-3x/logs/run-02-pgo_best-pgo_best.client.log",
+      "bytes": 457,
+      "sha256": "c0a105952f01f1fe4a80eaa3fc95abadee800c2fc794039f2c9323b36883f246"
+    },
+    {
+      "path": "screen-cache-hit-64m-3x/logs/run-02-rtorrent-rtorrent.client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen-cache-hit-64m-3x/logs/run-03-baseline-baseline.client.log",
+      "bytes": 457,
+      "sha256": "a30e270b63054dd27dee491b732ed829f46c2247bbacf69229584bac67f4027a"
+    },
+    {
+      "path": "screen-cache-hit-64m-3x/logs/run-03-cache_candidate-cache_candidate.client.log",
+      "bytes": 457,
+      "sha256": "4c6c221632c4c300c3e6f6214be50fbb57bebc0a457c542b6872286dc3aca7fc"
+    },
+    {
+      "path": "screen-cache-hit-64m-3x/logs/run-03-pgo_best-pgo_best.client.log",
+      "bytes": 457,
+      "sha256": "5a1792ea0ea2e617d39764f61f31549a4b04edefe4804042d74b59a41fb6fdbd"
+    },
+    {
+      "path": "screen-cache-hit-64m-3x/logs/run-03-rtorrent-rtorrent.client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen-cache-hit-64m-3x/summary.json",
+      "bytes": 238542,
+      "sha256": "3f2dcdf621918cafe10bb0f3618de69d2464ee490a160b29119d548ec12e5343"
+    },
+    {
+      "path": "screen-opt-s-stream-256m-1x/logs/run-01-baseline-baseline.client.log",
+      "bytes": 457,
+      "sha256": "80733236da5bf226f229fe794eace20918f8f14811896eb8f30b4ae825192130"
+    },
+    {
+      "path": "screen-opt-s-stream-256m-1x/logs/run-01-opt_s_candidate-opt_s_candidate.client.log",
+      "bytes": 457,
+      "sha256": "c7414f64478711a351c3ac2b4c69b049e0d4cc72967c9739841df56c4cb30323"
+    },
+    {
+      "path": "screen-opt-s-stream-256m-1x/logs/run-01-rtorrent-rtorrent.client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen-opt-s-stream-256m-1x/summary.json",
+      "bytes": 107139,
+      "sha256": "28765e4fbb873628a8adebb69b1f4cddf7766fa02d931e1621a8ee04d857bc24"
+    },
+    {
+      "path": "screen-opt-s-stream-64m-1x/logs/run-01-baseline-baseline.client.log",
+      "bytes": 457,
+      "sha256": "e2166f11073686fbc1e3f78e9ddfa1080846df9b19bc371913a151bf32836fa1"
+    },
+    {
+      "path": "screen-opt-s-stream-64m-1x/logs/run-01-opt_s_candidate-opt_s_candidate.client.log",
+      "bytes": 457,
+      "sha256": "eb65ec5c7ab3c6421d0c9ec3fae6c41ba13c4ebc7f9ae4da0f544548d878dda3"
+    },
+    {
+      "path": "screen-opt-s-stream-64m-1x/logs/run-01-rtorrent-rtorrent.client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen-opt-s-stream-64m-1x/summary.json",
+      "bytes": 59152,
+      "sha256": "fd7ae380f02e70ba394efdf5916589173d639c9a467d720cbcdb396c5e33d62e"
+    },
+    {
+      "path": "screen-opt-s-stream-64m-3x/logs/run-01-baseline-baseline.client.log",
+      "bytes": 457,
+      "sha256": "68ead4bc5af4b680fc95b5b116262942c7311af22e11334c38f6d0a3bb6c51ef"
+    },
+    {
+      "path": "screen-opt-s-stream-64m-3x/logs/run-01-opt_s_candidate-opt_s_candidate.client.log",
+      "bytes": 457,
+      "sha256": "a2d0243d3bab4e2b3d31d638ca255e564a6e34220915d2b4961aa4a8afb47211"
+    },
+    {
+      "path": "screen-opt-s-stream-64m-3x/logs/run-01-rtorrent-rtorrent.client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen-opt-s-stream-64m-3x/logs/run-02-baseline-baseline.client.log",
+      "bytes": 457,
+      "sha256": "fb44fe5026dea729ec1af57e4b9d3e436b647a466a7995119c24f9a4e2ea3456"
+    },
+    {
+      "path": "screen-opt-s-stream-64m-3x/logs/run-02-opt_s_candidate-opt_s_candidate.client.log",
+      "bytes": 457,
+      "sha256": "f6e0276fe5d818bcc7ee60bc2b019d0d37fac5ee1489985f3b31509a63cf82ac"
+    },
+    {
+      "path": "screen-opt-s-stream-64m-3x/logs/run-02-rtorrent-rtorrent.client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen-opt-s-stream-64m-3x/logs/run-03-baseline-baseline.client.log",
+      "bytes": 457,
+      "sha256": "5ad532573df8a9e92aacff733a8344715d3535bc870d3ff2215bf5544430809d"
+    },
+    {
+      "path": "screen-opt-s-stream-64m-3x/logs/run-03-opt_s_candidate-opt_s_candidate.client.log",
+      "bytes": 457,
+      "sha256": "673c1eb1bf207fc9880780ed5ce1be50c88436d29725818fe1e7f6fff4c4c34c"
+    },
+    {
+      "path": "screen-opt-s-stream-64m-3x/logs/run-03-rtorrent-rtorrent.client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen-opt-s-stream-64m-3x/summary.json",
+      "bytes": 175221,
+      "sha256": "b18dbbe0b2e15a617e8f0dfb8470a04d5d789451d7d7121bf0ca9868240b0c97"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-01-baseline/after-seed-recheck-pid-2328631.smaps",
+      "bytes": 56138,
+      "sha256": "5df05dc1b3593b5817b03e3d3a31d80551133419391aeb4ccf9cff29f0aac3b5"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-01-baseline/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "450d437d06313cea55a4a4827e59b175df587d9daf6fe3bfa99150e602aac57c"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-01-baseline/after-transfer-pid-2328631.smaps",
+      "bytes": 54649,
+      "sha256": "7c6717f742f9dd62baabac5391f5c3a418d1179c8fa59eda70a743f6fe4f6508"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-01-baseline/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "e08f899d90d67fb57f3688db2a7a8c84d327045ca26f4dc0a6a4da060ad0bc3f"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-01-baseline/before-torrent-add-pid-2328631.smaps",
+      "bytes": 41278,
+      "sha256": "1b08c653c5d0a2b3a19b27bf9c0574369ef0e9d5c261e861df62725d6f7254d8"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-01-baseline/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "02bd02adcd5b95859caf173c8a1710090dddda633f42278f0ee723f8e7881a88"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-01-pgo/after-seed-recheck-pid-2326564.smaps",
+      "bytes": 55896,
+      "sha256": "d787776440edf2a6d877034bf6eb369405a9196a91e790c831248abe85cd59a1"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-01-pgo/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "54f15b251c1f4f203e30a1d5037a3ac2de0f05b3c24af2e6b5d0954977196169"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-01-pgo/after-transfer-pid-2326564.smaps",
+      "bytes": 54407,
+      "sha256": "fd86d3bd3dde800c0da55d5ffc2cd350cfc545d6c4f2b3ce3f80e44fa6ea734b"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-01-pgo/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "22222571a42990766dedc08ae5aa56d0e383b7ed44b9949a00aa834d22b7fbee"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-01-pgo/before-torrent-add-pid-2326564.smaps",
+      "bytes": 41036,
+      "sha256": "510b0c9e102f224cbc4f2f8724d2917496eee5ec2d015a45d3f998613a871a2f"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-01-pgo/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "2427d311712c6efee849cc1634bd26aa6b4f89da2f99ec093b9d94476a4c256f"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-02-baseline/after-seed-recheck-pid-2337254.smaps",
+      "bytes": 56138,
+      "sha256": "57ca1fe3ec460585c5cad82570eb4aee7d762d6ca66c3eb0d0717e2b998cd9c4"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-02-baseline/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "2e8e8ea03c2f051253fc8750db2cfc7b7b5ead44c89af73a6cb30c8ee2fdffd7"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-02-baseline/after-transfer-pid-2337254.smaps",
+      "bytes": 54649,
+      "sha256": "85884ce1f04cccb2259cf8e53be872fb9fa68eed4c26ce72a269876d96e0e677"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-02-baseline/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "0a25ea5c3b9ab2b58328c3691e829330465120791e09084300495232feaead6d"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-02-baseline/before-torrent-add-pid-2337254.smaps",
+      "bytes": 41278,
+      "sha256": "bd07a0611fc1a47b82f31544ff8d0632d3cf5b9abac08492f3b61b9d3de0fdd3"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-02-baseline/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "fcba08c804d9ca995435ea356311548fcf4735e0bd443a0a90843485335e5d79"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-02-pgo/after-seed-recheck-pid-2333756.smaps",
+      "bytes": 55896,
+      "sha256": "725bf029556f6edc3b8320b6a1ed5b565cd5463cc918a48298a21b260434f198"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-02-pgo/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "5a27ffa3463c00164b9015d597df52eadfa49b154e66c0140815e087ccfda26c"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-02-pgo/after-transfer-pid-2333756.smaps",
+      "bytes": 54407,
+      "sha256": "26c7692b39b109c8e21e463be6eadec36d2d48a11c63de77784b9c7450e3de0e"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-02-pgo/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "426895de6e0bd1740bafcda0f0f046bdfa2a4246c7470b8136555d3ca74781e7"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-02-pgo/before-torrent-add-pid-2333756.smaps",
+      "bytes": 41036,
+      "sha256": "848b856cf2150c302324993414bd08ef663ffe09cd40155f6452f248e834ed2d"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-02-pgo/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "9044c47b53a4492304c5aa26ec0bcab0714cc30f0018f73aac16d8ccd49e0760"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-03-baseline/after-seed-recheck-pid-2339146.smaps",
+      "bytes": 56138,
+      "sha256": "fcb4e947ed7f8750cdafffa294c1d089f2928c0f15813f13d66fc2abb2879c34"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-03-baseline/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "f469d165f9975bcfdedd419ce4d11b1a8ff62d7871ce2f33008d3fc9d2b8b17c"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-03-baseline/after-transfer-pid-2339146.smaps",
+      "bytes": 54649,
+      "sha256": "c74ed865226d6af7f42784954ffa772eb03cc5e3aaf21fb7e831c3fcf2f5286a"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-03-baseline/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "0ee6254301d3d5adc5295b96e7098111332655064697f509c9dab9308fd2ed64"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-03-baseline/before-torrent-add-pid-2339146.smaps",
+      "bytes": 41278,
+      "sha256": "d0fc43c84aaa7249c3f6bc99f4df8d9b7437b9e20c926abf3b05a1ed18932db3"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-03-baseline/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "a9846434ee522355267836fd37695c3752982ae5dd5857f7dae8ef386fd2cac7"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-03-pgo/after-seed-recheck-pid-2341392.smaps",
+      "bytes": 55896,
+      "sha256": "75d853481e27be378002bbb93270657bc20afba95ea40f5884d80f4cba333adf"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-03-pgo/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "aa3378a79d032292075d6667912b91ae2031421db91a029e082f095698328b19"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-03-pgo/after-transfer-pid-2341392.smaps",
+      "bytes": 54407,
+      "sha256": "fbddf7c906a22b389aef9c81d138bcc678619b3886dfe1f7c18485e5b14351f6"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-03-pgo/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "5f14965e36c10316ed3bfb1ccb33ff44f3de8f828191ee547a3c691354219ae8"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-03-pgo/before-torrent-add-pid-2341392.smaps",
+      "bytes": 41036,
+      "sha256": "818baf17e20922622181ce7de301ca4ce73a35497baa35496d7625fead283e5f"
+    },
+    {
+      "path": "screen-pgo-128m-3x/diagnostics/run-03-pgo/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "3a84eafc2c851517773aa44c2f6f36a95b35a14eb9ebc62862cd3e6428fb810d"
+    },
+    {
+      "path": "screen-pgo-128m-3x/fixture/fixture.torrent",
+      "bytes": 2658,
+      "sha256": "36c0df549c2aa04cea953575429878979f00ed214f59e94a52b9b9032f290dbc"
+    },
+    {
+      "path": "screen-pgo-128m-3x/logs/run-01-baseline.baseline.client.log",
+      "bytes": 457,
+      "sha256": "064f482e898a20b6820cdbdc4b4149cd86f78a3897501fe8701c12f03bbe3737"
+    },
+    {
+      "path": "screen-pgo-128m-3x/logs/run-01-pgo.pgo.client.log",
+      "bytes": 457,
+      "sha256": "5def6da59c99feaaf802db6554ed788ed0b9c2e3c81e42fe131b9ffd14b0c3bb"
+    },
+    {
+      "path": "screen-pgo-128m-3x/logs/run-02-baseline.baseline.client.log",
+      "bytes": 457,
+      "sha256": "ddd2c6b9382d722d0dd03cae7976984ccdb598b7518f5443624b3c025ef64fd6"
+    },
+    {
+      "path": "screen-pgo-128m-3x/logs/run-02-pgo.pgo.client.log",
+      "bytes": 457,
+      "sha256": "24a8ee56106ac362c15af5d9dc7fcc41e86ffd145f6942174abfc8d867f6e26b"
+    },
+    {
+      "path": "screen-pgo-128m-3x/logs/run-03-baseline.baseline.client.log",
+      "bytes": 457,
+      "sha256": "1e942dacf25122fd5acfc40b2c4a11700e7d8deb45fb39a4194a78fb78e6169b"
+    },
+    {
+      "path": "screen-pgo-128m-3x/logs/run-03-pgo.pgo.client.log",
+      "bytes": 457,
+      "sha256": "a3f4c492508202c5c2a76bfb8bbe3963be4b6c1a6bd9dfe0b2587b166ab4315e"
+    },
+    {
+      "path": "screen-pgo-128m-3x/summary.json",
+      "bytes": 135178,
+      "sha256": "c2db981b95bdf41dd31c838d2811825890754d76e23459ac15d2be467862473b"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-01-baseline/after-seed-recheck-pid-2346797.smaps",
+      "bytes": 56138,
+      "sha256": "f02967a47e4a140179c28b879bb4466132fcbe8ea4a549404dc271fa2905b30a"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-01-baseline/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "eb8d37c14eba363fa43b4961bb15d545470836b24d78894b8487ea0a280c826b"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-01-baseline/after-transfer-pid-2346797.smaps",
+      "bytes": 56138,
+      "sha256": "4302918be3423b65b99867bea0b7998dcea5c61fa14c587d5e3a358e46a19943"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-01-baseline/after-transfer.metrics.prom",
+      "bytes": 63224,
+      "sha256": "d2cb58f50b7156d305599d5791f3fefb6097772292e696f22e198ea7a8aead55"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-01-baseline/before-torrent-add-pid-2346797.smaps",
+      "bytes": 41278,
+      "sha256": "71d949f78e9b356bc097da61b23b2c3e7943a7a21e6a25a77f521cc7c4b53ab5"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-01-baseline/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "a8c4b0c7acae4df7dba0c185f553a03e044e2c7e8e3c4ceaebc1d21b3558db80"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-01-pgo/after-seed-recheck-pid-2351603.smaps",
+      "bytes": 56648,
+      "sha256": "fd7a7e971c9af5a6e55453b25ee20092b6afc55198a3fd719e6c0fbf4408b273"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-01-pgo/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "b3dc05a426ced4a5685c3902e327dd25973e02bd4219992a8ce8f522ea4d1991"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-01-pgo/after-transfer-pid-2351603.smaps",
+      "bytes": 56648,
+      "sha256": "d40dacaf43ed9bb53ef15df2df668badad964f7cb589c24898f0e29f7cfc259e"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-01-pgo/after-transfer.metrics.prom",
+      "bytes": 63222,
+      "sha256": "37995fcd82ceaeda54d778a61f72cc0cf1962784a120ef50ac6d3014b98e0e85"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-01-pgo/before-torrent-add-pid-2351603.smaps",
+      "bytes": 41036,
+      "sha256": "cbd734a07cd99bd10860c1568e859f64431c9e54fea377ed46a7367d7ba686af"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-01-pgo/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "f52d53662dfa94acdcbb4debcf3eb6438dd8cf4fdd3256752ad37c0ec6fc84f6"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-02-baseline/after-seed-recheck-pid-2359913.smaps",
+      "bytes": 56138,
+      "sha256": "feab6cf29d768f9a3329cd989bb05638bafa1ea971733aef512c795ff345ac16"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-02-baseline/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "cc973573eed2b1cfe2d6f3fc598d64829a9b5495e7015ec191a5231db56a538c"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-02-baseline/after-transfer-pid-2359913.smaps",
+      "bytes": 56138,
+      "sha256": "a99341fd4c03ae7b7d61436d20c42d6ef18500d2cdbfcf672345d61551eaf09e"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-02-baseline/after-transfer.metrics.prom",
+      "bytes": 63222,
+      "sha256": "2921232c1f3ca41254b1fa631a5a740454abf24ce9e9d8cfe50117ee14b1f838"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-02-baseline/before-torrent-add-pid-2359913.smaps",
+      "bytes": 41278,
+      "sha256": "35f73e93e66ce131bd3f8f889b985996adae3bca96e76d47b21bf189f0d75657"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-02-baseline/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "765161678568ff48eaf5fcc4ac4bedb9ce84a196c3c35ebba32b7071ac0c6abb"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-02-pgo/after-seed-recheck-pid-2354809.smaps",
+      "bytes": 56648,
+      "sha256": "b0a916d35265870944e8c0b2542659f770589100cb9934b37f3968ffe68fb77f"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-02-pgo/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "f5ca8d3d3073d70257af0e69f2b8fe20192a27e1c1897230238ca1bd3f3ee1e5"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-02-pgo/after-transfer-pid-2354809.smaps",
+      "bytes": 56648,
+      "sha256": "12cf27a3877931d7988e8e49caff0d009a8dd6aff38d1470275c557db36c78ab"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-02-pgo/after-transfer.metrics.prom",
+      "bytes": 63222,
+      "sha256": "7710d3a5f5d9fa2899754b42d7bf22844eb1a3c5a686194f00fa9d93ebf28a3b"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-02-pgo/before-torrent-add-pid-2354809.smaps",
+      "bytes": 41036,
+      "sha256": "8e06ca9b91efa772123621055397efcb38a5850e555c3e15493317bf327f0a1e"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-02-pgo/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "f2113e530cd3eabd33cabbb83536c6c391dfb298a4fd0a2dcdcbdf36f0f47549"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-03-baseline/after-seed-recheck-pid-2363898.smaps",
+      "bytes": 56138,
+      "sha256": "3c29620a6a4e2fc139c50b3d6a5bf8194b064cdd5a4defece358bcacb4a9e334"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-03-baseline/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "f2845b4a028329b7d7afa00d9312513ffb299e5d78894db1089e83bde110a5c8"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-03-baseline/after-transfer-pid-2363898.smaps",
+      "bytes": 56138,
+      "sha256": "5667d1a0cd8b76f1fdf468463250ed99809de4e82860bbee959a973018626b04"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-03-baseline/after-transfer.metrics.prom",
+      "bytes": 63222,
+      "sha256": "54f8cd16d693b548d4226b87e38be95f03def287bc6e9f9be5007f6ac3d3272e"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-03-baseline/before-torrent-add-pid-2363898.smaps",
+      "bytes": 41278,
+      "sha256": "0e79d1c80283a3f64d0cef5a43f376c6c663217cd45261a824630efb75fed1b6"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-03-baseline/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "a0b4612d27bb2a4a0373690c6927cd1e05e96c425405e5b6f93ff45315eb07c0"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-03-pgo/after-seed-recheck-pid-2367612.smaps",
+      "bytes": 57400,
+      "sha256": "6b45bb34e010880c93edfc21d8c2836aa25f30b3a805b3d6df4166c207ab2a8b"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-03-pgo/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "e48b29d3f7e5207d01fbd895eab408a7b1c90a1e1830c6aed3528b3c761afb69"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-03-pgo/after-transfer-pid-2367612.smaps",
+      "bytes": 57400,
+      "sha256": "64ec894a7e41c23eb65ea319ec3be9b6e9d2799048cbcf326bb6677d81053e7d"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-03-pgo/after-transfer.metrics.prom",
+      "bytes": 63224,
+      "sha256": "408a4c79b2b4c17b5e61f478f0fca2d02ff296c6aee0c384303966b210639f08"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-03-pgo/before-torrent-add-pid-2367612.smaps",
+      "bytes": 41036,
+      "sha256": "9ad30918cc81da6e5f50fee6d4127d5e3a5ac613a99d031b0937fab8c1c41b06"
+    },
+    {
+      "path": "screen-pgo-256m-3x/diagnostics/run-03-pgo/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "283928a5a58517e63a5103c51c0adff1b93b9c2220fb0e3b526fcd144d0d9116"
+    },
+    {
+      "path": "screen-pgo-256m-3x/fixture/fixture.torrent",
+      "bytes": 5218,
+      "sha256": "0d7b693cbd17871c6d2058fa4b57317576d742ae345333bb01d86b1acf595a64"
+    },
+    {
+      "path": "screen-pgo-256m-3x/logs/run-01-baseline.baseline.client.log",
+      "bytes": 457,
+      "sha256": "1e7592b785332ee77f2113a002c01e1b72934827ddd5956e8955080f30813f86"
+    },
+    {
+      "path": "screen-pgo-256m-3x/logs/run-01-pgo.pgo.client.log",
+      "bytes": 457,
+      "sha256": "e8b226207f744f265ac2071d1c0af52fa2d18f74f72beeb7ed5a7204f4c4baf6"
+    },
+    {
+      "path": "screen-pgo-256m-3x/logs/run-02-baseline.baseline.client.log",
+      "bytes": 457,
+      "sha256": "011933fbc5bf258f34d2f9ba0d6cb07df6883432fb8036e673125352041d2348"
+    },
+    {
+      "path": "screen-pgo-256m-3x/logs/run-02-pgo.pgo.client.log",
+      "bytes": 457,
+      "sha256": "b336883d0eefe196dc83c244de915b88766bc88bb054997d338c3ea9c0a71670"
+    },
+    {
+      "path": "screen-pgo-256m-3x/logs/run-03-baseline.baseline.client.log",
+      "bytes": 457,
+      "sha256": "30c7c9fa00ded4c911a8a828a87e507bfb7766892a7a1e6ccd9a9e545ca0043b"
+    },
+    {
+      "path": "screen-pgo-256m-3x/logs/run-03-pgo.pgo.client.log",
+      "bytes": 457,
+      "sha256": "d8ae529fa61522073f68cfb17f001969b405a29adf160b72b4b451951db80f1c"
+    },
+    {
+      "path": "screen-pgo-256m-3x/summary.json",
+      "bytes": 188885,
+      "sha256": "14521697f66643569c27d93a5cc297584879398d3d67e04e303b66fed1068e42"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-01-baseline/after-seed-recheck-pid-2776726.smaps",
+      "bytes": 56147,
+      "sha256": "675db2bf0ef78d0c397b24a67403ee2321faf5b61cce4326ebf664201823c74e"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-01-baseline/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "18812d10dd3f31b07a1aafaf2ed6e014e9da5c367b6b533d4942cf4f2f6e0688"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-01-baseline/after-transfer-pid-2776726.smaps",
+      "bytes": 54658,
+      "sha256": "8b9e4c465dea5738e7d4d175e0124162a9a5a78a6cf232b53fe7ff464188d31e"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-01-baseline/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "a81c28275cd67c13b7aea730de2d67cf842fc24bd62ca897c0eaa167955546b5"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-01-baseline/before-torrent-add-pid-2776726.smaps",
+      "bytes": 41287,
+      "sha256": "11ddeb83072ab09fb777e214d4b236d9e1f2a9ab5d545a47aaf70a43c4e61d95"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-01-baseline/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "16f8e90005776946816d0d3251575e3280157c2b9985d8bbac9fe7b1bdf97bd1"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-01-pgo/after-seed-recheck-pid-2780248.smaps",
+      "bytes": 55905,
+      "sha256": "a7777d90876a6923d43713c837257d1fd1ff73ed95b2632562747c98cc349f39"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-01-pgo/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "ac58e606315962b53c5d5a9a2fab9d6e279fbc35503c50eab37652366ba55830"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-01-pgo/after-transfer-pid-2780248.smaps",
+      "bytes": 54416,
+      "sha256": "bd59bf6fc71a2944ed5fdc61de8c5f2c9b9898e29fd1292160955e6cec121290"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-01-pgo/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "13bfb95afe2727789299c48a361169ce5395edeba4b388b302f681157b6e000a"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-01-pgo/before-torrent-add-pid-2780248.smaps",
+      "bytes": 41045,
+      "sha256": "d0322805f2b9854f85b57ac64d571b55ceb4191a3a914489c9265622d4addcd0"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-01-pgo/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "702ccd961004abf98154e91c61e72128bc2073f2259acc8efc8fde256c59a3f3"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-02-baseline/after-seed-recheck-pid-2788584.smaps",
+      "bytes": 56147,
+      "sha256": "f68b03865e6cd742ea059a825a7cc730d3810f8dd8345a9b2e9da81724aebd13"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-02-baseline/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "9c004406de44332e99aa8d516e9e106bf2d915a63d142acd11d68670bc8416af"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-02-baseline/after-transfer-pid-2788584.smaps",
+      "bytes": 54658,
+      "sha256": "6c14a05f916e5664043f1d53a42057be94a35c9d44e11fe70ce2359e53769ecd"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-02-baseline/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "347693f66065434b8c6bdf4b8470e18881af86138cf2c9af7f98e8a3e1c8b65c"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-02-baseline/before-torrent-add-pid-2788584.smaps",
+      "bytes": 41287,
+      "sha256": "fc66893061fafce64218c4c67210e5013e78e815703c97860367c7c8c292bd2e"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-02-baseline/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "a6c13724d104f7b77399ad7ec83c426bd5d11dfba4d71126e7c9e33140cce034"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-02-pgo/after-seed-recheck-pid-2785235.smaps",
+      "bytes": 55905,
+      "sha256": "ec49cc330aff49e7f6664caed793a7397ab0d3a57050ef95b84eb69349a95856"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-02-pgo/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "bb406b0a97c0dc0bad1c12affe853ad98aa2f5135857c55139f8f4d593779bb3"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-02-pgo/after-transfer-pid-2785235.smaps",
+      "bytes": 54416,
+      "sha256": "2c3cd9ea8058066239e27b03759cb5f340fb20e8a2b104453f4db68fef6c2b8b"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-02-pgo/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "e017611cf8cb58931029d5ad140a076b44371c69a104ffc417350350ad084332"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-02-pgo/before-torrent-add-pid-2785235.smaps",
+      "bytes": 41045,
+      "sha256": "96f55a57e48d241ee19812259bacefe1d1b3cebd10a541c3620348f67e189d7a"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-02-pgo/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "d9c88dbc7ee27551448c73e349252b8b01c73867911d1f145e44ed136aada43f"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-03-baseline/after-seed-recheck-pid-2796183.smaps",
+      "bytes": 56899,
+      "sha256": "52917645baada06b1e70e3ae5d8698f160357e43f529e4922f5522556ff54a97"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-03-baseline/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "f3e708462f2bbbe6858e5e1c777da83f65a4986833fba114b83edd6358f12902"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-03-baseline/after-transfer-pid-2796183.smaps",
+      "bytes": 55410,
+      "sha256": "4a10a82929d95cb50560010ba44a87b1399fca5a69df1942ca7d12a0f8fe04f6"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-03-baseline/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "9c27fb725f26b5dd24bbb8cd1540986773f3ebd27ded9de8674d656b16aa475c"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-03-baseline/before-torrent-add-pid-2796183.smaps",
+      "bytes": 41287,
+      "sha256": "e25ef9f2d13e0f3de9a01fde129363b9672e02156cf0eed65cdd8f3e34c9c9b2"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-03-baseline/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "d9e82a89cf41a9e0a28d251148adb7a0d4dbcca5d7fe860d88b46dbd9d4c64ac"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-03-pgo/after-seed-recheck-pid-2790844.smaps",
+      "bytes": 55905,
+      "sha256": "acd059aec66dce66529b3e7874b63db4f53b63e31d868fc7ce08b2356e200b58"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-03-pgo/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "816c8ff5cb3da0888a43ccda6f2c23a7b61927dd657e1d6b96f97e5480bd0133"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-03-pgo/after-transfer-pid-2790844.smaps",
+      "bytes": 54416,
+      "sha256": "bbda49a53583d39ec232bde3a135c7a8e417e267b1566effc71d1b7ea32dd9e9"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-03-pgo/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "e2f7cbb416716359c77ea548a22016c042c094e1368fb9ba1f06c6fff897cab4"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-03-pgo/before-torrent-add-pid-2790844.smaps",
+      "bytes": 41045,
+      "sha256": "19127ed31c7eb93dfd45cad45fe098d72eb4a5a88b934b7fd1eccc850413a45a"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/diagnostics/run-03-pgo/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "5a0cc889f6e4aaf9f10bbc2f8ae97f2148f591bc902abc07407ad2c3cc0933b0"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/fixture/fixture.torrent",
+      "bytes": 2658,
+      "sha256": "36c0df549c2aa04cea953575429878979f00ed214f59e94a52b9b9032f290dbc"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/logs/run-01-baseline.baseline.client.log",
+      "bytes": 457,
+      "sha256": "a12726df05c24b06dc2d00ba87be888dcbbd6a9aa4843144294c87a1db8b71e4"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/logs/run-01-pgo.pgo.client.log",
+      "bytes": 457,
+      "sha256": "a764f0633bee73c8ebce54382ce482e47282a2f1cc892c639beede6ee693533e"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/logs/run-01-rtorrent.rtorrent.client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/logs/run-02-baseline.baseline.client.log",
+      "bytes": 457,
+      "sha256": "2ef0ec651b0d222fa57f84b68b99c1c1c48c80d30afad6873019ad9bf46a4f34"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/logs/run-02-pgo.pgo.client.log",
+      "bytes": 457,
+      "sha256": "5df0df5634903dce7a1cafa94d34ccc1be8b139f9adab8b89c39d1967ebc4715"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/logs/run-02-rtorrent.rtorrent.client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/logs/run-03-baseline.baseline.client.log",
+      "bytes": 457,
+      "sha256": "3660af9d9708e23574973b44180f2a73da8a3a878c4196c4b7a7bb43d75e79d7"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/logs/run-03-pgo.pgo.client.log",
+      "bytes": 457,
+      "sha256": "c6a1599f2526a537363ce92f257e4408abc71449afc177c876b8ee07d4463697"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/logs/run-03-rtorrent.rtorrent.client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen-pgo-rtorrent-128m-3x/summary.json",
+      "bytes": 222839,
+      "sha256": "2b2caba40b64e44465bde487fcedd6d0a8ddbe136c6080bdb6a081eef5486225"
+    },
+    {
+      "path": "screen-pgo-script-rtorrent-64m-1x/logs/run-01-baseline.client.log",
+      "bytes": 457,
+      "sha256": "c9d1900d6c5e77b810621227c5501a6a6e6589f2d5acdc20302621fcaa06465c"
+    },
+    {
+      "path": "screen-pgo-script-rtorrent-64m-1x/logs/run-01-pgo-script.client.log",
+      "bytes": 457,
+      "sha256": "482120495c62cdd3d0ba2c0f7b926083615072e8241bcf4168df0297ed8a5316"
+    },
+    {
+      "path": "screen-pgo-script-rtorrent-64m-1x/logs/run-01-rtorrent.client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen-pgo-script-rtorrent-64m-1x/summary.json",
+      "bytes": 59379,
+      "sha256": "fc308ce0d307d6dcfab99989dfde76b8a118d09538d45bd9a020f8ac5b096ba9"
+    },
+    {
+      "path": "screen-pgo-transfer-only-64m-1x/logs/run-01-baseline-baseline.client.log",
+      "bytes": 457,
+      "sha256": "3fabe961fa1fc9fca5d3ed2bfa220f5f7f447f3a1c62174eb0bc5d8c5a80fcbd"
+    },
+    {
+      "path": "screen-pgo-transfer-only-64m-1x/logs/run-01-pgo_full-pgo_full.client.log",
+      "bytes": 457,
+      "sha256": "5f38d335f4e1f5cc547918d3a404cc5575bb1804814a8e909be6649a1eb68a10"
+    },
+    {
+      "path": "screen-pgo-transfer-only-64m-1x/logs/run-01-pgo_transfer-pgo_transfer.client.log",
+      "bytes": 457,
+      "sha256": "37017ed4d9ae68035cbcdbb3b99a90d1e23bf1e31633b3a0c75306ae091cfc44"
+    },
+    {
+      "path": "screen-pgo-transfer-only-64m-1x/logs/run-01-rtorrent-rtorrent.client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen-pgo-transfer-only-64m-1x/summary.json",
+      "bytes": 69550,
+      "sha256": "52bd7b0355c7ecfd2f12164b5662a8837cafa1ebbb217ef62f7fd483e2d9aa83"
+    },
+    {
+      "path": "screen-pread-vs-uring-64m/logs/run-01-pread-pread.client.log",
+      "bytes": 457,
+      "sha256": "5076795f096f4eb0add3a78cac33ac9981e15ff7f396747b4e401c60a08950cb"
+    },
+    {
+      "path": "screen-pread-vs-uring-64m/logs/run-01-uring-uring.client.log",
+      "bytes": 457,
+      "sha256": "d213218a814ba08151ca2df6f59bd3a96877323cca30dca91219de6cb2992e52"
+    },
+    {
+      "path": "screen-pread-vs-uring-64m/summary.json",
+      "bytes": 44311,
+      "sha256": "b39b8081929667e59ba6548c8f6d9f77d12fecb922b872384052f83332f34726"
+    },
+    {
+      "path": "screen-rtorrent-pgo-baseline-256m-1x/logs/run-01-baseline-baseline.client.log",
+      "bytes": 457,
+      "sha256": "ab965968e41a959d6d2f3b52c6a2de4f99ec08720be02bfe2c96dd74c5fd8482"
+    },
+    {
+      "path": "screen-rtorrent-pgo-baseline-256m-1x/logs/run-01-pgo-pgo.client.log",
+      "bytes": 457,
+      "sha256": "ee0a9bafc4913aee40f15ac2abf2d57a7358a01d3138301776ec85e3745af1ac"
+    },
+    {
+      "path": "screen-rtorrent-pgo-baseline-256m-1x/logs/run-01-rtorrent-rtorrent.client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen-rtorrent-pgo-baseline-256m-1x/summary.json",
+      "bytes": 100990,
+      "sha256": "6bf264da61f791156c2342d3bb95868a726e930cf17d9bb6f219ba1ac9dc5cf2"
+    },
+    {
+      "path": "screen-rtorrent-pgo-baseline-64m-3x/logs/run-01-baseline-baseline.client.log",
+      "bytes": 457,
+      "sha256": "5be5724f4064b9f0da5aeb7534fc6d0d917f0e4815a7177bf10b03c5ee07c2fb"
+    },
+    {
+      "path": "screen-rtorrent-pgo-baseline-64m-3x/logs/run-01-pgo-pgo.client.log",
+      "bytes": 457,
+      "sha256": "53ce855b43f96e9645f7d0cb020b7f671fd5ed3e207ae86ab4153e50faf7fe7a"
+    },
+    {
+      "path": "screen-rtorrent-pgo-baseline-64m-3x/logs/run-01-rtorrent-rtorrent.client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen-rtorrent-pgo-baseline-64m-3x/logs/run-02-baseline-baseline.client.log",
+      "bytes": 457,
+      "sha256": "c09c98ef18d26ee179da3840e412409825ccecd1ca3fc574cb7e3f56ed17ea32"
+    },
+    {
+      "path": "screen-rtorrent-pgo-baseline-64m-3x/logs/run-02-pgo-pgo.client.log",
+      "bytes": 457,
+      "sha256": "a163ca4d68f9e1bcebd490a93f24d0703966ea994b5ed0691a2233fdd37dedd9"
+    },
+    {
+      "path": "screen-rtorrent-pgo-baseline-64m-3x/logs/run-02-rtorrent-rtorrent.client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen-rtorrent-pgo-baseline-64m-3x/logs/run-03-baseline-baseline.client.log",
+      "bytes": 457,
+      "sha256": "4fed9741d61a09f501821ce6b66e44d599651a75eaa73d52f12e47aa2b169c0d"
+    },
+    {
+      "path": "screen-rtorrent-pgo-baseline-64m-3x/logs/run-03-pgo-pgo.client.log",
+      "bytes": 457,
+      "sha256": "81030a32537fed03ce7cbf4a72a8b76e5d9ecf83d94ed00fa23580213c2fbc9e"
+    },
+    {
+      "path": "screen-rtorrent-pgo-baseline-64m-3x/logs/run-03-rtorrent-rtorrent.client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen-rtorrent-pgo-baseline-64m-3x/summary.json",
+      "bytes": 150695,
+      "sha256": "ef336d80f8aeec5d4674f4fd325f08759c8d46a2e1fa3ef6c52c4278f8a01eaf"
+    },
+    {
+      "path": "screen-stream-cache-64m-1x/logs/run-01-pgo_best-pgo_best.client.log",
+      "bytes": 457,
+      "sha256": "950e8b093819f488f4e18719b7a7cb321abf125ef1eb1011de4d69c8297c8160"
+    },
+    {
+      "path": "screen-stream-cache-64m-1x/logs/run-01-rtorrent-rtorrent.client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen-stream-cache-64m-1x/logs/run-01-stream_candidate-stream_candidate.client.log",
+      "bytes": 457,
+      "sha256": "5f797c3d8373d229df6b91cefd0725ac6dd9ae8d217fac6dcf3c0e54d44948cb"
+    },
+    {
+      "path": "screen-stream-cache-64m-1x/summary.json",
+      "bytes": 59060,
+      "sha256": "38d110f9556bd723655ad70d1de15f323ab71a9a6a318564c10eed0a43a6f006"
+    },
+    {
+      "path": "screen-stream-cache-64m-3x/logs/run-01-pgo_best-pgo_best.client.log",
+      "bytes": 457,
+      "sha256": "e0911bc80a39ed427a41b713c2cef59689079386a54581309695a7cc4ad23675"
+    },
+    {
+      "path": "screen-stream-cache-64m-3x/logs/run-01-rtorrent-rtorrent.client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen-stream-cache-64m-3x/logs/run-01-stream_candidate-stream_candidate.client.log",
+      "bytes": 457,
+      "sha256": "0d849df3361bbcee96ad135ff5872befa7286c742c8fc7a5801b12a47e62ec20"
+    },
+    {
+      "path": "screen-stream-cache-64m-3x/logs/run-02-pgo_best-pgo_best.client.log",
+      "bytes": 457,
+      "sha256": "3a8464c4f98fae29260beb2c2e84c0533492ff13daf4d888a16286b83fa9c934"
+    },
+    {
+      "path": "screen-stream-cache-64m-3x/logs/run-02-rtorrent-rtorrent.client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen-stream-cache-64m-3x/logs/run-02-stream_candidate-stream_candidate.client.log",
+      "bytes": 457,
+      "sha256": "96301791a243621b0538808e71f5e2233c7e18e58538a82115563370ae89057c"
+    },
+    {
+      "path": "screen-stream-cache-64m-3x/logs/run-03-pgo_best-pgo_best.client.log",
+      "bytes": 457,
+      "sha256": "a98e8cf6b411f28a533a90c688589b6bfef00514fc4aad185be26af37536b4e7"
+    },
+    {
+      "path": "screen-stream-cache-64m-3x/logs/run-03-rtorrent-rtorrent.client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen-stream-cache-64m-3x/logs/run-03-stream_candidate-stream_candidate.client.log",
+      "bytes": 457,
+      "sha256": "d485eae9c15a31f0162ed235bc17803b81537e1a0af2848558ab3314bc46d8b4"
+    },
+    {
+      "path": "screen-stream-cache-64m-3x/summary.json",
+      "bytes": 174922,
+      "sha256": "9f5f3e7370dfa1dbea5c54e6b7f20f51eb60dd16c1bef653c84c6ace4a80d459"
+    }
+  ],
+  "source_profile": {
+    "path": "pgo-full-training/seed-profile.profdata.gz",
+    "uncompressed_bytes": 23860344,
+    "uncompressed_sha256": "45c1f0352f9fe9f1622b783ced1a48a93269cc2eb79ce77549468e35401fc4ed"
+  }
+}
