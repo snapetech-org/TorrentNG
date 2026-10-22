@@ -1,0 +1,73 @@
+{
+  "all_payload_cleanup_deleted": true,
+  "all_transfers_verified": 12,
+  "build_gate_sha256": "b112aefc1bb827f15a857a6aba60efa26a60d0a8d6aabc37e963e4ecca291d70",
+  "build_toolchain": "rustc 1.97.0 / cargo 1.97.0; thin LTO; system allocator; opt3 candidate uses opt-level=3; size candidate uses opt-level=s",
+  "clients": {
+    "new-opt3-default": {
+      "binary_artifact": "torrentngd-consolidated-opt3-197",
+      "build": "normal opt-level=3",
+      "explicit_test_settings": {},
+      "runtime_default_confirmation": "no runtime override in run manifest; source/default-worker test gate confirms default; warning-level startup log does not print the selected count",
+      "sha256": "3078a818a3b65007f7741b26a284e22205ba07996916f56b05ce5cec68ce8fea"
+    },
+    "new-size-default": {
+      "binary_artifact": "torrentngd-consolidated-size-197",
+      "build": "opt-level=s",
+      "explicit_test_settings": {},
+      "runtime_default_confirmation": "no runtime override in run manifest; source/default-worker test gate confirms default; warning-level startup log does not print the selected count",
+      "sha256": "4aaa587c0953a8a4d73a01c52ea4429cb03699f232d63c6c4fb0d2ef6b407e63"
+    },
+    "old-best-oneworker": {
+      "binary_artifact": "torrentngd-verify-197",
+      "explicit_test_settings": {
+        "tokio_workers": "1"
+      },
+      "sha256": "94a24269b7aefb191be39d7d955c9e25cf93bdacd3914bd6d36756569a356cd0"
+    },
+    "rtorrent": {
+      "binary_artifact": "rtorrent",
+      "explicit_test_settings": {},
+      "sha256": "b7828655feb7fa0b15d6a091d2bdbb0656be88a010d0c59d275d086ef40c61a8",
+      "version": "0.16.25"
+    }
+  },
+  "diagnostic_run": false,
+  "fixture_bytes": 268435456,
+  "full_production_diff_sha256": "5f7cf1e84b4a11cb7f15e48f8b495d065fcab07746e9ade3e3ee2f08cfdf4bad",
+  "main_rate_runtime_diff_sha256": "c40762882b8f16e69994f85db813c91a9e7cbecfa77a819bb49f464cf564c9b2",
+  "offered_rate_bytes_per_second": 4194304,
+  "order_seed": 4,
+  "payload_cleanup": "deleted only after verified transfer and client shutdown",
+  "publication": "Build identities and explicit test settings only; machine paths and environment captures omitted.",
+  "purpose": "Final user-authorized 4-way, 3-round whole-client CPU/RAM comparison; no further performance runs authorized",
+  "randomized_orders": [
+    [
+      "new-size-default",
+      "old-best-oneworker",
+      "rtorrent",
+      "new-opt3-default"
+    ],
+    [
+      "new-size-default",
+      "old-best-oneworker",
+      "new-opt3-default",
+      "rtorrent"
+    ],
+    [
+      "new-opt3-default",
+      "new-size-default",
+      "rtorrent",
+      "old-best-oneworker"
+    ]
+  ],
+  "request_block_bytes": 16384,
+  "request_window": 32,
+  "rounds": 3,
+  "runner_sha256": "05cff349eeb248f41290fdd7e889b4d3946020d1137b914fe2f8e8f24812fc74",
+  "seed": 20261022,
+  "source_base_commit": "a8154943f9bd489d79e84ab13423befb576d2789",
+  "source_commit": "152be9714b4b229194877476023f4061784bc946",
+  "summary_sha256": "46dc29a64b0172a994a2acd48fc378da432a68b785f350337c4e37ccf80aeb5a",
+  "verify_source_diff_sha256": "eebbcaa4010b7bac4e4f0ee55871505e3d3843384c47634dbb613cc44c9d5c26"
+}

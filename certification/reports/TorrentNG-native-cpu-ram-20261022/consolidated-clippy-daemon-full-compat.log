@@ -1,0 +1,4 @@
+    Checking rt-api-transmission v0.1.0 (<checkout>/crates/rt-api-transmission)
+    Checking rt-api-deluge v0.1.0 (<checkout>/crates/rt-api-deluge)
+    Checking torrentngd v0.1.0 (<checkout>/crates/torrentngd)
+    Finished `release` profile [optimized] target(s) in 2.11s
