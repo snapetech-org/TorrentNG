@@ -46,3 +46,10 @@ raw summaries are retained with the results.
 64 KiB `pread` batches with 64 KiB and 1 MiB mmap windows. The 1 MiB mapping
 reduced median read-only CPU by 8.6% in three small pairs; scheduler, socket,
 cold-file, and memory costs were not measured.
+
+`pgo-native-target-screen-20261022/` preserves a profile generated and used
+with the same `target-cpu=native` setting. Its one-round 64 MiB screen lost to
+the retained PGO control on CPU and PSS, while anonymous memory was slightly
+lower. The exact profile, executable, instrumented binary, verified run
+summary, logs, metrics, and compressed process maps are retained; no default
+changed.

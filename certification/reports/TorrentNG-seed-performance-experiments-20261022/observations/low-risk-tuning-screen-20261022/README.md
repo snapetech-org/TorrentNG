@@ -78,10 +78,12 @@ CARGO_PROFILE_RELEASE_OPT_LEVEL=3 cargo +1.94.0 build --locked --release -p torr
 An attempted PGO plus `target-cpu=native` refinement reused the current-source
 portable transfer-window profile. Rust reported control-flow profile
 mismatches in eight functions, including the peer-read cache consumer and
-upload window controller. The build was stopped before producing a binary;
-there is no performance result. Revisit only with a matching native-target
-instrumented profile. The profile SHA-256 was
-`80fda6a6a1da618cfc7e6bf364ea90c6e27d87cc7278bcc6c1fbfea151580b82`.
+upload window controller, so that build was stopped without producing a
+binary. A follow-up trained a matching native-target profile and built cleanly,
+but its one-round whole-client result was worse than the retained PGO control
+on CPU and PSS. The matching profile and result are preserved in
+[`../pgo-native-target-screen-20261022/`](../pgo-native-target-screen-20261022/);
+neither attempt changed release defaults.
 
 ## Diagnostic CPU profile
 
