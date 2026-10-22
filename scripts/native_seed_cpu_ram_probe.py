@@ -85,12 +85,17 @@ def make_fixture(folder: Path, size: int, seed: int):
             out.write(data); digest.update(data); pending.extend(data)
             remaining -= len(data); counter += 1
             while len(pending) >= PIECE:
-                hashes.extend(hashlib.sha1(pending[:PIECE], usedforsecurity=False).digest()); del pending[:PIECE]
-    if pending: hashes.extend(hashlib.sha1(pending, usedforsecurity=False).digest())
+                # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- BEP 3 mandates SHA-1 for torrent piece hashes; this is protocol identity, not a security digest.
+                hashes.extend(hashlib.sha1(pending[:PIECE], usedforsecurity=False).digest())
+                del pending[:PIECE]
+    if pending:
+        # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- BEP 3 mandates SHA-1 for torrent piece hashes; this is protocol identity, not a security digest.
+        hashes.extend(hashlib.sha1(pending, usedforsecurity=False).digest())
     info = {b"length": size, b"name": b"payload.bin", b"piece length": PIECE,
             b"pieces": bytes(hashes), b"private": 1}
     torrent = bencode({b"info": info})
     (folder / "fixture.torrent").write_bytes(torrent)
+    # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- BEP 3 defines the torrent info-hash as SHA-1.
     info_hash = hashlib.sha1(bencode(info), usedforsecurity=False).digest()
     return payload, torrent, info_hash, digest.hexdigest()
 
@@ -449,6 +454,7 @@ def collect_diagnostics(api_port, root_pid, directory, label):
     try:
         request = urllib.request.Request(f"http://127.0.0.1:{api_port}/metrics",
             headers={"Authorization": f"Bearer {TOKEN}"})
+        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- URL host is a generated loopback API port and the route and scheme are fixed.
         with urllib.request.urlopen(request, timeout=15) as response:
             metrics_text = response.read().decode("utf-8", errors="replace")
         metrics_path.write_text(metrics_text)
@@ -556,6 +562,7 @@ def add_torrent(api_port, torrent, save_path):
     body.extend(f"--{boundary}--\r\n".encode())
     req = urllib.request.Request(f"http://127.0.0.1:{api_port}/api/qb/v2/torrents/add", data=body,
         headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": f"multipart/form-data; boundary={boundary}"})
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- URL host is the generated loopback API port; route and scheme are fixed.
     with urllib.request.urlopen(req, timeout=30) as response:
         if response.status >= 300: raise RuntimeError(f"torrent add HTTP {response.status}")
 
@@ -564,6 +571,7 @@ def add_torrent_peer(api_port, info_hash, peer_address):
     body = urllib.parse.urlencode({"hashes": info_hash, "peers": f"{peer_address[0]}:{peer_address[1]}"}).encode()
     request = urllib.request.Request(f"http://127.0.0.1:{api_port}/api/qb/v2/torrents/addPeers", data=body,
         headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/x-www-form-urlencoded"})
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- URL host is the generated loopback API port and route and scheme are fixed.
     with urllib.request.urlopen(request, timeout=15) as response:
         if response.status >= 300: raise RuntimeError(f"manual peer add HTTP {response.status}")
 
@@ -571,6 +579,7 @@ def add_torrent_peer(api_port, info_hash, peer_address):
 def api_json(api_port, path):
     request = urllib.request.Request(f"http://127.0.0.1:{api_port}{path}",
         headers={"Authorization": f"Bearer {TOKEN}"})
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- host and route callers are confined to the probe's local API.
     with urllib.request.urlopen(request, timeout=15) as response:
         return json.loads(response.read())
 
