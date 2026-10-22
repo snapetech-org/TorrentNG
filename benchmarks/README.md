@@ -77,8 +77,9 @@ efficiency screens should continue using local controlled swarms and report
 peer arrival, first payload, active-window cost, and end-to-end completion
 separately. Public swarms remain a separate interoperability check.
 The same screen measured anonymous-memory peaks of 14.5 MiB for TorrentNG and
-3.4 MiB for rTorrent; rTorrent's cgroup current peak was 134.4 MiB, largely
-file cache. These are different memory categories, not a total-RAM win.
+3.4 MiB for rTorrent. rTorrent's Docker working-set peak was 134.4 MiB and its
+cgroup current peak was 140.4 MiB, including about 129 MiB of file cache. These
+are different memory categories, not a total-RAM win.
 
 The modern rTorrent source points to a useful seed-path experiment. At the
 v0.16.25 tags, libtorrent retains a chunk handle when consecutive requests use

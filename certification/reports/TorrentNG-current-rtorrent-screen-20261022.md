@@ -92,6 +92,10 @@ Memory uses the container cgroup and Docker working-set counter, sampled at the 
 | TorrentNG | 3.5 | 2.9 | n/a | n/a | 21.0 | 14.5 | 31.7 | 31.2 | n/a |
 | rTorrent | 3.5 | 2.6 | n/a | n/a | 134.4 | 3.4 | 20.2 | 20.2 | n/a |
 
+For rTorrent, the sampled Docker working-set peak was 134.4 MiB; the cgroup
+current peak was 140.4 MiB. The cgroup file-cache peak was about 129.0 MiB,
+while anonymous memory peaked at 3.4 MiB.
+
 ## CPU and block I/O
 
 Cgroup v2 CPU time and block I/O counters are reported per GiB of observed payload transfer. Public rows use completed-byte progress unless the payload passed its SHA-256 check; seed rows use the leecher's completed-byte progress and count as successful only after its final SHA-256 passes. Block bytes are summed across devices from `io.stat`, so this measures host block traffic charged to the client cgroup, not logical filesystem reads/writes. A page-cache hit does not count as block I/O. `n/a` means fewer than two samples or unavailable cgroup counters.
