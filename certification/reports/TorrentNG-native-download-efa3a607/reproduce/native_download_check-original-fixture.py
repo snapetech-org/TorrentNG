@@ -61,8 +61,8 @@ def check(args):
     piece = hashlib.shake_256(b"native-download-piece-v1").digest(PIECE)
     # BEP 3 requires SHA-1 for torrent piece hashes; this is protocol identity, not security.
     info = {b"length": PIECE * args.pieces, b"name": b"payload.bin", b"piece length": PIECE,
-            b"pieces": hashlib.sha1(piece, usedforsecurity=False).digest() * args.pieces, b"private": 1}
-    info_hash = hashlib.sha1(bencode(info), usedforsecurity=False).digest()
+            b"pieces": hashlib.sha1(piece, usedforsecurity=False).digest() * args.pieces, b"private": 1}  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- BEP 3 mandates SHA-1 for the torrent piece hash.
+    info_hash = hashlib.sha1(bencode(info), usedforsecurity=False).digest()  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- BEP 3 defines the torrent info-hash as SHA-1.
     api_port = port()
     config = output / "config.toml"
     config.write_text(f'''[daemon]
