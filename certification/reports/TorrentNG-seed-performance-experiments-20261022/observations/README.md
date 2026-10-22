@@ -28,3 +28,9 @@ approaches. Its five-pair transfer-window profile screen improved CPU and
 anonymous memory but raised PSS; the one-pair full-process profile screen lost
 on all three resource metrics. Both remain opt-in experiments with exact
 profiles, binaries, summaries, logs, metrics, compressed smaps, and checksums.
+
+`upload-rate-batch-20261022/` preserves a candidate that reserved a bounded
+group of per-block upload-rate grants under one rate-tree lock. Two randomized
+64 MiB screens did not establish a CPU and PSS improvement together, so the
+candidate was not promoted. Its patch, executable, verified summaries, logs,
+metrics, and process maps remain available for future profiling.

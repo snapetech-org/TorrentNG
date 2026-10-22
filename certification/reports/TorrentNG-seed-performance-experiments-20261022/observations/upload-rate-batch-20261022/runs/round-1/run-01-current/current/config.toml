@@ -1,0 +1,18 @@
+[daemon]
+api_bind = "127.0.0.1:41361"
+session_dir = "<task-scratch>/round-1/run-01-current/current/session"
+log_level = "warn"
+
+[network]
+listen_port = 37807
+max_peers = 8
+max_incoming_handshakes = 32
+
+[storage]
+download_dir = "<task-scratch>/round-1/run-01-current/current/download"
+
+[dht]
+enabled = false
+
+[auth]
+api_tokens_file  = "<redacted>"

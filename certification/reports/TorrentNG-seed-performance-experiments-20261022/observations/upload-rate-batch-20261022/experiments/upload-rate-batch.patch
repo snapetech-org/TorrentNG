@@ -1,0 +1,281 @@
+diff --git a/crates/rt-engine/src/network_budget.rs b/crates/rt-engine/src/network_budget.rs
+index 52568cbd..c940addf 100644
+--- a/crates/rt-engine/src/network_budget.rs
++++ b/crates/rt-engine/src/network_budget.rs
+@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
+ use std::sync::{Arc, Mutex, MutexGuard};
+ use std::time::Duration;
+
++use smallvec::SmallVec;
+ use tokio::sync::{mpsc, oneshot, Notify, Semaphore};
+ // tokio's Instant, not std's: it respects the paused/mockable clock that
+ // `#[tokio::test(start_paused = true)]` and `tokio::time::advance()` use.
+@@ -307,6 +308,108 @@ impl GlobalNetworkBudget {
+             .await
+     }
+
++    /// Reserve a bounded group of upload payload grants under one rate-tree
++    /// lock when they are immediately available. A rate-limited remainder
++    /// falls back to the normal per-payload waiter path, preserving the same
++    /// fairness, cancellation, and settlement boundaries as individual
++    /// admissions.
++    pub(crate) async fn acquire_upload_batch(
++        &self,
++        peer_id: RatePeerId,
++        payload_bytes: &[u64],
++        cancellation: &RateLimitCancellation,
++        generation: u64,
++    ) -> anyhow::Result<SmallVec<[Option<RateAdmissionGrant>; 4]>> {
++        anyhow::ensure!(
++            !payload_bytes.is_empty() && payload_bytes.iter().all(|bytes| *bytes > 0),
++            "upload rate batch must contain non-zero payloads"
++        );
++
++        let mut grants = SmallVec::new();
++        if cancellation.generation() != generation {
++            grants.extend(std::iter::repeat_with(|| None).take(payload_bytes.len()));
++            return Ok(grants);
++        }
++
++        let now = self.upload_tree.now();
++        let (grant_ids, granted_count, wake_fairness_waiters, unknown_peer) = {
++            let mut tree = self.upload_tree.lock_tree();
++            let mut grant_ids = SmallVec::<[(u64, u64); 4]>::new();
++            let mut granted_count = 0;
++            let mut unknown_peer = false;
++            for &bytes in payload_bytes {
++                match tree.try_grant_probe_tracked(peer_id, bytes, now) {
++                    (Grant::Granted, Some(grant_id)) => {
++                        grant_ids.push((grant_id, bytes));
++                        granted_count += 1;
++                    }
++                    (Grant::Wait { .. }, _) => break,
++                    (Grant::Unknown, _) => {
++                        unknown_peer = true;
++                        break;
++                    }
++                    (Grant::Granted, None) => {
++                        unreachable!("non-zero upload rate grant has no reservation identity")
++                    }
++                }
++            }
++            let wake_fairness_waiters =
++                granted_count > 0 && tree.has_change_waiters(peer_id.torrent);
++            (
++                grant_ids,
++                granted_count,
++                wake_fairness_waiters,
++                unknown_peer,
++            )
++        };
++
++        if wake_fairness_waiters {
++            self.upload_tree.notify_demand_change(peer_id.torrent);
++        }
++        grants.extend(grant_ids.into_iter().map(|(grant_id, bytes)| {
++            Some(RateAdmissionGrant {
++                scheduler: Arc::clone(&self.upload_tree),
++                peer_id,
++                grant_id,
++                bytes,
++                active: true,
++            })
++        }));
++        if unknown_peer {
++            anyhow::bail!(
++                "rate peer is not registered: torrent={} connection={}.{}",
++                peer_id.torrent.0,
++                peer_id.connection.slot,
++                peer_id.connection.generation
++            );
++        }
++
++        if cancellation.generation() != generation {
++            grants.clear();
++            grants.extend(std::iter::repeat_with(|| None).take(payload_bytes.len()));
++            return Ok(grants);
++        }
++
++        for &bytes in &payload_bytes[granted_count..] {
++            match self
++                .acquire_upload(peer_id, bytes, cancellation, generation)
++                .await
++            {
++                Ok(Some(grant)) => grants.push(Some(grant)),
++                Ok(None) => {
++                    grants.push(None);
++                    grants.extend(
++                        std::iter::repeat_with(|| None)
++                            .take(payload_bytes.len().saturating_sub(grants.len())),
++                    );
++                    break;
++                }
++                Err(error) => return Err(error),
++            }
++        }
++        Ok(grants)
++    }
++
+     pub(crate) async fn acquire_download(
+         &self,
+         peer_id: RatePeerId,
+@@ -1600,6 +1703,79 @@ mod tests {
+         );
+     }
+
++    #[tokio::test(start_paused = true)]
++    async fn immediate_upload_batch_grants_keep_individual_settlement_and_refunds() {
++        const BLOCK: u64 = 16 * 1024;
++        let budget = GlobalNetworkBudget::new(1, None, Some(640 * 1024));
++        let torrent = budget.new_transfer_torrent_key();
++        budget.register_upload_torrent(torrent, None);
++        let peer = rate_peer(torrent, 1);
++        budget.register_transfer_peer(peer);
++        let demand_change_count = budget.upload_tree.demand_changes.lock().unwrap().len();
++        let cancellation = RateLimitCancellation::default();
++        let generation = cancellation.generation();
++        let payloads = [BLOCK; 4];
++
++        let grants = budget
++            .acquire_upload_batch(peer, &payloads, &cancellation, generation)
++            .await
++            .unwrap();
++        assert_eq!(grants.len(), payloads.len());
++        assert!(grants.iter().all(Option::is_some));
++        assert_eq!(budget.upload_tree.next_demand.load(Ordering::Relaxed), 1);
++        assert_eq!(
++            budget.upload_tree.demand_changes.lock().unwrap().len(),
++            demand_change_count
++        );
++        assert_eq!(budget.upload_tree.available_credit_bytes(peer), 0);
++
++        drop(grants);
++        assert_eq!(budget.upload_tree.available_credit_bytes(peer), 64 * 1024);
++
++        let grants = budget
++            .acquire_upload_batch(peer, &payloads, &cancellation, generation)
++            .await
++            .unwrap();
++        for grant in grants.into_iter().flatten() {
++            grant.settle(BLOCK);
++        }
++        assert_eq!(budget.upload_tree.available_credit_bytes(peer), 0);
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn rate_limited_upload_batch_keeps_grants_before_cancellation() {
++        const BLOCK: u64 = 16 * 1024;
++        let budget = GlobalNetworkBudget::new(1, None, Some(1));
++        let torrent = budget.new_transfer_torrent_key();
++        budget.register_upload_torrent(torrent, None);
++        let peer = rate_peer(torrent, 1);
++        budget.register_transfer_peer(peer);
++        let cancellation = RateLimitCancellation::default();
++        let generation = cancellation.generation();
++        let task_budget = budget.clone();
++        let task_cancellation = cancellation.clone();
++        let waiter = tokio::spawn(async move {
++            task_budget
++                .acquire_upload_batch(peer, &[BLOCK; 4], &task_cancellation, generation)
++                .await
++        });
++
++        tokio::task::yield_now().await;
++        tokio::task::yield_now().await;
++        assert!(
++            !waiter.is_finished(),
++            "the remaining grants should be rate limited"
++        );
++        cancellation.cancel();
++        let grants = waiter.await.unwrap().unwrap();
++        assert_eq!(grants.len(), 4);
++        assert!(grants[..2].iter().all(Option::is_some));
++        assert!(grants[2..].iter().all(Option::is_none));
++
++        drop(grants);
++        assert_eq!(budget.upload_tree.available_credit_bytes(peer), 16 * 1024);
++    }
++
+     #[tokio::test(start_paused = true)]
+     async fn retiring_sync_download_demand_unblocks_live_peer_without_removal() {
+         const BLOCK: u64 = 16 * 1024;
+diff --git a/crates/rt-engine/src/torrent_task.rs b/crates/rt-engine/src/torrent_task.rs
+index 4dfb0518..f034300c 100644
+--- a/crates/rt-engine/src/torrent_task.rs
++++ b/crates/rt-engine/src/torrent_task.rs
+@@ -10636,37 +10636,55 @@ async fn upload_read_batch_future(
+                 )),
+             ),
+         };
++        let (mut rate_grants, rate_error) = if error.is_none() {
++            let payload_bytes = blocks
++                .iter()
++                .map(|block| block.data.len() as u64)
++                .collect::<UploadBatch<_>>();
++            match read_context
++                .upload_rate
++                .network_budget
++                .acquire_upload_batch(
++                    read_context.upload_rate.peer,
++                    &payload_bytes,
++                    &read_context.upload_control,
++                    read_context.upload_control.generation(),
++                )
++                .await
++            {
++                Ok(grants) => (Some(grants.into_iter()), None),
++                Err(error) => (None, Some(format!("{error:#}"))),
++            }
++        } else {
++            (None, None)
++        };
+         let mut blocks = blocks.into_iter();
+-        let control_generation = read_context.upload_control.generation();
+         let mut completions = UploadBatch::new();
+         for spec in specs {
+             let result = match error.as_ref() {
+                 Some(message) => Err(anyhow::anyhow!(message.clone())),
++                None if rate_error.is_some() => Err(anyhow::anyhow!(rate_error
++                    .as_ref()
++                    .expect("checked above")
++                    .clone())),
+                 None => blocks
+                     .next()
+                     .ok_or_else(|| anyhow::anyhow!("upload batch lost a completed block")),
+             };
+             match result {
+                 Ok(mut block) => {
+-                    let bytes = block.data.len() as u64;
+-                    let (result, rate_interrupted) = match read_context
+-                        .upload_rate
+-                        .network_budget
+-                        .acquire_upload(
+-                            read_context.upload_rate.peer,
+-                            bytes,
+-                            &read_context.upload_control,
+-                            control_generation,
+-                        )
+-                        .await
+-                    {
+-                        Ok(Some(grant)) => {
+-                            block.rate_grant = Some(grant);
+-                            (Ok(block), false)
+-                        }
+-                        Ok(None) => (Ok(block), true),
+-                        Err(error) => (Err(error), false),
+-                    };
++                    let (result, rate_interrupted) =
++                        match rate_grants.as_mut().and_then(|grants| grants.next()) {
++                            Some(Some(grant)) => {
++                                block.rate_grant = Some(grant);
++                                (Ok(block), false)
++                            }
++                            Some(None) => (Ok(block), true),
++                            None => (
++                                Err(anyhow::anyhow!("upload rate batch lost a payload grant")),
++                                false,
++                            ),
++                        };
+                     completions.push(UploadReadCompletion::Completed {
+                         request: spec.request,
+                         result,

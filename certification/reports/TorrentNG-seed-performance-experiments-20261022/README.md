@@ -2,6 +2,8 @@
 
 **Status:** the measured 16 ms upload-read coalescing window is now the release-source default. Same-source paired screens improved median CPU and memory at both 64 MiB and 128 MiB in the normal release build. PGO remains opt-in; its 64 MiB screen showed an anonymous-memory tradeoff, while its 128 MiB screen improved all three medians. The io_uring startup fix makes the requested backend selectable, but its matched screen still showed a CPU regression and only a small memory reduction.
 
+A bounded batch-rate-admission refactor was screened against the current 16 ms release and rTorrent 0.16.25. It did not establish a CPU and PSS win together and was not promoted; its patch and complete two-screen evidence are in [`observations/upload-rate-batch-20261022/`](observations/upload-rate-batch-20261022/).
+
 The objective remains to meet or beat current rTorrent in both process CPU and memory. These local tests do not reach that objective. The last published whole-client comparison remains the reference: TorrentNG at 1.90 CPU seconds and 19.82 MiB PSS versus rTorrent at 0.73 seconds and 10.74 MiB PSS.
 
 ## Method
@@ -87,6 +89,7 @@ Every rejected or inconsistent source candidate is kept as a patch under [`exper
 | Candidate | Result | Decision |
 |---|---|---|
 | Increase upload batch target to 8 | One 64 MiB round: CPU rose 14.9%, PSS 7.1%, and anonymous peak 8.4% versus baseline. | Reverted; keep [`upload-batch8.patch`](experiments/upload-batch8.patch). |
+| Batch per-block upload-rate admissions under one tree lock | Two randomized one-round 64 MiB screens: median CPU rose 8.3%, PSS 0.8%, and anonymous memory 2.9%; CPU moved in opposite directions in the two rounds. | Not promoted; keep the exact patch, candidate executable, and verified summaries under [`observations/upload-rate-batch-20261022/`](observations/upload-rate-batch-20261022/). |
 | Cache-hit single-lookup refactor | One round looked faster, but the three-round median was 5.801 CPU-s/GiB versus 3.780 for the PGO control; PSS was essentially tied. | Reverted as inconsistent; keep [`cache-hit-single-hash.patch`](experiments/cache-hit-single-hash.patch). |
 | Active stream kept outside the cache map | At 64 MiB under `opt-level=s`, the three-round median improved CPU 16.3% and PSS was tied. At 256 MiB, the single candidate round used 9.8% more CPU with effectively tied PSS. In a refreshed PGO comparison, it was 6.7% slower and used 0.46 MiB more PSS than the PGO control. | Reverted as size/profile dependent; keep [`stream-cache-active.patch`](experiments/stream-cache-active.patch). |
 | Wait for a fourth request before dispatch | The runtime setting disabled the read elevator, so the probe did not exercise batching and is not a scored result. | Do not infer a gain; preserve [`fourth-request-probe.patch`](experiments/fourth-request-probe.patch) for a corrected test. |
