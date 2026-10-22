@@ -62,5 +62,10 @@ LABEL org.opencontainers.image.title="TorrentNG current upstream rTorrent benchm
       org.torrentng.benchmark.debian.snapshot="$DEBIAN_SNAPSHOT"
 
 ENV HOME=/config
+RUN groupadd --gid 1000 torrent \
+    && useradd --uid 1000 --gid 1000 --home-dir /config --shell /usr/sbin/nologin torrent \
+    && mkdir -p /config \
+    && chown torrent:torrent /config
+USER torrent
 ENTRYPOINT ["/usr/local/bin/rtorrent"]
 CMD ["-n", "-o", "import=/etc/rtorrent/rtorrent.rc", "-o", "system.daemon.set=true"]
