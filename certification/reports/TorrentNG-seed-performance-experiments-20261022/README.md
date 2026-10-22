@@ -82,6 +82,22 @@ The second fresh profile counted the full process from startup rather than reset
 
 The existing 16 ms PGO binary used as the control has SHA-256 `8e8522729bdc06b8590995945e87544741370cb66c70eb13576d54f8e378f006`. The new profile-use builds produced no profile-mismatch warnings; this fixes the stale-profile concern but does not fix the PSS tradeoff. Neither screen included rTorrent, so these runs make no new claim about the comparator gap. The earlier best PGO PSS result remains 15.80 MiB and is preserved above. All new profiles, exact instrumented and optimized binaries, training records, paired summaries, logs, metrics, smaps, and checksums are under [`observations/pgo-current-source-16ms-20261022/`](observations/pgo-current-source-16ms-20261022/).
 
+### Matched native-target PGO follow-up
+
+The earlier `target-cpu=native` attempt reused a portable-target profile and was stopped after LLVM reported control-flow mismatches. I trained a new profile with the native target enabled in both the instrumented and profile-use builds. The profile-use build completed without mismatch warnings. This removes the profile mismatch as an explanation for the result, but the candidate still lost the short whole-client screen.
+
+Five clients ran one randomized 64 MiB local seed transfer each, all at 4 MiB/s with the same 16 KiB requests, 32-request window, `pread`, disabled DHT/PEX, and no tracker. Every payload matched SHA-256 `b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901`. The single-round order was PGO control, native-target PGO, release, rTorrent, then portable-target PGO.
+
+| Build | CPU-s/GiB | Peak PSS | Peak anonymous |
+|---|---:|---:|---:|
+| Retained PGO control | 2.812 | 16.37 MiB | 6.33 MiB |
+| Matched native-target PGO | 3.025 (+7.6%) | 18.22 MiB (+11.3%) | 6.00 MiB (-5.2%) |
+| Fresh portable-target PGO | 2.795 (-0.6%) | 18.54 MiB (+13.3%) | 6.50 MiB (+2.7%) |
+| Release | 3.675 | 18.79 MiB | 6.06 MiB |
+| rTorrent 0.16.25 | 2.068 | 7.59 MiB | 3.05 MiB |
+
+The native-target candidate therefore did not improve CPU and PSS together against its PGO control. Its slightly lower anonymous peak is retained as a separate memory observation, but does not offset the CPU and PSS regressions. The run started while `kspld0` was busy (load averages 23.27/20.21/18.89 and about 117 GiB of swap in use), so these one-round values are exploratory rather than a new ranking. The existing release and PGO choices are unchanged. The candidate's optimized and instrumented binaries, raw and merged LLVM profiles, verified summary, logs, metrics, compressed `smaps`, and checksums are retained under [`observations/pgo-native-target-screen-20261022/`](observations/pgo-native-target-screen-20261022/).
+
 ## Source-level candidates and reversions
 
 Every rejected or inconsistent source candidate is kept as a patch under [`experiments/`](experiments/) so it can be revisited without losing its result.
@@ -94,6 +110,39 @@ Every rejected or inconsistent source candidate is kept as a patch under [`exper
 | Active stream kept outside the cache map | At 64 MiB under `opt-level=s`, the three-round median improved CPU 16.3% and PSS was tied. At 256 MiB, the single candidate round used 9.8% more CPU with effectively tied PSS. In a refreshed PGO comparison, it was 6.7% slower and used 0.46 MiB more PSS than the PGO control. | Reverted as size/profile dependent; keep [`stream-cache-active.patch`](experiments/stream-cache-active.patch). |
 | Wait for a fourth request before dispatch | The runtime setting disabled the read elevator, so the probe did not exercise batching and is not a scored result. | Do not infer a gain; preserve [`fourth-request-probe.patch`](experiments/fourth-request-probe.patch) for a corrected test. |
 | io_uring startup and queue-sized ring | The earlier requested arm actually selected `pread`. Direct worker startup now selects io_uring at queue depth 64. A three-round verified comparison found higher CPU with slightly lower PSS and anonymous memory. | Keep the startup correction and explicit backend available; do not promote io_uring as a performance winner or change the default queue depth. Results and invalid attempts are retained under [`observations/io-uring-queue-depth-64/`](observations/io-uring-queue-depth-64/). |
+
+### Allocator and codegen screens
+
+Six one-round randomized, SHA-256-verified 64 MiB screens compared the system
+allocator with jemalloc and two jemalloc refinements, a portable build with
+`target-cpu=native`, and Rust 1.94 with Rust 1.97. None lowered CPU and PSS
+together. Jemalloc used 0.8% more CPU and 14.0% more PSS than the
+system allocator; one arena used 0.4% more CPU and 12.0% more PSS, while
+immediate decay used 6.2% more CPU and 29.7% more PSS. Host-tuned codegen used
+9.2% more CPU for 1.2% lower PSS. Rust 1.97 used 1.2% more CPU and 2.5% more
+PSS. These are one-round screens, not medians; no build default changed. Exact
+candidate executables and raw summaries are retained under
+[`observations/low-risk-tuning-screen-20261022/`](observations/low-risk-tuning-screen-20261022/).
+
+The `opt-level=3` screen reduced CPU by 10.5% against the compact release but
+raised PSS by 14.9%. In that same round, the PGO control used 4.851 CPU-s/GiB
+and 16.25 MiB PSS, versus 6.259 CPU-s/GiB and 21.48 MiB for `opt-level=3`.
+Host load was high, so this remains exploratory and does not replace any
+previous best. A separate mapped-window probe used 8.6% less CPU than already
+batched 64 KiB `pread` reads in a hot data-only test; the result excludes the
+scheduler and socket path and is not a whole-client gain. Both reports and
+raw evidence are retained under
+[`observations/low-risk-tuning-screen-20261022/`](observations/low-risk-tuning-screen-20261022/)
+and [`observations/mapped-window-read-probe-20261022/`](observations/mapped-window-read-probe-20261022/).
+
+An `opt-level=3` candidate reduced CPU by 10.5% against the compact release in
+one 64 MiB round, but raised PSS by 14.9% and lost to the PGO control on both
+CPU and PSS. Host load was high during that screen, so it remains exploratory.
+The exact binary and run summary are retained. A separate hot-file probe found
+that 1 MiB mmap windows reduced median CPU by 8.6% versus already-batched
+64 KiB `pread` reads; this is a read-stage result, not a whole-client gain.
+The profile and raw measurements are under
+[`observations/mapped-window-read-probe-20261022/`](observations/mapped-window-read-probe-20261022/).
 
 ### io_uring startup attribution and measured tradeoff
 

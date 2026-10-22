@@ -3,8 +3,8 @@
   "files": [
     {
       "path": "README.md",
-      "bytes": 2149,
-      "sha256": "5a61dd4e21587ade13f8dbeb5b92e0c908c96154cb825ea12eb0397d2f59e085"
+      "bytes": 3244,
+      "sha256": "4009bcf841ebf9a8b43f0f37419c3efdd7cba67c75e4eb633efd6bb7fdfa1d8b"
     },
     {
       "path": "batch-distribution-16m/logs/run-01-batches-batches.client.log",
@@ -445,6 +445,91 @@
       "path": "io-uring-queue-depth-64/pread-uring-rtorrent-64m-r1/summary.source.json",
       "bytes": 68648,
       "sha256": "c83d50138002bbd3d98e559ea3f9c8b3616d96fce295a5ccb49f892525373043"
+    },
+    {
+      "path": "low-risk-tuning-screen-20261022/README.md",
+      "bytes": 6098,
+      "sha256": "4588e87165ea6821b53ae858e1e3e99895d6c367a362c7862d7ee0752cede9b5"
+    },
+    {
+      "path": "low-risk-tuning-screen-20261022/SHA256SUMS.uncompressed",
+      "bytes": 428,
+      "sha256": "ffdc268759877d9772739b7ef162a80546b7901c45a69342d6503b34cbcddd23"
+    },
+    {
+      "path": "low-risk-tuning-screen-20261022/executables/torrentngd-jemalloc-rust194.gz",
+      "bytes": 8956234,
+      "sha256": "cdcdabf42c3208adabf0b73485b753955a4e69596b822695d884f776141c9a05"
+    },
+    {
+      "path": "low-risk-tuning-screen-20261022/executables/torrentngd-system-rust194-opt-level3.gz",
+      "bytes": 11096392,
+      "sha256": "12c5991efd18e074886c157adf74c2e1292952a8b0d38b9e88fa6b3dc735be17"
+    },
+    {
+      "path": "low-risk-tuning-screen-20261022/executables/torrentngd-system-rust194-target-cpu-native.gz",
+      "bytes": 8832727,
+      "sha256": "8796f33942963c346ada6de618a3069c082e912e59cba6cda28a480d5b2dd49a"
+    },
+    {
+      "path": "low-risk-tuning-screen-20261022/executables/torrentngd-system-rust197.gz",
+      "bytes": 8597595,
+      "sha256": "6e88dee6155c0e6b15eb6c290ba01fa78feb8263dca7cd81cc1fee735e0bca8f"
+    },
+    {
+      "path": "low-risk-tuning-screen-20261022/profile/current-system-256m-payload-window.prof.gz",
+      "bytes": 3666,
+      "sha256": "11f8b3a71df0cb84b78994a2b4f56f332fe9475926e2438b90caed559da3e6cb"
+    },
+    {
+      "path": "low-risk-tuning-screen-20261022/profile/current-system-256m-summary.json",
+      "bytes": 38861,
+      "sha256": "736f62ed5d5ba0464bfeed10a20254769252e319cc817be2cfab24d872776d8c"
+    },
+    {
+      "path": "low-risk-tuning-screen-20261022/runs/rust194-vs-rust197-64m.json",
+      "bytes": 59815,
+      "sha256": "5e496256feb21e55b3e1ee40a0f036b36ab3ce0221b93da897228ba4e5f6d232"
+    },
+    {
+      "path": "low-risk-tuning-screen-20261022/runs/system-vs-jemalloc-64m.json",
+      "bytes": 59851,
+      "sha256": "3c24674410ff51472b29bc8e5372d3008cf35a5895be72d80c49444ab0ec5090"
+    },
+    {
+      "path": "low-risk-tuning-screen-20261022/runs/system-vs-jemalloc-arena1-64m.json",
+      "bytes": 60167,
+      "sha256": "a0e247ea9aebdbc3733a621e00c2ddb2e7380d99665faf554b0fd31ed3d0f902"
+    },
+    {
+      "path": "low-risk-tuning-screen-20261022/runs/system-vs-jemalloc-decay0-64m.json",
+      "bytes": 60232,
+      "sha256": "f342f8e8ba84af0558cb03dd0209f485f13e69cd1dbc0d417dbc03fe126c6c15"
+    },
+    {
+      "path": "low-risk-tuning-screen-20261022/runs/system-vs-native-64m.json",
+      "bytes": 59646,
+      "sha256": "1be27d98f6a7902af59803ffed597bd8caa3d60473ce8ee99124403803eb3807"
+    },
+    {
+      "path": "low-risk-tuning-screen-20261022/runs/system-vs-opt-level3-64m-1x.json",
+      "bytes": 81349,
+      "sha256": "7e3e022a11cf0686b590b545998d6865ae98b58978c6b520ce18486924bfd68e"
+    },
+    {
+      "path": "mapped-window-read-probe-20261022/README.md",
+      "bytes": 2053,
+      "sha256": "1fe4e7ebde27bedc163f4fa18a5652d4e90d43613f5e57d45f40fb745c831edb"
+    },
+    {
+      "path": "mapped-window-read-probe-20261022/mmap_window_probe.c",
+      "bytes": 3365,
+      "sha256": "597e20c8151eff02f928fa6b624f7a3de2b7b6e634f10faca157a55731d3c7d0"
+    },
+    {
+      "path": "mapped-window-read-probe-20261022/results.txt",
+      "bytes": 1564,
+      "sha256": "24b0588c170bfa0430f9664aa242d8534398d2d8bb6921abd78d345a43f76233"
     },
     {
       "path": "pgo-cache-hit-training-64m/logs/run-01-training-training.client.log",
@@ -1167,6 +1252,201 @@
       "sha256": "418255d20546c792adcab41b6b2d89e7e761bd396637ded5a30d13ca412387fe"
     },
     {
+      "path": "pgo-native-target-screen-20261022/README.md",
+      "bytes": 5301,
+      "sha256": "f479832b0c657bc69acb57306b305ebc16430c50c410a05fd4e0be36480989ea"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/SHA256SUMS.uncompressed",
+      "bytes": 434,
+      "sha256": "94dc0c4e177eb848adf33007a48b0b304929c4259792dff3ab081da4f2512c54"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/executables/torrentngd-native-instrumented.gz",
+      "bytes": 16931306,
+      "sha256": "68910b37382c2ec23b4f1143262c550d5151b6871be6236c0986a54a7404bdc3"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/executables/torrentngd-native-pgo.gz",
+      "bytes": 8788620,
+      "sha256": "51d6ec130e87d40e1c1d2d3d2d58aaa3b30fb2fbc5b32a735f6c520f048e79b0"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/profiles/native-transfer.profdata.gz",
+      "bytes": 5074811,
+      "sha256": "d5493f6f28d9eeeb9983275fe0e18f07a53f218a2ccc33ab50d2e6ca18d1df33"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/profiles/transfer-window.profraw.gz",
+      "bytes": 2341924,
+      "sha256": "a30447252768ece9a8462cd634aedaad99a36076732dc010554752bd5c710384"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/fixture.torrent",
+      "bytes": 1377,
+      "sha256": "c3dcc6124dcd3bbb0bc2ead7b754361db71ddef1a98e0094f851cb255e4cf7d7"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/native-pgo/client.log",
+      "bytes": 457,
+      "sha256": "a11bb592db8727ecb28b53cf97050e08be3ef1cbb63808ac089ccf61fb48f496"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/native-pgo/diagnostics/after-seed-recheck-pid-4098665.smaps.gz",
+      "bytes": 2278,
+      "sha256": "35c1344eb342e1f8b1cb8cd54369e98cb24f7052a5c32317e75a82322c265ed3"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/native-pgo/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "bc38248dd9e7682255510df54cf5e6cb9213bbd1eaab5620f38055c29fdaf4b8"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/native-pgo/diagnostics/after-transfer-pid-4098665.smaps.gz",
+      "bytes": 2264,
+      "sha256": "69acc9f980dfe9145f10f2609b24376c09703361b01dc811bfe28042118eee6d"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/native-pgo/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63169,
+      "sha256": "00ae2b59e561d73feb31be779c392dfca39b61a8e4c8b35ac6d018df5e991df7"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/native-pgo/diagnostics/before-torrent-add-pid-4098665.smaps.gz",
+      "bytes": 1991,
+      "sha256": "ba6df7f92bd7ef31bdc6a4d79f70ea91cc13c935e3966be6e7f6e90861f1741c"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/native-pgo/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "2de760aee2b6ad5aa43d4990395e1282f9c36971e858bd20f471d2653f2191d9"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/pgo-control/client.log",
+      "bytes": 457,
+      "sha256": "b9529ca113fc04774d71cbb444f36a3d021342d698c4f974aa31700f3b91f29f"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/pgo-control/diagnostics/after-seed-recheck-pid-4096731.smaps.gz",
+      "bytes": 2278,
+      "sha256": "5ae64bee9b7c66bb5fc1b5e4efcc227b8f9763cc4e9cda2bfbc226cdb7fc0961"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/pgo-control/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "ce4d52241987c9ec1cc1c7826050578841161fb74e1fc90053e51bcbeecd4b9f"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/pgo-control/diagnostics/after-transfer-pid-4096731.smaps.gz",
+      "bytes": 2300,
+      "sha256": "292797aa146cf3bfcb652449bddf911e7aec02f5431996e300cbe29dd2f0f7ff"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/pgo-control/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63169,
+      "sha256": "49c398ce89dd29427a44c7ad96a85e3d5448c7ab3157762d95ec1b80eb6945b9"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/pgo-control/diagnostics/before-torrent-add-pid-4096731.smaps.gz",
+      "bytes": 1994,
+      "sha256": "54e8a5f7f8b4577179f1b9a539f3c4652d4bb6460408ebeae668150221dc5c44"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/pgo-control/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "4788312015f77bf0dffb3501f36ff9f7eba8c62d4440e00a7cb83aea1a527f95"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/portable-pgo/client.log",
+      "bytes": 457,
+      "sha256": "6e91bb4d0a39f4f2bf3cc15e62b53c2fecac0ecafb518966821af6a4f1f16039"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/portable-pgo/diagnostics/after-seed-recheck-pid-4107438.smaps.gz",
+      "bytes": 2302,
+      "sha256": "193d65ff4522798a998e364e7f12d5fdbc1941dbb5638942c5d3613c5231445d"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/portable-pgo/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "0fccbb2032e076c114719d5e8e4e872115022346e4f7c89d566c075ce9412bb3"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/portable-pgo/diagnostics/after-transfer-pid-4107438.smaps.gz",
+      "bytes": 2328,
+      "sha256": "2dc326d1678fd55e5f29101bb5f837b2e72f7b50cac71ac13afd16a5e312caff"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/portable-pgo/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63169,
+      "sha256": "f204dcf2e6d43c9497c37fca7fbe60cf9f2b0e88be192b4ed51deaf5728d9e5f"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/portable-pgo/diagnostics/before-torrent-add-pid-4107438.smaps.gz",
+      "bytes": 2015,
+      "sha256": "17829c4fd13ae05304e2c118f0ca92f2eb3837b286b0c2c6717c7144ad8cc058"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/portable-pgo/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "92e15f9bbcf8392d689ff9c949ffc07e0983db88729b922d98dc0f5b1090baf4"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/release/client.log",
+      "bytes": 457,
+      "sha256": "e47ee3fad9d2dedcd8d3ee664d3575ba9e04b536254efd0828764f4ac7a384ea"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/release/diagnostics/after-seed-recheck-pid-4100299.smaps.gz",
+      "bytes": 2286,
+      "sha256": "0c4607266d58cb3a87d76a5591f9b9c1d18cfd1e7d463f7a81f47e44dff94823"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/release/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "e5c9118c6cc7025a2889e9c8ea350df5769d9f54791e6e078bc5f20253a81969"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/release/diagnostics/after-transfer-pid-4100299.smaps.gz",
+      "bytes": 2281,
+      "sha256": "385ee6e56113236f96007d29d2b066b8d1fdf6980feba9c64143bb915bd222ea"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/release/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63173,
+      "sha256": "d806e9d080de6b108c22022d9b29e3697a6e7fe8a72f43235a1f0592776dbf62"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/release/diagnostics/before-torrent-add-pid-4100299.smaps.gz",
+      "bytes": 1998,
+      "sha256": "0e6b91053498611d060311d0ab194391f5c5f7ebc8388ba7244205062beba0b9"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/release/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "ed12e6feb9693e8440e41a30d712efbe526eb2fd6cc54633eef9fbdc3486adb5"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/screen-64m/summary.json",
+      "bytes": 103084,
+      "sha256": "1c5098ac43cb56fd77cbbe78735222b0e5d02879527825c63aa34447888865f7"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/training-64m/client.log",
+      "bytes": 2212,
+      "sha256": "ddaf546143dbba693cf4b950f63ff819cde9c22b332b43b1e94b595289315fc5"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/training-64m/fixture.torrent",
+      "bytes": 1377,
+      "sha256": "c3dcc6124dcd3bbb0bc2ead7b754361db71ddef1a98e0094f851cb255e4cf7d7"
+    },
+    {
+      "path": "pgo-native-target-screen-20261022/runs/training-64m/summary.json",
+      "bytes": 23643,
+      "sha256": "3a9967028e003699e88044346666159689c8e9e942437413fa63ff1115168083"
+    },
+    {
       "path": "pgo-stream-cache-training-64m/logs/run-01-training-training.client.log",
       "bytes": 2212,
       "sha256": "180a5f02c37b95a286745b6ccc0c4436f401e3b6d1cf61c03ccbeea82422661b"
@@ -1197,6 +1477,16 @@
       "sha256": "2cae7c3d70d23d6031cc2c5ef7041dc8ef94bf4f8a7e6fa1b5e34b69ccd85b00"
     },
     {
+      "path": "screen-cache-hit-64m-1x-launch-failure/logs/run-01-rtorrent-rtorrent.client.log",
+      "bytes": 188,
+      "sha256": "26cb6752a4413fdfd2db8d2b1b5ac6594748156a5812784b047ba71e475f9d5d"
+    },
+    {
+      "path": "screen-cache-hit-64m-1x-launch-failure/summary.json",
+      "bytes": 1114,
+      "sha256": "cfed76a85fc08c2c6a59c22efb026d4f77eeb4707ce24a5e5e2e3731fab38a75"
+    },
+    {
       "path": "screen-cache-hit-64m-1x/logs/run-01-baseline-baseline.client.log",
       "bytes": 457,
       "sha256": "1d67c9f4dce124c74914e5a7aef9eea78d0d1d63ffcb0c87311be684fc42cc80"
@@ -1220,16 +1510,6 @@
       "path": "screen-cache-hit-64m-1x/summary.json",
       "bytes": 80470,
       "sha256": "9ff1dd866afaaa69334a81ce0128058bea1f9fc78d4ce16546216049bbf75bb7"
-    },
-    {
-      "path": "screen-cache-hit-64m-1x-launch-failure/logs/run-01-rtorrent-rtorrent.client.log",
-      "bytes": 188,
-      "sha256": "26cb6752a4413fdfd2db8d2b1b5ac6594748156a5812784b047ba71e475f9d5d"
-    },
-    {
-      "path": "screen-cache-hit-64m-1x-launch-failure/summary.json",
-      "bytes": 1114,
-      "sha256": "cfed76a85fc08c2c6a59c22efb026d4f77eeb4707ce24a5e5e2e3731fab38a75"
     },
     {
       "path": "screen-cache-hit-64m-3x/logs/run-01-baseline-baseline.client.log",

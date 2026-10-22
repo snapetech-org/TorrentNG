@@ -170,6 +170,21 @@ The follow-up upload-rate admission batching refactor also failed to beat the
 16 ms release on CPU and PSS together in two randomized 64 MiB screens. Its
 patch and verified measurements are retained in the same report for later
 profiling.
+Six one-round 64 MiB screens tested jemalloc, allocator refinements,
+`target-cpu=native`, Rust 1.97, and `opt-level=3`. None improved CPU and PSS
+together, so the current system allocator, portable target, and compact
+release profile remain in place. The exact builds, verified summaries, and
+diagnostic profile are in the
+[low-risk tuning screen](certification/reports/TorrentNG-seed-performance-experiments-20261022/observations/low-risk-tuning-screen-20261022/README.md).
+The separate [mapped-window probe](certification/reports/TorrentNG-seed-performance-experiments-20261022/observations/mapped-window-read-probe-20261022/README.md)
+found an 8.6% read-stage CPU reduction against batched `pread`, but no whole-client result.
+I also rebuilt PGO with a profile trained for `target-cpu=native` to avoid the
+control-flow mismatch in the earlier portable-profile attempt. In one matched
+64 MiB screen, it used 7.6% more CPU and 11.3% more PSS than the retained PGO
+control, though anonymous memory was 5.2% lower. All transfers verified, but
+the host was busy and this one-round result is only screening evidence. The
+candidate was not promoted; its exact profile, binaries, and run data are
+preserved in the [native-target PGO screen](certification/reports/TorrentNG-seed-performance-experiments-20261022/observations/pgo-native-target-screen-20261022/README.md).
 
 ## Learn more
 

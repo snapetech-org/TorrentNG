@@ -38,3 +38,22 @@ group of per-block upload-rate grants under one rate-tree lock. Two randomized
 64 MiB screens did not establish a CPU and PSS improvement together, so the
 candidate was not promoted. Its patch, executable, verified summaries, logs,
 metrics, and process maps remain available for future profiling.
+
+`low-risk-tuning-screen-20261022/` preserves six one-round verified 64 MiB
+screens of jemalloc, one-arena and immediate-decay jemalloc refinements,
+host-tuned codegen, Rust 1.97, and `opt-level=3`, plus a 256 MiB diagnostic CPU
+profile of the current system-allocator baseline. None of the candidates
+reduced CPU and PSS together; no release default changed. Exact binaries and
+raw summaries are retained with the results.
+
+`mapped-window-read-probe-20261022/` retains a hot-file microprobe comparing
+64 KiB `pread` batches with 64 KiB and 1 MiB mmap windows. The 1 MiB mapping
+reduced median read-only CPU by 8.6% in three small pairs; scheduler, socket,
+cold-file, and memory costs were not measured.
+
+`pgo-native-target-screen-20261022/` preserves a profile generated and used
+with the same `target-cpu=native` setting. Its one-round 64 MiB screen lost to
+the retained PGO control on CPU and PSS, while anonymous memory was slightly
+lower. The exact profile, executable, instrumented binary, verified run
+summary, logs, metrics, and compressed process maps are retained; no default
+changed.
