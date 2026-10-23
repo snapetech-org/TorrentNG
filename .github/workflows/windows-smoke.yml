@@ -22,6 +22,12 @@ jobs:
   smoke:
     timeout-minutes: 45
     runs-on: windows-latest
+    # The certification evidence contains paths longer than Win32's default
+    # MAX_PATH. Expose Git's long-path setting to checkout and later Git calls.
+    env:
+      GIT_CONFIG_COUNT: 1
+      GIT_CONFIG_KEY_0: core.longpaths
+      GIT_CONFIG_VALUE_0: "true"
     defaults:
       run:
         shell: powershell
