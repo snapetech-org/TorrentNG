@@ -733,7 +733,7 @@ jobs:
                   if (tag ~ stable_tag_pattern && version ~ /^[0-9]{8}-[0-9]+$/) print version "\t" tag
                 }
               ' |
-              sort -t "$(printf '\t')" -k1,1V |
+              sort -V |
               tail -n 1 |
               cut -f2
           )"
