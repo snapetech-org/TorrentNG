@@ -321,7 +321,15 @@ impl Decoder for PeerCodec {
             return Ok(None);
         }
         if self.resources.is_some() && src.capacity() > 0 {
-            self.reserve_capacity(src, src.capacity())?;
+            // A first call may receive a prefilled buffer and must charge it.
+            // After that, completed-frame splits only reduce this capacity;
+            // any later growth is admitted by reserve_capacity before reading.
+            let accounted_capacity = self.memory.as_ref().map_or(0, |memory| {
+                usize::try_from(memory.read_reserved_bytes).unwrap_or(usize::MAX)
+            });
+            if src.capacity() > accounted_capacity {
+                self.reserve_capacity(src, src.capacity())?;
+            }
         }
         let copied_payload_bytes = Message::copied_payload_bytes(&src[4..total]);
         let message_memory_lease = if copied_payload_bytes == 0 {
@@ -697,6 +705,30 @@ mod tests {
             governor.snapshot().classes[MemoryClass::PeerBuffer as usize].denied_allocations,
             1
         );
+    }
+
+    #[test]
+    fn resource_codec_charges_prefilled_complete_frame() {
+        let governor = peer_buffer_governor(64 * 1024);
+        let mut codec = PeerCodec::with_resources(governor.clone());
+        let mut input = encode_msg(Message::Request {
+            piece: 1,
+            begin: 0,
+            length: 16 * 1024,
+        });
+        let input_capacity = input.capacity() as u64;
+
+        assert_eq!(
+            codec.decode(&mut input).unwrap().unwrap(),
+            Message::Request {
+                piece: 1,
+                begin: 0,
+                length: 16 * 1024,
+            }
+        );
+        assert_eq!(governor.snapshot().total_used_bytes, input_capacity);
+        drop(codec);
+        assert_eq!(governor.snapshot().total_used_bytes, 0);
     }
 
     #[test]
