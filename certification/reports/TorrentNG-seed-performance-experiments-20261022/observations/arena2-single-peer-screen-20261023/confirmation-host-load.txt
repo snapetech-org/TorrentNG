@@ -1,0 +1,6 @@
+Host snapshots for the order-balanced arena cap confirmation — 2026-10-23
+
+Before: CPU PSI some avg10/avg60/avg300 = 1.71/2.91/6.05%; full = 0.00%. Load average = 19.13/24.22/24.49.
+After: CPU PSI some avg10/avg60/avg300 = 6.67/7.98/6.70%; full = 0.00%. Load average = 26.83/24.80/24.62.
+
+The six transfers completed and verified, but rising host CPU pressure limits the CPU conclusion.

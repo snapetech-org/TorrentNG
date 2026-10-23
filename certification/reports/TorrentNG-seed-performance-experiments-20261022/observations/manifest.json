@@ -658,8 +658,8 @@
     },
     {
       "path": "arena2-single-peer-screen-20261023/README.md",
-      "bytes": 1877,
-      "sha256": "bfd04a449139a2d015b66932ab24b48320ff5ee313c9ec6e57757d5d57790884"
+      "bytes": 2428,
+      "sha256": "a561b875c88c9a7266559094d06fcbbc1d117cf1609efb7cc864e2adda8fedc5"
     },
     {
       "path": "arena2-single-peer-screen-20261023/host-load.txt",
@@ -8425,6 +8425,21 @@
       "path": "upload-rate-batch-20261022/screen-2/summary.source.json",
       "bytes": 59738,
       "sha256": "3602711cc09010e48df6c51f00275df3605fafd13183191f2bae6d6f7a6dc698"
+    },
+    {
+      "path": "arena2-single-peer-screen-20261023/confirmation-host-load.txt",
+      "bytes": 389,
+      "sha256": "bbb9436f7fa742cea55c95c810834a4ba9703c43e104856b12a4dab68eb61427"
+    },
+    {
+      "path": "arena2-single-peer-screen-20261023/confirmation-summary.json",
+      "bytes": 7786,
+      "sha256": "ee1010a3cd77fc6b920857285a1a2dfdb71504c300435d8676ddf3eecd95530c"
+    },
+    {
+      "path": "arena2-single-peer-screen-20261023/confirmation-validation.txt",
+      "bytes": 694,
+      "sha256": "a9378a4c5c9952d0cb6eea37f5b517eb5c381dd9a33c67d105e29c852847b364"
     }
   ]
 }
