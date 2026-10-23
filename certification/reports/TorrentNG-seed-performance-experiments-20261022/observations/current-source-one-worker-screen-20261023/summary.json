@@ -1,0 +1,151 @@
+{
+  "format": "torrentng-current-source-storage-worker-screen-v1",
+  "engine_source_revision": "39554462",
+  "probe_revision": "1360dc24",
+  "fixture_bytes": 67108864,
+  "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+  "binary_sha256": "b13f157809d98bdc052017f83bd2369685f7221116d8269837120f6af07cd263",
+  "settings": {
+    "offered_rate_bytes_per_second": 4194304,
+    "block_bytes": 16384,
+    "request_window": 32,
+    "storage_backend": "pread",
+    "dht": false,
+    "pex": false,
+    "tracker": false
+  },
+  "pairs": [
+    {
+      "round": 1,
+      "order": [
+        "workers-2",
+        "workers-1"
+      ],
+      "workers_2": {
+        "run": "control-r1",
+        "cpu_seconds_per_gib": 4.18811344,
+        "peak_pss_mib": 18.6455078125,
+        "peak_anonymous_mib": 6.0234375,
+        "verified": true,
+        "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "workers_1": {
+        "run": "oneworker-r1",
+        "cpu_seconds_per_gib": 4.020632736,
+        "peak_pss_mib": 17.58984375,
+        "peak_anonymous_mib": 4.96875,
+        "verified": true,
+        "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "worker_1_delta_percent": {
+        "cpu_seconds_per_gib": -3.9989533807852347,
+        "peak_pss_mib": -5.661760854763526,
+        "peak_anonymous_mib": -17.509727626459142
+      }
+    },
+    {
+      "round": 2,
+      "order": [
+        "workers-1",
+        "workers-2"
+      ],
+      "workers_2": {
+        "run": "control-r2",
+        "cpu_seconds_per_gib": 4.252998944,
+        "peak_pss_mib": 19.3984375,
+        "peak_anonymous_mib": 6.50390625,
+        "verified": true,
+        "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "workers_1": {
+        "run": "oneworker-r2",
+        "cpu_seconds_per_gib": 3.770311536,
+        "peak_pss_mib": 17.75,
+        "peak_anonymous_mib": 5.2421875,
+        "verified": true,
+        "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "worker_1_delta_percent": {
+        "cpu_seconds_per_gib": -11.349342296004105,
+        "peak_pss_mib": -8.497784937575513,
+        "peak_anonymous_mib": -19.3993993993994
+      }
+    },
+    {
+      "round": 3,
+      "order": [
+        "workers-2",
+        "workers-1"
+      ],
+      "workers_2": {
+        "run": "control-r3",
+        "cpu_seconds_per_gib": 3.775456832,
+        "peak_pss_mib": 19.03125,
+        "peak_anonymous_mib": 6.5234375,
+        "verified": true,
+        "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "workers_1": {
+        "run": "oneworker-r3",
+        "cpu_seconds_per_gib": 3.9181936,
+        "peak_pss_mib": 17.6689453125,
+        "peak_anonymous_mib": 5.1875,
+        "verified": true,
+        "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "worker_1_delta_percent": {
+        "cpu_seconds_per_gib": 3.780648921481293,
+        "peak_pss_mib": -7.158251231527093,
+        "peak_anonymous_mib": -20.479041916167663
+      }
+    }
+  ],
+  "aggregate": {
+    "cpu_seconds_per_gib": {
+      "workers_2_median": 4.18811344,
+      "workers_1_median": 3.9181936,
+      "paired_deltas_percent": [
+        -3.9989533807852347,
+        -11.349342296004105,
+        3.780648921481293
+      ],
+      "paired_median_change_percent": -3.9989533807852347,
+      "worker_1_wins": 2
+    },
+    "peak_pss_mib": {
+      "workers_2_median": 19.03125,
+      "workers_1_median": 17.6689453125,
+      "paired_deltas_percent": [
+        -5.661760854763526,
+        -8.497784937575513,
+        -7.158251231527093
+      ],
+      "paired_median_change_percent": -7.158251231527093,
+      "worker_1_wins": 3
+    },
+    "peak_anonymous_mib": {
+      "workers_2_median": 6.50390625,
+      "workers_1_median": 5.1875,
+      "paired_deltas_percent": [
+        -17.509727626459142,
+        -19.3993993993994,
+        -20.479041916167663
+      ],
+      "paired_median_change_percent": -19.3993993993994,
+      "worker_1_wins": 3
+    }
+  },
+  "host_cpu_pressure_snapshots_percent": {
+    "before_screen_some_avg10_avg60_avg300": [
+      1.95,
+      2.05,
+      4.06
+    ],
+    "after_screen_some_avg10_avg60_avg300": [
+      1.5,
+      1.51,
+      3.15
+    ]
+  },
+  "decision": "Promising single-peer configuration option, not a new default. It lowered CPU and both memory measures in the paired medians, but a previous three-peer screen found one worker raised CPU in every round. Need a workload-aware policy or configuration selection before applying globally."
+}

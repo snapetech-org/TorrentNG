@@ -8510,6 +8510,21 @@
       "path": "arena4-single-peer-screen-20261023/validation.txt",
       "bytes": 756,
       "sha256": "93031684fe53c3989ad76c5c0516e46072daa7872ba72774b3fe174871996f97"
+    },
+    {
+      "path": "current-source-one-worker-screen-20261023/README.md",
+      "bytes": 1096,
+      "sha256": "6f4ed22afa400faece6dd7ece9cb56a3d02d8b1e178f69b398de3acec230d542"
+    },
+    {
+      "path": "current-source-one-worker-screen-20261023/summary.json",
+      "bytes": 4712,
+      "sha256": "bdde0dd6eabd1e0d8436bfbc9c9d2052bca83c734ea30b694e3d638ec5beee88"
+    },
+    {
+      "path": "current-source-one-worker-screen-20261023/validation.txt",
+      "bytes": 516,
+      "sha256": "d51c7cc3f4328ad1ba37dde6e3fbb75868f4420baa3a8e7b89dd962e8832dd9d"
     }
   ]
 }
