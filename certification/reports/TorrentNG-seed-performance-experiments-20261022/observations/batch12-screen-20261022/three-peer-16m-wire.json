@@ -1,0 +1,58 @@
+{
+  "status": "complete",
+  "method": "three simultaneous loopback leechers per one seed daemon; each receives the same deterministic fixture at 4 MiB/s; process CPU normalized over total verified bytes",
+  "fixture_bytes_per_peer": 16777216,
+  "peer_count": 3,
+  "total_payload_bytes": 50331648,
+  "fixture_sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3",
+  "info_hash": "bc09795309ae171fe1317fedab7c74c0c9e2fd77",
+  "binary_hashes": {
+    "batch12": "e81e8e64dd6c7c841112a7af02d24d4d67b4d77efab18b80450cd2534f407eb1"
+  },
+  "leecher_rate_bytes_per_second": 4194304,
+  "randomized_order": [
+    "batch12"
+  ],
+  "runs": [
+    {
+      "round": 1,
+      "name": "batch12",
+      "kind": "torrentngd",
+      "binary": "/tmp/torrentng-seed-goal-20261022/batch12-release.torrentngd",
+      "binary_sha256": "e81e8e64dd6c7c841112a7af02d24d4d67b4d77efab18b80450cd2534f407eb1",
+      "environment_overrides": {
+        "TNG_STORAGE_BACKEND": "pread"
+      },
+      "verified_peers": 3,
+      "peer_transfers": [
+        {
+          "bytes": 16777216,
+          "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3",
+          "payload_elapsed_seconds": 4.0000542679918,
+          "elapsed_seconds": 4.595062960986979
+        },
+        {
+          "bytes": 16777216,
+          "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3",
+          "payload_elapsed_seconds": 4.000062183011323,
+          "elapsed_seconds": 4.5953489470120985
+        },
+        {
+          "bytes": 16777216,
+          "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3",
+          "payload_elapsed_seconds": 4.000062865001382,
+          "elapsed_seconds": 4.5946037330140825
+        }
+      ],
+      "total_verified_bytes": 50331648,
+      "elapsed_wall_seconds": 4.597598850989016,
+      "process_cpu_seconds": 0.084866209,
+      "cpu_seconds_per_gib": 1.8104791253333332,
+      "peak_pss_bytes": 19904512,
+      "peak_anonymous_bytes": 6373376,
+      "peak_rss_bytes": 22736896,
+      "samples_count": 19,
+      "sampler_error": []
+    }
+  ]
+}

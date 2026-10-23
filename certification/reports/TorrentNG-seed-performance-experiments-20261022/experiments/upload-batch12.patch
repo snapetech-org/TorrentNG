@@ -1,0 +1,17 @@
+diff --git a/crates/rt-engine/src/torrent_task.rs b/crates/rt-engine/src/torrent_task.rs
+index 16ca80a3..9904723c 100644
+--- a/crates/rt-engine/src/torrent_task.rs
++++ b/crates/rt-engine/src/torrent_task.rs
+@@ -164 +164 @@ const MAX_PENDING_UPLOAD_READS: usize = 16;
+-// This experiment bounds storage reads at 128 KiB: eight legal 16 KiB wire
++// This experiment bounds storage reads at 192 KiB: twelve legal 16 KiB wire
+diff --git a/crates/rt-engine/src/transfer/upload_scheduler.rs b/crates/rt-engine/src/transfer/upload_scheduler.rs
+index f7c93424..ac249df2 100644
+--- a/crates/rt-engine/src/transfer/upload_scheduler.rs
++++ b/crates/rt-engine/src/transfer/upload_scheduler.rs
+@@ -17 +17 @@ use super::rate::RatePeerId;
+-pub(crate) const MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS: usize = 8;
++pub(crate) const MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS: usize = 12;
+@@ -37 +37 @@ impl Default for UploadReadLimits {
+-            max_in_flight_per_connection: 8,
++            max_in_flight_per_connection: 12,

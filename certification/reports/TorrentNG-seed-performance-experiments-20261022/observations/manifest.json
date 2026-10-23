@@ -27,6 +27,41 @@
       "sha256": "f567e1fd0b664ca7a65c762b72a657b339d396de281a36769640f245a592e912"
     },
     {
+      "path": "batch12-screen-20261022/64m-load-after.txt",
+      "bytes": 72,
+      "sha256": "7ee06310c2fcfc323de1126041abef9619d30b19d9f43545a9a0a12c4a137db6"
+    },
+    {
+      "path": "batch12-screen-20261022/64m-load-before.txt",
+      "bytes": 72,
+      "sha256": "20a87671d6eb02d709cd013894e03795b6f503013a1726173c2d4e467a94e158"
+    },
+    {
+      "path": "batch12-screen-20261022/64m-one-round.json",
+      "bytes": 51302,
+      "sha256": "e85d4ff398fb6252cd8c0bea77b226b6db4343c9eefd503a854fa8c4964c7b1f"
+    },
+    {
+      "path": "batch12-screen-20261022/README.md",
+      "bytes": 2429,
+      "sha256": "eddd5c536a6419fc268eb9f71695b2927b32a8e3a9f09849532185217d3b5071"
+    },
+    {
+      "path": "batch12-screen-20261022/batch12-release.torrentngd.gz",
+      "bytes": 9705950,
+      "sha256": "b5d4f701aa9a8785c7d7ff4e439474e0dfbaa09534ab164cb955a8ea62375cc8"
+    },
+    {
+      "path": "batch12-screen-20261022/three-peer-16m-wire.json",
+      "bytes": 2116,
+      "sha256": "ea916d801eadcfb68b0a0d0ee194ebc57f4d266b9279d554fd66e3b65037373e"
+    },
+    {
+      "path": "batch12-screen-20261022/three-peer-16m-wire.py",
+      "bytes": 6177,
+      "sha256": "af12d0e15a2d14a524dad5baf830da334ff3fe3a2b3b66cf45e2c8da00cc2f5e"
+    },
+    {
       "path": "concurrent-arena-cap-screen-20261022/README.md",
       "bytes": 2768,
       "sha256": "e60f5eb70418793504e22e1f44328e465fc46b3e577149f6d1f6a1d776de0054"
@@ -3703,8 +3738,8 @@
     },
     {
       "path": "seed-goal-next-avenues-20261022/README.md",
-      "bytes": 9440,
-      "sha256": "bb71d3b90fec87dc1dc40b0c03fcb527663d5bc88c5b8d7f4dfa1c41736a3f44"
+      "bytes": 9858,
+      "sha256": "d186babaac18f13a010b8bccb6e391c38626e211d43f1cb8c1ca9dc4d2374137"
     },
     {
       "path": "seed-goal-next-avenues-20261022/active-stream-lookup.patch",

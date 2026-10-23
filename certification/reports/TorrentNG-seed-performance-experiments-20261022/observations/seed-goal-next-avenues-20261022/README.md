@@ -89,6 +89,8 @@ A 16-block, 64 ms candidate first failed with BatchTooLarge because the schedule
 
 A 16-block candidate with a shorter 32 ms window used 2% less CPU in one 64 MiB round, but 4.7% more PSS. Neither 16-block variant passes the joint CPU/PSS gate. The production per-connection limit remains eight. Both patches and all three screen summaries are preserved for later refinement.
 
+A 12-block candidate kept the 32 ms window and raised the per-connection limit to twelve. It passed all 769 engine tests and a three-peer 16 MiB SHA-256 wire check, but its one-round 64 MiB comparison used 1.9% more CPU and 2.4% more PSS than the eight-block build while host load was high. It is not promoted; its patch and exact binary are preserved in [`../batch12-screen-20261022/`](../batch12-screen-20261022/).
+
 ## Other screened avenues
 
 - The bounded mapped-range cache passed focused storage and wire tests. Its first two versions had very high CPU in short screens; the third tied CPU within 0.3% but raised PSS by about 0.84 MiB. The mapped-window patch and all three summaries are preserved.
