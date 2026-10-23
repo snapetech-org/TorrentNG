@@ -18,18 +18,19 @@ import tempfile
 import sys
 
 from native_seed_pgo import (validate_profile, workload_args, feature_identity,
-                             feature_args, training_workloads, workload_environment)
+                             feature_args, training_workloads, workload_environment,
+                             optimization_identity, optimization_flags)
 from seed_efficiency_tools import command, manifest, sha256, source_digest, source_provenance, verify_manifest
 
 REPO = Path(__file__).resolve().parents[1]
 
 
-def train(pgo_profile, repo, output, target, corpus, bolt, merge_fdata, client_cpus=None, features="default"):
+def train(pgo_profile, repo, output, target, corpus, bolt, merge_fdata, client_cpus=None, features="default", optimization_level="s"):
     """Build an immutable input and collect the standard four-shape profile."""
     repo, output = Path(repo).resolve(), Path(output).resolve()
     pgo_profile = Path(pgo_profile).resolve()
     features = feature_identity(features)
-    validated_profile = validate_profile(pgo_profile, repo, features)
+    validated_profile = validate_profile(pgo_profile, repo, features, optimization_level)
     before = source_provenance(repo)
     if before["dirty"]:
         raise ValueError("layout training requires a clean source checkout")
@@ -63,7 +64,7 @@ def train(pgo_profile, repo, output, target, corpus, bolt, merge_fdata, client_c
     else:
         shutil.copyfile(profile, cached_profile)
     profile = cached_profile
-    env = {**os.environ, "RUSTFLAGS": "-Cprofile-use=" + str(profile)}
+    env = {**os.environ, "RUSTFLAGS": "-Cprofile-use=" + str(profile) + optimization_flags(optimization_level)}
     with (output / "training.log").open("w") as log:
         def run(argv, stdout=log):
             subprocess.run([str(arg) for arg in argv], cwd=repo, env=env,
@@ -72,7 +73,7 @@ def train(pgo_profile, repo, output, target, corpus, bolt, merge_fdata, client_c
              "--bin", "torrentngd", "--target-dir", target, *feature_args(features), "--", "-Clink-arg=-Wl,--emit-relocs"])
         binary = output / "torrentngd.pgo-relocs"
         shutil.copy2(target / "release/torrentngd", binary)
-        build = manifest(binary, repo, profile, features=features)
+        build = manifest(binary, repo, profile, features=features, optimization_level=optimization_level)
         build["rustflags"] = env["RUSTFLAGS"]
         build.setdefault("build_environment", {})["RUSTFLAGS"] = env["RUSTFLAGS"]
         build["binary_link_args"] = ["-Clink-arg=-Wl,--emit-relocs"]
@@ -103,6 +104,7 @@ def train(pgo_profile, repo, output, target, corpus, bolt, merge_fdata, client_c
     record = {"format": "torrentng-bolt-experiment-v1", "input_binary_sha256": sha256(binary),
               "instrumented_binary_sha256": sha256(instrumented), "profile_sha256": sha256(merged),
               "pgo_profile_sha256": sha256(profile), "training": workloads,
+              "optimization_level": optimization_identity(optimization_level),
               "bolt_version": command(bolt_path, "--version"), "tool_sha256": sha256(bolt_path),
               "merge_tool_sha256": sha256(merge_path)}
     profile_path = output / "bolt-profile.manifest.json"
@@ -149,6 +151,8 @@ def generate(binary, binary_manifest, bolt_profile, profile_manifest, output, bo
     for key, expected in checks.items():
         if training.get(key) != expected:
             raise ValueError(f"BOLT training provenance mismatch: {key}")
+    if optimization_identity(training.get("optimization_level", "s")) != optimization_identity(metadata.get("optimization_level", "s")):
+        raise ValueError("BOLT training provenance mismatch: optimization_level")
     if not training.get("training"):
         raise ValueError("BOLT profile lacks a recorded training corpus")
     sidecar = Path(str(output) + ".manifest.json")
@@ -171,6 +175,7 @@ def generate(binary, binary_manifest, bolt_profile, profile_manifest, output, bo
         "source_digest": metadata["source_digest"], "source_commit": metadata["source_commit"],
         "source_tree": metadata.get("source_tree"), "rustc": metadata["rustc"],
         "features": feature_identity(metadata.get("features", "default")), "pgo_profile_sha256": metadata["profile_sha256"],
+        "optimization_level": optimization_identity(metadata.get("optimization_level", "s")),
         "input_binary_sha256": metadata["binary_sha256"],
         "bolt_profile_sha256": checks["profile_sha256"], "bolt_tool_sha256": checks["tool_sha256"],
         "bolt_version": command(bolt_path, "--version"), "training_corpus": training["training"],
@@ -181,7 +186,7 @@ def generate(binary, binary_manifest, bolt_profile, profile_manifest, output, bo
     return record
 
 
-def validate(order, repo, pgo_profile, build_manifest=None, features="default"):
+def validate(order, repo, pgo_profile, build_manifest=None, features="default", optimization_level="s"):
     order, repo = Path(order).resolve(), Path(repo).resolve()
     data = json.loads(Path(str(order) + ".manifest.json").read_text())
     if data.get("format") != "torrentng-function-order-v1":
@@ -189,18 +194,22 @@ def validate(order, repo, pgo_profile, build_manifest=None, features="default"):
     if data.get("order_sha256") != sha256(order):
         raise ValueError("function order differs from its manifest")
     features = feature_identity(features)
-    profile = validate_profile(pgo_profile, repo, features)
+    profile = validate_profile(pgo_profile, repo, features, optimization_level)
     expected = {"source_digest": source_digest(repo), "rustc": profile["rustc"],
                 "pgo_profile_sha256": profile["profile_sha256"], "features": features}
     for key, value in expected.items():
         if data.get(key) != value:
             raise ValueError(f"function order differs from this build: {key}")
+    if optimization_identity(data.get("optimization_level", "s")) != optimization_identity(optimization_level):
+        raise ValueError("function order differs from this build: optimization_level")
     if build_manifest is not None:
         path = Path(build_manifest)
         build = json.loads(path.read_text())
         verify_manifest(build, build["binary"])
         if feature_identity(build.get("features", "default")) != features:
             raise ValueError("output build differs from function order: features")
+        if optimization_identity(build.get("optimization_level", "s")) != optimization_identity(optimization_level):
+            raise ValueError("output build differs from function order: optimization_level")
         for key in ("source_digest", "rustc"):
             if build.get(key) != data[key]:
                 raise ValueError(f"output build differs from function order: {key}")
@@ -230,6 +239,7 @@ def main():
     collect.add_argument("--merge-fdata", default="merge-fdata-20")
     collect.add_argument("--client-cpus")
     collect.add_argument("--features", default="default")
+    collect.add_argument("--opt-level", choices=("s", "3"), default="s")
     create = sub.add_parser("generate")
     for name in ("binary", "binary-manifest", "bolt-profile", "profile-manifest", "output"):
         create.add_argument("--" + name, type=Path, required=True)
@@ -239,18 +249,19 @@ def main():
     check.add_argument("--repo", type=Path, default=REPO)
     check.add_argument("--pgo-profile", type=Path, required=True)
     check.add_argument("--features", default="default")
+    check.add_argument("--opt-level", choices=("s", "3"), default="s")
     check.add_argument("--build-manifest", type=Path,
                        help="also verify and record the order in a completed build manifest")
     args = parser.parse_args()
     if args.operation == "train":
         print(train(args.pgo_profile, args.repo, args.output, args.target_dir,
-                    args.corpus, args.bolt, args.merge_fdata, args.client_cpus, args.features))
+                    args.corpus, args.bolt, args.merge_fdata, args.client_cpus, args.features, args.opt_level))
     elif args.operation == "generate":
         result = generate(args.binary, args.binary_manifest, args.bolt_profile,
                           args.profile_manifest, args.output, args.bolt)
         print(result["order_sha256"])
     else:
-        validate(args.order, args.repo, args.pgo_profile, args.build_manifest, args.features)
+        validate(args.order, args.repo, args.pgo_profile, args.build_manifest, args.features, args.opt_level)
 
 
 if __name__ == "__main__":

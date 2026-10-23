@@ -59,7 +59,17 @@ def workload_environment(workload, label="training"):
             for arg in ("--client-env", f"{label}:{key}={value}")]
 
 
-def validate_profile(profile, repo=REPO, features="default"):
+def optimization_identity(level):
+    if level not in ("s", "3"):
+        raise ValueError("optimization_level must be s or 3")
+    return level
+
+
+def optimization_flags(level):
+    return " -Copt-level=3" if optimization_identity(level) == "3" else ""
+
+
+def validate_profile(profile, repo=REPO, features="default", optimization_level="s"):
     profile = Path(profile).resolve()
     metadata = json.loads(Path(str(profile) + ".manifest.json").read_text())
     if metadata["source_digest"] != source_digest(repo):
@@ -68,6 +78,8 @@ def validate_profile(profile, repo=REPO, features="default"):
         raise ValueError("PGO training compiler differs from this build")
     if feature_identity(metadata.get("features", "default")) != feature_identity(features):
         raise ValueError("PGO training features differ from this build")
+    if optimization_identity(metadata.get("optimization_level", "s")) != optimization_identity(optimization_level):
+        raise ValueError("PGO training optimization_level differs from this build")
     if profile.suffix == ".gz":
         digest = hashlib.sha256()
         with gzip.open(profile, "rb") as stream:
@@ -94,6 +106,7 @@ def main():
     parser.add_argument("--repeats", type=int, default=10)
     parser.add_argument("--client-cpus")
     parser.add_argument("--features", default="default")
+    parser.add_argument("--opt-level", choices=("s", "3"), default="s")
     parser.add_argument("--target-dir", type=Path, help="reuse an instrumented build cache")
     args = parser.parse_args()
     source_repo = args.repo.resolve()
@@ -101,7 +114,7 @@ def main():
     if args.command == "validate":
         if args.profile is None:
             parser.error("--profile is required")
-        validate_profile(args.profile, source_repo, features)
+        validate_profile(args.profile, source_repo, features, args.opt_level)
         return
     if args.output is None:
         parser.error("--output is required")
@@ -119,6 +132,8 @@ def main():
                     or plain.get("profile_sha256") or not optimized.get("profile_sha256")
                     or plain.get("rustc") != optimized.get("rustc")
                     or plain.get("features") != optimized.get("features")
+                    or optimization_identity(plain.get("optimization_level", "s")) != args.opt_level
+                    or optimization_identity(optimized.get("optimization_level", "s")) != args.opt_level
                     or plain.get("dirty", True) or optimized.get("dirty", True)):
                 parser.error("each clean source requires matching non-PGO and PGO builds")
     output = args.output.resolve()
@@ -136,7 +151,7 @@ def main():
                        or key in {"RUSTFLAGS", "RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER",
                                   "CARGO_BUILD_RUSTC", "CARGO_BUILD_RUSTFLAGS"})):
             parser.error("unset compiler, flag and release-profile overrides before PGO training")
-        environment["RUSTFLAGS"] = f"-Cprofile-generate={profile_dir}"
+        environment["RUSTFLAGS"] = f"-Cprofile-generate={profile_dir}" + optimization_flags(args.opt_level)
         run(["cargo", "+1.97.0", "build", "--locked", "--release", "-p", "torrentngd", "--target-dir", target,
              *feature_args(features)], env=environment, cwd=source_repo)
         binary = target / "release/torrentngd"
@@ -158,7 +173,9 @@ def main():
         profile = output / "seed.profdata"
         run([profdata, "merge", "-o", profile, *profiles])
         if before != source_digest(source_repo): raise RuntimeError("source changed during training")
-        metadata = manifest(binary, source_repo, profile, features=features)
+        metadata = manifest(binary, source_repo, profile, features=features, optimization_level=args.opt_level)
+        metadata["rustflags"] = environment["RUSTFLAGS"]
+        metadata.setdefault("build_environment", {})["RUSTFLAGS"] = environment["RUSTFLAGS"]
         metadata["training_corpus"] = workloads
         metadata["training_binary_sha256"] = sha256(binary)
         metadata["instrumentation_flags"] = environment["RUSTFLAGS"]

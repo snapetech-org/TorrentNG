@@ -239,6 +239,31 @@ retain worker-side path validation and the two-worker default until operation
 counts justify more policy. Arena-one, one-worker, opt-z, and blended PGO profiles
 were rejected tradeoffs in the review and are not promoted by this implementation.
 
+## Explicit compiler optimization experiments
+
+Release defaults remain `opt-level = "s"`. PGO training/validation and function-order
+training/validation accept `--opt-level s|3`, defaulting to `s`. The release helper
+accepts the same selection as its optional sixth argument:
+
+```sh
+python3 scripts/native_seed_pgo.py train --repo /path/to/frozen-source --output /path/to/pgo-opt3 --features seed-mmap --opt-level 3
+python3 scripts/native_seed_function_order.py train --repo /path/to/frozen-source --pgo-profile /path/to/pgo-opt3/seed.profdata --output /path/to/layout-opt3 --features seed-mmap --opt-level 3
+scripts/build_native_pgo_release.sh /path/to/pgo-opt3/seed.profdata /path/to/target /path/to/frozen-source /path/to/layout-opt3/function-order.txt seed-mmap 3
+```
+
+Only `3` adds `-Copt-level=3`; `s` retains the workspace flags unchanged. Compiler
+and inherited Cargo profile overrides remain rejected, even when they agree with
+the requested level. PGO, BOLT input/training, function-order and build manifests
+record `optimization_level`; validation rejects mixed levels. An absent legacy
+field means `s`, never `3`. Separate training is required for each level. Changing
+levels changes Cargo's compiler flags, while content-hashed profile/order paths
+continue to invalidate stale inputs in reused target directories.
+
+This enables a controlled combination of opt-level 3, PGO and function ordering;
+it does not establish that layout offsets opt-level 3's earlier memory regression.
+Qualify CPU and PSS together with matched source, features, workloads and build
+provenance, including API activation and held-out transfer shapes.
+
 ## Historical evidence corrections
 
 The [matched rTorrent follow-up](../certification/reports/TorrentNG-seed-poll-boundary-20261023/README.md)

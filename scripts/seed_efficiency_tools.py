@@ -61,7 +61,9 @@ def source_provenance(repo, kind="torrentngd"):
     }
 
 
-def manifest(binary, repo, profile=None, features="default", kind="torrentngd", dependency_repos=None):
+def manifest(binary, repo, profile=None, features="default", kind="torrentngd", dependency_repos=None, optimization_level="s"):
+    if optimization_level not in ("s", "3"):
+        raise ValueError("optimization_level must be s or 3")
     repo, binary = Path(repo).resolve(), Path(binary).resolve()
     source = source_provenance(repo, kind)
     dependencies = {name: source_provenance(path, "rtorrent")
@@ -86,6 +88,7 @@ def manifest(binary, repo, profile=None, features="default", kind="torrentngd", 
         "cargo": command("cargo", "+1.97.0", "-V") if kind == "torrentngd" else None,
         "cxx": command(os.environ.get("CXX", "c++"), "--version") if kind == "rtorrent" else None,
         "cxxflags": os.environ.get("CXXFLAGS", "") if kind == "rtorrent" else None,
+        "optimization_level": optimization_level if kind == "torrentngd" else None,
         "features": features, "profile_sha256": sha256(profile) if profile else None,
         "rustflags": os.environ.get("RUSTFLAGS", ""),
         "build_environment": {key: value for key, value in os.environ.items()
@@ -211,6 +214,7 @@ def main():
     build.add_argument("--repo", default=Path(__file__).resolve().parents[1])
     build.add_argument("--profile")
     build.add_argument("--features", default="default")
+    build.add_argument("--opt-level", choices=("s", "3"), default="s")
     build.add_argument("--kind", choices=("torrentngd", "rtorrent"), default="torrentngd")
     build.add_argument("--dependency-repo", action="append", default=[], metavar="NAME=PATH",
                        help="record a separately built dependency, e.g. libtorrent=/path/to/source")
@@ -231,7 +235,7 @@ def main():
             if not separator or not name or not path or name in dependencies:
                 parser.error("--dependency-repo requires a unique nonempty NAME=PATH")
             dependencies[name] = path
-        result = manifest(args.binary, args.repo, args.profile, args.features, args.kind, dependencies)
+        result = manifest(args.binary, args.repo, args.profile, args.features, args.kind, dependencies, args.opt_level)
         if args.require_clean and result["dirty"]:
             parser.error("qualified builds require a clean source tree")
     else:

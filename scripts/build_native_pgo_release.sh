@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/build_native_pgo_release.sh PROFILE.profdata[.gz] [TARGET_DIR] [SOURCE_REPO] [FUNCTION_ORDER] [FEATURES]
+Usage: scripts/build_native_pgo_release.sh PROFILE.profdata[.gz] [TARGET_DIR] [SOURCE_REPO] [FUNCTION_ORDER] [FEATURES] [OPT_LEVEL]
 
 Build torrentngd with LLVM profile-guided optimization using the pinned Rust
 toolchain and the workspace's normal release profile. This experimental build
@@ -14,6 +14,8 @@ FUNCTION_ORDER optionally selects a source/compiler/PGO-matched order generated
 by native_seed_function_order.py. It needs its manifest sidecar. This remains
 experimental and requires independent matched CPU/PSS qualification.
 FEATURES defaults to default; pass an empty FUNCTION_ORDER to select only features.
+OPT_LEVEL is s (default workspace profile) or 3 (explicit -Copt-level=3).
+Training, PGO use and optional layout must have the same optimization level.
 EOF
 }
 
@@ -22,7 +24,7 @@ if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
   exit 0
 fi
 
-if [[ $# -lt 1 || $# -gt 5 ]]; then
+if [[ $# -lt 1 || $# -gt 6 ]]; then
   usage >&2
   exit 2
 fi
@@ -51,6 +53,13 @@ source_repo=$(realpath "${3:-$repo_root}")
 profile_input=$(realpath "$1")
 function_order=""
 features=${5:-default}
+optimization_level=${6:-s}
+optimization_flags=""
+case "$optimization_level" in
+  s) ;;
+  3) optimization_flags=" -Copt-level=3" ;;
+  *) echo "OPT_LEVEL must be s or 3" >&2; exit 2 ;;
+esac
 cargo_features=()
 if [[ $features != default ]]; then
   cargo_features=(--features "$features")
@@ -98,10 +107,10 @@ fi
 echo "PGO profile SHA-256: $(sha256sum "$profile_data" | cut -d ' ' -f 1)"
 echo "Target directory: $target_dir"
 cd "$source_repo"
-python3 "$repo_root/scripts/native_seed_pgo.py" validate --profile "$profile_input" --repo "$source_repo" --features "$features"
+python3 "$repo_root/scripts/native_seed_pgo.py" validate --profile "$profile_input" --repo "$source_repo" --features "$features" --opt-level "$optimization_level"
 if [[ -n $function_order ]]; then
   python3 "$repo_root/scripts/native_seed_function_order.py" validate \
-    --order "$function_order" --repo "$source_repo" --pgo-profile "$profile_input" --features "$features"
+    --order "$function_order" --repo "$source_repo" --pgo-profile "$profile_input" --features "$features" --opt-level "$optimization_level"
   order_hash=$(sha256sum "$function_order" | cut -d ' ' -f 1)
   staged_order="$target_dir/torrentng-seed-order-$order_hash.txt"
   if [[ -f $staged_order ]]; then
@@ -111,23 +120,23 @@ if [[ -n $function_order ]]; then
   fi
   cp "$function_order.manifest.json" "$staged_order.manifest.json"
   function_order=$staged_order
-  RUSTFLAGS="-Cprofile-use=$profile_data" \
+  RUSTFLAGS="-Cprofile-use=$profile_data$optimization_flags" \
     cargo +1.97.0 rustc --locked --release -p torrentngd --bin torrentngd --target-dir "$target_dir" "${cargo_features[@]}" -- \
       -Clink-arg=-Wl,--emit-relocs "-Clink-arg=-Wl,--symbol-ordering-file=$function_order"
 else
-  RUSTFLAGS="-Cprofile-use=$profile_data" \
+  RUSTFLAGS="-Cprofile-use=$profile_data$optimization_flags" \
     cargo +1.97.0 build --locked --release -p torrentngd --target-dir "$target_dir" "${cargo_features[@]}"
 fi
 
 echo "torrentngd SHA-256: $(sha256sum "$target_dir/release/torrentngd" | cut -d ' ' -f 1)"
 
-RUSTFLAGS="-Cprofile-use=$profile_data" python3 "$repo_root/scripts/seed_efficiency_tools.py" manifest \
+RUSTFLAGS="-Cprofile-use=$profile_data$optimization_flags" python3 "$repo_root/scripts/seed_efficiency_tools.py" manifest \
   --binary "$target_dir/release/torrentngd" --repo "$source_repo" --profile "$profile_data" \
-  --features "$features" \
+  --features "$features" --opt-level "$optimization_level" \
   --output "$target_dir/release/torrentngd.manifest.json"
 
 if [[ -n $function_order ]]; then
   python3 "$repo_root/scripts/native_seed_function_order.py" validate \
     --order "$function_order" --repo "$source_repo" --pgo-profile "$profile_input" \
-    --build-manifest "$target_dir/release/torrentngd.manifest.json" --features "$features"
+    --build-manifest "$target_dir/release/torrentngd.manifest.json" --features "$features" --opt-level "$optimization_level"
 fi
