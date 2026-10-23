@@ -14,7 +14,7 @@ use tokio::sync::oneshot;
 use super::coords::{BlockExtent, BLOCK_SIZE};
 use super::rate::RatePeerId;
 
-const MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS: usize = 4;
+pub(crate) const MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS: usize = 8;
 
 pub(crate) type UploadReadPermits =
     smallvec::SmallVec<[UploadReadPermit; MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS]>;

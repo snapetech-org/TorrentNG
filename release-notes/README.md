@@ -23,7 +23,15 @@ start with a capitalized sentence, and end with punctuation.
 For internal-only work, no fragment is needed. In a pull request, either select the internal-only
 option in the template or put `release-note: none` on its own line in the description. When a
 direct push or merge check reads commit messages, put the same marker on its own line in the
-commit message. The tag
+commit message. For example, an internal-only direct-push commit can use:
+
+```text
+chore(ci): update validation
+
+release-note: none
+```
+
+The tag
 workflow assembles fragments since the previous published release and uses the
 same text for the GitHub release and Discord announcement. If a release range
 contains no user-facing changes, its release page says so explicitly.
