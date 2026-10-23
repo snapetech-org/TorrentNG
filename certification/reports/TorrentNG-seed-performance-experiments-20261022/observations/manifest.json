@@ -142,6 +142,61 @@
       "sha256": "e7d71ab902a595c3abcb6fa5913cb702233659e0ab6a850facf38b2b623fa76e"
     },
     {
+      "path": "current-thread-runtime-screen-20261022/README.md",
+      "bytes": 1671,
+      "sha256": "801e0558b29ea2983003bf28f9151009a44160bb546f884cbb9e7f4c4f907068"
+    },
+    {
+      "path": "current-thread-runtime-screen-20261022/binary-sha256.txt",
+      "bytes": 218,
+      "sha256": "e66fe404e229741337d383203e2a426a193b05b01174fa6e978a10d0545d7337"
+    },
+    {
+      "path": "current-thread-runtime-screen-20261022/candidate.torrentngd.gz",
+      "bytes": 8838152,
+      "sha256": "298767c8ddb5baf95d948dda3d3379cfc35a25530dbc8f9ee1146b5757c8dfbd"
+    },
+    {
+      "path": "current-thread-runtime-screen-20261022/fixture.torrent",
+      "bytes": 1377,
+      "sha256": "c3dcc6124dcd3bbb0bc2ead7b754361db71ddef1a98e0094f851cb255e4cf7d7"
+    },
+    {
+      "path": "current-thread-runtime-screen-20261022/load-after.txt",
+      "bytes": 35,
+      "sha256": "70e9aa927ca484f66cd3f99cca176666622be9bff00a483c2ca54f8f7672abfc"
+    },
+    {
+      "path": "current-thread-runtime-screen-20261022/load-before.txt",
+      "bytes": 35,
+      "sha256": "20c2d4ffe914a59447a52afcf718c4aac36971eaea433043fcb4210aa6b09c28"
+    },
+    {
+      "path": "current-thread-runtime-screen-20261022/run-01-candidate/client.log",
+      "bytes": 457,
+      "sha256": "9b4f8864fe0836119678b3d00a3cb2adf465f26cb0c4046321eaebcc652cfb5e"
+    },
+    {
+      "path": "current-thread-runtime-screen-20261022/run-01-control/client.log",
+      "bytes": 457,
+      "sha256": "fef242bd7767e7afbc239bbca8ce673ee5afa9928ab1b49e6b928402e5c3b4f1"
+    },
+    {
+      "path": "current-thread-runtime-screen-20261022/run-01-rt/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "current-thread-runtime-screen-20261022/source-revision.txt",
+      "bytes": 41,
+      "sha256": "c50d39ce695261020b56ffb152fe527a592ff4c2d2a9dff50b9061c2682a0e8c"
+    },
+    {
+      "path": "current-thread-runtime-screen-20261022/summary.json",
+      "bytes": 59690,
+      "sha256": "01f999c0124b19d2e4c67ee76df84d51ba13e766578c158504e44912f9064626"
+    },
+    {
       "path": "framed-preflush-screen-20261022/README.md",
       "bytes": 2113,
       "sha256": "0239d65c39d0482290398dca9b91a82d6bf8b6a89370661ca44ec74e9945ec8b"
