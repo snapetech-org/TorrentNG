@@ -1,0 +1,410 @@
+{
+  "format": "torrentng-peer-select-biased-screen-v1",
+  "source_revision": "672e5233fb773b72897511f8d914b9d126dbfe59",
+  "candidate_change": "Add tokio::select! biased; to run_peer_loop_with_upload_future without changing branch order.",
+  "candidate_patch_sha256": "15b8fdbfca72e12a30aa30b6d79762908459dfcc16150a3830295cb2f91373c2",
+  "control_binary_sha256": "844479163668b69bfe378838540dd9973fb60b3a781c237a2eefbd0d33d2fd07",
+  "candidate_binary_sha256": "b5ea9e6bee367b508165bb8bc2eae970d7dedc4da14806f06760cb18be40e3aa",
+  "rtorrent_binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+  "rustc": "1.94.0",
+  "fixture_bytes": 67108864,
+  "fixture_seed": 20261023,
+  "fixture_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8",
+  "backend": "pread",
+  "offered_rate_bytes_per_second": 4194304,
+  "block_bytes": 16384,
+  "request_window": 32,
+  "warmup_seconds": 2,
+  "cooldown_seconds": 2,
+  "cpu_metric": "payload_cpu_seconds_user_system normalized by fixture bytes to CPU-seconds per GiB",
+  "screens": [
+    {
+      "name": "initial_three_way_one_round",
+      "randomized_orders": [
+        [
+          "control",
+          "rtorrent",
+          "biased"
+        ]
+      ],
+      "runs": [
+        {
+          "round": 1,
+          "client": "control",
+          "binary_sha256": "844479163668b69bfe378838540dd9973fb60b3a781c237a2eefbd0d33d2fd07",
+          "cpu_seconds_per_gib": 3.996345168,
+          "peak_pss_mib": 18.5908203125,
+          "peak_anonymous_mib": 5.98828125,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 1,
+          "client": "rtorrent",
+          "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+          "cpu_seconds_per_gib": 2.130031904,
+          "peak_pss_mib": 7.041015625,
+          "peak_anonymous_mib": 3.08984375,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 1,
+          "client": "biased",
+          "binary_sha256": "b5ea9e6bee367b508165bb8bc2eae970d7dedc4da14806f06760cb18be40e3aa",
+          "cpu_seconds_per_gib": 3.504282368,
+          "peak_pss_mib": 18.6376953125,
+          "peak_anonymous_mib": 6.015625,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        }
+      ]
+    },
+    {
+      "name": "three_way_three_rounds",
+      "randomized_orders": [
+        [
+          "biased",
+          "control",
+          "rtorrent"
+        ],
+        [
+          "biased",
+          "control",
+          "rtorrent"
+        ],
+        [
+          "rtorrent",
+          "control",
+          "biased"
+        ]
+      ],
+      "runs": [
+        {
+          "round": 1,
+          "client": "biased",
+          "binary_sha256": "b5ea9e6bee367b508165bb8bc2eae970d7dedc4da14806f06760cb18be40e3aa",
+          "cpu_seconds_per_gib": 3.639481648,
+          "peak_pss_mib": 18.6533203125,
+          "peak_anonymous_mib": 6.05078125,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 1,
+          "client": "control",
+          "binary_sha256": "844479163668b69bfe378838540dd9973fb60b3a781c237a2eefbd0d33d2fd07",
+          "cpu_seconds_per_gib": 3.434568112,
+          "peak_pss_mib": 19.2783203125,
+          "peak_anonymous_mib": 6.44140625,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 1,
+          "client": "rtorrent",
+          "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+          "cpu_seconds_per_gib": 2.310359952,
+          "peak_pss_mib": 7.58203125,
+          "peak_anonymous_mib": 3.08984375,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 2,
+          "client": "biased",
+          "binary_sha256": "b5ea9e6bee367b508165bb8bc2eae970d7dedc4da14806f06760cb18be40e3aa",
+          "cpu_seconds_per_gib": 3.619771664,
+          "peak_pss_mib": 19.0712890625,
+          "peak_anonymous_mib": 6.51953125,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 2,
+          "client": "control",
+          "binary_sha256": "844479163668b69bfe378838540dd9973fb60b3a781c237a2eefbd0d33d2fd07",
+          "cpu_seconds_per_gib": 3.834177264,
+          "peak_pss_mib": 19.2705078125,
+          "peak_anonymous_mib": 6.4921875,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 2,
+          "client": "rtorrent",
+          "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+          "cpu_seconds_per_gib": 1.949704928,
+          "peak_pss_mib": 7.58203125,
+          "peak_anonymous_mib": 3.08984375,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 3,
+          "client": "rtorrent",
+          "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+          "cpu_seconds_per_gib": 2.556058128,
+          "peak_pss_mib": 7.52734375,
+          "peak_anonymous_mib": 3.0859375,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 3,
+          "client": "control",
+          "binary_sha256": "844479163668b69bfe378838540dd9973fb60b3a781c237a2eefbd0d33d2fd07",
+          "cpu_seconds_per_gib": 4.083633344,
+          "peak_pss_mib": 20.0712890625,
+          "peak_anonymous_mib": 7.5078125,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 3,
+          "client": "biased",
+          "binary_sha256": "b5ea9e6bee367b508165bb8bc2eae970d7dedc4da14806f06760cb18be40e3aa",
+          "cpu_seconds_per_gib": 4.173810672,
+          "peak_pss_mib": 19.1923828125,
+          "peak_anonymous_mib": 6.46875,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        }
+      ]
+    },
+    {
+      "name": "balanced_pair_three_rounds",
+      "randomized_orders": [
+        [
+          "control",
+          "biased"
+        ],
+        [
+          "control",
+          "biased"
+        ],
+        [
+          "biased",
+          "control"
+        ]
+      ],
+      "runs": [
+        {
+          "round": 1,
+          "client": "control",
+          "binary_sha256": "844479163668b69bfe378838540dd9973fb60b3a781c237a2eefbd0d33d2fd07",
+          "cpu_seconds_per_gib": 4.140035536,
+          "peak_pss_mib": 18.5595703125,
+          "peak_anonymous_mib": 6.0078125,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 1,
+          "client": "biased",
+          "binary_sha256": "b5ea9e6bee367b508165bb8bc2eae970d7dedc4da14806f06760cb18be40e3aa",
+          "cpu_seconds_per_gib": 3.87693512,
+          "peak_pss_mib": 18.5908203125,
+          "peak_anonymous_mib": 6.03515625,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 2,
+          "client": "control",
+          "binary_sha256": "844479163668b69bfe378838540dd9973fb60b3a781c237a2eefbd0d33d2fd07",
+          "cpu_seconds_per_gib": 3.459283008,
+          "peak_pss_mib": 19.0546875,
+          "peak_anonymous_mib": 6.5,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 2,
+          "client": "biased",
+          "binary_sha256": "b5ea9e6bee367b508165bb8bc2eae970d7dedc4da14806f06760cb18be40e3aa",
+          "cpu_seconds_per_gib": 3.519811792,
+          "peak_pss_mib": 18.5322265625,
+          "peak_anonymous_mib": 6.046875,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 3,
+          "client": "biased",
+          "binary_sha256": "b5ea9e6bee367b508165bb8bc2eae970d7dedc4da14806f06760cb18be40e3aa",
+          "cpu_seconds_per_gib": 3.525806368,
+          "peak_pss_mib": 18.7587890625,
+          "peak_anonymous_mib": 6.03515625,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 3,
+          "client": "control",
+          "binary_sha256": "844479163668b69bfe378838540dd9973fb60b3a781c237a2eefbd0d33d2fd07",
+          "cpu_seconds_per_gib": 3.405231248,
+          "peak_pss_mib": 18.5166015625,
+          "peak_anonymous_mib": 5.96484375,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        }
+      ]
+    },
+    {
+      "name": "alternating_pair_five_rounds",
+      "randomized_orders": [
+        [
+          "control",
+          "biased"
+        ],
+        [
+          "biased",
+          "control"
+        ],
+        [
+          "control",
+          "biased"
+        ],
+        [
+          "biased",
+          "control"
+        ],
+        [
+          "control",
+          "biased"
+        ]
+      ],
+      "runs": [
+        {
+          "round": 1,
+          "client": "control",
+          "binary_sha256": "844479163668b69bfe378838540dd9973fb60b3a781c237a2eefbd0d33d2fd07",
+          "cpu_seconds_per_gib": 3.437936944,
+          "peak_pss_mib": 19.0556640625,
+          "peak_anonymous_mib": 6.453125,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 1,
+          "client": "biased",
+          "binary_sha256": "b5ea9e6bee367b508165bb8bc2eae970d7dedc4da14806f06760cb18be40e3aa",
+          "cpu_seconds_per_gib": 4.875433008,
+          "peak_pss_mib": 18.6767578125,
+          "peak_anonymous_mib": 6.046875,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 2,
+          "client": "biased",
+          "binary_sha256": "b5ea9e6bee367b508165bb8bc2eae970d7dedc4da14806f06760cb18be40e3aa",
+          "cpu_seconds_per_gib": 5.164137808,
+          "peak_pss_mib": 18.8798828125,
+          "peak_anonymous_mib": 6.2421875,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 2,
+          "client": "control",
+          "binary_sha256": "844479163668b69bfe378838540dd9973fb60b3a781c237a2eefbd0d33d2fd07",
+          "cpu_seconds_per_gib": 4.781375904,
+          "peak_pss_mib": 19.0517578125,
+          "peak_anonymous_mib": 6.44921875,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 3,
+          "client": "control",
+          "binary_sha256": "844479163668b69bfe378838540dd9973fb60b3a781c237a2eefbd0d33d2fd07",
+          "cpu_seconds_per_gib": 5.483216096,
+          "peak_pss_mib": 18.8095703125,
+          "peak_anonymous_mib": 6.2578125,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 3,
+          "client": "biased",
+          "binary_sha256": "b5ea9e6bee367b508165bb8bc2eae970d7dedc4da14806f06760cb18be40e3aa",
+          "cpu_seconds_per_gib": 3.907566288,
+          "peak_pss_mib": 18.7666015625,
+          "peak_anonymous_mib": 6.04296875,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 4,
+          "client": "biased",
+          "binary_sha256": "b5ea9e6bee367b508165bb8bc2eae970d7dedc4da14806f06760cb18be40e3aa",
+          "cpu_seconds_per_gib": 3.785175376,
+          "peak_pss_mib": 19.5556640625,
+          "peak_anonymous_mib": 7.0703125,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 4,
+          "client": "control",
+          "binary_sha256": "844479163668b69bfe378838540dd9973fb60b3a781c237a2eefbd0d33d2fd07",
+          "cpu_seconds_per_gib": 3.43393704,
+          "peak_pss_mib": 19.0517578125,
+          "peak_anonymous_mib": 6.5,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 5,
+          "client": "control",
+          "binary_sha256": "844479163668b69bfe378838540dd9973fb60b3a781c237a2eefbd0d33d2fd07",
+          "cpu_seconds_per_gib": 3.291974592,
+          "peak_pss_mib": 19.2314453125,
+          "peak_anonymous_mib": 6.453125,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        },
+        {
+          "round": 5,
+          "client": "biased",
+          "binary_sha256": "b5ea9e6bee367b508165bb8bc2eae970d7dedc4da14806f06760cb18be40e3aa",
+          "cpu_seconds_per_gib": 3.656372544,
+          "peak_pss_mib": 19.1416015625,
+          "peak_anonymous_mib": 6.484375,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8"
+        }
+      ]
+    }
+  ]
+}
