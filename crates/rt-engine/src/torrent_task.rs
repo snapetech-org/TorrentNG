@@ -8856,7 +8856,9 @@ struct PeerLoopStart {
     send_terminal_event_on_peer_channel: bool,
 }
 
-async fn run_peer_loop(
+// Return the driver directly: an async forwarding wrapper retains another
+// copy of its owned arguments alongside the complete child future.
+fn run_peer_loop(
     addr: SocketAddr,
     peer_id: PeerId,
     peer_io: PeerIo,
@@ -8867,7 +8869,7 @@ async fn run_peer_loop(
     // loop returns. The direct loop path can opt into the ordinary event
     // channel when it owns no separate terminal delivery path.
     send_terminal_event_on_peer_channel: bool,
-) -> PeerLoopExit {
+) -> impl std::future::Future<Output = PeerLoopExit> {
     run_peer_loop_with_upload_future(
         PeerLoopStart {
             addr,
@@ -8880,10 +8882,14 @@ async fn run_peer_loop(
         },
         upload_read_batch_future,
     )
-    .await
 }
 
-async fn run_peer_loop_with_upload_future<MakeUploadReadFuture, F>(
+// Destructure startup outside the coroutine so only its fields are captured;
+// the moved PeerLoopStart container need not remain in the suspended frame.
+// Rust 1.97 x86_64 layout: direct capture reduces this driver from
+// 6,400 to 5,464 bytes. Keep the explicit capture boundary.
+#[allow(clippy::manual_async_fn)]
+fn run_peer_loop_with_upload_future<MakeUploadReadFuture, F>(
     PeerLoopStart {
         addr,
         peer_id,
@@ -8894,75 +8900,76 @@ async fn run_peer_loop_with_upload_future<MakeUploadReadFuture, F>(
         send_terminal_event_on_peer_channel,
     }: PeerLoopStart,
     make_upload_read_future: MakeUploadReadFuture,
-) -> PeerLoopExit
+) -> impl std::future::Future<Output = PeerLoopExit>
 where
     MakeUploadReadFuture:
         Fn(UploadBatch<UploadReadSpec>, Arc<UploadReadContext>) -> F + Copy + Send + 'static,
     F: std::future::Future<Output = UploadBatchCompletion> + Send + 'static,
 {
-    let mut outstanding = Vec::<OutstandingRequest>::new();
-    let upload_service = upload.upload_rate.network_budget.upload_service();
-    let upload_obligations = match upload_service.register(
-        upload.upload_rate.peer,
-        upload.fast_negotiated,
-        MAX_UPLOAD_WORK,
-    ) {
-        Ok(connection) => connection,
-        Err(error) => {
-            return PeerLoopExit {
-                result: Err(anyhow::anyhow!(
-                    "registering shared upload service: {error:?}"
-                )),
-                outstanding: drain_outstanding(&mut outstanding),
-            };
-        }
-    };
-    // These fields are stable for the peer's lifetime. Keep one shared
-    // context for every in-flight block instead of cloning the path, storage
-    // scheduler, resource governor, rate handle, and read-admission handle
-    // each time the peer loop refills its upload queue.
-    let upload_read_context = Arc::new(UploadReadContext {
-        #[cfg(all(target_os = "linux", feature = "seed-mmap"))]
-        mapped_upload: matches!(&peer_io, PeerIo::Tcp(_)),
-        save_root: upload.save_root.clone(),
-        piece_map: upload.piece_map.clone(),
-        hybrid_v2: upload.hybrid_v2.clone(),
-        plane: upload.plane,
-        storage: upload.storage.clone(),
-        resources: upload.resources.clone(),
-        upload_control: upload.upload_control.clone(),
-        upload_rate: upload.upload_rate.clone(),
-        read_admission: upload_obligations.read_admission(),
-    });
-    // BEP 10 extension ids are negotiated per peer. The id in our outgoing
-    // handshake is the id this loop receives from the peer; responses must
-    // use the peer's advertised id rather than our local id.
-    let mut remote_ut_metadata_id = None;
-    let mut download_choked = true;
-    let mut upload_choked = true;
-    let mut timeout_tick = interval(Duration::from_secs(5));
-    let mut last_activity = Instant::now();
-    // Disk reads are scheduled through the bounded mount scheduler, but the
-    // peer loop must not await one read inline: a slow device otherwise
-    // prevents it from processing choke/shutdown/input messages. Keep their
-    // futures in the select loop instead of spawning a Tokio task per block.
-    let mut upload_reads = UploadReadTasks::<UploadBatchCompletion>::default();
-    let mut upload_dispatch_pending = false;
-    let mut upload_intake_messages = 0usize;
-    let mut upload_pipeline_width = 1usize;
-    let mut upload_coalescing_expired = false;
-    let upload_coalescing_flush = sleep(UPLOAD_READ_COALESCE_MAX_DELAY);
-    tokio::pin!(upload_coalescing_flush);
-    let mut deferred_peer_message: Option<anyhow::Result<Option<Message>>> = None;
-    // Protocol obligations are process-owned by generation-safe connection
-    // identity. The socket loop retains the only writer and upload-read futures.
-    let mut upload_request_drops = 0u64;
-    let mut download_generation = 0u64;
-    let mut upload_accounting_batch = UploadAccountingBatch::default();
-    let upload_accounting_flush = sleep(UPLOAD_ACCOUNTING_MAX_DELAY);
-    tokio::pin!(upload_accounting_flush);
+    async move {
+        let mut outstanding = Vec::<OutstandingRequest>::new();
+        let upload_service = upload.upload_rate.network_budget.upload_service();
+        let upload_obligations = match upload_service.register(
+            upload.upload_rate.peer,
+            upload.fast_negotiated,
+            MAX_UPLOAD_WORK,
+        ) {
+            Ok(connection) => connection,
+            Err(error) => {
+                return PeerLoopExit {
+                    result: Err(anyhow::anyhow!(
+                        "registering shared upload service: {error:?}"
+                    )),
+                    outstanding: drain_outstanding(&mut outstanding),
+                };
+            }
+        };
+        // These fields are stable for the peer's lifetime. Keep one shared
+        // context for every in-flight block instead of cloning the path, storage
+        // scheduler, resource governor, rate handle, and read-admission handle
+        // each time the peer loop refills its upload queue.
+        let upload_read_context = Arc::new(UploadReadContext {
+            #[cfg(all(target_os = "linux", feature = "seed-mmap"))]
+            mapped_upload: matches!(&peer_io, PeerIo::Tcp(_)),
+            save_root: upload.save_root.clone(),
+            piece_map: upload.piece_map.clone(),
+            hybrid_v2: upload.hybrid_v2.clone(),
+            plane: upload.plane,
+            storage: upload.storage.clone(),
+            resources: upload.resources.clone(),
+            upload_control: upload.upload_control.clone(),
+            upload_rate: upload.upload_rate.clone(),
+            read_admission: upload_obligations.read_admission(),
+        });
+        // BEP 10 extension ids are negotiated per peer. The id in our outgoing
+        // handshake is the id this loop receives from the peer; responses must
+        // use the peer's advertised id rather than our local id.
+        let mut remote_ut_metadata_id = None;
+        let mut download_choked = true;
+        let mut upload_choked = true;
+        let mut timeout_tick = interval(Duration::from_secs(5));
+        let mut last_activity = Instant::now();
+        // Disk reads are scheduled through the bounded mount scheduler, but the
+        // peer loop must not await one read inline: a slow device otherwise
+        // prevents it from processing choke/shutdown/input messages. Keep their
+        // futures in the select loop instead of spawning a Tokio task per block.
+        let mut upload_reads = UploadReadTasks::<UploadBatchCompletion>::default();
+        let mut upload_dispatch_pending = false;
+        let mut upload_intake_messages = 0usize;
+        let mut upload_pipeline_width = 1usize;
+        let mut upload_coalescing_expired = false;
+        let upload_coalescing_flush = sleep(UPLOAD_READ_COALESCE_MAX_DELAY);
+        tokio::pin!(upload_coalescing_flush);
+        let mut deferred_peer_message: Option<anyhow::Result<Option<Message>>> = None;
+        // Protocol obligations are process-owned by generation-safe connection
+        // identity. The socket loop retains the only writer and upload-read futures.
+        let mut upload_request_drops = 0u64;
+        let mut download_generation = 0u64;
+        let mut upload_accounting_batch = UploadAccountingBatch::default();
+        let upload_accounting_flush = sleep(UPLOAD_ACCOUNTING_MAX_DELAY);
+        tokio::pin!(upload_accounting_flush);
 
-    let result: anyhow::Result<()> = async {
+        let result: anyhow::Result<()> = async {
         'peer: loop {
         // Poll the decoder once while upload dispatch is pending. Any complete
         // frames already in the socket buffer are processed first, up to a
@@ -9965,28 +9972,29 @@ where
     }
     .await;
 
-    // Keep this outside the result-producing block: socket, framing, and
-    // event-delivery errors can leave that block through `?`, bypassing the
-    // normal loop break. Drop in-flight reads immediately so their permits,
-    // memory leases, and scheduler work do not survive peer exit.
-    upload_obligations.close();
-    abort_upload_reads(&mut upload_reads);
+        // Keep this outside the result-producing block: socket, framing, and
+        // event-delivery errors can leave that block through `?`, bypassing the
+        // normal loop break. Drop in-flight reads immediately so their permits,
+        // memory leases, and scheduler work do not survive peer exit.
+        upload_obligations.close();
+        abort_upload_reads(&mut upload_reads);
 
-    let outstanding = drain_outstanding(&mut outstanding);
-    if send_terminal_event_on_peer_channel {
-        let _ = send_peer_event(
-            &peer_event_tx,
-            PeerEvent::Disconnected {
-                peer: addr,
-                id: peer_id,
-                outstanding: outstanding.clone(),
-            },
-        )
-        .await;
-    }
-    PeerLoopExit {
-        result,
-        outstanding,
+        let outstanding = drain_outstanding(&mut outstanding);
+        if send_terminal_event_on_peer_channel {
+            let _ = send_peer_event(
+                &peer_event_tx,
+                PeerEvent::Disconnected {
+                    peer: addr,
+                    id: peer_id,
+                    outstanding: outstanding.clone(),
+                },
+            )
+            .await;
+        }
+        PeerLoopExit {
+            result,
+            outstanding,
+        }
     }
 }
 
@@ -17682,6 +17690,128 @@ mod tests {
             upload_accounting: Arc::new(UploadAccountingState::new(UPLOAD_ACCOUNTING_BATCH_BYTES)),
         };
         (upload, storage)
+    }
+
+    #[tokio::test]
+    async fn peer_loop_download_demand_preserves_inflight_upload_and_generation() {
+        let temp = tempfile::tempdir().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let remote = TcpStream::connect(addr).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let (upload, _) = peer_loop_upload_context(
+            temp.path(),
+            4,
+            false,
+            false,
+            RateLimitCancellation::default(),
+            RateLimitCancellation::default(),
+        )
+        .await;
+        let service = upload.upload_rate.network_budget.upload_service();
+        let resources = upload.resources.clone();
+        let grant = test_download_grant(&upload.upload_rate, 4);
+        let (event_tx, mut event_rx) = mpsc::channel(16);
+        let (cmd_tx, cmd_rx) = mpsc::channel(8);
+        let peer = tokio::spawn(run_peer_loop_with_upload_future(
+            PeerLoopStart {
+                addr,
+                peer_id: PeerId::new(),
+                peer_io: PeerIo::Tcp(Framed::new(server, PeerCodec::default())),
+                peer_event_tx: event_tx,
+                peer_cmd_rx: cmd_rx,
+                upload,
+                send_terminal_event_on_peer_channel: false,
+            },
+            |_, _| std::future::pending::<UploadBatchCompletion>(),
+        ));
+        let mut remote = Framed::new(remote, PeerCodec::default());
+        cmd_tx.send(PeerCommand::Unchoke).await.unwrap();
+        assert!(matches!(
+            remote.next().await.unwrap().unwrap(),
+            Message::Unchoke
+        ));
+        remote
+            .send(Message::Request {
+                piece: 0,
+                begin: 0,
+                length: 4,
+            })
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(1), async {
+            while service.in_service_requests() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        // A remote choke must advance the generation while upload work remains
+        // live; subsequent download demand must preserve both directions.
+        remote.send(Message::Choke).await.unwrap();
+        assert!(matches!(
+            timeout(Duration::from_secs(1), event_rx.recv())
+                .await
+                .unwrap(),
+            Some(PeerEvent::Choked {
+                download_generation: 1,
+                ..
+            })
+        ));
+        remote.send(Message::Unchoke).await.unwrap();
+        assert!(matches!(
+            timeout(Duration::from_secs(1), event_rx.recv())
+                .await
+                .unwrap(),
+            Some(PeerEvent::Unchoked {
+                download_generation: 1,
+                ..
+            })
+        ));
+        let request = BlockRequest {
+            piece: 0,
+            begin: 0,
+            length: 4,
+        };
+        cmd_tx
+            .send(PeerCommand::Request {
+                request,
+                download_generation: 1,
+                memory_lease: reserve_peer_event_bytes(&resources, 4).unwrap(),
+                rate_grant: Some(grant),
+                source_permit: None,
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            timeout(Duration::from_secs(1), remote.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap(),
+            Message::Request {
+                piece: 0,
+                begin: 0,
+                length: 4
+            }
+        ));
+        assert_eq!(
+            service.in_service_requests(),
+            1,
+            "download demand must retain the existing upload owner"
+        );
+        cmd_tx.send(PeerCommand::Shutdown).await.unwrap();
+        let exit = timeout(Duration::from_secs(1), peer)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(exit.result.is_ok());
+        assert_eq!(exit.outstanding, vec![request]);
+        assert_eq!(service.in_service_requests(), 0);
+        assert_eq!(
+            resources.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
+            0
+        );
     }
 
     #[tokio::test]

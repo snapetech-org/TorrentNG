@@ -21,6 +21,15 @@ return to downloading. Releasing actual seed allocations does not let a recheck
 silently bypass admission. Existing tracker, super-seed, BEP 6, metadata, padding,
 hybrid, uTP, verification, and durability paths remain in the product.
 
+The follow-up future-state refactor removes redundant async forwarding and
+captures connection inputs directly. Upload-read completion coordinates are
+projected after the awaited read, while the original request specifications
+retain ownership throughout cancellation and error handling. With Rust 1.97.0
+on x86_64, compiler layout diagnostics show incoming/outgoing connection futures
+shrinking by 1,872 bytes and reusable upload-read futures by 744 bytes per
+allocated slot. These object sizes are not whole-process RAM measurements.
+No new protocol fork, task, queue, or per-batch allocation is introduced.
+
 ## Mapping ownership and fallback
 
 Build with `cargo build --release --locked -p torrentngd --features seed-mmap` and
@@ -80,6 +89,14 @@ outside the tool and keep leechers on other cores. These snapshots reveal noise;
 they do not make a shared host isolated. Detailed profiler runs are separate from
 scored runs. Use the existing transfer-rebuild and API-load harnesses for mixed
 download/recheck/API and many-torrent qualification.
+
+Diagnostic metrics now carry snapshot generation and age measured from
+collection start. The probe waits for a snapshot whose collection began after
+the diagnostic boundary, outside scored windows. Old binaries are explicitly
+marked `unsupported`; a timeout is not treated as fresh data. Frame-pool gauges
+observe the shared pool even when only MountScheduler is initialized, without
+creating the older global storage runtime. Archived single-scrape counter
+snapshots may describe an earlier phase; OS CPU/PSS scores are independent.
 
 ```sh
 python3 scripts/seed_efficiency_tools.py analyze \
@@ -191,11 +208,24 @@ profile with their manifests, avoiding unnecessary retraining during analysis.
 
 The fourth build argument is optional. Without it the PGO build path is unchanged.
 With it, the build checks order contents, source digest, compiler, PGO profile and
-default feature identity before linking, and records the order in the output
+selected feature identity before linking, and records the order in the output
 manifest. Changed inputs require retraining. No application release setting,
 worker count, allocator or storage policy is changed by this option. Every output
 artifact needs independent paired CPU/PSS validation and functional coverage;
 the helper does not declare a performance pass.
+
+Pass `--features seed-mmap` to both training commands and `seed-mmap` as the fifth
+build argument (an empty fourth argument selects no function order). Training
+then exercises mapped activation and buffered fallback in separate processes
+using the same feature-enabled executable. Additional workload environment
+settings in the corpus are preserved. Default-feature profiles are rejected for
+feature-enabled builds, and vice versa.
+
+The build helper and layout trainer stage profiles under content-hashed paths;
+the helper also stages linker-order files by content hash. Cargo fingerprints
+compiler arguments, so replacing profile/order contents at one unchanged path
+must not silently reuse an older optimized artifact. Keep frozen measured
+executables and their manifests separate from reusable target directories.
 
 Unset `CARGO_ENCODED_RUSTFLAGS` even when its value is empty. Cargo gives it
 [precedence over `RUSTFLAGS`](https://doc.rust-lang.org/cargo/reference/config.html#buildrustflags),

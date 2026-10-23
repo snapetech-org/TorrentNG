@@ -148,6 +148,8 @@ class FunctionOrderTests(unittest.TestCase):
             argv = list(map(str, argv))
             calls.append(argv)
             if argv[0] == "cargo":
+                self.assertEqual(kwargs["env"]["RUSTFLAGS"], "-Cprofile-use=" + str(
+                    target / ("torrentng-seed-" + sha256(unpacked) + ".profdata")))
                 binary = target / "release/torrentngd"
                 binary.parent.mkdir(parents=True)
                 binary.write_bytes(b"built")
@@ -195,7 +197,7 @@ class FunctionOrderTests(unittest.TestCase):
         stub = "#!" + sys.executable + "\n" + '''import json,os,sys
 from pathlib import Path
 name=Path(sys.argv[0]).name
-with open(os.environ['CALL_LOG'],'a') as f: f.write(json.dumps({'name':name,'args':sys.argv[1:]})+'\\n')
+with open(os.environ['CALL_LOG'],'a') as f: f.write(json.dumps({'name':name,'args':sys.argv[1:],'rustflags':os.environ.get('RUSTFLAGS')})+'\\n')
 if name=='cargo':
  p=Path(sys.argv[sys.argv.index('--target-dir')+1])/'release/torrentngd'
  p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(b'compiled')
@@ -207,6 +209,7 @@ if name=='cargo':
         (self.root / "source repo").mkdir()
         (self.root / "orders").mkdir()
         (self.root / "orders/seed order.txt").write_text("hot\n")
+        (self.root / "orders/seed order.txt.manifest.json").write_text("{}")
         profile = self.root / "pgo.profdata"
         profile.write_bytes(b"profile")
         log = self.root / "calls.jsonl"
@@ -235,12 +238,27 @@ if name=='cargo':
                 self.assertNotIn("--features", cargo)
             if has_order:
                 absolute = str(self.root / "orders/seed order.txt")
-                self.assertIn("-Clink-arg=-Wl,--symbol-ordering-file=" + absolute, cargo)
+                staged = str(self.root / "target" / ("torrentng-seed-order-" +
+                             sha256(self.root / "orders/seed order.txt") + ".txt"))
+                self.assertIn("-Clink-arg=-Wl,--symbol-ordering-file=" + staged, cargo)
                 validations = [call["args"] for call in calls if call["name"] == "python3"
                                and "native_seed_function_order.py" in call["args"][0]]
                 self.assertEqual(len(validations), 2)
-                for args in validations:
-                    self.assertEqual(args[args.index("--order") + 1], absolute)
+                self.assertEqual([args[args.index("--order") + 1] for args in validations],
+                                 [absolute, staged])
+        old_flags = next(call["rustflags"] for call in calls if call["name"] == "cargo")
+        old_order = next(arg for arg in cargo if "--symbol-ordering-file=" in arg)
+        profile.write_bytes(b"retrained profile at the same input path")
+        (self.root / "orders/seed order.txt").write_text("warm\nhot\n")
+        log.write_text("")
+        subprocess.run(["bash", str(script), "pgo.profdata", "target", "source repo",
+                        "orders/seed order.txt", "seed-mmap"],
+                       cwd=self.root, env=environment, check=True, capture_output=True, text=True)
+        calls = [json.loads(line) for line in log.read_text().splitlines()]
+        compiled = next(call for call in calls if call["name"] == "cargo")
+        self.assertNotEqual(old_flags, compiled["rustflags"])
+        self.assertNotIn(old_order, compiled["args"])
+        self.assertIn(sha256(profile), compiled["rustflags"])
         log.write_text("")
         result = subprocess.run(["bash", str(script), "pgo.profdata", "target", "source repo"],
                                 cwd=self.root, env={**environment, "CARGO_ENCODED_RUSTFLAGS": ""},

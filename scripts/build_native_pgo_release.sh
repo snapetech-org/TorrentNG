@@ -61,7 +61,8 @@ fi
 target_input=${2:-"$repo_root/target/pgo-release"}
 mkdir -p "$target_input"
 target_dir=$(cd "$target_input" && pwd)
-profile_data="$target_dir/torrentng-seed-profile.profdata"
+profile_unpacked=$(mktemp "$target_dir/torrentng-seed-profile.XXXXXX")
+trap 'rm -f "$profile_unpacked"' EXIT
 
 if [[ ! -f $profile_input ]]; then
   echo "profile file not found: $profile_input" >&2
@@ -71,12 +72,23 @@ fi
 case "$profile_input" in
   *.gz)
     gzip -t "$profile_input"
-    gzip -dc "$profile_input" > "$profile_data"
+    gzip -dc "$profile_input" > "$profile_unpacked"
     ;;
   *)
-    cp "$profile_input" "$profile_data"
+    cp "$profile_input" "$profile_unpacked"
     ;;
 esac
+
+# Cargo fingerprints flag strings, not the contents of a profile or linker
+# order file named in those flags. Immutable hash-named inputs make a changed
+# training result invalidate cached code even when TARGET_DIR is reused.
+profile_hash=$(sha256sum "$profile_unpacked" | cut -d ' ' -f 1)
+profile_data="$target_dir/torrentng-seed-$profile_hash.profdata"
+if [[ -f $profile_data ]]; then
+  cmp "$profile_unpacked" "$profile_data"
+else
+  mv "$profile_unpacked" "$profile_data"
+fi
 
 if ! rustc +1.97.0 -V >/dev/null 2>&1; then
   echo "Rust toolchain 1.97.0 is required" >&2
@@ -90,6 +102,15 @@ python3 "$repo_root/scripts/native_seed_pgo.py" validate --profile "$profile_inp
 if [[ -n $function_order ]]; then
   python3 "$repo_root/scripts/native_seed_function_order.py" validate \
     --order "$function_order" --repo "$source_repo" --pgo-profile "$profile_input" --features "$features"
+  order_hash=$(sha256sum "$function_order" | cut -d ' ' -f 1)
+  staged_order="$target_dir/torrentng-seed-order-$order_hash.txt"
+  if [[ -f $staged_order ]]; then
+    cmp "$function_order" "$staged_order"
+  else
+    cp "$function_order" "$staged_order"
+  fi
+  cp "$function_order.manifest.json" "$staged_order.manifest.json"
+  function_order=$staged_order
   RUSTFLAGS="-Cprofile-use=$profile_data" \
     cargo +1.97.0 rustc --locked --release -p torrentngd --bin torrentngd --target-dir "$target_dir" "${cargo_features[@]}" -- \
       -Clink-arg=-Wl,--emit-relocs "-Clink-arg=-Wl,--symbol-ordering-file=$function_order"

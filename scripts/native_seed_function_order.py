@@ -53,6 +53,16 @@ def train(pgo_profile, repo, output, target, corpus, bolt, merge_fdata, client_c
         shutil.copyfileobj(source, destination)
     if sha256(profile) != validated_profile["profile_sha256"]:
         raise ValueError("PGO profile changed while preparing layout training")
+    # Share immutable compiler inputs with the release helper. Cargo does not
+    # fingerprint the contents of files passed through -Cprofile-use.
+    target.mkdir(parents=True, exist_ok=True)
+    cached_profile = target / ("torrentng-seed-" + sha256(profile) + ".profdata")
+    if cached_profile.exists():
+        if sha256(cached_profile) != sha256(profile):
+            raise ValueError("cached PGO profile differs from its content identity")
+    else:
+        shutil.copyfile(profile, cached_profile)
+    profile = cached_profile
     env = {**os.environ, "RUSTFLAGS": "-Cprofile-use=" + str(profile)}
     with (output / "training.log").open("w") as log:
         def run(argv, stdout=log):
