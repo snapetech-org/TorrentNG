@@ -5,12 +5,6 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Existing release tag to build"
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -37,14 +31,10 @@ jobs:
       - name: Validate tag and provenance
         id: tag
         env:
-          REQUESTED_TAG: ${{ inputs.tag || github.ref_name }}
+          REQUESTED_TAG: ${{ github.ref_name }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$GITHUB_REF" != "refs/heads/main" ]]; then
-            echo "Manual releases must be dispatched from the default main branch." >&2
-            exit 1
-          fi
           tag="$REQUESTED_TAG"
           if [[ ! "$tag" =~ ^v[A-Za-z0-9][A-Za-z0-9._-]*$ && ! "$tag" =~ ^main-[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
             [[ "$tag" == *..* ]] || ! git check-ref-format "refs/tags/$tag"; then
