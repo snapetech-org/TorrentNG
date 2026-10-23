@@ -103,7 +103,7 @@ use crate::transfer::obligations::{
 };
 use crate::transfer::rate::RatePeerId;
 use crate::transfer::shared_upload::{SharedUploadPeer, SharedUploadReadHandle};
-use crate::transfer::upload_scheduler::UploadReadPermit;
+use crate::transfer::upload_scheduler::{UploadReadPermit, MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS};
 use crate::transfer::window::{WindowConfig, WindowController, WindowInputs};
 use crate::{EnginePeerSnapshot, EngineTorrentLimits, EngineWebseedSnapshot, TorrentRuntimeStats};
 
@@ -119,7 +119,7 @@ const MAX_READY_UPLOAD_INTAKE_MESSAGES: usize = MAX_UPLOAD_READ_BATCH_BLOCKS;
 // draining never combines those refills, so every cache hit still enters the
 // disk queue. Bound collection latency, and never wait for more requests than
 // this peer has demonstrated it can keep outstanding.
-const UPLOAD_READ_COALESCE_MAX_DELAY: Duration = Duration::from_millis(16);
+const UPLOAD_READ_COALESCE_MAX_DELAY: Duration = Duration::from_millis(32);
 
 pub(crate) async fn connect_utp_with_deadline(
     network_budget: &GlobalNetworkBudget,
@@ -161,10 +161,11 @@ const PEER_SOCKET_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 // derived from a 64 MiB test fixture capped a continuously used connection at
 // about 6.4 MiB/s and silently dropped valid requests beyond it.
 const MAX_PENDING_UPLOAD_READS: usize = 16;
-// Start with 64 KiB storage reads: four legal 16 KiB wire requests share one
-// bounded pread while keeping response obligations and rate grants separate.
-const MAX_UPLOAD_READ_BATCH_BLOCKS: usize = 4;
-const MAX_UPLOAD_READ_BATCH_BYTES: usize = 64 * 1024;
+// This experiment bounds storage reads at 128 KiB: eight legal 16 KiB wire
+// requests share one pread while keeping response obligations and rate grants
+// separate.
+const MAX_UPLOAD_READ_BATCH_BLOCKS: usize = MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS;
+const MAX_UPLOAD_READ_BATCH_BYTES: usize = MAX_UPLOAD_READ_BATCH_BLOCKS * MAX_BLOCK_SIZE as usize;
 // A 64 MiB fixture at the protocol's 16 KiB block size is 4,096 requests.
 // Requests are only small coordinates; the response data remains bounded by
 // MAX_PENDING_UPLOAD_READS and the peer-buffer governor.
@@ -17296,14 +17297,14 @@ mod tests {
     #[tokio::test]
     async fn contiguous_upload_blocks_share_one_storage_read_and_keep_wire_slices() {
         let dir = tempfile::tempdir().unwrap();
-        let first = vec![0x31; MAX_BLOCK_SIZE as usize];
-        let second = vec![0xa7; MAX_BLOCK_SIZE as usize];
-        let mut payload = first.clone();
-        payload.extend_from_slice(&second);
+        let expected = (0..MAX_UPLOAD_READ_BATCH_BLOCKS)
+            .map(|index| vec![0x31u8.wrapping_add(index as u8); MAX_BLOCK_SIZE as usize])
+            .collect::<Vec<_>>();
+        let payload = expected.concat();
         std::fs::write(dir.path().join("payload.bin"), &payload).unwrap();
         let piece_map = Arc::new(
             PieceMap::new(
-                u64::from(MAX_BLOCK_SIZE) * 2,
+                payload.len() as u64,
                 vec![FileSpan {
                     file_index: 0,
                     path: SafeRelPath::from_name("payload.bin", false).unwrap(),
@@ -17337,33 +17338,57 @@ mod tests {
             upload_rate,
             read_admission: upload_registration.read_admission(),
         };
-        let first_request = UploadRequest::from_wire(BlockExtent::new(0, 0, MAX_BLOCK_SIZE));
-        let second_request =
-            UploadRequest::from_wire(BlockExtent::new(0, MAX_BLOCK_SIZE, MAX_BLOCK_SIZE));
-        let specs = [first_request, second_request].map(|request| UploadReadSpec {
+        let requests: [UploadRequest; MAX_UPLOAD_READ_BATCH_BLOCKS] =
+            std::array::from_fn(|index| {
+                UploadRequest::from_wire(BlockExtent::new(
+                    0,
+                    index as u32 * MAX_BLOCK_SIZE,
+                    MAX_BLOCK_SIZE,
+                ))
+            });
+        let specs = requests.map(|request| UploadReadSpec {
             request,
             span: upload_read_span(&read_context, request),
             choke_critical: false,
         });
-        assert!(can_append_upload_read(
-            &specs[..1],
-            &specs[1],
-            MAX_BLOCK_SIZE as usize
-        ));
+        let mut batch_bytes = MAX_BLOCK_SIZE as usize;
+        for index in 1..specs.len() {
+            assert!(can_append_upload_read(
+                &specs[..index],
+                &specs[index],
+                batch_bytes
+            ));
+            batch_bytes += MAX_BLOCK_SIZE as usize;
+        }
+        let ninth = UploadReadSpec {
+            request: UploadRequest::from_wire(BlockExtent::new(
+                0,
+                MAX_UPLOAD_READ_BATCH_BLOCKS as u32 * MAX_BLOCK_SIZE,
+                MAX_BLOCK_SIZE,
+            )),
+            span: Some(UploadReadSpan {
+                file_ordinal: 0,
+                offset: payload.len() as u64,
+                length: MAX_BLOCK_SIZE as usize,
+            }),
+            choke_critical: false,
+        };
+        assert!(!can_append_upload_read(&specs, &ninth, batch_bytes));
         let reads_before: u64 = read_context.storage.stats().read_ops_by_class.iter().sum();
 
         let blocks = read_upload_batch_blocks(&read_context, &specs)
             .await
             .unwrap();
 
-        assert_eq!(blocks.len(), 2);
-        assert_eq!(blocks[0].data.as_ref(), first.as_slice());
-        assert_eq!(blocks[1].data.as_ref(), second.as_slice());
+        assert_eq!(blocks.len(), MAX_UPLOAD_READ_BATCH_BLOCKS);
+        for (block, expected) in blocks.iter().zip(&expected) {
+            assert_eq!(block.data.as_ref(), expected.as_slice());
+        }
         let reads_after: u64 = read_context.storage.stats().read_ops_by_class.iter().sum();
         assert_eq!(reads_after - reads_before, 1);
         assert_eq!(
             read_context.resources.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
-            u64::from(MAX_BLOCK_SIZE) * 2
+            payload.len() as u64
         );
 
         drop(blocks);
