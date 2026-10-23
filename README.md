@@ -152,14 +152,19 @@ the upload-read coalescing window from 8 ms to 16 ms reduced median CPU by
 The paired 64 MiB release screen moved in the same direction. The matching PGO
 128 MiB screen reduced median CPU by 2.6%, PSS by 2.8%, and anonymous memory by
 5.5%; its 64 MiB screen had a 5.5% anonymous-memory increase, which is recorded
-alongside the gains. The 16 ms change is retained in the release source, and
-the exact 8 ms baseline, 16 ms candidate, raw summaries, logs, and diagnostics
-remain in the [seed performance experiments report](certification/reports/TorrentNG-seed-performance-experiments-20261022/README.md).
+alongside the gains. The 16 ms setting was retained at that stage; the exact 8 ms baseline, 16 ms
+candidate, raw summaries, logs, and diagnostics remain in the [seed performance
+experiments report](certification/reports/TorrentNG-seed-performance-experiments-20261022/README.md).
+It was later superseded by the measured 32 ms/eight-block default described below.
 
-The current matched 128 MiB comparison still leaves the 16 ms PGO candidate at
-about 1.43× rTorrent 0.16.25 CPU, 2.05× its PSS, and 2.04× its anonymous memory.
-The earlier full-profile PGO result remains preserved as the historical memory
-best. PGO is still opt-in. The separate io_uring screen confirmed the requested
+A further measured source improvement is now retained on main as commit `39554462`: upload reads collect for up to 32 ms and combine up to eight contiguous 16 KiB blocks. In three randomized 64 MiB release rounds, CPU fell 22.2% (4.504 to 3.506 CPU-s/GiB), PSS fell 1.5% (18.875 to 18.586 MiB), and anonymous peak fell 7.5% (6.500 to 6.012 MiB), with every transfer SHA-256 verified. Fresh PGO screens improved on matched PGO controls at 64 MiB (3.016 vs 3.481 CPU-s/GiB; 15.791 vs 16.037 MiB PSS) and 128 MiB (3.348 vs 4.019; 15.593 vs 16.184 MiB PSS). PGO remains opt-in, and at 128 MiB the candidate still used about 1.42× rTorrent CPU and 2.05× its PSS. Sixteen-block experiments did not improve CPU and PSS together; all failed and losing patches and measurements are preserved. The detailed method, matched results, optional allocator tradeoff, and exact artifacts are in the [seed experiment report](certification/reports/TorrentNG-seed-performance-experiments-20261022/README.md#current-main-improvement-bounded-eight-block-reads) and [evidence directory](certification/reports/TorrentNG-seed-performance-experiments-20261022/observations/seed-goal-next-avenues-20261022/README.md).
+
+The earlier matched 128 MiB comparison left the 16 ms PGO candidate at about
+1.43× rTorrent 0.16.25 CPU, 2.05× its PSS, and 2.04× its anonymous memory. The
+newer 32 ms/eight-block PGO screen reports 1.42× rTorrent CPU and 2.05× its PSS;
+its 15.59 MiB PSS is the lowest recorded 128 MiB PGO median in these local
+screens. Earlier full-profile PGO evidence remains archived for comparison.
+PGO is still opt-in. The separate io_uring screen confirmed the requested
 backend but measured about 13% more CPU than `pread` for roughly 2.5% lower PSS;
 that tradeoff and the worker-startup correction are documented in the same
 report. Fresh PGO profiles trained from the current source lowered CPU in the

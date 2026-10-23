@@ -1,10 +1,32 @@
 # Native seed performance follow-up — 2026-10-22
 
-**Status:** the measured 16 ms upload-read coalescing window is now the release-source default. Same-source paired screens improved median CPU and memory at both 64 MiB and 128 MiB in the normal release build. PGO remains opt-in; its 64 MiB screen showed an anonymous-memory tradeoff, while its 128 MiB screen improved all three medians. io_uring is selectable after fixing backend startup, but depth-4's initial one-pair gains did not reproduce in a randomized three-pair screen; keep `pread` and the existing queue default.
+**Status:** main commit `39554462` now collects upload reads for up to 32 ms and batches up to eight contiguous 16 KiB blocks. Three-round release and PGO screens show lower CPU with small PSS reductions; PGO remains opt-in. The current rTorrent 0.16.25 parity goal remains unmet. io_uring stays selectable after its startup fix, but its repeated screen did not beat `pread` on CPU.
 
 A bounded batch-rate-admission refactor was screened against the current 16 ms release and rTorrent 0.16.25. It did not establish a CPU and PSS win together and was not promoted; its patch and complete two-screen evidence are in [`observations/upload-rate-batch-20261022/`](observations/upload-rate-batch-20261022/).
 
 The objective remains to meet or beat current rTorrent in both process CPU and memory. These local tests do not reach that objective. The last published whole-client comparison remains the reference: TorrentNG at 1.90 CPU seconds and 19.82 MiB PSS versus rTorrent at 0.73 seconds and 10.74 MiB PSS.
+
+
+## Current main improvement: bounded eight-block reads
+
+Commit `39554462` raises the bounded upload-read collection delay to 32 ms and allows up to eight contiguous legal 16 KiB requests in one 128 KiB storage read. The per-connection cap remains eight; global admission remains capped at 64 jobs and 16 MiB. The work preserves individual wire requests and their ownership/cancellation behavior.
+
+Randomized matched local loopback screens used the same 4 MiB/s offered rate, 32-request window, and SHA-256-verified payloads. At 64 MiB, the release candidate reduced median CPU by 22.2%, PSS by 1.5%, and anonymous peak by 7.5% versus the prior release source. The fresh PGO candidate improved on its matched PGO control at both tested sizes:
+
+| Fixture | Build | CPU-s/GiB | Peak PSS | Peak anonymous |
+|---|---|---:|---:|---:|
+| 64 MiB, 3 rounds | Release control | 4.504 | 18.875 MiB | 6.500 MiB |
+| 64 MiB, 3 rounds | Eight-block release | **3.506** (-22.2%) | **18.586 MiB** (-1.5%) | **6.012 MiB** (-7.5%) |
+| 64 MiB, 3 rounds | PGO control | 3.481 | 16.037 MiB | 6.020 MiB |
+| 64 MiB, 3 rounds | Eight-block PGO | **3.016** (-13.4%) | **15.791 MiB** (-1.5%) | **5.953 MiB** (-1.1%) |
+| 64 MiB, 3 rounds | rTorrent 0.16.25 | 2.211 | 7.676 MiB | 3.074 MiB |
+| 128 MiB, 3 rounds | PGO control | 4.019 | 16.184 MiB | 6.477 MiB |
+| 128 MiB, 3 rounds | Eight-block PGO | **3.348** (-16.7%) | **15.593 MiB** (-3.6%) | **6.023 MiB** (-7.0%) |
+| 128 MiB, 3 rounds | rTorrent 0.16.25 | 2.361 | 7.607 MiB | 3.070 MiB |
+
+The 128 MiB PGO candidate remains about 1.42× rTorrent CPU and 2.05× its PSS. A 128 MiB release check was a single round and is screening-only. These results support retaining the change; they do not replace the official whole-client qualification. All scored transfers passed SHA-256, and the release-source change passed 769 `rt-engine` tests plus the formatting check before commit.
+
+`MALLOC_ARENA_MAX=1` improved the eight-block PGO candidate's 64 MiB three-round medians by 2.1% CPU, 7.4% PSS, and 20.8% anonymous memory, but a one-round 128 MiB check used 2.3% more CPU for 8.7% less PSS. Keep it optional and size-dependent. Sixteen-block variants did not improve CPU and PSS together: the fixed 64 ms candidate raised CPU 18% and PSS 26%; a 32 ms one-round variant lowered CPU 2.1% but raised PSS 4.7%. Their patches, failure, logs, binaries, profiles, and JSON summaries remain archived under [`observations/seed-goal-next-avenues-20261022/`](observations/seed-goal-next-avenues-20261022/).
 
 ## Method
 
@@ -61,7 +83,7 @@ All 27 transfers in the four scored comparisons passed SHA-256 verification and 
 
 The same-fixture 128 MiB PGO comparison included source-built rTorrent 0.16.25: it used 2.32 CPU-s/GiB, 7.90 MiB peak PSS, and 3.04 MiB peak anonymous memory. The 16 ms TorrentNG build remained about **1.43× rTorrent CPU, 2.05× PSS, and 2.04× anonymous memory**. This is a measured step, not parity. The earlier retained full-profile PGO result (3.68 CPU-s/GiB, 15.80 MiB PSS, 6.08 MiB anonymous) remains in the report; the new PGO screen improves CPU but does not beat those historical absolute memory minima. The 64 MiB PGO anonymous-memory increase is retained as a size-dependent tradeoff.
 
-The 16 MiB diagnostic trace counted 350 storage reads for 1,024 blocks at 8 ms (`320×3`, `8×4`, `10×2`, `12×1`) and 257 at 16 ms (`255×4`, `2×2`), a **26.6% reduction**. This supports the mechanism but does not replace the whole-client measurements. The 16 ms setting is now in the release source. Exact 8 ms and 16 ms binaries, original and normalized summaries, logs, metrics, compressed smaps, and the one-line patch are preserved under [`observations/upload-coalesce-16ms/`](observations/upload-coalesce-16ms/).
+The 16 MiB diagnostic trace counted 350 storage reads for 1,024 blocks at 8 ms (`320×3`, `8×4`, `10×2`, `12×1`) and 257 at 16 ms (`255×4`, `2×2`), a **26.6% reduction**. This supports the mechanism but does not replace the whole-client measurements. At that point, the 16 ms setting was in the release source; commit 39554462 later superseded it with the measured 32 ms/eight-block default. Exact 8 ms and 16 ms binaries, original and normalized summaries, logs, metrics, compressed smaps, and the one-line patch are preserved under [`observations/upload-coalesce-16ms/`](observations/upload-coalesce-16ms/).
 
 Validation after the source change: `cargo +1.94.0 fmt --all -- --check`, the focused `peer_loop_flushes_small_upload_batches_after_the_short_deadline` test, and all 769 `rt-engine` tests passed.
 
@@ -117,13 +139,14 @@ Every rejected or inconsistent source candidate is kept as a patch under [`exper
 
 | Candidate | Result | Decision |
 |---|---|---|
-| Increase upload batch target to 8 | One 64 MiB round: CPU rose 14.9%, PSS 7.1%, and anonymous peak 8.4% versus baseline. | Reverted; keep [`upload-batch8.patch`](experiments/upload-batch8.patch). |
+| Initial eight-block variant with the shorter 16 ms collection window | One 64 MiB round: CPU rose 14.9%, PSS 7.1%, and anonymous peak 8.4% versus its baseline. This was the earlier short-window candidate, not the later 32 ms change now on main. | Rejected as measured; retain [`upload-batch8.patch`](experiments/upload-batch8.patch) and the later successful candidate evidence under [`observations/seed-goal-next-avenues-20261022/`](observations/seed-goal-next-avenues-20261022/). |
+| 32 ms collection window with up to eight contiguous blocks | Three-round release screen: CPU -22.2%, PSS -1.5%, anonymous peak -7.5%. Fresh PGO screens improved CPU/PSS at 64 and 128 MiB. | Retained on main as `39554462`; preserve the complete measurements and candidate artifacts under [`observations/seed-goal-next-avenues-20261022/`](observations/seed-goal-next-avenues-20261022/). |
 | Batch per-block upload-rate admissions under one tree lock | Two randomized one-round 64 MiB screens: median CPU rose 8.3%, PSS 0.8%, and anonymous memory 2.9%; CPU moved in opposite directions in the two rounds. | Not promoted; keep the exact patch, candidate executable, and verified summaries under [`observations/upload-rate-batch-20261022/`](observations/upload-rate-batch-20261022/). |
 | Cache-hit single-lookup refactor | One round looked faster, but the three-round median was 5.801 CPU-s/GiB versus 3.780 for the PGO control; PSS was essentially tied. | Reverted as inconsistent; keep [`cache-hit-single-hash.patch`](experiments/cache-hit-single-hash.patch). |
 | Active stream kept outside the cache map | At 64 MiB under `opt-level=s`, the three-round median improved CPU 16.3% and PSS was tied. At 256 MiB, the single candidate round used 9.8% more CPU with effectively tied PSS. In a refreshed PGO comparison, it was 6.7% slower and used 0.46 MiB more PSS than the PGO control. | Reverted as size/profile dependent; keep [`stream-cache-active.patch`](experiments/stream-cache-active.patch). |
 | Wait for a fourth request before dispatch | The runtime setting disabled the read elevator, so the probe did not exercise batching and is not a scored result. | Do not infer a gain; preserve [`fourth-request-probe.patch`](experiments/fourth-request-probe.patch) for a corrected test. |
 | io_uring startup and queue-sized ring | The earlier requested arm actually selected `pread`. Direct worker startup now selects io_uring at queue depth 64. A three-round verified comparison found higher CPU with slightly lower PSS and anonymous memory. | Keep the startup correction and explicit backend available; do not promote io_uring as a performance winner or change the default queue depth. Results and invalid attempts are retained under [`observations/io-uring-queue-depth-64/`](observations/io-uring-queue-depth-64/). |
-| Opportunistically join a second ready four-block read for an eight-frame TCP write | One instrumented 16 MiB trace produced two eight-frame writes and saved three calls out of 257; a second intake-cap-eight variant raised storage reads to 402 and socket writes to 280. Short diagnostic CPU/PSS readings were worse and are not scores. | Keep the current 16 ms window and four-block reads. Do not promote either variant; retain their patches and traces under [`observations/socket-write-coalesce-screen-20261022/`](observations/socket-write-coalesce-screen-20261022/). |
+| Opportunistically join a second ready four-block read for an eight-frame TCP write | One instrumented 16 MiB trace produced two eight-frame writes and saved three calls out of 257; a second intake-cap-eight variant raised storage reads to 402 and socket writes to 280. Short diagnostic CPU/PSS readings were worse and are not scores. | Do not promote either socket-write variant; retain their patches and traces under [`observations/socket-write-coalesce-screen-20261022/`](observations/socket-write-coalesce-screen-20261022/). The separate measured 32 ms/eight-block read improvement is retained on main. |
 | Current-source mimalloc, including zero-delay purge | Two one-pair 16 MiB verified screens showed no stable CPU gain; mimalloc used 4.5–5.1 MiB more PSS and 4.4–4.8 MiB more anonymous memory. | Stop allocator tuning before a larger comparison. Keep the system allocator default and retain the summaries under [`observations/mimalloc-current-source-screen-20261022/`](observations/mimalloc-current-source-screen-20261022/). |
 | io_uring at queue depths 1, 4, and 8 | Depth 4 looked faster in two single pairs, but its randomized 64 MiB three-pair repeat used 7.3% more median CPU than `pread`, with tied PSS. Depth 8 used 11.5% more CPU in its one-pair screen; depth 1 saturated the scheduler before a valid transfer. | Keep `pread` as default. Preserve the startup fix and all mixed/failed evidence under [`observations/io-uring-queue-depth-followup-20261022/`](observations/io-uring-queue-depth-followup-20261022/). |
 
@@ -231,16 +254,16 @@ matched-run cycle on the path-map refactor alone. The profile, exact summary,
 and resolution notes are in
 [`observations/pgo-hotpath-profile-20261022/`](observations/pgo-hotpath-profile-20261022/).
 
-## Upstream rTorrent path and next source experiment
+## Upstream rTorrent path and mapped-range evidence
 
 The comparator is built from the official [rTorrent v0.16.25 release](https://github.com/rakshasa/rtorrent/releases/tag/v0.16.25). Its paired [libTorrent v0.16.25 README](https://github.com/rakshasa/libtorrent/blob/v0.16.25/README.md) describes transferring directly from file pages to the network stack. That supports testing file-page-backed payload ownership. It does not establish that raw `sendfile` is the right implementation: our sendfile measurement traded a large anonymous-memory reduction for a 4.14× CPU increase.
 
-TorrentNG currently resolves a verified v1 upload to a file span, then calls `read_owned_at_with_priority`; storage schedules a positioned read into an owned frame, and the peer writer sends the resulting `Bytes`. `rt-storage/src/verify.rs` explicitly avoids `mmap` for verification. The source-level follow-up is therefore a bounded, read-only mapped-range lease for eligible verified seed reads, keeping the current vectored frame header and buffered fallback. Its first screen must check CPU, PSS, anonymous memory, scheduling fairness, cancellation, path-replacement fencing, and the behavior when file pages are cold. A map-per-block implementation is not a candidate: mapping lifetime and reuse must be bounded and measured first.
+TorrentNG currently resolves a verified v1 upload to a file span, then calls `read_owned_at_with_priority`; storage schedules a positioned read into an owned frame, and the peer writer sends the resulting `Bytes`. Earlier bounded mapped-range probes did not improve whole-client CPU and PSS together: the latest mapped-window candidate tied CPU within 0.3% but raised PSS by about 0.84 MiB. The read-only mapping route remains a revisit candidate only if it can share bounded mappings across reads and remove enough scheduler, allocation, or copy work to beat the current eight-block main source. Any future screen must keep the buffered fallback and check hot and cold file pages, fairness, cancellation, and path-replacement fencing. A map-per-block implementation is not a candidate.
 
 ## Reproducibility and evidence
 
 [`observations/`](observations/) contains the complete probe JSON and captured client logs for the scored and invalid screens. [`manifest.json`](observations/manifest.json) records each file's byte length and SHA-256; it also records the uncompressed PGO profile hash. The summaries bind measurements to binary checksums, fixture hashes, round order, transfer completion, and payload verification.
 
-The benchmark probe's regression tests cover its process sampling, profile-window setup, configuration, and cleanup behavior. They must pass before using the probe for another qualification run. Re-run a promising candidate against the same baseline and current rTorrent binary in randomized, paired rounds at both 128 and 256 MiB, then qualify it using the official release comparison before changing defaults.
+The benchmark probe's regression tests cover its process sampling, profile-window setup, configuration, and cleanup behavior. They must pass before another qualification run. The 32 ms/eight-block source change is already on main after randomized paired 64 MiB release and 64/128 MiB PGO screens; future candidates must use current main as control, keep the exact current rTorrent binary, repeat at 128 and 256 MiB, and pass correctness plus the official release comparison before any further default change.
 
 The separate supplied source-review archive is assessed in [`TorrentNG-rtorrent-hot-path-review-20261022/README.md`](../TorrentNG-rtorrent-hot-path-review-20261022/README.md). Its source files match the reviewed `7ba8bb6a` checkout, so it adds no code change.

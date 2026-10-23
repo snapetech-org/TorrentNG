@@ -1,0 +1,4402 @@
+{
+  "format": "native-seed-cpu-ram-v1",
+  "status": "complete",
+  "cpu_measurement": "process CPU clock nanoseconds where available; /proc user+system ticks fallback",
+  "diagnostic_run": false,
+  "peer_debug": false,
+  "cpu_profile": null,
+  "pgo_profile_window": null,
+  "fixture_bytes": 16777216,
+  "fixture_seed": 20261022,
+  "storage_io_queue_depth": null,
+  "fixture_sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3",
+  "info_hash": "bc09795309ae171fe1317fedab7c74c0c9e2fd77",
+  "offered_rate_bytes_per_second": 4194304,
+  "block_bytes": 16384,
+  "request_window": 32,
+  "dht": false,
+  "pex": false,
+  "tracker": false,
+  "bind_address": "127.0.0.1",
+  "paired": true,
+  "payload_cleanup_policy": "remove per-run seed and downloaded payload copies after a verified transfer and client shutdown",
+  "keep_payloads": false,
+  "randomized_orders": [
+    [
+      "baseline",
+      "rtorrent",
+      "mapped"
+    ],
+    [
+      "mapped",
+      "baseline",
+      "rtorrent"
+    ],
+    [
+      "rtorrent",
+      "mapped",
+      "baseline"
+    ]
+  ],
+  "runs": [
+    {
+      "round": 1,
+      "name": "baseline",
+      "kind": "torrentngd",
+      "binary": "/home/keith/Documents/code/TorrentNG/target/release/torrentngd",
+      "binary_sha256": "63e316c8727c00e3c3356f48076ee7afeb4654b6050435f1c037c1c30247df99",
+      "command": [
+        "/home/keith/Documents/code/TorrentNG/target/release/torrentngd"
+      ],
+      "config_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-01-baseline/baseline/config.toml",
+      "environment_overrides": {
+        "TNG_STORAGE_BACKEND": "pread"
+      },
+      "inherited_measurement_controls": {
+        "names": [],
+        "safe_values": {}
+      },
+      "namespace_pid": 826649,
+      "proc_pid": 826649,
+      "transfer": {
+        "bytes": 16777216,
+        "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3",
+        "verified": true,
+        "elapsed_seconds": 4.217890341009479,
+        "first_payload_delay_seconds": 0.051737165020313114,
+        "payload_elapsed_seconds": 4.000077089993283,
+        "offered_rate_bytes_per_second": 4194304,
+        "connection_start_sample": {
+          "time": 1792720843.8500986,
+          "monotonic": 132139.158385926,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 37883313,
+          "rss_bytes": 22069248,
+          "pss_bytes": 19221504,
+          "anonymous_bytes": 6193152
+        },
+        "leecher_address": [
+          "127.0.0.1",
+          58787
+        ],
+        "first_payload_sample": {
+          "time": 1792720843.9037204,
+          "monotonic": 132139.212008545,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 39817177,
+          "rss_bytes": 22163456,
+          "pss_bytes": 19315712,
+          "anonymous_bytes": 6205440
+        },
+        "payload_complete_sample": {
+          "time": 1792720847.9265323,
+          "monotonic": 132143.234819804,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 14,
+          "cpu_time_user_system_ns": 150987945,
+          "rss_bytes": 22163456,
+          "pss_bytes": 19315712,
+          "anonymous_bytes": 6205440
+        },
+        "post_leecher_sample": {
+          "time": 1792720847.99554,
+          "monotonic": 132143.30382833,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 14,
+          "cpu_time_user_system_ns": 151188349,
+          "rss_bytes": 22163456,
+          "pss_bytes": 19315712,
+          "anonymous_bytes": 6205440
+        },
+        "initial_client_messages": [
+          {
+            "type": "handshake",
+            "bytes_hex": "13426974546f7272656e742070726f746f636f6c0000000000000000bc09795309ae171fe1317fedab7c74c0c9e2fd772d544e47303030312d4350552d52414d30303031"
+          },
+          {
+            "type": "bitfield",
+            "bytes_hex": "00000003050000"
+          },
+          {
+            "type": "interested",
+            "bytes_hex": "0000000102"
+          }
+        ],
+        "peer_state_snapshots": [],
+        "mid_transfer_diagnostics": null
+      },
+      "pre_leecher_sample": {
+        "time": 1792720843.7962296,
+        "monotonic": 132139.104516912,
+        "pids": [
+          826649
+        ],
+        "cpu_ticks_user_system": 3,
+        "cpu_time_user_system_ns": 36595295,
+        "rss_bytes": 21938176,
+        "pss_bytes": 19090432,
+        "anonymous_bytes": 6193152
+      },
+      "cpu_tick_hz": 100,
+      "payload_cpu_seconds_user_system": 0.111170768,
+      "connection_to_payload_cpu_seconds_user_system": 0.113104632,
+      "connection_wait_cpu_seconds": 0.001933864,
+      "connection_setup_cpu_seconds": 0.001288018,
+      "active_peak_rss_bytes": 22163456,
+      "active_peak_pss_bytes": 19315712,
+      "active_peak_anonymous_bytes": 6205440,
+      "idle_before": [
+        {
+          "time": 1792720838.440901,
+          "monotonic": 132133.749188336,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 35584492,
+          "rss_bytes": 21938176,
+          "pss_bytes": 19090432,
+          "anonymous_bytes": 6193152
+        },
+        {
+          "time": 1792720839.4836788,
+          "monotonic": 132134.79196602,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 35737849,
+          "rss_bytes": 21938176,
+          "pss_bytes": 19090432,
+          "anonymous_bytes": 6193152
+        },
+        {
+          "time": 1792720840.5307732,
+          "monotonic": 132135.839060451,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 35939627,
+          "rss_bytes": 21938176,
+          "pss_bytes": 19090432,
+          "anonymous_bytes": 6193152
+        },
+        {
+          "time": 1792720841.5973208,
+          "monotonic": 132136.905609486,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 36155963,
+          "rss_bytes": 21938176,
+          "pss_bytes": 19090432,
+          "anonymous_bytes": 6193152
+        },
+        {
+          "time": 1792720842.6665292,
+          "monotonic": 132137.974817153,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 36386434,
+          "rss_bytes": 21938176,
+          "pss_bytes": 19090432,
+          "anonymous_bytes": 6193152
+        }
+      ],
+      "active_samples": [
+        {
+          "time": 1792720843.8000472,
+          "monotonic": 132139.108334308,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 37883313,
+          "rss_bytes": 22069248,
+          "pss_bytes": 19221504,
+          "anonymous_bytes": 6193152
+        },
+        {
+          "time": 1792720844.8548439,
+          "monotonic": 132140.163130916,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 6,
+          "cpu_time_user_system_ns": 65300522,
+          "rss_bytes": 22163456,
+          "pss_bytes": 19315712,
+          "anonymous_bytes": 6205440
+        },
+        {
+          "time": 1792720845.9194179,
+          "monotonic": 132141.227704333,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 9,
+          "cpu_time_user_system_ns": 95063476,
+          "rss_bytes": 22163456,
+          "pss_bytes": 19315712,
+          "anonymous_bytes": 6205440
+        },
+        {
+          "time": 1792720846.9839594,
+          "monotonic": 132142.292246627,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 11,
+          "cpu_time_user_system_ns": 128505658,
+          "rss_bytes": 22163456,
+          "pss_bytes": 19315712,
+          "anonymous_bytes": 6205440
+        },
+        {
+          "time": 1792720848.0535097,
+          "monotonic": 132143.361797187,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 14,
+          "cpu_time_user_system_ns": 151188349,
+          "rss_bytes": 22163456,
+          "pss_bytes": 19315712,
+          "anonymous_bytes": 6205440
+        },
+        {
+          "time": 1792720843.7962296,
+          "monotonic": 132139.104516912,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 36595295,
+          "rss_bytes": 21938176,
+          "pss_bytes": 19090432,
+          "anonymous_bytes": 6193152
+        },
+        {
+          "time": 1792720843.8500986,
+          "monotonic": 132139.158385926,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 37883313,
+          "rss_bytes": 22069248,
+          "pss_bytes": 19221504,
+          "anonymous_bytes": 6193152
+        },
+        {
+          "time": 1792720843.9037204,
+          "monotonic": 132139.212008545,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 39817177,
+          "rss_bytes": 22163456,
+          "pss_bytes": 19315712,
+          "anonymous_bytes": 6205440
+        },
+        {
+          "time": 1792720847.9265323,
+          "monotonic": 132143.234819804,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 14,
+          "cpu_time_user_system_ns": 150987945,
+          "rss_bytes": 22163456,
+          "pss_bytes": 19315712,
+          "anonymous_bytes": 6205440
+        },
+        {
+          "time": 1792720847.99554,
+          "monotonic": 132143.30382833,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 14,
+          "cpu_time_user_system_ns": 151188349,
+          "rss_bytes": 22163456,
+          "pss_bytes": 19315712,
+          "anonymous_bytes": 6205440
+        }
+      ],
+      "idle_after": [
+        {
+          "time": 1792720848.1919072,
+          "monotonic": 132143.500194379,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 14,
+          "cpu_time_user_system_ns": 152021319,
+          "rss_bytes": 22237184,
+          "pss_bytes": 19389440,
+          "anonymous_bytes": 6279168
+        },
+        {
+          "time": 1792720849.2581735,
+          "monotonic": 132144.566460948,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 14,
+          "cpu_time_user_system_ns": 152331173,
+          "rss_bytes": 22433792,
+          "pss_bytes": 19389440,
+          "anonymous_bytes": 6279168
+        },
+        {
+          "time": 1792720850.3183017,
+          "monotonic": 132145.626589339,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 14,
+          "cpu_time_user_system_ns": 152530055,
+          "rss_bytes": 22433792,
+          "pss_bytes": 19389440,
+          "anonymous_bytes": 6279168
+        },
+        {
+          "time": 1792720851.3817499,
+          "monotonic": 132146.690037533,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 14,
+          "cpu_time_user_system_ns": 152735960,
+          "rss_bytes": 22433792,
+          "pss_bytes": 19390464,
+          "anonymous_bytes": 6279168
+        },
+        {
+          "time": 1792720852.4412434,
+          "monotonic": 132147.749531027,
+          "pids": [
+            826649
+          ],
+          "cpu_ticks_user_system": 14,
+          "cpu_time_user_system_ns": 152882565,
+          "rss_bytes": 22433792,
+          "pss_bytes": 19390464,
+          "anonymous_bytes": 6279168
+        }
+      ],
+      "diagnostic_run": false,
+      "torrentng_diagnostics": {
+        "before_torrent_add": {
+          "label": "before-torrent-add",
+          "captured_unix": 1792720837.464317,
+          "process": {
+            "time": 1792720837.5026803,
+            "monotonic": 132132.810967881,
+            "pids": [
+              826649
+            ],
+            "cpu_ticks_user_system": 0,
+            "cpu_time_user_system_ns": 9790393,
+            "rss_bytes": 17231872,
+            "pss_bytes": 14384128,
+            "anonymous_bytes": 3485696
+          },
+          "smaps": [
+            {
+              "pid": 826649,
+              "path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-01-baseline/baseline/diagnostics/before-torrent-add-pid-826649.smaps",
+              "totals_bytes": {
+                "Size": 232976384,
+                "Rss": 17231872,
+                "Pss": 14382080,
+                "Anonymous": 3485696,
+                "Private_Clean": 10862592,
+                "Private_Dirty": 3518464,
+                "Shared_Clean": 2850816,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            }
+          ],
+          "metrics": {
+            "torrentng_storage_peer_read_cache_entries": 0.0,
+            "torrentng_storage_peer_read_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_budget_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_hits_total": 0.0,
+            "torrentng_storage_peer_read_cache_misses_total": 0.0,
+            "torrentng_storage_peer_read_cache_evictions_total": 0.0
+          },
+          "smaps_totals_bytes": {
+            "Size": 232976384,
+            "Rss": 17231872,
+            "Pss": 14382080,
+            "Anonymous": 3485696,
+            "Private_Clean": 10862592,
+            "Private_Dirty": 3518464,
+            "Shared_Clean": 2850816,
+            "Shared_Dirty": 0,
+            "Swap": 0
+          },
+          "metrics_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-01-baseline/baseline/diagnostics/before-torrent-add.metrics.prom"
+        },
+        "after_seed_recheck": {
+          "label": "after-seed-recheck",
+          "captured_unix": 1792720838.321433,
+          "process": {
+            "time": 1792720838.364894,
+            "monotonic": 132133.673182165,
+            "pids": [
+              826649
+            ],
+            "cpu_ticks_user_system": 2,
+            "cpu_time_user_system_ns": 34563974,
+            "rss_bytes": 21860352,
+            "pss_bytes": 19012608,
+            "anonymous_bytes": 6115328
+          },
+          "smaps": [
+            {
+              "pid": 826649,
+              "path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-01-baseline/baseline/diagnostics/after-seed-recheck-pid-826649.smaps",
+              "totals_bytes": {
+                "Size": 579088384,
+                "Rss": 21860352,
+                "Pss": 19010560,
+                "Anonymous": 6115328,
+                "Private_Clean": 12861440,
+                "Private_Dirty": 6148096,
+                "Shared_Clean": 2850816,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            }
+          ],
+          "metrics": {
+            "torrentng_storage_peer_read_cache_entries": 0.0,
+            "torrentng_storage_peer_read_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_budget_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_hits_total": 0.0,
+            "torrentng_storage_peer_read_cache_misses_total": 0.0,
+            "torrentng_storage_peer_read_cache_evictions_total": 0.0,
+            "storage_scheduler_selected_backends": [
+              "pread"
+            ]
+          },
+          "smaps_totals_bytes": {
+            "Size": 579088384,
+            "Rss": 21860352,
+            "Pss": 19010560,
+            "Anonymous": 6115328,
+            "Private_Clean": 12861440,
+            "Private_Dirty": 6148096,
+            "Shared_Clean": 2850816,
+            "Shared_Dirty": 0,
+            "Swap": 0
+          },
+          "metrics_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-01-baseline/baseline/diagnostics/after-seed-recheck.metrics.prom"
+        },
+        "during_transfer": null,
+        "after_transfer": {
+          "label": "after-transfer",
+          "captured_unix": 1792720848.053785,
+          "process": {
+            "time": 1792720848.124805,
+            "monotonic": 132143.433092066,
+            "pids": [
+              826649
+            ],
+            "cpu_ticks_user_system": 14,
+            "cpu_time_user_system_ns": 151188349,
+            "rss_bytes": 22163456,
+            "pss_bytes": 19315712,
+            "anonymous_bytes": 6205440
+          },
+          "smaps": [
+            {
+              "pid": 826649,
+              "path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-01-baseline/baseline/diagnostics/after-transfer-pid-826649.smaps",
+              "totals_bytes": {
+                "Size": 579088384,
+                "Rss": 22163456,
+                "Pss": 19313664,
+                "Anonymous": 6205440,
+                "Private_Clean": 13074432,
+                "Private_Dirty": 6238208,
+                "Shared_Clean": 2850816,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            }
+          ],
+          "metrics": {
+            "torrentng_storage_peer_read_cache_entries": 0.0,
+            "torrentng_storage_peer_read_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_budget_bytes": 16777216.0,
+            "torrentng_storage_peer_read_cache_hits_total": 0.0,
+            "torrentng_storage_peer_read_cache_misses_total": 0.0,
+            "torrentng_storage_peer_read_cache_evictions_total": 0.0,
+            "storage_scheduler_selected_backends": [
+              "pread"
+            ]
+          },
+          "smaps_totals_bytes": {
+            "Size": 579088384,
+            "Rss": 22163456,
+            "Pss": 19313664,
+            "Anonymous": 6205440,
+            "Private_Clean": 13074432,
+            "Private_Dirty": 6238208,
+            "Shared_Clean": 2850816,
+            "Shared_Dirty": 0,
+            "Swap": 0
+          },
+          "metrics_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-01-baseline/baseline/diagnostics/after-transfer.metrics.prom"
+        }
+      },
+      "payload_cleanup": {
+        "policy": "after-verified-transfer-and-client-shutdown",
+        "status": "deleted",
+        "paths": [
+          "downloaded.bin",
+          "baseline/download/payload.bin"
+        ]
+      }
+    },
+    {
+      "round": 1,
+      "name": "rtorrent",
+      "kind": "rtorrent",
+      "binary": "/tmp/torrentng-seed-goal-20261022/rtorrent-rootfs/usr/local/bin/rtorrent",
+      "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+      "command": [
+        "/tmp/torrentng-seed-goal-20261022/rtorrent-rootfs/usr/local/bin/rtorrent",
+        "-n",
+        "-o",
+        "import=/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-01-rtorrent/rtorrent/rtorrent.rc",
+        "-o",
+        "system.daemon.set=true"
+      ],
+      "config_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-01-rtorrent/rtorrent/rtorrent.rc",
+      "environment_overrides": {
+        "LD_LIBRARY_PATH": "/tmp/torrentng-seed-goal-20261022/rtorrent-libs:/tmp/torrentng-seed-goal-20261022/rtorrent-rootfs/usr/local/lib"
+      },
+      "inherited_measurement_controls": {
+        "names": [],
+        "safe_values": {}
+      },
+      "namespace_pid": 829438,
+      "proc_pid": 829438,
+      "transfer": {
+        "bytes": 16777216,
+        "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3",
+        "verified": true,
+        "elapsed_seconds": 4.217658895999193,
+        "first_payload_delay_seconds": 0.07464063799125142,
+        "payload_elapsed_seconds": 4.000068898021709,
+        "offered_rate_bytes_per_second": 4194304,
+        "connection_start_sample": {
+          "time": 1792720859.6104944,
+          "monotonic": 132154.918781525,
+          "pids": [
+            829438
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 39054443,
+          "rss_bytes": 20164608,
+          "pss_bytes": 6620160,
+          "anonymous_bytes": 3211264
+        },
+        "leecher_address": [
+          "127.0.0.1",
+          45581
+        ],
+        "first_payload_sample": {
+          "time": 1792720859.674343,
+          "monotonic": 132154.982631444,
+          "pids": [
+            829438
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 39436557,
+          "rss_bytes": 20836352,
+          "pss_bytes": 7221248,
+          "anonymous_bytes": 3211264
+        },
+        "payload_complete_sample": {
+          "time": 1792720863.6745787,
+          "monotonic": 132158.982866036,
+          "pids": [
+            829438
+          ],
+          "cpu_ticks_user_system": 7,
+          "cpu_time_user_system_ns": 84266961,
+          "rss_bytes": 21348352,
+          "pss_bytes": 7733248,
+          "anonymous_bytes": 3211264
+        },
+        "post_leecher_sample": {
+          "time": 1792720863.7415566,
+          "monotonic": 132159.04984397,
+          "pids": [
+            829438
+          ],
+          "cpu_ticks_user_system": 7,
+          "cpu_time_user_system_ns": 84631021,
+          "rss_bytes": 20303872,
+          "pss_bytes": 6688768,
+          "anonymous_bytes": 3211264
+        },
+        "initial_client_messages": [
+          {
+            "type": "handshake",
+            "bytes_hex": "13426974546f7272656e742070726f746f636f6c0000000000000000bc09795309ae171fe1317fedab7c74c0c9e2fd772d544e47303030312d4350552d52414d30303031"
+          },
+          {
+            "type": "bitfield",
+            "bytes_hex": "00000003050000"
+          },
+          {
+            "type": "interested",
+            "bytes_hex": "0000000102"
+          }
+        ],
+        "peer_state_snapshots": [],
+        "mid_transfer_diagnostics": null
+      },
+      "pre_leecher_sample": {
+        "time": 1792720859.5362754,
+        "monotonic": 132154.844562073,
+        "pids": [
+          829438
+        ],
+        "cpu_ticks_user_system": 3,
+        "cpu_time_user_system_ns": 38947313,
+        "rss_bytes": 20164608,
+        "pss_bytes": 6620160,
+        "anonymous_bytes": 3211264
+      },
+      "cpu_tick_hz": 100,
+      "payload_cpu_seconds_user_system": 0.044830404,
+      "connection_to_payload_cpu_seconds_user_system": 0.045212518,
+      "connection_wait_cpu_seconds": 0.000382114,
+      "connection_setup_cpu_seconds": 0.00010713,
+      "active_peak_rss_bytes": 21348352,
+      "active_peak_pss_bytes": 7733248,
+      "active_peak_anonymous_bytes": 3211264,
+      "idle_before": [
+        {
+          "time": 1792720854.091112,
+          "monotonic": 132149.399399466,
+          "pids": [
+            829438
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 38440204,
+          "rss_bytes": 20164608,
+          "pss_bytes": 6622208,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720855.1591535,
+          "monotonic": 132150.467441728,
+          "pids": [
+            829438
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 38641391,
+          "rss_bytes": 20164608,
+          "pss_bytes": 6622208,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720856.2240572,
+          "monotonic": 132151.532344672,
+          "pids": [
+            829438
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 38699620,
+          "rss_bytes": 20164608,
+          "pss_bytes": 6622208,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720857.2819242,
+          "monotonic": 132152.59021147,
+          "pids": [
+            829438
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 38798485,
+          "rss_bytes": 20164608,
+          "pss_bytes": 6621184,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720858.342492,
+          "monotonic": 132153.650779612,
+          "pids": [
+            829438
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 38852114,
+          "rss_bytes": 20164608,
+          "pss_bytes": 6621184,
+          "anonymous_bytes": 3211264
+        }
+      ],
+      "active_samples": [
+        {
+          "time": 1792720859.5347476,
+          "monotonic": 132154.843035697,
+          "pids": [
+            829438
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 38947313,
+          "rss_bytes": 20164608,
+          "pss_bytes": 6620160,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720860.6184008,
+          "monotonic": 132155.926687312,
+          "pids": [
+            829438
+          ],
+          "cpu_ticks_user_system": 4,
+          "cpu_time_user_system_ns": 51090236,
+          "rss_bytes": 20901888,
+          "pss_bytes": 7286784,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720861.6904082,
+          "monotonic": 132156.99869477,
+          "pids": [
+            829438
+          ],
+          "cpu_ticks_user_system": 5,
+          "cpu_time_user_system_ns": 62301319,
+          "rss_bytes": 21159936,
+          "pss_bytes": 7544832,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720862.7612824,
+          "monotonic": 132158.069569172,
+          "pids": [
+            829438
+          ],
+          "cpu_ticks_user_system": 6,
+          "cpu_time_user_system_ns": 75886179,
+          "rss_bytes": 20439040,
+          "pss_bytes": 6823936,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720859.5362754,
+          "monotonic": 132154.844562073,
+          "pids": [
+            829438
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 38947313,
+          "rss_bytes": 20164608,
+          "pss_bytes": 6620160,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720859.6104944,
+          "monotonic": 132154.918781525,
+          "pids": [
+            829438
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 39054443,
+          "rss_bytes": 20164608,
+          "pss_bytes": 6620160,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720859.674343,
+          "monotonic": 132154.982631444,
+          "pids": [
+            829438
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 39436557,
+          "rss_bytes": 20836352,
+          "pss_bytes": 7221248,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720863.6745787,
+          "monotonic": 132158.982866036,
+          "pids": [
+            829438
+          ],
+          "cpu_ticks_user_system": 7,
+          "cpu_time_user_system_ns": 84266961,
+          "rss_bytes": 21348352,
+          "pss_bytes": 7733248,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720863.7415566,
+          "monotonic": 132159.04984397,
+          "pids": [
+            829438
+          ],
+          "cpu_ticks_user_system": 7,
+          "cpu_time_user_system_ns": 84631021,
+          "rss_bytes": 20303872,
+          "pss_bytes": 6688768,
+          "anonymous_bytes": 3211264
+        }
+      ],
+      "idle_after": [
+        {
+          "time": 1792720863.8103821,
+          "monotonic": 132159.118670038,
+          "pids": [
+            829438
+          ],
+          "cpu_ticks_user_system": 7,
+          "cpu_time_user_system_ns": 84653473,
+          "rss_bytes": 20303872,
+          "pss_bytes": 6688768,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720864.8728561,
+          "monotonic": 132160.18114305,
+          "pids": [
+            829438
+          ],
+          "cpu_ticks_user_system": 7,
+          "cpu_time_user_system_ns": 85221445,
+          "rss_bytes": 20303872,
+          "pss_bytes": 6688768,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720865.9359348,
+          "monotonic": 132161.244222204,
+          "pids": [
+            829438
+          ],
+          "cpu_ticks_user_system": 7,
+          "cpu_time_user_system_ns": 85362518,
+          "rss_bytes": 20303872,
+          "pss_bytes": 6688768,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720867.0057545,
+          "monotonic": 132162.314041868,
+          "pids": [
+            829438
+          ],
+          "cpu_ticks_user_system": 7,
+          "cpu_time_user_system_ns": 85468216,
+          "rss_bytes": 20303872,
+          "pss_bytes": 6688768,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720868.0823388,
+          "monotonic": 132163.390626248,
+          "pids": [
+            829438
+          ],
+          "cpu_ticks_user_system": 7,
+          "cpu_time_user_system_ns": 85543537,
+          "rss_bytes": 20303872,
+          "pss_bytes": 6688768,
+          "anonymous_bytes": 3211264
+        }
+      ],
+      "diagnostic_run": false,
+      "torrentng_diagnostics": null,
+      "payload_cleanup": {
+        "policy": "after-verified-transfer-and-client-shutdown",
+        "status": "deleted",
+        "paths": [
+          "downloaded.bin",
+          "rtorrent/download/payload.bin"
+        ]
+      }
+    },
+    {
+      "round": 1,
+      "name": "mapped",
+      "kind": "torrentngd",
+      "binary": "/tmp/torrentng-seed-goal-20261022/mapped-range-release-target/release/torrentngd",
+      "binary_sha256": "2216ed50c475ea4c26000af8b99dc610694051730fabad0ba762bc1465811b74",
+      "command": [
+        "/tmp/torrentng-seed-goal-20261022/mapped-range-release-target/release/torrentngd"
+      ],
+      "config_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-01-mapped/mapped/config.toml",
+      "environment_overrides": {
+        "TNG_STORAGE_BACKEND": "pread"
+      },
+      "inherited_measurement_controls": {
+        "names": [],
+        "safe_values": {}
+      },
+      "namespace_pid": 831835,
+      "proc_pid": 831835,
+      "transfer": {
+        "bytes": 16777216,
+        "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3",
+        "verified": true,
+        "elapsed_seconds": 4.2037094560218975,
+        "first_payload_delay_seconds": 0.07459032000042498,
+        "payload_elapsed_seconds": 4.000064602994826,
+        "offered_rate_bytes_per_second": 4194304,
+        "connection_start_sample": {
+          "time": 1792720875.9051828,
+          "monotonic": 132171.213470784,
+          "pids": [
+            831835
+          ],
+          "cpu_ticks_user_system": 4,
+          "cpu_time_user_system_ns": 46701166,
+          "rss_bytes": 22310912,
+          "pss_bytes": 19479552,
+          "anonymous_bytes": 6201344
+        },
+        "leecher_address": [
+          "127.0.0.1",
+          57467
+        ],
+        "first_payload_sample": {
+          "time": 1792720875.9814389,
+          "monotonic": 132171.289726082,
+          "pids": [
+            831835
+          ],
+          "cpu_ticks_user_system": 4,
+          "cpu_time_user_system_ns": 51550317,
+          "rss_bytes": 22401024,
+          "pss_bytes": 19569664,
+          "anonymous_bytes": 6225920
+        },
+        "payload_complete_sample": {
+          "time": 1792720879.9672425,
+          "monotonic": 132175.275530015,
+          "pids": [
+            831835
+          ],
+          "cpu_ticks_user_system": 32,
+          "cpu_time_user_system_ns": 331664209,
+          "rss_bytes": 22450176,
+          "pss_bytes": 19619840,
+          "anonymous_bytes": 6275072
+        },
+        "post_leecher_sample": {
+          "time": 1792720880.0232775,
+          "monotonic": 132175.331564364,
+          "pids": [
+            831835
+          ],
+          "cpu_ticks_user_system": 32,
+          "cpu_time_user_system_ns": 331842993,
+          "rss_bytes": 22450176,
+          "pss_bytes": 19619840,
+          "anonymous_bytes": 6275072
+        },
+        "initial_client_messages": [
+          {
+            "type": "handshake",
+            "bytes_hex": "13426974546f7272656e742070726f746f636f6c0000000000000000bc09795309ae171fe1317fedab7c74c0c9e2fd772d544e47303030312d4350552d52414d30303031"
+          },
+          {
+            "type": "bitfield",
+            "bytes_hex": "00000003050000"
+          },
+          {
+            "type": "interested",
+            "bytes_hex": "0000000102"
+          }
+        ],
+        "peer_state_snapshots": [],
+        "mid_transfer_diagnostics": null
+      },
+      "pre_leecher_sample": {
+        "time": 1792720875.8304083,
+        "monotonic": 132171.138694993,
+        "pids": [
+          831835
+        ],
+        "cpu_ticks_user_system": 4,
+        "cpu_time_user_system_ns": 45841950,
+        "rss_bytes": 22175744,
+        "pss_bytes": 19344384,
+        "anonymous_bytes": 6197248
+      },
+      "cpu_tick_hz": 100,
+      "payload_cpu_seconds_user_system": 0.280113892,
+      "connection_to_payload_cpu_seconds_user_system": 0.284963043,
+      "connection_wait_cpu_seconds": 0.004849151,
+      "connection_setup_cpu_seconds": 0.000859216,
+      "active_peak_rss_bytes": 22450176,
+      "active_peak_pss_bytes": 19619840,
+      "active_peak_anonymous_bytes": 6275072,
+      "idle_before": [
+        {
+          "time": 1792720870.4402983,
+          "monotonic": 132165.748585979,
+          "pids": [
+            831835
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 45043551,
+          "rss_bytes": 22175744,
+          "pss_bytes": 19345408,
+          "anonymous_bytes": 6197248
+        },
+        {
+          "time": 1792720871.4978154,
+          "monotonic": 132166.80610225,
+          "pids": [
+            831835
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 45230580,
+          "rss_bytes": 22175744,
+          "pss_bytes": 19345408,
+          "anonymous_bytes": 6197248
+        },
+        {
+          "time": 1792720872.5574138,
+          "monotonic": 132167.865701535,
+          "pids": [
+            831835
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 45381602,
+          "rss_bytes": 22175744,
+          "pss_bytes": 19345408,
+          "anonymous_bytes": 6197248
+        },
+        {
+          "time": 1792720873.6128337,
+          "monotonic": 132168.921121354,
+          "pids": [
+            831835
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 45553414,
+          "rss_bytes": 22175744,
+          "pss_bytes": 19344384,
+          "anonymous_bytes": 6197248
+        },
+        {
+          "time": 1792720874.6892903,
+          "monotonic": 132169.997577231,
+          "pids": [
+            831835
+          ],
+          "cpu_ticks_user_system": 4,
+          "cpu_time_user_system_ns": 45724232,
+          "rss_bytes": 22175744,
+          "pss_bytes": 19344384,
+          "anonymous_bytes": 6197248
+        }
+      ],
+      "active_samples": [
+        {
+          "time": 1792720875.8448868,
+          "monotonic": 132171.153173727,
+          "pids": [
+            831835
+          ],
+          "cpu_ticks_user_system": 4,
+          "cpu_time_user_system_ns": 46701166,
+          "rss_bytes": 22310912,
+          "pss_bytes": 19479552,
+          "anonymous_bytes": 6201344
+        },
+        {
+          "time": 1792720876.913513,
+          "monotonic": 132172.221799492,
+          "pids": [
+            831835
+          ],
+          "cpu_ticks_user_system": 12,
+          "cpu_time_user_system_ns": 122581348,
+          "rss_bytes": 22417408,
+          "pss_bytes": 19586048,
+          "anonymous_bytes": 6242304
+        },
+        {
+          "time": 1792720877.9811683,
+          "monotonic": 132173.289456261,
+          "pids": [
+            831835
+          ],
+          "cpu_ticks_user_system": 19,
+          "cpu_time_user_system_ns": 198842341,
+          "rss_bytes": 22425600,
+          "pss_bytes": 19594240,
+          "anonymous_bytes": 6250496
+        },
+        {
+          "time": 1792720879.0463502,
+          "monotonic": 132174.354636836,
+          "pids": [
+            831835
+          ],
+          "cpu_ticks_user_system": 27,
+          "cpu_time_user_system_ns": 277203805,
+          "rss_bytes": 22425600,
+          "pss_bytes": 19595264,
+          "anonymous_bytes": 6250496
+        },
+        {
+          "time": 1792720875.8304083,
+          "monotonic": 132171.138694993,
+          "pids": [
+            831835
+          ],
+          "cpu_ticks_user_system": 4,
+          "cpu_time_user_system_ns": 45841950,
+          "rss_bytes": 22175744,
+          "pss_bytes": 19344384,
+          "anonymous_bytes": 6197248
+        },
+        {
+          "time": 1792720875.9051828,
+          "monotonic": 132171.213470784,
+          "pids": [
+            831835
+          ],
+          "cpu_ticks_user_system": 4,
+          "cpu_time_user_system_ns": 46701166,
+          "rss_bytes": 22310912,
+          "pss_bytes": 19479552,
+          "anonymous_bytes": 6201344
+        },
+        {
+          "time": 1792720875.9814389,
+          "monotonic": 132171.289726082,
+          "pids": [
+            831835
+          ],
+          "cpu_ticks_user_system": 4,
+          "cpu_time_user_system_ns": 51550317,
+          "rss_bytes": 22401024,
+          "pss_bytes": 19569664,
+          "anonymous_bytes": 6225920
+        },
+        {
+          "time": 1792720879.9672425,
+          "monotonic": 132175.275530015,
+          "pids": [
+            831835
+          ],
+          "cpu_ticks_user_system": 32,
+          "cpu_time_user_system_ns": 331664209,
+          "rss_bytes": 22450176,
+          "pss_bytes": 19619840,
+          "anonymous_bytes": 6275072
+        },
+        {
+          "time": 1792720880.0232775,
+          "monotonic": 132175.331564364,
+          "pids": [
+            831835
+          ],
+          "cpu_ticks_user_system": 32,
+          "cpu_time_user_system_ns": 331842993,
+          "rss_bytes": 22450176,
+          "pss_bytes": 19619840,
+          "anonymous_bytes": 6275072
+        }
+      ],
+      "idle_after": [
+        {
+          "time": 1792720880.16512,
+          "monotonic": 132175.473407466,
+          "pids": [
+            831835
+          ],
+          "cpu_ticks_user_system": 32,
+          "cpu_time_user_system_ns": 332964261,
+          "rss_bytes": 22503424,
+          "pss_bytes": 19673088,
+          "anonymous_bytes": 6328320
+        },
+        {
+          "time": 1792720881.2175002,
+          "monotonic": 132176.525787463,
+          "pids": [
+            831835
+          ],
+          "cpu_ticks_user_system": 32,
+          "cpu_time_user_system_ns": 333270701,
+          "rss_bytes": 22700032,
+          "pss_bytes": 19673088,
+          "anonymous_bytes": 6328320
+        },
+        {
+          "time": 1792720882.2723444,
+          "monotonic": 132177.580631574,
+          "pids": [
+            831835
+          ],
+          "cpu_ticks_user_system": 32,
+          "cpu_time_user_system_ns": 333429478,
+          "rss_bytes": 22700032,
+          "pss_bytes": 19673088,
+          "anonymous_bytes": 6328320
+        },
+        {
+          "time": 1792720883.3229642,
+          "monotonic": 132178.631251556,
+          "pids": [
+            831835
+          ],
+          "cpu_ticks_user_system": 32,
+          "cpu_time_user_system_ns": 333573668,
+          "rss_bytes": 22700032,
+          "pss_bytes": 19673088,
+          "anonymous_bytes": 6328320
+        },
+        {
+          "time": 1792720884.3823075,
+          "monotonic": 132179.690594705,
+          "pids": [
+            831835
+          ],
+          "cpu_ticks_user_system": 32,
+          "cpu_time_user_system_ns": 333732075,
+          "rss_bytes": 22700032,
+          "pss_bytes": 19673088,
+          "anonymous_bytes": 6328320
+        }
+      ],
+      "diagnostic_run": false,
+      "torrentng_diagnostics": {
+        "before_torrent_add": {
+          "label": "before-torrent-add",
+          "captured_unix": 1792720869.4216142,
+          "process": {
+            "time": 1792720869.4768414,
+            "monotonic": 132164.785128919,
+            "pids": [
+              831835
+            ],
+            "cpu_ticks_user_system": 0,
+            "cpu_time_user_system_ns": 14524610,
+            "rss_bytes": 17424384,
+            "pss_bytes": 14594048,
+            "anonymous_bytes": 3477504
+          },
+          "smaps": [
+            {
+              "pid": 831835,
+              "path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-01-mapped/mapped/diagnostics/before-torrent-add-pid-831835.smaps",
+              "totals_bytes": {
+                "Size": 233152512,
+                "Rss": 17424384,
+                "Pss": 14590976,
+                "Anonymous": 3477504,
+                "Private_Clean": 0,
+                "Private_Dirty": 14589952,
+                "Shared_Clean": 2834432,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            }
+          ],
+          "metrics": {
+            "torrentng_storage_peer_read_cache_entries": 0.0,
+            "torrentng_storage_peer_read_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_budget_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_hits_total": 0.0,
+            "torrentng_storage_peer_read_cache_misses_total": 0.0,
+            "torrentng_storage_peer_read_cache_evictions_total": 0.0
+          },
+          "smaps_totals_bytes": {
+            "Size": 233152512,
+            "Rss": 17424384,
+            "Pss": 14590976,
+            "Anonymous": 3477504,
+            "Private_Clean": 0,
+            "Private_Dirty": 14589952,
+            "Shared_Clean": 2834432,
+            "Shared_Dirty": 0,
+            "Swap": 0
+          },
+          "metrics_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-01-mapped/mapped/diagnostics/before-torrent-add.metrics.prom"
+        },
+        "after_seed_recheck": {
+          "label": "after-seed-recheck",
+          "captured_unix": 1792720870.2956493,
+          "process": {
+            "time": 1792720870.3471472,
+            "monotonic": 132165.65543443,
+            "pids": [
+              831835
+            ],
+            "cpu_ticks_user_system": 3,
+            "cpu_time_user_system_ns": 43687331,
+            "rss_bytes": 22102016,
+            "pss_bytes": 19271680,
+            "anonymous_bytes": 6123520
+          },
+          "smaps": [
+            {
+              "pid": 831835,
+              "path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-01-mapped/mapped/diagnostics/after-seed-recheck-pid-831835.smaps",
+              "totals_bytes": {
+                "Size": 579264512,
+                "Rss": 22102016,
+                "Pss": 19268608,
+                "Anonymous": 6123520,
+                "Private_Clean": 0,
+                "Private_Dirty": 19267584,
+                "Shared_Clean": 2834432,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            }
+          ],
+          "metrics": {
+            "torrentng_storage_peer_read_cache_entries": 0.0,
+            "torrentng_storage_peer_read_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_budget_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_hits_total": 0.0,
+            "torrentng_storage_peer_read_cache_misses_total": 0.0,
+            "torrentng_storage_peer_read_cache_evictions_total": 0.0,
+            "storage_scheduler_selected_backends": [
+              "pread"
+            ]
+          },
+          "smaps_totals_bytes": {
+            "Size": 579264512,
+            "Rss": 22102016,
+            "Pss": 19268608,
+            "Anonymous": 6123520,
+            "Private_Clean": 0,
+            "Private_Dirty": 19267584,
+            "Shared_Clean": 2834432,
+            "Shared_Dirty": 0,
+            "Swap": 0
+          },
+          "metrics_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-01-mapped/mapped/diagnostics/after-seed-recheck.metrics.prom"
+        },
+        "during_transfer": null,
+        "after_transfer": {
+          "label": "after-transfer",
+          "captured_unix": 1792720880.0349424,
+          "process": {
+            "time": 1792720880.0942276,
+            "monotonic": 132175.402514875,
+            "pids": [
+              831835
+            ],
+            "cpu_ticks_user_system": 32,
+            "cpu_time_user_system_ns": 331842993,
+            "rss_bytes": 22450176,
+            "pss_bytes": 19619840,
+            "anonymous_bytes": 6275072
+          },
+          "smaps": [
+            {
+              "pid": 831835,
+              "path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-01-mapped/mapped/diagnostics/after-transfer-pid-831835.smaps",
+              "totals_bytes": {
+                "Size": 579264512,
+                "Rss": 22450176,
+                "Pss": 19616768,
+                "Anonymous": 6275072,
+                "Private_Clean": 0,
+                "Private_Dirty": 19615744,
+                "Shared_Clean": 2834432,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            }
+          ],
+          "metrics": {
+            "torrentng_storage_peer_read_cache_entries": 0.0,
+            "torrentng_storage_peer_read_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_budget_bytes": 16777216.0,
+            "torrentng_storage_peer_read_cache_hits_total": 0.0,
+            "torrentng_storage_peer_read_cache_misses_total": 0.0,
+            "torrentng_storage_peer_read_cache_evictions_total": 0.0,
+            "storage_scheduler_selected_backends": [
+              "pread"
+            ]
+          },
+          "smaps_totals_bytes": {
+            "Size": 579264512,
+            "Rss": 22450176,
+            "Pss": 19616768,
+            "Anonymous": 6275072,
+            "Private_Clean": 0,
+            "Private_Dirty": 19615744,
+            "Shared_Clean": 2834432,
+            "Shared_Dirty": 0,
+            "Swap": 0
+          },
+          "metrics_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-01-mapped/mapped/diagnostics/after-transfer.metrics.prom"
+        }
+      },
+      "payload_cleanup": {
+        "policy": "after-verified-transfer-and-client-shutdown",
+        "status": "deleted",
+        "paths": [
+          "downloaded.bin",
+          "mapped/download/payload.bin"
+        ]
+      }
+    },
+    {
+      "round": 2,
+      "name": "mapped",
+      "kind": "torrentngd",
+      "binary": "/tmp/torrentng-seed-goal-20261022/mapped-range-release-target/release/torrentngd",
+      "binary_sha256": "2216ed50c475ea4c26000af8b99dc610694051730fabad0ba762bc1465811b74",
+      "command": [
+        "/tmp/torrentng-seed-goal-20261022/mapped-range-release-target/release/torrentngd"
+      ],
+      "config_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-02-mapped/mapped/config.toml",
+      "environment_overrides": {
+        "TNG_STORAGE_BACKEND": "pread"
+      },
+      "inherited_measurement_controls": {
+        "names": [],
+        "safe_values": {}
+      },
+      "namespace_pid": 834974,
+      "proc_pid": 834974,
+      "transfer": {
+        "bytes": 16777216,
+        "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3",
+        "verified": true,
+        "elapsed_seconds": 4.142782041017199,
+        "first_payload_delay_seconds": 0.0463596019835677,
+        "payload_elapsed_seconds": 4.000056299002608,
+        "offered_rate_bytes_per_second": 4194304,
+        "connection_start_sample": {
+          "time": 1792720892.0711217,
+          "monotonic": 132187.379408839,
+          "pids": [
+            834974
+          ],
+          "cpu_ticks_user_system": 4,
+          "cpu_time_user_system_ns": 50003341,
+          "rss_bytes": 22319104,
+          "pss_bytes": 19483648,
+          "anonymous_bytes": 6205440
+        },
+        "leecher_address": [
+          "127.0.0.1",
+          55037
+        ],
+        "first_payload_sample": {
+          "time": 1792720892.1276784,
+          "monotonic": 132187.43596557,
+          "pids": [
+            834974
+          ],
+          "cpu_ticks_user_system": 4,
+          "cpu_time_user_system_ns": 54603867,
+          "rss_bytes": 22409216,
+          "pss_bytes": 19573760,
+          "anonymous_bytes": 6230016
+        },
+        "payload_complete_sample": {
+          "time": 1792720896.1156142,
+          "monotonic": 132191.423900623,
+          "pids": [
+            834974
+          ],
+          "cpu_ticks_user_system": 29,
+          "cpu_time_user_system_ns": 302464239,
+          "rss_bytes": 22458368,
+          "pss_bytes": 19622912,
+          "anonymous_bytes": 6279168
+        },
+        "post_leecher_sample": {
+          "time": 1792720896.1578376,
+          "monotonic": 132191.466124526,
+          "pids": [
+            834974
+          ],
+          "cpu_ticks_user_system": 29,
+          "cpu_time_user_system_ns": 302589784,
+          "rss_bytes": 22458368,
+          "pss_bytes": 19622912,
+          "anonymous_bytes": 6279168
+        },
+        "initial_client_messages": [
+          {
+            "type": "handshake",
+            "bytes_hex": "13426974546f7272656e742070726f746f636f6c0000000000000000bc09795309ae171fe1317fedab7c74c0c9e2fd772d544e47303030312d4350552d52414d30303031"
+          },
+          {
+            "type": "bitfield",
+            "bytes_hex": "00000003050000"
+          },
+          {
+            "type": "interested",
+            "bytes_hex": "0000000102"
+          }
+        ],
+        "peer_state_snapshots": [],
+        "mid_transfer_diagnostics": null
+      },
+      "pre_leecher_sample": {
+        "time": 1792720892.0245643,
+        "monotonic": 132187.332850852,
+        "pids": [
+          834974
+        ],
+        "cpu_ticks_user_system": 4,
+        "cpu_time_user_system_ns": 48972683,
+        "rss_bytes": 22188032,
+        "pss_bytes": 19352576,
+        "anonymous_bytes": 6205440
+      },
+      "cpu_tick_hz": 100,
+      "payload_cpu_seconds_user_system": 0.247860372,
+      "connection_to_payload_cpu_seconds_user_system": 0.252460898,
+      "connection_wait_cpu_seconds": 0.004600526,
+      "connection_setup_cpu_seconds": 0.001030658,
+      "active_peak_rss_bytes": 22458368,
+      "active_peak_pss_bytes": 19622912,
+      "active_peak_anonymous_bytes": 6279168,
+      "idle_before": [
+        {
+          "time": 1792720886.6879792,
+          "monotonic": 132181.996266689,
+          "pids": [
+            834974
+          ],
+          "cpu_ticks_user_system": 4,
+          "cpu_time_user_system_ns": 48059226,
+          "rss_bytes": 22188032,
+          "pss_bytes": 19352576,
+          "anonymous_bytes": 6205440
+        },
+        {
+          "time": 1792720887.739908,
+          "monotonic": 132183.048195229,
+          "pids": [
+            834974
+          ],
+          "cpu_ticks_user_system": 4,
+          "cpu_time_user_system_ns": 48244761,
+          "rss_bytes": 22188032,
+          "pss_bytes": 19352576,
+          "anonymous_bytes": 6205440
+        },
+        {
+          "time": 1792720888.798589,
+          "monotonic": 132184.106877234,
+          "pids": [
+            834974
+          ],
+          "cpu_ticks_user_system": 4,
+          "cpu_time_user_system_ns": 48408129,
+          "rss_bytes": 22188032,
+          "pss_bytes": 19352576,
+          "anonymous_bytes": 6205440
+        },
+        {
+          "time": 1792720889.8526697,
+          "monotonic": 132185.160957845,
+          "pids": [
+            834974
+          ],
+          "cpu_ticks_user_system": 4,
+          "cpu_time_user_system_ns": 48656102,
+          "rss_bytes": 22188032,
+          "pss_bytes": 19352576,
+          "anonymous_bytes": 6205440
+        },
+        {
+          "time": 1792720890.8955135,
+          "monotonic": 132186.203801237,
+          "pids": [
+            834974
+          ],
+          "cpu_ticks_user_system": 4,
+          "cpu_time_user_system_ns": 48857918,
+          "rss_bytes": 22188032,
+          "pss_bytes": 19352576,
+          "anonymous_bytes": 6205440
+        }
+      ],
+      "active_samples": [
+        {
+          "time": 1792720892.0243669,
+          "monotonic": 132187.33265407,
+          "pids": [
+            834974
+          ],
+          "cpu_ticks_user_system": 4,
+          "cpu_time_user_system_ns": 48972683,
+          "rss_bytes": 22188032,
+          "pss_bytes": 19352576,
+          "anonymous_bytes": 6205440
+        },
+        {
+          "time": 1792720893.1102836,
+          "monotonic": 132188.418570061,
+          "pids": [
+            834974
+          ],
+          "cpu_ticks_user_system": 12,
+          "cpu_time_user_system_ns": 130266375,
+          "rss_bytes": 22425600,
+          "pss_bytes": 19590144,
+          "anonymous_bytes": 6246400
+        },
+        {
+          "time": 1792720894.1656344,
+          "monotonic": 132189.473922131,
+          "pids": [
+            834974
+          ],
+          "cpu_ticks_user_system": 19,
+          "cpu_time_user_system_ns": 205496639,
+          "rss_bytes": 22437888,
+          "pss_bytes": 19602432,
+          "anonymous_bytes": 6258688
+        },
+        {
+          "time": 1792720895.2146313,
+          "monotonic": 132190.522917979,
+          "pids": [
+            834974
+          ],
+          "cpu_ticks_user_system": 25,
+          "cpu_time_user_system_ns": 267954077,
+          "rss_bytes": 22437888,
+          "pss_bytes": 19602432,
+          "anonymous_bytes": 6258688
+        },
+        {
+          "time": 1792720892.0245643,
+          "monotonic": 132187.332850852,
+          "pids": [
+            834974
+          ],
+          "cpu_ticks_user_system": 4,
+          "cpu_time_user_system_ns": 48972683,
+          "rss_bytes": 22188032,
+          "pss_bytes": 19352576,
+          "anonymous_bytes": 6205440
+        },
+        {
+          "time": 1792720892.0711217,
+          "monotonic": 132187.379408839,
+          "pids": [
+            834974
+          ],
+          "cpu_ticks_user_system": 4,
+          "cpu_time_user_system_ns": 50003341,
+          "rss_bytes": 22319104,
+          "pss_bytes": 19483648,
+          "anonymous_bytes": 6205440
+        },
+        {
+          "time": 1792720892.1276784,
+          "monotonic": 132187.43596557,
+          "pids": [
+            834974
+          ],
+          "cpu_ticks_user_system": 4,
+          "cpu_time_user_system_ns": 54603867,
+          "rss_bytes": 22409216,
+          "pss_bytes": 19573760,
+          "anonymous_bytes": 6230016
+        },
+        {
+          "time": 1792720896.1156142,
+          "monotonic": 132191.423900623,
+          "pids": [
+            834974
+          ],
+          "cpu_ticks_user_system": 29,
+          "cpu_time_user_system_ns": 302464239,
+          "rss_bytes": 22458368,
+          "pss_bytes": 19622912,
+          "anonymous_bytes": 6279168
+        },
+        {
+          "time": 1792720896.1578376,
+          "monotonic": 132191.466124526,
+          "pids": [
+            834974
+          ],
+          "cpu_ticks_user_system": 29,
+          "cpu_time_user_system_ns": 302589784,
+          "rss_bytes": 22458368,
+          "pss_bytes": 19622912,
+          "anonymous_bytes": 6279168
+        }
+      ],
+      "idle_after": [
+        {
+          "time": 1792720896.2528064,
+          "monotonic": 132191.561093835,
+          "pids": [
+            834974
+          ],
+          "cpu_ticks_user_system": 29,
+          "cpu_time_user_system_ns": 303230793,
+          "rss_bytes": 22507520,
+          "pss_bytes": 19672064,
+          "anonymous_bytes": 6328320
+        },
+        {
+          "time": 1792720897.2932894,
+          "monotonic": 132192.60157723,
+          "pids": [
+            834974
+          ],
+          "cpu_ticks_user_system": 29,
+          "cpu_time_user_system_ns": 303381196,
+          "rss_bytes": 22704128,
+          "pss_bytes": 19673088,
+          "anonymous_bytes": 6328320
+        },
+        {
+          "time": 1792720898.3377728,
+          "monotonic": 132193.646059982,
+          "pids": [
+            834974
+          ],
+          "cpu_ticks_user_system": 29,
+          "cpu_time_user_system_ns": 303490761,
+          "rss_bytes": 22704128,
+          "pss_bytes": 19673088,
+          "anonymous_bytes": 6328320
+        },
+        {
+          "time": 1792720899.3854842,
+          "monotonic": 132194.693772257,
+          "pids": [
+            834974
+          ],
+          "cpu_ticks_user_system": 29,
+          "cpu_time_user_system_ns": 303637917,
+          "rss_bytes": 22704128,
+          "pss_bytes": 19673088,
+          "anonymous_bytes": 6328320
+        },
+        {
+          "time": 1792720900.4315774,
+          "monotonic": 132195.739864864,
+          "pids": [
+            834974
+          ],
+          "cpu_ticks_user_system": 29,
+          "cpu_time_user_system_ns": 303805291,
+          "rss_bytes": 22704128,
+          "pss_bytes": 19673088,
+          "anonymous_bytes": 6328320
+        }
+      ],
+      "diagnostic_run": false,
+      "torrentng_diagnostics": {
+        "before_torrent_add": {
+          "label": "before-torrent-add",
+          "captured_unix": 1792720885.6670477,
+          "process": {
+            "time": 1792720885.717598,
+            "monotonic": 132181.025885071,
+            "pids": [
+              834974
+            ],
+            "cpu_ticks_user_system": 0,
+            "cpu_time_user_system_ns": 17638784,
+            "rss_bytes": 17444864,
+            "pss_bytes": 14609408,
+            "anonymous_bytes": 3493888
+          },
+          "smaps": [
+            {
+              "pid": 834974,
+              "path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-02-mapped/mapped/diagnostics/before-torrent-add-pid-834974.smaps",
+              "totals_bytes": {
+                "Size": 233156608,
+                "Rss": 17444864,
+                "Pss": 14607360,
+                "Anonymous": 3493888,
+                "Private_Clean": 0,
+                "Private_Dirty": 14606336,
+                "Shared_Clean": 2838528,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            }
+          ],
+          "metrics": {
+            "torrentng_storage_peer_read_cache_entries": 0.0,
+            "torrentng_storage_peer_read_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_budget_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_hits_total": 0.0,
+            "torrentng_storage_peer_read_cache_misses_total": 0.0,
+            "torrentng_storage_peer_read_cache_evictions_total": 0.0
+          },
+          "smaps_totals_bytes": {
+            "Size": 233156608,
+            "Rss": 17444864,
+            "Pss": 14607360,
+            "Anonymous": 3493888,
+            "Private_Clean": 0,
+            "Private_Dirty": 14606336,
+            "Shared_Clean": 2838528,
+            "Shared_Dirty": 0,
+            "Swap": 0
+          },
+          "metrics_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-02-mapped/mapped/diagnostics/before-torrent-add.metrics.prom"
+        },
+        "after_seed_recheck": {
+          "label": "after-seed-recheck",
+          "captured_unix": 1792720886.5358572,
+          "process": {
+            "time": 1792720886.5971172,
+            "monotonic": 132181.90540453,
+            "pids": [
+              834974
+            ],
+            "cpu_ticks_user_system": 4,
+            "cpu_time_user_system_ns": 46364495,
+            "rss_bytes": 22118400,
+            "pss_bytes": 19282944,
+            "anonymous_bytes": 6135808
+          },
+          "smaps": [
+            {
+              "pid": 834974,
+              "path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-02-mapped/mapped/diagnostics/after-seed-recheck-pid-834974.smaps",
+              "totals_bytes": {
+                "Size": 579268608,
+                "Rss": 22118400,
+                "Pss": 19280896,
+                "Anonymous": 6135808,
+                "Private_Clean": 0,
+                "Private_Dirty": 19279872,
+                "Shared_Clean": 2838528,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            }
+          ],
+          "metrics": {
+            "torrentng_storage_peer_read_cache_entries": 0.0,
+            "torrentng_storage_peer_read_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_budget_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_hits_total": 0.0,
+            "torrentng_storage_peer_read_cache_misses_total": 0.0,
+            "torrentng_storage_peer_read_cache_evictions_total": 0.0,
+            "storage_scheduler_selected_backends": [
+              "pread"
+            ]
+          },
+          "smaps_totals_bytes": {
+            "Size": 579268608,
+            "Rss": 22118400,
+            "Pss": 19280896,
+            "Anonymous": 6135808,
+            "Private_Clean": 0,
+            "Private_Dirty": 19279872,
+            "Shared_Clean": 2838528,
+            "Shared_Dirty": 0,
+            "Swap": 0
+          },
+          "metrics_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-02-mapped/mapped/diagnostics/after-seed-recheck.metrics.prom"
+        },
+        "during_transfer": null,
+        "after_transfer": {
+          "label": "after-transfer",
+          "captured_unix": 1792720896.167653,
+          "process": {
+            "time": 1792720896.2094963,
+            "monotonic": 132191.517783678,
+            "pids": [
+              834974
+            ],
+            "cpu_ticks_user_system": 29,
+            "cpu_time_user_system_ns": 302589784,
+            "rss_bytes": 22458368,
+            "pss_bytes": 19622912,
+            "anonymous_bytes": 6279168
+          },
+          "smaps": [
+            {
+              "pid": 834974,
+              "path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-02-mapped/mapped/diagnostics/after-transfer-pid-834974.smaps",
+              "totals_bytes": {
+                "Size": 579268608,
+                "Rss": 22458368,
+                "Pss": 19620864,
+                "Anonymous": 6279168,
+                "Private_Clean": 0,
+                "Private_Dirty": 19619840,
+                "Shared_Clean": 2838528,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            }
+          ],
+          "metrics": {
+            "torrentng_storage_peer_read_cache_entries": 0.0,
+            "torrentng_storage_peer_read_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_budget_bytes": 16777216.0,
+            "torrentng_storage_peer_read_cache_hits_total": 0.0,
+            "torrentng_storage_peer_read_cache_misses_total": 0.0,
+            "torrentng_storage_peer_read_cache_evictions_total": 0.0,
+            "storage_scheduler_selected_backends": [
+              "pread"
+            ]
+          },
+          "smaps_totals_bytes": {
+            "Size": 579268608,
+            "Rss": 22458368,
+            "Pss": 19620864,
+            "Anonymous": 6279168,
+            "Private_Clean": 0,
+            "Private_Dirty": 19619840,
+            "Shared_Clean": 2838528,
+            "Shared_Dirty": 0,
+            "Swap": 0
+          },
+          "metrics_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-02-mapped/mapped/diagnostics/after-transfer.metrics.prom"
+        }
+      },
+      "payload_cleanup": {
+        "policy": "after-verified-transfer-and-client-shutdown",
+        "status": "deleted",
+        "paths": [
+          "downloaded.bin",
+          "mapped/download/payload.bin"
+        ]
+      }
+    },
+    {
+      "round": 2,
+      "name": "baseline",
+      "kind": "torrentngd",
+      "binary": "/home/keith/Documents/code/TorrentNG/target/release/torrentngd",
+      "binary_sha256": "63e316c8727c00e3c3356f48076ee7afeb4654b6050435f1c037c1c30247df99",
+      "command": [
+        "/home/keith/Documents/code/TorrentNG/target/release/torrentngd"
+      ],
+      "config_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-02-baseline/baseline/config.toml",
+      "environment_overrides": {
+        "TNG_STORAGE_BACKEND": "pread"
+      },
+      "inherited_measurement_controls": {
+        "names": [],
+        "safe_values": {}
+      },
+      "namespace_pid": 837859,
+      "proc_pid": 837859,
+      "transfer": {
+        "bytes": 16777216,
+        "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3",
+        "verified": true,
+        "elapsed_seconds": 4.19749181199586,
+        "first_payload_delay_seconds": 0.06182786199497059,
+        "payload_elapsed_seconds": 4.000084858998889,
+        "offered_rate_bytes_per_second": 4194304,
+        "connection_start_sample": {
+          "time": 1792720908.0477502,
+          "monotonic": 132203.356037255,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 39454250,
+          "rss_bytes": 22388736,
+          "pss_bytes": 19532800,
+          "anonymous_bytes": 6193152
+        },
+        "leecher_address": [
+          "127.0.0.1",
+          59173
+        ],
+        "first_payload_sample": {
+          "time": 1792720908.119546,
+          "monotonic": 132203.427833205,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 40982179,
+          "rss_bytes": 22396928,
+          "pss_bytes": 19540992,
+          "anonymous_bytes": 6201344
+        },
+        "payload_complete_sample": {
+          "time": 1792720912.1061478,
+          "monotonic": 132207.414435111,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 14,
+          "cpu_time_user_system_ns": 142603094,
+          "rss_bytes": 22396928,
+          "pss_bytes": 19540992,
+          "anonymous_bytes": 6201344
+        },
+        "post_leecher_sample": {
+          "time": 1792720912.1712985,
+          "monotonic": 132207.479586108,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 14,
+          "cpu_time_user_system_ns": 142777671,
+          "rss_bytes": 22396928,
+          "pss_bytes": 19540992,
+          "anonymous_bytes": 6201344
+        },
+        "initial_client_messages": [
+          {
+            "type": "handshake",
+            "bytes_hex": "13426974546f7272656e742070726f746f636f6c0000000000000000bc09795309ae171fe1317fedab7c74c0c9e2fd772d544e47303030312d4350552d52414d30303031"
+          },
+          {
+            "type": "bitfield",
+            "bytes_hex": "00000003050000"
+          },
+          {
+            "type": "interested",
+            "bytes_hex": "0000000102"
+          }
+        ],
+        "peer_state_snapshots": [],
+        "mid_transfer_diagnostics": null
+      },
+      "pre_leecher_sample": {
+        "time": 1792720907.9854577,
+        "monotonic": 132203.293745074,
+        "pids": [
+          837859
+        ],
+        "cpu_ticks_user_system": 3,
+        "cpu_time_user_system_ns": 38540539,
+        "rss_bytes": 22257664,
+        "pss_bytes": 19401728,
+        "anonymous_bytes": 6193152
+      },
+      "cpu_tick_hz": 100,
+      "payload_cpu_seconds_user_system": 0.101620915,
+      "connection_to_payload_cpu_seconds_user_system": 0.103148844,
+      "connection_wait_cpu_seconds": 0.001527929,
+      "connection_setup_cpu_seconds": 0.000913711,
+      "active_peak_rss_bytes": 22396928,
+      "active_peak_pss_bytes": 19540992,
+      "active_peak_anonymous_bytes": 6201344,
+      "idle_before": [
+        {
+          "time": 1792720902.6760247,
+          "monotonic": 132197.984311664,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 2,
+          "cpu_time_user_system_ns": 37780948,
+          "rss_bytes": 22257664,
+          "pss_bytes": 19401728,
+          "anonymous_bytes": 6193152
+        },
+        {
+          "time": 1792720903.7169008,
+          "monotonic": 132199.025188158,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 2,
+          "cpu_time_user_system_ns": 37944313,
+          "rss_bytes": 22257664,
+          "pss_bytes": 19401728,
+          "anonymous_bytes": 6193152
+        },
+        {
+          "time": 1792720904.7608328,
+          "monotonic": 132200.069120054,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 2,
+          "cpu_time_user_system_ns": 38056904,
+          "rss_bytes": 22257664,
+          "pss_bytes": 19401728,
+          "anonymous_bytes": 6193152
+        },
+        {
+          "time": 1792720905.801964,
+          "monotonic": 132201.110250889,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 2,
+          "cpu_time_user_system_ns": 38214389,
+          "rss_bytes": 22257664,
+          "pss_bytes": 19401728,
+          "anonymous_bytes": 6193152
+        },
+        {
+          "time": 1792720906.8477774,
+          "monotonic": 132202.156064545,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 2,
+          "cpu_time_user_system_ns": 38370812,
+          "rss_bytes": 22257664,
+          "pss_bytes": 19401728,
+          "anonymous_bytes": 6193152
+        }
+      ],
+      "active_samples": [
+        {
+          "time": 1792720907.9711378,
+          "monotonic": 132203.279424908,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 38540539,
+          "rss_bytes": 22257664,
+          "pss_bytes": 19401728,
+          "anonymous_bytes": 6193152
+        },
+        {
+          "time": 1792720909.032331,
+          "monotonic": 132204.340618095,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 6,
+          "cpu_time_user_system_ns": 69181789,
+          "rss_bytes": 22396928,
+          "pss_bytes": 19540992,
+          "anonymous_bytes": 6201344
+        },
+        {
+          "time": 1792720910.0841577,
+          "monotonic": 132205.392445198,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 9,
+          "cpu_time_user_system_ns": 96839682,
+          "rss_bytes": 22396928,
+          "pss_bytes": 19540992,
+          "anonymous_bytes": 6201344
+        },
+        {
+          "time": 1792720911.1393316,
+          "monotonic": 132206.447618744,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 11,
+          "cpu_time_user_system_ns": 120453511,
+          "rss_bytes": 22396928,
+          "pss_bytes": 19540992,
+          "anonymous_bytes": 6201344
+        },
+        {
+          "time": 1792720912.2167766,
+          "monotonic": 132207.525063677,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 14,
+          "cpu_time_user_system_ns": 142777671,
+          "rss_bytes": 22396928,
+          "pss_bytes": 19540992,
+          "anonymous_bytes": 6201344
+        },
+        {
+          "time": 1792720907.9854577,
+          "monotonic": 132203.293745074,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 38540539,
+          "rss_bytes": 22257664,
+          "pss_bytes": 19401728,
+          "anonymous_bytes": 6193152
+        },
+        {
+          "time": 1792720908.0477502,
+          "monotonic": 132203.356037255,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 39454250,
+          "rss_bytes": 22388736,
+          "pss_bytes": 19532800,
+          "anonymous_bytes": 6193152
+        },
+        {
+          "time": 1792720908.119546,
+          "monotonic": 132203.427833205,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 40982179,
+          "rss_bytes": 22396928,
+          "pss_bytes": 19540992,
+          "anonymous_bytes": 6201344
+        },
+        {
+          "time": 1792720912.1061478,
+          "monotonic": 132207.414435111,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 14,
+          "cpu_time_user_system_ns": 142603094,
+          "rss_bytes": 22396928,
+          "pss_bytes": 19540992,
+          "anonymous_bytes": 6201344
+        },
+        {
+          "time": 1792720912.1712985,
+          "monotonic": 132207.479586108,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 14,
+          "cpu_time_user_system_ns": 142777671,
+          "rss_bytes": 22396928,
+          "pss_bytes": 19540992,
+          "anonymous_bytes": 6201344
+        }
+      ],
+      "idle_after": [
+        {
+          "time": 1792720912.3188956,
+          "monotonic": 132207.627182623,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 14,
+          "cpu_time_user_system_ns": 143471007,
+          "rss_bytes": 22470656,
+          "pss_bytes": 19614720,
+          "anonymous_bytes": 6275072
+        },
+        {
+          "time": 1792720913.376449,
+          "monotonic": 132208.684736401,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 14,
+          "cpu_time_user_system_ns": 143711657,
+          "rss_bytes": 22667264,
+          "pss_bytes": 19615744,
+          "anonymous_bytes": 6275072
+        },
+        {
+          "time": 1792720914.4334161,
+          "monotonic": 132209.741703326,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 14,
+          "cpu_time_user_system_ns": 143871766,
+          "rss_bytes": 22667264,
+          "pss_bytes": 19615744,
+          "anonymous_bytes": 6275072
+        },
+        {
+          "time": 1792720915.4914856,
+          "monotonic": 132210.799773683,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 14,
+          "cpu_time_user_system_ns": 144075297,
+          "rss_bytes": 22667264,
+          "pss_bytes": 19615744,
+          "anonymous_bytes": 6275072
+        },
+        {
+          "time": 1792720916.5471568,
+          "monotonic": 132211.855444329,
+          "pids": [
+            837859
+          ],
+          "cpu_ticks_user_system": 14,
+          "cpu_time_user_system_ns": 144293184,
+          "rss_bytes": 22667264,
+          "pss_bytes": 19615744,
+          "anonymous_bytes": 6275072
+        }
+      ],
+      "diagnostic_run": false,
+      "torrentng_diagnostics": {
+        "before_torrent_add": {
+          "label": "before-torrent-add",
+          "captured_unix": 1792720901.699101,
+          "process": {
+            "time": 1792720901.7419178,
+            "monotonic": 132197.050205511,
+            "pids": [
+              837859
+            ],
+            "cpu_ticks_user_system": 0,
+            "cpu_time_user_system_ns": 12225650,
+            "rss_bytes": 17383424,
+            "pss_bytes": 14527488,
+            "anonymous_bytes": 3481600
+          },
+          "smaps": [
+            {
+              "pid": 837859,
+              "path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-02-baseline/baseline/diagnostics/before-torrent-add-pid-837859.smaps",
+              "totals_bytes": {
+                "Size": 232972288,
+                "Rss": 17383424,
+                "Pss": 14525440,
+                "Anonymous": 3481600,
+                "Private_Clean": 11010048,
+                "Private_Dirty": 3514368,
+                "Shared_Clean": 2859008,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            }
+          ],
+          "metrics": {
+            "torrentng_storage_peer_read_cache_entries": 0.0,
+            "torrentng_storage_peer_read_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_budget_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_hits_total": 0.0,
+            "torrentng_storage_peer_read_cache_misses_total": 0.0,
+            "torrentng_storage_peer_read_cache_evictions_total": 0.0
+          },
+          "smaps_totals_bytes": {
+            "Size": 232972288,
+            "Rss": 17383424,
+            "Pss": 14525440,
+            "Anonymous": 3481600,
+            "Private_Clean": 11010048,
+            "Private_Dirty": 3514368,
+            "Shared_Clean": 2859008,
+            "Shared_Dirty": 0,
+            "Swap": 0
+          },
+          "metrics_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-02-baseline/baseline/diagnostics/before-torrent-add.metrics.prom"
+        },
+        "after_seed_recheck": {
+          "label": "after-seed-recheck",
+          "captured_unix": 1792720902.559316,
+          "process": {
+            "time": 1792720902.607199,
+            "monotonic": 132197.915486474,
+            "pids": [
+              837859
+            ],
+            "cpu_ticks_user_system": 2,
+            "cpu_time_user_system_ns": 36616749,
+            "rss_bytes": 22179840,
+            "pss_bytes": 19323904,
+            "anonymous_bytes": 6115328
+          },
+          "smaps": [
+            {
+              "pid": 837859,
+              "path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-02-baseline/baseline/diagnostics/after-seed-recheck-pid-837859.smaps",
+              "totals_bytes": {
+                "Size": 579084288,
+                "Rss": 22179840,
+                "Pss": 19321856,
+                "Anonymous": 6115328,
+                "Private_Clean": 13172736,
+                "Private_Dirty": 6148096,
+                "Shared_Clean": 2859008,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            }
+          ],
+          "metrics": {
+            "torrentng_storage_peer_read_cache_entries": 0.0,
+            "torrentng_storage_peer_read_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_budget_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_hits_total": 0.0,
+            "torrentng_storage_peer_read_cache_misses_total": 0.0,
+            "torrentng_storage_peer_read_cache_evictions_total": 0.0,
+            "storage_scheduler_selected_backends": [
+              "pread"
+            ]
+          },
+          "smaps_totals_bytes": {
+            "Size": 579084288,
+            "Rss": 22179840,
+            "Pss": 19321856,
+            "Anonymous": 6115328,
+            "Private_Clean": 13172736,
+            "Private_Dirty": 6148096,
+            "Shared_Clean": 2859008,
+            "Shared_Dirty": 0,
+            "Swap": 0
+          },
+          "metrics_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-02-baseline/baseline/diagnostics/after-seed-recheck.metrics.prom"
+        },
+        "during_transfer": null,
+        "after_transfer": {
+          "label": "after-transfer",
+          "captured_unix": 1792720912.217001,
+          "process": {
+            "time": 1792720912.2643402,
+            "monotonic": 132207.57262739,
+            "pids": [
+              837859
+            ],
+            "cpu_ticks_user_system": 14,
+            "cpu_time_user_system_ns": 142777671,
+            "rss_bytes": 22396928,
+            "pss_bytes": 19540992,
+            "anonymous_bytes": 6201344
+          },
+          "smaps": [
+            {
+              "pid": 837859,
+              "path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-02-baseline/baseline/diagnostics/after-transfer-pid-837859.smaps",
+              "totals_bytes": {
+                "Size": 579084288,
+                "Rss": 22396928,
+                "Pss": 19538944,
+                "Anonymous": 6201344,
+                "Private_Clean": 13303808,
+                "Private_Dirty": 6234112,
+                "Shared_Clean": 2859008,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            }
+          ],
+          "metrics": {
+            "torrentng_storage_peer_read_cache_entries": 0.0,
+            "torrentng_storage_peer_read_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_budget_bytes": 16777216.0,
+            "torrentng_storage_peer_read_cache_hits_total": 0.0,
+            "torrentng_storage_peer_read_cache_misses_total": 0.0,
+            "torrentng_storage_peer_read_cache_evictions_total": 0.0,
+            "storage_scheduler_selected_backends": [
+              "pread"
+            ]
+          },
+          "smaps_totals_bytes": {
+            "Size": 579084288,
+            "Rss": 22396928,
+            "Pss": 19538944,
+            "Anonymous": 6201344,
+            "Private_Clean": 13303808,
+            "Private_Dirty": 6234112,
+            "Shared_Clean": 2859008,
+            "Shared_Dirty": 0,
+            "Swap": 0
+          },
+          "metrics_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-02-baseline/baseline/diagnostics/after-transfer.metrics.prom"
+        }
+      },
+      "payload_cleanup": {
+        "policy": "after-verified-transfer-and-client-shutdown",
+        "status": "deleted",
+        "paths": [
+          "downloaded.bin",
+          "baseline/download/payload.bin"
+        ]
+      }
+    },
+    {
+      "round": 2,
+      "name": "rtorrent",
+      "kind": "rtorrent",
+      "binary": "/tmp/torrentng-seed-goal-20261022/rtorrent-rootfs/usr/local/bin/rtorrent",
+      "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+      "command": [
+        "/tmp/torrentng-seed-goal-20261022/rtorrent-rootfs/usr/local/bin/rtorrent",
+        "-n",
+        "-o",
+        "import=/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-02-rtorrent/rtorrent/rtorrent.rc",
+        "-o",
+        "system.daemon.set=true"
+      ],
+      "config_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-02-rtorrent/rtorrent/rtorrent.rc",
+      "environment_overrides": {
+        "LD_LIBRARY_PATH": "/tmp/torrentng-seed-goal-20261022/rtorrent-libs:/tmp/torrentng-seed-goal-20261022/rtorrent-rootfs/usr/local/lib"
+      },
+      "inherited_measurement_controls": {
+        "names": [],
+        "safe_values": {}
+      },
+      "namespace_pid": 840395,
+      "proc_pid": 840395,
+      "transfer": {
+        "bytes": 16777216,
+        "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3",
+        "verified": true,
+        "elapsed_seconds": 4.315842369018355,
+        "first_payload_delay_seconds": 0.10773748601786792,
+        "payload_elapsed_seconds": 4.000056650984334,
+        "offered_rate_bytes_per_second": 4194304,
+        "connection_start_sample": {
+          "time": 1792720923.5558891,
+          "monotonic": 132218.864176361,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 34128001,
+          "rss_bytes": 20127744,
+          "pss_bytes": 6393856,
+          "anonymous_bytes": 3211264
+        },
+        "leecher_address": [
+          "127.0.0.1",
+          60629
+        ],
+        "first_payload_sample": {
+          "time": 1792720923.6662958,
+          "monotonic": 132218.974582593,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 34951042,
+          "rss_bytes": 20910080,
+          "pss_bytes": 7076864,
+          "anonymous_bytes": 3211264
+        },
+        "payload_complete_sample": {
+          "time": 1792720927.658161,
+          "monotonic": 132222.966448989,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 7,
+          "cpu_time_user_system_ns": 81424451,
+          "rss_bytes": 21417984,
+          "pss_bytes": 7586816,
+          "anonymous_bytes": 3211264
+        },
+        "post_leecher_sample": {
+          "time": 1792720927.793634,
+          "monotonic": 132223.10192144,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 7,
+          "cpu_time_user_system_ns": 82926281,
+          "rss_bytes": 20393984,
+          "pss_bytes": 6562816,
+          "anonymous_bytes": 3211264
+        },
+        "initial_client_messages": [
+          {
+            "type": "handshake",
+            "bytes_hex": "13426974546f7272656e742070726f746f636f6c0000000000000000bc09795309ae171fe1317fedab7c74c0c9e2fd772d544e47303030312d4350552d52414d30303031"
+          },
+          {
+            "type": "bitfield",
+            "bytes_hex": "00000003050000"
+          },
+          {
+            "type": "interested",
+            "bytes_hex": "0000000102"
+          }
+        ],
+        "peer_state_snapshots": [],
+        "mid_transfer_diagnostics": null
+      },
+      "pre_leecher_sample": {
+        "time": 1792720923.4905872,
+        "monotonic": 132218.798874926,
+        "pids": [
+          840395
+        ],
+        "cpu_ticks_user_system": 3,
+        "cpu_time_user_system_ns": 33940580,
+        "rss_bytes": 20119552,
+        "pss_bytes": 6385664,
+        "anonymous_bytes": 3211264
+      },
+      "cpu_tick_hz": 100,
+      "payload_cpu_seconds_user_system": 0.046473409,
+      "connection_to_payload_cpu_seconds_user_system": 0.04729645,
+      "connection_wait_cpu_seconds": 0.000823041,
+      "connection_setup_cpu_seconds": 0.000187421,
+      "active_peak_rss_bytes": 21417984,
+      "active_peak_pss_bytes": 7586816,
+      "active_peak_anonymous_bytes": 3211264,
+      "idle_before": [
+        {
+          "time": 1792720918.132325,
+          "monotonic": 132213.440612154,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 33363282,
+          "rss_bytes": 20119552,
+          "pss_bytes": 6267904,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720919.1771235,
+          "monotonic": 132214.485411128,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 33682359,
+          "rss_bytes": 20119552,
+          "pss_bytes": 6315008,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720920.233726,
+          "monotonic": 132215.542013354,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 33736189,
+          "rss_bytes": 20119552,
+          "pss_bytes": 6315008,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720921.2819397,
+          "monotonic": 132216.590227145,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 33805237,
+          "rss_bytes": 20119552,
+          "pss_bytes": 6316032,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720922.326073,
+          "monotonic": 132217.634359905,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 33863256,
+          "rss_bytes": 20119552,
+          "pss_bytes": 6387712,
+          "anonymous_bytes": 3211264
+        }
+      ],
+      "active_samples": [
+        {
+          "time": 1792720923.4842496,
+          "monotonic": 132218.792536992,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 33940580,
+          "rss_bytes": 20119552,
+          "pss_bytes": 6385664,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720924.5539877,
+          "monotonic": 132219.862274568,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 47101744,
+          "rss_bytes": 20713472,
+          "pss_bytes": 6881280,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720925.6090186,
+          "monotonic": 132220.917306435,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 5,
+          "cpu_time_user_system_ns": 60439369,
+          "rss_bytes": 20975616,
+          "pss_bytes": 7065600,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720926.6617618,
+          "monotonic": 132221.970048116,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 6,
+          "cpu_time_user_system_ns": 73451087,
+          "rss_bytes": 21172224,
+          "pss_bytes": 7342080,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720927.8062773,
+          "monotonic": 132223.114564697,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 7,
+          "cpu_time_user_system_ns": 82926281,
+          "rss_bytes": 20393984,
+          "pss_bytes": 6562816,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720923.4905872,
+          "monotonic": 132218.798874926,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 33940580,
+          "rss_bytes": 20119552,
+          "pss_bytes": 6385664,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720923.5558891,
+          "monotonic": 132218.864176361,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 34128001,
+          "rss_bytes": 20127744,
+          "pss_bytes": 6393856,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720923.6662958,
+          "monotonic": 132218.974582593,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 34951042,
+          "rss_bytes": 20910080,
+          "pss_bytes": 7076864,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720927.658161,
+          "monotonic": 132222.966448989,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 7,
+          "cpu_time_user_system_ns": 81424451,
+          "rss_bytes": 21417984,
+          "pss_bytes": 7586816,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720927.793634,
+          "monotonic": 132223.10192144,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 7,
+          "cpu_time_user_system_ns": 82926281,
+          "rss_bytes": 20393984,
+          "pss_bytes": 6562816,
+          "anonymous_bytes": 3211264
+        }
+      ],
+      "idle_after": [
+        {
+          "time": 1792720927.874116,
+          "monotonic": 132223.182403471,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 7,
+          "cpu_time_user_system_ns": 82949275,
+          "rss_bytes": 20393984,
+          "pss_bytes": 6562816,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720928.919697,
+          "monotonic": 132224.227986505,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 7,
+          "cpu_time_user_system_ns": 83643313,
+          "rss_bytes": 20393984,
+          "pss_bytes": 6563840,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720929.9731052,
+          "monotonic": 132225.281392399,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 7,
+          "cpu_time_user_system_ns": 83760833,
+          "rss_bytes": 20393984,
+          "pss_bytes": 6596608,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720931.0254793,
+          "monotonic": 132226.333767069,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 7,
+          "cpu_time_user_system_ns": 83885486,
+          "rss_bytes": 20393984,
+          "pss_bytes": 6596608,
+          "anonymous_bytes": 3211264
+        },
+        {
+          "time": 1792720932.0823486,
+          "monotonic": 132227.390636142,
+          "pids": [
+            840395
+          ],
+          "cpu_ticks_user_system": 7,
+          "cpu_time_user_system_ns": 83975556,
+          "rss_bytes": 20393984,
+          "pss_bytes": 6595584,
+          "anonymous_bytes": 3211264
+        }
+      ],
+      "diagnostic_run": false,
+      "torrentng_diagnostics": null,
+      "payload_cleanup": {
+        "policy": "after-verified-transfer-and-client-shutdown",
+        "status": "deleted",
+        "paths": [
+          "downloaded.bin",
+          "rtorrent/download/payload.bin"
+        ]
+      }
+    },
+    {
+      "round": 3,
+      "name": "rtorrent",
+      "kind": "rtorrent",
+      "binary": "/tmp/torrentng-seed-goal-20261022/rtorrent-rootfs/usr/local/bin/rtorrent",
+      "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+      "command": [
+        "/tmp/torrentng-seed-goal-20261022/rtorrent-rootfs/usr/local/bin/rtorrent",
+        "-n",
+        "-o",
+        "import=/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-03-rtorrent/rtorrent/rtorrent.rc",
+        "-o",
+        "system.daemon.set=true"
+      ],
+      "config_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-03-rtorrent/rtorrent/rtorrent.rc",
+      "environment_overrides": {
+        "LD_LIBRARY_PATH": "/tmp/torrentng-seed-goal-20261022/rtorrent-libs:/tmp/torrentng-seed-goal-20261022/rtorrent-rootfs/usr/local/lib"
+      },
+      "inherited_measurement_controls": {
+        "names": [],
+        "safe_values": {}
+      },
+      "namespace_pid": 843704,
+      "proc_pid": 843704,
+      "transfer": {
+        "bytes": 16777216,
+        "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3",
+        "verified": true,
+        "elapsed_seconds": 4.298183768987656,
+        "first_payload_delay_seconds": 0.11225119899609126,
+        "payload_elapsed_seconds": 4.00007861899212,
+        "offered_rate_bytes_per_second": 4194304,
+        "connection_start_sample": {
+          "time": 1792720939.0572798,
+          "monotonic": 132234.365567202,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 32491559,
+          "rss_bytes": 20500480,
+          "pss_bytes": 6586368,
+          "anonymous_bytes": 3215360
+        },
+        "leecher_address": [
+          "127.0.0.1",
+          48007
+        ],
+        "first_payload_sample": {
+          "time": 1792720939.149598,
+          "monotonic": 132234.45788537,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 32988569,
+          "rss_bytes": 21258240,
+          "pss_bytes": 7283712,
+          "anonymous_bytes": 3215360
+        },
+        "payload_complete_sample": {
+          "time": 1792720943.1711857,
+          "monotonic": 132238.479473593,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 6,
+          "cpu_time_user_system_ns": 70386029,
+          "rss_bytes": 21753856,
+          "pss_bytes": 7739392,
+          "anonymous_bytes": 3215360
+        },
+        "post_leecher_sample": {
+          "time": 1792720943.2679944,
+          "monotonic": 132238.576281713,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 6,
+          "cpu_time_user_system_ns": 70590150,
+          "rss_bytes": 20713472,
+          "pss_bytes": 6696960,
+          "anonymous_bytes": 3215360
+        },
+        "initial_client_messages": [
+          {
+            "type": "handshake",
+            "bytes_hex": "13426974546f7272656e742070726f746f636f6c0000000000000000bc09795309ae171fe1317fedab7c74c0c9e2fd772d544e47303030312d4350552d52414d30303031"
+          },
+          {
+            "type": "bitfield",
+            "bytes_hex": "00000003050000"
+          },
+          {
+            "type": "interested",
+            "bytes_hex": "0000000102"
+          }
+        ],
+        "peer_state_snapshots": [],
+        "mid_transfer_diagnostics": null
+      },
+      "pre_leecher_sample": {
+        "time": 1792720938.98561,
+        "monotonic": 132234.29389747,
+        "pids": [
+          843704
+        ],
+        "cpu_ticks_user_system": 3,
+        "cpu_time_user_system_ns": 32277888,
+        "rss_bytes": 20500480,
+        "pss_bytes": 6586368,
+        "anonymous_bytes": 3215360
+      },
+      "cpu_tick_hz": 100,
+      "payload_cpu_seconds_user_system": 0.03739746,
+      "connection_to_payload_cpu_seconds_user_system": 0.03789447,
+      "connection_wait_cpu_seconds": 0.00049701,
+      "connection_setup_cpu_seconds": 0.000213671,
+      "active_peak_rss_bytes": 21753856,
+      "active_peak_pss_bytes": 7739392,
+      "active_peak_anonymous_bytes": 3215360,
+      "idle_before": [
+        {
+          "time": 1792720933.724152,
+          "monotonic": 132229.032439244,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 31600819,
+          "rss_bytes": 20500480,
+          "pss_bytes": 6588416,
+          "anonymous_bytes": 3215360
+        },
+        {
+          "time": 1792720934.7658694,
+          "monotonic": 132230.074157252,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 32015117,
+          "rss_bytes": 20500480,
+          "pss_bytes": 6591488,
+          "anonymous_bytes": 3215360
+        },
+        {
+          "time": 1792720935.8050697,
+          "monotonic": 132231.113356784,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 32094015,
+          "rss_bytes": 20500480,
+          "pss_bytes": 6588416,
+          "anonymous_bytes": 3215360
+        },
+        {
+          "time": 1792720936.8467102,
+          "monotonic": 132232.154997177,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 32168685,
+          "rss_bytes": 20500480,
+          "pss_bytes": 6589440,
+          "anonymous_bytes": 3215360
+        },
+        {
+          "time": 1792720937.8909373,
+          "monotonic": 132233.199224627,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 32223497,
+          "rss_bytes": 20500480,
+          "pss_bytes": 6585344,
+          "anonymous_bytes": 3215360
+        }
+      ],
+      "active_samples": [
+        {
+          "time": 1792720939.0238936,
+          "monotonic": 132234.332180641,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 32491559,
+          "rss_bytes": 20500480,
+          "pss_bytes": 6586368,
+          "anonymous_bytes": 3215360
+        },
+        {
+          "time": 1792720940.0804775,
+          "monotonic": 132235.388763926,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 41325722,
+          "rss_bytes": 21192704,
+          "pss_bytes": 7216128,
+          "anonymous_bytes": 3215360
+        },
+        {
+          "time": 1792720941.1580222,
+          "monotonic": 132236.466308894,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 5,
+          "cpu_time_user_system_ns": 53493278,
+          "rss_bytes": 21520384,
+          "pss_bytes": 7508992,
+          "anonymous_bytes": 3215360
+        },
+        {
+          "time": 1792720942.2407913,
+          "monotonic": 132237.549077806,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 5,
+          "cpu_time_user_system_ns": 62842041,
+          "rss_bytes": 20770816,
+          "pss_bytes": 6757376,
+          "anonymous_bytes": 3215360
+        },
+        {
+          "time": 1792720943.3522372,
+          "monotonic": 132238.660525002,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 6,
+          "cpu_time_user_system_ns": 70590150,
+          "rss_bytes": 20713472,
+          "pss_bytes": 6697984,
+          "anonymous_bytes": 3215360
+        },
+        {
+          "time": 1792720938.98561,
+          "monotonic": 132234.29389747,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 32277888,
+          "rss_bytes": 20500480,
+          "pss_bytes": 6586368,
+          "anonymous_bytes": 3215360
+        },
+        {
+          "time": 1792720939.0572798,
+          "monotonic": 132234.365567202,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 32491559,
+          "rss_bytes": 20500480,
+          "pss_bytes": 6586368,
+          "anonymous_bytes": 3215360
+        },
+        {
+          "time": 1792720939.149598,
+          "monotonic": 132234.45788537,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 32988569,
+          "rss_bytes": 21258240,
+          "pss_bytes": 7283712,
+          "anonymous_bytes": 3215360
+        },
+        {
+          "time": 1792720943.1711857,
+          "monotonic": 132238.479473593,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 6,
+          "cpu_time_user_system_ns": 70386029,
+          "rss_bytes": 21753856,
+          "pss_bytes": 7739392,
+          "anonymous_bytes": 3215360
+        },
+        {
+          "time": 1792720943.2679944,
+          "monotonic": 132238.576281713,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 6,
+          "cpu_time_user_system_ns": 70590150,
+          "rss_bytes": 20713472,
+          "pss_bytes": 6696960,
+          "anonymous_bytes": 3215360
+        }
+      ],
+      "idle_after": [
+        {
+          "time": 1792720943.4572053,
+          "monotonic": 132238.76549248,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 6,
+          "cpu_time_user_system_ns": 70644172,
+          "rss_bytes": 20713472,
+          "pss_bytes": 6697984,
+          "anonymous_bytes": 3215360
+        },
+        {
+          "time": 1792720944.5275671,
+          "monotonic": 132239.835854914,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 6,
+          "cpu_time_user_system_ns": 70762805,
+          "rss_bytes": 20713472,
+          "pss_bytes": 6609920,
+          "anonymous_bytes": 3215360
+        },
+        {
+          "time": 1792720945.5758102,
+          "monotonic": 132240.884097796,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 6,
+          "cpu_time_user_system_ns": 70860748,
+          "rss_bytes": 20713472,
+          "pss_bytes": 6697984,
+          "anonymous_bytes": 3215360
+        },
+        {
+          "time": 1792720946.676329,
+          "monotonic": 132241.984615694,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 6,
+          "cpu_time_user_system_ns": 70913878,
+          "rss_bytes": 20713472,
+          "pss_bytes": 6699008,
+          "anonymous_bytes": 3215360
+        },
+        {
+          "time": 1792720947.7559838,
+          "monotonic": 132243.064270936,
+          "pids": [
+            843704
+          ],
+          "cpu_ticks_user_system": 6,
+          "cpu_time_user_system_ns": 70988227,
+          "rss_bytes": 20713472,
+          "pss_bytes": 6697984,
+          "anonymous_bytes": 3215360
+        }
+      ],
+      "diagnostic_run": false,
+      "torrentng_diagnostics": null,
+      "payload_cleanup": {
+        "policy": "after-verified-transfer-and-client-shutdown",
+        "status": "deleted",
+        "paths": [
+          "downloaded.bin",
+          "rtorrent/download/payload.bin"
+        ]
+      }
+    },
+    {
+      "round": 3,
+      "name": "mapped",
+      "kind": "torrentngd",
+      "binary": "/tmp/torrentng-seed-goal-20261022/mapped-range-release-target/release/torrentngd",
+      "binary_sha256": "2216ed50c475ea4c26000af8b99dc610694051730fabad0ba762bc1465811b74",
+      "command": [
+        "/tmp/torrentng-seed-goal-20261022/mapped-range-release-target/release/torrentngd"
+      ],
+      "config_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-03-mapped/mapped/config.toml",
+      "environment_overrides": {
+        "TNG_STORAGE_BACKEND": "pread"
+      },
+      "inherited_measurement_controls": {
+        "names": [],
+        "safe_values": {}
+      },
+      "namespace_pid": 847349,
+      "proc_pid": 847349,
+      "transfer": {
+        "bytes": 16777216,
+        "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3",
+        "verified": true,
+        "elapsed_seconds": 4.1488495139929,
+        "first_payload_delay_seconds": 0.05627907399320975,
+        "payload_elapsed_seconds": 4.000061332015321,
+        "offered_rate_bytes_per_second": 4194304,
+        "connection_start_sample": {
+          "time": 1792720955.587583,
+          "monotonic": 132250.89587028,
+          "pids": [
+            847349
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 37677445,
+          "rss_bytes": 22089728,
+          "pss_bytes": 19254272,
+          "anonymous_bytes": 6205440
+        },
+        "leecher_address": [
+          "127.0.0.1",
+          49317
+        ],
+        "first_payload_sample": {
+          "time": 1792720955.6611316,
+          "monotonic": 132250.969418961,
+          "pids": [
+            847349
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 40866711,
+          "rss_bytes": 22179840,
+          "pss_bytes": 19344384,
+          "anonymous_bytes": 6230016
+        },
+        "payload_complete_sample": {
+          "time": 1792720959.630555,
+          "monotonic": 132254.938841857,
+          "pids": [
+            847349
+          ],
+          "cpu_ticks_user_system": 26,
+          "cpu_time_user_system_ns": 272788865,
+          "rss_bytes": 22261760,
+          "pss_bytes": 19426304,
+          "anonymous_bytes": 6311936
+        },
+        "post_leecher_sample": {
+          "time": 1792720959.6689334,
+          "monotonic": 132254.977220542,
+          "pids": [
+            847349
+          ],
+          "cpu_ticks_user_system": 26,
+          "cpu_time_user_system_ns": 272920502,
+          "rss_bytes": 22261760,
+          "pss_bytes": 19426304,
+          "anonymous_bytes": 6311936
+        },
+        "initial_client_messages": [
+          {
+            "type": "handshake",
+            "bytes_hex": "13426974546f7272656e742070726f746f636f6c0000000000000000bc09795309ae171fe1317fedab7c74c0c9e2fd772d544e47303030312d4350552d52414d30303031"
+          },
+          {
+            "type": "bitfield",
+            "bytes_hex": "00000003050000"
+          },
+          {
+            "type": "interested",
+            "bytes_hex": "0000000102"
+          }
+        ],
+        "peer_state_snapshots": [],
+        "mid_transfer_diagnostics": null
+      },
+      "pre_leecher_sample": {
+        "time": 1792720955.529412,
+        "monotonic": 132250.837700511,
+        "pids": [
+          847349
+        ],
+        "cpu_ticks_user_system": 3,
+        "cpu_time_user_system_ns": 36890902,
+        "rss_bytes": 22020096,
+        "pss_bytes": 19184640,
+        "anonymous_bytes": 6201344
+      },
+      "cpu_tick_hz": 100,
+      "payload_cpu_seconds_user_system": 0.231922154,
+      "connection_to_payload_cpu_seconds_user_system": 0.23511142,
+      "connection_wait_cpu_seconds": 0.003189266,
+      "connection_setup_cpu_seconds": 0.000786543,
+      "active_peak_rss_bytes": 22261760,
+      "active_peak_pss_bytes": 19426304,
+      "active_peak_anonymous_bytes": 6311936,
+      "idle_before": [
+        {
+          "time": 1792720950.2410424,
+          "monotonic": 132245.549331335,
+          "pids": [
+            847349
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 36077047,
+          "rss_bytes": 22020096,
+          "pss_bytes": 19184640,
+          "anonymous_bytes": 6201344
+        },
+        {
+          "time": 1792720951.2890873,
+          "monotonic": 132246.597374618,
+          "pids": [
+            847349
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 36271122,
+          "rss_bytes": 22020096,
+          "pss_bytes": 19184640,
+          "anonymous_bytes": 6201344
+        },
+        {
+          "time": 1792720952.333826,
+          "monotonic": 132247.642113017,
+          "pids": [
+            847349
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 36456810,
+          "rss_bytes": 22020096,
+          "pss_bytes": 19184640,
+          "anonymous_bytes": 6201344
+        },
+        {
+          "time": 1792720953.3771906,
+          "monotonic": 132248.685478595,
+          "pids": [
+            847349
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 36601772,
+          "rss_bytes": 22020096,
+          "pss_bytes": 19184640,
+          "anonymous_bytes": 6201344
+        },
+        {
+          "time": 1792720954.429249,
+          "monotonic": 132249.737536206,
+          "pids": [
+            847349
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 36781718,
+          "rss_bytes": 22020096,
+          "pss_bytes": 19184640,
+          "anonymous_bytes": 6201344
+        }
+      ],
+      "active_samples": [
+        {
+          "time": 1792720955.5322392,
+          "monotonic": 132250.840525874,
+          "pids": [
+            847349
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 36890902,
+          "rss_bytes": 22020096,
+          "pss_bytes": 19184640,
+          "anonymous_bytes": 6201344
+        },
+        {
+          "time": 1792720956.5831203,
+          "monotonic": 132251.89140705,
+          "pids": [
+            847349
+          ],
+          "cpu_ticks_user_system": 9,
+          "cpu_time_user_system_ns": 105690850,
+          "rss_bytes": 22261760,
+          "pss_bytes": 19426304,
+          "anonymous_bytes": 6311936
+        },
+        {
+          "time": 1792720957.6317692,
+          "monotonic": 132252.940057442,
+          "pids": [
+            847349
+          ],
+          "cpu_ticks_user_system": 16,
+          "cpu_time_user_system_ns": 164324304,
+          "rss_bytes": 22261760,
+          "pss_bytes": 19426304,
+          "anonymous_bytes": 6311936
+        },
+        {
+          "time": 1792720958.6797898,
+          "monotonic": 132253.988076226,
+          "pids": [
+            847349
+          ],
+          "cpu_ticks_user_system": 22,
+          "cpu_time_user_system_ns": 225870569,
+          "rss_bytes": 22261760,
+          "pss_bytes": 19426304,
+          "anonymous_bytes": 6311936
+        },
+        {
+          "time": 1792720955.529412,
+          "monotonic": 132250.837700511,
+          "pids": [
+            847349
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 36890902,
+          "rss_bytes": 22020096,
+          "pss_bytes": 19184640,
+          "anonymous_bytes": 6201344
+        },
+        {
+          "time": 1792720955.587583,
+          "monotonic": 132250.89587028,
+          "pids": [
+            847349
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 37677445,
+          "rss_bytes": 22089728,
+          "pss_bytes": 19254272,
+          "anonymous_bytes": 6205440
+        },
+        {
+          "time": 1792720955.6611316,
+          "monotonic": 132250.969418961,
+          "pids": [
+            847349
+          ],
+          "cpu_ticks_user_system": 3,
+          "cpu_time_user_system_ns": 40866711,
+          "rss_bytes": 22179840,
+          "pss_bytes": 19344384,
+          "anonymous_bytes": 6230016
+        },
+        {
+          "time": 1792720959.630555,
+          "monotonic": 132254.938841857,
+          "pids": [
+            847349
+          ],
+          "cpu_ticks_user_system": 26,
+          "cpu_time_user_system_ns": 272788865,
+          "rss_bytes": 22261760,
+          "pss_bytes": 19426304,
+          "anonymous_bytes": 6311936
+        },
+        {
+          "time": 1792720959.6689334,
+          "monotonic": 132254.977220542,
+          "pids": [
+            847349
+          ],
+          "cpu_ticks_user_system": 26,
+          "cpu_time_user_system_ns": 272920502,
+          "rss_bytes": 22261760,
+          "pss_bytes": 19426304,
+          "anonymous_bytes": 6311936
+        }
+      ],
+      "idle_after": [
+        {
+          "time": 1792720959.757321,
+          "monotonic": 132255.065608145,
+          "pids": [
+            847349
+          ],
+          "cpu_ticks_user_system": 26,
+          "cpu_time_user_system_ns": 273571992,
+          "rss_bytes": 22310912,
+          "pss_bytes": 19475456,
+          "anonymous_bytes": 6361088
+        },
+        {
+          "time": 1792720960.7969,
+          "monotonic": 132256.10518744,
+          "pids": [
+            847349
+          ],
+          "cpu_ticks_user_system": 27,
+          "cpu_time_user_system_ns": 273823273,
+          "rss_bytes": 22507520,
+          "pss_bytes": 19476480,
+          "anonymous_bytes": 6361088
+        },
+        {
+          "time": 1792720961.8458705,
+          "monotonic": 132257.154157918,
+          "pids": [
+            847349
+          ],
+          "cpu_ticks_user_system": 27,
+          "cpu_time_user_system_ns": 273980086,
+          "rss_bytes": 22507520,
+          "pss_bytes": 19476480,
+          "anonymous_bytes": 6361088
+        },
+        {
+          "time": 1792720962.8874907,
+          "monotonic": 132258.195778433,
+          "pids": [
+            847349
+          ],
+          "cpu_ticks_user_system": 27,
+          "cpu_time_user_system_ns": 274131941,
+          "rss_bytes": 22507520,
+          "pss_bytes": 19476480,
+          "anonymous_bytes": 6361088
+        },
+        {
+          "time": 1792720963.9287972,
+          "monotonic": 132259.237084899,
+          "pids": [
+            847349
+          ],
+          "cpu_ticks_user_system": 27,
+          "cpu_time_user_system_ns": 274290879,
+          "rss_bytes": 22507520,
+          "pss_bytes": 19476480,
+          "anonymous_bytes": 6361088
+        }
+      ],
+      "diagnostic_run": false,
+      "torrentng_diagnostics": {
+        "before_torrent_add": {
+          "label": "before-torrent-add",
+          "captured_unix": 1792720949.1664555,
+          "process": {
+            "time": 1792720949.2329988,
+            "monotonic": 132244.541286072,
+            "pids": [
+              847349
+            ],
+            "cpu_ticks_user_system": 0,
+            "cpu_time_user_system_ns": 12693007,
+            "rss_bytes": 17477632,
+            "pss_bytes": 14642176,
+            "anonymous_bytes": 3493888
+          },
+          "smaps": [
+            {
+              "pid": 847349,
+              "path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-03-mapped/mapped/diagnostics/before-torrent-add-pid-847349.smaps",
+              "totals_bytes": {
+                "Size": 233156608,
+                "Rss": 17477632,
+                "Pss": 14640128,
+                "Anonymous": 3493888,
+                "Private_Clean": 0,
+                "Private_Dirty": 14639104,
+                "Shared_Clean": 2838528,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            }
+          ],
+          "metrics": {
+            "torrentng_storage_peer_read_cache_entries": 0.0,
+            "torrentng_storage_peer_read_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_budget_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_hits_total": 0.0,
+            "torrentng_storage_peer_read_cache_misses_total": 0.0,
+            "torrentng_storage_peer_read_cache_evictions_total": 0.0
+          },
+          "smaps_totals_bytes": {
+            "Size": 233156608,
+            "Rss": 17477632,
+            "Pss": 14640128,
+            "Anonymous": 3493888,
+            "Private_Clean": 0,
+            "Private_Dirty": 14639104,
+            "Shared_Clean": 2838528,
+            "Shared_Dirty": 0,
+            "Swap": 0
+          },
+          "metrics_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-03-mapped/mapped/diagnostics/before-torrent-add.metrics.prom"
+        },
+        "after_seed_recheck": {
+          "label": "after-seed-recheck",
+          "captured_unix": 1792720950.091941,
+          "process": {
+            "time": 1792720950.1784174,
+            "monotonic": 132245.486706002,
+            "pids": [
+              847349
+            ],
+            "cpu_ticks_user_system": 3,
+            "cpu_time_user_system_ns": 35312063,
+            "rss_bytes": 21946368,
+            "pss_bytes": 19110912,
+            "anonymous_bytes": 6127616
+          },
+          "smaps": [
+            {
+              "pid": 847349,
+              "path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-03-mapped/mapped/diagnostics/after-seed-recheck-pid-847349.smaps",
+              "totals_bytes": {
+                "Size": 579268608,
+                "Rss": 21946368,
+                "Pss": 19108864,
+                "Anonymous": 6127616,
+                "Private_Clean": 0,
+                "Private_Dirty": 19107840,
+                "Shared_Clean": 2838528,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            }
+          ],
+          "metrics": {
+            "torrentng_storage_peer_read_cache_entries": 0.0,
+            "torrentng_storage_peer_read_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_budget_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_hits_total": 0.0,
+            "torrentng_storage_peer_read_cache_misses_total": 0.0,
+            "torrentng_storage_peer_read_cache_evictions_total": 0.0,
+            "storage_scheduler_selected_backends": [
+              "pread"
+            ]
+          },
+          "smaps_totals_bytes": {
+            "Size": 579268608,
+            "Rss": 21946368,
+            "Pss": 19108864,
+            "Anonymous": 6127616,
+            "Private_Clean": 0,
+            "Private_Dirty": 19107840,
+            "Shared_Clean": 2838528,
+            "Shared_Dirty": 0,
+            "Swap": 0
+          },
+          "metrics_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-03-mapped/mapped/diagnostics/after-seed-recheck.metrics.prom"
+        },
+        "during_transfer": null,
+        "after_transfer": {
+          "label": "after-transfer",
+          "captured_unix": 1792720959.6785626,
+          "process": {
+            "time": 1792720959.7175717,
+            "monotonic": 132255.025859519,
+            "pids": [
+              847349
+            ],
+            "cpu_ticks_user_system": 26,
+            "cpu_time_user_system_ns": 272920502,
+            "rss_bytes": 22261760,
+            "pss_bytes": 19426304,
+            "anonymous_bytes": 6311936
+          },
+          "smaps": [
+            {
+              "pid": 847349,
+              "path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-03-mapped/mapped/diagnostics/after-transfer-pid-847349.smaps",
+              "totals_bytes": {
+                "Size": 579268608,
+                "Rss": 22261760,
+                "Pss": 19424256,
+                "Anonymous": 6311936,
+                "Private_Clean": 0,
+                "Private_Dirty": 19423232,
+                "Shared_Clean": 2838528,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            }
+          ],
+          "metrics": {
+            "torrentng_storage_peer_read_cache_entries": 0.0,
+            "torrentng_storage_peer_read_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_budget_bytes": 16777216.0,
+            "torrentng_storage_peer_read_cache_hits_total": 0.0,
+            "torrentng_storage_peer_read_cache_misses_total": 0.0,
+            "torrentng_storage_peer_read_cache_evictions_total": 0.0,
+            "storage_scheduler_selected_backends": [
+              "pread"
+            ]
+          },
+          "smaps_totals_bytes": {
+            "Size": 579268608,
+            "Rss": 22261760,
+            "Pss": 19424256,
+            "Anonymous": 6311936,
+            "Private_Clean": 0,
+            "Private_Dirty": 19423232,
+            "Shared_Clean": 2838528,
+            "Shared_Dirty": 0,
+            "Swap": 0
+          },
+          "metrics_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-03-mapped/mapped/diagnostics/after-transfer.metrics.prom"
+        }
+      },
+      "payload_cleanup": {
+        "policy": "after-verified-transfer-and-client-shutdown",
+        "status": "deleted",
+        "paths": [
+          "downloaded.bin",
+          "mapped/download/payload.bin"
+        ]
+      }
+    },
+    {
+      "round": 3,
+      "name": "baseline",
+      "kind": "torrentngd",
+      "binary": "/home/keith/Documents/code/TorrentNG/target/release/torrentngd",
+      "binary_sha256": "63e316c8727c00e3c3356f48076ee7afeb4654b6050435f1c037c1c30247df99",
+      "command": [
+        "/home/keith/Documents/code/TorrentNG/target/release/torrentngd"
+      ],
+      "config_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-03-baseline/baseline/config.toml",
+      "environment_overrides": {
+        "TNG_STORAGE_BACKEND": "pread"
+      },
+      "inherited_measurement_controls": {
+        "names": [],
+        "safe_values": {}
+      },
+      "namespace_pid": 850661,
+      "proc_pid": 850661,
+      "transfer": {
+        "bytes": 16777216,
+        "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3",
+        "verified": true,
+        "elapsed_seconds": 4.139131841016933,
+        "first_payload_delay_seconds": 0.03980560498894192,
+        "payload_elapsed_seconds": 4.000060104008298,
+        "offered_rate_bytes_per_second": 4194304,
+        "connection_start_sample": {
+          "time": 1792720971.4416285,
+          "monotonic": 132266.74991574,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 2,
+          "cpu_time_user_system_ns": 33467967,
+          "rss_bytes": 22081536,
+          "pss_bytes": 19233792,
+          "anonymous_bytes": 6193152
+        },
+        "leecher_address": [
+          "127.0.0.1",
+          38585
+        ],
+        "first_payload_sample": {
+          "time": 1792720971.481337,
+          "monotonic": 132266.789623932,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 2,
+          "cpu_time_user_system_ns": 35055754,
+          "rss_bytes": 22482944,
+          "pss_bytes": 19635200,
+          "anonymous_bytes": 6594560
+        },
+        "payload_complete_sample": {
+          "time": 1792720975.4836578,
+          "monotonic": 132270.791944902,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 10,
+          "cpu_time_user_system_ns": 110849604,
+          "rss_bytes": 22482944,
+          "pss_bytes": 19635200,
+          "anonymous_bytes": 6594560
+        },
+        "post_leecher_sample": {
+          "time": 1792720975.5312872,
+          "monotonic": 132270.839573923,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 10,
+          "cpu_time_user_system_ns": 111020154,
+          "rss_bytes": 22482944,
+          "pss_bytes": 19635200,
+          "anonymous_bytes": 6594560
+        },
+        "initial_client_messages": [
+          {
+            "type": "handshake",
+            "bytes_hex": "13426974546f7272656e742070726f746f636f6c0000000000000000bc09795309ae171fe1317fedab7c74c0c9e2fd772d544e47303030312d4350552d52414d30303031"
+          },
+          {
+            "type": "bitfield",
+            "bytes_hex": "00000003050000"
+          },
+          {
+            "type": "interested",
+            "bytes_hex": "0000000102"
+          }
+        ],
+        "peer_state_snapshots": [],
+        "mid_transfer_diagnostics": null
+      },
+      "pre_leecher_sample": {
+        "time": 1792720971.401123,
+        "monotonic": 132266.709410402,
+        "pids": [
+          850661
+        ],
+        "cpu_ticks_user_system": 2,
+        "cpu_time_user_system_ns": 32767618,
+        "rss_bytes": 21950464,
+        "pss_bytes": 19102720,
+        "anonymous_bytes": 6193152
+      },
+      "cpu_tick_hz": 100,
+      "payload_cpu_seconds_user_system": 0.07579385,
+      "connection_to_payload_cpu_seconds_user_system": 0.077381637,
+      "connection_wait_cpu_seconds": 0.001587787,
+      "connection_setup_cpu_seconds": 0.000700349,
+      "active_peak_rss_bytes": 22482944,
+      "active_peak_pss_bytes": 19635200,
+      "active_peak_anonymous_bytes": 6594560,
+      "idle_before": [
+        {
+          "time": 1792720966.1399007,
+          "monotonic": 132261.448188149,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 2,
+          "cpu_time_user_system_ns": 32109809,
+          "rss_bytes": 21950464,
+          "pss_bytes": 19102720,
+          "anonymous_bytes": 6193152
+        },
+        {
+          "time": 1792720967.180389,
+          "monotonic": 132262.488676113,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 2,
+          "cpu_time_user_system_ns": 32210419,
+          "rss_bytes": 21950464,
+          "pss_bytes": 19102720,
+          "anonymous_bytes": 6193152
+        },
+        {
+          "time": 1792720968.2283325,
+          "monotonic": 132263.536619812,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 2,
+          "cpu_time_user_system_ns": 32334723,
+          "rss_bytes": 21950464,
+          "pss_bytes": 19102720,
+          "anonymous_bytes": 6193152
+        },
+        {
+          "time": 1792720969.266977,
+          "monotonic": 132264.575263949,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 2,
+          "cpu_time_user_system_ns": 32510925,
+          "rss_bytes": 21950464,
+          "pss_bytes": 19102720,
+          "anonymous_bytes": 6193152
+        },
+        {
+          "time": 1792720970.3141835,
+          "monotonic": 132265.622470233,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 2,
+          "cpu_time_user_system_ns": 32643534,
+          "rss_bytes": 21950464,
+          "pss_bytes": 19102720,
+          "anonymous_bytes": 6193152
+        }
+      ],
+      "active_samples": [
+        {
+          "time": 1792720971.401978,
+          "monotonic": 132266.710264978,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 2,
+          "cpu_time_user_system_ns": 32842117,
+          "rss_bytes": 21950464,
+          "pss_bytes": 19102720,
+          "anonymous_bytes": 6193152
+        },
+        {
+          "time": 1792720972.4433177,
+          "monotonic": 132267.751604126,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 5,
+          "cpu_time_user_system_ns": 53853757,
+          "rss_bytes": 22482944,
+          "pss_bytes": 19635200,
+          "anonymous_bytes": 6594560
+        },
+        {
+          "time": 1792720973.485373,
+          "monotonic": 132268.793660447,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 6,
+          "cpu_time_user_system_ns": 74295073,
+          "rss_bytes": 22482944,
+          "pss_bytes": 19635200,
+          "anonymous_bytes": 6594560
+        },
+        {
+          "time": 1792720974.535814,
+          "monotonic": 132269.844100967,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 9,
+          "cpu_time_user_system_ns": 93311591,
+          "rss_bytes": 22482944,
+          "pss_bytes": 19635200,
+          "anonymous_bytes": 6594560
+        },
+        {
+          "time": 1792720975.5778532,
+          "monotonic": 132270.886140575,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 10,
+          "cpu_time_user_system_ns": 111020154,
+          "rss_bytes": 22482944,
+          "pss_bytes": 19635200,
+          "anonymous_bytes": 6594560
+        },
+        {
+          "time": 1792720971.401123,
+          "monotonic": 132266.709410402,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 2,
+          "cpu_time_user_system_ns": 32767618,
+          "rss_bytes": 21950464,
+          "pss_bytes": 19102720,
+          "anonymous_bytes": 6193152
+        },
+        {
+          "time": 1792720971.4416285,
+          "monotonic": 132266.74991574,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 2,
+          "cpu_time_user_system_ns": 33467967,
+          "rss_bytes": 22081536,
+          "pss_bytes": 19233792,
+          "anonymous_bytes": 6193152
+        },
+        {
+          "time": 1792720971.481337,
+          "monotonic": 132266.789623932,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 2,
+          "cpu_time_user_system_ns": 35055754,
+          "rss_bytes": 22482944,
+          "pss_bytes": 19635200,
+          "anonymous_bytes": 6594560
+        },
+        {
+          "time": 1792720975.4836578,
+          "monotonic": 132270.791944902,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 10,
+          "cpu_time_user_system_ns": 110849604,
+          "rss_bytes": 22482944,
+          "pss_bytes": 19635200,
+          "anonymous_bytes": 6594560
+        },
+        {
+          "time": 1792720975.5312872,
+          "monotonic": 132270.839573923,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 10,
+          "cpu_time_user_system_ns": 111020154,
+          "rss_bytes": 22482944,
+          "pss_bytes": 19635200,
+          "anonymous_bytes": 6594560
+        }
+      ],
+      "idle_after": [
+        {
+          "time": 1792720975.6713493,
+          "monotonic": 132270.979636245,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 10,
+          "cpu_time_user_system_ns": 111870913,
+          "rss_bytes": 22552576,
+          "pss_bytes": 19704832,
+          "anonymous_bytes": 6664192
+        },
+        {
+          "time": 1792720976.7232575,
+          "monotonic": 132272.031544982,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 10,
+          "cpu_time_user_system_ns": 112079634,
+          "rss_bytes": 22749184,
+          "pss_bytes": 19705856,
+          "anonymous_bytes": 6664192
+        },
+        {
+          "time": 1792720977.761753,
+          "monotonic": 132273.070040169,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 10,
+          "cpu_time_user_system_ns": 112173522,
+          "rss_bytes": 22749184,
+          "pss_bytes": 19705856,
+          "anonymous_bytes": 6664192
+        },
+        {
+          "time": 1792720978.800274,
+          "monotonic": 132274.108561267,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 10,
+          "cpu_time_user_system_ns": 112321880,
+          "rss_bytes": 22749184,
+          "pss_bytes": 19705856,
+          "anonymous_bytes": 6664192
+        },
+        {
+          "time": 1792720979.842164,
+          "monotonic": 132275.150452725,
+          "pids": [
+            850661
+          ],
+          "cpu_ticks_user_system": 10,
+          "cpu_time_user_system_ns": 112475867,
+          "rss_bytes": 22749184,
+          "pss_bytes": 19705856,
+          "anonymous_bytes": 6664192
+        }
+      ],
+      "diagnostic_run": false,
+      "torrentng_diagnostics": {
+        "before_torrent_add": {
+          "label": "before-torrent-add",
+          "captured_unix": 1792720965.1845775,
+          "process": {
+            "time": 1792720965.2264166,
+            "monotonic": 132260.53470369,
+            "pids": [
+              850661
+            ],
+            "cpu_ticks_user_system": 0,
+            "cpu_time_user_system_ns": 8811942,
+            "rss_bytes": 17403904,
+            "pss_bytes": 14556160,
+            "anonymous_bytes": 3481600
+          },
+          "smaps": [
+            {
+              "pid": 850661,
+              "path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-03-baseline/baseline/diagnostics/before-torrent-add-pid-850661.smaps",
+              "totals_bytes": {
+                "Size": 232972288,
+                "Rss": 17403904,
+                "Pss": 14554112,
+                "Anonymous": 3481600,
+                "Private_Clean": 11038720,
+                "Private_Dirty": 3514368,
+                "Shared_Clean": 2850816,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            }
+          ],
+          "metrics": {
+            "torrentng_storage_peer_read_cache_entries": 0.0,
+            "torrentng_storage_peer_read_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_budget_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_hits_total": 0.0,
+            "torrentng_storage_peer_read_cache_misses_total": 0.0,
+            "torrentng_storage_peer_read_cache_evictions_total": 0.0
+          },
+          "smaps_totals_bytes": {
+            "Size": 232972288,
+            "Rss": 17403904,
+            "Pss": 14554112,
+            "Anonymous": 3481600,
+            "Private_Clean": 11038720,
+            "Private_Dirty": 3514368,
+            "Shared_Clean": 2850816,
+            "Shared_Dirty": 0,
+            "Swap": 0
+          },
+          "metrics_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-03-baseline/baseline/diagnostics/before-torrent-add.metrics.prom"
+        },
+        "after_seed_recheck": {
+          "label": "after-seed-recheck",
+          "captured_unix": 1792720966.0392754,
+          "process": {
+            "time": 1792720966.0780811,
+            "monotonic": 132261.386368314,
+            "pids": [
+              850661
+            ],
+            "cpu_ticks_user_system": 2,
+            "cpu_time_user_system_ns": 31439846,
+            "rss_bytes": 21872640,
+            "pss_bytes": 19024896,
+            "anonymous_bytes": 6115328
+          },
+          "smaps": [
+            {
+              "pid": 850661,
+              "path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-03-baseline/baseline/diagnostics/after-seed-recheck-pid-850661.smaps",
+              "totals_bytes": {
+                "Size": 579084288,
+                "Rss": 21872640,
+                "Pss": 19022848,
+                "Anonymous": 6115328,
+                "Private_Clean": 12873728,
+                "Private_Dirty": 6148096,
+                "Shared_Clean": 2850816,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            }
+          ],
+          "metrics": {
+            "torrentng_storage_peer_read_cache_entries": 0.0,
+            "torrentng_storage_peer_read_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_budget_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_hits_total": 0.0,
+            "torrentng_storage_peer_read_cache_misses_total": 0.0,
+            "torrentng_storage_peer_read_cache_evictions_total": 0.0,
+            "storage_scheduler_selected_backends": [
+              "pread"
+            ]
+          },
+          "smaps_totals_bytes": {
+            "Size": 579084288,
+            "Rss": 21872640,
+            "Pss": 19022848,
+            "Anonymous": 6115328,
+            "Private_Clean": 12873728,
+            "Private_Dirty": 6148096,
+            "Shared_Clean": 2850816,
+            "Shared_Dirty": 0,
+            "Swap": 0
+          },
+          "metrics_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-03-baseline/baseline/diagnostics/after-seed-recheck.metrics.prom"
+        },
+        "during_transfer": null,
+        "after_transfer": {
+          "label": "after-transfer",
+          "captured_unix": 1792720975.5781357,
+          "process": {
+            "time": 1792720975.624573,
+            "monotonic": 132270.932860928,
+            "pids": [
+              850661
+            ],
+            "cpu_ticks_user_system": 10,
+            "cpu_time_user_system_ns": 111020154,
+            "rss_bytes": 22482944,
+            "pss_bytes": 19635200,
+            "anonymous_bytes": 6594560
+          },
+          "smaps": [
+            {
+              "pid": 850661,
+              "path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-03-baseline/baseline/diagnostics/after-transfer-pid-850661.smaps",
+              "totals_bytes": {
+                "Size": 579084288,
+                "Rss": 22482944,
+                "Pss": 19633152,
+                "Anonymous": 6594560,
+                "Private_Clean": 13004800,
+                "Private_Dirty": 6627328,
+                "Shared_Clean": 2850816,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            }
+          ],
+          "metrics": {
+            "torrentng_storage_peer_read_cache_entries": 0.0,
+            "torrentng_storage_peer_read_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_budget_bytes": 16777216.0,
+            "torrentng_storage_peer_read_cache_hits_total": 0.0,
+            "torrentng_storage_peer_read_cache_misses_total": 0.0,
+            "torrentng_storage_peer_read_cache_evictions_total": 0.0,
+            "storage_scheduler_selected_backends": [
+              "pread"
+            ]
+          },
+          "smaps_totals_bytes": {
+            "Size": 579084288,
+            "Rss": 22482944,
+            "Pss": 19633152,
+            "Anonymous": 6594560,
+            "Private_Clean": 13004800,
+            "Private_Dirty": 6627328,
+            "Shared_Clean": 2850816,
+            "Shared_Dirty": 0,
+            "Swap": 0
+          },
+          "metrics_path": "/tmp/torrentng-seed-goal-20261022/mapped-range-screen-v2-16m-3x/run-03-baseline/baseline/diagnostics/after-transfer.metrics.prom"
+        }
+      },
+      "payload_cleanup": {
+        "policy": "after-verified-transfer-and-client-shutdown",
+        "status": "deleted",
+        "paths": [
+          "downloaded.bin",
+          "baseline/download/payload.bin"
+        ]
+      }
+    }
+  ],
+  "client_environment_overrides": {
+    "baseline": {
+      "TNG_STORAGE_BACKEND": "pread"
+    },
+    "mapped": {
+      "TNG_STORAGE_BACKEND": "pread"
+    },
+    "rtorrent": {
+      "LD_LIBRARY_PATH": "/tmp/torrentng-seed-goal-20261022/rtorrent-libs:/tmp/torrentng-seed-goal-20261022/rtorrent-rootfs/usr/local/lib"
+    }
+  },
+  "inherited_measurement_controls": {
+    "names": [],
+    "safe_values": {}
+  }
+}
