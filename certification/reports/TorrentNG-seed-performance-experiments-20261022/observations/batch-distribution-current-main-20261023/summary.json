@@ -1,0 +1,40 @@
+{
+  "format": "torrentng-current-main-upload-batch-distribution-v1",
+  "source_revision": "672e5233fb773b72897511f8d914b9d126dbfe59",
+  "binary_sha256": "844479163668b69bfe378838540dd9973fb60b3a781c237a2eefbd0d33d2fd07",
+  "fixture_bytes": 16777216,
+  "fixture_seed": 20261023,
+  "fixture_sha256": "8720b45a392e63940e529552c5cb8be01e422e0fc58b538302c952f19c37f012",
+  "backend": "pread",
+  "offered_rate_bytes_per_second": 4194304,
+  "block_bytes": 16384,
+  "request_window": 32,
+  "diagnostic_logging_filter": "torrentng::upload_batches=debug",
+  "performance_score": null,
+  "transfer_verified": true,
+  "transferred_bytes": 16777216,
+  "payload_sha256": "8720b45a392e63940e529552c5cb8be01e422e0fc58b538302c952f19c37f012",
+  "batch_observations": {
+    "storage_read_operations": 129,
+    "storage_read_block_histogram": {
+      "1": 1,
+      "7": 1,
+      "8": 127
+    },
+    "ready_frame_group_operations": 129,
+    "ready_frame_count_histogram": {
+      "1": 1,
+      "7": 1,
+      "8": 127
+    },
+    "socket_write_operations": 129,
+    "socket_write_frame_count_histogram": {
+      "1": 1,
+      "7": 1,
+      "8": 127
+    },
+    "total_piece_frames": 1024
+  },
+  "debug_log_sha256": "2a023e37bbb5b3f9a4846a1b20a6d2661e774495feb834998b9ceae8a9f4b133",
+  "debug_log_included": false
+}

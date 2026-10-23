@@ -3,8 +3,8 @@
   "files": [
     {
       "path": "README.md",
-      "bytes": 7094,
-      "sha256": "99e3cbcb637904711cfac6f7bee189d44ed57d86434f736a7aefcf56bbd76fb9"
+      "bytes": 7416,
+      "sha256": "7019125f4ac7be4af9986908e36032973bc92415db8838e90a3193a17cb789ca"
     },
     {
       "path": "active-stream-current-main-screen-20261023/README.md",
@@ -675,6 +675,16 @@
       "path": "batch-distribution-candidate-16m/summary.json",
       "bytes": 14286,
       "sha256": "f567e1fd0b664ca7a65c762b72a657b339d396de281a36769640f245a592e912"
+    },
+    {
+      "path": "batch-distribution-current-main-20261023/README.md",
+      "bytes": 1383,
+      "sha256": "d092075ddec2e5f11a1869657bb8f3677e87890dd81ce3f2c732b9c16aecad2b"
+    },
+    {
+      "path": "batch-distribution-current-main-20261023/summary.json",
+      "bytes": 1291,
+      "sha256": "e2dd8ffa5508d6669eadd4656ed5bf3170e43396b5c8fd5a353cf6a2b3428756"
     },
     {
       "path": "batch12-screen-20261022/64m-load-after.txt",

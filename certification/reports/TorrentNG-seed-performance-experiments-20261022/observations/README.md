@@ -98,6 +98,11 @@ first runs looked faster, but an alternating five-pair repeat used 13.7% more
 median CPU, losing CPU in four pairs. It remains an archived candidate, not a
 production change.
 
+[`batch-distribution-current-main-20261023/`](batch-distribution-current-main-20261023/)
+records the current main build's per-batch telemetry during a 16 MiB diagnostic
+transfer: 127 of 129 storage reads contained eight blocks. The singleton and
+seven-block batch were the transfer edges; no performance score was taken.
+
 The later `MALLOC_ARENA_MAX=1` three-peer follow-up is also captured in
 [`arena-cap-concurrent-followup-20261023/`](arena-cap-concurrent-followup-20261023/):
 it reduced memory but increased CPU in all three randomized rounds, replacing
