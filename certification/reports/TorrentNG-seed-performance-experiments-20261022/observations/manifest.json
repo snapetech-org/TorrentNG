@@ -87,6 +87,61 @@
       "sha256": "0719f13e1697cd24c65ee30ebdd470e48b2eebf6183b6dfeb637ba19dc1eb3a3"
     },
     {
+      "path": "current-eight-block-profile-20261022/README.md",
+      "bytes": 1672,
+      "sha256": "7f8f248ffa45987f73c67f107a768e4812c4cb79efd84a45330b9e63698fdddd"
+    },
+    {
+      "path": "current-eight-block-profile-20261022/binary-sha256.txt",
+      "bytes": 129,
+      "sha256": "38a1d5b493d3208db93083168978bf736cb9078aaa297b4cf228560e8fa903f2"
+    },
+    {
+      "path": "current-eight-block-profile-20261022/fixture.torrent",
+      "bytes": 1377,
+      "sha256": "c3dcc6124dcd3bbb0bc2ead7b754361db71ddef1a98e0094f851cb255e4cf7d7"
+    },
+    {
+      "path": "current-eight-block-profile-20261022/profile-leaf-summary.txt",
+      "bytes": 1078,
+      "sha256": "593b8fa0c20551a82830d2f35b626e19842d43b0dcec4f7fedb2361142ff4feb"
+    },
+    {
+      "path": "current-eight-block-profile-20261022/profile-raw.txt",
+      "bytes": 24571,
+      "sha256": "5db15b4b5e198af19350c95106fe86aaa33f4a3aa0600fe9be1bf565e19cc7be"
+    },
+    {
+      "path": "current-eight-block-profile-20261022/run-01-current/client.log",
+      "bytes": 508,
+      "sha256": "09b0d6bb8dd24b743ace70ccbf351ca3636be754f81ddd241b5e5be51be84499"
+    },
+    {
+      "path": "current-eight-block-profile-20261022/run-01-current/payload-window.prof",
+      "bytes": 36633,
+      "sha256": "a34d288d06fcf63b0016e7067e63c21b09f5b5f7aa27ba1a0710a74da3356515"
+    },
+    {
+      "path": "current-eight-block-profile-20261022/run-01-current/profile-start.gdb.log",
+      "bytes": 474,
+      "sha256": "810dccad3887b8cc568fb1c4edd6c28e66329cb0fecd54cd0550c9d370f4f577"
+    },
+    {
+      "path": "current-eight-block-profile-20261022/run-01-current/profile-stop.gdb.log",
+      "bytes": 442,
+      "sha256": "386dcea6f032d7ac7ae109380c560e846fdd6cdba5abe2c5178db2c4da491547"
+    },
+    {
+      "path": "current-eight-block-profile-20261022/source-revision.txt",
+      "bytes": 41,
+      "sha256": "bc548c4f63da13cb612c3f3a0f16709b06d966a6ad57d841523782f69a77bf92"
+    },
+    {
+      "path": "current-eight-block-profile-20261022/summary.json",
+      "bytes": 19464,
+      "sha256": "e7d71ab902a595c3abcb6fa5913cb702233659e0ab6a850facf38b2b623fa76e"
+    },
+    {
       "path": "framed-preflush-screen-20261022/README.md",
       "bytes": 2113,
       "sha256": "0239d65c39d0482290398dca9b91a82d6bf8b6a89370661ca44ec74e9945ec8b"
@@ -805,6 +860,61 @@
       "path": "mimalloc-current-source-screen-20261022/runs/purge-delay-0/summary.json",
       "bytes": 29046,
       "sha256": "96a1ecd9f023605df2b4a0d9c284612dee69b56e397de2d0cb52a89fb77cc211"
+    },
+    {
+      "path": "peer-codec-borrow-screen-20261022/README.md",
+      "bytes": 1805,
+      "sha256": "ccbfb8624b241ed52e71b50b600eff5ba60a840ae797f3200ef712e84604c2bc"
+    },
+    {
+      "path": "peer-codec-borrow-screen-20261022/binary-sha256.txt",
+      "bytes": 218,
+      "sha256": "1050ccf6a27c7499349f288dee3fe5f02f4974bdff2d84057c884a151654b75a"
+    },
+    {
+      "path": "peer-codec-borrow-screen-20261022/candidate.torrentngd.gz",
+      "bytes": 8838152,
+      "sha256": "8a4bc782e7d56a40b819559a329160fd558bb27d7e719a6326135f705732cb74"
+    },
+    {
+      "path": "peer-codec-borrow-screen-20261022/fixture.torrent",
+      "bytes": 1377,
+      "sha256": "c3dcc6124dcd3bbb0bc2ead7b754361db71ddef1a98e0094f851cb255e4cf7d7"
+    },
+    {
+      "path": "peer-codec-borrow-screen-20261022/load-after.txt",
+      "bytes": 34,
+      "sha256": "40d0e3a33a495ac6d6e48bfe8316d8c1c40768772a78a53ba821dce43c6f0d41"
+    },
+    {
+      "path": "peer-codec-borrow-screen-20261022/load-before.txt",
+      "bytes": 34,
+      "sha256": "fb4d3101cfb407a88f1d72006f97fdf35fb19e9143761f2eb8f68fd2aef0a8f4"
+    },
+    {
+      "path": "peer-codec-borrow-screen-20261022/run-01-candidate/client.log",
+      "bytes": 457,
+      "sha256": "989dd8648510e1acc0e50eacecd7f445e42fc3b2fe4d0e31db5cdb94f1a2d8f5"
+    },
+    {
+      "path": "peer-codec-borrow-screen-20261022/run-01-control/client.log",
+      "bytes": 457,
+      "sha256": "c9cf46ead2dd1e55d40b0e504122499a3b0770f5b07e9f9033fee39cd46466dd"
+    },
+    {
+      "path": "peer-codec-borrow-screen-20261022/run-01-rt/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "peer-codec-borrow-screen-20261022/source-revision.txt",
+      "bytes": 41,
+      "sha256": "bc548c4f63da13cb612c3f3a0f16709b06d966a6ad57d841523782f69a77bf92"
+    },
+    {
+      "path": "peer-codec-borrow-screen-20261022/summary.json",
+      "bytes": 59606,
+      "sha256": "c8ee3fab083aa099f3caa14e9b541071aa6fcbc425f5c496334738e88fcdd768"
     },
     {
       "path": "pgo-cache-hit-training-64m/logs/run-01-training-training.client.log",
@@ -2707,6 +2817,16 @@
       "sha256": "2cae7c3d70d23d6031cc2c5ef7041dc8ef94bf4f8a7e6fa1b5e34b69ccd85b00"
     },
     {
+      "path": "screen-cache-hit-64m-1x-launch-failure/logs/run-01-rtorrent-rtorrent.client.log",
+      "bytes": 188,
+      "sha256": "26cb6752a4413fdfd2db8d2b1b5ac6594748156a5812784b047ba71e475f9d5d"
+    },
+    {
+      "path": "screen-cache-hit-64m-1x-launch-failure/summary.json",
+      "bytes": 1114,
+      "sha256": "cfed76a85fc08c2c6a59c22efb026d4f77eeb4707ce24a5e5e2e3731fab38a75"
+    },
+    {
       "path": "screen-cache-hit-64m-1x/logs/run-01-baseline-baseline.client.log",
       "bytes": 457,
       "sha256": "1d67c9f4dce124c74914e5a7aef9eea78d0d1d63ffcb0c87311be684fc42cc80"
@@ -2730,16 +2850,6 @@
       "path": "screen-cache-hit-64m-1x/summary.json",
       "bytes": 80470,
       "sha256": "9ff1dd866afaaa69334a81ce0128058bea1f9fc78d4ce16546216049bbf75bb7"
-    },
-    {
-      "path": "screen-cache-hit-64m-1x-launch-failure/logs/run-01-rtorrent-rtorrent.client.log",
-      "bytes": 188,
-      "sha256": "26cb6752a4413fdfd2db8d2b1b5ac6594748156a5812784b047ba71e475f9d5d"
-    },
-    {
-      "path": "screen-cache-hit-64m-1x-launch-failure/summary.json",
-      "bytes": 1114,
-      "sha256": "cfed76a85fc08c2c6a59c22efb026d4f77eeb4707ce24a5e5e2e3731fab38a75"
     },
     {
       "path": "screen-cache-hit-64m-3x/logs/run-01-baseline-baseline.client.log",

@@ -1,0 +1,12 @@
+[New LWP 1980371 (id 2)]
+[New LWP 1980370 (id 3)]
+[New LWP 1980369 (id 4)]
+[New LWP 1980368 (id 5)]
+[New LWP 1980367 (id 6)]
+[New LWP 1980334 (id 7)]
+[New LWP 1980333 (id 8)]
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/usr/lib/libthread_db.so.1".
+[Switching to thread 1 (Thread 0x7fd0110c1a40 (LWP 1980332))]
+0x00007fd010f1e46d in syscall () from /usr/lib/libc.so.6
+[Inferior 1 (process 1980332) detached]

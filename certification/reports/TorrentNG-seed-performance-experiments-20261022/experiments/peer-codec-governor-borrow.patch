@@ -1,0 +1,33 @@
+diff --git a/crates/rt-peer-wire/src/codec.rs b/crates/rt-peer-wire/src/codec.rs
+index 8dcc81f9..b5e3420f 100644
+--- a/crates/rt-peer-wire/src/codec.rs
++++ b/crates/rt-peer-wire/src/codec.rs
+@@ -130,8 +130,8 @@ impl PeerCodec {
+         let accounted_capacity = src.capacity().max(required);
+         self.read_buffer_high_water_bytes =
+             self.read_buffer_high_water_bytes.max(accounted_capacity);
+-        let resources = self.resources.clone();
+-        if let Some(resources) = resources.as_ref() {
++        let resources = self.resources.as_ref();
++        if let Some(resources) = resources {
+             let accounted_capacity_bytes = u64::try_from(accounted_capacity)
+                 .map_err(|_| WireError::PeerBufferLengthOverflow)?;
+             let reserved_read_bytes = self
+@@ -188,7 +188,7 @@ impl PeerCodec {
+
+         // Account for allocator growth beyond the requested capacity before
+         // another frame can be admitted on this connection.
+-        if let Some(resources) = resources.as_ref() {
++        if let Some(resources) = resources {
+             let actual_capacity =
+                 u64::try_from(src.capacity()).map_err(|_| WireError::PeerBufferLengthOverflow)?;
+             let memory = self
+@@ -216,7 +216,7 @@ impl PeerCodec {
+         // allocate. Its lease can return to the warm-buffer size after the
+         // output buffer is empty.
+         let accounted_capacity = dst.capacity().max(required);
+-        if let Some(resources) = self.resources.clone() {
++        if let Some(resources) = self.resources.as_ref() {
+             let memory = self
+                 .memory
+                 .get_or_insert_with(|| Box::new(PeerCodecMemory::default()));

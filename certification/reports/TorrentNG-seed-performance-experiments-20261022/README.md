@@ -143,6 +143,7 @@ Every rejected or inconsistent source candidate is kept as a patch under [`exper
 | 32 ms collection window with up to eight contiguous blocks | Three-round release screen: CPU -22.2%, PSS -1.5%, anonymous peak -7.5%. Fresh PGO screens improved CPU/PSS at 64 and 128 MiB. | Retained on main as `39554462`; preserve the complete measurements and candidate artifacts under [`observations/seed-goal-next-avenues-20261022/`](observations/seed-goal-next-avenues-20261022/). |
 | 32 ms collection window with up to twelve contiguous blocks | One 64 MiB screen: CPU 1.9%, PSS 2.4%, and anonymous peak 4.3% above the current eight-block source. All checksums passed, but the run was under high host load. | Not promoted; keep [`upload-batch12.patch`](experiments/upload-batch12.patch) and its test/build/benchmark evidence under [`observations/batch12-screen-20261022/`](observations/batch12-screen-20261022/). A quiet-host repeat is needed before drawing a firm conclusion. |
 | Remove the explicit TCP `Framed::flush()` before raw Piece writes | One screen appeared 21.8% faster with 6.1% lower PSS, but the randomized confirm was nearly tied in round 1 and 6.6% slower with 2.7% higher PSS in round 2. Host load was elevated, and remaining rounds were stopped. | Not promoted; 770 engine tests and the wire-order test passed. Preserve [`skip-peer-framed-preflush.patch`](experiments/skip-peer-framed-preflush.patch), exact binary, and all completed summaries under [`observations/framed-preflush-screen-20261022/`](observations/framed-preflush-screen-20261022/). |
+| Borrow `ResourceGovernor` in peer codec capacity checks instead of cloning its `Arc` | One randomized 64 MiB screen: candidate CPU +17.3%, PSS +0.11 MiB, anonymous memory tied. Candidate ran last as host load rose; profile signal was only 7 ms in a 332 ms sample. | Not promoted; focused peer-wire tests passed. Keep [`peer-codec-governor-borrow.patch`](experiments/peer-codec-governor-borrow.patch), candidate binary, and raw screen under [`observations/peer-codec-borrow-screen-20261022/`](observations/peer-codec-borrow-screen-20261022/); profile is in [`observations/current-eight-block-profile-20261022/`](observations/current-eight-block-profile-20261022/). Revisit only with a quiet, reversed-order screen if profiling still points to codec admission. |
 | Batch per-block upload-rate admissions under one tree lock | Two randomized one-round 64 MiB screens: median CPU rose 8.3%, PSS 0.8%, and anonymous memory 2.9%; CPU moved in opposite directions in the two rounds. | Not promoted; keep the exact patch, candidate executable, and verified summaries under [`observations/upload-rate-batch-20261022/`](observations/upload-rate-batch-20261022/). |
 | Cache-hit single-lookup refactor | One round looked faster, but the three-round median was 5.801 CPU-s/GiB versus 3.780 for the PGO control; PSS was essentially tied. | Reverted as inconsistent; keep [`cache-hit-single-hash.patch`](experiments/cache-hit-single-hash.patch). |
 | Active stream kept outside the cache map | At 64 MiB under `opt-level=s`, the three-round median improved CPU 16.3% and PSS was tied. At 256 MiB, the single candidate round used 9.8% more CPU with effectively tied PSS. In a refreshed PGO comparison, it was 6.7% slower and used 0.46 MiB more PSS than the PGO control. | Reverted as size/profile dependent; keep [`stream-cache-active.patch`](experiments/stream-cache-active.patch). |
@@ -255,6 +256,16 @@ evidence only, not a client comparison. It does not justify spending a
 matched-run cycle on the path-map refactor alone. The profile, exact summary,
 and resolution notes are in
 [`observations/pgo-hotpath-profile-20261022/`](observations/pgo-hotpath-profile-20261022/).
+
+A 64 MiB profile of the exact current eight-block release binary likewise found
+no dominant TorrentNG leaf: 52% of 332 ms of samples landed in libc, and
+`PeerCodec::reserve_capacity` accounted for 7 ms (2.1%). A borrow-only refactor
+removed the codec's `ResourceGovernor` clones and passed 59 peer-wire tests,
+but the first matched 64 MiB screen measured 4.175 versus 3.560 CPU-s/GiB and
+18.63 versus 18.52 MiB PSS; it ran last as host load rose. Do not promote it
+from this screen. Preserve the complete profile and candidate artifacts under
+[`observations/current-eight-block-profile-20261022/`](observations/current-eight-block-profile-20261022/)
+and [`observations/peer-codec-borrow-screen-20261022/`](observations/peer-codec-borrow-screen-20261022/).
 
 ## Upstream rTorrent path and mapped-range evidence
 

@@ -1,0 +1,17 @@
+Profile source: current main binary e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276
+Sample window: first valid Piece block through final block, 1,000 Hz gperftools
+Total sample weight: 332 ms across 332 sample ticks
+
+Symbolized leaf samples (addr2line -f -C against the exact binary):
+172 ms 51.8%  libc.so.6
+12 ms   3.6%   rt_engine::torrent_task::run_peer_loop_with_upload_future::{{closure}}::{{closure}}
+7 ms    2.1%   rt_peer_wire::codec::PeerCodec::reserve_capacity
+7 ms    2.1%   hashbrown::raw::RawTableInner::rehash_in_place
+6 ms    1.8%   tokio::sync::mpsc::chan::channel
+5 ms    1.5%   tokio::process::imp::GlobalOrphanQueue::reap_orphans
+4 ms    1.2%   core::ptr::drop_in_place<rt_engine::command::EngineCmd>
+4 ms    1.2%   alloc::vec::Vec<T,A>::extend_from_slice
+3 ms    0.9%   rt_engine::storage_jobs::interrupted_before_start_completion
+3 ms    0.9%   core::slice::sort::stable::quicksort::stable_partition
+
+This is a single diagnostic profile with only 332 ms of sample weight. It is not a benchmark score or a precise ranking of hot functions.
