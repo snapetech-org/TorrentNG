@@ -98,6 +98,19 @@ Five clients ran one randomized 64 MiB local seed transfer each, all at 4 MiB/s 
 
 The native-target candidate therefore did not improve CPU and PSS together against its PGO control. Its slightly lower anonymous peak is retained as a separate memory observation, but does not offset the CPU and PSS regressions. The run started while `kspld0` was busy (load averages 23.27/20.21/18.89 and about 117 GiB of swap in use), so these one-round values are exploratory rather than a new ranking. The existing release and PGO choices are unchanged. The candidate's optimized and instrumented binaries, raw and merged LLVM profiles, verified summary, logs, metrics, compressed `smaps`, and checksums are retained under [`observations/pgo-native-target-screen-20261022/`](observations/pgo-native-target-screen-20261022/).
 
+### Equal-weight full-process and transfer-window profile blend
+
+I combined the current-source full-process and transfer-window profiles at equal weight. Both inputs were trained with Rust 1.97.0 / LLVM 22.1.6 from the same source and portable target, and the profile-use build completed without mismatch warnings. A first five-client 64 MiB round looked encouraging against the PGO control: 3.106 vs. 3.587 CPU-s/GiB, with PSS 17.29 vs. 16.69 MiB. The blend ran last, so I expanded it to three randomized rounds rather than treating that as a win.
+
+| Build | CPU-s/GiB median | Peak PSS median | Peak anonymous median |
+|---|---:|---:|---:|
+| Existing PGO control | 3.049 | 16.08 MiB | 6.34 MiB |
+| Equal-weight profile blend | 3.229 (+5.9%) | 17.58 MiB (+9.3%) | 6.01 MiB (-5.2%) |
+| Transfer-window PGO | 2.972 (-2.6%) | 18.52 MiB (+15.2%) | 6.31 MiB (-0.5%) |
+| rTorrent 0.16.25 | 1.975 | 7.62 MiB | 3.05 MiB |
+
+All 17 transfers across the initial and repeated screens verified the same fixture SHA-256 `b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901`. Across the repeated screen, the blend's CPU was worse than the control in two rounds and slightly better in one; its PSS was higher in all three. It did lower anonymous memory, but did not improve CPU and PSS together against the retained PGO control. No build setting changed. The one-round summary, three-round summaries, exact merged profile and binary, and process diagnostics are preserved under [`observations/pgo-profile-blend-20261022/`](observations/pgo-profile-blend-20261022/).
+
 ## Source-level candidates and reversions
 
 Every rejected or inconsistent source candidate is kept as a patch under [`experiments/`](experiments/) so it can be revisited without losing its result.

@@ -53,3 +53,10 @@ the retained PGO control on CPU and PSS, while anonymous memory was slightly
 lower. The exact profile, executable, instrumented binary, verified run
 summary, logs, metrics, and compressed process maps are retained; no default
 changed.
+
+`pgo-profile-blend-20261022/` preserves an equal-weight combination of the
+current-source full-process and transfer-window profiles. A one-round screen
+looked better, but three randomized rounds used more CPU and PSS than the
+retained PGO control. The initial and repeated verified summaries, exact
+merged profile, candidate binary, logs, metrics, and compressed process maps
+are retained so the tradeoff can be revisited.

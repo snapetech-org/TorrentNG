@@ -185,6 +185,11 @@ control, though anonymous memory was 5.2% lower. All transfers verified, but
 the host was busy and this one-round result is only screening evidence. The
 candidate was not promoted; its exact profile, binaries, and run data are
 preserved in the [native-target PGO screen](certification/reports/TorrentNG-seed-performance-experiments-20261022/observations/pgo-native-target-screen-20261022/README.md).
+An equal-weight blend of the current-source full-process and transfer-window
+profiles looked promising in one pass, then lost its three-round screen: CPU
+was 5.9% higher and PSS 9.3% higher than the PGO control, though anonymous
+memory was 5.2% lower. The initial and repeated results, binary, and merged
+profile are preserved in the [PGO blend screen](certification/reports/TorrentNG-seed-performance-experiments-20261022/observations/pgo-profile-blend-20261022/README.md).
 
 ## Learn more
 
