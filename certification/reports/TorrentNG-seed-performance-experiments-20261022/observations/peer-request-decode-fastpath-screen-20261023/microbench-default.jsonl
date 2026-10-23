@@ -1,0 +1,6 @@
+{"pair": 1, "arm": "control", "output": "mode=default frames=8000000 cpu_s=0.261648 wall_s=0.262971 msg_per_cpu_s=30575430 checksum=4096002960883712"}
+{"pair": 1, "arm": "candidate", "output": "mode=default frames=8000000 cpu_s=0.140791 wall_s=0.141482 msg_per_cpu_s=56821814 checksum=4096002960883712"}
+{"pair": 2, "arm": "candidate", "output": "mode=default frames=8000000 cpu_s=0.152234 wall_s=0.153152 msg_per_cpu_s=52550679 checksum=4096002960883712"}
+{"pair": 2, "arm": "control", "output": "mode=default frames=8000000 cpu_s=0.253800 wall_s=0.255270 msg_per_cpu_s=31520883 checksum=4096002960883712"}
+{"pair": 3, "arm": "control", "output": "mode=default frames=8000000 cpu_s=0.265696 wall_s=0.266931 msg_per_cpu_s=30109599 checksum=4096002960883712"}
+{"pair": 3, "arm": "candidate", "output": "mode=default frames=8000000 cpu_s=0.139537 wall_s=0.140268 msg_per_cpu_s=57332464 checksum=4096002960883712"}
