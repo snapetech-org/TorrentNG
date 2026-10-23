@@ -1,0 +1,218 @@
+{
+  "format": "torrentng-pgo-worker-rtorrent-screen-v1",
+  "host": "kspld0, AMD Ryzen 9 9950X3D",
+  "engine_source_revision": "39554462",
+  "probe_revision": "8cc705a8",
+  "fixture_bytes": 67108864,
+  "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+  "binary_sha256": {
+    "torrentng_pgo_batch8": "fe1dc0a1b5b3f1605045f4e839cf574041ff6535d7aa309f0b49a9487cde026f",
+    "rtorrent_0_16_25": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46"
+  },
+  "settings": {
+    "offered_rate_bytes_per_second": 4194304,
+    "block_bytes": 16384,
+    "request_window": 32,
+    "torrentng_storage_backend": "pread",
+    "dht": false,
+    "pex": false,
+    "tracker": false,
+    "rounds": 3,
+    "order_seed": 20261030
+  },
+  "randomized_orders": [
+    [
+      "oneworker",
+      "current2",
+      "rtorrent"
+    ],
+    [
+      "current2",
+      "oneworker",
+      "rtorrent"
+    ],
+    [
+      "rtorrent",
+      "current2",
+      "oneworker"
+    ]
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "order": [
+        "oneworker",
+        "current2",
+        "rtorrent"
+      ],
+      "current2": {
+        "round": 1,
+        "cpu_seconds_per_gib": 2.934545696,
+        "peak_pss_mib": 15.546875,
+        "peak_anonymous_mib": 5.96875,
+        "verified": true,
+        "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+        "binary_sha256": "fe1dc0a1b5b3f1605045f4e839cf574041ff6535d7aa309f0b49a9487cde026f",
+        "storage_io_worker_threads": 2
+      },
+      "oneworker": {
+        "round": 1,
+        "cpu_seconds_per_gib": 2.943724864,
+        "peak_pss_mib": 14.8173828125,
+        "peak_anonymous_mib": 5.17578125,
+        "verified": true,
+        "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+        "binary_sha256": "fe1dc0a1b5b3f1605045f4e839cf574041ff6535d7aa309f0b49a9487cde026f",
+        "storage_io_worker_threads": 1
+      },
+      "rtorrent": {
+        "round": 1,
+        "cpu_seconds_per_gib": 3.02468928,
+        "peak_pss_mib": 7.7109375,
+        "peak_anonymous_mib": 3.09765625,
+        "verified": true,
+        "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+        "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+        "storage_io_worker_threads": null
+      },
+      "oneworker_delta_vs_current2_percent": {
+        "cpu_seconds_per_gib": 0.3127969011527767,
+        "peak_pss_mib": -4.692211055276382,
+        "peak_anonymous_mib": -13.285340314136127
+      }
+    },
+    {
+      "round": 2,
+      "order": [
+        "current2",
+        "oneworker",
+        "rtorrent"
+      ],
+      "current2": {
+        "round": 2,
+        "cpu_seconds_per_gib": 3.253432448,
+        "peak_pss_mib": 16.25390625,
+        "peak_anonymous_mib": 6.3984375,
+        "verified": true,
+        "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+        "binary_sha256": "fe1dc0a1b5b3f1605045f4e839cf574041ff6535d7aa309f0b49a9487cde026f",
+        "storage_io_worker_threads": 2
+      },
+      "oneworker": {
+        "round": 2,
+        "cpu_seconds_per_gib": 3.755173264,
+        "peak_pss_mib": 14.8837890625,
+        "peak_anonymous_mib": 5.17578125,
+        "verified": true,
+        "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+        "binary_sha256": "fe1dc0a1b5b3f1605045f4e839cf574041ff6535d7aa309f0b49a9487cde026f",
+        "storage_io_worker_threads": 1
+      },
+      "rtorrent": {
+        "round": 2,
+        "cpu_seconds_per_gib": 2.737622848,
+        "peak_pss_mib": 8.119140625,
+        "peak_anonymous_mib": 3.09765625,
+        "verified": true,
+        "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+        "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+        "storage_io_worker_threads": null
+      },
+      "oneworker_delta_vs_current2_percent": {
+        "cpu_seconds_per_gib": 15.421891310773587,
+        "peak_pss_mib": -8.429464071136746,
+        "peak_anonymous_mib": -19.10866910866911
+      }
+    },
+    {
+      "round": 3,
+      "order": [
+        "rtorrent",
+        "current2",
+        "oneworker"
+      ],
+      "current2": {
+        "round": 3,
+        "cpu_seconds_per_gib": 3.123105264,
+        "peak_pss_mib": 15.74609375,
+        "peak_anonymous_mib": 5.95703125,
+        "verified": true,
+        "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+        "binary_sha256": "fe1dc0a1b5b3f1605045f4e839cf574041ff6535d7aa309f0b49a9487cde026f",
+        "storage_io_worker_threads": 2
+      },
+      "oneworker": {
+        "round": 3,
+        "cpu_seconds_per_gib": 2.702468576,
+        "peak_pss_mib": 14.8837890625,
+        "peak_anonymous_mib": 5.21875,
+        "verified": true,
+        "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+        "binary_sha256": "fe1dc0a1b5b3f1605045f4e839cf574041ff6535d7aa309f0b49a9487cde026f",
+        "storage_io_worker_threads": 1
+      },
+      "rtorrent": {
+        "round": 3,
+        "cpu_seconds_per_gib": 2.480881024,
+        "peak_pss_mib": 8.126953125,
+        "peak_anonymous_mib": 3.1015625,
+        "verified": true,
+        "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+        "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+        "storage_io_worker_threads": null
+      },
+      "oneworker_delta_vs_current2_percent": {
+        "cpu_seconds_per_gib": -13.468540200955587,
+        "peak_pss_mib": -5.476308608285786,
+        "peak_anonymous_mib": -12.393442622950818
+      }
+    }
+  ],
+  "medians": {
+    "current2": {
+      "cpu_seconds_per_gib": 3.123105264,
+      "peak_pss_mib": 15.74609375,
+      "peak_anonymous_mib": 5.96875
+    },
+    "oneworker": {
+      "cpu_seconds_per_gib": 2.943724864,
+      "peak_pss_mib": 14.8837890625,
+      "peak_anonymous_mib": 5.17578125
+    },
+    "rtorrent": {
+      "cpu_seconds_per_gib": 2.737622848,
+      "peak_pss_mib": 8.119140625,
+      "peak_anonymous_mib": 3.09765625
+    }
+  },
+  "median_delta_vs_rtorrent_percent": {
+    "current2_vs_rtorrent_percent": {
+      "cpu_seconds_per_gib": 14.080917547923674,
+      "peak_pss_mib": 93.93793601154678,
+      "peak_anonymous_mib": 92.6860025220681
+    },
+    "oneworker_vs_rtorrent_percent": {
+      "cpu_seconds_per_gib": 7.528502918163839,
+      "peak_pss_mib": 83.31729612701467,
+      "peak_anonymous_mib": 67.08701134930644
+    }
+  },
+  "host_cpu_pressure_psi_percent": {
+    "before_avg10_avg60_avg300": [
+      0.64,
+      2.87,
+      4.73
+    ],
+    "mid_screen_avg10_avg60_avg300": [
+      5.94,
+      6.09,
+      5.34
+    ],
+    "after_avg10_avg60_avg300": [
+      0.63,
+      2.29,
+      4.32
+    ]
+  },
+  "decision": "One storage worker reduced PSS and anonymous memory consistently versus the same PGO binary at two workers, but paired CPU was effectively tied (one-worker won one of three CPU pairs). Versus rTorrent 0.16.25, one-worker PGO remained 7.5% higher in median CPU, 83.3% higher in PSS, and 67.1% higher in anonymous memory. Do not promote a default; retain one worker as a possible memory-focused configuration."
+}

@@ -8530,6 +8530,21 @@
       "path": "worker1-arena1-combined-interrupted-screen-20261023/README.md",
       "bytes": 792,
       "sha256": "e07bd5521105af432a5b97f68646177c87217caf03754d4e9d18d822b0910240"
+    },
+    {
+      "path": "pgo-worker-count-rtorrent-screen-20261023/README.md",
+      "bytes": 1250,
+      "sha256": "b3e1e01be7bf29642b914531fb96e74e473c7a2886f2173a94007dfb741b7658"
+    },
+    {
+      "path": "pgo-worker-count-rtorrent-screen-20261023/summary.json",
+      "bytes": 7331,
+      "sha256": "121ed08ce59954affbc1fc56a81a4bdb3fa585d03acdd5637dbd321e88cbcc22"
+    },
+    {
+      "path": "pgo-worker-count-rtorrent-screen-20261023/validation.txt",
+      "bytes": 704,
+      "sha256": "8ea8293dad443a440ffc33b46d654d81d50ebfec94a88e36bac62b335286f574"
     }
   ]
 }

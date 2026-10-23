@@ -1,0 +1,5 @@
+- Probe: `scripts/native_seed_cpu_ram_probe.py`, per-client storage worker override from commit `8cc705a8`.
+- No source build during this screen; exact current-best PGO binary SHA-256 `fe1dc0a1b5b3f1605045f4e839cf574041ff6535d7aa309f0b49a9487cde026f`.
+- Exact rTorrent 0.16.25 comparator SHA-256 `698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46`.
+- Three randomized rounds, order seed 20261030, 64 MiB fixture, 4 MiB/s offered rate, 16 KiB blocks, 32-request window. TorrentNG backend was pinned to `pread`; one-worker arm alone used `io_worker_threads = 1`.
+- All nine transfers completed and verified fixture SHA-256 `b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901`.
