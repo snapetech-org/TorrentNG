@@ -1617,7 +1617,7 @@ class WorkflowSecurityTests(unittest.TestCase):
                 env=environment,
             )
             self.assertEqual(completed.returncode, 2, completed.stderr)
-            self.assertIn("refusing a user-data directory as INTEROP_WORKDIR", completed.stderr)
+            self.assertIn("refusing to reset non-empty INTEROP_WORKDIR", completed.stderr)
             self.assertEqual(protected_file.read_text(encoding="utf-8"), "user data")
 
     def test_interop_matrix_rejects_invalid_suite_before_starting_docker(self) -> None:
