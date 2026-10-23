@@ -75,3 +75,14 @@ No production or build default changed.
 `pgo-hotpath-profile-20261022/` retains one exact-binary 256 MiB PGO CPU
 profile. It did not provide a matched performance result; the peer-read stream
 map was not a sampled symbol, so a map-only refactor was not selected.
+
+`io-uring-queue-depth-followup-20261022/` preserves the depth-1 failure and
+depth-4/depth-8 screens. One-pair depth-4 runs looked faster, but a randomized
+three-pair 64 MiB repeat used 7.3% more median CPU than `pread`, with tied PSS.
+Raw summaries, run logs, redacted configurations, fixture metainfo, and the
+queue-full failure are retained; generated payloads and temporary credentials
+are excluded. No queue depth or release default changed.
+
+`pgo-hotpath-profile-20261022/libc.debug.gz` preserves the exact matching libc
+debug ELF used to resolve the profile samples. Its uncompressed SHA-256 and
+build ID are recorded in that observation's README.

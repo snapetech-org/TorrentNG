@@ -23,11 +23,41 @@ Those numbers are profiler-run observations only: there is no matched control,
 the profiling preload adds work and memory, and the sampled PSS includes an
 initial burst. Do not use them as a benchmark score.
 
-The profile also placed 348 ms (47.1% of sample weight) in `libc.so.6`, but
-this host's libc symbols are not sufficient to resolve those samples. A first
-nearest-exported-symbol pass fell outside the exported symbol's recorded size,
-so that attribution was discarded. Leave the libc portion unattributed; this
-profile cannot distinguish syscall, synchronization, allocator, or copy cost.
+The profile placed 348 ms (47.1% of sample weight) in `libc.so.6`. Those
+samples are now resolved with the exact debug ELF matching this host's libc
+build ID `d320029ad1a23be2f4bce117fd321cbd23a2014b`. The host library had inode
+`1159760811` and SHA-256
+`02c8c3d06180beee9c7d0392aa85736c7d19f274a81e7f8f0b3d9e28e0641524`; the
+matching debug ELF SHA-256 was
+`9af842d74dabd58b9389ac41060ad28f2ed7f3997a943d0422f8cfe9c119bed3`.
+The exact debug ELF is retained as [`libc.debug.gz`](libc.debug.gz); verify its
+uncompressed hash with `gzip -dc libc.debug.gz | sha256sum`.
+
+| libc symbol | Sampled leaf time |
+|---|---:|
+| `__syscall_cancel_arch` | 257 ms |
+| `syscall` | 26 ms |
+| `statx` | 23 ms |
+| `__memmove_avx512_unaligned_erms` | 16 ms |
+| `epoll_wait` | 9 ms |
+| `__libc_malloc` | 4 ms |
+| VDSO | 4 ms |
+| Other libc symbols | 9 ms |
+
+Caller-PC recovery placed 129 ms of `__syscall_cancel_arch` samples at the
+`std::net::TcpStream::read` wrapper, 67 ms at `TcpStream::write_vectored`, and
+54 ms in a Tokio worker-poll stack. Disassembly confirms the wrapper's sampled
+return PC follows the `syscall` instruction, so this weight includes the
+syscall boundary and execution; it is not a measurement of cancellation
+bookkeeping alone. The profile does not recover syscall numbers or isolate the
+kernel work represented by the broad Tokio-poll samples. The 23 ms `statx`
+samples lead to `HandleCache::touch_for_access`, which performs the path
+identity check that fences cached descriptors against path replacement.
+Preserve that check; its correctness role is not removed by this profile.
+
+This resolves where the libc leaf samples landed, but it does not turn their
+weight into removable application work or a whole-client CPU estimate. The
+profile remains diagnostic, with no matched control or rTorrent run.
 
 ## Sampled functions
 

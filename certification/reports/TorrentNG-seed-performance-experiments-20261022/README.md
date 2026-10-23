@@ -1,6 +1,6 @@
 # Native seed performance follow-up — 2026-10-22
 
-**Status:** the measured 16 ms upload-read coalescing window is now the release-source default. Same-source paired screens improved median CPU and memory at both 64 MiB and 128 MiB in the normal release build. PGO remains opt-in; its 64 MiB screen showed an anonymous-memory tradeoff, while its 128 MiB screen improved all three medians. The io_uring startup fix makes the requested backend selectable, but its matched screen still showed a CPU regression and only a small memory reduction.
+**Status:** the measured 16 ms upload-read coalescing window is now the release-source default. Same-source paired screens improved median CPU and memory at both 64 MiB and 128 MiB in the normal release build. PGO remains opt-in; its 64 MiB screen showed an anonymous-memory tradeoff, while its 128 MiB screen improved all three medians. io_uring is selectable after fixing backend startup, but depth-4's initial one-pair gains did not reproduce in a randomized three-pair screen; keep `pread` and the existing queue default.
 
 A bounded batch-rate-admission refactor was screened against the current 16 ms release and rTorrent 0.16.25. It did not establish a CPU and PSS win together and was not promoted; its patch and complete two-screen evidence are in [`observations/upload-rate-batch-20261022/`](observations/upload-rate-batch-20261022/).
 
@@ -123,6 +123,9 @@ Every rejected or inconsistent source candidate is kept as a patch under [`exper
 | Active stream kept outside the cache map | At 64 MiB under `opt-level=s`, the three-round median improved CPU 16.3% and PSS was tied. At 256 MiB, the single candidate round used 9.8% more CPU with effectively tied PSS. In a refreshed PGO comparison, it was 6.7% slower and used 0.46 MiB more PSS than the PGO control. | Reverted as size/profile dependent; keep [`stream-cache-active.patch`](experiments/stream-cache-active.patch). |
 | Wait for a fourth request before dispatch | The runtime setting disabled the read elevator, so the probe did not exercise batching and is not a scored result. | Do not infer a gain; preserve [`fourth-request-probe.patch`](experiments/fourth-request-probe.patch) for a corrected test. |
 | io_uring startup and queue-sized ring | The earlier requested arm actually selected `pread`. Direct worker startup now selects io_uring at queue depth 64. A three-round verified comparison found higher CPU with slightly lower PSS and anonymous memory. | Keep the startup correction and explicit backend available; do not promote io_uring as a performance winner or change the default queue depth. Results and invalid attempts are retained under [`observations/io-uring-queue-depth-64/`](observations/io-uring-queue-depth-64/). |
+| Opportunistically join a second ready four-block read for an eight-frame TCP write | One instrumented 16 MiB trace produced two eight-frame writes and saved three calls out of 257; a second intake-cap-eight variant raised storage reads to 402 and socket writes to 280. Short diagnostic CPU/PSS readings were worse and are not scores. | Keep the current 16 ms window and four-block reads. Do not promote either variant; retain their patches and traces under [`observations/socket-write-coalesce-screen-20261022/`](observations/socket-write-coalesce-screen-20261022/). |
+| Current-source mimalloc, including zero-delay purge | Two one-pair 16 MiB verified screens showed no stable CPU gain; mimalloc used 4.5–5.1 MiB more PSS and 4.4–4.8 MiB more anonymous memory. | Stop allocator tuning before a larger comparison. Keep the system allocator default and retain the summaries under [`observations/mimalloc-current-source-screen-20261022/`](observations/mimalloc-current-source-screen-20261022/). |
+| io_uring at queue depths 1, 4, and 8 | Depth 4 looked faster in two single pairs, but its randomized 64 MiB three-pair repeat used 7.3% more median CPU than `pread`, with tied PSS. Depth 8 used 11.5% more CPU in its one-pair screen; depth 1 saturated the scheduler before a valid transfer. | Keep `pread` as default. Preserve the startup fix and all mixed/failed evidence under [`observations/io-uring-queue-depth-followup-20261022/`](observations/io-uring-queue-depth-followup-20261022/). |
 
 ### Allocator and codegen screens
 
@@ -181,6 +184,22 @@ The CPU cost is higher, while the memory reductions are small and these screens 
 
 The updated-source PGO build emitted profile-mismatch warnings for the changed backend functions, so those two rows are screening evidence only. Neither screen displaces the retained full-profile PGO result of 3.68 CPU-s/GiB / 15.80 MiB PSS at 128 MiB.
 
+### io_uring queue-depth follow-up
+
+Because the first queue-depth-64 screen traded higher CPU for slightly lower
+memory, smaller rings were screened before dropping the backend. At depth 4,
+one 16 MiB pair and one 64 MiB pair appeared to improve CPU, PSS, and anonymous
+memory. A randomized three-pair 64 MiB repeat did not confirm the CPU gain:
+median CPU was 6.040 CPU-s/GiB for io_uring versus 5.628 for `pread` (+7.3%),
+while PSS was effectively tied (18.50 versus 18.51 MiB) and anonymous peak was
+2.5% higher (6.11 versus 5.96 MiB). io_uring was slower in each paired round.
+The depth-8 one-pair screen also used 11.5% more CPU; depth 1 failed with
+scheduler queue-full errors before a valid transfer. Backend-selection gauges
+were checked for every scored run, and all scored transfers verified their
+fixture hashes. No storage default changed. Full measurements and failed
+attempt evidence are in
+[`observations/io-uring-queue-depth-followup-20261022/`](observations/io-uring-queue-depth-followup-20261022/).
+
 The first three-client attempt is preserved but invalid: the harness correctly removed inherited loader variables, and rTorrent then exited 127 because `libtorrent.so.53` was not found. The valid retry passed the pinned `LD_LIBRARY_PATH` explicitly. The exact output binary hashes, selected-backend snapshots, process maps, logs, and original plus relocated summaries are in the evidence directory above. The code and harness correction were committed on `main` as `85dc7800`.
 
 The experiments also keep evidence that did not fit a clean score: an initial rTorrent launch failed because its loader could not find `libtorrent.so.53`; the later valid runs use a pinned `LD_LIBRARY_PATH`. Failed and diagnostic summaries remain in the observations directory and are excluded from performance claims.
@@ -198,13 +217,18 @@ defaults; all raw evidence and the retained fat-LTO executable are in
 
 One exact-binary, 256 MiB PGO CPU profile sampled broad peer-task and supervised
 torrent-task poll frames most often among resolved TorrentNG frames. `PreparedPread::execute`
-was 2.9% of the TorrentNG leaf sample weight, while 47.1% of all sample weight
-mapped to libc without reliable symbol attribution. `PeerReadStreams::observe`
-was not sampled as a separate symbol, which is not proof that it is free. This
-is diagnostic evidence only, not a client comparison; the profile cannot
-separate libc read, copy, synchronization, or allocator work. It does not
-justify spending a matched-run cycle on the path-map refactor alone. The
-profile, exact summary, and resolution notes are in
+was 2.9% of the TorrentNG leaf sample weight. The 47.1% of all sample weight
+inside libc is now symbol-resolved using the matching debug ELF: the largest
+entry was `__syscall_cancel_arch` (257 ms), with caller samples mapping to TCP
+read (129 ms), vectored write (67 ms), and a broad Tokio worker-poll stack (54
+ms). A further 23 ms in `statx` came from `HandleCache::touch_for_access` and
+its deliberate path-replacement fence. This points toward transport and poll
+work but does not identify removable kernel work or a whole-client CPU gain;
+the identity check remains required. `PeerReadStreams::observe` was not sampled
+as a separate symbol, which is not proof that it is free. This is diagnostic
+evidence only, not a client comparison. It does not justify spending a
+matched-run cycle on the path-map refactor alone. The profile, exact summary,
+and resolution notes are in
 [`observations/pgo-hotpath-profile-20261022/`](observations/pgo-hotpath-profile-20261022/).
 
 ## Upstream rTorrent path and next source experiment

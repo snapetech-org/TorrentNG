@@ -3,8 +3,8 @@
   "files": [
     {
       "path": "README.md",
-      "bytes": 4319,
-      "sha256": "86319c049ff7403f898cde901117ffe452654825ecc4d2ef5fe994917f48dcbd"
+      "bytes": 5201,
+      "sha256": "71624bcddc0c6938c60b5346b8cc097cdcd5c8271d30012116a66aaafab976f2"
     },
     {
       "path": "batch-distribution-16m/logs/run-01-batches-batches.client.log",
@@ -447,6 +447,171 @@
       "sha256": "c83d50138002bbd3d98e559ea3f9c8b3616d96fce295a5ccb49f892525373043"
     },
     {
+      "path": "io-uring-queue-depth-followup-20261022/README.md",
+      "bytes": 3088,
+      "sha256": "14920cd29c4817fc4c17760561c6c3ad9e6946b115b39f33c58126da827c0ad2"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/depth1-16m-invalid.json",
+      "bytes": 1212,
+      "sha256": "15d0d1588a23290efe23da5f41a6a2e24b135cee2cc57f291dad319fad160520"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/depth1-client.log",
+      "bytes": 9286,
+      "sha256": "0f25d08d58a9665827fecccd83db78610db04c9dda85d2f29ed7317e47835f5e"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/depth4-16m-single-pair.json",
+      "bytes": 29589,
+      "sha256": "c2c05c1f26c99e260f102c2d4d1681c1ba7a0a089647ed4babe8ebce10e26fd7"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/depth4-64m-single-pair.json",
+      "bytes": 37144,
+      "sha256": "a6c154dc8172ed60de50ac64c0bf10836a296ef57f73a21697dbfa33b565bcf7"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/depth4-64m-three-pairs.json",
+      "bytes": 109273,
+      "sha256": "bfda266ac5a7e371d71f3994145f457316e1858e3b5de80e79346ec49f7f609a"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/depth8-16m-single-pair.json",
+      "bytes": 29238,
+      "sha256": "e3e85ddbec718dc916a022f5841d9e8e81f7b3c04316948a812ec522c87f06e3"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/fixture-16m.torrent",
+      "bytes": 416,
+      "sha256": "ed235ed21bc21c5b29fdf4aebfadcce4f595f8ba8ce7923f05e1c3913a3ca8e5"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/fixture-64m.torrent",
+      "bytes": 1377,
+      "sha256": "c3dcc6124dcd3bbb0bc2ead7b754361db71ddef1a98e0094f851cb255e4cf7d7"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth4-16m-round-01-pread.client.log",
+      "bytes": 457,
+      "sha256": "887edc710a20103c70378349e837fd76cbdd19da45a63e57cdea7f943167f058"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth4-16m-round-01-pread.config.toml",
+      "bytes": 434,
+      "sha256": "e1602c29ec55cf5322018f8242295da149ab7fc8979f504bfe707cc58e4e259c"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth4-16m-round-01-uring4.client.log",
+      "bytes": 457,
+      "sha256": "6ca0181a7a7a25ce77ed6f37f96bda927fdee4025aaab57453515538a61eb361"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth4-16m-round-01-uring4.config.toml",
+      "bytes": 438,
+      "sha256": "13b7f74913242d01fbc0d2e4e4761490a307bec34500a0a4d72e7c620d37ad43"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth4-64m-3x-round-01-pread.client.log",
+      "bytes": 457,
+      "sha256": "bd17b94fae482f40d00da106924316e42c6c0ada3f302a73be8daec36019a34a"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth4-64m-3x-round-01-pread.config.toml",
+      "bytes": 440,
+      "sha256": "41d146992b39709485581e578435ea282764a24e6fc2df99caa3f9bf5b82cb61"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth4-64m-3x-round-01-uring4.client.log",
+      "bytes": 457,
+      "sha256": "f8a4de167cc056812abd46428e501755a88ec71cfec7865f376494afb6e2f495"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth4-64m-3x-round-01-uring4.config.toml",
+      "bytes": 444,
+      "sha256": "019d6a88c1ae0ed21e25ad7840578c69f948e873ef7bf0113675dd978e1c50ab"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth4-64m-3x-round-02-pread.client.log",
+      "bytes": 457,
+      "sha256": "99ad3e68cae2bc85a3f18adc0431a4c1202b97d88a54d03cc99645bff8a3e2b8"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth4-64m-3x-round-02-pread.config.toml",
+      "bytes": 440,
+      "sha256": "018ebb325b846a3dae5cd687f7802a1170a7b94f7202749ca27ac6eb74305324"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth4-64m-3x-round-02-uring4.client.log",
+      "bytes": 457,
+      "sha256": "bb7258068b0c859087513d1cf2e3eaadcef3cd677ea66adb429bf2724a0afb97"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth4-64m-3x-round-02-uring4.config.toml",
+      "bytes": 444,
+      "sha256": "46311244fb5e846297b2dd25190d1ac46c7be9578929dcaaac3d2a4a2f21108e"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth4-64m-3x-round-03-pread.client.log",
+      "bytes": 457,
+      "sha256": "90e4aef62d2b065d7ca220356cd2394f544f86d50d00631f9c6f86905d35c9e5"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth4-64m-3x-round-03-pread.config.toml",
+      "bytes": 440,
+      "sha256": "c4bb1b19f3a7208c1afaf981a3276b03c7f26fc66846c60e912ef70657f94ee3"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth4-64m-3x-round-03-uring4.client.log",
+      "bytes": 457,
+      "sha256": "b64a091006677c97453652da441f457562076625da6e669e96bfbfbc46ebc6f3"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth4-64m-3x-round-03-uring4.config.toml",
+      "bytes": 444,
+      "sha256": "42f8b47005aa339bf026124ec8c8d1f39835b04e8e7a795220b39247873474da"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth4-64m-round-01-pread.client.log",
+      "bytes": 457,
+      "sha256": "71dc678be8b2b9d1724c26e9382f70e4e0a7e01b012c2541505f4acac346d397"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth4-64m-round-01-pread.config.toml",
+      "bytes": 434,
+      "sha256": "1f27f46da6b317aa6c28cbdaaf6fed7195b4f2c01af355fc7d181b543690c5ed"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth4-64m-round-01-uring4.client.log",
+      "bytes": 457,
+      "sha256": "58a795ccc7ea5c0f7ab1d074d4c95adda94427e039e0df59fa0b337d452b1847"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth4-64m-round-01-uring4.config.toml",
+      "bytes": 438,
+      "sha256": "93e946727978c397dcc4b2a07a4de3f626a28538a616d54b324c39046c5533d2"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth8-16m-round-01-pread.client.log",
+      "bytes": 457,
+      "sha256": "8d20c8bd918bda9417b6778f8b5272a575e5cc5060d0c360c58350a87185166a"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth8-16m-round-01-pread.config.toml",
+      "bytes": 434,
+      "sha256": "cb3de4aca7ede9d6e76982e9669210992ca3234f93eaef6fc5bcf9c3a323d576"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth8-16m-round-01-uring8.client.log",
+      "bytes": 457,
+      "sha256": "e6a7759eef370366914a457920ff9510eac86352d98b31af7773df06113a4b86"
+    },
+    {
+      "path": "io-uring-queue-depth-followup-20261022/runs/depth8-16m-round-01-uring8.config.toml",
+      "bytes": 438,
+      "sha256": "fbd7ffa3ba7f30fe16832114ff561bed285b577ef65e52f101657f2fdd8d272f"
+    },
+    {
       "path": "low-risk-tuning-screen-20261022/README.md",
       "bytes": 6098,
       "sha256": "4588e87165ea6821b53ae858e1e3e99895d6c367a362c7862d7ee0752cede9b5"
@@ -530,6 +695,21 @@
       "path": "mapped-window-read-probe-20261022/results.txt",
       "bytes": 1564,
       "sha256": "24b0588c170bfa0430f9664aa242d8534398d2d8bb6921abd78d345a43f76233"
+    },
+    {
+      "path": "mimalloc-current-source-screen-20261022/README.md",
+      "bytes": 2082,
+      "sha256": "d15779ff4f897eab900816dd78ceebf654f23bbe1dd999c936ed836c507b336a"
+    },
+    {
+      "path": "mimalloc-current-source-screen-20261022/runs/default-purge-delay/summary.json",
+      "bytes": 28817,
+      "sha256": "d2759d967cdd4dd1eb60514cf46554227661e834587027d3d9be79f110b9ff7e"
+    },
+    {
+      "path": "mimalloc-current-source-screen-20261022/runs/purge-delay-0/summary.json",
+      "bytes": 29046,
+      "sha256": "96a1ecd9f023605df2b4a0d9c284612dee69b56e397de2d0cb52a89fb77cc211"
     },
     {
       "path": "pgo-cache-hit-training-64m/logs/run-01-training-training.client.log",
@@ -1253,8 +1433,8 @@
     },
     {
       "path": "pgo-hotpath-profile-20261022/README.md",
-      "bytes": 3757,
-      "sha256": "5c47e579ea5bd272f3b80daa8c669d02fa9996d017c24d9c76af8ce9b523bdba"
+      "bytes": 5179,
+      "sha256": "4820b80c95a07aeaf2e0e7e1b1271993d503b580acb2c2554123f0b9444b8f15"
     },
     {
       "path": "pgo-hotpath-profile-20261022/client.log",
@@ -1265,6 +1445,11 @@
       "path": "pgo-hotpath-profile-20261022/fixture.torrent",
       "bytes": 5218,
       "sha256": "0d7b693cbd17871c6d2058fa4b57317576d742ae345333bb01d86b1acf595a64"
+    },
+    {
+      "path": "pgo-hotpath-profile-20261022/libc.debug.gz",
+      "bytes": 4029894,
+      "sha256": "ddfc0f847271a107c0d13f8499abc9f3a662fb7da4404601c2d3b98f09aa4817"
     },
     {
       "path": "pgo-hotpath-profile-20261022/payload-window.prof",
@@ -3490,6 +3675,51 @@
       "path": "screen-stream-cache-64m-3x/summary.json",
       "bytes": 174922,
       "sha256": "9f5f3e7370dfa1dbea5c54e6b7f20f51eb60dd16c1bef653c84c6ace4a80d459"
+    },
+    {
+      "path": "socket-write-coalesce-screen-20261022/README.md",
+      "bytes": 2550,
+      "sha256": "410496a5d7d2e3f3ffb932fa024db4c3ad2b81a6a207e039ae2a8cf97b558e3a"
+    },
+    {
+      "path": "socket-write-coalesce-screen-20261022/experiments/intake8-plus-ready-only.patch",
+      "bytes": 6912,
+      "sha256": "8982e45e6c5af423aea61922038c31092174a7912becc521c2964eae06717b23"
+    },
+    {
+      "path": "socket-write-coalesce-screen-20261022/experiments/ready-only-eight-frame.patch",
+      "bytes": 6238,
+      "sha256": "9355063ed3e75ade436765ba22ccf44ff94a79179e4aba308e498305521fd9de"
+    },
+    {
+      "path": "socket-write-coalesce-screen-20261022/runs/baseline-16m/client.log",
+      "bytes": 182210,
+      "sha256": "7ec33652b0d27942b3efa85cd6afc8dac889fd8de5bd5224be5c880b2aafcb5e"
+    },
+    {
+      "path": "socket-write-coalesce-screen-20261022/runs/baseline-16m/summary.json",
+      "bytes": 15400,
+      "sha256": "89a5ff6fa31a10fab8e5559cd252e0608f716750fd1f7c19e6cdb8a68439887a"
+    },
+    {
+      "path": "socket-write-coalesce-screen-20261022/runs/intake8-ready-only-16m/client.log",
+      "bytes": 229399,
+      "sha256": "920b1026546369a5d4e973ca227e32798182f420e2e6e8cf7d1ae953bcbfc0e2"
+    },
+    {
+      "path": "socket-write-coalesce-screen-20261022/runs/intake8-ready-only-16m/summary.json",
+      "bytes": 15413,
+      "sha256": "da5441dcc50b7cd60f15fa8cedb36e55910388f16729c1a9d26f977f284e5fde"
+    },
+    {
+      "path": "socket-write-coalesce-screen-20261022/runs/ready-only-16m/client.log",
+      "bytes": 180609,
+      "sha256": "5d4d89109134a78f06ad47ca383ffa7cd0094693ed56eb7fadb65c03684a134a"
+    },
+    {
+      "path": "socket-write-coalesce-screen-20261022/runs/ready-only-16m/summary.json",
+      "bytes": 15342,
+      "sha256": "3bdd2429354527c64e39a896d4647b10f66d690d68942fad846a7d3844ce236f"
     },
     {
       "path": "upload-coalesce-16ms/README.md",

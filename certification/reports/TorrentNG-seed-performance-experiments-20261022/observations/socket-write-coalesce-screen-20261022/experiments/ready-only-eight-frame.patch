@@ -1,0 +1,133 @@
+diff --git a/crates/rt-engine/src/torrent_task.rs b/crates/rt-engine/src/torrent_task.rs
+index 4dfb0518..81821e06 100644
+--- a/crates/rt-engine/src/torrent_task.rs
++++ b/crates/rt-engine/src/torrent_task.rs
+@@ -165,6 +165,10 @@ const MAX_PENDING_UPLOAD_READS: usize = 16;
+ // bounded pread while keeping response obligations and rate grants separate.
+ const MAX_UPLOAD_READ_BATCH_BLOCKS: usize = 4;
+ const MAX_UPLOAD_READ_BATCH_BYTES: usize = 64 * 1024;
++// Keep storage reads bounded at four blocks, but let TCP join two read batches
++// when both completions are already ready. This saves one socket write without
++// waiting longer or widening the amount admitted by a single storage read.
++const MAX_SOCKET_WRITE_FRAMES: usize = MAX_UPLOAD_READ_BATCH_BLOCKS * 2;
+ // A 64 MiB fixture at the protocol's 16 KiB block size is 4,096 requests.
+ // Requests are only small coordinates; the response data remains bounded by
+ // MAX_PENDING_UPLOAD_READS and the peer-buffer governor.
+@@ -2178,6 +2182,7 @@ impl UploadContext {
+ // These collections have a protocol scheduling bound; keep their elements
+ // inline instead of allocating a new Vec at each stage of every read.
+ type UploadBatch<T> = smallvec::SmallVec<[T; MAX_UPLOAD_READ_BATCH_BLOCKS]>;
++type ReadyUploadBatch<T> = smallvec::SmallVec<[T; MAX_SOCKET_WRITE_FRAMES]>;
+ 
+ struct UploadReadContext {
+     save_root: PathBuf,
+@@ -8501,7 +8506,7 @@ where
+ {
+     use tokio::io::AsyncWriteExt;
+ 
+-    if pieces.len() > MAX_UPLOAD_READ_BATCH_BLOCKS {
++    if pieces.len() > MAX_SOCKET_WRITE_FRAMES {
+         return Err((
+             0,
+             std::io::Error::new(
+@@ -8510,7 +8515,7 @@ where
+             ),
+         ));
+     }
+-    let mut headers = [[0u8; 13]; MAX_UPLOAD_READ_BATCH_BLOCKS];
++    let mut headers = [[0u8; 13]; MAX_SOCKET_WRITE_FRAMES];
+     for (index, (piece, begin, data)) in pieces.iter().enumerate() {
+         let message_len = 9usize
+             .checked_add(data.len())
+@@ -8532,7 +8537,7 @@ where
+     }
+ 
+     let deadline = TokioInstant::now() + PEER_SOCKET_WRITE_TIMEOUT;
+-    let mut cursors = [(0usize, 0usize); MAX_UPLOAD_READ_BATCH_BLOCKS];
++    let mut cursors = [(0usize, 0usize); MAX_SOCKET_WRITE_FRAMES];
+     loop {
+         let completed = cursors
+             .iter()
+@@ -8545,7 +8550,7 @@ where
+         }
+ 
+         let write_result = {
+-            let mut buffers: [IoSlice<'_>; MAX_UPLOAD_READ_BATCH_BLOCKS * 2] =
++            let mut buffers: [IoSlice<'_>; MAX_SOCKET_WRITE_FRAMES * 2] =
+                 std::array::from_fn(|_| IoSlice::new(&[]));
+             let mut buffer_count = 0;
+             for (index, (_, _, data)) in pieces.iter().enumerate().skip(completed) {
+@@ -9810,7 +9815,23 @@ where
+                 let Some(upload_completions) = upload_result else {
+                     continue;
+                 };
+-                let mut ready_uploads = UploadBatch::new();
++                let mut upload_completions: ReadyUploadBatch<_> =
++                    upload_completions.into_iter().collect();
++                // A second four-block read is already in flight when peers
++                // refill their bounded request window. Join it only when its
++                // completion is ready now; never delay the first response to
++                // wait for more disk work. Leave uTP and queued control traffic
++                // on the existing four-frame path.
++                if matches!(&peer_io, PeerIo::Tcp(_))
++                    && peer_cmd_rx.is_empty()
++                    && upload_completions.len() == MAX_UPLOAD_READ_BATCH_BLOCKS
++                    && !upload_reads.is_empty()
++                {
++                    if let Some(Some(next_completions)) = upload_reads.next().now_or_never() {
++                        upload_completions.extend(next_completions);
++                    }
++                }
++                let mut ready_uploads: ReadyUploadBatch<_> = ReadyUploadBatch::new();
+                 for upload_completion in upload_completions {
+                     upload_reads.finish_request();
+                     let (request, result, rate_interrupted) = match upload_completion {
+@@ -9908,7 +9929,7 @@ where
+                         .map(|(request, block)| {
+                             (request.wire_piece, request.wire_begin, &block.data)
+                         })
+-                        .collect::<UploadBatch<_>>();
++                        .collect::<ReadyUploadBatch<_>>();
+                     let (completed_frames, send_error) = match peer_io.send_pieces(&frames).await {
+                         Ok(completed) => (completed, None),
+                         Err((completed, error)) => (completed, Some(error)),
+@@ -10956,6 +10977,39 @@ mod tests {
+         assert_eq!(&received[30..], b"WXYZ");
+     }
+ 
++    #[tokio::test]
++    async fn opportunistic_eight_piece_write_preserves_order_across_partial_writes() {
++        use tokio::io::AsyncReadExt;
++
++        let payloads: Vec<_> = (0..MAX_SOCKET_WRITE_FRAMES)
++            .map(|index| bytes::Bytes::from(vec![index as u8; 4]))
++            .collect();
++        let pieces: Vec<_> = payloads
++            .iter()
++            .enumerate()
++            .map(|(index, payload)| (42u32, (index * 4) as u32, payload))
++            .collect();
++        let mut expected = Vec::new();
++        for (piece, begin, payload) in &pieces {
++            expected.extend_from_slice(&(9u32 + payload.len() as u32).to_be_bytes());
++            expected.push(7);
++            expected.extend_from_slice(&piece.to_be_bytes());
++            expected.extend_from_slice(&begin.to_be_bytes());
++            expected.extend_from_slice(payload);
++        }
++
++        let (mut writer, mut reader) = tokio::io::duplex(11);
++        let mut received = vec![0; expected.len()];
++        let (write_result, read_result) = tokio::join!(
++            write_piece_frames_vectored(&mut writer, &pieces),
++            reader.read_exact(&mut received),
++        );
++
++        assert_eq!(write_result.unwrap(), MAX_SOCKET_WRITE_FRAMES);
++        read_result.unwrap();
++        assert_eq!(received, expected);
++    }
++
+     #[tokio::test]
+     async fn batched_piece_write_reports_only_complete_frames_on_error() {
+         use std::pin::Pin;
