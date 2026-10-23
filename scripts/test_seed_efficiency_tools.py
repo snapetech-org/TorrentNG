@@ -3,6 +3,7 @@
 import copy
 import gzip
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -30,6 +31,52 @@ def experiment(control, candidate, *, clean=True):
 
 
 class QualificationTests(unittest.TestCase):
+    def test_training_can_use_an_older_clean_checkout_without_copying_tools(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "older checkout"
+            source.mkdir()
+            output = root / "training"
+            corpus = root / "corpus.json"
+            corpus.write_text(json.dumps({"training": [{"mib": 16, "mib_per_second": 4,
+                "peers": 1, "window": 16, "pattern": "sequential"}]}))
+            profdata = root / "lib/rustlib/test-host/bin/llvm-profdata"
+            profdata.parent.mkdir(parents=True)
+            profdata.touch()
+
+            def fake_run(argv, **kwargs):
+                if argv[0] == "cargo":
+                    self.assertEqual(kwargs["cwd"], source)
+                    binary = output / "instrumented/release/torrentngd"
+                    binary.parent.mkdir(parents=True)
+                    binary.write_bytes(b"instrumented daemon")
+                elif argv[0] == profdata:
+                    Path(argv[3]).write_bytes(b"profile")
+                else:
+                    self.assertEqual(argv[1], pgo.PROBE)
+                    (output / "raw/daemon-test.profraw").write_bytes(b"raw")
+
+            argv = ["native_seed_pgo.py", "train", "--repo", str(source),
+                    "--output", str(output), "--corpus", str(corpus)]
+            with patch.object(sys, "argv", argv), patch.dict(os.environ, {}, clear=True), \
+                    patch.object(pgo, "run", side_effect=fake_run), \
+                    patch.object(pgo, "source_digest", return_value="source") as digest, \
+                    patch.object(pgo, "manifest", return_value={}) as manifest, \
+                    patch.object(pgo, "command", side_effect=[str(root), "host: test-host"]), \
+                    patch("builtins.print"):
+                pgo.main()
+                self.assertTrue(all(call.args == (source,) for call in digest.call_args_list))
+                self.assertEqual(manifest.call_args.args[1], source)
+            self.assertEqual(list(source.iterdir()), [], "the source checkout stays untouched")
+            self.assertTrue((output / "seed.profdata.manifest.json").is_file())
+
+    def test_validate_cli_passes_the_selected_source_checkout(self):
+        source = Path("/source/baseline")
+        argv = ["native_seed_pgo.py", "validate", "--repo", str(source), "--profile", "seed.profdata"]
+        with patch.object(sys, "argv", argv), patch.object(pgo, "validate_profile") as validate:
+            pgo.main()
+        validate.assert_called_once_with(Path("seed.profdata"), source)
+
     def test_paired_ratios_not_ratio_of_unrelated_medians(self):
         result = tools.paired_analysis(experiment([1, 100, 101], [2, 50, 202]),
                                        "control", "candidate", minimum_rounds=3)

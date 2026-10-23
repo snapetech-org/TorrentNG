@@ -32,7 +32,8 @@ Mapped bytes share the existing global peer-read-cache budget and resource
 governor. Buffered read-ahead is disabled while mapping is enabled, including for
 fallback reads, so the experiment does not silently retain two caches. Live
 batches pin their window; pressure can reclaim only idle windows. Cache entries
-do not retain descriptor leases. A live batch does.
+do not retain descriptor leases. A live batch does. Window charges round up to
+whole pages even for tiny files; at most eight cache entries are retained.
 
 Linux `mmap`, `madvise`, `mlock`, `sendmsg`, and `munmap` are isolated in the storage
 module, with range checks and ownership comments at every unsafe boundary. This
@@ -110,7 +111,17 @@ corpus, and hashes. A profile cannot be silently reused after source or compiler
 changes. Older archived profiles without that provenance need fresh training;
 they are historical evidence, not qualified inputs to the new build script.
 
-Train the baseline from its own source as well. Produce the four named cells
+Train the baseline from its own clean source as well, without copying these
+tools into that checkout:
+
+```sh
+python3 scripts/native_seed_pgo.py train --repo /absolute/path/baseline \
+  --output /absolute/path/baseline-training
+scripts/build_native_pgo_release.sh /absolute/path/baseline-training/seed.profdata \
+  /absolute/path/baseline-pgo-build /absolute/path/baseline
+```
+
+Produce the four named cells
 `baseline`, `baseline-pgo`, `candidate`, and `candidate-pgo`, each with a clean
 manifest. Pass all four `--client LABEL=torrentngd:/path/binary` and matching
 `--client-manifest LABEL=/path/manifest.json` arguments to:
@@ -148,3 +159,6 @@ The historical compact-release CPU values 1.90 and 0.73 are seconds per 256 MiB
 transfer, equivalent to 7.60 and 2.92 CPU seconds/GiB. The worker report's GiB labels
 were incorrect. Keep those older host results separate from October 22–23 screens.
 This erratum preserves original evidence rather than rewriting recorded results.
+
+Implementation tests, release transfer checks, and the local ten-round comparison
+are recorded in the [validation report](../certification/reports/TorrentNG-owned-seed-pipeline-20261023/README.md).

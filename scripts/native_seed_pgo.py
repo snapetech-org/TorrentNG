@@ -21,7 +21,7 @@ PROBE = REPO / "scripts/native_seed_cpu_ram_probe.py"
 
 
 def run(args, **kwargs):
-    subprocess.run([str(arg) for arg in args], cwd=REPO, check=True, **kwargs)
+    subprocess.run([str(arg) for arg in args], cwd=kwargs.pop("cwd", REPO), check=True, **kwargs)
 
 
 def workload_args(workload):
@@ -57,16 +57,19 @@ def main():
     parser.add_argument("command", choices=("train", "validate", "matrix"))
     parser.add_argument("--output", type=Path)
     parser.add_argument("--profile", type=Path)
+    parser.add_argument("--repo", type=Path, default=REPO,
+                        help="source checkout to train or validate, including an older clean baseline")
     parser.add_argument("--corpus", type=Path, default=REPO / "certification/benchmarks/seed-efficiency-corpus.json")
     parser.add_argument("--client", action="append", default=[], help="matrix label=kind:binary; supply baseline, baseline-pgo, candidate, candidate-pgo and optionally rtorrent")
     parser.add_argument("--client-manifest", action="append", default=[])
     parser.add_argument("--repeats", type=int, default=10)
     parser.add_argument("--client-cpus")
     args = parser.parse_args()
+    source_repo = args.repo.resolve()
     if args.command == "validate":
         if args.profile is None:
             parser.error("--profile is required")
-        validate_profile(args.profile)
+        validate_profile(args.profile, source_repo)
         return
     if args.output is None:
         parser.error("--output is required")
@@ -82,13 +85,15 @@ def main():
             plain, optimized = metadata[name], metadata[name + "-pgo"]
             if (plain.get("source_digest") != optimized.get("source_digest")
                     or plain.get("profile_sha256") or not optimized.get("profile_sha256")
+                    or plain.get("rustc") != optimized.get("rustc")
+                    or plain.get("features") != optimized.get("features")
                     or plain.get("dirty", True) or optimized.get("dirty", True)):
                 parser.error("each clean source requires matching non-PGO and PGO builds")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     corpus = json.loads(args.corpus.read_text())
     if args.command == "train":
-        before = source_digest(REPO)
+        before = source_digest(source_repo)
         profile_dir = output / "raw"
         profile_dir.mkdir()
         target = output / "instrumented"
@@ -98,7 +103,7 @@ def main():
                           "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_RUSTC", "CARGO_BUILD_RUSTFLAGS"}):
             parser.error("unset compiler, flag and release-profile overrides before PGO training")
         environment["RUSTFLAGS"] = f"-Cprofile-generate={profile_dir}"
-        run(["cargo", "+1.97.0", "build", "--locked", "--release", "-p", "torrentngd", "--target-dir", target], env=environment)
+        run(["cargo", "+1.97.0", "build", "--locked", "--release", "-p", "torrentngd", "--target-dir", target], env=environment, cwd=source_repo)
         binary = target / "release/torrentngd"
         for index, workload in enumerate(corpus["training"]):
             argv = [sys.executable, PROBE, "--client", f"training=torrentngd:{binary}",
@@ -116,8 +121,8 @@ def main():
         if not profiles: raise RuntimeError("training produced no daemon profiles")
         profile = output / "seed.profdata"
         run([profdata, "merge", "-o", profile, *profiles])
-        if before != source_digest(REPO): raise RuntimeError("source changed during training")
-        metadata = manifest(binary, REPO, profile)
+        if before != source_digest(source_repo): raise RuntimeError("source changed during training")
+        metadata = manifest(binary, source_repo, profile)
         metadata["training_corpus"] = corpus["training"]
         metadata["training_binary_sha256"] = sha256(binary)
         metadata["instrumentation_flags"] = environment["RUSTFLAGS"]
