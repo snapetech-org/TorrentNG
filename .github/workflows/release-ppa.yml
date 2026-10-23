@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing published release tag to upload, for example main-20260930-4
+        description: Existing published release tag to upload, for example v20260930-4
         required: true
         type: string
       include_orig:
@@ -49,7 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           tag="$REQUESTED_TAG"
-          if [[ ! "$tag" =~ ^main-[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
+          if [[ ! "$tag" =~ ^v[A-Za-z0-9][A-Za-z0-9._-]*$ && ! "$tag" =~ ^main-[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
             [[ "$tag" == *..* ]] || ! git check-ref-format "refs/tags/$tag"; then
             echo "Invalid release tag: $tag" >&2
             exit 1

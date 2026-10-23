@@ -260,7 +260,7 @@ else
 fi
 
 [[ -n "$release_tag" ]] || fail "No published stable release exists in $REPO."
-if [[ ! "$release_tag" =~ ^main-[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
+if [[ ! "$release_tag" =~ ^v[A-Za-z0-9][A-Za-z0-9._-]*$ && ! "$release_tag" =~ ^main-[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
   [[ "$release_tag" == *..* ]]; then
   fail "Invalid TorrentNG release tag: $release_tag"
 fi

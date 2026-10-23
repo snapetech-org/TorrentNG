@@ -29,7 +29,7 @@ if [[ "$include_orig" != true && "$include_orig" != false ]]; then
   exit 2
 fi
 
-if [[ ! "$release_tag" =~ ^main-[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
+if [[ ! "$release_tag" =~ ^v[A-Za-z0-9][A-Za-z0-9._-]*$ && ! "$release_tag" =~ ^main-[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
   [[ "$release_tag" == *..* ]] || ! git check-ref-format "refs/tags/$release_tag"; then
   echo "Invalid release tag: $release_tag" >&2
   exit 1

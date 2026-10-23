@@ -16,7 +16,7 @@ out="$(cd "$out" && pwd)"
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 
-# main-20261012-3 / main-v1.2.3 -> 20261012.3 / 1.2.3 (same rule as the PPA).
+# v20261012-3 / v1.2.3 -> 20261012.3 / 1.2.3 (same rule as the PPA).
 version="${tag#main-}"; version="${version#v}"; version="${version//-/.}"
 name="torrentng-desktop-${tag}-${suffix}"
 

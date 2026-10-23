@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to publish, for example main-v0.1.0
+        description: Release tag to publish, for example v0.1.0
         required: true
         type: string
 permissions:
@@ -33,7 +33,7 @@ jobs:
             exit 1
           fi
           tag="$REQUESTED_TAG"
-          if [[ ! "$tag" =~ ^main-[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
+          if [[ ! "$tag" =~ ^v[A-Za-z0-9][A-Za-z0-9._-]*$ && ! "$tag" =~ ^main-[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
             [[ "$tag" == *..* ]] || ! git check-ref-format "refs/tags/$tag"; then
             echo "Invalid release tag: $tag" >&2
             exit 1

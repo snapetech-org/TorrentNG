@@ -4,7 +4,7 @@ name: Release
 on:
   push:
     tags:
-      - "main-*"
+      - "v*"
   workflow_dispatch:
     inputs:
       tag:
@@ -46,7 +46,7 @@ jobs:
             exit 1
           fi
           tag="$REQUESTED_TAG"
-          if [[ ! "$tag" =~ ^main-[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
+          if [[ ! "$tag" =~ ^v[A-Za-z0-9][A-Za-z0-9._-]*$ && ! "$tag" =~ ^main-[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
             [[ "$tag" == *..* ]] || ! git check-ref-format "refs/tags/$tag"; then
             echo "Invalid release tag: $tag" >&2
             exit 1
@@ -719,17 +719,23 @@ jobs:
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#main-}"
-          stable_tag_pattern='^main-[0-9]{8}-[0-9]+$'
+          version="${version#v}"
+          stable_tag_pattern='^(v[0-9]{8}-[0-9]+|main-[0-9]{8}-[0-9]+)$'
           latest_stable_tag="$(
-            git ls-remote --tags origin 'refs/tags/main-*' |
+            git ls-remote --tags origin 'refs/tags/main-*' 'refs/tags/v*' |
               awk -v stable_tag_pattern="$stable_tag_pattern" '
                 $2 !~ /\^\{\}$/ {
                   sub(/^refs\/tags\//, "", $2)
-                  if ($2 ~ stable_tag_pattern) print $2
+                  tag = $2
+                  version = tag
+                  sub(/^main-/, "", version)
+                  sub(/^v/, "", version)
+                  if (tag ~ stable_tag_pattern && version ~ /^[0-9]{8}-[0-9]+$/) print version "\t" tag
                 }
               ' |
-              sort -V |
-              tail -n 1
+              sort -t "$(printf '\t')" -k1,1V |
+              tail -n 1 |
+              cut -f2
           )"
           is_latest_stable=false
           if [[ "$RELEASE_TAG" =~ $stable_tag_pattern && "$RELEASE_TAG" == "$latest_stable_tag" ]]; then

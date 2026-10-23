@@ -17,7 +17,7 @@ fi
 skopeo copy "docker://${NATIVE_IMAGE_SHA_TAG}" "docker://docker.io/snapetech/torrentng-native:${ci_tag}"
 skopeo copy "docker://${PACKAGED_IMAGE_SHA_TAG}" "docker://docker.io/snapetech/torrentng:${ci_tag}"
 
-stable_tag_pattern='^main-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9]+$'
+stable_tag_pattern='^(v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9]+|main-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9]+)$'
 if ! printf '%s\n' "$ci_tag" | grep -Eq "$stable_tag_pattern"; then
   printf 'Skipping stable aliases for non-stable tag %s.\n' "$ci_tag"
   exit 0
@@ -30,7 +30,7 @@ extract_stable_tags() {
       line = $0
       while (match(line, /"[^"]+"/)) {
         tag = substr(line, RSTART + 1, RLENGTH - 2)
-        if (tag ~ /^main-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9]+$/) print tag
+        if (tag ~ /^(v|main-)[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9]+$/) print tag
         line = substr(line, RSTART + RLENGTH)
       }
       if (/\]/) exit
@@ -48,9 +48,12 @@ latest_common_stable_tag="$(
     }
     !packaged_map[$0] { next }
     {
-      count = split($0, release, "-")
-      release_date = release[2] + 0
-      release_number = release[3] + 0
+      version = $0
+      sub(/^main-/, "", version)
+      sub(/^v/, "", version)
+      count = split(version, release, "-")
+      release_date = release[1] + 0
+      release_number = release[2] + 0
       if (release_date > latest_date || (release_date == latest_date && release_number > latest_number)) {
         latest = $0
         latest_date = release_date

@@ -110,7 +110,8 @@ Before submitting or rescanning:
 - **Published-image cadence.** These runtime and template behaviors were
   verified against locally built images from current source, not asserted
   from reading the Dockerfiles. The templates use `:latest`, but the release
-  workflow publishes that tag only from a `main-*` release tag; a commit on
+  workflow publishes that tag only from a release tag (`v<version>` for new
+  releases); a commit on
   `main` alone does not update GHCR. After changing deployment behavior,
   push a release tag, wait for the image workflow to complete, and verify the
   native and sidecar package pages before installing from the raw template

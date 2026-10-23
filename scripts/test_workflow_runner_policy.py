@@ -5,7 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_DIR = ROOT / ".github" / "workflows"
-PUBLIC_JIT_WORKFLOW = "fork-safe-validation.yml"
+PUBLIC_FORK_WORKFLOW = "fork-safe-validation.yml"
 PROTECTED_TRANSFER_WORKFLOW = "transfer-rebuild.yml"
 
 
@@ -59,21 +59,32 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             self.assertIn('"ng-shared-main-torrentng"', expression, name)
             self.assertIn('"ng-main-run-{0}"', expression, name)
             self.assertIn("github.run_id", expression, name)
-            self.assertIn("github.event_name == 'push'", expression, name)
-            self.assertIn("github.event_name == 'workflow_dispatch'", expression, name)
-            self.assertIn("github.ref == 'refs/heads/main'", expression, name)
+            self.assertIn(
+                "contains(fromJSON('[\"push\",\"workflow_dispatch\",\"schedule\",\"release\",\"repository_dispatch\"]'), github.event_name)",
+                expression,
+                name,
+            )
+            self.assertIn(
+                "github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v'))",
+                expression,
+                name,
+            )
+            self.assertIn("vars.NG_HOSTED_FIRST", expression, name)
+            self.assertIn("vars.NG_FORCE_JIT", expression, name)
+            self.assertIn("github.run_attempt > 1", expression, name)
             self.assertIn("|| 'ubuntu-latest'", expression, name)
 
     def test_other_workflows_use_github_hosted_runners(self) -> None:
         for workflow in WORKFLOW_DIR.glob("*.y*"):
             source = workflow.read_text(encoding="utf-8")
-            if workflow.name in {PUBLIC_JIT_WORKFLOW, PROTECTED_TRANSFER_WORKFLOW, "ci.yml"}:
+            if workflow.name in {PUBLIC_FORK_WORKFLOW, PROTECTED_TRANSFER_WORKFLOW, "ci.yml"}:
                 continue
             if workflow.name in {
                 "codeql.yml",
                 "release-notes.yml",
                 "semgrep-community.yml",
                 "trivy-filesystem.yml",
+                "release.yml",
             }:
                 expressions = re.findall(r"(?m)^\s*runs-on: (?P<runner>[^\n]+)$", source)
                 routed = [expression for expression in expressions if "ng-shared-main-jit" in expression]
@@ -82,10 +93,23 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                     self.assertIn('"group":"ng-shared-main-jit"', expression)
                     self.assertIn('"ng-shared-main-torrentng"', expression)
                     self.assertIn('"ng-main-run-{0}"', expression)
-                    self.assertIn("github.event_name == 'push'", expression)
-                    self.assertIn("github.event_name == 'workflow_dispatch'", expression)
-                    self.assertIn("github.ref == 'refs/heads/main'", expression)
-                    self.assertIn("|| 'ubuntu-latest'", expression)
+                    if workflow.name == "release.yml":
+                        self.assertIn(
+                            "contains(fromJSON('[\"push\",\"workflow_dispatch\",\"schedule\",\"release\",\"repository_dispatch\"]'), github.event_name)",
+                            expression,
+                        )
+                        self.assertIn(
+                            "github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v'))",
+                            expression,
+                        )
+                    else:
+                        self.assertIn("github.event_name == 'push'", expression)
+                        self.assertIn("github.event_name == 'workflow_dispatch'", expression)
+                        self.assertIn("github.ref == 'refs/heads/main'", expression)
+                    self.assertRegex(
+                        expression,
+                        r"\|\| (?:'ubuntu-latest'|'ubuntu-24\.04'|matrix\.os)",
+                    )
                 if workflow.name in {"codeql.yml", "semgrep-community.yml"}:
                     self.assertIn("github.event_name == 'schedule'", routed[0])
                 if workflow.name == "semgrep-community.yml":
@@ -125,21 +149,16 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         self.assertIn("persist-credentials: false", source)
         self.assertNotIn("TRUSTED_MAIN_RUNNERS_ENABLED", source)
 
-    def test_public_jit_runner_is_limited_to_fork_pull_requests(self) -> None:
-        source = (WORKFLOW_DIR / PUBLIC_JIT_WORKFLOW).read_text(encoding="utf-8")
+    def test_public_fork_validation_stays_on_github_hosted_runners(self) -> None:
+        source = (WORKFLOW_DIR / PUBLIC_FORK_WORKFLOW).read_text(encoding="utf-8")
         runs_on = next(
             line.strip()
             for line in source.splitlines()
             if line.strip().startswith("runs-on:")
         )
-        self.assertIn("github.event_name == 'pull_request'", runs_on)
-        self.assertIn("github.event.pull_request.head.repo.fork == true", runs_on)
-        self.assertIn(
-            "fromJSON('{\"group\":\"public-fork-jit\","
-            "\"labels\":[\"self-hosted\",\"linux\",\"x64\",\"public-pr-torrentng\"]}')",
-            runs_on,
-        )
-        self.assertIn("|| 'ubuntu-latest' }}", runs_on)
+        self.assertIn("runs-on: ubuntu-latest", runs_on)
+        self.assertNotIn("self-hosted", source)
+        self.assertNotIn("public-fork-jit", source)
         self.assertIn(
             "github.event.pull_request.base.repo.full_name == 'snapetech-org/TorrentNG'",
             source,
@@ -151,6 +170,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         self.assertIn("branches: [main]", caller)
         self.assertIn("github.event.pull_request.head.repo.fork == true", caller)
         self.assertIn("github.event.pull_request.base.ref == 'main'", caller)
+        self.assertRegex(caller, r"(?m)^  pull_request:$")
         self.assertNotIn("pull_request_target", source + caller)
 
     def test_windows_smoke_uses_the_hosted_windows_runner(self) -> None:

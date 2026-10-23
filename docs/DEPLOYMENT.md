@@ -331,8 +331,9 @@ TNG_SECRET_KEY="$(openssl rand -hex 32)" TNG_API_TOKENS="token-one,token-two" ./
 ## Tagged Releases
 
 Release builds are intentionally tag-only. Pushing commits to `main` does not
-build or publish a release. To publish, create and push a `main-*` tag that
-points at a commit already on `main`; the release workflow verifies the tag
+publish a release. New releases use a `v<version>` tag such as `v20261023-1`.
+Existing `main-*` releases remain available under their original tags. Push a
+new tag that points at a commit already on `main`; the release workflow verifies the tag
 ancestry, builds the compatible-client service, WebUI, and Docker images,
 creates or updates the
 GitHub Release, and posts a Discord announcement.

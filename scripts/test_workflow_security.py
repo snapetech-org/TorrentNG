@@ -176,17 +176,12 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertNotIn("TRUSTED_MAIN_RUNNERS_ENABLED", source)
 
     def test_workflows_use_github_hosted_runners(self) -> None:
-        public_jit_runner = (
-            "runs-on: ${{ github.event_name == 'pull_request' && "
-            "github.event.pull_request.head.repo.fork == true && "
-            "fromJSON('{\"group\":\"public-fork-jit\","
-            "\"labels\":[\"self-hosted\",\"linux\",\"x64\",\"public-pr-torrentng\"]}') "
-            "|| 'ubuntu-latest' }}"
-        )
         for workflow_path in WORKFLOWS.glob("*.y*"):
             source = workflow_path.read_text(encoding="utf-8")
             if workflow_path.name == "fork-safe-validation.yml":
-                self.assertIn(public_jit_runner, source)
+                self.assertRegex(source, r"(?m)^\s*runs-on: ubuntu-latest$")
+                self.assertNotIn("self-hosted", source)
+                self.assertNotIn("public-fork-jit", source)
                 self.assertIn(
                     "github.event.pull_request.base.repo.full_name == 'snapetech-org/TorrentNG'",
                     source,
@@ -203,16 +198,31 @@ class WorkflowSecurityTests(unittest.TestCase):
                 "release-notes.yml",
                 "semgrep-community.yml",
                 "trivy-filesystem.yml",
+                "release.yml",
             }:
                 expressions = re.findall(r"(?m)^\s*runs-on: (?P<runner>[^\n]+)$", source)
                 routed = [expression for expression in expressions if "ng-shared-main-jit" in expression]
                 self.assertTrue(routed, workflow_path.name)
                 for expression in routed:
                     self.assertIn('"group":"ng-shared-main-jit"', expression)
-                    self.assertIn("github.event_name == 'push'", expression)
-                    self.assertIn("github.event_name == 'workflow_dispatch'", expression)
-                    self.assertIn("github.ref == 'refs/heads/main'", expression)
-                    self.assertIn("|| 'ubuntu-latest'", expression)
+                    if workflow_path.name == "release.yml":
+                        self.assertIn(
+                            "contains(fromJSON('[\"push\",\"workflow_dispatch\",\"schedule\",\"release\",\"repository_dispatch\"]'), github.event_name)",
+                            expression,
+                        )
+                        self.assertIn(
+                            "github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v'))",
+                            expression,
+                        )
+                        self.assertRegex(
+                            expression,
+                            r"\|\| (?:'ubuntu-latest'|'ubuntu-24\.04'|matrix\.os)",
+                        )
+                    else:
+                        self.assertIn("github.event_name == 'push'", expression)
+                        self.assertIn("github.event_name == 'workflow_dispatch'", expression)
+                        self.assertIn("github.ref == 'refs/heads/main'", expression)
+                        self.assertIn("|| 'ubuntu-latest'", expression)
                 if workflow_path.name in {"codeql.yml", "semgrep-community.yml"}:
                     self.assertIn("github.event_name == 'schedule'", routed[0])
                 if workflow_path.name == "semgrep-community.yml":
@@ -302,6 +312,7 @@ class WorkflowSecurityTests(unittest.TestCase):
 
     def test_release_tags_are_validated_before_release_jobs(self) -> None:
         release = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+        self.assertIn('      - "v*"', release)
         self.assertIn("validate-release-tag:", release)
         self.assertIn("REQUESTED_TAG: ${{ inputs.tag || github.ref_name }}", release)
         self.assertIn("git merge-base --is-ancestor", release)
@@ -1606,7 +1617,7 @@ class WorkflowSecurityTests(unittest.TestCase):
                 env=environment,
             )
             self.assertEqual(completed.returncode, 2, completed.stderr)
-            self.assertIn("refusing to reset non-empty INTEROP_WORKDIR", completed.stderr)
+            self.assertIn("refusing a user-data directory as INTEROP_WORKDIR", completed.stderr)
             self.assertEqual(protected_file.read_text(encoding="utf-8"), "user data")
 
     def test_interop_matrix_rejects_invalid_suite_before_starting_docker(self) -> None:

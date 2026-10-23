@@ -18,7 +18,7 @@ must not install a second torrent engine in existing-client mode.
 - Build one Linux/musl archive per supported YunoHost architecture (`amd64`,
   `arm64`) from the upstream release commit. Include both Rust executables and
   the production WebUI assets. Dedicated `yunohost-*` tags publish the first
-  app bundles; normal `main-*` releases also publish updated bundles. Publish
+  app bundles; new `v<version>` releases also publish updated bundles. Publish
   SHA256 checksums with both release types. This avoids depending on the host's
   glibc version or a build toolchain during app installation.
 - Keep app binaries and static assets under `install_dir`; keep engine state,
