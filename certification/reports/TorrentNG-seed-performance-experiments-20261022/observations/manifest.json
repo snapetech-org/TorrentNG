@@ -27,6 +27,31 @@
       "sha256": "f567e1fd0b664ca7a65c762b72a657b339d396de281a36769640f245a592e912"
     },
     {
+      "path": "concurrent-arena-cap-screen-20261022/README.md",
+      "bytes": 2768,
+      "sha256": "e60f5eb70418793504e22e1f44328e465fc46b3e577149f6d1f6a1d776de0054"
+    },
+    {
+      "path": "concurrent-arena-cap-screen-20261022/runner-arena1-rtorrent.py",
+      "bytes": 6464,
+      "sha256": "cfffe986a5cddf41230d2fe59101ae171073482fc691ba3237a12012cef55997"
+    },
+    {
+      "path": "concurrent-arena-cap-screen-20261022/runner-arena2.py",
+      "bytes": 6571,
+      "sha256": "a81cbd2dc76fab0eaa09f296ce3d18323d717c55513d42a58dfd27c7a2d771df"
+    },
+    {
+      "path": "concurrent-arena-cap-screen-20261022/three-peer-screen-1.json",
+      "bytes": 5378,
+      "sha256": "562f089c6e4df3d5a465b7a9ea1860465127a7a83a0eecc06e34706674547658"
+    },
+    {
+      "path": "concurrent-arena-cap-screen-20261022/three-peer-screen-2.json",
+      "bytes": 5327,
+      "sha256": "0719f13e1697cd24c65ee30ebdd470e48b2eebf6183b6dfeb637ba19dc1eb3a3"
+    },
+    {
       "path": "io-uring-queue-depth-64/backend-smoke-16m/fixture/fixture.torrent",
       "bytes": 416,
       "sha256": "ed235ed21bc21c5b29fdf4aebfadcce4f595f8ba8ce7923f05e1c3913a3ca8e5"
@@ -2612,16 +2637,6 @@
       "sha256": "2cae7c3d70d23d6031cc2c5ef7041dc8ef94bf4f8a7e6fa1b5e34b69ccd85b00"
     },
     {
-      "path": "screen-cache-hit-64m-1x-launch-failure/logs/run-01-rtorrent-rtorrent.client.log",
-      "bytes": 188,
-      "sha256": "26cb6752a4413fdfd2db8d2b1b5ac6594748156a5812784b047ba71e475f9d5d"
-    },
-    {
-      "path": "screen-cache-hit-64m-1x-launch-failure/summary.json",
-      "bytes": 1114,
-      "sha256": "cfed76a85fc08c2c6a59c22efb026d4f77eeb4707ce24a5e5e2e3731fab38a75"
-    },
-    {
       "path": "screen-cache-hit-64m-1x/logs/run-01-baseline-baseline.client.log",
       "bytes": 457,
       "sha256": "1d67c9f4dce124c74914e5a7aef9eea78d0d1d63ffcb0c87311be684fc42cc80"
@@ -2645,6 +2660,16 @@
       "path": "screen-cache-hit-64m-1x/summary.json",
       "bytes": 80470,
       "sha256": "9ff1dd866afaaa69334a81ce0128058bea1f9fc78d4ce16546216049bbf75bb7"
+    },
+    {
+      "path": "screen-cache-hit-64m-1x-launch-failure/logs/run-01-rtorrent-rtorrent.client.log",
+      "bytes": 188,
+      "sha256": "26cb6752a4413fdfd2db8d2b1b5ac6594748156a5812784b047ba71e475f9d5d"
+    },
+    {
+      "path": "screen-cache-hit-64m-1x-launch-failure/summary.json",
+      "bytes": 1114,
+      "sha256": "cfed76a85fc08c2c6a59c22efb026d4f77eeb4707ce24a5e5e2e3731fab38a75"
     },
     {
       "path": "screen-cache-hit-64m-3x/logs/run-01-baseline-baseline.client.log",
@@ -3678,8 +3703,8 @@
     },
     {
       "path": "seed-goal-next-avenues-20261022/README.md",
-      "bytes": 9268,
-      "sha256": "54429ab08cddba09394377eb106aa67a4b11bc7e7df9613eca5cff2fc0fdcded"
+      "bytes": 9440,
+      "sha256": "bb71d3b90fec87dc1dc40b0c03fcb527663d5bc88c5b8d7f4dfa1c41736a3f44"
     },
     {
       "path": "seed-goal-next-avenues-20261022/active-stream-lookup.patch",

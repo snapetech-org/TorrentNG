@@ -81,7 +81,7 @@ A follow-up tested `MALLOC_ARENA_MAX=1` on the exact eight-block release binary 
 
 The first 64 MiB one-round result showed a CPU regression, but the three randomized rounds reversed it. In the repeated 64 MiB comparison the arena-capped arm used less CPU, PSS, and anonymous memory in every pair; the same held in all three 128 MiB pairs. The absolute 64 MiB CPU values varied across rounds, so treat the paired medians as screening evidence.
 
-At 128 MiB, the capped release build still used about 1.62× rTorrent CPU and 2.28× its PSS. The cap is a promising Linux/glibc runtime option, but it is not enabled by default: concurrent-peer allocator contention and non-glibc deployments have not been qualified. The one-round result, three-round summaries, exact fixture torrents, per-run client logs, smaps, and metrics are preserved in this folder.
+At 128 MiB, the capped release build still used about 1.62× rTorrent CPU and 2.28× its PSS. The cap is a promising Linux/glibc runtime option, but it is not enabled by default: concurrent-peer allocator contention and non-glibc deployments have not been qualified. A later three-peer screen was inconclusive under high host load; its results are in [`../concurrent-arena-cap-screen-20261022/`](../concurrent-arena-cap-screen-20261022/). The one-round result, three-round summaries, exact fixture torrents, per-run client logs, smaps, and metrics are preserved in this folder.
 
 ## Wider batches: failed and regressed candidates
 
