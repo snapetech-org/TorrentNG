@@ -8162,6 +8162,26 @@
       "sha256": "66b9f074c4f655c7aedbb903a18fcfe7678a1438db847a1b5b98b0c87704f841"
     },
     {
+      "path": "upload-obligation-lock-batch-screen-20261023/README.md",
+      "bytes": 2508,
+      "sha256": "f9976e32fe8ccb8ba3b1764b26780e47f347b011e20aba03154534af969e6ec5"
+    },
+    {
+      "path": "upload-obligation-lock-batch-screen-20261023/candidate.patch.gz",
+      "bytes": 1851,
+      "sha256": "8c55fe009d96b6e9224a7159b92b3dc14c06fa419172e7aeb90ed3accdf4aec6"
+    },
+    {
+      "path": "upload-obligation-lock-batch-screen-20261023/summary.json",
+      "bytes": 4764,
+      "sha256": "6fbd71006f1727008fa0b6cb32fa0ebaeff1136e689aafd915624884c0101559"
+    },
+    {
+      "path": "upload-obligation-lock-batch-screen-20261023/validation.txt",
+      "bytes": 778,
+      "sha256": "a88aaa210b050c7ae6642bd37de9a644dd7f77a5ed6f60e1bcf4d748a125e832"
+    },
+    {
       "path": "upload-rate-batch-20261022/README.md",
       "bytes": 3579,
       "sha256": "8cc3f26cb09da5be49458af53eab53c20ae81d0701cccc2839ab94e913f3ccd1"
