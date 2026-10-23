@@ -14,7 +14,7 @@ use tokio::sync::oneshot;
 use super::coords::{BlockExtent, BLOCK_SIZE};
 use super::rate::RatePeerId;
 
-pub(crate) const MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS: usize = 8;
+pub(crate) const MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS: usize = 16;
 
 pub(crate) type UploadReadPermits =
     smallvec::SmallVec<[UploadReadPermit; MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS]>;
@@ -34,7 +34,7 @@ impl Default for UploadReadLimits {
             max_connections: 200,
             max_in_flight_jobs: 64,
             max_in_flight_bytes: 16 * 1024 * 1024,
-            max_in_flight_per_connection: 8,
+            max_in_flight_per_connection: MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS,
             max_queued_per_connection: 8,
         }
     }

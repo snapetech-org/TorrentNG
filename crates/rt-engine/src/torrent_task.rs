@@ -160,10 +160,9 @@ const PEER_SOCKET_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 // buckets. There is deliberately no requests-per-interval ceiling: a count
 // derived from a 64 MiB test fixture capped a continuously used connection at
 // about 6.4 MiB/s and silently dropped valid requests beyond it.
-const MAX_PENDING_UPLOAD_READS: usize = 16;
-// This experiment bounds storage reads at 128 KiB: eight legal 16 KiB wire
-// requests share one pread while keeping response obligations and rate grants
-// separate.
+const MAX_PENDING_UPLOAD_READS: usize = MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS;
+// Bound a storage read at 256 KiB: sixteen legal 16 KiB wire requests may
+// share one pread while keeping response obligations and rate grants separate.
 const MAX_UPLOAD_READ_BATCH_BLOCKS: usize = MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS;
 const MAX_UPLOAD_READ_BATCH_BYTES: usize = MAX_UPLOAD_READ_BATCH_BLOCKS * MAX_BLOCK_SIZE as usize;
 // A 64 MiB fixture at the protocol's 16 KiB block size is 4,096 requests.
