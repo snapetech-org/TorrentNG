@@ -1,0 +1,41 @@
+{
+  "format": "torrentng-upload-batch-distribution-v1",
+  "note": "Unscored RUST_LOG diagnostic traces; do not infer CPU/RAM performance from these runs.",
+  "current_batch8": {
+    "label": "current batch8",
+    "fixture_sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3",
+    "verified": true,
+    "storage_read_operations": 128,
+    "requests_in_batches": 1024,
+    "batch_size_histogram": {
+      "8": 128
+    },
+    "mean_requests_per_read": 8.0
+  },
+  "candidate_batch16": {
+    "label": "candidate batch16",
+    "fixture_sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3",
+    "verified": true,
+    "storage_read_operations": 126,
+    "requests_in_batches": 1024,
+    "batch_size_histogram": {
+      "1": 4,
+      "2": 4,
+      "3": 3,
+      "4": 4,
+      "5": 2,
+      "6": 3,
+      "7": 4,
+      "8": 4,
+      "9": 95,
+      "12": 1,
+      "16": 2
+    },
+    "mean_requests_per_read": 8.126984126984127
+  },
+  "candidate_change": {
+    "storage_read_operations_reduction_percent": 1.5625,
+    "candidate_full_16_block_batches": 0,
+    "candidate_batch_count": 126
+  }
+}

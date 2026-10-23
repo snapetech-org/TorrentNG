@@ -1,0 +1,242 @@
+{
+  "format": "torrentng-arena-cap-confirmation-v1",
+  "scope": "same-binary, same-fixture, one-peer 64 MiB release-to-release environment screen; not an rTorrent comparison",
+  "fixture_bytes": 67108864,
+  "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+  "binary_sha256": "b13f157809d98bdc052017f83bd2369685f7221116d8269837120f6af07cd263",
+  "settings": {
+    "offered_rate_bytes_per_second": 4194304,
+    "block_bytes": 16384,
+    "request_window": 32,
+    "storage": "pread",
+    "dht": false,
+    "pex": false,
+    "tracker": false
+  },
+  "treatment": {
+    "current": "no MALLOC_ARENA_MAX override",
+    "arena2": "MALLOC_ARENA_MAX=2"
+  },
+  "host_cpu_pressure_confirmation": {
+    "before_psi_avg10_percent": 1.71,
+    "before_psi_avg60_percent": 2.91,
+    "after_psi_avg10_percent": 6.67,
+    "after_psi_avg60_percent": 7.98,
+    "after_load_average": "26.83 / 24.80 / 24.62"
+  },
+  "pairs": [
+    {
+      "stage": "initial",
+      "round": 1,
+      "order": [
+        "arena2",
+        "current"
+      ],
+      "current": {
+        "cpu_seconds_per_gib": 5.480324336,
+        "peak_pss_mib": 18.0478515625,
+        "peak_anonymous_mib": 5.5078125,
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "arena2": {
+        "cpu_seconds_per_gib": 4.617714432,
+        "peak_pss_mib": 17.9384765625,
+        "peak_anonymous_mib": 5.12109375,
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "arena2_delta_percent": {
+        "cpu_seconds_per_gib": -15.740125056715259,
+        "peak_pss_mib": -0.6060278123478202,
+        "peak_anonymous_mib": -7.021276595744686
+      }
+    },
+    {
+      "stage": "initial",
+      "round": 2,
+      "order": [
+        "arena2",
+        "current"
+      ],
+      "current": {
+        "cpu_seconds_per_gib": 4.767357616,
+        "peak_pss_mib": 18.7470703125,
+        "peak_anonymous_mib": 6.140625,
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "arena2": {
+        "cpu_seconds_per_gib": 7.766247104,
+        "peak_pss_mib": 17.2275390625,
+        "peak_anonymous_mib": 4.609375,
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "arena2_delta_percent": {
+        "cpu_seconds_per_gib": 62.90464717677684,
+        "peak_pss_mib": -8.105433140594887,
+        "peak_anonymous_mib": -24.93638676844784
+      }
+    },
+    {
+      "stage": "initial",
+      "round": 3,
+      "order": [
+        "current",
+        "arena2"
+      ],
+      "current": {
+        "cpu_seconds_per_gib": 4.39540168,
+        "peak_pss_mib": 18.1142578125,
+        "peak_anonymous_mib": 5.1640625,
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "arena2": {
+        "cpu_seconds_per_gib": 4.559334816,
+        "peak_pss_mib": 17.7509765625,
+        "peak_anonymous_mib": 5.0390625,
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "arena2_delta_percent": {
+        "cpu_seconds_per_gib": 3.7296508472918433,
+        "peak_pss_mib": -2.0054989487303887,
+        "peak_anonymous_mib": -2.4205748865355536
+      }
+    },
+    {
+      "stage": "confirmation",
+      "round": 1,
+      "order": [
+        "current",
+        "arena2"
+      ],
+      "current": {
+        "cpu_seconds_per_gib": 5.241524352,
+        "peak_pss_mib": 19.21484375,
+        "peak_anonymous_mib": 6.44921875,
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "arena2": {
+        "cpu_seconds_per_gib": 4.918036848,
+        "peak_pss_mib": 18.38671875,
+        "peak_anonymous_mib": 5.62109375,
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "arena2_delta_percent": {
+        "cpu_seconds_per_gib": -6.17163027920623,
+        "peak_pss_mib": -4.309819068916443,
+        "peak_anonymous_mib": -12.840702604482136
+      }
+    },
+    {
+      "stage": "confirmation",
+      "round": 2,
+      "order": [
+        "current",
+        "arena2"
+      ],
+      "current": {
+        "cpu_seconds_per_gib": 5.120654496,
+        "peak_pss_mib": 18.8017578125,
+        "peak_anonymous_mib": 6.0234375,
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "arena2": {
+        "cpu_seconds_per_gib": 6.158885872,
+        "peak_pss_mib": 19.93359375,
+        "peak_anonymous_mib": 7.11328125,
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "arena2_delta_percent": {
+        "cpu_seconds_per_gib": 20.27536473728142,
+        "peak_pss_mib": 6.019841063730325,
+        "peak_anonymous_mib": 18.093385214007785
+      }
+    },
+    {
+      "stage": "confirmation",
+      "round": 3,
+      "order": [
+        "arena2",
+        "current"
+      ],
+      "current": {
+        "cpu_seconds_per_gib": 5.043494672,
+        "peak_pss_mib": 19.0400390625,
+        "peak_anonymous_mib": 6.08984375,
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "arena2": {
+        "cpu_seconds_per_gib": 4.25757168,
+        "peak_pss_mib": 18.2470703125,
+        "peak_anonymous_mib": 5.68359375,
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "arena2_delta_percent": {
+        "cpu_seconds_per_gib": -15.582905170163318,
+        "peak_pss_mib": -4.164743293840079,
+        "peak_anonymous_mib": -6.670942912123157
+      }
+    }
+  ],
+  "aggregate_of_six_pairs": {
+    "cpu_seconds_per_gib": {
+      "current_treatment_median": 5.082074584,
+      "arena2_treatment_median": 4.76787564,
+      "treatment_median_change_percent": -6.182493759324181,
+      "paired_median_change_percent": -1.2209897159571934,
+      "paired_changes_percent": [
+        -15.740125056715259,
+        62.90464717677684,
+        3.7296508472918433,
+        -6.17163027920623,
+        20.27536473728142,
+        -15.582905170163318
+      ],
+      "arena2_wins": 3,
+      "pairs": 6
+    },
+    "peak_pss_mib": {
+      "current_treatment_median": 18.7744140625,
+      "arena2_treatment_median": 18.0927734375,
+      "treatment_median_change_percent": -3.6306892067620278,
+      "paired_median_change_percent": -3.085121121285234,
+      "paired_changes_percent": [
+        -0.6060278123478202,
+        -8.105433140594887,
+        -2.0054989487303887,
+        -4.309819068916443,
+        6.019841063730325,
+        -4.164743293840079
+      ],
+      "arena2_wins": 5,
+      "pairs": 6
+    },
+    "peak_anonymous_mib": {
+      "current_treatment_median": 6.056640625,
+      "arena2_treatment_median": 5.37109375,
+      "treatment_median_change_percent": -11.318929377620124,
+      "paired_median_change_percent": -6.846109753933922,
+      "paired_changes_percent": [
+        -7.021276595744686,
+        -24.93638676844784,
+        -2.4205748865355536,
+        -12.840702604482136,
+        18.093385214007785,
+        -6.670942912123157
+      ],
+      "arena2_wins": 5,
+      "pairs": 6
+    }
+  },
+  "interpretation": "Memory was lower in 5 of 6 pairs. CPU was lower in only 3 of 6; paired median CPU change was approximately -1.2%, with large opposing outliers. CPU pressure increased during the confirmation. Keep as a possible memory-only runtime tuning option; do not promote as a default or claim a joint CPU/memory win."
+}

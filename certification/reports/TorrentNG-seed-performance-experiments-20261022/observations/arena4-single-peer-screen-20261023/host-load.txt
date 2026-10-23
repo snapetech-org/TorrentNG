@@ -1,0 +1,1 @@
+This screen did not capture a pre-test host-pressure snapshot. At completion, /proc/pressure/cpu reported some avg10/avg60/avg300 = 5.33/6.43/6.09%. All three pairs ran arena4 first, so order and host drift are confounded. Treat the result as a screening result only.

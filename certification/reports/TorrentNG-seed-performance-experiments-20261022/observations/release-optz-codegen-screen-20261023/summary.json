@@ -1,0 +1,387 @@
+{
+  "format": "torrentng-release-optz-codegen-screen-v1",
+  "source_revision": "87c7e2247240e1d3170dfa4f7d0b74e181bf61c9",
+  "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+  "fixture_bytes": 16777216,
+  "fixture_sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3",
+  "settings": {
+    "offered_rate_bytes_per_second": 4194304,
+    "block_bytes": 16384,
+    "request_window": 32,
+    "storage": "pread",
+    "dht": false,
+    "pex": false,
+    "tracker": false
+  },
+  "executables": {
+    "current_opt_level_s": {
+      "sha256": "b13f157809d98bdc052017f83bd2369685f7221116d8269837120f6af07cd263",
+      "bytes": 24663632
+    },
+    "candidate_opt_level_z": {
+      "sha256": "220a6d5f1713a60b6e1109bb551d179c1d5871abdfd7c8070ffeb6d0670c3d27",
+      "bytes": 25650368,
+      "size_change_percent": 4.000773284324066
+    },
+    "candidate_opt_level_z_target_cpu_native": {
+      "sha256": "c2c75f7db5dc62ccd1f987f1f199e30889291bf7661b101440094c53ebde1823",
+      "bytes": 25835640,
+      "size_change_percent": 4.751968404329099
+    }
+  },
+  "screens": [
+    {
+      "label": "opt-level-z initial",
+      "candidate": "optz",
+      "binary_sha256": "220a6d5f1713a60b6e1109bb551d179c1d5871abdfd7c8070ffeb6d0670c3d27",
+      "binary_bytes": 25650368,
+      "profile": "CARGO_PROFILE_RELEASE_OPT_LEVEL=z",
+      "rustflags": null,
+      "order_seed": 20261026,
+      "pairs": [
+        {
+          "round": 1,
+          "order": [
+            "optz",
+            "current"
+          ],
+          "current": {
+            "cpu_seconds_per_gib": 5.04368928,
+            "peak_pss_mib": 18.109375,
+            "peak_anonymous_mib": 5.390625,
+            "verified": true,
+            "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+          },
+          "optz": {
+            "cpu_seconds_per_gib": 6.495284352,
+            "peak_pss_mib": 17.12890625,
+            "peak_anonymous_mib": 5.5234375,
+            "verified": true,
+            "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+          },
+          "candidate_delta_percent": {
+            "cpu_seconds_per_gib": 28.780422254719063,
+            "peak_pss_mib": -5.4141501294219125,
+            "peak_anonymous_mib": 2.463768115942022
+          }
+        },
+        {
+          "round": 2,
+          "order": [
+            "optz",
+            "current"
+          ],
+          "current": {
+            "cpu_seconds_per_gib": 6.309774912,
+            "peak_pss_mib": 18.21875,
+            "peak_anonymous_mib": 5.52734375,
+            "verified": true,
+            "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+          },
+          "optz": {
+            "cpu_seconds_per_gib": 5.792198016,
+            "peak_pss_mib": 17.28515625,
+            "peak_anonymous_mib": 5.4453125,
+            "verified": true,
+            "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+          },
+          "candidate_delta_percent": {
+            "cpu_seconds_per_gib": -8.202779072446242,
+            "peak_pss_mib": -5.124356775300177,
+            "peak_anonymous_mib": -1.4840989399293236
+          }
+        },
+        {
+          "round": 3,
+          "order": [
+            "optz",
+            "current"
+          ],
+          "current": {
+            "cpu_seconds_per_gib": 5.225159424,
+            "peak_pss_mib": 18.48828125,
+            "peak_anonymous_mib": 5.53515625,
+            "verified": true,
+            "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+          },
+          "optz": {
+            "cpu_seconds_per_gib": 5.55215552,
+            "peak_pss_mib": 17.28125,
+            "peak_anonymous_mib": 5.5,
+            "verified": true,
+            "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+          },
+          "candidate_delta_percent": {
+            "cpu_seconds_per_gib": 6.258107542098235,
+            "peak_pss_mib": -6.528628776674417,
+            "peak_anonymous_mib": -0.635144671841914
+          }
+        }
+      ]
+    },
+    {
+      "label": "opt-level-z confirmation",
+      "candidate": "optz",
+      "binary_sha256": "220a6d5f1713a60b6e1109bb551d179c1d5871abdfd7c8070ffeb6d0670c3d27",
+      "binary_bytes": 25650368,
+      "profile": "CARGO_PROFILE_RELEASE_OPT_LEVEL=z",
+      "rustflags": null,
+      "order_seed": 20261055,
+      "pairs": [
+        {
+          "round": 1,
+          "order": [
+            "current",
+            "optz"
+          ],
+          "current": {
+            "cpu_seconds_per_gib": 5.978886976,
+            "peak_pss_mib": 18.421875,
+            "peak_anonymous_mib": 5.47265625,
+            "verified": true,
+            "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+          },
+          "optz": {
+            "cpu_seconds_per_gib": 9.053116352,
+            "peak_pss_mib": 17.0,
+            "peak_anonymous_mib": 5.1875,
+            "verified": true,
+            "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+          },
+          "candidate_delta_percent": {
+            "cpu_seconds_per_gib": 51.41808815487465,
+            "peak_pss_mib": -7.718405428329089,
+            "peak_anonymous_mib": -5.210563882940756
+          }
+        },
+        {
+          "round": 2,
+          "order": [
+            "current",
+            "optz"
+          ],
+          "current": {
+            "cpu_seconds_per_gib": 6.937415616,
+            "peak_pss_mib": 17.7109375,
+            "peak_anonymous_mib": 5.171875,
+            "verified": true,
+            "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+          },
+          "optz": {
+            "cpu_seconds_per_gib": 6.104216384,
+            "peak_pss_mib": 16.8515625,
+            "peak_anonymous_mib": 5.17578125,
+            "verified": true,
+            "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+          },
+          "candidate_delta_percent": {
+            "cpu_seconds_per_gib": -12.010225105705995,
+            "peak_pss_mib": -4.852227613586235,
+            "peak_anonymous_mib": 0.07552870090634656
+          }
+        },
+        {
+          "round": 3,
+          "order": [
+            "current",
+            "optz"
+          ],
+          "current": {
+            "cpu_seconds_per_gib": 6.268990464,
+            "peak_pss_mib": 18.00390625,
+            "peak_anonymous_mib": 5.39453125,
+            "verified": true,
+            "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+          },
+          "optz": {
+            "cpu_seconds_per_gib": 8.488662528,
+            "peak_pss_mib": 17.234375,
+            "peak_anonymous_mib": 5.47265625,
+            "verified": true,
+            "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+          },
+          "candidate_delta_percent": {
+            "cpu_seconds_per_gib": 35.407169252315526,
+            "peak_pss_mib": -4.2742460403558225,
+            "peak_anonymous_mib": 1.4482259232440287
+          }
+        }
+      ]
+    },
+    {
+      "label": "opt-level-z plus target-cpu=native",
+      "candidate": "native",
+      "binary_sha256": "c2c75f7db5dc62ccd1f987f1f199e30889291bf7661b101440094c53ebde1823",
+      "binary_bytes": 25835640,
+      "profile": "CARGO_PROFILE_RELEASE_OPT_LEVEL=z",
+      "rustflags": "-C target-cpu=native",
+      "order_seed": 20261025,
+      "pairs": [
+        {
+          "round": 1,
+          "order": [
+            "current",
+            "native"
+          ],
+          "current": {
+            "cpu_seconds_per_gib": 4.78912832,
+            "peak_pss_mib": 18.21875,
+            "peak_anonymous_mib": 5.52734375,
+            "verified": true,
+            "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+          },
+          "native": {
+            "cpu_seconds_per_gib": 4.59410368,
+            "peak_pss_mib": 17.125,
+            "peak_anonymous_mib": 5.1875,
+            "verified": true,
+            "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+          },
+          "candidate_delta_percent": {
+            "cpu_seconds_per_gib": -4.072236677926389,
+            "peak_pss_mib": -6.003430531732423,
+            "peak_anonymous_mib": -6.148409893992934
+          }
+        },
+        {
+          "round": 2,
+          "order": [
+            "current",
+            "native"
+          ],
+          "current": {
+            "cpu_seconds_per_gib": 4.177393472,
+            "peak_pss_mib": 18.2578125,
+            "peak_anonymous_mib": 5.54296875,
+            "verified": true,
+            "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+          },
+          "native": {
+            "cpu_seconds_per_gib": 5.01475008,
+            "peak_pss_mib": 17.390625,
+            "peak_anonymous_mib": 5.46484375,
+            "verified": true,
+            "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+          },
+          "candidate_delta_percent": {
+            "cpu_seconds_per_gib": 20.044954194824747,
+            "peak_pss_mib": -4.749679075738122,
+            "peak_anonymous_mib": -1.4094432699083836
+          }
+        },
+        {
+          "round": 3,
+          "order": [
+            "native",
+            "current"
+          ],
+          "current": {
+            "cpu_seconds_per_gib": 3.947648256,
+            "peak_pss_mib": 18.296875,
+            "peak_anonymous_mib": 5.578125,
+            "verified": true,
+            "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+          },
+          "native": {
+            "cpu_seconds_per_gib": 4.123689216,
+            "peak_pss_mib": 17.55859375,
+            "peak_anonymous_mib": 5.45703125,
+            "verified": true,
+            "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+          },
+          "candidate_delta_percent": {
+            "cpu_seconds_per_gib": 4.459388187193136,
+            "peak_pss_mib": -4.035012809564476,
+            "peak_anonymous_mib": -2.170868347338939
+          }
+        }
+      ]
+    }
+  ],
+  "aggregate_opt_level_z_six_pairs": {
+    "cpu_seconds_per_gib": {
+      "current_median": 6.12393872,
+      "candidate_median": 6.299750368,
+      "paired_median_change_percent": 17.51926489840865,
+      "paired_changes_percent": [
+        28.780422254719063,
+        -8.202779072446242,
+        6.258107542098235,
+        51.41808815487465,
+        -12.010225105705995,
+        35.407169252315526
+      ],
+      "candidate_wins": 2,
+      "pairs": 6
+    },
+    "peak_pss_mib": {
+      "current_median": 18.1640625,
+      "candidate_median": 17.181640625,
+      "paired_median_change_percent": -5.269253452361045,
+      "paired_changes_percent": [
+        -5.4141501294219125,
+        -5.124356775300177,
+        -6.528628776674417,
+        -7.718405428329089,
+        -4.852227613586235,
+        -4.2742460403558225
+      ],
+      "candidate_wins": 6,
+      "pairs": 6
+    },
+    "peak_anonymous_mib": {
+      "current_median": 5.43359375,
+      "candidate_median": 5.458984375,
+      "paired_median_change_percent": -0.27980798546778374,
+      "paired_changes_percent": [
+        2.463768115942022,
+        -1.4840989399293236,
+        -0.635144671841914,
+        -5.210563882940756,
+        0.07552870090634656,
+        1.4482259232440287
+      ],
+      "candidate_wins": 3,
+      "pairs": 6
+    }
+  },
+  "aggregate_opt_level_z_target_cpu_native_three_pairs": {
+    "cpu_seconds_per_gib": {
+      "current_median": 4.177393472,
+      "candidate_median": 4.59410368,
+      "paired_median_change_percent": 4.459388187193136,
+      "paired_changes_percent": [
+        -4.072236677926389,
+        20.044954194824747,
+        4.459388187193136
+      ],
+      "candidate_wins": 1,
+      "pairs": 3
+    },
+    "peak_pss_mib": {
+      "current_median": 18.2578125,
+      "candidate_median": 17.390625,
+      "paired_median_change_percent": -4.749679075738122,
+      "paired_changes_percent": [
+        -6.003430531732423,
+        -4.749679075738122,
+        -4.035012809564476
+      ],
+      "candidate_wins": 3,
+      "pairs": 3
+    },
+    "peak_anonymous_mib": {
+      "current_median": 5.54296875,
+      "candidate_median": 5.45703125,
+      "paired_median_change_percent": -2.170868347338939,
+      "paired_changes_percent": [
+        -6.148409893992934,
+        -1.4094432699083836,
+        -2.170868347338939
+      ],
+      "candidate_wins": 3,
+      "pairs": 3
+    }
+  },
+  "decision": "Do not promote either profile. opt-level=z reduced PSS in all six pairs but lost CPU in four of six, with paired median CPU +17.5%; anonymous memory was effectively unchanged. Adding target-cpu=native reduced CPU in one of three pairs only (paired median +4.5%) while retaining lower memory, but both the binary size and remaining CPU cost are unsuitable as a joint improvement. Preserve as compiler-profile evidence; default opt-level=s binary restored."
+}

@@ -1,0 +1,3 @@
+The scored 16 MiB A/B began at 12:09:10 with CPU PSI some avg10/avg60/avg300 = 1.74/9.57/9.88%, load average 28.30/28.73/25.66. It completed at 12:09:53 with CPU PSI = 0.47/5.02/8.62%, load average 26.24/28.26/25.65. The six transfers verified; host pressure was falling during the short test, so the screen remains preliminary.
+
+The batch-size traces are unscored debug runs with RUST_LOG enabled.

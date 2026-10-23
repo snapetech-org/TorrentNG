@@ -1,0 +1,4 @@
+Command:
+python3 scripts/native_seed_cpu_ram_probe.py --client current=torrentngd:/home/keith/Documents/code/TorrentNG/target/release/torrentngd --client arena2=torrentngd:/home/keith/Documents/code/TorrentNG/target/release/torrentngd --client-env arena2:MALLOC_ARENA_MAX=2 --size 67108864 --repeats 3 --order-seed 20261025 --warmup 0 --cooldown 0
+
+Result: exit status 0; six transfers verified fixture SHA-256 b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901. The executable SHA-256 was b13f157809d98bdc052017f83bd2369685f7221116d8269837120f6af07cd263 for both treatments. Order was current-first twice and arena2-first once, balancing the earlier screen across the six pairs.

@@ -1,0 +1,6 @@
+Validation:
+- `python3 scripts/test_native_seed_cpu_ram_probe.py`: 24 tests passed.
+- `python3 -m py_compile scripts/native_seed_cpu_ram_probe.py scripts/test_native_seed_cpu_ram_probe.py`: passed.
+- Six local 64 MiB transfers completed and SHA-256 verified; three pairs were run with storage workers in order 2→1, 1→2, 2→1.
+- Both arms used daemon SHA-256 `b13f157809d98bdc052017f83bd2369685f7221116d8269837120f6af07cd263` and diagnostics confirmed `pread`.
+- No engine source or production defaults changed.

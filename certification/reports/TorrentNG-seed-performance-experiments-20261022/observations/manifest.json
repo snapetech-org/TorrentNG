@@ -657,6 +657,26 @@
       "sha256": "cbbe94f22404212428ea39c9305a58d9338392edde2ced1f7cab53f00d341403"
     },
     {
+      "path": "arena2-single-peer-screen-20261023/README.md",
+      "bytes": 2428,
+      "sha256": "a561b875c88c9a7266559094d06fcbbc1d117cf1609efb7cc864e2adda8fedc5"
+    },
+    {
+      "path": "arena2-single-peer-screen-20261023/host-load.txt",
+      "bytes": 495,
+      "sha256": "821b24a39adffdf97d3b90915732ba3b046b34cf2419c14eb740c8b1fd30795c"
+    },
+    {
+      "path": "arena2-single-peer-screen-20261023/summary.json",
+      "bytes": 4403,
+      "sha256": "614b47d9f29bbf9e5c9d5e3d0dc8a02570945e18ac96930c65d0e3f69cc62d1b"
+    },
+    {
+      "path": "arena2-single-peer-screen-20261023/validation.txt",
+      "bytes": 513,
+      "sha256": "9ed43104d0440ca7f5b937989fc8f71503ee39b14e22c654b51d58cdb150d2bb"
+    },
+    {
       "path": "batch-distribution-16m/logs/run-01-batches-batches.client.log",
       "bytes": 245966,
       "sha256": "5f5efee4d3997df8b3d36366876fad474d634eb8893b1d0f2313d9608ccdc59a"
@@ -2560,6 +2580,46 @@
       "path": "peer-read-current-entry-screen-20261023/summary.json",
       "bytes": 7995,
       "sha256": "0c754042075f0bb013472f9285798e7d117a83c9f230a275f4ca8549e7eff8c9"
+    },
+    {
+      "path": "peer-request-decode-fastpath-screen-20261023/README.md",
+      "bytes": 3937,
+      "sha256": "d7488112ff7ae52f3c3bd21cc5c043f29fdf49ad78d18bd0abfd03f6152fc915"
+    },
+    {
+      "path": "peer-request-decode-fastpath-screen-20261023/binary-identities.txt",
+      "bytes": 637,
+      "sha256": "92bed7500d18f8dbd6a5dd82ffc8157e9e2013a5606c669f9b7e0fdaa385cfcf"
+    },
+    {
+      "path": "peer-request-decode-fastpath-screen-20261023/candidate.patch.gz",
+      "bytes": 1308,
+      "sha256": "7742a92acf845b1e78622e8a568e507dfa92745b8106d61e654cc060b5aa01b4"
+    },
+    {
+      "path": "peer-request-decode-fastpath-screen-20261023/microbench-default.jsonl",
+      "bytes": 912,
+      "sha256": "206c93f381cb61bd02104a40a2cfec164d040813511c6668f730cce9ee9dd9a1"
+    },
+    {
+      "path": "peer-request-decode-fastpath-screen-20261023/microbench-resources.jsonl",
+      "bytes": 1540,
+      "sha256": "afaeaa9f228b513038b298c281f2b00dd101a65872605c61476b78ec6baa0903"
+    },
+    {
+      "path": "peer-request-decode-fastpath-screen-20261023/request_decode_bench.rs",
+      "bytes": 2444,
+      "sha256": "dac1aac66f2b110b6f531e268b7d5a6497fbb68643c0d73a48905c6b4da1f972"
+    },
+    {
+      "path": "peer-request-decode-fastpath-screen-20261023/rtorrent-launch-failure.txt",
+      "bytes": 511,
+      "sha256": "3f9a589202dc1f838d0fb0ecff85c3df23bbf1b71e8b1b3aa79808ca21aed7b1"
+    },
+    {
+      "path": "peer-request-decode-fastpath-screen-20261023/summary.json",
+      "bytes": 8417,
+      "sha256": "7ccd75b3b71b043d773be433605a98292e24b669262d196df5f694cb32b6d79b"
     },
     {
       "path": "peer-select-biased-screen-20261023/README.md",
@@ -8122,6 +8182,26 @@
       "sha256": "66b9f074c4f655c7aedbb903a18fcfe7678a1438db847a1b5b98b0c87704f841"
     },
     {
+      "path": "upload-obligation-lock-batch-screen-20261023/README.md",
+      "bytes": 2508,
+      "sha256": "f9976e32fe8ccb8ba3b1764b26780e47f347b011e20aba03154534af969e6ec5"
+    },
+    {
+      "path": "upload-obligation-lock-batch-screen-20261023/candidate.patch.gz",
+      "bytes": 1851,
+      "sha256": "8c55fe009d96b6e9224a7159b92b3dc14c06fa419172e7aeb90ed3accdf4aec6"
+    },
+    {
+      "path": "upload-obligation-lock-batch-screen-20261023/summary.json",
+      "bytes": 4764,
+      "sha256": "6fbd71006f1727008fa0b6cb32fa0ebaeff1136e689aafd915624884c0101559"
+    },
+    {
+      "path": "upload-obligation-lock-batch-screen-20261023/validation.txt",
+      "bytes": 778,
+      "sha256": "a88aaa210b050c7ae6642bd37de9a644dd7f77a5ed6f60e1bcf4d748a125e832"
+    },
+    {
       "path": "upload-rate-batch-20261022/README.md",
       "bytes": 3579,
       "sha256": "8cc3f26cb09da5be49458af53eab53c20ae81d0701cccc2839ab94e913f3ccd1"
@@ -8345,6 +8425,126 @@
       "path": "upload-rate-batch-20261022/screen-2/summary.source.json",
       "bytes": 59738,
       "sha256": "3602711cc09010e48df6c51f00275df3605fafd13183191f2bae6d6f7a6dc698"
+    },
+    {
+      "path": "arena2-single-peer-screen-20261023/confirmation-host-load.txt",
+      "bytes": 389,
+      "sha256": "bbb9436f7fa742cea55c95c810834a4ba9703c43e104856b12a4dab68eb61427"
+    },
+    {
+      "path": "arena2-single-peer-screen-20261023/confirmation-summary.json",
+      "bytes": 7786,
+      "sha256": "ee1010a3cd77fc6b920857285a1a2dfdb71504c300435d8676ddf3eecd95530c"
+    },
+    {
+      "path": "arena2-single-peer-screen-20261023/confirmation-validation.txt",
+      "bytes": 694,
+      "sha256": "a9378a4c5c9952d0cb6eea37f5b517eb5c381dd9a33c67d105e29c852847b364"
+    },
+    {
+      "path": "release-optz-codegen-screen-20261023/README.md",
+      "bytes": 2400,
+      "sha256": "12f39f7be38e06b54c73864bc4ded666a082a4a4485f29e1890388521f2e890e"
+    },
+    {
+      "path": "release-optz-codegen-screen-20261023/host-load.txt",
+      "bytes": 494,
+      "sha256": "0264bd5700ab7ae3bc86a020022ac5dc2adb3167d2c4c7509b0d556e5efcbd71"
+    },
+    {
+      "path": "release-optz-codegen-screen-20261023/summary.json",
+      "bytes": 13052,
+      "sha256": "d1453993279c60b8a0df851fb1351e455bbf51477621af7ae55c20e6383abd50"
+    },
+    {
+      "path": "release-optz-codegen-screen-20261023/validation.txt",
+      "bytes": 1104,
+      "sha256": "df4670f37905e894b638049e730470fea53f2a6dd79d93af6021c46be3163aef"
+    },
+    {
+      "path": "upload-batch-16-screen-20261023/README.md",
+      "bytes": 2081,
+      "sha256": "63db8573b2c1408161fcbe621d7aab2249f3353928fa1e2b9bd74e0d8d066c99"
+    },
+    {
+      "path": "upload-batch-16-screen-20261023/batch-distribution.json",
+      "bytes": 1129,
+      "sha256": "f50f5747db00f17ef87f2476564813a9a1a849a03d8368718be4695a9f072488"
+    },
+    {
+      "path": "upload-batch-16-screen-20261023/candidate.patch",
+      "bytes": 2237,
+      "sha256": "8229a6d41917e0afce53edfdeed7417c52583f01a4bc2a04def9cd62fcb1d131"
+    },
+    {
+      "path": "upload-batch-16-screen-20261023/host-load.txt",
+      "bytes": 399,
+      "sha256": "0f79d3be6aadb4bbd582d768cb5a4be2467894f2ed11e6e8b92c715681170b3e"
+    },
+    {
+      "path": "upload-batch-16-screen-20261023/summary.json",
+      "bytes": 4854,
+      "sha256": "77ee08e66b7c553af7046d6cd52b2643fdcb4b54f7813c1cc0c46fe25dbdbc3d"
+    },
+    {
+      "path": "upload-batch-16-screen-20261023/validation.txt",
+      "bytes": 1099,
+      "sha256": "a3c060a1e17b254434f5c375b17fa801b20ec124c061b549a09d1c7daddf313d"
+    },
+    {
+      "path": "arena4-single-peer-screen-20261023/README.md",
+      "bytes": 1335,
+      "sha256": "29f16c344a9c1f9fee38a48248bae2341deaafa476fa6a510f4b174509d0817d"
+    },
+    {
+      "path": "arena4-single-peer-screen-20261023/host-load.txt",
+      "bytes": 268,
+      "sha256": "919b3db4c3155a8991a80aa8330fef220f644e2844ba5262345c110381d50828"
+    },
+    {
+      "path": "arena4-single-peer-screen-20261023/summary.json",
+      "bytes": 4553,
+      "sha256": "9e9e2478e7077249a7621e6924c615e236125fae34c29b7b7ac63fa256061831"
+    },
+    {
+      "path": "arena4-single-peer-screen-20261023/validation.txt",
+      "bytes": 756,
+      "sha256": "93031684fe53c3989ad76c5c0516e46072daa7872ba72774b3fe174871996f97"
+    },
+    {
+      "path": "current-source-one-worker-screen-20261023/README.md",
+      "bytes": 1096,
+      "sha256": "6f4ed22afa400faece6dd7ece9cb56a3d02d8b1e178f69b398de3acec230d542"
+    },
+    {
+      "path": "current-source-one-worker-screen-20261023/summary.json",
+      "bytes": 4712,
+      "sha256": "bdde0dd6eabd1e0d8436bfbc9c9d2052bca83c734ea30b694e3d638ec5beee88"
+    },
+    {
+      "path": "current-source-one-worker-screen-20261023/validation.txt",
+      "bytes": 516,
+      "sha256": "d51c7cc3f4328ad1ba37dde6e3fbb75868f4420baa3a8e7b89dd962e8832dd9d"
+    },
+    {
+      "path": "worker1-arena1-combined-interrupted-screen-20261023/README.md",
+      "bytes": 792,
+      "sha256": "e07bd5521105af432a5b97f68646177c87217caf03754d4e9d18d822b0910240"
+    },
+    {
+      "path": "pgo-worker-count-rtorrent-screen-20261023/README.md",
+      "bytes": 1250,
+      "sha256": "b3e1e01be7bf29642b914531fb96e74e473c7a2886f2173a94007dfb741b7658"
+    },
+    {
+      "path": "pgo-worker-count-rtorrent-screen-20261023/summary.json",
+      "bytes": 7331,
+      "sha256": "121ed08ce59954affbc1fc56a81a4bdb3fa585d03acdd5637dbd321e88cbcc22"
+    },
+    {
+      "path": "pgo-worker-count-rtorrent-screen-20261023/validation.txt",
+      "bytes": 704,
+      "sha256": "8ea8293dad443a440ffc33b46d654d81d50ebfec94a88e36bac62b335286f574"
     }
   ]
 }

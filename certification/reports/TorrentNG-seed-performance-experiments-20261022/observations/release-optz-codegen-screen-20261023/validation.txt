@@ -1,0 +1,13 @@
+Builds, from source revision 87c7e2247240e1d3170dfa4f7d0b74e181bf61c9 with Rust 1.94.0:
+
+CARGO_BUILD_JOBS=4 CARGO_PROFILE_RELEASE_OPT_LEVEL=z cargo build --locked --release --package torrentngd --bin torrentngd
+CARGO_BUILD_JOBS=4 CARGO_PROFILE_RELEASE_OPT_LEVEL=z RUSTFLAGS="-C target-cpu=native" cargo build --locked --release --package torrentngd --bin torrentngd
+
+Both builds succeeded. The default opt-level=s executable was saved before each build and restored after. Candidate hashes and sizes are in summary.json.
+
+Transfer screens (three randomized pairs per screen; all 18 transfers verified the same 16 MiB fixture SHA-256 listed in summary.json):
+- opt-level=z initial: --order-seed 20261026 (candidate first in all three pairs)
+- opt-level=z confirmation: --order-seed 20261055 (current first in all three pairs)
+- opt-level=z + target-cpu=native: --order-seed 20261025 (current first twice, candidate first once)
+
+The first two opt-level=z orders balance across six pairs. CPU values are a screening result, not a clean-host certification claim. No source files or profile defaults changed.

@@ -1,0 +1,159 @@
+{
+  "format": "torrentng-arena4-single-peer-screen-v1",
+  "source_revision": "3594b00c",
+  "fixture_bytes": 67108864,
+  "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+  "binary_sha256": "b13f157809d98bdc052017f83bd2369685f7221116d8269837120f6af07cd263",
+  "settings": {
+    "offered_rate_bytes_per_second": 4194304,
+    "block_bytes": 16384,
+    "request_window": 32,
+    "storage_backend": "auto; see diagnostic backend selected per round",
+    "dht": false,
+    "pex": false,
+    "tracker": false
+  },
+  "orders": [
+    [
+      "arena4",
+      "current"
+    ],
+    [
+      "arena4",
+      "current"
+    ],
+    [
+      "arena4",
+      "current"
+    ]
+  ],
+  "pairs": [
+    {
+      "round": 1,
+      "order": [
+        "arena4",
+        "current"
+      ],
+      "current": {
+        "round": 1,
+        "cpu_seconds_per_gib": 3.488913408,
+        "peak_pss_mib": 18.9697265625,
+        "peak_anonymous_mib": 6.48828125,
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "arena4": {
+        "round": 1,
+        "cpu_seconds_per_gib": 4.08725928,
+        "peak_pss_mib": 18.3447265625,
+        "peak_anonymous_mib": 5.85546875,
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "arena4_delta_percent": {
+        "cpu_seconds_per_gib": 17.14992039148939,
+        "peak_pss_mib": -3.2947232947232945,
+        "peak_anonymous_mib": -9.75316074653823
+      }
+    },
+    {
+      "round": 2,
+      "order": [
+        "arena4",
+        "current"
+      ],
+      "current": {
+        "round": 2,
+        "cpu_seconds_per_gib": 5.65017312,
+        "peak_pss_mib": 18.625,
+        "peak_anonymous_mib": 6.00390625,
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "arena4": {
+        "round": 2,
+        "cpu_seconds_per_gib": 6.20005304,
+        "peak_pss_mib": 19.1416015625,
+        "peak_anonymous_mib": 6.36328125,
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "arena4_delta_percent": {
+        "cpu_seconds_per_gib": 9.732089766481357,
+        "peak_pss_mib": 2.77369966442953,
+        "peak_anonymous_mib": 5.985686402081978
+      }
+    },
+    {
+      "round": 3,
+      "order": [
+        "arena4",
+        "current"
+      ],
+      "current": {
+        "round": 3,
+        "cpu_seconds_per_gib": 5.521817216,
+        "peak_pss_mib": 18.17578125,
+        "peak_anonymous_mib": 5.56640625,
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "arena4": {
+        "round": 3,
+        "cpu_seconds_per_gib": 5.761435136,
+        "peak_pss_mib": 18.3603515625,
+        "peak_anonymous_mib": 5.80859375,
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901"
+      },
+      "arena4_delta_percent": {
+        "cpu_seconds_per_gib": 4.339475767247139,
+        "peak_pss_mib": 1.0154738878143132,
+        "peak_anonymous_mib": 4.350877192982456
+      }
+    }
+  ],
+  "aggregate": {
+    "cpu_seconds_per_gib": {
+      "current_median": 5.521817216,
+      "arena4_median": 5.761435136,
+      "paired_changes_percent": [
+        17.14992039148939,
+        9.732089766481357,
+        4.339475767247139
+      ],
+      "paired_median_change_percent": 9.732089766481357,
+      "arena4_wins": 0
+    },
+    "peak_pss_mib": {
+      "current_median": 18.625,
+      "arena4_median": 18.3603515625,
+      "paired_changes_percent": [
+        -3.2947232947232945,
+        2.77369966442953,
+        1.0154738878143132
+      ],
+      "paired_median_change_percent": 1.0154738878143132,
+      "arena4_wins": 1
+    },
+    "peak_anonymous_mib": {
+      "current_median": 6.00390625,
+      "arena4_median": 5.85546875,
+      "paired_changes_percent": [
+        -9.75316074653823,
+        5.985686402081978,
+        4.350877192982456
+      ],
+      "paired_median_change_percent": 4.350877192982456,
+      "arena4_wins": 1
+    }
+  },
+  "decision": "Do not promote. MALLOC_ARENA_MAX=4 used more CPU in all three pairs; paired memory deltas were mixed. This was an economical screen with all treatment-first order and elevated host CPU pressure at completion; no confirmation run was warranted.",
+  "host_cpu_pressure_after": {
+    "some_avg10_avg60_avg300_percent": [
+      5.33,
+      6.43,
+      6.09
+    ]
+  }
+}

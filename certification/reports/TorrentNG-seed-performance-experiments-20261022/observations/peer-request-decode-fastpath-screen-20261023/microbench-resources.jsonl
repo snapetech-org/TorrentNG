@@ -1,0 +1,10 @@
+{"pair": 1, "arm": "control", "output": "mode=resources frames=8000000 cpu_s=0.351523 wall_s=0.354159 msg_per_cpu_s=22758113 checksum=4096002960883712"}
+{"pair": 1, "arm": "candidate", "output": "mode=resources frames=8000000 cpu_s=0.219112 wall_s=0.220546 msg_per_cpu_s=36511008 checksum=4096002960883712"}
+{"pair": 2, "arm": "candidate", "output": "mode=resources frames=8000000 cpu_s=0.216830 wall_s=0.217861 msg_per_cpu_s=36895264 checksum=4096002960883712"}
+{"pair": 2, "arm": "control", "output": "mode=resources frames=8000000 cpu_s=0.344028 wall_s=0.346343 msg_per_cpu_s=23253921 checksum=4096002960883712"}
+{"pair": 3, "arm": "control", "output": "mode=resources frames=8000000 cpu_s=0.347046 wall_s=0.349358 msg_per_cpu_s=23051699 checksum=4096002960883712"}
+{"pair": 3, "arm": "candidate", "output": "mode=resources frames=8000000 cpu_s=0.233867 wall_s=0.235717 msg_per_cpu_s=34207477 checksum=4096002960883712"}
+{"pair": 4, "arm": "candidate", "output": "mode=resources frames=8000000 cpu_s=0.215176 wall_s=0.215896 msg_per_cpu_s=37178868 checksum=4096002960883712"}
+{"pair": 4, "arm": "control", "output": "mode=resources frames=8000000 cpu_s=0.345481 wall_s=0.346854 msg_per_cpu_s=23156121 checksum=4096002960883712"}
+{"pair": 5, "arm": "control", "output": "mode=resources frames=8000000 cpu_s=0.346611 wall_s=0.347779 msg_per_cpu_s=23080629 checksum=4096002960883712"}
+{"pair": 5, "arm": "candidate", "output": "mode=resources frames=8000000 cpu_s=0.215290 wall_s=0.216189 msg_per_cpu_s=37159181 checksum=4096002960883712"}

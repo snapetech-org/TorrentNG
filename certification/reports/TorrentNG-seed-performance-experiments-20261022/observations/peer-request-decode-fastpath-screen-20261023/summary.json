@@ -1,0 +1,235 @@
+{
+  "status": "not-promoted",
+  "source_base_commit": "c10e914db6ee6b707cda1cf9eac91243927a2de8",
+  "candidate_change": "Decode complete fixed-size Request frames from the BytesMut slice, then advance the frame without split_to().freeze(); preserve request-length validation and consume malformed complete frames before returning the error.",
+  "candidate_patch_sha256_gzip": "7742a92acf845b1e78622e8a568e507dfa92745b8106d61e654cc060b5aa01b4",
+  "candidate_patch_sha256_uncompressed": "e526b3e7bab5bb59e8094219a5f71ccc7f8d7504b86b36d58ee14e41cbc7cfc6",
+  "toolchain": "rustc 1.94.0",
+  "release_profile": "opt-level=s, thin LTO, codegen-units=1",
+  "cargo_lock_sha256": "667fa1fe9e6d7076ecec380f59a58a45ce868ff9719d512eab37b43fca546d0d",
+  "binary_sha256": {
+    "control": "b13f157809d98bdc052017f83bd2369685f7221116d8269837120f6af07cd263",
+    "candidate": "581f20d3a198ebc3f62e7e173a08b39aabdd8f30ca9b26e13b85a820791b2cb0"
+  },
+  "validation": {
+    "fmt": "passed",
+    "rt_peer_wire_tests": {
+      "passed": 61,
+      "failed": 0,
+      "ignored": 1
+    }
+  },
+  "microbenchmarks": [
+    {
+      "frame_count_per_run": 8000000,
+      "mode": "resources",
+      "paired_cpu_percent_change_candidate_vs_control": [
+        -37.667805520549145,
+        -36.9731533479833,
+        -32.61210329466412,
+        -37.716980094419085,
+        -37.887141492912804
+      ],
+      "median_paired_cpu_percent_change": -37.667805520549145,
+      "control_median_cpu_seconds": 0.346611,
+      "candidate_median_cpu_seconds": 0.21683,
+      "candidate_cpu_change_percent_from_medians": -37.442839379015666,
+      "all_checksums_match": true,
+      "raw_file": "microbench-resources.jsonl"
+    },
+    {
+      "frame_count_per_run": 8000000,
+      "mode": "default",
+      "paired_cpu_percent_change_candidate_vs_control": [
+        -46.190683666605516,
+        -40.018124507486206,
+        -47.48246115861736
+      ],
+      "median_paired_cpu_percent_change": -46.190683666605516,
+      "control_median_cpu_seconds": 0.261648,
+      "candidate_median_cpu_seconds": 0.140791,
+      "candidate_cpu_change_percent_from_medians": -46.190683666605516,
+      "all_checksums_match": true,
+      "raw_file": "microbench-default.jsonl"
+    }
+  ],
+  "whole_client_16MiB_three_round": {
+    "source_probe": "scripts/native_seed_cpu_ram_probe.py",
+    "workload": {
+      "payload_bytes": 16777216,
+      "fixture_seed": 20261023,
+      "fixture_sha256": "8720b45a392e63940e529552c5cb8be01e422e0fc58b538302c952f19c37f012",
+      "block_bytes": 16384,
+      "request_window": 32,
+      "offered_rate_bytes_per_second": 4194304,
+      "dht": false,
+      "pex": false,
+      "tracker": false,
+      "transport": "local TCP"
+    },
+    "round_orders": [
+      [
+        "candidate",
+        "control"
+      ],
+      [
+        "control",
+        "candidate"
+      ],
+      [
+        "candidate",
+        "control"
+      ]
+    ],
+    "clients": {
+      "control": {
+        "median_cpu_seconds": 0.054085695,
+        "median_cpu_seconds_per_GiB": 3.46148448,
+        "median_peak_pss_MiB": 18.0595703125,
+        "median_peak_anonymous_MiB": 5.515625
+      },
+      "candidate": {
+        "median_cpu_seconds": 0.05611096,
+        "median_cpu_seconds_per_GiB": 3.59110144,
+        "median_peak_pss_MiB": 18.0869140625,
+        "median_peak_anonymous_MiB": 5.40234375
+      }
+    },
+    "paired_results": [
+      {
+        "round": 1,
+        "cpu_percent_change": 3.328782794328,
+        "pss_delta_MiB": -0.1953125,
+        "anonymous_delta_MiB": -0.32421875
+      },
+      {
+        "round": 2,
+        "cpu_percent_change": -5.515528643941813,
+        "pss_delta_MiB": -0.12109375,
+        "anonymous_delta_MiB": -0.11328125
+      },
+      {
+        "round": 3,
+        "cpu_percent_change": 17.533119432720422,
+        "pss_delta_MiB": 0.2021484375,
+        "anonymous_delta_MiB": 0.06640625
+      }
+    ],
+    "runs": [
+      {
+        "round": 1,
+        "name": "candidate",
+        "binary_sha256": "581f20d3a198ebc3f62e7e173a08b39aabdd8f30ca9b26e13b85a820791b2cb0",
+        "payload_cpu_seconds": 0.058948711,
+        "cpu_seconds_per_GiB": 3.772717504,
+        "payload_seconds": 4.000056136021158,
+        "verified": true,
+        "sha256": "8720b45a392e63940e529552c5cb8be01e422e0fc58b538302c952f19c37f012",
+        "peak_pss_MiB": 17.82421875,
+        "peak_anonymous_MiB": 5.1328125
+      },
+      {
+        "round": 1,
+        "name": "control",
+        "binary_sha256": "b13f157809d98bdc052017f83bd2369685f7221116d8269837120f6af07cd263",
+        "payload_cpu_seconds": 0.057049652,
+        "cpu_seconds_per_GiB": 3.651177728,
+        "payload_seconds": 4.000063973013312,
+        "verified": true,
+        "sha256": "8720b45a392e63940e529552c5cb8be01e422e0fc58b538302c952f19c37f012",
+        "peak_pss_MiB": 18.01953125,
+        "peak_anonymous_MiB": 5.45703125
+      },
+      {
+        "round": 2,
+        "name": "control",
+        "binary_sha256": "b13f157809d98bdc052017f83bd2369685f7221116d8269837120f6af07cd263",
+        "payload_cpu_seconds": 0.054085695,
+        "cpu_seconds_per_GiB": 3.46148448,
+        "payload_seconds": 4.000074545998359,
+        "verified": true,
+        "sha256": "8720b45a392e63940e529552c5cb8be01e422e0fc58b538302c952f19c37f012",
+        "peak_pss_MiB": 18.2080078125,
+        "peak_anonymous_MiB": 5.515625
+      },
+      {
+        "round": 2,
+        "name": "candidate",
+        "binary_sha256": "581f20d3a198ebc3f62e7e173a08b39aabdd8f30ca9b26e13b85a820791b2cb0",
+        "payload_cpu_seconds": 0.051102583,
+        "cpu_seconds_per_GiB": 3.270565312,
+        "payload_seconds": 4.000067487999331,
+        "verified": true,
+        "sha256": "8720b45a392e63940e529552c5cb8be01e422e0fc58b538302c952f19c37f012",
+        "peak_pss_MiB": 18.0869140625,
+        "peak_anonymous_MiB": 5.40234375
+      },
+      {
+        "round": 3,
+        "name": "candidate",
+        "binary_sha256": "581f20d3a198ebc3f62e7e173a08b39aabdd8f30ca9b26e13b85a820791b2cb0",
+        "payload_cpu_seconds": 0.05611096,
+        "cpu_seconds_per_GiB": 3.59110144,
+        "payload_seconds": 4.000061625003582,
+        "verified": true,
+        "sha256": "8720b45a392e63940e529552c5cb8be01e422e0fc58b538302c952f19c37f012",
+        "peak_pss_MiB": 18.26171875,
+        "peak_anonymous_MiB": 5.5859375
+      },
+      {
+        "round": 3,
+        "name": "control",
+        "binary_sha256": "b13f157809d98bdc052017f83bd2369685f7221116d8269837120f6af07cd263",
+        "payload_cpu_seconds": 0.047740552,
+        "cpu_seconds_per_GiB": 3.055395328,
+        "payload_seconds": 4.0000466459896415,
+        "verified": true,
+        "sha256": "8720b45a392e63940e529552c5cb8be01e422e0fc58b538302c952f19c37f012",
+        "peak_pss_MiB": 18.0595703125,
+        "peak_anonymous_MiB": 5.51953125
+      }
+    ],
+    "all_transfers_verified": true,
+    "host_load_before": "20.64 23.06 22.58 7/13701 3957266"
+  },
+  "whole_client_16MiB_initial_pair": {
+    "runs": [
+      {
+        "round": 1,
+        "name": "control",
+        "binary_sha256": "b13f157809d98bdc052017f83bd2369685f7221116d8269837120f6af07cd263",
+        "payload_cpu_seconds": 0.061028336,
+        "cpu_seconds_per_GiB": 3.905813504,
+        "payload_seconds": 4.000063069019234,
+        "verified": true,
+        "sha256": "8720b45a392e63940e529552c5cb8be01e422e0fc58b538302c952f19c37f012",
+        "peak_pss_MiB": 18.97265625,
+        "peak_anonymous_MiB": 6.41015625
+      },
+      {
+        "round": 1,
+        "name": "candidate",
+        "binary_sha256": "581f20d3a198ebc3f62e7e173a08b39aabdd8f30ca9b26e13b85a820791b2cb0",
+        "payload_cpu_seconds": 0.084344134,
+        "cpu_seconds_per_GiB": 5.398024576,
+        "payload_seconds": 4.000060418009525,
+        "verified": true,
+        "sha256": "8720b45a392e63940e529552c5cb8be01e422e0fc58b538302c952f19c37f012",
+        "peak_pss_MiB": 18.7431640625,
+        "peak_anonymous_MiB": 5.96484375
+      }
+    ],
+    "randomized_orders": [
+      [
+        "control",
+        "candidate"
+      ]
+    ],
+    "host_load_before": "16.74 20.63 21.67 19/14003 3951594",
+    "host_load_after": "30.02 23.12 22.45 13/14059 3953020"
+  },
+  "rtorrent_direct_host_attempt": {
+    "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+    "result": "process exited with signal 11 before SCGI readiness; no transfer was scored. This was a failed direct-host launch, not a comparison."
+  }
+}
