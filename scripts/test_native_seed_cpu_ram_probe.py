@@ -239,6 +239,22 @@ class ProbeTests(unittest.TestCase):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 probe.storage_io_worker_threads_line(invalid)
 
+    def test_client_storage_io_worker_thread_override_is_labeled_and_bounded(self):
+        self.assertEqual(probe.parse_client_storage_io_worker_threads("one=1"), ("one", 1))
+        self.assertEqual(
+            probe.client_storage_io_worker_thread_overrides(
+                [("one", 1), ("current", 2)], ["one", "current", "rt"]),
+            {"one": 1, "current": 2},
+        )
+        with self.assertRaisesRegex(argparse.ArgumentTypeError, "LABEL=WORKER_THREADS"):
+            probe.parse_client_storage_io_worker_threads("1")
+        with self.assertRaises(argparse.ArgumentTypeError):
+            probe.parse_client_storage_io_worker_threads("one=0")
+        with self.assertRaisesRegex(ValueError, "unknown client label"):
+            probe.client_storage_io_worker_thread_overrides([("other", 1)], ["one"])
+        with self.assertRaisesRegex(ValueError, "duplicate worker-count override"):
+            probe.client_storage_io_worker_thread_overrides([("one", 1), ("one", 2)], ["one"])
+
     def test_selected_backend_diagnostic_preserves_backend_label(self):
         metrics = "\n".join((
             'torrentng_storage_scheduler_backend_selected{backend="pread",scheduler_group="1"} 0',

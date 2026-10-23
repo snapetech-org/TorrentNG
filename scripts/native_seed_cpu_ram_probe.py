@@ -685,6 +685,18 @@ def parse_client_env(value):
     return label, key, contents
 
 
+def parse_client_storage_io_worker_threads(value):
+    label, separator, raw = value.partition("=")
+    if not separator or not label:
+        raise argparse.ArgumentTypeError("expected LABEL=WORKER_THREADS")
+    try:
+        worker_threads = int(raw)
+        storage_io_worker_threads_line(worker_threads)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+    return label, worker_threads
+
+
 def client_env_overrides(entries, labels):
     known_labels, overrides = set(labels), {}
     for label, key, value in entries:
@@ -694,6 +706,17 @@ def client_env_overrides(entries, labels):
         if key in per_client:
             raise ValueError(f"duplicate --client-env for {label}:{key}")
         per_client[key] = value
+    return overrides
+
+
+def client_storage_io_worker_thread_overrides(entries, labels):
+    known_labels, overrides = set(labels), {}
+    for label, worker_threads in entries:
+        if label not in known_labels:
+            raise ValueError(f"worker-count override references unknown client label: {label}")
+        if label in overrides:
+            raise ValueError(f"duplicate worker-count override for {label}")
+        overrides[label] = worker_threads
     return overrides
 
 
@@ -876,6 +899,9 @@ def parse_args():
         help="set [storage].io_queue_depth on TorrentNG clients for backend sizing screens")
     p.add_argument("--storage-io-worker-threads", type=int,
         help="set [storage].io_worker_threads on TorrentNG clients for worker-count screens")
+    p.add_argument("--client-storage-io-worker-threads", action="append",
+        type=parse_client_storage_io_worker_threads, default=[], metavar="LABEL=COUNT",
+        help="override [storage].io_worker_threads for one named client")
     p.add_argument("--output", help="new result directory; default is a fresh temporary directory")
     p.add_argument("--warmup", type=int, default=5); p.add_argument("--cooldown", type=int, default=5)
     p.add_argument("--timeout", type=int, default=900); p.add_argument("--order-seed", type=int, default=1)
@@ -925,6 +951,8 @@ def main():
         raise SystemExit("--client labels must be unique")
     try:
         env_overrides = client_env_overrides(args.client_env, [client[0] for client in args.client])
+        worker_thread_overrides = client_storage_io_worker_thread_overrides(
+            args.client_storage_io_worker_threads, [client[0] for client in args.client])
     except ValueError as error:
         raise SystemExit(str(error)) from error
     if not 0 <= args.seed < 2**64:
@@ -963,6 +991,7 @@ def main():
         "fixture_bytes": args.size, "fixture_seed": args.seed,
         "storage_io_queue_depth": args.storage_io_queue_depth,
         "storage_io_worker_threads": args.storage_io_worker_threads,
+        "client_storage_io_worker_threads": worker_thread_overrides,
         "fixture_sha256": digest, "info_hash": ih.hex(), "offered_rate_bytes_per_second": RATE,
         "block_bytes": BLOCK, "request_window": WINDOW, "dht": False, "pex": False,
         "tracker": False, "bind_address": "127.0.0.1", "paired": len(args.client) >= 2,
@@ -984,7 +1013,7 @@ def main():
             item = start_client(client, run_dir, fixture_dir, torrent, ih, args.ready_timeout,
                                 env_overrides.get(client[0], {}), profile_preload, profile_path,
                                 pgo_profile_path, args.storage_io_queue_depth,
-                                args.storage_io_worker_threads)
+                                worker_thread_overrides.get(client[0], args.storage_io_worker_threads))
             successful_run, run_record = False, None
             def sample_loop():
                 while not stop.is_set(): active.append(process_sample(item["proc_pid"])); stop.wait(1)
@@ -1042,6 +1071,9 @@ def main():
                 run_record = {"round": round_index + 1, "name": client[0], "kind": client[1], "binary": item["binary"],
                     "binary_sha256": item["binary_sha256"], "command": item["command"], "config_path": item["config"],
                     "environment_overrides": item["environment_overrides"],
+                    "storage_io_worker_threads": (worker_thread_overrides.get(
+                        client[0], args.storage_io_worker_threads)
+                        if client[1] == "torrentngd" else None),
                     "inherited_measurement_controls": item["inherited_measurement_controls"],
                     "namespace_pid": item["process"].pid, "proc_pid": item["proc_pid"],
                     "transfer": transfer, "pre_leecher_sample": pre_leecher_sample,
