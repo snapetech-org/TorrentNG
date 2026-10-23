@@ -1,0 +1,143 @@
+{
+  "status": "complete",
+  "method": "three simultaneous loopback leechers per one seed daemon; each receives the same deterministic fixture at 4 MiB/s; process CPU normalized over total verified bytes",
+  "fixture_bytes_per_peer": 67108864,
+  "peer_count": 3,
+  "total_payload_bytes": 201326592,
+  "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+  "info_hash": "5ceff928c8833b0f7994370f398ba4b14b28034a",
+  "binary_hashes": {
+    "release": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+    "arena2": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+    "rt": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46"
+  },
+  "leecher_rate_bytes_per_second": 4194304,
+  "randomized_order": [
+    "release",
+    "arena2",
+    "rt"
+  ],
+  "runs": [
+    {
+      "round": 1,
+      "name": "release",
+      "kind": "torrentngd",
+      "binary": "/tmp/torrentng-seed-goal-20261022/arena1-release-batch8.torrentngd",
+      "binary_sha256": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+      "environment_overrides": {
+        "TNG_STORAGE_BACKEND": "pread"
+      },
+      "verified_peers": 3,
+      "peer_transfers": [
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.0000633969903,
+          "elapsed_seconds": 16.613872178975726
+        },
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.00006368700997,
+          "elapsed_seconds": 16.613707726006396
+        },
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.00005820702063,
+          "elapsed_seconds": 16.612690702982945
+        }
+      ],
+      "total_verified_bytes": 201326592,
+      "elapsed_wall_seconds": 16.61656452898751,
+      "process_cpu_seconds": 0.437925639,
+      "cpu_seconds_per_gib": 2.335603408,
+      "peak_pss_bytes": 20259840,
+      "peak_anonymous_bytes": 6856704,
+      "peak_rss_bytes": 23281664,
+      "samples_count": 30,
+      "sampler_error": []
+    },
+    {
+      "round": 2,
+      "name": "arena2",
+      "kind": "torrentngd",
+      "binary": "/tmp/torrentng-seed-goal-20261022/arena1-release-batch8.torrentngd",
+      "binary_sha256": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+      "environment_overrides": {
+        "TNG_STORAGE_BACKEND": "pread",
+        "MALLOC_ARENA_MAX": "2"
+      },
+      "verified_peers": 3,
+      "peer_transfers": [
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.00006290600868,
+          "elapsed_seconds": 16.580157340009464
+        },
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.000060671009123,
+          "elapsed_seconds": 16.5811126769986
+        },
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.000057816010667,
+          "elapsed_seconds": 16.580130089016166
+        }
+      ],
+      "total_verified_bytes": 201326592,
+      "elapsed_wall_seconds": 16.581766740011517,
+      "process_cpu_seconds": 0.511755544,
+      "cpu_seconds_per_gib": 2.7293629013333334,
+      "peak_pss_bytes": 19297280,
+      "peak_anonymous_bytes": 5894144,
+      "peak_rss_bytes": 22347776,
+      "samples_count": 30,
+      "sampler_error": []
+    },
+    {
+      "round": 3,
+      "name": "rt",
+      "kind": "rtorrent",
+      "binary": "/tmp/torrentng-seed-goal-20261022/rtorrent-rootfs/usr/local/bin/rtorrent",
+      "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+      "environment_overrides": {
+        "LD_LIBRARY_PATH": "/tmp/torrentng-seed-goal-20261022/rtorrent-libs:/tmp/torrentng-seed-goal-20261022/rtorrent-rootfs/usr/local/lib"
+      },
+      "verified_peers": 3,
+      "peer_transfers": [
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.000052734976634,
+          "elapsed_seconds": 16.510053631005576
+        },
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.00006568999379,
+          "elapsed_seconds": 16.508933189994423
+        },
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.000062042992795,
+          "elapsed_seconds": 16.50909421700635
+        }
+      ],
+      "total_verified_bytes": 201326592,
+      "elapsed_wall_seconds": 16.51047215698054,
+      "process_cpu_seconds": 0.223408077,
+      "cpu_seconds_per_gib": 1.191509744,
+      "peak_pss_bytes": 7977984,
+      "peak_anonymous_bytes": 3227648,
+      "peak_rss_bytes": 21364736,
+      "samples_count": 30,
+      "sampler_error": []
+    }
+  ]
+}

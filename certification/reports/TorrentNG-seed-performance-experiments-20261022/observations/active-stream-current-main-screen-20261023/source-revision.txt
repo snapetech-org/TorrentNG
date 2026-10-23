@@ -1,0 +1,3 @@
+Base source: 4b187a8d (main, documentation-only commit; production source includes the eight-block batching change)
+Candidate source: base plus active-stream-current-main.patch
+Candidate source patch: crates/rt-storage/src/scheduler.rs only

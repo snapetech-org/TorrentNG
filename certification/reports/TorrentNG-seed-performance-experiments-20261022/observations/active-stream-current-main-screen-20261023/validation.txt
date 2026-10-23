@@ -1,0 +1,4 @@
+Rust: 1.94.0
+Formatting: cargo +1.94.0 fmt --all -- --check (passed)
+Focused tests: CARGO_TARGET_DIR=/tmp/torrentng-seed-goal-20261022/target cargo +1.94.0 test --locked -p rt-storage peer_read_stream (2 passed, 352 filtered)
+Release build: CARGO_TARGET_DIR=/tmp/torrentng-seed-goal-20261022/target cargo +1.94.0 build --locked --release -p torrentngd --no-default-features --features system-allocator (passed)

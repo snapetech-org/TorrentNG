@@ -1,0 +1,2 @@
+08:14:40 up 2 days, 56 min,  2 users,  load average: 12.24, 9.18, 7.41
+32 CPUs

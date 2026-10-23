@@ -1,0 +1,789 @@
+# HELP torrentng_engine_alive TorrentNG client actor liveness (1=alive, 0=unavailable)
+# TYPE torrentng_engine_alive gauge
+torrentng_engine_alive 1
+# HELP torrentng_peer_listener_healthy TorrentNG peer listener health (1=healthy, 0=unhealthy)
+# TYPE torrentng_peer_listener_healthy gauge
+torrentng_peer_listener_healthy 1
+# HELP torrentng_peer_handshakes_admitted_total Inbound handshake-admission permits granted before peer-wire validation
+# TYPE torrentng_peer_handshakes_admitted_total counter
+torrentng_peer_handshakes_admitted_total 0
+# HELP torrentng_peer_handshakes_rejected_global_budget_total Inbound handshakes rejected by the global handshake budget
+# TYPE torrentng_peer_handshakes_rejected_global_budget_total counter
+torrentng_peer_handshakes_rejected_global_budget_total 0
+# HELP torrentng_peer_handshakes_rejected_per_ip_budget_total Inbound handshakes rejected by the per-IP rate budget
+# TYPE torrentng_peer_handshakes_rejected_per_ip_budget_total counter
+torrentng_peer_handshakes_rejected_per_ip_budget_total 0
+# HELP torrentng_peer_connections_rejected_budget_total Inbound handshakes rejected by the global peer-connection budget
+# TYPE torrentng_peer_connections_rejected_budget_total counter
+torrentng_peer_connections_rejected_budget_total 0
+# HELP torrentng_peer_handshake_read_errors_total Inbound peer handshakes with a failed or truncated read
+# TYPE torrentng_peer_handshake_read_errors_total counter
+torrentng_peer_handshake_read_errors_total 0
+# HELP torrentng_peer_handshake_timeouts_total Inbound peer handshakes that exceeded the handshake deadline
+# TYPE torrentng_peer_handshake_timeouts_total counter
+torrentng_peer_handshake_timeouts_total 0
+# HELP torrentng_peer_handshakes_malformed_total Inbound peer handshakes rejected by wire-protocol parsing
+# TYPE torrentng_peer_handshakes_malformed_total counter
+torrentng_peer_handshakes_malformed_total 0
+# HELP torrentng_database_worker_healthy Dedicated database worker health (1=healthy, 0=unhealthy)
+# TYPE torrentng_database_worker_healthy gauge
+torrentng_database_worker_healthy 1
+# HELP torrentng_database_worker_queue_depth Commands waiting in the bounded native database-worker queue
+# TYPE torrentng_database_worker_queue_depth gauge
+torrentng_database_worker_queue_depth 0
+# HELP torrentng_database_worker_queue_capacity Configured capacity of the native database-worker command queue
+# TYPE torrentng_database_worker_queue_capacity gauge
+torrentng_database_worker_queue_capacity 128
+# HELP torrentng_database_worker_commands_enqueued_total Database-worker commands successfully admitted to the bounded queue
+# TYPE torrentng_database_worker_commands_enqueued_total counter
+torrentng_database_worker_commands_enqueued_total 14
+# HELP torrentng_database_worker_commands_completed_total Database-worker commands completed with either success or failure
+# TYPE torrentng_database_worker_commands_completed_total counter
+torrentng_database_worker_commands_completed_total 14
+# HELP torrentng_database_worker_command_failures_total Database-worker commands completed with an error
+# TYPE torrentng_database_worker_command_failures_total counter
+torrentng_database_worker_command_failures_total 0
+# HELP torrentng_database_worker_commands_cancelled_total Queued database-worker commands cancelled before execution
+# TYPE torrentng_database_worker_commands_cancelled_total counter
+torrentng_database_worker_commands_cancelled_total 0
+# HELP torrentng_database_worker_enqueue_timeouts_total Database-worker queue admissions that timed out under backpressure
+# TYPE torrentng_database_worker_enqueue_timeouts_total counter
+torrentng_database_worker_enqueue_timeouts_total 0
+# HELP torrentng_database_worker_queue_wait_seconds_total Cumulative time database-worker commands waited in the queue
+# TYPE torrentng_database_worker_queue_wait_seconds_total counter
+torrentng_database_worker_queue_wait_seconds_total 0.000064106
+# HELP torrentng_database_worker_command_latency_seconds_total Cumulative enqueue-to-result latency for completed database-worker commands
+# TYPE torrentng_database_worker_command_latency_seconds_total counter
+torrentng_database_worker_command_latency_seconds_total 0.000588744
+# HELP torrentng_database_worker_batch_transactions_total Shared database transactions attempted for batched worker commands
+# TYPE torrentng_database_worker_batch_transactions_total counter
+torrentng_database_worker_batch_transactions_total 0
+# HELP torrentng_database_worker_batch_transaction_failures_total Shared batched database transactions that failed to commit or roll back
+# TYPE torrentng_database_worker_batch_transaction_failures_total counter
+torrentng_database_worker_batch_transaction_failures_total 0
+# HELP torrentng_database_worker_batch_transaction_duration_seconds_total Cumulative duration of shared batched database transactions
+# TYPE torrentng_database_worker_batch_transaction_duration_seconds_total counter
+torrentng_database_worker_batch_transaction_duration_seconds_total 0.000000000
+# HELP torrentng_storage_supervisor_healthy Detached storage supervisor health (1=healthy, 0=unhealthy)
+# TYPE torrentng_storage_supervisor_healthy gauge
+torrentng_storage_supervisor_healthy 1
+# HELP torrentng_dht_enabled Whether the TorrentNG-client DHT is enabled (1=enabled, 0=disabled)
+# TYPE torrentng_dht_enabled gauge
+torrentng_dht_enabled 0
+# HELP torrentng_dht_healthy TorrentNG-client DHT task health (1=healthy, 0=unhealthy)
+# TYPE torrentng_dht_healthy gauge
+torrentng_dht_healthy 1
+# HELP torrentng_torrents_total Total torrents in session
+# TYPE torrentng_torrents_total gauge
+torrentng_torrents_total 0
+# HELP torrentng_torrents_seeding Currently seeding torrents
+# TYPE torrentng_torrents_seeding gauge
+torrentng_torrents_seeding 0
+# HELP torrentng_torrents_downloading Currently downloading torrents
+# TYPE torrentng_torrents_downloading gauge
+torrentng_torrents_downloading 0
+# HELP torrentng_torrents_paused Paused or stopped torrents
+# TYPE torrentng_torrents_paused gauge
+torrentng_torrents_paused 0
+# HELP torrentng_torrents_checking Torrents checking pieces
+# TYPE torrentng_torrents_checking gauge
+torrentng_torrents_checking 0
+# HELP torrentng_torrents_metadata_pending Metadata-pending torrents
+# TYPE torrentng_torrents_metadata_pending gauge
+torrentng_torrents_metadata_pending 0
+# HELP torrentng_torrents_queued Queued torrents
+# TYPE torrentng_torrents_queued gauge
+torrentng_torrents_queued 0
+# HELP torrentng_torrents_errored Errored torrents
+# TYPE torrentng_torrents_errored gauge
+torrentng_torrents_errored 0
+# HELP torrentng_torrents_activity_hot Torrents currently classified as hot by the activity tier policy
+# TYPE torrentng_torrents_activity_hot gauge
+torrentng_torrents_activity_hot 0
+# HELP torrentng_torrents_activity_warm Torrents currently classified as warm by the activity tier policy
+# TYPE torrentng_torrents_activity_warm gauge
+torrentng_torrents_activity_warm 0
+# HELP torrentng_torrents_activity_dormant Torrents currently classified as dormant by the activity tier policy
+# TYPE torrentng_torrents_activity_dormant gauge
+torrentng_torrents_activity_dormant 0
+# HELP torrentng_dormant_runtime_heap_bytes Heap bytes retained by compact dormant runtime projections
+# TYPE torrentng_dormant_runtime_heap_bytes gauge
+torrentng_dormant_runtime_heap_bytes 0
+# HELP torrentng_torrent_tasks_active Active per-torrent runtime tasks
+# TYPE torrentng_torrent_tasks_active gauge
+torrentng_torrent_tasks_active 0
+# HELP torrentng_fastresume_dirty_pieces Pieces validated since the last completed durability barrier
+# TYPE torrentng_fastresume_dirty_pieces gauge
+torrentng_fastresume_dirty_pieces 0
+# HELP torrentng_completed_piece_verify_from_memory_total Completed piece verifications hashed from assembled in-memory piece data
+# TYPE torrentng_completed_piece_verify_from_memory_total counter
+torrentng_completed_piece_verify_from_memory_total 0
+# HELP torrentng_completed_piece_verify_from_disk_total Completed piece verifications that fell back to disk re-read
+# TYPE torrentng_completed_piece_verify_from_disk_total counter
+torrentng_completed_piece_verify_from_disk_total 0
+# HELP torrentng_bytes_uploaded_total Uploaded bytes from session accounting
+# TYPE torrentng_bytes_uploaded_total counter
+torrentng_bytes_uploaded_total 0
+# HELP torrentng_bytes_downloaded_total Downloaded bytes from session accounting
+# TYPE torrentng_bytes_downloaded_total counter
+torrentng_bytes_downloaded_total 0
+# HELP torrentng_payload_copy_peer_v2_assembly_bytes_total Bytes copied into pure-v2 peer piece assemblies at instrumented sites
+# TYPE torrentng_payload_copy_peer_v2_assembly_bytes_total counter
+torrentng_payload_copy_peer_v2_assembly_bytes_total 0
+# HELP torrentng_payload_copy_peer_file_segment_bytes_total Bytes copied into peer file segments at instrumented sites
+# TYPE torrentng_payload_copy_peer_file_segment_bytes_total counter
+torrentng_payload_copy_peer_file_segment_bytes_total 0
+# HELP torrentng_payload_copy_webseed_reassembly_bytes_total Bytes copied while reassembling webseed ranges at instrumented sites
+# TYPE torrentng_payload_copy_webseed_reassembly_bytes_total counter
+torrentng_payload_copy_webseed_reassembly_bytes_total 0
+# HELP torrentng_download_rate_bytes_per_second Aggregate current peer download rate
+# TYPE torrentng_download_rate_bytes_per_second gauge
+torrentng_download_rate_bytes_per_second 0
+# HELP torrentng_upload_rate_bytes_per_second Aggregate current peer upload rate
+# TYPE torrentng_upload_rate_bytes_per_second gauge
+torrentng_upload_rate_bytes_per_second 0
+# HELP torrentng_bytes_left Bytes left across enabled torrent pieces
+# TYPE torrentng_bytes_left gauge
+torrentng_bytes_left 0
+# HELP torrentng_jobs_active Active durable jobs
+# TYPE torrentng_jobs_active gauge
+torrentng_jobs_active 0
+# HELP torrentng_storage_jobs_inflight Storage-plan requests retained by the background dispatcher
+# TYPE torrentng_storage_jobs_inflight gauge
+torrentng_storage_jobs_inflight 0
+# HELP torrentng_storage_jobs_queue_depth Storage-plan requests pending in the bounded dispatcher channel
+# TYPE torrentng_storage_jobs_queue_depth gauge
+torrentng_storage_jobs_queue_depth 0
+# HELP torrentng_storage_jobs_capacity End-to-end storage-plan dispatcher capacity
+# TYPE torrentng_storage_jobs_capacity gauge
+torrentng_storage_jobs_capacity 34
+# HELP torrentng_storage_jobs_saturated Whether the end-to-end storage-plan dispatcher is saturated (1=saturated, 0=not saturated)
+# TYPE torrentng_storage_jobs_saturated gauge
+torrentng_storage_jobs_saturated 0
+# HELP torrentng_storage_workers Configured blocking storage worker count
+# TYPE torrentng_storage_workers gauge
+torrentng_storage_workers 2
+# HELP torrentng_storage_workers_healthy Storage-job supervisor health (1=healthy, 0=unhealthy)
+# TYPE torrentng_storage_workers_healthy gauge
+torrentng_storage_workers_healthy 1
+# HELP torrentng_trackers_total Persisted tracker rows
+# TYPE torrentng_trackers_total gauge
+torrentng_trackers_total 0
+# HELP torrentng_trackers_working Trackers in working state
+# TYPE torrentng_trackers_working gauge
+torrentng_trackers_working 0
+# HELP torrentng_trackers_warning Trackers with warning state
+# TYPE torrentng_trackers_warning gauge
+torrentng_trackers_warning 0
+# HELP torrentng_trackers_error Trackers with error state
+# TYPE torrentng_trackers_error gauge
+torrentng_trackers_error 0
+# HELP torrentng_trackers_error_ratio_milli Tracker error ratio multiplied by 1000 (250 means 25 percent)
+# TYPE torrentng_trackers_error_ratio_milli gauge
+torrentng_trackers_error_ratio_milli 0
+# HELP torrentng_dht_routing_nodes DHT routing table nodes retained by the TorrentNG-client DHT task
+# TYPE torrentng_dht_routing_nodes gauge
+torrentng_dht_routing_nodes 0
+# HELP torrentng_dht_announced_peer_sets Info-hash peer sets retained from DHT announce_peer queries
+# TYPE torrentng_dht_announced_peer_sets gauge
+torrentng_dht_announced_peer_sets 0
+# HELP torrentng_dht_announced_peers DHT announced peers retained across all info-hash peer sets
+# TYPE torrentng_dht_announced_peers gauge
+torrentng_dht_announced_peers 0
+# HELP torrentng_dht_tracked_torrents Torrents registered with the TorrentNG-client DHT task
+# TYPE torrentng_dht_tracked_torrents gauge
+torrentng_dht_tracked_torrents 0
+# HELP torrentng_dht_tracked_torrents_cap Configured admission cap for DHT-tracked torrents (dht.tracked_torrents_cap)
+# TYPE torrentng_dht_tracked_torrents_cap gauge
+torrentng_dht_tracked_torrents_cap 0
+# HELP torrentng_dht_tracked_torrents_rejected_total Torrents rejected from DHT tracking because dht_tracked_torrents_cap was reached; nonzero means DHT peer discovery is unavailable for at least one torrent
+# TYPE torrentng_dht_tracked_torrents_rejected_total counter
+torrentng_dht_tracked_torrents_rejected_total 0
+# HELP torrentng_dht_outstanding_requests DHT KRPC requests currently awaiting responses
+# TYPE torrentng_dht_outstanding_requests gauge
+torrentng_dht_outstanding_requests 0
+# HELP torrentng_dht_queried_nodes DHT nodes remembered as queried across active lookups
+# TYPE torrentng_dht_queried_nodes gauge
+torrentng_dht_queried_nodes 0
+# HELP torrentng_storage_file_pool_capacity Configured open-file cache capacity across unique shared scheduler pools
+# TYPE torrentng_storage_file_pool_capacity gauge
+torrentng_storage_file_pool_capacity 0
+# HELP torrentng_storage_file_pool_open_files Cached file entries across unique shared scheduler pools
+# TYPE torrentng_storage_file_pool_open_files gauge
+torrentng_storage_file_pool_open_files 0
+# HELP torrentng_storage_file_pool_active_descriptors Leased descriptor slots for cached files, open attempts, or I/O across unique shared scheduler pools
+# TYPE torrentng_storage_file_pool_active_descriptors gauge
+torrentng_storage_file_pool_active_descriptors 0
+# HELP torrentng_storage_file_pool_memory_bytes Approximate open-file cache metadata across unique shared scheduler pools
+# TYPE torrentng_storage_file_pool_memory_bytes gauge
+torrentng_storage_file_pool_memory_bytes 0
+# HELP torrentng_storage_file_pool_hits_total Open-file cache hits across running torrent schedulers
+# TYPE torrentng_storage_file_pool_hits_total counter
+torrentng_storage_file_pool_hits_total 0
+# HELP torrentng_storage_file_pool_misses_total Open-file cache misses across running torrent schedulers
+# TYPE torrentng_storage_file_pool_misses_total counter
+torrentng_storage_file_pool_misses_total 0
+# HELP torrentng_storage_file_pool_evictions_total Open-file cache evictions across running torrent schedulers
+# TYPE torrentng_storage_file_pool_evictions_total counter
+torrentng_storage_file_pool_evictions_total 0
+# HELP torrentng_storage_file_pool_idle_closes_total Idle open-file cache closes across running torrent schedulers
+# TYPE torrentng_storage_file_pool_idle_closes_total counter
+torrentng_storage_file_pool_idle_closes_total 0
+# HELP torrentng_storage_io_queue_depth Queued disk I/O jobs across unique shared worker pools
+# TYPE torrentng_storage_io_queue_depth gauge
+torrentng_storage_io_queue_depth 0
+# HELP torrentng_storage_hash_queue_depth Queued hashing jobs across unique shared worker pools
+# TYPE torrentng_storage_hash_queue_depth gauge
+torrentng_storage_hash_queue_depth 0
+# HELP torrentng_storage_device_queue_capacity Configured process-level device queue permits across running torrent schedulers
+# TYPE torrentng_storage_device_queue_capacity gauge
+torrentng_storage_device_queue_capacity 0
+# HELP torrentng_storage_device_queue_available Currently available process-level device queue permits across running torrent schedulers
+# TYPE torrentng_storage_device_queue_available gauge
+torrentng_storage_device_queue_available 0
+# HELP torrentng_storage_queued_disk_bytes Estimated process-owned bytes represented by queued disk and hash jobs
+# TYPE torrentng_storage_queued_disk_bytes gauge
+torrentng_storage_queued_disk_bytes 0
+# HELP torrentng_storage_queue_full_total Disk or hash jobs denied because the per-mount storage queue was full
+# TYPE torrentng_storage_queue_full_total counter
+torrentng_storage_queue_full_total 0
+# HELP torrentng_storage_dirty_files Dirty files tracked by running torrent schedulers
+# TYPE torrentng_storage_dirty_files gauge
+torrentng_storage_dirty_files 0
+# HELP torrentng_storage_read_ops_total Positioned read operations across running torrent schedulers
+# TYPE torrentng_storage_read_ops_total counter
+torrentng_storage_read_ops_total 0
+# HELP torrentng_storage_read_ops_by_class_total Positioned read operations by I/O class across running torrent schedulers
+# TYPE torrentng_storage_read_ops_by_class_total counter
+torrentng_storage_read_ops_by_class_total{class="metadata"} 0
+torrentng_storage_read_ops_by_class_total{class="recheck"} 0
+torrentng_storage_read_ops_by_class_total{class="move_copy"} 0
+torrentng_storage_read_ops_by_class_total{class="peer_write"} 0
+torrentng_storage_read_ops_by_class_total{class="peer_read"} 0
+torrentng_storage_read_ops_by_class_total{class="foreground"} 0
+# HELP torrentng_storage_write_ops_total Positioned write operations across running torrent schedulers
+# TYPE torrentng_storage_write_ops_total counter
+torrentng_storage_write_ops_total 0
+# HELP torrentng_storage_write_ops_by_class_total Positioned write operations by I/O class across running torrent schedulers
+# TYPE torrentng_storage_write_ops_by_class_total counter
+torrentng_storage_write_ops_by_class_total{class="metadata"} 0
+torrentng_storage_write_ops_by_class_total{class="recheck"} 0
+torrentng_storage_write_ops_by_class_total{class="move_copy"} 0
+torrentng_storage_write_ops_by_class_total{class="peer_write"} 0
+torrentng_storage_write_ops_by_class_total{class="peer_read"} 0
+torrentng_storage_write_ops_by_class_total{class="foreground"} 0
+# HELP torrentng_storage_bytes_read_total Bytes read through running torrent schedulers
+# TYPE torrentng_storage_bytes_read_total counter
+torrentng_storage_bytes_read_total 0
+# HELP torrentng_storage_bytes_read_by_class_total Bytes read by I/O class through running torrent schedulers
+# TYPE torrentng_storage_bytes_read_by_class_total counter
+torrentng_storage_bytes_read_by_class_total{class="metadata"} 0
+torrentng_storage_bytes_read_by_class_total{class="recheck"} 0
+torrentng_storage_bytes_read_by_class_total{class="move_copy"} 0
+torrentng_storage_bytes_read_by_class_total{class="peer_write"} 0
+torrentng_storage_bytes_read_by_class_total{class="peer_read"} 0
+torrentng_storage_bytes_read_by_class_total{class="foreground"} 0
+# HELP torrentng_storage_bytes_written_total Bytes written through running torrent schedulers
+# TYPE torrentng_storage_bytes_written_total counter
+torrentng_storage_bytes_written_total 0
+# HELP torrentng_storage_bytes_written_by_class_total Bytes written by I/O class through running torrent schedulers
+# TYPE torrentng_storage_bytes_written_by_class_total counter
+torrentng_storage_bytes_written_by_class_total{class="metadata"} 0
+torrentng_storage_bytes_written_by_class_total{class="recheck"} 0
+torrentng_storage_bytes_written_by_class_total{class="move_copy"} 0
+torrentng_storage_bytes_written_by_class_total{class="peer_write"} 0
+torrentng_storage_bytes_written_by_class_total{class="peer_read"} 0
+torrentng_storage_bytes_written_by_class_total{class="foreground"} 0
+# HELP torrentng_storage_backend_read_ops_total Backend disk read operations across running torrent schedulers
+# TYPE torrentng_storage_backend_read_ops_total counter
+torrentng_storage_backend_read_ops_total 0
+# HELP torrentng_storage_backend_read_ops_by_class_total Backend disk read operations by I/O class across running torrent schedulers
+# TYPE torrentng_storage_backend_read_ops_by_class_total counter
+torrentng_storage_backend_read_ops_by_class_total{class="metadata"} 0
+torrentng_storage_backend_read_ops_by_class_total{class="recheck"} 0
+torrentng_storage_backend_read_ops_by_class_total{class="move_copy"} 0
+torrentng_storage_backend_read_ops_by_class_total{class="peer_write"} 0
+torrentng_storage_backend_read_ops_by_class_total{class="peer_read"} 0
+torrentng_storage_backend_read_ops_by_class_total{class="foreground"} 0
+# HELP torrentng_storage_backend_bytes_read_total Bytes read from backend disk operations across running torrent schedulers
+# TYPE torrentng_storage_backend_bytes_read_total counter
+torrentng_storage_backend_bytes_read_total 0
+# HELP torrentng_storage_backend_bytes_read_by_class_total Bytes read from backend disk operations by I/O class across running torrent schedulers
+# TYPE torrentng_storage_backend_bytes_read_by_class_total counter
+torrentng_storage_backend_bytes_read_by_class_total{class="metadata"} 0
+torrentng_storage_backend_bytes_read_by_class_total{class="recheck"} 0
+torrentng_storage_backend_bytes_read_by_class_total{class="move_copy"} 0
+torrentng_storage_backend_bytes_read_by_class_total{class="peer_write"} 0
+torrentng_storage_backend_bytes_read_by_class_total{class="peer_read"} 0
+torrentng_storage_backend_bytes_read_by_class_total{class="foreground"} 0
+# HELP torrentng_storage_read_latency_nanoseconds_total Total read queue plus execution latency across running torrent schedulers
+# TYPE torrentng_storage_read_latency_nanoseconds_total counter
+torrentng_storage_read_latency_nanoseconds_total 0
+# HELP torrentng_storage_read_latency_nanoseconds Read queue plus execution latency across running torrent schedulers
+# TYPE torrentng_storage_read_latency_nanoseconds histogram
+torrentng_storage_read_latency_nanoseconds_bucket{le="100000"} 0
+torrentng_storage_read_latency_nanoseconds_bucket{le="500000"} 0
+torrentng_storage_read_latency_nanoseconds_bucket{le="1000000"} 0
+torrentng_storage_read_latency_nanoseconds_bucket{le="5000000"} 0
+torrentng_storage_read_latency_nanoseconds_bucket{le="10000000"} 0
+torrentng_storage_read_latency_nanoseconds_bucket{le="50000000"} 0
+torrentng_storage_read_latency_nanoseconds_bucket{le="100000000"} 0
+torrentng_storage_read_latency_nanoseconds_bucket{le="+Inf"} 0
+torrentng_storage_read_latency_nanoseconds_sum 0
+torrentng_storage_read_latency_nanoseconds_count 0
+# HELP torrentng_storage_read_latency_nanoseconds_by_class_total Total read queue plus execution latency by I/O class
+# TYPE torrentng_storage_read_latency_nanoseconds_by_class_total counter
+torrentng_storage_read_latency_nanoseconds_by_class_total{class="metadata"} 0
+torrentng_storage_read_latency_nanoseconds_by_class_total{class="recheck"} 0
+torrentng_storage_read_latency_nanoseconds_by_class_total{class="move_copy"} 0
+torrentng_storage_read_latency_nanoseconds_by_class_total{class="peer_write"} 0
+torrentng_storage_read_latency_nanoseconds_by_class_total{class="peer_read"} 0
+torrentng_storage_read_latency_nanoseconds_by_class_total{class="foreground"} 0
+# HELP torrentng_storage_write_latency_nanoseconds_total Total write queue plus execution latency across running torrent schedulers
+# TYPE torrentng_storage_write_latency_nanoseconds_total counter
+torrentng_storage_write_latency_nanoseconds_total 0
+# HELP torrentng_storage_write_latency_nanoseconds Write queue plus execution latency across running torrent schedulers
+# TYPE torrentng_storage_write_latency_nanoseconds histogram
+torrentng_storage_write_latency_nanoseconds_bucket{le="100000"} 0
+torrentng_storage_write_latency_nanoseconds_bucket{le="500000"} 0
+torrentng_storage_write_latency_nanoseconds_bucket{le="1000000"} 0
+torrentng_storage_write_latency_nanoseconds_bucket{le="5000000"} 0
+torrentng_storage_write_latency_nanoseconds_bucket{le="10000000"} 0
+torrentng_storage_write_latency_nanoseconds_bucket{le="50000000"} 0
+torrentng_storage_write_latency_nanoseconds_bucket{le="100000000"} 0
+torrentng_storage_write_latency_nanoseconds_bucket{le="+Inf"} 0
+torrentng_storage_write_latency_nanoseconds_sum 0
+torrentng_storage_write_latency_nanoseconds_count 0
+# HELP torrentng_storage_write_latency_nanoseconds_by_class_total Total write queue plus execution latency by I/O class
+# TYPE torrentng_storage_write_latency_nanoseconds_by_class_total counter
+torrentng_storage_write_latency_nanoseconds_by_class_total{class="metadata"} 0
+torrentng_storage_write_latency_nanoseconds_by_class_total{class="recheck"} 0
+torrentng_storage_write_latency_nanoseconds_by_class_total{class="move_copy"} 0
+torrentng_storage_write_latency_nanoseconds_by_class_total{class="peer_write"} 0
+torrentng_storage_write_latency_nanoseconds_by_class_total{class="peer_read"} 0
+torrentng_storage_write_latency_nanoseconds_by_class_total{class="foreground"} 0
+# HELP torrentng_storage_read_latency_nanoseconds_by_device_total Total read queue plus execution latency by storage device
+# TYPE torrentng_storage_read_latency_nanoseconds_by_device_total counter
+# HELP torrentng_storage_read_latency_nanoseconds_by_device Read queue plus execution latency histogram by storage device
+# TYPE torrentng_storage_read_latency_nanoseconds_by_device histogram
+# HELP torrentng_storage_write_latency_nanoseconds_by_device_total Total write queue plus execution latency by storage device
+# TYPE torrentng_storage_write_latency_nanoseconds_by_device_total counter
+# HELP torrentng_storage_write_latency_nanoseconds_by_device Write queue plus execution latency histogram by storage device
+# TYPE torrentng_storage_write_latency_nanoseconds_by_device histogram
+# HELP torrentng_storage_sync_latency_nanoseconds_by_device_total Total sync queue plus execution latency by storage device
+# TYPE torrentng_storage_sync_latency_nanoseconds_by_device_total counter
+# HELP torrentng_storage_sync_latency_nanoseconds_by_device Sync queue plus execution latency histogram by storage device
+# TYPE torrentng_storage_sync_latency_nanoseconds_by_device histogram
+# HELP torrentng_storage_hash_latency_nanoseconds_by_device_total Total hashing queue plus execution latency by storage device
+# TYPE torrentng_storage_hash_latency_nanoseconds_by_device_total counter
+# HELP torrentng_storage_hash_latency_nanoseconds_by_device Hashing queue plus execution latency histogram by storage device
+# TYPE torrentng_storage_hash_latency_nanoseconds_by_device histogram
+# HELP torrentng_storage_sync_latency_nanoseconds_total Total sync queue plus execution latency across running torrent schedulers
+# TYPE torrentng_storage_sync_latency_nanoseconds_total counter
+torrentng_storage_sync_latency_nanoseconds_total 0
+# HELP torrentng_storage_sync_latency_nanoseconds Sync queue plus execution latency across running torrent schedulers
+# TYPE torrentng_storage_sync_latency_nanoseconds histogram
+torrentng_storage_sync_latency_nanoseconds_bucket{le="100000"} 0
+torrentng_storage_sync_latency_nanoseconds_bucket{le="500000"} 0
+torrentng_storage_sync_latency_nanoseconds_bucket{le="1000000"} 0
+torrentng_storage_sync_latency_nanoseconds_bucket{le="5000000"} 0
+torrentng_storage_sync_latency_nanoseconds_bucket{le="10000000"} 0
+torrentng_storage_sync_latency_nanoseconds_bucket{le="50000000"} 0
+torrentng_storage_sync_latency_nanoseconds_bucket{le="100000000"} 0
+torrentng_storage_sync_latency_nanoseconds_bucket{le="+Inf"} 0
+torrentng_storage_sync_latency_nanoseconds_sum 0
+torrentng_storage_sync_latency_nanoseconds_count 0
+# HELP torrentng_storage_hash_latency_nanoseconds_total Total hashing queue plus execution latency across running torrent schedulers
+# TYPE torrentng_storage_hash_latency_nanoseconds_total counter
+torrentng_storage_hash_latency_nanoseconds_total 0
+# HELP torrentng_storage_hash_latency_nanoseconds Hashing queue plus execution latency across running torrent schedulers
+# TYPE torrentng_storage_hash_latency_nanoseconds histogram
+torrentng_storage_hash_latency_nanoseconds_bucket{le="100000"} 0
+torrentng_storage_hash_latency_nanoseconds_bucket{le="500000"} 0
+torrentng_storage_hash_latency_nanoseconds_bucket{le="1000000"} 0
+torrentng_storage_hash_latency_nanoseconds_bucket{le="5000000"} 0
+torrentng_storage_hash_latency_nanoseconds_bucket{le="10000000"} 0
+torrentng_storage_hash_latency_nanoseconds_bucket{le="50000000"} 0
+torrentng_storage_hash_latency_nanoseconds_bucket{le="100000000"} 0
+torrentng_storage_hash_latency_nanoseconds_bucket{le="+Inf"} 0
+torrentng_storage_hash_latency_nanoseconds_sum 0
+torrentng_storage_hash_latency_nanoseconds_count 0
+# HELP torrentng_storage_sync_ops_total Data sync operations across running torrent schedulers
+# TYPE torrentng_storage_sync_ops_total counter
+torrentng_storage_sync_ops_total 0
+# HELP torrentng_storage_hash_ops_total Hashing operations across running torrent schedulers
+# TYPE torrentng_storage_hash_ops_total counter
+torrentng_storage_hash_ops_total 0
+# HELP torrentng_storage_preallocation_failures_total Preallocation failures across running torrent schedulers
+# TYPE torrentng_storage_preallocation_failures_total counter
+torrentng_storage_preallocation_failures_total 0
+# HELP torrentng_storage_preallocation_fallbacks_total Preallocation fallback events across running torrent schedulers
+# TYPE torrentng_storage_preallocation_fallbacks_total counter
+torrentng_storage_preallocation_fallbacks_total 0
+# HELP torrentng_storage_peer_read_cache_entries Peer-read readahead cache entries across running torrent schedulers
+# TYPE torrentng_storage_peer_read_cache_entries gauge
+torrentng_storage_peer_read_cache_entries 0
+# HELP torrentng_storage_peer_read_cache_bytes Peer-read readahead payload bytes across running torrent schedulers
+# TYPE torrentng_storage_peer_read_cache_bytes gauge
+torrentng_storage_peer_read_cache_bytes 0
+# HELP torrentng_storage_peer_read_cache_global_backing_bytes Process-wide peer-read cache backing bytes including live response slices
+# TYPE torrentng_storage_peer_read_cache_global_backing_bytes gauge
+torrentng_storage_peer_read_cache_global_backing_bytes 0
+# HELP torrentng_storage_peer_read_cache_global_budget_bytes Process-wide peer-read cache backing-byte budget
+# TYPE torrentng_storage_peer_read_cache_global_budget_bytes gauge
+torrentng_storage_peer_read_cache_global_budget_bytes 0
+# HELP torrentng_storage_peer_read_cache_hits_total Peer-read readahead cache hits across running torrent schedulers
+# TYPE torrentng_storage_peer_read_cache_hits_total counter
+torrentng_storage_peer_read_cache_hits_total 0
+# HELP torrentng_storage_peer_read_cache_misses_total Peer-read readahead cache misses across running torrent schedulers
+# TYPE torrentng_storage_peer_read_cache_misses_total counter
+torrentng_storage_peer_read_cache_misses_total 0
+# HELP torrentng_storage_peer_read_cache_evictions_total Peer-read readahead cache evictions across running torrent schedulers
+# TYPE torrentng_storage_peer_read_cache_evictions_total counter
+torrentng_storage_peer_read_cache_evictions_total 0
+# HELP torrentng_storage_peer_read_elevator_enabled Running torrent schedulers with peer-read elevator enabled
+# TYPE torrentng_storage_peer_read_elevator_enabled gauge
+torrentng_storage_peer_read_elevator_enabled 0
+# HELP torrentng_storage_peer_read_elevator_queue_depth Configured peer-read elevator queue depth across running torrent schedulers
+# TYPE torrentng_storage_peer_read_elevator_queue_depth gauge
+torrentng_storage_peer_read_elevator_queue_depth 0
+# HELP torrentng_storage_peer_read_elevator_queued Currently queued peer-read elevator requests across running torrent schedulers
+# TYPE torrentng_storage_peer_read_elevator_queued gauge
+torrentng_storage_peer_read_elevator_queued 0
+# HELP torrentng_storage_peer_read_elevator_queue_full_total Peer-read elevator requests denied because the elevator queue was full
+# TYPE torrentng_storage_peer_read_elevator_queue_full_total counter
+torrentng_storage_peer_read_elevator_queue_full_total 0
+# HELP torrentng_storage_peer_read_elevator_batches_total Peer-read elevator backend batches across running torrent schedulers
+# TYPE torrentng_storage_peer_read_elevator_batches_total counter
+torrentng_storage_peer_read_elevator_batches_total 0
+# HELP torrentng_storage_peer_read_elevator_coalesced_requests_total Peer-read elevator logical requests coalesced into existing backend batches
+# TYPE torrentng_storage_peer_read_elevator_coalesced_requests_total counter
+torrentng_storage_peer_read_elevator_coalesced_requests_total 0
+# HELP torrentng_storage_page_cache_advise_sequential_total Successful POSIX_FADV_SEQUENTIAL hints issued by storage schedulers
+# TYPE torrentng_storage_page_cache_advise_sequential_total counter
+torrentng_storage_page_cache_advise_sequential_total 0
+# HELP torrentng_storage_page_cache_advise_willneed_total Successful POSIX_FADV_WILLNEED hints issued by storage schedulers
+# TYPE torrentng_storage_page_cache_advise_willneed_total counter
+torrentng_storage_page_cache_advise_willneed_total 0
+# HELP torrentng_storage_page_cache_advise_dontneed_total Successful POSIX_FADV_DONTNEED hints issued by storage schedulers
+# TYPE torrentng_storage_page_cache_advise_dontneed_total counter
+torrentng_storage_page_cache_advise_dontneed_total 0
+# HELP torrentng_storage_page_cache_advise_failures_total Failed page-cache advice calls observed by storage schedulers
+# TYPE torrentng_storage_page_cache_advise_failures_total counter
+torrentng_storage_page_cache_advise_failures_total 0
+# HELP torrentng_storage_sparse_data_extents_total Sparse-file data extents discovered during storage recheck
+# TYPE torrentng_storage_sparse_data_extents_total counter
+torrentng_storage_sparse_data_extents_total 0
+# HELP torrentng_storage_sparse_hole_bytes_total Sparse-file hole bytes skipped during storage recheck
+# TYPE torrentng_storage_sparse_hole_bytes_total counter
+torrentng_storage_sparse_hole_bytes_total 0
+# HELP torrentng_storage_sparse_seek_fallbacks_total Sparse-file extent probes that fell back to contiguous reads
+# TYPE torrentng_storage_sparse_seek_fallbacks_total counter
+torrentng_storage_sparse_seek_fallbacks_total 0
+# HELP torrentng_piece_assembly_buffers In-memory piece assembly buffers across running torrents
+# TYPE torrentng_piece_assembly_buffers gauge
+torrentng_piece_assembly_buffers 0
+# HELP torrentng_piece_assembly_bytes In-memory piece assembly bytes across running torrents
+# TYPE torrentng_piece_assembly_bytes gauge
+torrentng_piece_assembly_bytes 0
+# HELP torrentng_piece_assembly_evictions_total In-memory piece assembly buffers evicted by torrent-task budgets
+# TYPE torrentng_piece_assembly_evictions_total counter
+torrentng_piece_assembly_evictions_total 0
+# HELP torrentng_peer_request_window_reductions_total Peer request refill windows reduced because memory pressure limited in-flight piece data
+# TYPE torrentng_peer_request_window_reductions_total counter
+torrentng_peer_request_window_reductions_total 0
+# HELP torrentng_peer_rx_buffer_bytes Potential peer receive payload capacity from outstanding block requests; not a direct reading of allocated bytes
+# TYPE torrentng_peer_rx_buffer_bytes gauge
+torrentng_peer_rx_buffer_bytes 0
+# HELP torrentng_peer_tx_buffer_bytes Peer upload buffer bytes currently owned by torrent tasks
+# TYPE torrentng_peer_tx_buffer_bytes gauge
+torrentng_peer_tx_buffer_bytes 0
+# HELP torrentng_peer_command_queue_depth Queued peer commands across active peer tasks
+# TYPE torrentng_peer_command_queue_depth gauge
+torrentng_peer_command_queue_depth 0
+# HELP torrentng_peer_command_queue_capacity Total peer command queue capacity across active peer tasks
+# TYPE torrentng_peer_command_queue_capacity gauge
+torrentng_peer_command_queue_capacity 0
+# HELP torrentng_peer_command_queue_bytes Estimated peer command queue capacity bytes; this estimate may overlap leased memory
+# TYPE torrentng_peer_command_queue_bytes gauge
+torrentng_peer_command_queue_bytes 0
+# HELP torrentng_peer_buffer_estimated_bytes Estimated peer request, upload-buffer, and command-queue bytes; may overlap leased memory and is not cap accounting
+# TYPE torrentng_peer_buffer_estimated_bytes gauge
+torrentng_peer_buffer_estimated_bytes 0
+# HELP torrentng_peer_command_queue_full_total Nonblocking peer command sends denied because peer command queues were full
+# TYPE torrentng_peer_command_queue_full_total counter
+torrentng_peer_command_queue_full_total 0
+# HELP torrentng_tracker_peer_cache_entries Tracker-discovered peer addresses retained across running torrents
+# TYPE torrentng_tracker_peer_cache_entries gauge
+torrentng_tracker_peer_cache_entries 0
+# HELP torrentng_tracker_peer_cache_drops_total Tracker-discovered peer addresses dropped because bounded peer caches were full
+# TYPE torrentng_tracker_peer_cache_drops_total counter
+torrentng_tracker_peer_cache_drops_total 0
+# HELP torrentng_memory_cap_bytes Configured process-owned memory cap enforced by the resource governor
+# TYPE torrentng_memory_cap_bytes gauge
+torrentng_memory_cap_bytes 536870912
+# HELP torrentng_memory_used_bytes Process-owned bytes currently leased through the resource governor
+# TYPE torrentng_memory_used_bytes gauge
+torrentng_memory_used_bytes 0
+# HELP torrentng_memory_pressure_state Resource governor memory pressure state: normal=0 constrained=1 critical=2
+# TYPE torrentng_memory_pressure_state gauge
+torrentng_memory_pressure_state 0
+# HELP torrentng_memory_class_cap_bytes Configured process-owned memory cap by resource class
+# TYPE torrentng_memory_class_cap_bytes gauge
+torrentng_memory_class_cap_bytes{class="storage_frame"} 134217728
+# HELP torrentng_memory_class_used_bytes Process-owned bytes currently leased by resource class
+# TYPE torrentng_memory_class_used_bytes gauge
+torrentng_memory_class_used_bytes{class="storage_frame"} 0
+# HELP torrentng_memory_class_denied_allocations_total Denied resource governor allocation attempts by resource class
+# TYPE torrentng_memory_class_denied_allocations_total counter
+torrentng_memory_class_denied_allocations_total{class="storage_frame"} 0
+# HELP torrentng_memory_class_cap_bytes Configured process-owned memory cap by resource class
+# TYPE torrentng_memory_class_cap_bytes gauge
+torrentng_memory_class_cap_bytes{class="piece_assembly"} 0
+# HELP torrentng_memory_class_used_bytes Process-owned bytes currently leased by resource class
+# TYPE torrentng_memory_class_used_bytes gauge
+torrentng_memory_class_used_bytes{class="piece_assembly"} 0
+# HELP torrentng_memory_class_denied_allocations_total Denied resource governor allocation attempts by resource class
+# TYPE torrentng_memory_class_denied_allocations_total counter
+torrentng_memory_class_denied_allocations_total{class="piece_assembly"} 0
+# HELP torrentng_memory_class_cap_bytes Configured process-owned memory cap by resource class
+# TYPE torrentng_memory_class_cap_bytes gauge
+torrentng_memory_class_cap_bytes{class="peer_buffer"} 134217728
+# HELP torrentng_memory_class_used_bytes Process-owned bytes currently leased by resource class
+# TYPE torrentng_memory_class_used_bytes gauge
+torrentng_memory_class_used_bytes{class="peer_buffer"} 0
+# HELP torrentng_memory_class_denied_allocations_total Denied resource governor allocation attempts by resource class
+# TYPE torrentng_memory_class_denied_allocations_total counter
+torrentng_memory_class_denied_allocations_total{class="peer_buffer"} 0
+# HELP torrentng_memory_class_cap_bytes Configured process-owned memory cap by resource class
+# TYPE torrentng_memory_class_cap_bytes gauge
+torrentng_memory_class_cap_bytes{class="webseed_body"} 67108864
+# HELP torrentng_memory_class_used_bytes Process-owned bytes currently leased by resource class
+# TYPE torrentng_memory_class_used_bytes gauge
+torrentng_memory_class_used_bytes{class="webseed_body"} 0
+# HELP torrentng_memory_class_denied_allocations_total Denied resource governor allocation attempts by resource class
+# TYPE torrentng_memory_class_denied_allocations_total counter
+torrentng_memory_class_denied_allocations_total{class="webseed_body"} 0
+# HELP torrentng_memory_class_cap_bytes Configured process-owned memory cap by resource class
+# TYPE torrentng_memory_class_cap_bytes gauge
+torrentng_memory_class_cap_bytes{class="metadata"} 33554432
+# HELP torrentng_memory_class_used_bytes Process-owned bytes currently leased by resource class
+# TYPE torrentng_memory_class_used_bytes gauge
+torrentng_memory_class_used_bytes{class="metadata"} 0
+# HELP torrentng_memory_class_denied_allocations_total Denied resource governor allocation attempts by resource class
+# TYPE torrentng_memory_class_denied_allocations_total counter
+torrentng_memory_class_denied_allocations_total{class="metadata"} 0
+# HELP torrentng_memory_class_cap_bytes Configured process-owned memory cap by resource class
+# TYPE torrentng_memory_class_cap_bytes gauge
+torrentng_memory_class_cap_bytes{class="tracker_peers"} 33554432
+# HELP torrentng_memory_class_used_bytes Process-owned bytes currently leased by resource class
+# TYPE torrentng_memory_class_used_bytes gauge
+torrentng_memory_class_used_bytes{class="tracker_peers"} 0
+# HELP torrentng_memory_class_denied_allocations_total Denied resource governor allocation attempts by resource class
+# TYPE torrentng_memory_class_denied_allocations_total counter
+torrentng_memory_class_denied_allocations_total{class="tracker_peers"} 0
+# HELP torrentng_memory_class_cap_bytes Configured process-owned memory cap by resource class
+# TYPE torrentng_memory_class_cap_bytes gauge
+torrentng_memory_class_cap_bytes{class="dht_table"} 33554432
+# HELP torrentng_memory_class_used_bytes Process-owned bytes currently leased by resource class
+# TYPE torrentng_memory_class_used_bytes gauge
+torrentng_memory_class_used_bytes{class="dht_table"} 0
+# HELP torrentng_memory_class_denied_allocations_total Denied resource governor allocation attempts by resource class
+# TYPE torrentng_memory_class_denied_allocations_total counter
+torrentng_memory_class_denied_allocations_total{class="dht_table"} 0
+# HELP torrentng_memory_class_cap_bytes Configured process-owned memory cap by resource class
+# TYPE torrentng_memory_class_cap_bytes gauge
+torrentng_memory_class_cap_bytes{class="queued_disk"} 67108864
+# HELP torrentng_memory_class_used_bytes Process-owned bytes currently leased by resource class
+# TYPE torrentng_memory_class_used_bytes gauge
+torrentng_memory_class_used_bytes{class="queued_disk"} 0
+# HELP torrentng_memory_class_denied_allocations_total Denied resource governor allocation attempts by resource class
+# TYPE torrentng_memory_class_denied_allocations_total counter
+torrentng_memory_class_denied_allocations_total{class="queued_disk"} 0
+# HELP torrentng_memory_class_cap_bytes Configured process-owned memory cap by resource class
+# TYPE torrentng_memory_class_cap_bytes gauge
+torrentng_memory_class_cap_bytes{class="api_snapshot"} 16777216
+# HELP torrentng_memory_class_used_bytes Process-owned bytes currently leased by resource class
+# TYPE torrentng_memory_class_used_bytes gauge
+torrentng_memory_class_used_bytes{class="api_snapshot"} 0
+# HELP torrentng_memory_class_denied_allocations_total Denied resource governor allocation attempts by resource class
+# TYPE torrentng_memory_class_denied_allocations_total counter
+torrentng_memory_class_denied_allocations_total{class="api_snapshot"} 0
+# HELP torrentng_memory_class_cap_bytes Configured process-owned memory cap by resource class
+# TYPE torrentng_memory_class_cap_bytes gauge
+torrentng_memory_class_cap_bytes{class="piece_index"} 134217728
+# HELP torrentng_memory_class_used_bytes Process-owned bytes currently leased by resource class
+# TYPE torrentng_memory_class_used_bytes gauge
+torrentng_memory_class_used_bytes{class="piece_index"} 0
+# HELP torrentng_memory_class_denied_allocations_total Denied resource governor allocation attempts by resource class
+# TYPE torrentng_memory_class_denied_allocations_total counter
+torrentng_memory_class_denied_allocations_total{class="piece_index"} 0
+# HELP torrentng_storage_descriptor_budget_initialized Whether a live storage path has initialized the managed-storage descriptor budget
+# TYPE torrentng_storage_descriptor_budget_initialized gauge
+torrentng_storage_descriptor_budget_initialized 0
+# HELP torrentng_storage_descriptor_leases_active Active managed-storage descriptor leases; zero until the descriptor budget is initialized
+# TYPE torrentng_storage_descriptor_leases_active gauge
+torrentng_storage_descriptor_leases_active 0
+# HELP torrentng_storage_descriptor_leases_capacity Managed-storage descriptor lease capacity; check the initialized gauge before interpreting zero
+# TYPE torrentng_storage_descriptor_leases_capacity gauge
+torrentng_storage_descriptor_leases_capacity 0
+# HELP torrentng_storage_descriptor_budget_waits_total Storage descriptor admissions delayed by the shared managed-storage quota; zero until initialized
+# TYPE torrentng_storage_descriptor_budget_waits_total counter
+torrentng_storage_descriptor_budget_waits_total 0
+# HELP torrentng_storage_scheduler_groups Distinct shared storage scheduler resource groups retained by live schedulers
+# TYPE torrentng_storage_scheduler_groups gauge
+torrentng_storage_scheduler_groups 0
+# HELP torrentng_storage_scheduler_backend_selected Selected backend held by a live torrent storage scheduler
+# TYPE torrentng_storage_scheduler_backend_selected gauge
+# HELP torrentng_storage_scheduler_backend_fixed_buffers_supported Whether the live torrent storage backend supports fixed registered buffers
+# TYPE torrentng_storage_scheduler_backend_fixed_buffers_supported gauge
+# HELP torrentng_storage_scheduler_backend_registered_files_supported Whether the live torrent storage backend supports registered files
+# TYPE torrentng_storage_scheduler_backend_registered_files_supported gauge
+# HELP torrentng_storage_scheduler_backend_max_batch_len Maximum batch size supported by the live torrent storage backend
+# TYPE torrentng_storage_scheduler_backend_max_batch_len gauge
+# HELP torrentng_storage_scheduler_backend_fixed_buffer_bytes Bytes in each fixed buffer supported by the live torrent storage backend
+# TYPE torrentng_storage_scheduler_backend_fixed_buffer_bytes gauge
+# HELP torrentng_storage_scheduler_backend_fixed_buffer_strategy Fixed-buffer strategy supported by the live torrent storage backend
+# TYPE torrentng_storage_scheduler_backend_fixed_buffer_strategy gauge
+# HELP torrentng_storage_scheduler_backend_fixed_buffer_worker_copy Whether the live backend copies through private fixed buffers
+# TYPE torrentng_storage_scheduler_backend_fixed_buffer_worker_copy gauge
+# HELP torrentng_storage_scheduler_backend_frame_pool_slots_supported Whether the live backend can submit frame-pool slots directly
+# TYPE torrentng_storage_scheduler_backend_frame_pool_slots_supported gauge
+# HELP torrentng_storage_runtime_initialized Whether the process-wide storage runtime has been created by a live storage path
+# TYPE torrentng_storage_runtime_initialized gauge
+torrentng_storage_runtime_initialized 0
+# HELP torrentng_utp_connects_total Outbound uTP streams that completed the SYN/STATE handshake
+# TYPE torrentng_utp_connects_total counter
+torrentng_utp_connects_total 0
+# HELP torrentng_utp_accepts_total Inbound uTP streams accepted by listeners or shared endpoints
+# TYPE torrentng_utp_accepts_total counter
+torrentng_utp_accepts_total 0
+# HELP torrentng_utp_bytes_sent_total uTP UDP payload bytes sent including protocol headers
+# TYPE torrentng_utp_bytes_sent_total counter
+torrentng_utp_bytes_sent_total 0
+# HELP torrentng_utp_bytes_received_total uTP application payload bytes delivered to streams
+# TYPE torrentng_utp_bytes_received_total counter
+torrentng_utp_bytes_received_total 0
+# HELP torrentng_utp_send_timeouts_total uTP send or close operations that timed out waiting for acknowledgement
+# TYPE torrentng_utp_send_timeouts_total counter
+torrentng_utp_send_timeouts_total 0
+# HELP torrentng_utp_recv_timeouts_total uTP receive operations that timed out waiting for packets
+# TYPE torrentng_utp_recv_timeouts_total counter
+torrentng_utp_recv_timeouts_total 0
+# HELP torrentng_utp_retransmits_total uTP packet retransmission attempts
+# TYPE torrentng_utp_retransmits_total counter
+torrentng_utp_retransmits_total 0
+# HELP torrentng_utp_route_drops_total uTP datagrams dropped because no stream route or queue slot was available
+# TYPE torrentng_utp_route_drops_total counter
+torrentng_utp_route_drops_total 0
+# HELP torrentng_utp_rtt_samples_total uTP RTT samples observed from packet timestamp deltas
+# TYPE torrentng_utp_rtt_samples_total counter
+torrentng_utp_rtt_samples_total 0
+# HELP torrentng_utp_rtt_us Last smoothed uTP RTT in microseconds
+# TYPE torrentng_utp_rtt_us gauge
+torrentng_utp_rtt_us 0
+# HELP torrentng_utp_rtt_min_us Minimum observed smoothed uTP RTT in microseconds
+# TYPE torrentng_utp_rtt_min_us gauge
+torrentng_utp_rtt_min_us 0
+# HELP torrentng_utp_rtt_max_us Maximum observed smoothed uTP RTT in microseconds
+# TYPE torrentng_utp_rtt_max_us gauge
+torrentng_utp_rtt_max_us 0
+# HELP torrentng_utp_rtt_var_us Last smoothed uTP RTT variance in microseconds
+# TYPE torrentng_utp_rtt_var_us gauge
+torrentng_utp_rtt_var_us 0
+# HELP torrentng_utp_retransmit_timeout_us Current uTP retransmission timeout in microseconds
+# TYPE torrentng_utp_retransmit_timeout_us gauge
+torrentng_utp_retransmit_timeout_us 0
+# HELP torrentng_utp_congestion_window_bytes Last observed uTP congestion window in bytes
+# TYPE torrentng_utp_congestion_window_bytes gauge
+torrentng_utp_congestion_window_bytes 0
+# HELP torrentng_utp_congestion_base_delay_us Last observed uTP base delay in microseconds
+# TYPE torrentng_utp_congestion_base_delay_us gauge
+torrentng_utp_congestion_base_delay_us 0
+# HELP torrentng_utp_congestion_current_delay_us Last observed uTP current delay in microseconds
+# TYPE torrentng_utp_congestion_current_delay_us gauge
+torrentng_utp_congestion_current_delay_us 0
+# HELP torrentng_utp_bytes_in_flight Last observed uTP bytes in flight
+# TYPE torrentng_utp_bytes_in_flight gauge
+torrentng_utp_bytes_in_flight 0
+# HELP torrentng_api_snapshot_refreshes_total Immutable API snapshot generations built across TorrentNG-client and qBittorrent facades
+# TYPE torrentng_api_snapshot_refreshes_total counter
+torrentng_api_snapshot_refreshes_total 0
+# HELP torrentng_api_snapshot_incremental_updates_total Immutable API snapshot generations advanced from the registry mutation journal
+# TYPE torrentng_api_snapshot_incremental_updates_total counter
+torrentng_api_snapshot_incremental_updates_total 0
+# HELP torrentng_api_snapshot_expired_total API pagination cursors rejected because their immutable snapshot expired
+# TYPE torrentng_api_snapshot_expired_total counter
+torrentng_api_snapshot_expired_total 0
+# HELP torrentng_api_sse_resyncs_total SSE clients forced to resnapshot after the mutation journal expired
+# TYPE torrentng_api_sse_resyncs_total counter
+torrentng_api_sse_resyncs_total 0
+# HELP torrentng_api_sse_events_total Torrent delta events emitted to SSE clients
+# TYPE torrentng_api_sse_events_total counter
+torrentng_api_sse_events_total 0
+# HELP torrentng_api_sse_lagged_total SSE stream polls delayed by more than three seconds
+# TYPE torrentng_api_sse_lagged_total counter
+torrentng_api_sse_lagged_total 0
+# HELP torrentng_api_sse_disconnects_total SSE stream instances dropped before the client connection remained active
+# TYPE torrentng_api_sse_disconnects_total counter
+torrentng_api_sse_disconnects_total 0
+# HELP torrentng_api_sse_clients Currently active TorrentNG SSE clients
+# TYPE torrentng_api_sse_clients gauge
+torrentng_api_sse_clients 0
+# HELP torrentng_api_response_bytes_estimated_total Estimated bytes emitted by bounded list and SSE responses
+# TYPE torrentng_api_response_bytes_estimated_total counter
+torrentng_api_response_bytes_estimated_total 0
+# HELP torrentng_egress_scheme_denied_total Outbound tracker/webseed URLs rejected by scheme policy
+# TYPE torrentng_egress_scheme_denied_total counter
+torrentng_egress_scheme_denied_total 0
+# HELP torrentng_egress_address_denied_total Outbound tracker/webseed addresses rejected by address policy
+# TYPE torrentng_egress_address_denied_total counter
+torrentng_egress_address_denied_total 0
+# HELP torrentng_egress_resolution_failed_total Outbound tracker/webseed DNS or address resolution failures
+# TYPE torrentng_egress_resolution_failed_total counter
+torrentng_egress_resolution_failed_total 0
+# HELP torrentng_egress_client_failed_total Outbound tracker/webseed HTTP client construction failures
+# TYPE torrentng_egress_client_failed_total counter
+torrentng_egress_client_failed_total 0
+# HELP torrentng_crash_safety_previous_run_unclean 1 when the previous daemon run did not shut down cleanly.
+# TYPE torrentng_crash_safety_previous_run_unclean gauge
+torrentng_crash_safety_previous_run_unclean{verdict="no_record"} 0
+# HELP torrentng_crash_recovery_rechecks_total Torrents whose resume state was discarded after a possible host crash, by reason.
+# TYPE torrentng_crash_recovery_rechecks_total counter
+torrentng_crash_recovery_rechecks_total{reason="unsynced_state"} 0
+torrentng_crash_recovery_rechecks_total{reason="full_policy"} 0
+torrentng_crash_recovery_rechecks_total{reason="recent_write"} 0
+torrentng_crash_recovery_rechecks_total{reason="weak_mount"} 0
+torrentng_crash_recovery_rechecks_total{reason="unknown_mount"} 0
+# HELP torrentng_allocation_audit_pieces_downgraded_total Valid pieces downgraded for re-verification because they overlapped a hole or unwritten extent.
+# TYPE torrentng_allocation_audit_pieces_downgraded_total counter
+torrentng_allocation_audit_pieces_downgraded_total 0
+# HELP torrentng_completions_gated_total Finished downloads held by the completion gate until their data was durable.
+# TYPE torrentng_completions_gated_total counter
+torrentng_completions_gated_total 0
+# HELP torrentng_completions_pending Finished downloads currently held by the completion gate.
+# TYPE torrentng_completions_pending gauge
+torrentng_completions_pending 0
+# HELP torrentng_completions_released_total Completions released after the durability barrier succeeded.
+# TYPE torrentng_completions_released_total counter
+torrentng_completions_released_total 0
+# HELP torrentng_completion_gate_retries_total Completion-gate barrier attempts that had to be retried.
+# TYPE torrentng_completion_gate_retries_total counter
+torrentng_completion_gate_retries_total 0
+# HELP torrentng_completion_verify_pieces_total Pieces re-read from disk by completion verification.
+# TYPE torrentng_completion_verify_pieces_total counter
+torrentng_completion_verify_pieces_total 0
+# HELP torrentng_completion_verify_failures_total Pieces that failed completion verification.
+# TYPE torrentng_completion_verify_failures_total counter
+torrentng_completion_verify_failures_total 0
+# HELP torrentng_integrity_regressions_total Torrents already reported complete whose pieces later failed verification.
+# TYPE torrentng_integrity_regressions_total counter
+torrentng_integrity_regressions_total 0
+# HELP torrentng_fsync_unsupported_total Times a filesystem reported that fsync is unsupported.
+# TYPE torrentng_fsync_unsupported_total counter
+torrentng_fsync_unsupported_total 0
+# HELP torrentng_storage_mounts Save-path mounts seen by the durability probe, by trust classification.
+# TYPE torrentng_storage_mounts gauge
+torrentng_storage_mounts{trust="strong"} 0
+torrentng_storage_mounts{trust="unknown"} 0
+torrentng_storage_mounts{trust="weak"} 0

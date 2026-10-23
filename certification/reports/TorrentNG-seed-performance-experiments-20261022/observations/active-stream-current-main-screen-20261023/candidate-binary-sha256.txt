@@ -1,0 +1,1 @@
+47ec146c033a175adb87cbc40a814f95e44e6cea4729750451b9a31661779a7f  candidate.torrentngd (uncompressed)

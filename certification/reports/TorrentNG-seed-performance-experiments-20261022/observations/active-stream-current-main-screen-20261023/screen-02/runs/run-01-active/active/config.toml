@@ -1,0 +1,18 @@
+[daemon]
+api_bind = "127.0.0.1:34747"
+session_dir = "/tmp/torrentng-seed-goal-20261022/active-stream-current-main-screen-64m-02/run-01-active/active/session"
+log_level = "warn"
+
+[network]
+listen_port = 45103
+max_peers = 8
+max_incoming_handshakes = 32
+
+[storage]
+download_dir = "/tmp/torrentng-seed-goal-20261022/active-stream-current-main-screen-64m-02/run-01-active/active/download"
+
+[dht]
+enabled = false
+
+[auth]
+api_tokens_file = "/tmp/torrentng-seed-goal-20261022/active-stream-current-main-screen-64m-02/run-01-active/active/api-token"

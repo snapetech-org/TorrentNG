@@ -1,0 +1,15 @@
+# Readahead screens (main baseline binary; local 64 MiB SHA-256 fixture)
+# Both TorrentNG clients use TNG_STORAGE_BACKEND=pread. rTorrent uses its pinned LD_LIBRARY_PATH.
+# The probe copies add only the listed peer_read_readahead_bytes field to generated candidate TOML.
+# The original benchmark harness is scripts/native_seed_cpu_ram_probe.py.
+
+Initial 256 KiB screen: probe_readahead_256k_initial_screen.py; labels control (default 512 KiB), candidate (256 KiB), rt; order seed 5; one round.
+Window sweep: probe_readahead_windows_screen.py; labels control (default 512 KiB), ra128 (128 KiB), ra256 (256 KiB), rt; order seed 20261032; one round.
+Confirmation: same window sweep; two rounds, order seed 20261033.
+Fixture: 67,108,864 bytes, seed 20261022, SHA-256 b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901.
+Baseline TorrentNG binary SHA-256 e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276.
+rTorrent 0.16.25 binary SHA-256 698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46.
+
+Baseline command template:
+PYTHONPATH=scripts python3 probe_readahead_windows_screen.py --client control=torrentngd:<eight-block-binary> --client ra256=torrentngd:<same-binary> --client ra128=torrentngd:<same-binary> --client rt=rtorrent:<pinned-rTorrent-binary> --client-env control:TNG_STORAGE_BACKEND=pread --client-env ra256:TNG_STORAGE_BACKEND=pread --client-env ra128:TNG_STORAGE_BACKEND=pread --client-env rt:LD_LIBRARY_PATH=<pinned-rTorrent-libraries> --size 67108864 --seed 20261022 --warmup 2 --cooldown 2 --timeout 180 --ready-timeout 60
+Initial 256 KiB arm used label candidate and the same binary, with --order-seed 5 and --repeats 1. Window sweep used --order-seed 20261032 and --repeats 1. Confirmation used --order-seed 20261033 and --repeats 2. Use a fresh --output directory for any rerun.

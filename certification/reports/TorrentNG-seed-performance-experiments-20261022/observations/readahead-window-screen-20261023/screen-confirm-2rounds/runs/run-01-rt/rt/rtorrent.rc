@@ -1,0 +1,8 @@
+directory.default.set = /tmp/torrentng-seed-goal-20261022/readahead-windows-confirm-64m-20261023-01/run-01-rt/rt/download
+session.path.set = /tmp/torrentng-seed-goal-20261022/readahead-windows-confirm-64m-20261023-01/run-01-rt/rt/session
+network.bind_address.ipv4.set = 127.0.0.1
+network.listen.port.range.set = 56541-56541
+network.listen.port.random.set = no
+dht.mode.set = disable
+protocol.pex.set = no
+network.scgi.open_port = 127.0.0.1:52925

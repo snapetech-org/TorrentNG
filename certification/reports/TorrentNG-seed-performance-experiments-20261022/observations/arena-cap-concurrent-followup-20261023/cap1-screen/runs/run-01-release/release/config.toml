@@ -1,0 +1,18 @@
+[daemon]
+api_bind = "127.0.0.1:58107"
+session_dir = "/tmp/torrentng-seed-goal-20261022/concurrent-peer-3x-64m-arena-cap-screen-20261023-01/run-01-release/release/session"
+log_level = "warn"
+
+[network]
+listen_port = 40271
+max_peers = 8
+max_incoming_handshakes = 32
+
+[storage]
+download_dir = "/tmp/torrentng-seed-goal-20261022/concurrent-peer-3x-64m-arena-cap-screen-20261023-01/run-01-release/release/download"
+
+[dht]
+enabled = false
+
+[auth]
+api_tokens_file = "/tmp/torrentng-seed-goal-20261022/concurrent-peer-3x-64m-arena-cap-screen-20261023-01/run-01-release/release/api-token"

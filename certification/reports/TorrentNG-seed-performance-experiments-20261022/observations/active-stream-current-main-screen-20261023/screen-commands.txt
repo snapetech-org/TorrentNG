@@ -1,0 +1,11 @@
+Base source: 4b187a8d plus active-stream-current-main.patch for the candidate build.
+Build: cargo +1.94.0 build --locked --release -p torrentngd --no-default-features --features system-allocator
+Focused tests: cargo +1.94.0 test --locked -p rt-storage peer_read_stream
+Benchmark: python3 scripts/native_seed_cpu_ram_probe.py
+Fixture: --size 67108864 --seed 20261022; every arm used TNG_STORAGE_BACKEND=pread.
+Screen 1: --order-seed 20261030 --warmup 2 --cooldown 2 --timeout 180 --ready-timeout 60 --repeats 1; order active, control, rt.
+Screen 2: --order-seed 5 --warmup 2 --cooldown 2 --timeout 180 --ready-timeout 60 --repeats 1; order control, active, rt.
+Control binary SHA-256: e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276
+Candidate binary SHA-256: 47ec146c033a175adb87cbc40a814f95e44e6cea4729750451b9a31661779a7f
+rTorrent 0.16.25 binary SHA-256: 698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46
+Fixture SHA-256: b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901
