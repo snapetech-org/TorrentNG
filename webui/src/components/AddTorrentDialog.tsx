@@ -125,8 +125,8 @@ export function AddTorrentDialog({ onClose }: Props) {
           data-filled={files.length > 0 ? 'true' : 'false'}
           role={files.length > 0 ? 'group' : 'button'}
           tabIndex={files.length > 0 ? undefined : 0}
-          aria-label={files.length > 0 ? t('Staged torrent files') : t('Choose or drop torrent files')}
-          {...textProps(files.length > 0 ? 'Staged torrent files' : 'Choose or drop torrent files')}
+          aria-label={files.length > 0 ? t('Staged torrent files') : undefined}
+          {...(files.length > 0 ? textProps('Staged torrent files') : {})}
           aria-keyshortcuts={files.length > 0 ? undefined : 'Enter Space'}
           data-dialog-initial-focus
           onDragOver={e => { e.preventDefault(); setDragOver(true) }}

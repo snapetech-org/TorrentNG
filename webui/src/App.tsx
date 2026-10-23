@@ -1058,8 +1058,7 @@ export function App() {
             type="button"
             onClick={() => setThemeMode(mode => mode === 'dark' ? 'light' : 'dark')}
             title={t('Toggle light/dark theme')}
-            aria-label={t('Switch to {mode} theme', { mode: t(themeMode === 'dark' ? 'Light' : 'Dark') })}
-            {...textProps('Switch to {mode} theme')}
+            {...textProps('Toggle light/dark theme')}
             aria-pressed={themeMode === 'dark'}
             style={themeButtonStyle}
           >
