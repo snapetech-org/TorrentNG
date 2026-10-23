@@ -310,6 +310,13 @@ pub struct FilePoolStats {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageIoStats {
+    pub prepared_slot_allocations: u64,
+    pub prepared_slot_reuses: u64,
+    pub prepared_active_jobs: u64,
+    pub prepared_queue_wait_ns: u64,
+    pub prepared_run_ns: u64,
+    pub mapped_upload_cache_bytes: u64,
+
     /// Identity for deduplicating snapshots of shared scheduler resources.
     /// Zero means the identity is unavailable and must not be deduplicated.
     #[doc(hidden)]
@@ -418,6 +425,13 @@ impl StorageRead {
 impl Default for StorageIoStats {
     fn default() -> Self {
         Self {
+            prepared_slot_allocations: 0,
+            prepared_slot_reuses: 0,
+            prepared_active_jobs: 0,
+            prepared_queue_wait_ns: 0,
+            prepared_run_ns: 0,
+            mapped_upload_cache_bytes: 0,
+
             shared_resource_id: 0,
             file_catalog_id: 0,
             device_id: None,
@@ -1172,6 +1186,9 @@ impl FileSyncFenceRegistry {
 /// Per-mount I/O scheduler.
 #[derive(Debug, Clone)]
 pub struct MountScheduler {
+    #[cfg(all(target_os = "linux", feature = "seed-mmap"))]
+    mapped_upload_cache: Arc<Mutex<crate::mapped_upload::MappedUploadCache>>,
+    prepared_completions: Arc<crate::completion::CompletionPool<PreparedReadJob>>,
     storage_root: StorageRootId,
     recheck_sem: Arc<Semaphore>,
     move_copy_sem: Arc<Semaphore>,
@@ -1576,7 +1593,7 @@ struct PeerReadCacheOwner {
 /// still apply; this manager caps their combined retained backing memory and
 /// evicts one oldest range per cache turn when memory is needed.
 #[derive(Debug)]
-struct PeerReadCacheManager {
+pub(crate) struct PeerReadCacheManager {
     budget_bytes: u64,
     used_bytes: AtomicU64,
     registry: Mutex<PeerReadCacheRegistry>,
@@ -1591,7 +1608,7 @@ impl PeerReadCacheManager {
         }
     }
 
-    fn reserve(self: &Arc<Self>, bytes: u64) -> Option<PeerReadCacheBudgetLease> {
+    pub(crate) fn reserve(self: &Arc<Self>, bytes: u64) -> Option<PeerReadCacheBudgetLease> {
         if bytes > self.budget_bytes {
             return None;
         }
@@ -1759,7 +1776,7 @@ static GLOBAL_PEER_READ_CACHE_MANAGER: Lazy<Arc<PeerReadCacheManager>> =
     Lazy::new(|| Arc::new(PeerReadCacheManager::new(MAX_GLOBAL_PEER_READ_CACHE_BYTES)));
 
 #[derive(Debug)]
-struct PeerReadCacheBudgetLease {
+pub(crate) struct PeerReadCacheBudgetLease {
     manager: Arc<PeerReadCacheManager>,
     bytes: u64,
 }
@@ -2151,6 +2168,8 @@ struct PreparedPread {
 }
 
 enum PreadPreparation {
+    #[cfg(all(target_os = "linux", feature = "seed-mmap"))]
+    Mapped(Option<crate::mapped_upload::MappedUploadRead>),
     Complete(StorageRead),
     /// Only a contended cache miss allocates this continuation. Never block
     /// a disk worker waiting for a device slot held by another worker job.
@@ -2164,6 +2183,98 @@ struct DeferredPread {
     offset: u64,
     len: usize,
     started: Instant,
+}
+
+// The large variant lives inside a bounded reusable Slot allocation. Boxing
+// it here would recreate the per-read allocation this pool removes.
+#[allow(clippy::large_enum_variant)]
+enum PreparedReadJob {
+    #[cfg(all(target_os = "linux", feature = "seed-mmap"))]
+    Mapped {
+        prepared: PreparedPread,
+        cache: Arc<Mutex<crate::mapped_upload::MappedUploadCache>>,
+        path: PathBuf,
+        offset: u64,
+        len: usize,
+    },
+    Read {
+        prepared: PreparedPread,
+        class: IoClass,
+        path: PathBuf,
+        offset: u64,
+        len: usize,
+        started: Instant,
+    },
+    Deferred(Box<DeferredPread>),
+}
+
+impl crate::completion::PreparedWork for PreparedReadJob {
+    type Output = PreadPreparation;
+    fn execute(self) -> Result<Self::Output, StorageError> {
+        match self {
+            #[cfg(all(target_os = "linux", feature = "seed-mmap"))]
+            Self::Mapped {
+                mut prepared,
+                cache,
+                path,
+                offset,
+                len,
+            } => {
+                let file =
+                    prepared
+                        .file_pool
+                        .get_or_open_normalized(&path, OpenMode::Read, false)?;
+                let identity = file.identity();
+                if !identity_matches_path(&path, identity).unwrap_or(false) {
+                    return Err(StorageError::Cancelled);
+                }
+                let owner = prepared
+                    .submission
+                    .as_mut()
+                    .expect("mapping owns admission");
+                owner.retain_file(file.clone());
+                owner.operation.bind_byte_range(offset, len as u64);
+                let generation = prepared.peer_read_cache_epoch.load(Ordering::Acquire);
+                let mapped = lock_recover(&cache)
+                    .read(
+                        file,
+                        &path,
+                        offset,
+                        len,
+                        generation,
+                        crate::mapped_upload::MappedReadBudget {
+                            bytes: prepared.readahead_cache_bytes,
+                            entries: prepared.readahead_cache_entries,
+                            resources: prepared.resources.as_ref(),
+                            manager: &prepared.peer_read_cache_manager,
+                        },
+                    )
+                    .map_err(|error| StorageError::io(path.display().to_string(), error))?;
+                if !identity_matches_path(&path, identity).unwrap_or(false) {
+                    return Err(StorageError::Cancelled);
+                }
+                if prepared.peer_read_cache_epoch.load(Ordering::Acquire) != generation {
+                    return Ok(PreadPreparation::Mapped(None));
+                }
+                if mapped.is_some() {
+                    prepared.counters.read_ops_by_class[class_index(IoClass::PeerRead)]
+                        .fetch_add(1, Ordering::Relaxed);
+                    prepared.counters.bytes_read_by_class[class_index(IoClass::PeerRead)]
+                        .fetch_add(len as u64, Ordering::Relaxed);
+                }
+                Ok(PreadPreparation::Mapped(mapped))
+            }
+            Self::Read {
+                prepared,
+                class,
+                path,
+                offset,
+                len,
+                started,
+            } => prepared.execute(class, path, offset, len, started),
+            Self::Deferred(pending) => pending.execute().map(PreadPreparation::Complete),
+        }
+    }
 }
 
 impl DeferredPread {
@@ -3905,7 +4016,31 @@ impl MountScheduler {
             );
         }
 
+        #[cfg(all(target_os = "linux", feature = "seed-mmap"))]
+        let mapped_upload_cache = Arc::new(Mutex::new(
+            crate::mapped_upload::MappedUploadCache::default(),
+        ));
+        #[cfg(all(target_os = "linux", feature = "seed-mmap"))]
+        if let Some(resources) = config.resources.as_ref() {
+            let cache = Arc::downgrade(&mapped_upload_cache);
+            resources.register_reclaimer(
+                MemoryClass::PeerBuffer,
+                "rt-storage.mapped-upload",
+                move |needed| {
+                    cache
+                        .upgrade()
+                        .and_then(|cache| {
+                            cache.try_lock().ok().map(|mut cache| cache.reclaim(needed))
+                        })
+                        .unwrap_or(0)
+                },
+            );
+        }
+
         MountScheduler {
+            #[cfg(all(target_os = "linux", feature = "seed-mmap"))]
+            mapped_upload_cache,
+            prepared_completions: Arc::new(crate::completion::CompletionPool::new(4)),
             storage_root,
             recheck_sem: Arc::new(Semaphore::new(recheck_limit)),
             move_copy_sem: Arc::new(Semaphore::new(mv)),
@@ -3976,7 +4111,20 @@ impl MountScheduler {
             .as_ref()
             .map(PeerReadElevator::queued_len)
             .unwrap_or(0);
+        let prepared = self.prepared_completions.stats();
+        #[cfg(all(target_os = "linux", feature = "seed-mmap"))]
+        let mapped_upload_cache_bytes =
+            lock_recover(&self.mapped_upload_cache).cached_bytes() as u64;
+        #[cfg(not(all(target_os = "linux", feature = "seed-mmap")))]
+        let mapped_upload_cache_bytes = 0;
         StorageIoStats {
+            prepared_slot_allocations: prepared[0],
+            prepared_slot_reuses: prepared[1],
+            prepared_active_jobs: prepared[2],
+            prepared_queue_wait_ns: prepared[3],
+            prepared_run_ns: prepared[4],
+            mapped_upload_cache_bytes,
+
             shared_resource_id: self._shared_resources.id,
             file_catalog_id: self.file_pool.catalog_id(),
             device_id: self.device_id.clone(),
@@ -4423,6 +4571,63 @@ impl MountScheduler {
         elevator.clone()
     }
 
+    /// Experimental immutable-view upload preparation. All filesystem and
+    /// faulting work stays on a disk worker; the socket only owns a bounded
+    /// mapped range. Unsupported kernels/backends return buffered fallback.
+    #[cfg(all(target_os = "linux", feature = "seed-mmap"))]
+    pub async fn read_upload_mapped(
+        &self,
+        path: &Path,
+        offset: u64,
+        len: usize,
+        priority: IoRequestPriority,
+    ) -> Result<Option<crate::mapped_upload::MappedUploadRead>, StorageError> {
+        if !crate::mapped_upload::enabled() || !self.disk_backend.uses_pread_workers() {
+            return Ok(None);
+        }
+        checked_file_range_end(path, offset, len as u64)?;
+        let _permit = self.acquire(IoClass::PeerRead).await?;
+        let mut submission = self.reserve_mount_submission(len as u64)?;
+        submission.start_device_operation(
+            self.acquire_device_operation_with_priority(IoClass::PeerRead, priority)
+                .await?,
+        );
+        let prepared = PreparedPread {
+            device_queue: self.device_queue.clone(),
+            file_pool: self.file_pool.clone(),
+            peer_read_cache: self.peer_read_cache.clone(),
+            peer_read_cache_manager: self.peer_read_cache_manager.clone(),
+            peer_read_cache_epoch: self.peer_read_cache_epoch.clone(),
+            peer_read_streams: self.peer_read_streams.clone(),
+            counters: self.counters.clone(),
+            resources: self.resources.clone(),
+            storage_root: self.storage_root,
+            cache_generation: None,
+            readahead_bytes: 0,
+            sequential_only: true,
+            readahead_cache_entries: self.io_config.peer_read_cache_entries,
+            readahead_cache_bytes: self.io_config.peer_read_cache_bytes,
+            submission: Some(submission),
+        };
+        match self
+            .disk_backend
+            .run_reusable(
+                &self.prepared_completions,
+                PreparedReadJob::Mapped {
+                    prepared,
+                    cache: self.mapped_upload_cache.clone(),
+                    path: normalized_key(path),
+                    offset,
+                    len,
+                },
+            )
+            .await?
+        {
+            PreadPreparation::Mapped(mapped) => Ok(mapped),
+            _ => Err(StorageError::Cancelled),
+        }
+    }
+
     pub async fn read_at(
         &self,
         class: IoClass,
@@ -4468,6 +4673,8 @@ impl MountScheduler {
         let readahead_cache_entries = self.io_config.peer_read_cache_entries;
         let readahead_cache_bytes = self.io_config.peer_read_cache_bytes;
         let readahead_enabled = readahead_cache_entries > 0 && readahead_cache_bytes > 0;
+        #[cfg(all(target_os = "linux", feature = "seed-mmap"))]
+        let readahead_enabled = readahead_enabled && !crate::mapped_upload::enabled();
         let readahead_bytes = if readahead_enabled {
             configured_readahead_bytes.min(readahead_cache_bytes)
         } else {
@@ -4519,10 +4726,22 @@ impl MountScheduler {
             };
             let failed_counter = counters.clone();
             let preparation = disk_backend
-                .run_prepared_pread(move || prepared.execute(class, path, offset, len, started))
+                .run_reusable(
+                    &self.prepared_completions,
+                    PreparedReadJob::Read {
+                        prepared,
+                        class,
+                        path,
+                        offset,
+                        len,
+                        started,
+                    },
+                )
                 .await;
             let result = match preparation {
                 Ok(PreadPreparation::Complete(read)) => Ok(read),
+                #[cfg(all(target_os = "linux", feature = "seed-mmap"))]
+                Ok(PreadPreparation::Mapped(_)) => Err(StorageError::Cancelled),
                 Ok(PreadPreparation::AwaitDevice(mut pending)) => {
                     let permit = self
                         .acquire_device_operation_with_priority(class, priority)
@@ -4534,8 +4753,17 @@ impl MountScheduler {
                         .expect("deferred pread owns its mount admission")
                         .start_device_operation(permit);
                     disk_backend
-                        .run_prepared_pread(move || pending.execute())
+                        .run_reusable(
+                            &self.prepared_completions,
+                            PreparedReadJob::Deferred(pending),
+                        )
                         .await
+                        .and_then(|result| match result {
+                            PreadPreparation::Complete(read) => Ok(read),
+                            PreadPreparation::AwaitDevice(_) => Err(StorageError::Cancelled),
+                            #[cfg(all(target_os = "linux", feature = "seed-mmap"))]
+                            PreadPreparation::Mapped(_) => Err(StorageError::Cancelled),
+                        })
                 }
                 Err(error) => Err(error),
             };
@@ -6402,6 +6630,160 @@ mod tests {
     use rt_path::SafeRelPath;
     use rt_path::StorageRootId;
     use rt_piece_map::{FileSpan, PieceMap};
+
+    #[cfg(all(target_os = "linux", feature = "seed-mmap"))]
+    #[test]
+    fn mapped_upload_bounds_residency_and_truncation_is_an_io_error() {
+        use std::io::Read;
+        use std::os::fd::AsFd;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("payload");
+        std::fs::write(&path, vec![0x5a; 1024 * 1024]).unwrap();
+        let scheduler = MountScheduler::new_for_path(
+            StorageRootId::new(),
+            dir.path(),
+            &SchedulerConfig::default(),
+        );
+        let file = scheduler
+            .file_pool
+            .get_or_open_normalized(&path, OpenMode::Read, false)
+            .unwrap();
+        let manager = Arc::new(PeerReadCacheManager::new(512 * 1024));
+        let budget = crate::mapped_upload::MappedReadBudget {
+            bytes: 512 * 1024,
+            entries: 8,
+            resources: None,
+            manager: &manager,
+        };
+        let mut cache = crate::mapped_upload::MappedUploadCache::default();
+        let first = cache.read(file.clone(), &path, 0, 4, 0, budget).unwrap();
+        let Some(first) = first else {
+            // Old kernels explicitly select the buffered fallback.
+            assert_eq!(cache.cached_bytes(), 0);
+            return;
+        };
+        let second = cache
+            .read(file.clone(), &path, 256 * 1024, 4, 0, budget)
+            .unwrap()
+            .unwrap();
+        assert_eq!(cache.cached_bytes(), 512 * 1024);
+        assert!(cache
+            .read(file.clone(), &path, 512 * 1024, 4, 0, budget)
+            .unwrap()
+            .is_none());
+        let (sender, mut receiver) = std::os::unix::net::UnixStream::pair().unwrap();
+        assert_eq!(
+            first
+                .try_send_frames(sender.as_fd(), &[(b"h", 0, 4)])
+                .unwrap(),
+            5
+        );
+        let mut bytes = [0; 5];
+        receiver.read_exact(&mut bytes).unwrap();
+        assert_eq!(&bytes, b"hZZZZ");
+        assert!(first
+            .try_send_frames(sender.as_fd(), &[(b"", 3, 2)])
+            .is_err());
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(0)
+            .unwrap();
+        assert!(
+            first
+                .try_send_frames(sender.as_fd(), &[(b"", 0, 4)])
+                .is_err(),
+            "kernel must reject revoked pages"
+        );
+        drop((first, second));
+        assert_eq!(cache.reclaim(u64::MAX), 512 * 1024);
+        assert_eq!(manager.used_bytes.load(Ordering::Relaxed), 0);
+    }
+
+    #[cfg(all(target_os = "linux", feature = "seed-mmap"))]
+    #[test]
+    fn mapped_small_files_charge_pages_bound_entries_and_follow_replacement() {
+        use std::io::Read;
+        use std::os::fd::AsFd;
+        let dir = tempfile::tempdir().unwrap();
+        let paths = [
+            dir.path().join("a"),
+            dir.path().join("b"),
+            dir.path().join("c"),
+        ];
+        for (index, path) in paths.iter().enumerate() {
+            std::fs::write(path, [b'A' + index as u8]).unwrap();
+        }
+        let scheduler = MountScheduler::new_for_path(
+            StorageRootId::new(),
+            dir.path(),
+            &SchedulerConfig::default(),
+        );
+        let manager = Arc::new(PeerReadCacheManager::new(512 * 1024));
+        let budget = crate::mapped_upload::MappedReadBudget {
+            bytes: 512 * 1024,
+            entries: 2,
+            resources: None,
+            manager: &manager,
+        };
+        let mut cache = crate::mapped_upload::MappedUploadCache::default();
+        let open = |path: &Path| {
+            scheduler
+                .file_pool
+                .get_or_open_normalized(path, OpenMode::Read, false)
+                .unwrap()
+        };
+        let Some(first) = cache
+            .read(open(&paths[0]), &paths[0], 0, 1, 0, budget)
+            .unwrap()
+        else {
+            return;
+        };
+        let second = cache
+            .read(open(&paths[1]), &paths[1], 0, 1, 0, budget)
+            .unwrap()
+            .unwrap();
+        let resident = cache.cached_bytes();
+        assert!(
+            resident >= 2 * 4096,
+            "one-byte files still consume whole pages"
+        );
+        assert_eq!(resident as u64, manager.used_bytes.load(Ordering::Relaxed));
+        assert!(cache
+            .read(open(&paths[2]), &paths[2], 0, 1, 0, budget)
+            .unwrap()
+            .is_none());
+        drop(first);
+        let third = cache
+            .read(open(&paths[2]), &paths[2], 0, 1, 0, budget)
+            .unwrap()
+            .unwrap();
+        assert_eq!(cache.cached_bytes(), resident, "evict only idle backing");
+        std::fs::rename(&paths[2], dir.path().join("old-c")).unwrap();
+        std::fs::write(&paths[2], b"X").unwrap();
+        drop(second);
+        let replaced = cache
+            .read(open(&paths[2]), &paths[2], 0, 1, 0, budget)
+            .unwrap()
+            .unwrap();
+        let (sender, mut receiver) = std::os::unix::net::UnixStream::pair().unwrap();
+        third
+            .try_send_frames(sender.as_fd(), &[(b"", 0, 1)])
+            .unwrap();
+        replaced
+            .try_send_frames(sender.as_fd(), &[(b"", 0, 1)])
+            .unwrap();
+        let mut bytes = [0; 2];
+        receiver.read_exact(&mut bytes).unwrap();
+        assert_eq!(
+            &bytes, b"CX",
+            "a new path identity cannot hit the previous mapping"
+        );
+        drop((third, replaced));
+        cache.reclaim(u64::MAX);
+        assert_eq!(manager.used_bytes.load(Ordering::Relaxed), 0);
+    }
 
     fn insert_coverage_range(
         cache: &mut PeerReadCache,

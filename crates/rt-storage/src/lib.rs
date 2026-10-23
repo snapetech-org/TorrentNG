@@ -1,6 +1,7 @@
 pub mod alloc_audit;
 pub mod backend;
 pub mod boot;
+mod completion;
 pub mod device;
 pub mod durability_probe;
 pub mod elevator;
@@ -10,6 +11,8 @@ mod file_handle;
 pub mod frame;
 pub mod handle_cache;
 pub mod io_class;
+#[cfg(all(target_os = "linux", feature = "seed-mmap"))]
+pub mod mapped_upload;
 mod open;
 pub mod plan;
 pub mod runtime;

@@ -44,6 +44,24 @@ def decode(data):
 
 
 class ProbeTests(unittest.TestCase):
+    def test_concurrent_peer_ids_are_unique_and_exactly_twenty_wire_bytes(self):
+        identities = {probe.peer_identity(index) for index in range(32)}
+        self.assertEqual(len(identities), 32)
+        self.assertTrue(all(len(identity) == 20 for identity in identities))
+        self.assertEqual(len(probe.peer_identity()), 20)
+        with self.assertRaises(ValueError): probe.peer_identity(32)
+
+    def test_multi_file_fixture_preserves_hashes_and_unaligned_extents(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary) / "fixture"
+            payload, torrent, _, digest = probe.make_fixture(folder, 2 * probe.PIECE + 37, 123, 3)
+            info = decode(torrent)[b"info"]
+            self.assertNotIn(b"length", info)
+            self.assertEqual(info[b"name"], b"payload-set")
+            self.assertEqual(sum(file[b"length"] for file in info[b"files"]), payload.stat().st_size)
+            self.assertNotEqual(info[b"files"][0][b"length"] % probe.BLOCK, 0)
+            self.assertEqual(hashlib.sha256(payload.read_bytes()).hexdigest(), digest)
+
     def test_fixture_is_private_and_piece_hashes_match_payload(self):
         with tempfile.TemporaryDirectory() as temporary:
             payload, torrent, info_hash, expected = probe.make_fixture(

@@ -27,8 +27,8 @@ if [[ -n ${RUSTFLAGS:-} || -n ${CARGO_ENCODED_RUSTFLAGS:-} ]]; then
   exit 2
 fi
 
-if [[ -n ${RUSTC:-} || -n ${RUSTC_WRAPPER:-} ]]; then
-  echo "unset RUSTC and RUSTC_WRAPPER to use the pinned Rust toolchain" >&2
+if [[ -n ${RUSTC:-} || -n ${RUSTC_WRAPPER:-} || -n ${RUSTC_WORKSPACE_WRAPPER:-} || -n ${CARGO_BUILD_RUSTC:-} || -n ${CARGO_BUILD_RUSTFLAGS:-} ]]; then
+  echo "unset compiler and Cargo build overrides to use the pinned Rust toolchain" >&2
   exit 2
 fi
 
@@ -71,7 +71,12 @@ fi
 echo "PGO profile SHA-256: $(sha256sum "$profile_data" | cut -d ' ' -f 1)"
 echo "Target directory: $target_dir"
 cd "$repo_root"
+python3 "$repo_root/scripts/native_seed_pgo.py" validate --profile "$profile_input"
 RUSTFLAGS="-Cprofile-use=$profile_data" \
   cargo +1.97.0 build --locked --release -p torrentngd --target-dir "$target_dir"
 
 echo "torrentngd SHA-256: $(sha256sum "$target_dir/release/torrentngd" | cut -d ' ' -f 1)"
+
+RUSTFLAGS="-Cprofile-use=$profile_data" python3 "$repo_root/scripts/seed_efficiency_tools.py" manifest \
+  --binary "$target_dir/release/torrentngd" --repo "$repo_root" --profile "$profile_data" \
+  --output "$target_dir/release/torrentngd.manifest.json"

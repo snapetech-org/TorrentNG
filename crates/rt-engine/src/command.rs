@@ -398,6 +398,12 @@ pub struct EngineStats {
     pub storage_hash_ops: u64,
     pub storage_preallocation_failures: u64,
     pub storage_preallocation_fallbacks: u64,
+    pub storage_prepared_slot_allocations: u64,
+    pub storage_prepared_slot_reuses: u64,
+    pub storage_prepared_active_jobs: u64,
+    pub storage_prepared_queue_wait_ns: u64,
+    pub storage_prepared_run_ns: u64,
+    pub storage_mapped_upload_cache_bytes: u64,
     pub storage_peer_read_cache_entries: u64,
     pub storage_peer_read_cache_bytes: u64,
     pub storage_peer_read_cache_global_backing_bytes: u64,
@@ -906,6 +912,24 @@ impl EngineStats {
         self.storage_preallocation_fallbacks = self
             .storage_preallocation_fallbacks
             .saturating_add(storage.preallocation_fallbacks);
+        self.storage_prepared_slot_allocations = self
+            .storage_prepared_slot_allocations
+            .saturating_add(storage.prepared_slot_allocations);
+        self.storage_prepared_slot_reuses = self
+            .storage_prepared_slot_reuses
+            .saturating_add(storage.prepared_slot_reuses);
+        self.storage_prepared_active_jobs = self
+            .storage_prepared_active_jobs
+            .saturating_add(storage.prepared_active_jobs);
+        self.storage_prepared_queue_wait_ns = self
+            .storage_prepared_queue_wait_ns
+            .saturating_add(storage.prepared_queue_wait_ns);
+        self.storage_prepared_run_ns = self
+            .storage_prepared_run_ns
+            .saturating_add(storage.prepared_run_ns);
+        self.storage_mapped_upload_cache_bytes = self
+            .storage_mapped_upload_cache_bytes
+            .saturating_add(storage.mapped_upload_cache_bytes);
         self.storage_peer_read_cache_entries = self
             .storage_peer_read_cache_entries
             .saturating_add(storage.peer_read_cache_entries as u64);

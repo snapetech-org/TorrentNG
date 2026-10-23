@@ -86,19 +86,19 @@ struct Waiter {
     id: u64,
     jobs: usize,
     bytes: u64,
-    per_job_bytes: [u64; MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS],
     reply: WaiterReply,
 }
 
 enum WaiterReply {
     Single(oneshot::Sender<UploadReadPermit>),
-    Batch(oneshot::Sender<UploadReadPermits>),
+    Batch(oneshot::Sender<UploadReadPermit>),
 }
 
 pub(crate) struct UploadReadPermit {
     inner: Weak<Inner>,
     peer: RatePeerId,
     bytes: u64,
+    jobs: usize,
 }
 
 struct WaiterGuard {
@@ -243,6 +243,7 @@ impl UploadReadScheduler {
                     inner: Arc::downgrade(&self.inner),
                     peer,
                     bytes,
+                    jobs: 1,
                 });
             }
 
@@ -257,13 +258,10 @@ impl UploadReadScheduler {
                 .expect("connection checked above");
             let add_to_round_robin =
                 connection.queue.is_empty() && !connection.queued_in_round_robin;
-            let mut per_job_bytes = [0; MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS];
-            per_job_bytes[0] = bytes;
             connection.queue.push_back(Waiter {
                 id,
                 jobs: 1,
                 bytes,
-                per_job_bytes,
                 reply: WaiterReply::Single(reply),
             });
             if add_to_round_robin {
@@ -293,6 +291,26 @@ impl UploadReadScheduler {
         peer: RatePeerId,
         blocks: &[BlockExtent],
     ) -> Result<UploadReadPermits, UploadReadAdmissionError> {
+        let mut owned = self.acquire_batch_owned(peer, blocks).await?;
+        let permits = blocks
+            .iter()
+            .map(|block| UploadReadPermit {
+                inner: owned.inner.clone(),
+                peer,
+                bytes: u64::from(block.length),
+                jobs: 1,
+            })
+            .collect();
+        owned.jobs = 0;
+        owned.bytes = 0;
+        Ok(permits)
+    }
+
+    pub(crate) async fn acquire_batch_owned(
+        &self,
+        peer: RatePeerId,
+        blocks: &[BlockExtent],
+    ) -> Result<UploadReadPermit, UploadReadAdmissionError> {
         if blocks.is_empty()
             || blocks
                 .iter()
@@ -305,12 +323,10 @@ impl UploadReadScheduler {
         }
 
         let jobs = blocks.len();
-        let mut per_job_bytes = [0; MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS];
         let mut bytes = 0u64;
-        for (slot, block) in blocks.iter().enumerate() {
-            per_job_bytes[slot] = u64::from(block.length);
+        for block in blocks {
             bytes = bytes
-                .checked_add(per_job_bytes[slot])
+                .checked_add(u64::from(block.length))
                 .ok_or(UploadReadAdmissionError::BatchTooLarge)?;
         }
         if jobs > self.inner.limits.max_in_flight_jobs
@@ -366,15 +382,12 @@ impl UploadReadScheduler {
                     .expect("connection checked above");
                 connection.in_flight_jobs += jobs;
                 connection.in_flight_bytes = connection.in_flight_bytes.saturating_add(bytes);
-                return Ok(per_job_bytes[..jobs]
-                    .iter()
-                    .copied()
-                    .map(|bytes| UploadReadPermit {
-                        inner: Arc::downgrade(&self.inner),
-                        peer,
-                        bytes,
-                    })
-                    .collect());
+                return Ok(UploadReadPermit {
+                    inner: Arc::downgrade(&self.inner),
+                    peer,
+                    bytes,
+                    jobs,
+                });
             }
 
             let id = state.next_waiter;
@@ -392,7 +405,6 @@ impl UploadReadScheduler {
                 id,
                 jobs,
                 bytes,
-                per_job_bytes,
                 reply: WaiterReply::Batch(reply),
             });
             if add_to_round_robin {
@@ -456,15 +468,18 @@ impl Drop for UploadReadConnection {
 
 impl Drop for UploadReadPermit {
     fn drop(&mut self) {
+        if self.jobs == 0 {
+            return;
+        }
         let Some(inner) = self.inner.upgrade() else {
             return;
         };
         {
             let mut state = lock_state(&inner);
-            state.in_flight_jobs = state.in_flight_jobs.saturating_sub(1);
+            state.in_flight_jobs = state.in_flight_jobs.saturating_sub(self.jobs);
             state.in_flight_bytes = state.in_flight_bytes.saturating_sub(self.bytes);
             let remove = if let Some(connection) = state.connections.get_mut(&self.peer) {
-                connection.in_flight_jobs = connection.in_flight_jobs.saturating_sub(1);
+                connection.in_flight_jobs = connection.in_flight_jobs.saturating_sub(self.jobs);
                 connection.in_flight_bytes = connection.in_flight_bytes.saturating_sub(self.bytes);
                 connection.closed && connection.in_flight_jobs == 0
             } else {
@@ -584,23 +599,21 @@ fn pump(inner: &Arc<Inner>) {
                         inner: Arc::downgrade(inner),
                         peer,
                         bytes: waiter.bytes,
+                        jobs: 1,
                     };
                     if let Err(permit) = reply.send(permit) {
-                        failed_permits.push(smallvec::smallvec![permit]);
+                        failed_permits.push(permit);
                     }
                 }
                 WaiterReply::Batch(reply) => {
-                    let permits = waiter.per_job_bytes[..waiter.jobs]
-                        .iter()
-                        .copied()
-                        .map(|bytes| UploadReadPermit {
-                            inner: Arc::downgrade(inner),
-                            peer,
-                            bytes,
-                        })
-                        .collect();
-                    if let Err(permits) = reply.send(permits) {
-                        failed_permits.push(permits);
+                    let permit = UploadReadPermit {
+                        inner: Arc::downgrade(inner),
+                        peer,
+                        bytes: waiter.bytes,
+                        jobs: waiter.jobs,
+                    };
+                    if let Err(permit) = reply.send(permit) {
+                        failed_permits.push(permit);
                     }
                 }
             }

@@ -7,18 +7,16 @@
 pub(crate) struct PieceFlags {
     words: Vec<u64>,
     len: usize,
+    ones: usize,
 }
 
 impl PieceFlags {
     pub(crate) fn new(len: usize, value: bool) -> Self {
-        let mut flags = Self {
-            words: vec![0; len.div_ceil(64)],
+        Self {
+            words: Vec::new(),
             len,
-        };
-        if value {
-            flags.fill(true);
+            ones: if value { len } else { 0 },
         }
-        flags
     }
 
     pub(crate) fn from_bools(bools: &[bool]) -> Self {
@@ -42,32 +40,46 @@ impl PieceFlags {
     }
 
     pub(crate) fn get(&self, index: usize) -> bool {
-        index < self.len && self.words[index / 64] & (1 << (index % 64)) != 0
+        index < self.len
+            && if self.words.is_empty() {
+                self.ones != 0
+            } else {
+                self.words[index / 64] & (1 << (index % 64)) != 0
+            }
     }
 
     pub(crate) fn set(&mut self, index: usize, value: bool) {
-        if index >= self.len {
+        if index >= self.len || self.get(index) == value {
             return;
         }
+        if self.words.is_empty() {
+            self.words = vec![if self.ones == 0 { 0 } else { u64::MAX }; self.len.div_ceil(64)];
+            let tail = self.len % 64;
+            if tail != 0 {
+                if let Some(last) = self.words.last_mut() {
+                    *last &= (1u64 << tail) - 1;
+                }
+            }
+        }
+        self.ones = if value { self.ones + 1 } else { self.ones - 1 };
         let mask = 1u64 << (index % 64);
         if value {
             self.words[index / 64] |= mask;
         } else {
             self.words[index / 64] &= !mask;
         }
+        if self.ones == 0 || self.ones == self.len {
+            self.words = Vec::new();
+        }
     }
 
     pub(crate) fn fill(&mut self, value: bool) {
-        self.words.fill(if value { u64::MAX } else { 0 });
-        // Keep bits past `len` clear so word-wise counts stay exact.
-        if value {
-            let tail = self.len % 64;
-            if tail != 0 {
-                if let Some(last) = self.words.last_mut() {
-                    *last = (1u64 << tail) - 1;
-                }
-            }
-        }
+        self.words = Vec::new();
+        self.ones = if value { self.len } else { 0 };
+    }
+
+    pub(crate) fn is_empty_set(&self) -> bool {
+        self.ones == 0
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = bool> + '_ {
@@ -90,7 +102,11 @@ mod tests {
         assert_eq!(flags.iter().filter(|set| *set).count(), 129);
         flags.fill(false);
         assert_eq!(flags.iter().filter(|set| *set).count(), 0);
-        assert_eq!(std::mem::size_of_val(flags.words.as_slice()), 3 * 8);
+        assert_eq!(
+            flags.memory_bytes(),
+            0,
+            "uniform flags release backing storage"
+        );
     }
 
     #[test]

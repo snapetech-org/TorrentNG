@@ -6,6 +6,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+seed-mmap = []
+
 [dependencies]
 thiserror.workspace = true
 tracing.workspace = true
