@@ -1,0 +1,8 @@
+[?1049h[22;0;0t[1;24r(B[m[4l[?7h[39;49m[?1h=[?25l[39;49m(B[m[24;1H[?12l[?25h[?1049l[23;0;0t[?1l>rtorrent: caught torrent::internal_error: PollInternal::modify(): epoll_ctl(ADD) error for event: name:input fd:0 : Operation not permitted
+/tmp/torrentng-seed-goal-20261022/rtorrent-rootfs/usr/local/lib/libtorrent.so.53(_ZN7torrent14internal_error10initializeERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE+0x96) [0x7f255f5e4216]
+/tmp/torrentng-seed-goal-20261022/rtorrent-rootfs/usr/local/bin/rtorrent(_ZN7torrent14internal_errorC1ERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE+0x41) [0x561b791fc831]
+/tmp/torrentng-seed-goal-20261022/rtorrent-rootfs/usr/local/lib/libtorrent.so.53(+0x42d03) [0x7f255f56ad03]
+/tmp/torrentng-seed-goal-20261022/rtorrent-rootfs/usr/local/bin/rtorrent(+0x54ff4) [0x561b791e8ff4]
+/usr/lib/libc.so.6(+0x27781) [0x7f255ee27781]
+/usr/lib/libc.so.6(__libc_start_main+0x89) [0x7f255ee278b9]
+/tmp/torrentng-seed-goal-20261022/rtorrent-rootfs/usr/local/bin/rtorrent(+0x56921) [0x561b791ea921]

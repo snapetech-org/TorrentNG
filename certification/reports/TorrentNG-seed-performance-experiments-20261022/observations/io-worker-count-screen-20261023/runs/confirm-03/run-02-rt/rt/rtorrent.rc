@@ -1,0 +1,8 @@
+directory.default.set = /tmp/torrentng-seed-goal-20261022/io-worker-count-screen-20261023-01/trial-04/run-02-rt/rt/download
+session.path.set = /tmp/torrentng-seed-goal-20261022/io-worker-count-screen-20261023-01/trial-04/run-02-rt/rt/session
+network.bind_address.ipv4.set = 127.0.0.1
+network.listen.port.range.set = 49569-49569
+network.listen.port.random.set = no
+dht.mode.set = disable
+protocol.pex.set = no
+network.scgi.open_port = 127.0.0.1:38995

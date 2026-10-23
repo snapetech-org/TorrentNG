@@ -1,0 +1,4 @@
+runner-as-run.py records the executed three-peer runner with its task-specific
+scratch paths. runner.py uses the same workload and client logic, but resolves
+the repository from its location, imports the adjacent test-only probe copy,
+and accepts task-local output/order/scratch paths through environment values.

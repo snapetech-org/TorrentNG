@@ -1,0 +1,12 @@
+# Each invocation is one randomized three-peer round. The runner reuses the
+# 64 MiB seed fixture, 4 MiB/s per peer, pread backend, and the same TorrentNG
+# binary; the test-only probe configures worker counts 2 and 1 by client label.
+# The pinned rTorrent 0.16.25 binary and its runtime libraries must exist below
+# TNG_WORKER_SCREEN_SCRATCH (default /tmp/torrentng-seed-goal-20261022).
+cd certification/reports/TorrentNG-seed-performance-experiments-20261022/observations/io-worker-count-screen-20261023/multi-peer
+TNG_WORKER_SCREEN_OUTPUT=/tmp/torrentng-seed-goal-20261022/io-worker-count-3peer-64m-round-01 \
+TNG_WORKER_SCREEN_ORDER_SEED=20261030 python3 runner.py
+TNG_WORKER_SCREEN_OUTPUT=/tmp/torrentng-seed-goal-20261022/io-worker-count-3peer-64m-round-02 \
+TNG_WORKER_SCREEN_ORDER_SEED=20261031 python3 runner.py
+TNG_WORKER_SCREEN_OUTPUT=/tmp/torrentng-seed-goal-20261022/io-worker-count-3peer-64m-round-03 \
+TNG_WORKER_SCREEN_ORDER_SEED=20261033 python3 runner.py

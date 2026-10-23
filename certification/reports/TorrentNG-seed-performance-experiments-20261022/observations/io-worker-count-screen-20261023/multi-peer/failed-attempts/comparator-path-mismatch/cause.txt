@@ -1,0 +1,1 @@
+The runner pointed its rTorrent binary path inside this new scratch directory instead of the existing pinned comparator root. The control and one-worker arms completed and verified all three peers; rTorrent did not start. The corrected three-arm screen is summary-screen-01.json. This was a harness path error, not application failure evidence.

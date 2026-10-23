@@ -1,0 +1,11 @@
+--- scripts/native_seed_cpu_ram_probe.py
++++ probe-io-worker-count.py
+@@ -787,7 +787,7 @@
+     if kind == "torrentngd":
+         token_file = work / "api-token"; token_file.write_text(TOKEN + "\n"); token_file.chmod(0o600)
+         storage_queue_depth = storage_io_queue_depth_line(storage_io_queue_depth)
+-        config.write_text(f'''[daemon]\napi_bind = "127.0.0.1:{api_port}"\nsession_dir = "{work}/session"\nlog_level = "warn"\n\n[network]\nlisten_port = {peer_port}\nmax_peers = 8\nmax_incoming_handshakes = 32\n\n[storage]\ndownload_dir = "{download}"\n{storage_queue_depth}\n[dht]\nenabled = false\n\n[auth]\napi_tokens_file = "{token_file}"\n''')
++        config.write_text(f'''[daemon]\napi_bind = "127.0.0.1:{api_port}"\nsession_dir = "{work}/session"\nlog_level = "warn"\n\n[network]\nlisten_port = {peer_port}\nmax_peers = 8\nmax_incoming_handshakes = 32\n\n[storage]\nio_worker_threads = {1 if name == "one_worker" else 2}\ndownload_dir = "{download}"\n{storage_queue_depth}\n[dht]\nenabled = false\n\n[auth]\napi_tokens_file = "{token_file}"\n''')
+         env["TORRENTNGD_CONFIG"] = str(config)
+         if pgo_profile_path is None:
+             command = [binary]

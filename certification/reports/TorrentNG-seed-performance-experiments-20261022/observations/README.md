@@ -72,6 +72,13 @@ raising median CPU by 5.4%; cap 2 raised CPU by 42.3% in its one-round screen.
 The archive includes exact summaries and diagnostics plus the fat-LTO binary.
 No production or build default changed.
 
+`io-worker-count-screen-20261023/` preserves a config-only comparison of one
+versus two shared storage I/O workers on the current source. One worker lowered
+CPU and memory in three single-peer rounds, then used 12–19% more CPU in each of
+three randomized rounds with three concurrent peers while lowering memory.
+Keep the production default at two; the evidence motivates testing a bounded
+lazy second worker.
+
 `pgo-hotpath-profile-20261022/` retains one exact-binary 256 MiB PGO CPU
 profile. It did not provide a matched performance result; the peer-read stream
 map was not a sampled symbol, so a map-only refactor was not selected.
