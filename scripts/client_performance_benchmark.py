@@ -4442,7 +4442,7 @@ class Benchmark:
             return self._run_controlled_download_mode(
                 tracker_ip, meta, client_images,
             )
-        for client in CLIENTS:
+        for client in self.transfer_order:
             private_path = self.workdir / "torrents" / f"private-seed-{client}.torrent"
             try:
                 self._run_one(client, meta, tracker_ip, private_path)
@@ -4482,7 +4482,7 @@ class Benchmark:
         self._write_report(meta, client_images)
         if self.mode == "controlled-seed":
             return int(
-                len(self.results) != len(CLIENTS)
+                len(self.results) != len(self.transfer_order)
                 or any(row.get("seed") != "PASS" for row in self.results)
             )
         return int(not (

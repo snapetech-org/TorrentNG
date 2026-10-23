@@ -844,6 +844,7 @@ class CheckpointReportTests(unittest.TestCase):
             instance.seed_source_override.read_bytes(),
         ).hexdigest()
         instance.mode = "controlled-seed"
+        instance.transfer_order = ("torrentngd",)
         instance.config_dir = instance.workdir / "config"
         instance.project = "checkpoint-test"
         instance.skip_build = True
@@ -886,6 +887,7 @@ class CheckpointReportTests(unittest.TestCase):
     def test_interrupted_next_client_preserves_completed_client_report(self):
         with tempfile.TemporaryDirectory() as directory:
             instance = self.fixture(directory)
+            instance.transfer_order = ("torrentngd", "qbittorrent")
             checkpoints = []
             instance._write_report = mock.Mock(side_effect=lambda *args: checkpoints.append(
                 [dict(row) for row in instance.results],
@@ -909,6 +911,34 @@ class CheckpointReportTests(unittest.TestCase):
                 self.assertEqual(checkpoint, [{
                     "client": "torrentngd", "public": "NOT RUN", "seed": "PASS",
                 }])
+
+    def test_controlled_seed_uses_the_recorded_randomized_client_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            instance = self.fixture(directory)
+            instance.transfer_order = ("qbittorrent", "torrentngd")
+            instance._pinned_seed_metadata = mock.Mock(return_value={
+                "torrent_path": instance.workdir / "torrents" / "fixture.torrent",
+                "iso_name": "fixture.bin",
+                "size": instance.seed_source_override.stat().st_size,
+                "sha256": instance.seed_sha256_override,
+                "info_hash": "local-info-hash",
+            })
+            executed = []
+
+            def trial(client, *_args):
+                executed.append(client)
+                instance.results.append({
+                    "client": client, "public": "NOT RUN", "seed": "PASS",
+                })
+
+            instance._run_one = mock.Mock(side_effect=trial)
+            with mock.patch.object(
+                benchmark, "CLIENTS", ["torrentngd", "qbittorrent"],
+            ), mock.patch.object(benchmark.shutil, "which", return_value="/bin/available"):
+                status = instance.run()
+
+            self.assertEqual(status, 0)
+            self.assertEqual(executed, ["qbittorrent", "torrentngd"])
 
 
 class TrackerScrapeTests(unittest.TestCase):
