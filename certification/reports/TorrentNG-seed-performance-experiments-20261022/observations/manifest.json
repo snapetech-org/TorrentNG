@@ -27,6 +27,66 @@
       "sha256": "f567e1fd0b664ca7a65c762b72a657b339d396de281a36769640f245a592e912"
     },
     {
+      "path": "batch12-screen-20261022/64m-load-after.txt",
+      "bytes": 72,
+      "sha256": "7ee06310c2fcfc323de1126041abef9619d30b19d9f43545a9a0a12c4a137db6"
+    },
+    {
+      "path": "batch12-screen-20261022/64m-load-before.txt",
+      "bytes": 72,
+      "sha256": "20a87671d6eb02d709cd013894e03795b6f503013a1726173c2d4e467a94e158"
+    },
+    {
+      "path": "batch12-screen-20261022/64m-one-round.json",
+      "bytes": 51302,
+      "sha256": "e85d4ff398fb6252cd8c0bea77b226b6db4343c9eefd503a854fa8c4964c7b1f"
+    },
+    {
+      "path": "batch12-screen-20261022/README.md",
+      "bytes": 2429,
+      "sha256": "eddd5c536a6419fc268eb9f71695b2927b32a8e3a9f09849532185217d3b5071"
+    },
+    {
+      "path": "batch12-screen-20261022/batch12-release.torrentngd.gz",
+      "bytes": 9705950,
+      "sha256": "b5d4f701aa9a8785c7d7ff4e439474e0dfbaa09534ab164cb955a8ea62375cc8"
+    },
+    {
+      "path": "batch12-screen-20261022/three-peer-16m-wire.json",
+      "bytes": 2116,
+      "sha256": "ea916d801eadcfb68b0a0d0ee194ebc57f4d266b9279d554fd66e3b65037373e"
+    },
+    {
+      "path": "batch12-screen-20261022/three-peer-16m-wire.py",
+      "bytes": 6177,
+      "sha256": "af12d0e15a2d14a524dad5baf830da334ff3fe3a2b3b66cf45e2c8da00cc2f5e"
+    },
+    {
+      "path": "concurrent-arena-cap-screen-20261022/README.md",
+      "bytes": 2768,
+      "sha256": "e60f5eb70418793504e22e1f44328e465fc46b3e577149f6d1f6a1d776de0054"
+    },
+    {
+      "path": "concurrent-arena-cap-screen-20261022/runner-arena1-rtorrent.py",
+      "bytes": 6464,
+      "sha256": "cfffe986a5cddf41230d2fe59101ae171073482fc691ba3237a12012cef55997"
+    },
+    {
+      "path": "concurrent-arena-cap-screen-20261022/runner-arena2.py",
+      "bytes": 6571,
+      "sha256": "a81cbd2dc76fab0eaa09f296ce3d18323d717c55513d42a58dfd27c7a2d771df"
+    },
+    {
+      "path": "concurrent-arena-cap-screen-20261022/three-peer-screen-1.json",
+      "bytes": 5378,
+      "sha256": "562f089c6e4df3d5a465b7a9ea1860465127a7a83a0eecc06e34706674547658"
+    },
+    {
+      "path": "concurrent-arena-cap-screen-20261022/three-peer-screen-2.json",
+      "bytes": 5327,
+      "sha256": "0719f13e1697cd24c65ee30ebdd470e48b2eebf6183b6dfeb637ba19dc1eb3a3"
+    },
+    {
       "path": "io-uring-queue-depth-64/backend-smoke-16m/fixture/fixture.torrent",
       "bytes": 416,
       "sha256": "ed235ed21bc21c5b29fdf4aebfadcce4f595f8ba8ce7923f05e1c3913a3ca8e5"
@@ -2612,16 +2672,6 @@
       "sha256": "2cae7c3d70d23d6031cc2c5ef7041dc8ef94bf4f8a7e6fa1b5e34b69ccd85b00"
     },
     {
-      "path": "screen-cache-hit-64m-1x-launch-failure/logs/run-01-rtorrent-rtorrent.client.log",
-      "bytes": 188,
-      "sha256": "26cb6752a4413fdfd2db8d2b1b5ac6594748156a5812784b047ba71e475f9d5d"
-    },
-    {
-      "path": "screen-cache-hit-64m-1x-launch-failure/summary.json",
-      "bytes": 1114,
-      "sha256": "cfed76a85fc08c2c6a59c22efb026d4f77eeb4707ce24a5e5e2e3731fab38a75"
-    },
-    {
       "path": "screen-cache-hit-64m-1x/logs/run-01-baseline-baseline.client.log",
       "bytes": 457,
       "sha256": "1d67c9f4dce124c74914e5a7aef9eea78d0d1d63ffcb0c87311be684fc42cc80"
@@ -2645,6 +2695,16 @@
       "path": "screen-cache-hit-64m-1x/summary.json",
       "bytes": 80470,
       "sha256": "9ff1dd866afaaa69334a81ce0128058bea1f9fc78d4ce16546216049bbf75bb7"
+    },
+    {
+      "path": "screen-cache-hit-64m-1x-launch-failure/logs/run-01-rtorrent-rtorrent.client.log",
+      "bytes": 188,
+      "sha256": "26cb6752a4413fdfd2db8d2b1b5ac6594748156a5812784b047ba71e475f9d5d"
+    },
+    {
+      "path": "screen-cache-hit-64m-1x-launch-failure/summary.json",
+      "bytes": 1114,
+      "sha256": "cfed76a85fc08c2c6a59c22efb026d4f77eeb4707ce24a5e5e2e3731fab38a75"
     },
     {
       "path": "screen-cache-hit-64m-3x/logs/run-01-baseline-baseline.client.log",
@@ -3678,13 +3738,38 @@
     },
     {
       "path": "seed-goal-next-avenues-20261022/README.md",
-      "bytes": 7118,
-      "sha256": "3732cd624b12d5c4f58b58b03735ef32b1568e19c36230efabebaae39d3111da"
+      "bytes": 9858,
+      "sha256": "d186babaac18f13a010b8bccb6e391c38626e211d43f1cb8c1ca9dc4d2374137"
     },
     {
       "path": "seed-goal-next-avenues-20261022/active-stream-lookup.patch",
       "bytes": 5374,
       "sha256": "44573b17943f20574434af5ee557b88114786a2ee784b5c2b300f75e20af5e63"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/arena-cap-release-128m-3x.json",
+      "bytes": 222856,
+      "sha256": "13ffca1ac72869ebf3e892f4ab3440dcba2888ef6d6b7c51085e5647e186570d"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/arena-cap-release-128m.fixture.torrent",
+      "bytes": 2658,
+      "sha256": "c41ee02b67fcc6247c848614d192f00a15365952345e05a7157809a5490edb9e"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/arena-cap-release-64m-1x-initial.json",
+      "bytes": 59514,
+      "sha256": "c300699c3074ab89c480cc6c0f376e868fb0cdd2eb92fb861124b07669d736de"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/arena-cap-release-64m-3x.json",
+      "bytes": 175939,
+      "sha256": "68aa99838d49936b9dcfebb5bdef786e54144610477c5a9a0ae9fb40357642de"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/arena-cap-release-64m.fixture.torrent",
+      "bytes": 1377,
+      "sha256": "495c893eb0d7b2569a317ac3a1c98bb9fa6c2eecdb78dd8dfa928785a22e1b49"
     },
     {
       "path": "seed-goal-next-avenues-20261022/batch16-32ms.patch",
@@ -3840,6 +3925,531 @@
       "path": "seed-goal-next-avenues-20261022/mapped-window-v3.patch",
       "bytes": 60254,
       "sha256": "681c4bc121d5255e57ae6dc517196d4308f04e4bc76635e4f9b47e9c9d6246bb"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-01-arena1/arena1/client.log",
+      "bytes": 457,
+      "sha256": "82f097bbd545fb95360ed1ff07abe2c61435e4108447c1b43756d7ac351f52f4"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-01-arena1/arena1/diagnostics/after-seed-recheck-pid-1688334.smaps",
+      "bytes": 44819,
+      "sha256": "9d1588c463b212f298189f7f19b35f3edd91d9b8d89f5055d01f6f8d04f95545"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-01-arena1/arena1/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "cf9de1cc9d6dc69b5428ccef346d58ac6934415bac4ebb75777afe499c94908f"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-01-arena1/arena1/diagnostics/after-transfer-pid-1688334.smaps",
+      "bytes": 43330,
+      "sha256": "534d9c791ebc97cea17f61d5f7b6e79d413eacaf7b7da78366081e4534622081"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-01-arena1/arena1/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "5bc2d55120d208b6876714a99ad2c9b2b5617c0ae8d5ef780bba159e62951ff9"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-01-arena1/arena1/diagnostics/before-torrent-add-pid-1688334.smaps",
+      "bytes": 37374,
+      "sha256": "f21b430784e378201714f3308a02ec987b73797d18d91a325ee9cb666908cb3d"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-01-arena1/arena1/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "8858198c6ab752c133b5d3f91f27b218d4ea9e157be442c7c32e4afed5d7fb65"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-01-release/release/client.log",
+      "bytes": 457,
+      "sha256": "91508838c1491383ec73e779f3f380035a11e4470792a256115878c8b9523b1d"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-01-release/release/diagnostics/after-seed-recheck-pid-1695842.smaps",
+      "bytes": 56685,
+      "sha256": "c5fd80d3ebe745800b4399e433a1af12f62b4040ac4d101a7fe055114455ac09"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-01-release/release/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "f25265b5cc2c7bd8dfb3466a9cd81ef12131414e89f409592f178cf57774e57f"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-01-release/release/diagnostics/after-transfer-pid-1695842.smaps",
+      "bytes": 55196,
+      "sha256": "d52cdfebd37bc78f57d78060152002225d6508836a85a02d8f2e9fcc8c3554b3"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-01-release/release/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "97e80b94d4fa251bde89bf1351948e41e8936ef608175d97fad3d478a4df81d3"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-01-release/release/diagnostics/before-torrent-add-pid-1695842.smaps",
+      "bytes": 41825,
+      "sha256": "f2b4348043ceb1bf7c3f8142d878e2a24b0aa2d3040bdec4e62b0ce819d7bd06"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-01-release/release/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "98fe1a8a1a5da875355d1fb9e9b53b5eaa0756920637b5b65877d80e3fd64b59"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-01-rt/rt/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-02-arena1/arena1/client.log",
+      "bytes": 457,
+      "sha256": "95590004171269f932213d2d6a322a425a58a9e5c0ab47b1ffd360e7ab9d60ac"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-02-arena1/arena1/diagnostics/after-seed-recheck-pid-1704443.smaps",
+      "bytes": 44819,
+      "sha256": "143993ec43c2a7197dd385b787a7c924c848ef23a02af48db53f2c99287c9524"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-02-arena1/arena1/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "f9e0570b9692d3bba60ff47fce2ae6bcc9106b4c964d057d613d5c7c7c36ea23"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-02-arena1/arena1/diagnostics/after-transfer-pid-1704443.smaps",
+      "bytes": 43330,
+      "sha256": "f1d5d28bd1c28a1346be05aec22fa5d972ccff59bd749a774d52545256a51da9"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-02-arena1/arena1/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "edcf6eb638e739dd80c4106ffd75719640105ad281f7a4025585c8b293eb35d2"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-02-arena1/arena1/diagnostics/before-torrent-add-pid-1704443.smaps",
+      "bytes": 37374,
+      "sha256": "e0fa87abd89110b4bbf4bd8a608e38fa34796ad6dd474aaa36830cdbc13c819b"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-02-arena1/arena1/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "e6fc57ffec336fea4f92e63a0be98ca0b34aa83fa82d01c6855d5a1a4ba4ac13"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-02-release/release/client.log",
+      "bytes": 457,
+      "sha256": "9848f620ab7d3b98c5fd98b4b9d45fe59965615bfb7293bd744c65f87224420b"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-02-release/release/diagnostics/after-seed-recheck-pid-1702063.smaps",
+      "bytes": 56685,
+      "sha256": "4a6fb3075c0c1463cbc281baf2a61989fc7485407f0385a27512520811c85e4e"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-02-release/release/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "6bdb4e62d68619a22c4f687942b499a35b7c8afd6fe6809c50e69f0dda1f3c4c"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-02-release/release/diagnostics/after-transfer-pid-1702063.smaps",
+      "bytes": 55196,
+      "sha256": "5f191e67b623b687bd19ec06570c21e1aa6f7d14d044b017a30340ccc7ef374f"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-02-release/release/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63215,
+      "sha256": "a81145bcb9744faf1e13a82fb5ba54346861a95ae4d349bd077be662ea6e85e4"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-02-release/release/diagnostics/before-torrent-add-pid-1702063.smaps",
+      "bytes": 41825,
+      "sha256": "165a99494d029ef05a855a81d865fe2e6db80810bd2a6ec17d78f8f9e8de205d"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-02-release/release/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "50aa83e0b53b8290c6190c05046c24ff2fedc7e92e8628ac8cec4aee140ccc2f"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-02-rt/rt/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-03-arena1/arena1/client.log",
+      "bytes": 457,
+      "sha256": "218e416ecb198618e17d61b8f618a247a976a142819837fc463503b967541664"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-03-arena1/arena1/diagnostics/after-seed-recheck-pid-1714457.smaps",
+      "bytes": 44819,
+      "sha256": "cb28956ad01d3c680ce877594850a0d02076028b54ebdd36ff52d4103984cd4d"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-03-arena1/arena1/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "4a58b2fd66602c13ea1ab4a8b5f1d5e44c8a2dd1f8b77f37cc2afc5a18d917e6"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-03-arena1/arena1/diagnostics/after-transfer-pid-1714457.smaps",
+      "bytes": 43330,
+      "sha256": "5fcbfc6b5e31aa029693fcd3aa8d05045ea1e3ee1887ae91f0231dfff959bc6d"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-03-arena1/arena1/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "9714ef76c48261f46dccef135c15b641ef21eb699df8602ddd7bc60ce7821856"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-03-arena1/arena1/diagnostics/before-torrent-add-pid-1714457.smaps",
+      "bytes": 37374,
+      "sha256": "ac0ebd4b67f8189679ab8b9fe8c5c2774919adc3d833535470c162c7326129ba"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-03-arena1/arena1/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "5eaac76c357fb067fb768127718abf8e7802a237d533bf855026500344f3aaf2"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-03-release/release/client.log",
+      "bytes": 457,
+      "sha256": "b95c65fb28c33e51007ef15049acb0ec6b54c958b53541980e67e3dd153a22fd"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-03-release/release/diagnostics/after-seed-recheck-pid-1706865.smaps",
+      "bytes": 56685,
+      "sha256": "9758f0c202502ef739e10805dba5c8d040f22b0f76b3f1c65fe71f28eb49a89a"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-03-release/release/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "518b3d3756e7bbda9b9bf9535b323efa484ae841c37f3a4f77cf03aa9be5d75d"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-03-release/release/diagnostics/after-transfer-pid-1706865.smaps",
+      "bytes": 55196,
+      "sha256": "19d32291dd280a9122ba4d7e02293a60899f8a155e7df22af8b813da1baa346d"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-03-release/release/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63217,
+      "sha256": "65905746f8d89a3fe1644ce86cb671450f5f7276e8b17daa106320fff832ddd2"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-03-release/release/diagnostics/before-torrent-add-pid-1706865.smaps",
+      "bytes": 41825,
+      "sha256": "265ebad03911e385605d47a2112a9ecb633173be095f541e7cc6bdd538902e6f"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-03-release/release/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "41e95d8e2a9795d7abf95a6b04f2f829860e838306ea31a9cb7dde638f06cfe2"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/128m-3x/run-03-rt/rt/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-1x/run-01-arena1/arena1/client.log",
+      "bytes": 457,
+      "sha256": "89e0ed4f6dd8345d364513b660f5b69688161c04e5acd9deda23668a1722788b"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-1x/run-01-arena1/arena1/diagnostics/after-seed-recheck-pid-1651086.smaps",
+      "bytes": 44818,
+      "sha256": "f563deda0b8016060f50920ac12d41c6997709b2acc61086c4c069c20a22ee18"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-1x/run-01-arena1/arena1/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "a047b31e61784394a2b1813e034e1950a2d97edd93374e2325bbcd9d530cb9e1"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-1x/run-01-arena1/arena1/diagnostics/after-transfer-pid-1651086.smaps",
+      "bytes": 43329,
+      "sha256": "2f4527746e0785f8dd9946b1b84568e0a48e5c2e3d630786b9ede17f000ad761"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-1x/run-01-arena1/arena1/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63173,
+      "sha256": "6dca2f114255d65bfdabdc58f0224c6a3f227303df4495c79e19e4a35144f7ce"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-1x/run-01-arena1/arena1/diagnostics/before-torrent-add-pid-1651086.smaps",
+      "bytes": 37373,
+      "sha256": "1774205e7f7a50907b0d09d016f8ce509ba2e14b347de1193b11de0fce443eaf"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-1x/run-01-arena1/arena1/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "933cb0b047765851602d589f8363ae9ce5d5356ed29aff70a718f89187f3ab9c"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-1x/run-01-release/release/client.log",
+      "bytes": 457,
+      "sha256": "ff49bb66990702330a220b19144ed4fea1772daf92735709147e3e66f7e80e11"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-1x/run-01-release/release/diagnostics/after-seed-recheck-pid-1645671.smaps",
+      "bytes": 56684,
+      "sha256": "31c10e7fb15af5ac6c948bdbf741f97a768555d103c19abdffb8a0d46ae4dcb0"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-1x/run-01-release/release/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "61a9ffd01cd2da2b42c33ee82b45d1d47ed67241aad119d8329928525e25ad79"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-1x/run-01-release/release/diagnostics/after-transfer-pid-1645671.smaps",
+      "bytes": 55195,
+      "sha256": "5e925b9ef4c01fc088676505f6d3b0d191c07e8f61b4985ecf1793ad931595f5"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-1x/run-01-release/release/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63173,
+      "sha256": "753381eab4401f55e88d32adda3f465b5e84319eb9a512e7710c41e99684ea06"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-1x/run-01-release/release/diagnostics/before-torrent-add-pid-1645671.smaps",
+      "bytes": 41824,
+      "sha256": "3f9448d940290e4628089a11284dfff3aa4395f396dedd85ce2cd22beba59849"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-1x/run-01-release/release/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "d13e7a12fca1780079a3861962521de6efe4df3d1f4a0bb4aea4a4a8b2696131"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-1x/run-01-rt/rt/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-01-arena1/arena1/client.log",
+      "bytes": 457,
+      "sha256": "8883e9a027f513f3d940e098b9d039f34514c16f23467a95a31a2079f7850103"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-01-arena1/arena1/diagnostics/after-seed-recheck-pid-1660155.smaps",
+      "bytes": 44075,
+      "sha256": "2940e55d8b4a1ef8f2cba9919f52f9ea870d82510d3a16bbfa16b0bb8e5afe86"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-01-arena1/arena1/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "61149d4a4d1b47c228a762e42da6b5790606c20c5459e916de9339430a0ec512"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-01-arena1/arena1/diagnostics/after-transfer-pid-1660155.smaps",
+      "bytes": 42586,
+      "sha256": "c8721390b93fb0d7c20f49acc45c0ff247a8b94b2080bbe40e34cb420ccf66ef"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-01-arena1/arena1/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63173,
+      "sha256": "0b94518f8f6592dcedc804b1d56cabaa61e0bc795167b337a8db3fe8880c0a2a"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-01-arena1/arena1/diagnostics/before-torrent-add-pid-1660155.smaps",
+      "bytes": 37373,
+      "sha256": "19b3c74202b5ebe461c803a0bcde1e42a8fd4f1e28959b0d05d3ffb6191bbcf8"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-01-arena1/arena1/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "cf2ca1fa7b2b01223f242b67d0ef441fc7dadf359520611902c36b6cf8cf2096"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-01-release/release/client.log",
+      "bytes": 457,
+      "sha256": "86b3abb7f5c5ce684262502208f313fba47ab6848d13fb48e28926ebc53b7663"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-01-release/release/diagnostics/after-seed-recheck-pid-1654782.smaps",
+      "bytes": 55968,
+      "sha256": "a0215a9a6261010a9fed1ad66512f7c6a881ed1702f41a8dd65158849a5aaaa9"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-01-release/release/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "17401d330c6fc414c18488a28e38e11f7eae3045e6cd88546a746837d90ca8d9"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-01-release/release/diagnostics/after-transfer-pid-1654782.smaps",
+      "bytes": 55222,
+      "sha256": "b3c53bc55500b0defb84056c499b1c16edf5a9caf02e5fc0ed800155779ad32d"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-01-release/release/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63173,
+      "sha256": "44865f08cb5b007a6b6f7f9306942acbad7da3061468b2987cb2c9bca2a6c76b"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-01-release/release/diagnostics/before-torrent-add-pid-1654782.smaps",
+      "bytes": 41081,
+      "sha256": "47c0e707f6ea5f5caf659d4569e3bb54ead0cbf2194897c3740d6cf77bbad51b"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-01-release/release/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "9bfecd7696d4908a52c2fd643e1da21ef0468172f96b1e8f3bc866485e729b7b"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-01-rt/rt/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-02-arena1/arena1/client.log",
+      "bytes": 457,
+      "sha256": "104964743c0bf308b82e969d0494f82c6ace01e835a46a1971385791136d70ba"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-02-arena1/arena1/diagnostics/after-seed-recheck-pid-1668057.smaps",
+      "bytes": 46307,
+      "sha256": "642aa8acd17696831e99fa5d5b0e7b4aa8ec8d9deaa81419ab9e249694524d4b"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-02-arena1/arena1/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "90099e392195351fbb4025c0ac18a71f8dae3366dc1d1ca2a445325662ad109b"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-02-arena1/arena1/diagnostics/after-transfer-pid-1668057.smaps",
+      "bytes": 43329,
+      "sha256": "e1530790a1a1945c80d5ea9c9e9306e4f10727e5ae97cc198737c42f514800ec"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-02-arena1/arena1/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63173,
+      "sha256": "c9db82ff7953147c7130821564863ca2d4bfc114fe8803e26a149342e925036b"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-02-arena1/arena1/diagnostics/before-torrent-add-pid-1668057.smaps",
+      "bytes": 37373,
+      "sha256": "f62657cd813fef7f9a9d4fd348e9357626e4f0c801fcc78a8dda33718b1ba27d"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-02-arena1/arena1/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "463e6ba83825d8224211537cd08d47d5b9339e22891d52362f3021f83149ce00"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-02-release/release/client.log",
+      "bytes": 457,
+      "sha256": "126de20892f9b8f4fa4226739a16ab6f3992bb416b0dcdcadccb6bd2e79a3d46"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-02-release/release/diagnostics/after-seed-recheck-pid-1664706.smaps",
+      "bytes": 56684,
+      "sha256": "8d06d884f030997f3d8219dde3b66c91f1e8da511c848f013687355d250d33a0"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-02-release/release/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "f9050bc3e1ff4c34833096d1357887c830f0bbec530f71cde37cf7f524659aad"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-02-release/release/diagnostics/after-transfer-pid-1664706.smaps",
+      "bytes": 55195,
+      "sha256": "7e33dd42480c783a1e9163d5015a17e39cb50d46f9b62d1e48b4027b1ae19e34"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-02-release/release/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63173,
+      "sha256": "fd263c1db5eabb714e2a4fd0efa300e884e25976af574ab0986ae02c61c601a5"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-02-release/release/diagnostics/before-torrent-add-pid-1664706.smaps",
+      "bytes": 41824,
+      "sha256": "298c4a1f97b44d4e408ff92364ebeda76483d4fc762e4e24df3c4597fb0114b5"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-02-release/release/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "9e8eb64fc9750a144f7c2babd91a2abe263bb0e3565945c44952780334682e32"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-02-rt/rt/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-03-arena1/arena1/client.log",
+      "bytes": 457,
+      "sha256": "ad25fd6c6ed8034dc2dffc0815534f439e98167bdd680a27b630d47b3ac9ee7f"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-03-arena1/arena1/diagnostics/after-seed-recheck-pid-1670765.smaps",
+      "bytes": 44872,
+      "sha256": "57d2184455d14a4588b660d104c127e1a46b5b5e91b1ef5b598894878dbcc9ba"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-03-arena1/arena1/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "792cf14e534dab66970c46bb284af6d5782a1375de6d60de516cf89280aa3187"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-03-arena1/arena1/diagnostics/after-transfer-pid-1670765.smaps",
+      "bytes": 44126,
+      "sha256": "b2ac970b9e855aed26054bccf8081441b91b3acdf8aeee26d977ebc864f7fa29"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-03-arena1/arena1/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63173,
+      "sha256": "a23e753feaf31eea661e767164c2a8154c3f76957f2edbf3b6b5a79beb11ae0e"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-03-arena1/arena1/diagnostics/before-torrent-add-pid-1670765.smaps",
+      "bytes": 37391,
+      "sha256": "9809b8c8b70d144f5ed9ccce6d3ddf41c0122d881c3c5409648cecb332b1eeb5"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-03-arena1/arena1/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "9d770a643acc74ddd7c215c2ce9e56798a4c80c8fc2925822eefe56a1f9cf12f"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-03-release/release/client.log",
+      "bytes": 457,
+      "sha256": "df5ed7faa41ba90449ed771f7b827b404b710c743cb92f89903b6414facd884c"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-03-release/release/diagnostics/after-seed-recheck-pid-1680957.smaps",
+      "bytes": 56684,
+      "sha256": "64e8bfe2a6275331fcfd9cb946c37f4c8c6c49f81f6d4540d1455c4f7a82a419"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-03-release/release/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "3b7b3886e2982d25da0914f94eeba89e02bb963118e9ac160755eed8634da35c"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-03-release/release/diagnostics/after-transfer-pid-1680957.smaps",
+      "bytes": 55195,
+      "sha256": "f8825e48ea95bed7d6c46587e9022f064803b329fc85877d3ffd06fef96b6150"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-03-release/release/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63173,
+      "sha256": "c14a777c7c53d0588c0efcc92b2ec705ce940ed267f99a2f175573f339889765"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-03-release/release/diagnostics/before-torrent-add-pid-1680957.smaps",
+      "bytes": 41824,
+      "sha256": "87d8a1035c5048e26bde0d1ae66557517f7f20e53d43892d84b21f4eaad0beca"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-03-release/release/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "d34d94eeda479396588418f0802881f0ff4eff8163b6393d71828c1b5e62633e"
+    },
+    {
+      "path": "seed-goal-next-avenues-20261022/runs/64m-3x/run-03-rt/rt/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "path": "seed-goal-next-avenues-20261022/summaries/active-stream-16m-1x-summary.json",

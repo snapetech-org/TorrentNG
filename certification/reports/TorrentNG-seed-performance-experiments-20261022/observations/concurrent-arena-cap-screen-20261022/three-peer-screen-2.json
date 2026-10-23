@@ -1,0 +1,144 @@
+{
+  "status": "complete",
+  "method": "three simultaneous loopback leechers per one seed daemon; each receives the same deterministic fixture at 4 MiB/s; process CPU normalized over total verified bytes",
+  "fixture_bytes_per_peer": 67108864,
+  "peer_count": 3,
+  "total_payload_bytes": 201326592,
+  "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+  "info_hash": "5ceff928c8833b0f7994370f398ba4b14b28034a",
+  "binary_hashes": {
+    "arena1": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+    "release": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+    "arena2": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276"
+  },
+  "leecher_rate_bytes_per_second": 4194304,
+  "randomized_order": [
+    "arena1",
+    "release",
+    "arena2"
+  ],
+  "runs": [
+    {
+      "round": 1,
+      "name": "arena1",
+      "kind": "torrentngd",
+      "binary": "/tmp/torrentng-seed-goal-20261022/arena1-release-batch8.torrentngd",
+      "binary_sha256": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+      "environment_overrides": {
+        "TNG_STORAGE_BACKEND": "pread",
+        "MALLOC_ARENA_MAX": "1"
+      },
+      "verified_peers": 3,
+      "peer_transfers": [
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.000079452001955,
+          "elapsed_seconds": 16.937659092014655
+        },
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.000514812010806,
+          "elapsed_seconds": 16.911791029997403
+        },
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.00009686499834,
+          "elapsed_seconds": 16.936765565013047
+        }
+      ],
+      "total_verified_bytes": 201326592,
+      "elapsed_wall_seconds": 16.9436417639954,
+      "process_cpu_seconds": 0.759006341,
+      "cpu_seconds_per_gib": 4.048033818666666,
+      "peak_pss_bytes": 19195904,
+      "peak_anonymous_bytes": 5668864,
+      "peak_rss_bytes": 22253568,
+      "samples_count": 30,
+      "sampler_error": []
+    },
+    {
+      "round": 2,
+      "name": "release",
+      "kind": "torrentngd",
+      "binary": "/tmp/torrentng-seed-goal-20261022/arena1-release-batch8.torrentngd",
+      "binary_sha256": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+      "environment_overrides": {
+        "TNG_STORAGE_BACKEND": "pread"
+      },
+      "verified_peers": 3,
+      "peer_transfers": [
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.00013840198517,
+          "elapsed_seconds": 16.785349573998246
+        },
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.00019662201521,
+          "elapsed_seconds": 16.80479148600716
+        },
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.000058560981415,
+          "elapsed_seconds": 16.797366580023663
+        }
+      ],
+      "total_verified_bytes": 201326592,
+      "elapsed_wall_seconds": 16.809618208993925,
+      "process_cpu_seconds": 0.823423475,
+      "cpu_seconds_per_gib": 4.3915918666666665,
+      "peak_pss_bytes": 19961856,
+      "peak_anonymous_bytes": 6639616,
+      "peak_rss_bytes": 22962176,
+      "samples_count": 30,
+      "sampler_error": []
+    },
+    {
+      "round": 3,
+      "name": "arena2",
+      "kind": "torrentngd",
+      "binary": "/tmp/torrentng-seed-goal-20261022/arena1-release-batch8.torrentngd",
+      "binary_sha256": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+      "environment_overrides": {
+        "TNG_STORAGE_BACKEND": "pread",
+        "MALLOC_ARENA_MAX": "2"
+      },
+      "verified_peers": 3,
+      "peer_transfers": [
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.000055117008742,
+          "elapsed_seconds": 16.78385893898667
+        },
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.000086621002993,
+          "elapsed_seconds": 16.817490515008103
+        },
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.000075746997027,
+          "elapsed_seconds": 16.796410245995503
+        }
+      ],
+      "total_verified_bytes": 201326592,
+      "elapsed_wall_seconds": 16.820306120993337,
+      "process_cpu_seconds": 0.724339559,
+      "cpu_seconds_per_gib": 3.8631443146666666,
+      "peak_pss_bytes": 19131392,
+      "peak_anonymous_bytes": 6041600,
+      "peak_rss_bytes": 22183936,
+      "samples_count": 30,
+      "sampler_error": []
+    }
+  ]
+}
