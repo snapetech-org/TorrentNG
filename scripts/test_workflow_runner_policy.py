@@ -10,6 +10,27 @@ PROTECTED_TRANSFER_WORKFLOW = "transfer-rebuild.yml"
 
 
 class WorkflowRunnerPolicyTests(unittest.TestCase):
+    def test_codeql_installs_node_before_javascript_typescript_analysis(self) -> None:
+        source = (WORKFLOW_DIR / "codeql.yml").read_text(encoding="utf-8")
+        setup_match = re.search(
+            r"(?ms)^      - name: Set up Node\.js for CodeQL\n"
+            r"(?P<step>.*?)(?=^      - name: |\Z)",
+            source,
+        )
+        self.assertIsNotNone(setup_match)
+        setup_step = setup_match.group("step")
+        self.assertRegex(
+            setup_step,
+            r"(?m)^        if: matrix\.language == 'javascript-typescript'$",
+        )
+        self.assertRegex(
+            setup_step,
+            r"(?m)^        uses: actions/setup-node@[a-f0-9]{40} # v7$",
+        )
+        self.assertIn('node-version: "22.23.4"', setup_step)
+        self.assertIn("package-manager-cache: false", setup_step)
+        self.assertLess(setup_match.start(), source.index("- name: Initialize CodeQL"))
+
     def test_main_ci_routes_only_trusted_main_jobs_to_the_isolated_pool(self) -> None:
         source = (WORKFLOW_DIR / "ci.yml").read_text(encoding="utf-8")
         jobs = [
