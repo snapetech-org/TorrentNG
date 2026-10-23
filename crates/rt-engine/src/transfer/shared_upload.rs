@@ -348,6 +348,12 @@ impl SharedUploadConnection {
         lock(&self.state).obligations.next_request()
     }
 
+    pub(crate) fn next_request_with_choke_priority(&self) -> Option<(BlockExtent, bool)> {
+        lock(&self.state)
+            .obligations
+            .next_request_with_choke_priority()
+    }
+
     pub(crate) fn peek_request(&self) -> Option<BlockExtent> {
         lock(&self.state).obligations.peek_request()
     }

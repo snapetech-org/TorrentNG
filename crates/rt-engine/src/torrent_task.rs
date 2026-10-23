@@ -10417,14 +10417,8 @@ fn upload_read_spec(
     read_context: &UploadReadContext,
     obligations: &SharedUploadPeer,
     block: BlockExtent,
-    queued: bool,
+    choke_critical: bool,
 ) -> anyhow::Result<UploadReadSpec> {
-    let choke_critical = obligations.is_choked()
-        && if queued {
-            obligations.is_allowed_fast(block.piece)
-        } else {
-            obligations.may_send(&block)
-        };
     let Some(wire_block) = upload.canonical_to_wire_block(block) else {
         obligations.close();
         anyhow::bail!("accepted upload obligation has no matching wire extent");
@@ -10706,7 +10700,7 @@ where
     F: std::future::Future<Output = UploadBatch<UploadReadCompletion>> + Send + 'static,
 {
     while upload_reads.pending_request_count() < MAX_PENDING_UPLOAD_READS {
-        let Some(block) = obligations.next_request() else {
+        let Some((block, choke_critical)) = obligations.next_request_with_choke_priority() else {
             break;
         };
         let mut batch: UploadBatch<UploadReadSpec> = smallvec::smallvec![upload_read_spec(
@@ -10714,7 +10708,7 @@ where
             read_context,
             obligations,
             block,
-            false,
+            choke_critical,
         )?];
         let mut batch_bytes = batch[0]
             .span
@@ -10726,21 +10720,19 @@ where
             && batch.len() < MAX_UPLOAD_READ_BATCH_BLOCKS
             && batch_bytes < MAX_UPLOAD_READ_BATCH_BYTES
         {
-            let Some(next_block) = obligations.peek_request() else {
+            let Some((next_block, choke_critical)) = obligations.next_request_with_choke_priority()
+            else {
                 break;
             };
-            if obligations.is_choked() && !obligations.is_allowed_fast(next_block.piece) {
-                break;
-            }
-            let next_spec = upload_read_spec(upload, read_context, obligations, next_block, true)?;
+            let next_spec = upload_read_spec(
+                upload,
+                read_context,
+                obligations,
+                next_block,
+                choke_critical,
+            )?;
             if !can_append_upload_read(&batch, &next_spec, batch_bytes) {
-                break;
-            }
-            let Some(dequeued) = obligations.next_request() else {
-                break;
-            };
-            if dequeued != next_block {
-                if !obligations.requeue_front(dequeued) {
+                if !obligations.requeue_front(next_block) {
                     obligations.close();
                     anyhow::bail!("upload request changed during bounded batch admission");
                 }

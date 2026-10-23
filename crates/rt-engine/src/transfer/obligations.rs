@@ -265,15 +265,24 @@ impl InboundObligations {
 
     /// Next request to serve, if any.
     pub fn next_request(&mut self) -> Option<BlockExtent> {
+        self.next_request_with_choke_priority()
+            .map(|(block, _)| block)
+    }
+
+    /// Dequeue one request and return whether it remains eligible because of
+    /// allowed-fast while choked. The caller can carry this scheduling fact
+    /// forward without re-locking the peer state to ask the same question.
+    pub(crate) fn next_request_with_choke_priority(&mut self) -> Option<(BlockExtent, bool)> {
         let next = self.queue.front().copied()?;
-        if self.choked && !self.is_allowed_fast(next.piece) {
+        let choke_critical = self.choked && self.is_allowed_fast(next.piece);
+        if self.choked && !choke_critical {
             return None;
         }
         let block = self.queue.pop_front()?;
         let state = self.outstanding.get_mut(&block)?;
         *state = RequestState::InService;
         self.in_service_len = self.in_service_len.saturating_add(1);
-        Some(block)
+        Some((block, choke_critical))
     }
 
     /// Return an in-service request to the front of the queue when a
@@ -443,7 +452,11 @@ mod tests {
         ob.on_local_unchoke();
         assert_eq!(ob.on_request(b(1), true), InboundDecision::Queue);
         assert_eq!(ob.on_request(b(1), true), InboundDecision::Duplicate);
-        let block = ob.next_request().unwrap();
+        let (block, choke_critical) = ob.next_request_with_choke_priority().unwrap();
+        assert!(
+            !choke_critical,
+            "an unchoked request needs no priority boost"
+        );
         assert_eq!(ob.on_request(block, true), InboundDecision::Duplicate);
         assert_eq!(ob.finish(block, Served::Sent), None);
         // Once served, the same coordinates are a fresh request.
@@ -524,7 +537,7 @@ mod tests {
         assert_eq!(ob.on_request(b(7), true), InboundDecision::Duplicate);
         ob.allow_fast(8);
         assert_eq!(ob.on_request(b(8), true), InboundDecision::Queue);
-        assert_eq!(ob.next_request(), Some(b(7)));
+        assert_eq!(ob.next_request_with_choke_priority(), Some((b(7), true)));
         assert!(ob.may_send(&b(7)));
         ob.check_invariants().unwrap();
     }
