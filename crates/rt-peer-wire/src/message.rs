@@ -318,16 +318,7 @@ impl Message {
                 )))
             }
             5 => Ok(Message::Bitfield(body.to_vec())),
-            6 => {
-                expect_len(body, 12, "Request")?;
-                let (piece, begin, length) = parse_3u32(body);
-                validate_request(length)?;
-                Ok(Message::Request {
-                    piece,
-                    begin,
-                    length,
-                })
-            }
+            6 => Self::parse_request_body(body),
             7 => {
                 if body.len() < 8 {
                     return Err(WireError::InvalidMessage("Piece body too short".into()));
@@ -451,6 +442,19 @@ impl Message {
             piece,
             begin,
             data: payload.slice(9..),
+        })
+    }
+
+    /// Parse the fixed-size Request body without first creating an owned frame
+    /// payload. The peer codec uses this on the common incoming request path.
+    pub(crate) fn parse_request_body(body: &[u8]) -> Result<Self, WireError> {
+        expect_len(body, 12, "Request")?;
+        let (piece, begin, length) = parse_3u32(body);
+        validate_request(length)?;
+        Ok(Message::Request {
+            piece,
+            begin,
+            length,
         })
     }
 

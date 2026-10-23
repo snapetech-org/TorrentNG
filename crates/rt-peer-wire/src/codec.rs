@@ -323,6 +323,13 @@ impl Decoder for PeerCodec {
         if self.resources.is_some() && src.capacity() > 0 {
             self.reserve_capacity(src, src.capacity())?;
         }
+        if len == 13 && src[4] == 6 {
+            let request = Message::parse_request_body(&src[5..total]);
+            // Match the regular decode path: a malformed complete frame is
+            // consumed before its parse error is returned.
+            src.advance(total);
+            return request.map(Some);
+        }
         let copied_payload_bytes = Message::copied_payload_bytes(&src[4..total]);
         let message_memory_lease = if copied_payload_bytes == 0 {
             None
@@ -453,6 +460,35 @@ mod tests {
         let m2 = codec.decode(&mut buf).unwrap().unwrap();
         assert_eq!(m1, Message::Choke);
         assert_eq!(m2, Message::Interested);
+    }
+
+    #[test]
+    fn codec_decodes_request_frames_directly_and_consumes_them() {
+        let request = Message::Request {
+            piece: 23,
+            begin: 32_768,
+            length: 16_384,
+        };
+        let mut buf = encode_msg(request.clone());
+        let decoded = PeerCodec::default().decode(&mut buf).unwrap().unwrap();
+        assert_eq!(decoded, request);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn codec_consumes_invalid_request_before_returning_error() {
+        let mut buf = BytesMut::new();
+        buf.put_u32(13);
+        buf.put_u8(6);
+        buf.put_u32(23);
+        buf.put_u32(32_768);
+        buf.put_u32(0);
+
+        assert!(matches!(
+            PeerCodec::default().decode(&mut buf),
+            Err(WireError::InvalidMessage(_))
+        ));
+        assert!(buf.is_empty());
     }
 
     #[test]
