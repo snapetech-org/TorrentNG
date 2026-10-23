@@ -1083,6 +1083,8 @@ def main():
         if shutil.which("gdb") is None:
             raise SystemExit("--pgo-profile-window requires gdb")
     report = {"format": "native-seed-cpu-ram-v1", "status": "running",
+        "probe_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "qualification_tools_sha256": hashlib.sha256(Path(__file__).with_name("seed_efficiency_tools.py").read_bytes()).hexdigest(),
         "cpu_measurement": "process CPU clock nanoseconds where available; /proc user+system ticks fallback",
         "diagnostic_run": bool(args.diagnostics or args.peer_debug or args.cpu_profile or args.pgo_profile_window), "peer_debug": bool(args.peer_debug),
         "cpu_profile": ({"method": "gperftools, started/stopped by GDB at payload boundaries",

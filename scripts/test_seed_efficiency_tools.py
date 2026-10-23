@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline regression tests for build attribution and paired qualification."""
 import copy
+import gzip
 import json
 from pathlib import Path
 import tempfile
@@ -49,6 +50,7 @@ class QualificationTests(unittest.TestCase):
 
     def test_incomplete_mismatched_instrumented_and_rebuilt_runs_fail_closed(self):
         original = experiment([10] * 10, [9] * 10)
+        with self.assertRaises(ValueError): tools.paired_analysis(original, "control", "control")
         mutations = [lambda r: r.update(status="running"),
                      lambda r: r["runs"].pop(),
                      lambda r: r["runs"][0].update(diagnostic_run=True),
@@ -91,6 +93,10 @@ class QualificationTests(unittest.TestCase):
             Path(str(profile) + ".manifest.json").write_text(json.dumps(metadata))
             with patch.object(pgo, "source_digest", return_value="source"), patch.object(pgo, "command", return_value="compiler"):
                 pgo.validate_profile(profile)
+                compressed = Path(str(profile) + ".gz")
+                with gzip.open(compressed, "wb") as stream: stream.write(profile.read_bytes())
+                Path(str(compressed) + ".manifest.json").write_text(json.dumps(metadata))
+                pgo.validate_profile(compressed)
                 profile.write_bytes(b"changed")
                 with self.assertRaises(ValueError): pgo.validate_profile(profile)
             with patch.object(pgo, "source_digest", return_value="different"):

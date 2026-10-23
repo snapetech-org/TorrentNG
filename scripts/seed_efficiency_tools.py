@@ -125,6 +125,8 @@ def host_snapshot():
 
 
 def paired_analysis(report, control, candidate, tolerance=0.02, minimum_rounds=10):
+    if control == candidate:
+        raise ValueError("control and candidate must be different treatments")
     if not 0 <= tolerance <= 0.1 or minimum_rounds < 3:
         raise ValueError("invalid predeclared tolerance or minimum rounds")
     if report.get("status") != "complete":

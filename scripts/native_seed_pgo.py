@@ -6,6 +6,8 @@ uses different sizes, windows and peer counts; profile data is never trained on
 the held-out runs. All subprocesses use explicit argv, without shell evaluation.
 """
 import argparse
+import gzip
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -37,7 +39,15 @@ def validate_profile(profile, repo=REPO):
         raise ValueError("PGO training source differs from this build")
     if metadata["rustc"] != command("rustc", "+1.97.0", "-Vv"):
         raise ValueError("PGO training compiler differs from this build")
-    if metadata["profile_sha256"] != sha256(profile):
+    if profile.suffix == ".gz":
+        digest = hashlib.sha256()
+        with gzip.open(profile, "rb") as stream:
+            for chunk in iter(lambda: stream.read(1024**2), b""):
+                digest.update(chunk)
+        actual_hash = digest.hexdigest()
+    else:
+        actual_hash = sha256(profile)
+    if metadata["profile_sha256"] != actual_hash:
         raise ValueError("PGO profile hash differs from its manifest")
     return metadata
 
