@@ -1,0 +1,6 @@
+Host CPU snapshots during the compiler-profile screens — 2026-10-23
+
+The opt-level=z confirmation completed at 11:51:15. CPU PSI some avg10/avg60/avg300 = 9.12/4.98/3.99%; full = 0.00%. This is a busy-host limitation for its CPU result.
+
+Before the opt-level=z + target-cpu=native three-pair screen at 11:55:22: CPU PSI some avg10/avg60/avg300 = 0.84/4.43/5.43%; load average = 19.09/21.82/22.75.
+After the screen at 11:56:03: CPU PSI some avg10/avg60/avg300 = 3.67/3.18/4.92%; full = 0.00%.
