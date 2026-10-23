@@ -604,39 +604,104 @@ impl Drop for BlockingJobCancelGuard {
 const BLOCKING_JOB_QUEUED: u8 = 0;
 const BLOCKING_JOB_STARTED: u8 = 1;
 const BLOCKING_JOB_CANCELLED: u8 = 2;
+const BLOCKING_EXTRA_WORKER_NOT_STARTED: u8 = 0;
+const BLOCKING_EXTRA_WORKER_STARTED: u8 = 1;
+const BLOCKING_EXTRA_WORKER_UNAVAILABLE: u8 = 2;
+const BLOCKING_EXTRA_WORKER_IN_FLIGHT_THRESHOLD: usize = 2;
+
+#[derive(Debug)]
+struct BlockingJobInFlightGuard(Arc<AtomicUsize>);
+
+impl Drop for BlockingJobInFlightGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+fn spawn_blocking_worker(
+    queue_name: &'static str,
+    index: usize,
+    receiver: Arc<Mutex<mpsc::Receiver<BlockingJob>>>,
+    queued: Arc<AtomicUsize>,
+    in_flight: Option<Arc<AtomicUsize>>,
+) -> std::io::Result<()> {
+    let name = format!("{queue_name}-{index}");
+    std::thread::Builder::new()
+        .name(name)
+        .spawn(move || loop {
+            let job = {
+                let rx = lock_recover(&receiver);
+                rx.recv()
+            };
+            match job {
+                Ok(job) => {
+                    queued.fetch_sub(1, Ordering::Relaxed);
+                    let _in_flight = in_flight
+                        .as_ref()
+                        .map(|counter| BlockingJobInFlightGuard(Arc::clone(counter)));
+                    job();
+                }
+                Err(_) => break,
+            }
+        })
+        .map(drop)
+}
 
 #[derive(Debug)]
 struct BlockingPool {
     queue_name: &'static str,
     sender: mpsc::SyncSender<BlockingJob>,
+    receiver: Arc<Mutex<mpsc::Receiver<BlockingJob>>>,
     queued: Arc<AtomicUsize>,
+    in_flight: Option<Arc<AtomicUsize>>,
+    lazy_second_worker: bool,
+    second_worker_state: AtomicU8,
+    started_workers: AtomicUsize,
 }
 
 impl BlockingPool {
     fn new(name_prefix: &'static str, worker_threads: usize, queue_depth: usize) -> Self {
+        Self::new_with_lazy_second_worker(name_prefix, worker_threads, queue_depth, false)
+    }
+
+    fn new_lazy_second_worker(
+        name_prefix: &'static str,
+        worker_threads: usize,
+        queue_depth: usize,
+    ) -> Self {
+        Self::new_with_lazy_second_worker(name_prefix, worker_threads, queue_depth, true)
+    }
+
+    fn new_with_lazy_second_worker(
+        name_prefix: &'static str,
+        worker_threads: usize,
+        queue_depth: usize,
+        enable_lazy_second_worker: bool,
+    ) -> Self {
         let (sender, receiver) = mpsc::sync_channel::<BlockingJob>(queue_depth.max(1));
         let receiver = Arc::new(Mutex::new(receiver));
         let queued = Arc::new(AtomicUsize::new(0));
         let requested_workers = worker_threads.max(1);
+        // Only the default two-worker pool is lazy. A one-worker setting stays
+        // one worker, while explicit configurations above two keep their
+        // requested capacity at startup.
+        let lazy_second_worker = enable_lazy_second_worker && requested_workers == 2;
+        let in_flight = lazy_second_worker.then(|| Arc::new(AtomicUsize::new(0)));
+        let initial_workers = if lazy_second_worker {
+            1
+        } else {
+            requested_workers
+        };
         let mut started_workers = 0;
-        for index in 0..requested_workers {
-            let receiver = receiver.clone();
-            let queued = queued.clone();
-            let name = format!("{name_prefix}-{index}");
-            match std::thread::Builder::new().name(name).spawn(move || loop {
-                let job = {
-                    let rx = lock_recover(&receiver);
-                    rx.recv()
-                };
-                match job {
-                    Ok(job) => {
-                        queued.fetch_sub(1, Ordering::Relaxed);
-                        job();
-                    }
-                    Err(_) => break,
-                }
-            }) {
-                Ok(_) => started_workers += 1,
+        for index in 0..initial_workers {
+            match spawn_blocking_worker(
+                name_prefix,
+                index,
+                Arc::clone(&receiver),
+                Arc::clone(&queued),
+                in_flight.as_ref().map(Arc::clone),
+            ) {
+                Ok(()) => started_workers += 1,
                 Err(error) => {
                     tracing::error!(
                         component = "storage",
@@ -656,10 +721,65 @@ impl BlockingPool {
                 }
             }
         }
+        let second_worker_state = if lazy_second_worker && started_workers > 0 {
+            BLOCKING_EXTRA_WORKER_NOT_STARTED
+        } else {
+            BLOCKING_EXTRA_WORKER_UNAVAILABLE
+        };
         Self {
             queue_name: name_prefix,
             sender,
+            receiver,
             queued,
+            in_flight,
+            lazy_second_worker,
+            second_worker_state: AtomicU8::new(second_worker_state),
+            started_workers: AtomicUsize::new(started_workers),
+        }
+    }
+
+    fn maybe_start_second_worker(&self) {
+        if !self.lazy_second_worker
+            || self.in_flight.as_ref().is_none_or(|counter| {
+                counter.load(Ordering::Relaxed) < BLOCKING_EXTRA_WORKER_IN_FLIGHT_THRESHOLD
+            })
+            || self
+                .second_worker_state
+                .compare_exchange(
+                    BLOCKING_EXTRA_WORKER_NOT_STARTED,
+                    BLOCKING_EXTRA_WORKER_STARTED,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_err()
+        {
+            return;
+        }
+
+        match spawn_blocking_worker(
+            self.queue_name,
+            1,
+            Arc::clone(&self.receiver),
+            Arc::clone(&self.queued),
+            self.in_flight.as_ref().map(Arc::clone),
+        ) {
+            Ok(()) => {
+                self.started_workers.fetch_add(1, Ordering::Relaxed);
+            }
+            Err(error) => {
+                self.second_worker_state
+                    .store(BLOCKING_EXTRA_WORKER_UNAVAILABLE, Ordering::Release);
+                tracing::error!(
+                    component = "storage",
+                    operation = "spawn_lazy_blocking_worker",
+                    pool = self.queue_name,
+                    requested_workers = 2,
+                    started_workers = self.started_workers.load(Ordering::Relaxed),
+                    result = "degraded",
+                    error = %error,
+                    "storage blocking pool could not start its lazy second worker"
+                );
+            }
         }
     }
 
@@ -673,6 +793,9 @@ impl BlockingPool {
         let worker_job_state = job_state.clone();
         let _cancel_guard = BlockingJobCancelGuard(job_state);
         self.queued.fetch_add(1, Ordering::Relaxed);
+        if let Some(in_flight) = &self.in_flight {
+            in_flight.fetch_add(1, Ordering::Relaxed);
+        }
         if self
             .sender
             .try_send(Box::new(move || {
@@ -692,10 +815,14 @@ impl BlockingPool {
             .is_err()
         {
             self.queued.fetch_sub(1, Ordering::Relaxed);
+            if let Some(in_flight) = &self.in_flight {
+                in_flight.fetch_sub(1, Ordering::Relaxed);
+            }
             return Err(StorageError::QueueFull {
                 mount: self.queue_name.to_string(),
             });
         }
+        self.maybe_start_second_worker();
         rx.await.map_err(|_| StorageError::Cancelled)?
     }
 
@@ -838,7 +965,7 @@ fn create_scheduler_resources(key: SharedSchedulerKey) -> Arc<SharedSchedulerRes
             key.file_pool_size,
             Duration::from_secs(key.idle_file_ttl_secs),
         )),
-        io_pool: Arc::new(BlockingPool::new(
+        io_pool: Arc::new(BlockingPool::new_lazy_second_worker(
             "rt-storage-io",
             key.io_worker_threads,
             key.io_queue_depth,
@@ -7372,10 +7499,16 @@ mod tests {
     async fn blocking_pool_full_queue_fails_closed() {
         let (sender, _receiver) = mpsc::sync_channel::<BlockingJob>(1);
         sender.send(Box::new(|| {})).unwrap();
+        let receiver = Arc::new(Mutex::new(_receiver));
         let pool = BlockingPool {
             queue_name: "test-blocking-pool",
             sender,
+            receiver,
             queued: Arc::new(AtomicUsize::new(1)),
+            in_flight: None,
+            lazy_second_worker: false,
+            second_worker_state: AtomicU8::new(BLOCKING_EXTRA_WORKER_UNAVAILABLE),
+            started_workers: AtomicUsize::new(0),
         };
 
         let result = pool.run(|| Ok::<_, StorageError>(())).await;
@@ -7391,10 +7524,17 @@ mod tests {
     async fn blocking_pool_closed_queue_fails_closed() {
         let (sender, receiver) = mpsc::sync_channel::<BlockingJob>(1);
         drop(receiver);
+        let (closed_sender, closed_receiver) = mpsc::sync_channel::<BlockingJob>(1);
+        drop(closed_sender);
         let pool = BlockingPool {
             queue_name: "test-closed-blocking-pool",
             sender,
+            receiver: Arc::new(Mutex::new(closed_receiver)),
             queued: Arc::new(AtomicUsize::new(0)),
+            in_flight: None,
+            lazy_second_worker: false,
+            second_worker_state: AtomicU8::new(BLOCKING_EXTRA_WORKER_UNAVAILABLE),
+            started_workers: AtomicUsize::new(0),
         };
 
         let result = pool.run(|| Ok::<_, StorageError>(())).await;
@@ -7404,6 +7544,55 @@ mod tests {
             Err(StorageError::QueueFull { mount }) if mount == "test-closed-blocking-pool"
         ));
         assert_eq!(pool.queued(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn lazy_second_worker_starts_when_two_jobs_overlap() {
+        let pool = Arc::new(BlockingPool::new_lazy_second_worker(
+            "test-lazy-second-worker",
+            2,
+            8,
+        ));
+        let (started_tx, started_rx) = std::sync::mpsc::sync_channel(1);
+        let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
+        let first = tokio::spawn({
+            let pool = Arc::clone(&pool);
+            async move {
+                pool.run(move || {
+                    started_tx.send(()).unwrap();
+                    let _ = release_rx.recv();
+                    Ok::<_, StorageError>(1)
+                })
+                .await
+            }
+        });
+
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("first worker did not start its job");
+        assert_eq!(pool.started_workers.load(Ordering::Relaxed), 1);
+        assert_eq!(pool.in_flight.as_ref().unwrap().load(Ordering::Relaxed), 1);
+
+        let second = tokio::spawn({
+            let pool = Arc::clone(&pool);
+            async move { pool.run(|| Ok::<_, StorageError>(2)).await }
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while pool.started_workers.load(Ordering::Relaxed) != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("second worker did not start when a second job overlapped the active job");
+
+        let second_result = tokio::time::timeout(Duration::from_secs(1), second)
+            .await
+            .expect("second job did not complete")
+            .unwrap()
+            .unwrap();
+        assert_eq!(second_result, 2);
+        release_tx.send(()).unwrap();
+        assert_eq!(first.await.unwrap().unwrap(), 1);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
