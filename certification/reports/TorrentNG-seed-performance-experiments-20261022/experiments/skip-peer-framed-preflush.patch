@@ -1,0 +1,76 @@
+diff --git a/crates/rt-engine/src/torrent_task.rs b/crates/rt-engine/src/torrent_task.rs
+index 16ca80a3..f8b2a2f8 100644
+--- a/crates/rt-engine/src/torrent_task.rs
++++ b/crates/rt-engine/src/torrent_task.rs
+@@ -8357,3 +8357,3 @@ impl PeerIo {
+-                    // Preserve wire order with any control frame still held
+-                    // in Framed before bypassing its copying encoder.
+-                    framed.flush().await?;
++                    // Control messages use `SinkExt::send`, which flushes
++                    // before returning. The raw Piece write therefore follows
++                    // every earlier control frame without an extra no-op flush.
+@@ -8407,12 +8407,3 @@ impl PeerIo {
+-            PeerIo::Tcp(framed) => {
+-                match timeout(PEER_SOCKET_WRITE_TIMEOUT, framed.flush()).await {
+-                    Ok(Ok(())) => {}
+-                    Ok(Err(error)) => return Err((0, error.into())),
+-                    Err(_) => {
+-                        return Err((0, anyhow::anyhow!("peer socket write timed out")));
+-                    }
+-                }
+-                write_piece_frames_vectored(framed.get_mut(), pieces)
+-                    .await
+-                    .map_err(|(completed, error)| (completed, error.into()))
+-            }
++            PeerIo::Tcp(framed) => write_piece_frames_vectored(framed.get_mut(), pieces)
++                .await
++                .map_err(|(completed, error)| (completed, error.into())),
+@@ -10959,0 +10951,48 @@ mod tests {
++    #[tokio::test]
++    async fn raw_piece_writes_follow_flushed_control_messages() {
++        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let remote_stream = TcpStream::connect(listener.local_addr().unwrap())
++            .await
++            .unwrap();
++        let (server_stream, _) = listener.accept().await.unwrap();
++        let mut outgoing = PeerIo::Tcp(Framed::new(server_stream, PeerCodec::default()));
++        let mut incoming = Framed::new(remote_stream, PeerCodec::default());
++
++        outgoing.send(Message::Unchoke).await.unwrap();
++        outgoing
++            .send_piece(7, 0, bytes::Bytes::from_static(b"first"))
++            .await
++            .unwrap();
++        outgoing.send(Message::Choke).await.unwrap();
++        let second = bytes::Bytes::from_static(b"second");
++        let third = bytes::Bytes::from_static(b"third");
++        assert_eq!(
++            outgoing
++                .send_pieces(&[(7, 5, &second), (8, 0, &third)])
++                .await
++                .unwrap(),
++            2
++        );
++
++        assert!(matches!(
++            incoming.next().await.unwrap().unwrap(),
++            Message::Unchoke
++        ));
++        assert!(matches!(
++            incoming.next().await.unwrap().unwrap(),
++            Message::Piece { piece: 7, begin: 0, data } if data == bytes::Bytes::from_static(b"first")
++        ));
++        assert!(matches!(
++            incoming.next().await.unwrap().unwrap(),
++            Message::Choke
++        ));
++        assert!(matches!(
++            incoming.next().await.unwrap().unwrap(),
++            Message::Piece { piece: 7, begin: 5, data } if data == second
++        ));
++        assert!(matches!(
++            incoming.next().await.unwrap().unwrap(),
++            Message::Piece { piece: 8, begin: 0, data } if data == third
++        ));
++    }
++

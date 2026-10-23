@@ -87,6 +87,41 @@
       "sha256": "0719f13e1697cd24c65ee30ebdd470e48b2eebf6183b6dfeb637ba19dc1eb3a3"
     },
     {
+      "path": "framed-preflush-screen-20261022/README.md",
+      "bytes": 2113,
+      "sha256": "0239d65c39d0482290398dca9b91a82d6bf8b6a89370661ca44ec74e9945ec8b"
+    },
+    {
+      "path": "framed-preflush-screen-20261022/confirm-load-after.txt",
+      "bytes": 72,
+      "sha256": "e6941c1a05129c97ea3dcc2b1d212c6afbe8d91d578ca828b274749484e6d312"
+    },
+    {
+      "path": "framed-preflush-screen-20261022/confirm-load-before.txt",
+      "bytes": 72,
+      "sha256": "18fd5e30c48c34adb6aa46b4eadd184c54060f155a1ae12f230e7992decc97a5"
+    },
+    {
+      "path": "framed-preflush-screen-20261022/confirm-partial-64m.json",
+      "bytes": 89001,
+      "sha256": "0d8c1c3ebea45a865225ab21d5b330a6df5f5956bfee530caf6175b15d10796c"
+    },
+    {
+      "path": "framed-preflush-screen-20261022/first-screen-64m.json",
+      "bytes": 51330,
+      "sha256": "8bada191c2de8ec4ff0c67662feaa22d3d3efcf30fce9032edceb432e0b0f89b"
+    },
+    {
+      "path": "framed-preflush-screen-20261022/first-screen-load-before.txt",
+      "bytes": 72,
+      "sha256": "ed3dfebfa1ed2180ef4e59034de1fd979cdad6fb73db4cdef3800ef1fdb56877"
+    },
+    {
+      "path": "framed-preflush-screen-20261022/no-flush-release.torrentngd.gz",
+      "bytes": 9705777,
+      "sha256": "207a1a4cb3cb0a8f04cc3453f4ca09c79a7cdd5e71d65b541c8840daf420fc33"
+    },
+    {
       "path": "io-uring-queue-depth-64/backend-smoke-16m/fixture/fixture.torrent",
       "bytes": 416,
       "sha256": "ed235ed21bc21c5b29fdf4aebfadcce4f595f8ba8ce7923f05e1c3913a3ca8e5"
