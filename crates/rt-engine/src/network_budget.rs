@@ -307,6 +307,21 @@ impl GlobalNetworkBudget {
             .await
     }
 
+    /// Reserve one bounded upload segment before its payload is materialized.
+    /// Limited buckets and competing waiters retain one-block grant geometry.
+    pub(crate) async fn acquire_upload_batch(
+        &self,
+        peer_id: RatePeerId,
+        bytes: u64,
+        first_block: u64,
+        cancellation: &RateLimitCancellation,
+        generation: u64,
+    ) -> anyhow::Result<Option<RateAdmissionGrant>> {
+        self.upload_tree
+            .acquire_sized(peer_id, bytes, Some(first_block), cancellation, generation)
+            .await
+    }
+
     pub(crate) async fn acquire_download(
         &self,
         peer_id: RatePeerId,
@@ -1027,16 +1042,6 @@ impl HierarchicalRateService {
         }
     }
 
-    fn refund(&self, peer_id: RatePeerId, grant_id: u64, bytes: u64) {
-        if self
-            .lock_tree()
-            .refund_grant(peer_id, grant_id, bytes, self.now())
-            > 0
-        {
-            self.changed.cancel();
-        }
-    }
-
     fn try_acquire(
         self: &Arc<Self>,
         peer_id: RatePeerId,
@@ -1062,6 +1067,7 @@ impl HierarchicalRateService {
                 peer_id,
                 grant_id: grant_id.expect("granted payload has a reservation identity"),
                 bytes,
+                transferred: 0,
                 active: true,
             })),
             Grant::Wait { until } if until == CHANGE_ONLY_WAKE => {
@@ -1086,6 +1092,18 @@ impl HierarchicalRateService {
         cancellation: &RateLimitCancellation,
         generation: u64,
     ) -> anyhow::Result<Option<RateAdmissionGrant>> {
+        self.acquire_sized(peer_id, bytes, None, cancellation, generation)
+            .await
+    }
+
+    async fn acquire_sized(
+        self: &Arc<Self>,
+        peer_id: RatePeerId,
+        bytes: u64,
+        first_block: Option<u64>,
+        cancellation: &RateLimitCancellation,
+        generation: u64,
+    ) -> anyhow::Result<Option<RateAdmissionGrant>> {
         if bytes == 0 {
             anyhow::bail!("zero-byte payload cannot consume rate admission");
         }
@@ -1098,12 +1116,15 @@ impl HierarchicalRateService {
         // the persistent path below snapshots generations and retries under
         // the tree lock before it can sleep, so this probe cannot lose a wake.
         let now = self.now();
-        let (grant, grant_id, wake_fairness_waiters) = {
+        let (grant, grant_id, wake_fairness_waiters, granted_bytes) = {
             let mut tree = self.lock_tree();
+            let bytes = first_block.map_or(bytes, |first| {
+                tree.upload_batch_bytes(peer_id, bytes, first)
+            });
             let (grant, grant_id) = tree.try_grant_probe_tracked(peer_id, bytes, now);
             let wake_fairness_waiters =
                 grant == Grant::Granted && tree.has_change_waiters(peer_id.torrent);
-            (grant, grant_id, wake_fairness_waiters)
+            (grant, grant_id, wake_fairness_waiters, bytes)
         };
         if wake_fairness_waiters {
             self.notify_demand_change(peer_id.torrent);
@@ -1114,7 +1135,8 @@ impl HierarchicalRateService {
                     scheduler: Arc::clone(self),
                     peer_id,
                     grant_id: grant_id.expect("granted payload has a reservation identity"),
-                    bytes,
+                    bytes: granted_bytes,
+                    transferred: 0,
                     active: true,
                 };
                 if cancellation.generation() != generation {
@@ -1146,13 +1168,16 @@ impl HierarchicalRateService {
             let changed_generation = self.changed.generation();
             let demand_generation = demand_changes.generation();
             let now = self.now();
-            let (grant, grant_id, wake_fairness_waiters) = {
+            let (grant, grant_id, wake_fairness_waiters, granted_bytes) = {
                 let mut tree = self.lock_tree();
+                let bytes = first_block.map_or(bytes, |first| {
+                    tree.upload_batch_bytes(peer_id, bytes, first)
+                });
                 let (grant, grant_id) =
                     tree.try_grant_demand_tracked(peer_id, demand_id, bytes, now);
                 let wake_fairness_waiters =
                     grant == Grant::Granted && tree.has_change_waiters(peer_id.torrent);
-                (grant, grant_id, wake_fairness_waiters)
+                (grant, grant_id, wake_fairness_waiters, bytes)
             };
             if wake_fairness_waiters {
                 self.notify_demand_change(peer_id.torrent);
@@ -1163,7 +1188,8 @@ impl HierarchicalRateService {
                         scheduler: Arc::clone(self),
                         peer_id,
                         grant_id: grant_id.expect("granted payload has a reservation identity"),
-                        bytes,
+                        bytes: granted_bytes,
+                        transferred: 0,
                         active: true,
                     };
                     if cancellation.generation() != generation {
@@ -1224,6 +1250,7 @@ pub(crate) struct RateAdmissionGrant {
     grant_id: u64,
     bytes: u64,
     active: bool,
+    transferred: u64,
 }
 
 impl std::fmt::Debug for RateAdmissionGrant {
@@ -1238,6 +1265,14 @@ impl std::fmt::Debug for RateAdmissionGrant {
 }
 
 impl RateAdmissionGrant {
+    pub(crate) fn bytes(&self) -> u64 {
+        self.bytes
+    }
+
+    pub(crate) fn record_transferred(&mut self, bytes: u64) {
+        self.transferred = self.transferred.saturating_add(bytes).min(self.bytes);
+    }
+
     pub(crate) fn settle(mut self, transferred: u64) {
         let transferred = transferred.min(self.bytes);
         self.scheduler.settle_and_refund_unused(
@@ -1253,8 +1288,12 @@ impl RateAdmissionGrant {
 impl Drop for RateAdmissionGrant {
     fn drop(&mut self) {
         if self.active {
-            self.scheduler
-                .refund(self.peer_id, self.grant_id, self.bytes);
+            self.scheduler.settle_and_refund_unused(
+                self.peer_id,
+                self.grant_id,
+                self.transferred,
+                self.bytes - self.transferred,
+            );
         }
     }
 }
@@ -1297,6 +1336,48 @@ impl RateLimitCancellation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn upload_batch_credit_clamps_on_live_limits_and_refunds_unsent_prefix() {
+        let budget = GlobalNetworkBudget::new(4, None, None);
+        let torrent = budget.new_transfer_torrent_key();
+        budget.register_upload_torrent(torrent, None);
+        let peer = rate_peer(torrent, 0);
+        budget.register_transfer_peer(peer);
+        let cancel = RateLimitCancellation::default();
+        let mut grant = budget
+            .acquire_upload_batch(peer, 128 * 1024, 16 * 1024, &cancel, 0)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(grant.bytes(), 128 * 1024);
+        grant.record_transferred(16 * 1024);
+        // Epoch change must not refund old unlimited credit into this bucket.
+        budget.set_upload_limit(Some(1));
+        drop(grant);
+        let grant = budget
+            .acquire_upload_batch(peer, 128 * 1024, 16 * 1024, &cancel, 0)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(grant.bytes(), 16 * 1024);
+        drop(grant);
+        let grant = budget
+            .acquire_upload_batch(peer, 128 * 1024, 16 * 1024, &cancel, 0)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            grant.bytes(),
+            16 * 1024,
+            "unsent limited credit is refundable"
+        );
+        grant.settle(16 * 1024);
+        assert!(matches!(
+            budget.upload_tree.try_acquire(peer, 1).unwrap(),
+            RateAdmissionAttempt::Wait(_)
+        ));
+    }
 
     fn rate_peer(torrent: TorrentKey, slot: u32) -> RatePeerId {
         RatePeerId::new(

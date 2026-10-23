@@ -3,12 +3,13 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/build_native_pgo_release.sh PROFILE.profdata[.gz] [TARGET_DIR]
+Usage: scripts/build_native_pgo_release.sh PROFILE.profdata[.gz] [TARGET_DIR] [SOURCE_REPO]
 
 Build torrentngd with LLVM profile-guided optimization using the pinned Rust
 toolchain and the workspace's normal release profile. This experimental build
 does not change Cargo.toml release defaults. The output hash identifies this
 build; clean builds have not been byte-for-byte reproducible.
+SOURCE_REPO can select an older clean baseline without copying scripts into it.
 EOF
 }
 
@@ -17,7 +18,7 @@ if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
   exit 0
 fi
 
-if [[ $# -lt 1 || $# -gt 2 ]]; then
+if [[ $# -lt 1 || $# -gt 3 ]]; then
   usage >&2
   exit 2
 fi
@@ -27,8 +28,8 @@ if [[ -n ${RUSTFLAGS:-} || -n ${CARGO_ENCODED_RUSTFLAGS:-} ]]; then
   exit 2
 fi
 
-if [[ -n ${RUSTC:-} || -n ${RUSTC_WRAPPER:-} ]]; then
-  echo "unset RUSTC and RUSTC_WRAPPER to use the pinned Rust toolchain" >&2
+if [[ -n ${RUSTC:-} || -n ${RUSTC_WRAPPER:-} || -n ${RUSTC_WORKSPACE_WRAPPER:-} || -n ${CARGO_BUILD_RUSTC:-} || -n ${CARGO_BUILD_RUSTFLAGS:-} ]]; then
+  echo "unset compiler and Cargo build overrides to use the pinned Rust toolchain" >&2
   exit 2
 fi
 
@@ -42,6 +43,7 @@ while IFS='=' read -r env_name _; do
 done < <(env)
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source_repo=$(realpath "${3:-$repo_root}")
 profile_input=$(realpath "$1")
 target_input=${2:-"$repo_root/target/pgo-release"}
 mkdir -p "$target_input"
@@ -70,8 +72,13 @@ fi
 
 echo "PGO profile SHA-256: $(sha256sum "$profile_data" | cut -d ' ' -f 1)"
 echo "Target directory: $target_dir"
-cd "$repo_root"
+cd "$source_repo"
+python3 "$repo_root/scripts/native_seed_pgo.py" validate --profile "$profile_input" --repo "$source_repo"
 RUSTFLAGS="-Cprofile-use=$profile_data" \
   cargo +1.97.0 build --locked --release -p torrentngd --target-dir "$target_dir"
 
 echo "torrentngd SHA-256: $(sha256sum "$target_dir/release/torrentngd" | cut -d ' ' -f 1)"
+
+RUSTFLAGS="-Cprofile-use=$profile_data" python3 "$repo_root/scripts/seed_efficiency_tools.py" manifest \
+  --binary "$target_dir/release/torrentngd" --repo "$source_repo" --profile "$profile_data" \
+  --output "$target_dir/release/torrentngd.manifest.json"

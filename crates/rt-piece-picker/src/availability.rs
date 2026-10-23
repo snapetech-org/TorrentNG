@@ -12,6 +12,22 @@ use crate::picker::PieceAvailability;
 pub struct Availability {
     /// counts[i] = number of peers that have piece i.
     counts: Vec<u32>,
+    selection: SelectionState,
+    /// Pieces excluded from candidate indexes. Their swarm counts remain
+    /// live for diagnostics and endgame selection.
+    retired: PieceFlags,
+}
+
+/// Only downloading torrents retain candidate and rarity indexes. Seed mode
+/// keeps counts and retired flags in Availability so peer churn remains exact.
+#[derive(Debug, Clone)]
+enum SelectionState {
+    Seed { piece_count: usize },
+    Download(Box<DownloadSelection>),
+}
+
+#[derive(Debug, Clone)]
+struct DownloadSelection {
     /// buckets[c] holds every active piece index currently at availability
     /// count `c`. Zero-availability pieces have no rarity-bucket entry.
     buckets: Vec<Vec<u32>>,
@@ -23,9 +39,39 @@ pub struct Availability {
     candidates: Vec<u32>,
     /// Piece position in `candidates`, or `NO_POSITION` if it is inactive.
     candidate_positions: Vec<u32>,
-    /// Pieces excluded from candidate indexes. Their swarm counts remain
-    /// live for diagnostics and endgame selection.
-    retired: PieceFlags,
+}
+
+impl std::ops::Deref for SelectionState {
+    type Target = DownloadSelection;
+    fn deref(&self) -> &DownloadSelection {
+        static EMPTY: DownloadSelection = DownloadSelection {
+            buckets: Vec::new(),
+            bucket_positions: Vec::new(),
+            candidates: Vec::new(),
+            candidate_positions: Vec::new(),
+        };
+        match self {
+            Self::Seed { .. } => &EMPTY,
+            Self::Download(index) => index,
+        }
+    }
+}
+
+impl std::ops::DerefMut for SelectionState {
+    fn deref_mut(&mut self) -> &mut DownloadSelection {
+        if let Self::Seed { piece_count } = self {
+            *self = Self::Download(Box::new(DownloadSelection {
+                buckets: Vec::new(),
+                bucket_positions: vec![NO_POSITION; *piece_count],
+                candidates: Vec::new(),
+                candidate_positions: vec![NO_POSITION; *piece_count],
+            }));
+        }
+        match self {
+            Self::Download(index) => index,
+            Self::Seed { .. } => unreachable!(),
+        }
+    }
 }
 
 const NO_POSITION: u32 = u32::MAX;
@@ -57,10 +103,12 @@ impl Availability {
     pub fn new(piece_count: usize) -> Self {
         Availability {
             counts: vec![0; piece_count],
-            buckets: Vec::new(),
-            bucket_positions: vec![NO_POSITION; piece_count],
-            candidates: (0..piece_count).map(|piece| piece as u32).collect(),
-            candidate_positions: (0..piece_count).map(|piece| piece as u32).collect(),
+            selection: SelectionState::Download(Box::new(DownloadSelection {
+                buckets: Vec::new(),
+                bucket_positions: vec![NO_POSITION; piece_count],
+                candidates: (0..piece_count).map(|piece| piece as u32).collect(),
+                candidate_positions: (0..piece_count).map(|piece| piece as u32).collect(),
+            })),
             retired: PieceFlags::new(piece_count, false),
         }
     }
@@ -72,8 +120,11 @@ impl Availability {
     pub fn new_bounded(piece_count: usize, max_peers: usize) -> Self {
         let mut availability = Self::new(piece_count);
         let bucket_count = max_peers.min(u32::MAX as usize).saturating_add(1);
-        availability.buckets.reserve(bucket_count);
-        availability.buckets.resize_with(bucket_count, Vec::new);
+        availability.selection.buckets.reserve(bucket_count);
+        availability
+            .selection
+            .buckets
+            .resize_with(bucket_count, Vec::new);
         availability
     }
 
@@ -90,6 +141,7 @@ impl Availability {
             .saturating_add(1)
             .saturating_mul(2);
         std::mem::size_of::<Self>()
+            .saturating_add(std::mem::size_of::<DownloadSelection>())
             .saturating_add(piece_slots)
             .saturating_add(
                 piece_count
@@ -122,15 +174,16 @@ impl Availability {
         let new = c.saturating_add(1);
         *c = new;
         if new != old && !self.retired.get(piece) {
+            let selection = &mut *self.selection;
             Self::bucket_remove(
-                &mut self.buckets,
-                &mut self.bucket_positions,
+                &mut selection.buckets,
+                &mut selection.bucket_positions,
                 old,
                 piece as u32,
             );
             Self::bucket_insert(
-                &mut self.buckets,
-                &mut self.bucket_positions,
+                &mut selection.buckets,
+                &mut selection.bucket_positions,
                 new,
                 piece as u32,
             );
@@ -146,15 +199,16 @@ impl Availability {
         let new = c.saturating_sub(1);
         *c = new;
         if new != old && !self.retired.get(piece) {
+            let selection = &mut *self.selection;
             Self::bucket_remove(
-                &mut self.buckets,
-                &mut self.bucket_positions,
+                &mut selection.buckets,
+                &mut selection.bucket_positions,
                 old,
                 piece as u32,
             );
             Self::bucket_insert(
-                &mut self.buckets,
-                &mut self.bucket_positions,
+                &mut selection.buckets,
+                &mut selection.bucket_positions,
                 new,
                 piece as u32,
             );
@@ -176,7 +230,7 @@ impl Availability {
     /// Walks the availability buckets (already grouped and ordered by
     /// count) instead of sorting every piece on each call.
     pub fn rarest_first(&self, want: &[bool]) -> Vec<usize> {
-        self.buckets
+        self.selection.buckets
             .iter()
             .skip(1) // bucket 0 is never populated (see field doc)
             .flat_map(|bucket| bucket.iter().copied())
@@ -196,7 +250,7 @@ impl Availability {
     where
         F: FnMut(usize) -> bool,
     {
-        for bucket in self.buckets.iter().skip(1) {
+        for bucket in self.selection.buckets.iter().skip(1) {
             for &piece in bucket {
                 let piece = piece as usize;
                 if predicate(piece) {
@@ -241,7 +295,8 @@ impl Availability {
         R: Rng + ?Sized,
     {
         let preferred = preferred.filter(|&piece| {
-            self.candidate_positions
+            self.selection
+                .candidate_positions
                 .get(piece)
                 .is_some_and(|&pos| pos != NO_POSITION)
                 && self.count(piece) > 0
@@ -249,6 +304,7 @@ impl Availability {
                 && predicate(piece)
         });
         for (count, bucket) in self
+            .selection
             .buckets
             .iter()
             .enumerate()
@@ -308,7 +364,7 @@ impl Availability {
         let mut tied = 0usize;
         peer_has.for_each_set_piece(self.counts.len(), &mut |piece| {
             if piece >= self.counts.len()
-                || self.candidate_positions[piece] == NO_POSITION
+                || self.selection.candidate_positions[piece] == NO_POSITION
                 || !predicate(piece)
             {
                 return;
@@ -343,18 +399,20 @@ impl Availability {
         F: FnMut(usize) -> bool,
         R: Rng + ?Sized,
     {
-        if self.candidates.is_empty() {
+        if self.selection.candidates.is_empty() {
             return None;
         }
-        for _ in 0..self.candidates.len().min(RANDOM_CANDIDATE_PROBES) {
-            let piece = self.candidates[rng.random_range(0..self.candidates.len())] as usize;
+        for _ in 0..self.selection.candidates.len().min(RANDOM_CANDIDATE_PROBES) {
+            let piece = self.selection.candidates
+                [rng.random_range(0..self.selection.candidates.len())]
+                as usize;
             if predicate(piece) {
                 return Some(piece);
             }
         }
         let mut matched = 0usize;
         let mut selected = None;
-        for &piece in &self.candidates {
+        for &piece in &self.selection.candidates {
             let piece = piece as usize;
             if predicate(piece) {
                 matched = matched.saturating_add(1);
@@ -374,14 +432,15 @@ impl Availability {
     where
         F: FnMut(usize) -> bool,
     {
-        self.candidates
+        self.selection
+            .candidates
             .iter()
             .map(|piece| *piece as usize)
             .find(|piece| predicate(*piece))
     }
 
     pub(crate) fn candidate_count(&self) -> usize {
-        self.candidates.len()
+        self.selection.candidates.len()
     }
 
     /// Exclude a locally complete or otherwise unavailable piece from fresh
@@ -400,7 +459,8 @@ impl Availability {
     where
         F: FnMut(usize) -> Option<usize>,
     {
-        self.candidates
+        self.selection
+            .candidates
             .iter()
             .map(|piece| *piece as usize)
             .filter_map(|piece| key(piece).map(|key| (key, piece)))
@@ -412,6 +472,7 @@ impl Availability {
     /// Capacities are used so owner accounting includes vector growth slack.
     pub fn memory_bytes(&self) -> usize {
         let bucket_entries = self
+            .selection
             .buckets
             .iter()
             .map(|bucket| bucket.capacity().saturating_mul(std::mem::size_of::<u32>()))
@@ -420,27 +481,36 @@ impl Availability {
             .capacity()
             .saturating_mul(std::mem::size_of::<u32>())
             .saturating_add(
-                self.bucket_positions
+                self.selection
+                    .bucket_positions
                     .capacity()
                     .saturating_mul(std::mem::size_of::<u32>()),
             )
             .saturating_add(bucket_entries)
             .saturating_add(
-                self.buckets
+                self.selection
+                    .buckets
                     .capacity()
                     .saturating_mul(std::mem::size_of::<Vec<u32>>()),
             )
             .saturating_add(
-                self.candidates
+                self.selection
+                    .candidates
                     .capacity()
                     .saturating_mul(std::mem::size_of::<u32>()),
             )
             .saturating_add(
-                self.candidate_positions
+                self.selection
+                    .candidate_positions
                     .capacity()
                     .saturating_mul(std::mem::size_of::<u32>()),
             )
             .saturating_add(self.retired.memory_bytes())
+            .saturating_add(if matches!(self.selection, SelectionState::Download(_)) {
+                std::mem::size_of::<DownloadSelection>()
+            } else {
+                0
+            })
     }
 
     /// Remove a piece from the active candidate indexes while preserving its
@@ -452,15 +522,16 @@ impl Availability {
         }
         self.retired.set(piece, true);
         let count = self.count(piece);
+        let selection = &mut *self.selection;
         Self::bucket_remove(
-            &mut self.buckets,
-            &mut self.bucket_positions,
+            &mut selection.buckets,
+            &mut selection.bucket_positions,
             count,
             piece as u32,
         );
         Self::candidate_remove(
-            &mut self.candidates,
-            &mut self.candidate_positions,
+            &mut selection.candidates,
+            &mut selection.candidate_positions,
             piece as u32,
         );
     }
@@ -475,14 +546,24 @@ impl Availability {
         }
         self.retired.set(piece, false);
         let count = self.count(piece);
+        let selection = &mut *self.selection;
         Self::bucket_insert(
-            &mut self.buckets,
-            &mut self.bucket_positions,
+            &mut selection.buckets,
+            &mut selection.bucket_positions,
             count,
             piece as u32,
         );
-        self.candidate_positions[piece] = self.candidates.len() as u32;
-        self.candidates.push(piece as u32);
+        selection.candidate_positions[piece] = selection.candidates.len() as u32;
+        selection.candidates.push(piece as u32);
+    }
+
+    /// Release only download selection storage. Swarm counts remain exact
+    /// while seeding, including peer have/bitfield/disconnect updates.
+    pub(crate) fn compact_for_seed(&mut self) {
+        debug_assert!(self.selection.candidates.is_empty());
+        self.selection = SelectionState::Seed {
+            piece_count: self.counts.len(),
+        };
     }
 
     fn bucket_insert(buckets: &mut Vec<Vec<u32>>, positions: &mut [u32], count: u32, piece: u32) {
@@ -971,18 +1052,20 @@ mod tests {
             // Repeatedly remove the first entry. swap_remove fills that slot
             // from the bucket tail, so this leaves an over-sized allocation
             // unless trimming considers interior removals too.
-            let piece = av.buckets[1][0] as usize;
+            let piece = av.selection.buckets[1][0] as usize;
             av.add_have(piece);
         }
 
-        let rarity_one_bucket = &av.buckets[1];
+        let rarity_one_bucket = &av.selection.buckets[1];
         assert_eq!(rarity_one_bucket.len(), remaining_in_first_bucket);
         assert!(rarity_one_bucket.capacity() <= rarity_one_bucket.len() * 4);
         assert!(av
+            .selection
             .bucket_positions
             .iter()
             .all(|position| *position != NO_POSITION));
         assert!(av
+            .selection
             .candidate_positions
             .iter()
             .all(|position| *position != NO_POSITION));
@@ -999,7 +1082,7 @@ mod tests {
             }
         }
 
-        assert!(av.buckets.capacity() > max_peers);
+        assert!(av.selection.buckets.capacity() > max_peers);
         assert!(
             Availability::memory_bytes_upper_bound(piece_count, max_peers) >= av.memory_bytes(),
             "reserved bound must cover every live index allocation"

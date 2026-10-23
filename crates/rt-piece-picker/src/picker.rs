@@ -384,6 +384,10 @@ impl PiecePicker {
             self.remove_in_progress(piece);
             self.adjust_outstanding(old_wanted && enabled, false);
             self.refresh_candidate(piece);
+            if self.wanted.is_empty_set() {
+                self.availability.compact_for_seed();
+                self.in_progress = std::collections::HashMap::new();
+            }
         }
     }
 
@@ -1930,8 +1934,40 @@ mod tests {
     #[test]
     fn picker_flags_are_packed_not_one_byte_per_piece() {
         let picker = PiecePicker::new(1_000_000, 16 * 1024, 16 * 1024);
-        assert_eq!(picker.wanted.memory_bytes(), 125_000);
+        assert_eq!(
+            picker.wanted.memory_bytes(),
+            0,
+            "all-wanted flags are uniform"
+        );
         assert_eq!(picker.priority_count, 0);
+    }
+
+    #[test]
+    fn complete_seed_releases_selection_storage_and_recheck_restores_it() {
+        let mut picker = PiecePicker::new(4096, MAX_BLOCK_SIZE, MAX_BLOCK_SIZE);
+        let download_bytes = picker.memory_bytes();
+        for piece in 0..4096 {
+            picker.mark_have(piece);
+        }
+        let seed_bytes = picker.memory_bytes();
+        assert!(seed_bytes < download_bytes / 2);
+        assert!(picker.is_complete());
+        picker.availability.add_have(37);
+        picker.availability.add_have(38);
+        picker.availability.remove_have(38);
+        assert_eq!(picker.availability.count(37), 1);
+        assert_eq!(
+            picker.memory_bytes(),
+            seed_bytes,
+            "swarm updates do not rebuild download state"
+        );
+        picker.reject_piece(37);
+        assert!(!picker.is_complete());
+        let mut peer = vec![false; 4096];
+        peer[37] = true;
+        assert_eq!(picker.pick(&peer).unwrap().piece, 37);
+        picker.mark_have(37);
+        assert_eq!(picker.memory_bytes(), seed_bytes);
     }
 
     #[test]

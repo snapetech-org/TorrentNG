@@ -27,6 +27,7 @@ use std::os::unix::io::AsRawFd;
 use std::os::windows::fs::FileExt;
 #[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(test)]
 use std::sync::atomic::{AtomicU8, Ordering as AtomicOrdering};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
 use std::thread;
@@ -296,8 +297,27 @@ impl SelectedDiskBackend {
         matches!(&self.inner, SelectedDiskBackendInner::Pread(_))
     }
 
+    pub(crate) async fn run_reusable<W: crate::completion::PreparedWork>(
+        &self,
+        pool: &crate::completion::CompletionPool<W>,
+        work: W,
+    ) -> Result<W::Output, StorageError> {
+        let SelectedDiskBackendInner::Pread(backend) = &self.inner else {
+            return Err(StorageError::Cancelled);
+        };
+        let (job, generation, completion) = pool.prepare(work);
+        match backend.tx.try_send(Job::Reusable(job, generation)) {
+            Ok(()) => completion.await,
+            Err(mpsc::TrySendError::Full(_)) => Err(StorageError::QueueFull {
+                mount: "disk-backend".to_owned(),
+            }),
+            Err(mpsc::TrySendError::Disconnected(_)) => Err(StorageError::Cancelled),
+        }
+    }
+
     /// Execute one complete path-backed operation in the portable disk
     /// worker queue. io_uring keeps its own submission/completion lifecycle.
+    #[cfg(test)]
     pub(crate) async fn run_prepared_pread<T, F>(&self, f: F) -> Result<T, StorageError>
     where
         T: Send + 'static,
@@ -1193,7 +1213,9 @@ impl UringWorker {
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1).max(1);
         match job {
-            Job::Prepared(_) => {
+            #[cfg(test)]
+            Job::Prepared(_) => return Err(io::ErrorKind::Unsupported.into()),
+            Job::Reusable(_, _) => {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
                     "prepared operations must use the portable disk worker pool",
@@ -1621,7 +1643,9 @@ impl BackendFile {
 }
 
 enum Job {
+    #[cfg(test)]
     Prepared(PreparedJob),
+    Reusable(Arc<dyn crate::completion::Runnable>, u64),
     Read {
         file: BackendFile,
         frame: Frame,
@@ -1643,14 +1667,20 @@ enum Job {
     },
 }
 
+#[cfg(test)]
 type PreparedJob = Box<dyn FnOnce() + Send + 'static>;
 
+#[cfg(test)]
 const PREPARED_JOB_QUEUED: u8 = 0;
+#[cfg(test)]
 const PREPARED_JOB_STARTED: u8 = 1;
+#[cfg(test)]
 const PREPARED_JOB_CANCELLED: u8 = 2;
 
+#[cfg(test)]
 struct PreparedJobCancelGuard(Arc<AtomicU8>);
 
+#[cfg(test)]
 impl Drop for PreparedJobCancelGuard {
     fn drop(&mut self) {
         let _ = self.0.compare_exchange(
@@ -1890,6 +1920,7 @@ impl PreadBackend {
     /// pool that performs positioned I/O. This lets the scheduler keep path
     /// normalization, descriptor lookup, cache checks, the read, and final
     /// identity validation behind one queue and one completion.
+    #[cfg(test)]
     pub(crate) async fn run_prepared<T, F>(&self, f: F) -> Result<T, StorageError>
     where
         T: Send + 'static,
@@ -1945,7 +1976,9 @@ impl PreadBackend {
                 return; // sender dropped → shutdown
             };
             match job {
+                #[cfg(test)]
                 Job::Prepared(job) => job(),
+                Job::Reusable(job, generation) => job.run(generation),
                 Job::Read {
                     file,
                     mut frame,
@@ -2062,7 +2095,9 @@ fn fail_job_on_full(result: Result<(), mpsc::TrySendError<Job>>) {
 fn fail_job(job: Job, kind: io::ErrorKind, message: &'static str) {
     let error = || io::Error::new(kind, message);
     match job {
+        #[cfg(test)]
         Job::Prepared(_) => {}
+        Job::Reusable(_, _) => {}
         Job::Read {
             reply, mut owner, ..
         } => {

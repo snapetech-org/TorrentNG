@@ -13,6 +13,7 @@ path = "src/main.rs"
 [features]
 default = ["system-allocator"]
 system-allocator = []
+seed-mmap = ["rt-engine/seed-mmap", "rt-storage/seed-mmap"]
 jemalloc-allocator = ["dep:tikv-jemallocator", "rt-api-native/jemalloc-stats"]
 mimalloc-allocator = ["dep:mimalloc"]
 compat-transmission = ["dep:rt-api-transmission"]
