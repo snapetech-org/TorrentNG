@@ -9054,6 +9054,7 @@ where
                 || upload_intake_messages >= upload_pipeline_width
                 || upload_coalescing_expired);
         tokio::select! {
+            biased;
             cmd = peer_cmd_rx.recv() => {
                 let Some(cmd) = cmd else {
                     // A dropped command sender means the owner can no
