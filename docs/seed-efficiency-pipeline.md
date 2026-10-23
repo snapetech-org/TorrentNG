@@ -137,6 +137,30 @@ paired structural and PGO comparisons. Supply an independently pinned rTorrent
 artifact as an additional comparator. Do not multiply gains from unrelated
 experiments or interpret the four cells as additive effects.
 
+Build manifests now retain `source_tree` alongside the commit and hashes of actual
+build inputs. Publishing through the GitHub Git-data API can change commit
+metadata while preserving the entire tree. Tree equality reconciles that case;
+it does not excuse dirty files or replace the input hashes. The earlier training
+commit `f8772ff26b28e919431ff7dd73cd1917e3121f2d` and published commit
+`a826610742469278cd0d3a77aa897dd934e09bd8` both identify tree
+`91051f264644241d37150143ef95d00babfd3ea2`; all 258 training input hashes match
+the published tree. The original evidence manifest remains unchanged.
+
+For a native rTorrent comparator, record its separately built libtorrent source
+in addition to the executable and all linked-library hashes:
+
+```sh
+python3 scripts/seed_efficiency_tools.py manifest --kind rtorrent \
+  --binary /absolute/path/rtorrent --repo /absolute/path/rtorrent-source \
+  --dependency-repo libtorrent=/absolute/path/libtorrent-source \
+  --require-clean --output /absolute/path/rtorrent.manifest.json
+```
+
+Any dirty dependency makes the combined manifest dirty. The probe verifies that
+recorded shared libraries still match before measuring, so replacing a library
+without replacing its manifest fails attribution. Record compiler/configure flags
+and compare clients on the same host; an older rTorrent score is not a control.
+
 Direct ready-range hits, duplicate-miss coalescing, and worker activation hysteresis
 were conditional research suggestions, not established improvements. The typed
 storage lifecycle and diagnostics implement their prerequisites. They deliberately
@@ -145,6 +169,14 @@ counts justify more policy. Arena-one, one-worker, opt-z, and blended PGO profil
 were rejected tradeoffs in the review and are not promoted by this implementation.
 
 ## Historical evidence corrections
+
+The [matched rTorrent follow-up](../certification/reports/TorrentNG-seed-poll-boundary-20261023/README.md)
+ran both normal and PGO builds before and after an explicit peer polling
+boundary, plus the pinned native rTorrent/libtorrent comparator. That boundary
+reduced PGO code size but failed the joint CPU/PSS qualification gate and was
+reverted. The complete evidence is retained. Current main PGO still exceeded
+rTorrent's CPU and PSS in the matched workload; previous PGO gains do not imply
+client parity.
 
 The earlier preflush-removal executable with SHA-256
 `b13f157809d98bdc052017f83bd2369685f7221116d8269837120f6af07cd263`

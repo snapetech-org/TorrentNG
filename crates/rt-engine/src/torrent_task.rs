@@ -8868,7 +8868,7 @@ async fn run_peer_loop(
     // channel when it owns no separate terminal delivery path.
     send_terminal_event_on_peer_channel: bool,
 ) -> PeerLoopExit {
-    let peer_loop = run_peer_loop_with_upload_future(
+    run_peer_loop_with_upload_future(
         PeerLoopStart {
             addr,
             peer_id,
@@ -8879,23 +8879,8 @@ async fn run_peer_loop(
             send_terminal_event_on_peer_channel,
         },
         upload_read_batch_future,
-    );
-    tokio::pin!(peer_loop);
-    std::future::poll_fn(|cx| poll_peer_loop(peer_loop.as_mut(), cx)).await
-}
-
-// Keep the long-lived protocol loop in one explicitly non-inlined polling
-// function instead of copying it into TCP/uTP setup and Tokio task wrappers.
-// Target the ordinary poll call directly, independently of the compiler's
-// handling of inline attributes on async functions (rust-lang/rust#129347).
-// This adds no allocation or dynamic dispatch; the caller still owns and
-// cancels the same future in place.
-#[inline(never)]
-fn poll_peer_loop<F: std::future::Future>(
-    future: std::pin::Pin<&mut F>,
-    cx: &mut std::task::Context<'_>,
-) -> std::task::Poll<F::Output> {
-    future.poll(cx)
+    )
+    .await
 }
 
 async fn run_peer_loop_with_upload_future<MakeUploadReadFuture, F>(

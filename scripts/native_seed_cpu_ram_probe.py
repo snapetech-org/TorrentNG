@@ -494,7 +494,7 @@ def cpu_seconds_between(start, end, ticks_per_second):
 
 
 def collect_diagnostics(api_port, root_pid, directory, label):
-    """Write detailed process maps and the selected TorrentNG metrics outside CPU windows."""
+    """Write process maps and optional TorrentNG metrics outside CPU windows."""
     directory.mkdir(parents=True, exist_ok=True)
     result = {"label": label, "captured_unix": time.time(),
               "process": process_sample(root_pid), "smaps": [], "metrics": {}, "threads": []}
@@ -535,6 +535,8 @@ def collect_diagnostics(api_port, root_pid, directory, label):
         for key in ("Size", "Rss", "Pss", "Anonymous", "Private_Clean", "Private_Dirty",
                     "Shared_Clean", "Shared_Dirty", "Swap")
     }
+    if api_port is None:
+        return result
     metrics_path = directory / f"{label}.metrics.prom"
     try:
         request = urllib.request.Request(f"http://127.0.0.1:{api_port}/metrics",
@@ -1194,10 +1196,9 @@ def main():
                         args.rate, args.window, args.request_pattern, args.seed)
 
                 stop.set(); sampler.join()
-                post_transfer_diagnostics = None
-                if client[1] == "torrentngd":
-                    post_transfer_diagnostics = collect_diagnostics(
-                        item["api_port"], item["proc_pid"], Path(item["diagnostics_dir"]), "after-transfer")
+                post_transfer_diagnostics = collect_diagnostics(
+                    item["api_port"] if client[1] == "torrentngd" else None,
+                    item["proc_pid"], Path(item["diagnostics_dir"]), "after-transfer")
                 idle_after = []
                 for _ in range(args.cooldown): idle_after.append(process_sample(item["proc_pid"])); time.sleep(1)
                 hz = os.sysconf(os.sysconf_names["SC_CLK_TCK"])
@@ -1241,6 +1242,8 @@ def main():
                         "during_transfer": transfer["mid_transfer_diagnostics"],
                         "after_transfer": post_transfer_diagnostics,
                     } if client[1] == "torrentngd" else None),
+                    "rtorrent_diagnostics": ({"after_transfer": post_transfer_diagnostics}
+                                              if client[1] == "rtorrent" else None),
                     "payload_cleanup": ({"policy": "keep_payloads", "status": "retained-by-option"}
                                         if args.keep_payloads else
                                         {"policy": "after-verified-transfer-and-client-shutdown", "status": "pending"})}

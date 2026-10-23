@@ -1,0 +1,2 @@
+   text	   data	    bss	    dec	    hex	filename
+17739296	 686144	   2656	18428096	11930c0	/workspace/scratch/ca998092d7e5/bench-binaries/candidate
