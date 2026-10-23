@@ -23,6 +23,12 @@ Those numbers are profiler-run observations only: there is no matched control,
 the profiling preload adds work and memory, and the sampled PSS includes an
 initial burst. Do not use them as a benchmark score.
 
+The profile also placed 348 ms (47.1% of sample weight) in `libc.so.6`, but
+this host's libc symbols are not sufficient to resolve those samples. A first
+nearest-exported-symbol pass fell outside the exported symbol's recorded size,
+so that attribution was discarded. Leave the libc portion unattributed; this
+profile cannot distinguish syscall, synchronization, allocator, or copy cost.
+
 ## Sampled functions
 
 The 366 sampled stacks represented 739 ms of sample weight. Addresses were
@@ -60,6 +66,6 @@ completions, dispatch deadlines, idle timeout, and accounting flushes, so a
 fixed order is not adopted from this profile alone. See the [Tokio `select!`
 fairness documentation](https://docs.rs/tokio/latest/tokio/macro.select.html).
 
-The raw summary, fixture metainfo, profile, and debugger start/stop logs are
-retained here. The generated payload, API/bootstrap credentials, database, and
-profiler preload helper are excluded.
+The raw summary, fixture metainfo, profile, client log, and debugger start/stop
+logs are retained here. The generated payload, API/bootstrap credentials,
+database, and profiler preload helper are excluded.

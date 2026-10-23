@@ -196,11 +196,14 @@ screen raised CPU by 42.3% for 4.0% less PSS. None changes the release or PGO
 defaults; all raw evidence and the retained fat-LTO executable are in
 [`observations/runtime-tuning-screen-20261022/`](observations/runtime-tuning-screen-20261022/).
 
-One exact-binary, 256 MiB PGO CPU profile sampled the broad peer-task poll and
-supervised torrent-task poll most often. Storage preparation accounted for a
-small share; `PeerReadStreams::observe` was not sampled as a separate symbol.
-This is diagnostic evidence only, not a client comparison. It does not justify
-spending a matched-run cycle on the previously proposed path-map refactor; the
+One exact-binary, 256 MiB PGO CPU profile sampled broad peer-task and supervised
+torrent-task poll frames most often among resolved TorrentNG frames. `PreparedPread::execute`
+was 2.9% of the TorrentNG leaf sample weight, while 47.1% of all sample weight
+mapped to libc without reliable symbol attribution. `PeerReadStreams::observe`
+was not sampled as a separate symbol, which is not proof that it is free. This
+is diagnostic evidence only, not a client comparison; the profile cannot
+separate libc read, copy, synchronization, or allocator work. It does not
+justify spending a matched-run cycle on the path-map refactor alone. The
 profile, exact summary, and resolution notes are in
 [`observations/pgo-hotpath-profile-20261022/`](observations/pgo-hotpath-profile-20261022/).
 

@@ -1253,8 +1253,13 @@
     },
     {
       "path": "pgo-hotpath-profile-20261022/README.md",
-      "bytes": 3356,
-      "sha256": "e49333265db05fd1bceba6c306b71b2e8e2419db9eb7c5179c5cf0873dfcc361"
+      "bytes": 3757,
+      "sha256": "5c47e579ea5bd272f3b80daa8c669d02fa9996d017c24d9c76af8ce9b523bdba"
+    },
+    {
+      "path": "pgo-hotpath-profile-20261022/client.log",
+      "bytes": 506,
+      "sha256": "a25b0b9cde658793f5d97ffe3234e499c387a225adedc9c1c96bffd0922bd350"
     },
     {
       "path": "pgo-hotpath-profile-20261022/fixture.torrent",

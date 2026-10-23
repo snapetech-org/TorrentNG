@@ -197,11 +197,12 @@ with 5.4% more CPU; this remains an optional memory tradeoff, not a new default.
 The one-round arena-cap-2 screen raised CPU by 42.3%. Exact results and
 reproducible artifacts are in the
 [runtime and codegen screen](certification/reports/TorrentNG-seed-performance-experiments-20261022/observations/runtime-tuning-screen-20261022/README.md).
-An exact-binary 256 MiB CPU profile then showed most sampled work in broad
-peer/task polling, with storage preparation a small share; the proposed
-peer-read map refactor was not supported as a major target. This diagnostic
-run did not change source or defaults; its limits and raw profile are recorded
-in the [hot-path profile note](certification/reports/TorrentNG-seed-performance-experiments-20261022/observations/pgo-hotpath-profile-20261022/README.md).
+An exact-binary 256 MiB CPU profile showed broad peer/task polling among the
+largest resolved TorrentNG frames, but 47.1% of its sample weight mapped to
+libc without reliable symbol attribution. It is diagnostic-only and does not
+support the peer-read map refactor as a large target. The run changed no source
+or defaults; limits and the raw profile are in the
+[hot-path profile note](certification/reports/TorrentNG-seed-performance-experiments-20261022/observations/pgo-hotpath-profile-20261022/README.md).
 
 ## Learn more
 
