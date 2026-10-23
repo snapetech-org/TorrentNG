@@ -101,14 +101,10 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                     self.assertIn('"ng-shared-main-torrentng"', expression)
                     self.assertIn('"ng-main-run-{0}"', expression)
                     if workflow.name == "release.yml":
-                        self.assertIn(
-                            "contains(fromJSON('[\"push\",\"workflow_dispatch\",\"schedule\",\"release\",\"repository_dispatch\"]'), github.event_name)",
-                            expression,
-                        )
-                        self.assertIn(
-                            "github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v'))",
-                            expression,
-                        )
+                        self.assertIn("github.event_name == 'push'", expression)
+                        self.assertIn("github.ref_type == 'tag'", expression)
+                        self.assertIn("startsWith(github.ref_name, 'v')", expression)
+                        self.assertNotIn("workflow_dispatch", expression)
                     else:
                         self.assertIn("github.event_name == 'push'", expression)
                         self.assertIn("github.event_name == 'workflow_dispatch'", expression)
