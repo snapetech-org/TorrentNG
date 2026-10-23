@@ -97,6 +97,29 @@ scheduler used by the TorrentNG client.
 
 ## Tests
 
+### Optional Linux mapped uploads and unsafe ownership
+
+The `seed-mmap` feature with `TNG_SEED_MMAP=1` uses a narrow native-syscall
+boundary to avoid copying upload payloads into anonymous buffers. `Window` owns
+an `mmap` allocation behind an `Arc`, bounded by shared cache admission and the
+resource governor. Live reads also retain their descriptor lease; pathname
+identity and scheduler generation checks remain on the storage worker.
+No Rust reference or slice is created over externally mutable mapped bytes.
+Only `mlock` on the worker and `sendmsg` on the ready socket access those bytes.
+Ordinary `mlock` both populates and locks requested pages before they reach the
+peer task. Denied locking selects buffered reads. Final `munmap` releases the
+mapping and locks. Range checks precede each syscall; each unsafe block states
+its pointer, descriptor and lifetime obligations.
+
+The mapped-upload scheduler tests verify bounded admission, whole-page charges,
+resident and locked requested pages, denied-lock fallback and admission release
+in an isolated subprocess, retained live backing, pathname replacement,
+socket payload correctness and external truncation returning an I/O error.
+Truncation can revoke a mapping at any time, so a userspace payload load would
+be unsound even when a descriptor is held. The syscall-only representation is
+intentional. Neither mapped nor buffered reads promise an atomic snapshot of a
+file modified externally during transfer.
+
 Unit tests cover scheduler class isolation, read-missing behavior, write create
 policy, fd-pool hit/miss/eviction behavior, sparse preparation, and concurrent
 positioned writes on a cached fd. They also assert backend request parsing,

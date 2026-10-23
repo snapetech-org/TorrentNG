@@ -44,12 +44,13 @@ batches pin their window; pressure can reclaim only idle windows. Cache entries
 do not retain descriptor leases. A live batch does. Window charges round up to
 whole pages even for tiny files; at most eight cache entries are retained.
 
-Linux `mmap`, `madvise`, `mlock`, `sendmsg`, and `munmap` are isolated in the storage
+Linux `mmap`, `mlock`, `sendmsg`, and `munmap` are isolated in the storage
 module, with range checks and ownership comments at every unsafe boundary. This
 follows the repository's existing narrow native-syscall boundary; it is not a
 general allowance for unsafe application memory access. Requested pages must be
-resident and locked before the peer can send them. Unsupported kernels, denied
-memory-lock admission, exhausted budgets, unsupported backends, uTP, hybrid, and
+resident and locked before the peer can send them. Ordinary `mlock` populates
+and locks pages in one operation; no separate `MADV_POPULATE_READ` walk is needed.
+Denied memory-lock admission, exhausted budgets, unsupported backends, uTP, hybrid, and
 cross-file requests use the buffered path. External truncation becomes a syscall
 error/short write, rather than a Rust load from an invalid mapping. File mutation
 still cannot make an entire transfer an atomic content snapshot; checksum
