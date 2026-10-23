@@ -2657,18 +2657,32 @@ class Benchmark:
     def _wait_seed_leecher_tracker(self, info_hash, tracker_ip):
         deadline = time.monotonic() + 90
         last_error = None
+        last_counts = None
         while time.monotonic() < deadline:
             try:
                 counts = self._tracker_scrape_counts(tracker_ip, info_hash)
+                last_counts = counts
             except (OSError, urllib.error.URLError, ValueError) as error:
                 last_error = error
                 counts = None
-            if counts is not None and counts["complete"] >= 1:
+            # The seed is announced before this leecher starts. Waiting only
+            # for a complete peer lets the seeder reannounce before the
+            # leecher is registered, so a private torrent has no authorized
+            # peer to return and rejects the later inbound connection.
+            if (counts is not None and counts["complete"] >= 1
+                    and counts["incomplete"] >= 1):
                 return
             time.sleep(2)
-        detail = f": {last_error}" if last_error is not None else ""
+        if last_counts is not None:
+            detail = (
+                f" (last scrape: {last_counts['complete']} complete, "
+                f"{last_counts['incomplete']} incomplete)"
+            )
+        else:
+            detail = f": {last_error}" if last_error is not None else ""
         raise TimeoutError(
-            "OpenTracker live scrape did not report a registered seed for the test torrent"
+            "OpenTracker live scrape did not report both the seed and leecher "
+            "for the test torrent"
             + detail
         )
 

@@ -1012,7 +1012,7 @@ class TrackerScrapeTests(unittest.TestCase):
     def test_tracker_wait_ignores_cached_qbittorrent_status(self) -> None:
         instance = object.__new__(benchmark.Benchmark)
         instance._tracker_scrape_counts = mock.Mock(side_effect=[
-            {"complete": 0, "incomplete": 1},
+            {"complete": 1, "incomplete": 0},
             {"complete": 1, "incomplete": 1},
         ])
         instance._qbit_json = mock.Mock(side_effect=AssertionError("must use live scrape"))
