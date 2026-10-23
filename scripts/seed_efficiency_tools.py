@@ -43,11 +43,29 @@ def source_digest(repo):
     return hashlib.sha256(json.dumps(source_files(repo), sort_keys=True).encode()).hexdigest()
 
 
-def manifest(binary, repo, profile=None, features="default", kind="torrentngd"):
-    repo, binary = Path(repo).resolve(), Path(binary).resolve()
+def source_provenance(repo, kind="torrentngd"):
+    repo = Path(repo).resolve()
     sources = source_files(repo, kind)
     diff = subprocess.check_output(["git", "diff", "HEAD", "--binary"], cwd=repo)
     status = command("git", "status", "--porcelain", "--untracked-files=all", cwd=repo)
+    return {
+        "source_commit": command("git", "rev-parse", "HEAD", cwd=repo),
+        # Commit metadata can change when publishing an identical tree through
+        # GitHub. Keep the tree identity as well as hashes of actual build inputs;
+        # a tree alone does not describe dirty or untracked source files.
+        "source_tree": command("git", "rev-parse", "HEAD^{tree}", cwd=repo),
+        "dirty": bool(status), "source_status": status.splitlines(),
+        "tracked_diff_sha256": hashlib.sha256(diff).hexdigest(),
+        "source_files": sources,
+        "source_digest": hashlib.sha256(json.dumps(sources, sort_keys=True).encode()).hexdigest(),
+    }
+
+
+def manifest(binary, repo, profile=None, features="default", kind="torrentngd", dependency_repos=None):
+    repo, binary = Path(repo).resolve(), Path(binary).resolve()
+    source = source_provenance(repo, kind)
+    dependencies = {name: source_provenance(path, "rtorrent")
+                    for name, path in (dependency_repos or {}).items()}
     libraries = {}
     try:
         for line in command("ldd", str(binary)).splitlines():
@@ -59,11 +77,9 @@ def manifest(binary, repo, profile=None, features="default", kind="torrentngd"):
         pass
     return {
         "format": "torrentng-build-manifest-v1", "created_unix": time.time(), "kind": kind,
-        "source_commit": command("git", "rev-parse", "HEAD", cwd=repo),
-        "dirty": bool(status), "source_status": status.splitlines(),
-        "tracked_diff_sha256": hashlib.sha256(diff).hexdigest(),
-        "source_files": sources,
-        "source_digest": hashlib.sha256(json.dumps(sources, sort_keys=True).encode()).hexdigest(),
+        **source,
+        "dependency_sources": dependencies,
+        "dirty": source["dirty"] or any(item["dirty"] for item in dependencies.values()),
         "cargo_lock_sha256": sha256(repo / "Cargo.lock") if kind == "torrentngd" else None,
         "binary": str(binary), "binary_sha256": sha256(binary),
         "rustc": command("rustc", "+1.97.0", "-Vv") if kind == "torrentngd" else None,
@@ -89,6 +105,9 @@ def verify_manifest(data, binary):
     dependencies = data.get("cargo_lock_sha256") if data.get("kind", "torrentngd") == "torrentngd" else data.get("shared_libraries_sha256")
     if not data.get("source_digest") or not dependencies:
         raise ValueError("manifest lacks source or dependency provenance")
+    for path, expected in data.get("shared_libraries_sha256", {}).items():
+        if not Path(path).is_file() or sha256(path) != expected:
+            raise ValueError(f"shared library differs from its build manifest: {path}")
 
 
 def balanced_orders(count, repeats, seed):
@@ -193,6 +212,8 @@ def main():
     build.add_argument("--profile")
     build.add_argument("--features", default="default")
     build.add_argument("--kind", choices=("torrentngd", "rtorrent"), default="torrentngd")
+    build.add_argument("--dependency-repo", action="append", default=[], metavar="NAME=PATH",
+                       help="record a separately built dependency, e.g. libtorrent=/path/to/source")
     build.add_argument("--require-clean", action="store_true")
     analyze = commands.add_parser("analyze")
     analyze.add_argument("--summary", required=True)
@@ -204,7 +225,13 @@ def main():
         item.add_argument("--output", required=True)
     args = parser.parse_args()
     if args.command == "manifest":
-        result = manifest(args.binary, args.repo, args.profile, args.features, args.kind)
+        dependencies = {}
+        for value in args.dependency_repo:
+            name, separator, path = value.partition("=")
+            if not separator or not name or not path or name in dependencies:
+                parser.error("--dependency-repo requires a unique nonempty NAME=PATH")
+            dependencies[name] = path
+        result = manifest(args.binary, args.repo, args.profile, args.features, args.kind, dependencies)
         if args.require_clean and result["dirty"]:
             parser.error("qualified builds require a clean source tree")
     else:

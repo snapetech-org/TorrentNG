@@ -1,0 +1,310 @@
+{
+  "bolt-default": [
+    {
+      "format": "torrentng-paired-efficiency-v1",
+      "control": "pgo-relocs",
+      "candidate": "pgo-bolt",
+      "rounds": 3,
+      "tolerance": 0.02,
+      "minimum_rounds": 10,
+      "metrics": {
+        "cpu_seconds_per_gib": {
+          "paired_ratios": [
+            1.03988342836889,
+            0.9069615447442618,
+            1.0377737097911923
+          ],
+          "paired_median": 1.0377737097911923,
+          "wins": 1,
+          "interval": [
+            0.9069615447442618,
+            1.03988342836889
+          ]
+        },
+        "peak_pss_bytes": {
+          "paired_ratios": [
+            1.2039716845204536,
+            1.148044192296208,
+            1.2502370866788899
+          ],
+          "paired_median": 1.2039716845204536,
+          "wins": 0,
+          "interval": [
+            1.148044192296208,
+            1.2502370866788899
+          ]
+        },
+        "peak_anonymous_bytes": {
+          "paired_ratios": [
+            0.9940397350993377,
+            0.9207800121876905,
+            0.9947054930509597
+          ],
+          "paired_median": 0.9940397350993377,
+          "wins": 3,
+          "interval": [
+            0.9207800121876905,
+            0.9947054930509597
+          ]
+        }
+      },
+      "clean_provenance": true,
+      "resource_gate": "inconclusive_or_regression",
+      "claim_scope": "this workload and host only; correctness, goodput and latency gates remain mandatory"
+    }
+  ],
+  "layout-followup": [
+    {
+      "format": "torrentng-paired-efficiency-v1",
+      "control": "pgo-relocs",
+      "candidate": "pgo-bolt-4k",
+      "rounds": 3,
+      "tolerance": 0.02,
+      "minimum_rounds": 10,
+      "metrics": {
+        "cpu_seconds_per_gib": {
+          "paired_ratios": [
+            0.9032816290311142,
+            0.8637036262147508,
+            0.7885665390637092
+          ],
+          "paired_median": 0.8637036262147508,
+          "wins": 3,
+          "interval": [
+            0.7885665390637092,
+            0.9032816290311142
+          ]
+        },
+        "peak_pss_bytes": {
+          "paired_ratios": [
+            1.2013906447534766,
+            1.070517448856799,
+            1.0364086249558149
+          ],
+          "paired_median": 1.070517448856799,
+          "wins": 0,
+          "interval": [
+            1.0364086249558149,
+            1.2013906447534766
+          ]
+        },
+        "peak_anonymous_bytes": {
+          "paired_ratios": [
+            1.1367239101717306,
+            0.9122388059701493,
+            0.8984771573604061
+          ],
+          "paired_median": 0.9122388059701493,
+          "wins": 2,
+          "interval": [
+            0.8984771573604061,
+            1.1367239101717306
+          ]
+        }
+      },
+      "clean_provenance": true,
+      "resource_gate": "inconclusive_or_regression",
+      "claim_scope": "this workload and host only; correctness, goodput and latency gates remain mandatory"
+    },
+    {
+      "format": "torrentng-paired-efficiency-v1",
+      "control": "pgo-relocs",
+      "candidate": "pgo-link-order",
+      "rounds": 3,
+      "tolerance": 0.02,
+      "minimum_rounds": 10,
+      "metrics": {
+        "cpu_seconds_per_gib": {
+          "paired_ratios": [
+            1.0299926584045926,
+            0.9852855943180082,
+            0.9558415787168204
+          ],
+          "paired_median": 0.9852855943180082,
+          "wins": 2,
+          "interval": [
+            0.9558415787168204,
+            1.0299926584045926
+          ]
+        },
+        "peak_pss_bytes": {
+          "paired_ratios": [
+            0.8007585335018963,
+            0.8283995186522263,
+            0.8181925297513845
+          ],
+          "paired_median": 0.8181925297513845,
+          "wins": 3,
+          "interval": [
+            0.8007585335018963,
+            0.8283995186522263
+          ]
+        },
+        "peak_anonymous_bytes": {
+          "paired_ratios": [
+            0.9980184940554822,
+            1.0555223880597016,
+            0.9983079526226735
+          ],
+          "paired_median": 0.9983079526226735,
+          "wins": 2,
+          "interval": [
+            0.9980184940554822,
+            1.0555223880597016
+          ]
+        }
+      },
+      "clean_provenance": true,
+      "resource_gate": "inconclusive_or_regression",
+      "claim_scope": "this workload and host only; correctness, goodput and latency gates remain mandatory"
+    }
+  ],
+  "link-order-qualification": [
+    {
+      "format": "torrentng-paired-efficiency-v1",
+      "control": "pgo-relocs",
+      "candidate": "pgo-link-order",
+      "rounds": 10,
+      "tolerance": 0.02,
+      "minimum_rounds": 10,
+      "metrics": {
+        "cpu_seconds_per_gib": {
+          "paired_ratios": [
+            0.9778958514178446,
+            1.0359461443065605,
+            0.9089165890428886,
+            0.9827565492534867,
+            1.0770434980202999,
+            0.9780451764610386,
+            1.1061349828271942,
+            0.9960905512143351,
+            0.9783048862354659,
+            1.1746858439364325
+          ],
+          "paired_median": 0.9894235502339108,
+          "wins": 6,
+          "interval": [
+            0.9779705139394417,
+            1.091589240423747
+          ]
+        },
+        "peak_pss_bytes": {
+          "paired_ratios": [
+            0.8015612895536619,
+            0.7891344383057091,
+            0.874914175145122,
+            0.7956583585874204,
+            0.8849067413584569,
+            0.7568962448834312,
+            0.8549017137096774,
+            0.9549532825938989,
+            0.8264384513358176,
+            0.8449912339036334
+          ],
+          "paired_median": 0.8357148426197255,
+          "wins": 10,
+          "interval": [
+            0.7923963984465647,
+            0.8799104582517895
+          ]
+        },
+        "peak_anonymous_bytes": {
+          "paired_ratios": [
+            0.9271597967250141,
+            0.9606598984771574,
+            1.1728476821192053,
+            1.0033090668431501,
+            1.1651315789473684,
+            0.924908424908425,
+            1.084544253632761,
+            1.4361350099272006,
+            1.0528052805280528,
+            1.0826193390452876
+          ],
+          "paired_median": 1.0677123097866703,
+          "wins": 3,
+          "interval": [
+            0.9439098476010858,
+            1.1689896305332867
+          ]
+        }
+      },
+      "clean_provenance": true,
+      "resource_gate": "inconclusive_or_regression",
+      "claim_scope": "this workload and host only; correctness, goodput and latency gates remain mandatory"
+    },
+    {
+      "format": "torrentng-paired-efficiency-v1",
+      "control": "rtorrent",
+      "candidate": "pgo-link-order",
+      "rounds": 10,
+      "tolerance": 0.02,
+      "minimum_rounds": 10,
+      "metrics": {
+        "cpu_seconds_per_gib": {
+          "paired_ratios": [
+            1.179080173864364,
+            1.502301988235794,
+            1.290205308200396,
+            1.334002737850042,
+            1.3628242454823105,
+            1.245130549103826,
+            1.5208483967750392,
+            1.2531653675408,
+            1.168817768024292,
+            1.5772813502935301
+          ],
+          "paired_median": 1.312104023025219,
+          "wins": 0,
+          "interval": [
+            1.2121053614840949,
+            1.5115751925054166
+          ]
+        },
+        "peak_pss_bytes": {
+          "paired_ratios": [
+            1.2272810218978103,
+            1.1761207685269899,
+            1.3177587665695214,
+            1.186808118081181,
+            1.2781353438764251,
+            1.1782251362083296,
+            1.2562725673548745,
+            1.4268676035502958,
+            1.219591760648709,
+            1.2773715956863463
+          ],
+          "paired_median": 1.2417767946263423,
+          "wins": 0,
+          "interval": [
+            1.1825166271447554,
+            1.2979470552229733
+          ]
+        },
+        "peak_anonymous_bytes": {
+          "paired_ratios": [
+            2.4766214177978885,
+            2.2835595776772246,
+            2.6671686746987953,
+            2.283132530120482,
+            2.6711915535444946,
+            2.2816265060240966,
+            2.4728915662650603,
+            3.273001508295626,
+            2.405731523378582,
+            2.6601503759398497
+          ],
+          "paired_median": 2.4747564920314744,
+          "wins": 0,
+          "interval": [
+            2.2833460538988533,
+            2.669180114121645
+          ]
+        }
+      },
+      "clean_provenance": true,
+      "resource_gate": "inconclusive_or_regression",
+      "claim_scope": "this workload and host only; correctness, goodput and latency gates remain mandatory"
+    }
+  ]
+}

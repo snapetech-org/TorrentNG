@@ -1,0 +1,725 @@
+{
+  "source_smaps": "/workspace/scratch/ca998092d7e5/paired-owned-seed/run-01-candidate-pgo/candidate-pgo/diagnostics/after-transfer-pid-132958.smaps",
+  "phase": "after-transfer diagnostic; not peak attribution",
+  "units": "KiB",
+  "categories": {
+    "executable": {
+      "Pss": 11000,
+      "Rss": 11000,
+      "Size": 19236,
+      "Anonymous": 676
+    },
+    "heap": {
+      "Pss": 2128,
+      "Rss": 2128,
+      "Size": 2284,
+      "Anonymous": 2128
+    },
+    "anonymous": {
+      "Pss": 3084,
+      "Rss": 3084,
+      "Size": 608456,
+      "Anonymous": 3084
+    },
+    "other": {
+      "Pss": 32,
+      "Rss": 36,
+      "Size": 64,
+      "Anonymous": 0
+    },
+    "shared-library": {
+      "Pss": 195,
+      "Rss": 1000,
+      "Size": 3416,
+      "Anonymous": 56
+    },
+    "stack": {
+      "Pss": 108,
+      "Rss": 108,
+      "Size": 136,
+      "Anonymous": 108
+    }
+  },
+  "mappings": [
+    {
+      "mapping": "564fd9bb6000-564fda0a8000 r--p 00000000 00:1b 532492                     /workspace/scratch/ca998092d7e5/bench-binaries/candidate-pgo",
+      "category": "executable",
+      "Size": 5064,
+      "Rss": 2048,
+      "Pss": 2048,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "564fda0a8000-564fdadd6000 r-xp 004f1000 00:1b 532492                     /workspace/scratch/ca998092d7e5/bench-binaries/candidate-pgo",
+      "category": "executable",
+      "Size": 13496,
+      "Rss": 8276,
+      "Pss": 8276,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "564fdadd6000-564fdae74000 r--p 0121e000 00:1b 532492                     /workspace/scratch/ca998092d7e5/bench-binaries/candidate-pgo",
+      "category": "executable",
+      "Size": 632,
+      "Rss": 632,
+      "Pss": 632,
+      "Anonymous": 632
+    },
+    {
+      "mapping": "564fdae74000-564fdae7f000 rw-p 012bb000 00:1b 532492                     /workspace/scratch/ca998092d7e5/bench-binaries/candidate-pgo",
+      "category": "executable",
+      "Size": 44,
+      "Rss": 44,
+      "Pss": 44,
+      "Anonymous": 44
+    },
+    {
+      "mapping": "564ffa586000-564ffa7c1000 rw-p 00000000 00:00 0                          [heap]",
+      "category": "heap",
+      "Size": 2284,
+      "Rss": 2128,
+      "Pss": 2128,
+      "Anonymous": 2128
+    },
+    {
+      "mapping": "7fc6a4000000-7fc6a4021000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 132,
+      "Rss": 4,
+      "Pss": 4,
+      "Anonymous": 4
+    },
+    {
+      "mapping": "7fc6a4021000-7fc6a8000000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 65404,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6a8000000-7fc6a8101000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 1028,
+      "Rss": 1028,
+      "Pss": 1028,
+      "Anonymous": 1028
+    },
+    {
+      "mapping": "7fc6a8101000-7fc6ac000000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 64508,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6ac000000-7fc6ac102000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 1032,
+      "Rss": 1032,
+      "Pss": 1032,
+      "Anonymous": 1032
+    },
+    {
+      "mapping": "7fc6ac102000-7fc6b0000000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 64504,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6b0000000-7fc6b0021000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 132,
+      "Rss": 4,
+      "Pss": 4,
+      "Anonymous": 4
+    },
+    {
+      "mapping": "7fc6b0021000-7fc6b4000000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 65404,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6b4000000-7fc6b4021000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 132,
+      "Rss": 20,
+      "Pss": 20,
+      "Anonymous": 20
+    },
+    {
+      "mapping": "7fc6b4021000-7fc6b8000000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 65404,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6b8000000-7fc6b8021000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 132,
+      "Rss": 8,
+      "Pss": 8,
+      "Anonymous": 8
+    },
+    {
+      "mapping": "7fc6b8021000-7fc6bc000000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 65404,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6bc000000-7fc6bc056000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 344,
+      "Rss": 344,
+      "Pss": 344,
+      "Anonymous": 344
+    },
+    {
+      "mapping": "7fc6bc056000-7fc6c0000000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 65192,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6c0000000-7fc6c0021000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 132,
+      "Rss": 28,
+      "Pss": 28,
+      "Anonymous": 28
+    },
+    {
+      "mapping": "7fc6c0021000-7fc6c4000000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 65404,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6c4000000-7fc6c405c000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 368,
+      "Rss": 344,
+      "Pss": 344,
+      "Anonymous": 344
+    },
+    {
+      "mapping": "7fc6c405c000-7fc6c8000000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 65168,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6c9c17000-7fc6c9c18000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 4,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6c9c18000-7fc6c9c1a000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 8,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6c9c1a000-7fc6c9c1b000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 4,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6c9c1b000-7fc6c9c1d000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 8,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6c9c1d000-7fc6c9c1e000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 4,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6c9c1e000-7fc6c9e1e000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 2048,
+      "Rss": 8,
+      "Pss": 8,
+      "Anonymous": 8
+    },
+    {
+      "mapping": "7fc6c9e1e000-7fc6c9e1f000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 4,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6c9e1f000-7fc6ca01f000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 2048,
+      "Rss": 20,
+      "Pss": 20,
+      "Anonymous": 20
+    },
+    {
+      "mapping": "7fc6ca01f000-7fc6ca020000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 4,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6ca020000-7fc6ca022000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 8,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6ca022000-7fc6ca023000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 4,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6ca023000-7fc6ca025000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 8,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6ca025000-7fc6ca026000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 4,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6ca026000-7fc6ca226000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 2048,
+      "Rss": 20,
+      "Pss": 20,
+      "Anonymous": 20
+    },
+    {
+      "mapping": "7fc6ca226000-7fc6ca227000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 4,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6ca227000-7fc6ca229000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 8,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6ca229000-7fc6ca22a000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 4,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6ca22a000-7fc6ca42a000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 2048,
+      "Rss": 8,
+      "Pss": 8,
+      "Anonymous": 8
+    },
+    {
+      "mapping": "7fc6ca42a000-7fc6ca42b000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 4,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6ca42b000-7fc6ca62b000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 2048,
+      "Rss": 12,
+      "Pss": 12,
+      "Anonymous": 12
+    },
+    {
+      "mapping": "7fc6ca62e000-7fc6ca62f000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 4,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6ca62f000-7fc6ca82f000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 2048,
+      "Rss": 12,
+      "Pss": 12,
+      "Anonymous": 12
+    },
+    {
+      "mapping": "7fc6ca832000-7fc6ca833000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 4,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6ca833000-7fc6caa33000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 2048,
+      "Rss": 16,
+      "Pss": 16,
+      "Anonymous": 16
+    },
+    {
+      "mapping": "7fc6caa33000-7fc6caa34000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 4,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6caa34000-7fc6cac34000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 2048,
+      "Rss": 20,
+      "Pss": 20,
+      "Anonymous": 20
+    },
+    {
+      "mapping": "7fc6cac34000-7fc6cac3c000 rw-s 00000000 00:1b 925629                     /workspace/scratch/ca998092d7e5/paired-owned-seed/run-01-candidate-pgo/candidate-pgo/session/state.db-shm",
+      "category": "other",
+      "Size": 32,
+      "Rss": 32,
+      "Pss": 32,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6cac3c000-7fc6cac3d000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 4,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6cac3d000-7fc6cae3d000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 2048,
+      "Rss": 120,
+      "Pss": 120,
+      "Anonymous": 120
+    },
+    {
+      "mapping": "7fc6cae3d000-7fc6cae3f000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 8,
+      "Rss": 8,
+      "Pss": 8,
+      "Anonymous": 8
+    },
+    {
+      "mapping": "7fc6cae3f000-7fc6cae67000 r--p 00000000 00:1b 9223372036855345946        /usr/lib/x86_64-linux-gnu/libc.so.6",
+      "category": "shared-library",
+      "Size": 160,
+      "Rss": 148,
+      "Pss": 11,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6cae67000-7fc6cafef000 r-xp 00028000 00:1b 9223372036855345946        /usr/lib/x86_64-linux-gnu/libc.so.6",
+      "category": "shared-library",
+      "Size": 1568,
+      "Rss": 392,
+      "Pss": 61,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6cafef000-7fc6cb03e000 r--p 001b0000 00:1b 9223372036855345946        /usr/lib/x86_64-linux-gnu/libc.so.6",
+      "category": "shared-library",
+      "Size": 316,
+      "Rss": 48,
+      "Pss": 8,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6cb03e000-7fc6cb042000 r--p 001fe000 00:1b 9223372036855345946        /usr/lib/x86_64-linux-gnu/libc.so.6",
+      "category": "shared-library",
+      "Size": 16,
+      "Rss": 16,
+      "Pss": 16,
+      "Anonymous": 16
+    },
+    {
+      "mapping": "7fc6cb042000-7fc6cb044000 rw-p 00202000 00:1b 9223372036855345946        /usr/lib/x86_64-linux-gnu/libc.so.6",
+      "category": "shared-library",
+      "Size": 8,
+      "Rss": 8,
+      "Pss": 8,
+      "Anonymous": 8
+    },
+    {
+      "mapping": "7fc6cb044000-7fc6cb051000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 52,
+      "Rss": 20,
+      "Pss": 20,
+      "Anonymous": 20
+    },
+    {
+      "mapping": "7fc6cb051000-7fc6cb061000 r--p 00000000 00:1b 9223372036855346611        /usr/lib/x86_64-linux-gnu/libm.so.6",
+      "category": "shared-library",
+      "Size": 64,
+      "Rss": 52,
+      "Pss": 10,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6cb061000-7fc6cb0e0000 r-xp 00010000 00:1b 9223372036855346611        /usr/lib/x86_64-linux-gnu/libm.so.6",
+      "category": "shared-library",
+      "Size": 508,
+      "Rss": 72,
+      "Pss": 15,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6cb0e0000-7fc6cb138000 r--p 0008f000 00:1b 9223372036855346611        /usr/lib/x86_64-linux-gnu/libm.so.6",
+      "category": "shared-library",
+      "Size": 352,
+      "Rss": 28,
+      "Pss": 7,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6cb138000-7fc6cb139000 r--p 000e7000 00:1b 9223372036855346611        /usr/lib/x86_64-linux-gnu/libm.so.6",
+      "category": "shared-library",
+      "Size": 4,
+      "Rss": 4,
+      "Pss": 4,
+      "Anonymous": 4
+    },
+    {
+      "mapping": "7fc6cb139000-7fc6cb13a000 rw-p 000e8000 00:1b 9223372036855346611        /usr/lib/x86_64-linux-gnu/libm.so.6",
+      "category": "shared-library",
+      "Size": 4,
+      "Rss": 4,
+      "Pss": 4,
+      "Anonymous": 4
+    },
+    {
+      "mapping": "7fc6cb13a000-7fc6cb13e000 r--p 00000000 00:1b 9223372036855346230        /usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+      "category": "shared-library",
+      "Size": 16,
+      "Rss": 16,
+      "Pss": 8,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6cb13e000-7fc6cb162000 r-xp 00004000 00:1b 9223372036855346230        /usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+      "category": "shared-library",
+      "Size": 144,
+      "Rss": 8,
+      "Pss": 4,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6cb162000-7fc6cb166000 r--p 00028000 00:1b 9223372036855346230        /usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+      "category": "shared-library",
+      "Size": 16,
+      "Rss": 4,
+      "Pss": 2,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6cb166000-7fc6cb167000 r--p 0002b000 00:1b 9223372036855346230        /usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+      "category": "shared-library",
+      "Size": 4,
+      "Rss": 4,
+      "Pss": 4,
+      "Anonymous": 4
+    },
+    {
+      "mapping": "7fc6cb167000-7fc6cb168000 rw-p 0002c000 00:1b 9223372036855346230        /usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+      "category": "shared-library",
+      "Size": 4,
+      "Rss": 4,
+      "Pss": 4,
+      "Anonymous": 4
+    },
+    {
+      "mapping": "7fc6cb168000-7fc6cb169000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 4,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6cb169000-7fc6cb16b000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 8,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6cb16b000-7fc6cb16c000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 4,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6cb16c000-7fc6cb16e000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 8,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6cb16e000-7fc6cb16f000 ---p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 4,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6cb16f000-7fc6cb171000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 8,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6cb171000-7fc6cb173000 rw-p 00000000 00:00 0 ",
+      "category": "anonymous",
+      "Size": 8,
+      "Rss": 8,
+      "Pss": 8,
+      "Anonymous": 8
+    },
+    {
+      "mapping": "7fc6cb173000-7fc6cb177000 r--p 00000000 00:00 0                          [vvar]",
+      "category": "other",
+      "Size": 16,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6cb177000-7fc6cb179000 r--p 00000000 00:00 0                          [vvar_vclock]",
+      "category": "other",
+      "Size": 8,
+      "Rss": 0,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6cb179000-7fc6cb17b000 r-xp 00000000 00:00 0                          [vdso]",
+      "category": "other",
+      "Size": 8,
+      "Rss": 4,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6cb17b000-7fc6cb17c000 r--p 00000000 00:1b 9223372036855343694        /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+      "category": "shared-library",
+      "Size": 4,
+      "Rss": 4,
+      "Pss": 0,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6cb17c000-7fc6cb1a7000 r-xp 00001000 00:1b 9223372036855343694        /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+      "category": "shared-library",
+      "Size": 172,
+      "Rss": 152,
+      "Pss": 12,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6cb1a7000-7fc6cb1b1000 r--p 0002c000 00:1b 9223372036855343694        /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+      "category": "shared-library",
+      "Size": 40,
+      "Rss": 20,
+      "Pss": 1,
+      "Anonymous": 0
+    },
+    {
+      "mapping": "7fc6cb1b1000-7fc6cb1b3000 r--p 00036000 00:1b 9223372036855343694        /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+      "category": "shared-library",
+      "Size": 8,
+      "Rss": 8,
+      "Pss": 8,
+      "Anonymous": 8
+    },
+    {
+      "mapping": "7fc6cb1b3000-7fc6cb1b5000 rw-p 00038000 00:1b 9223372036855343694        /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+      "category": "shared-library",
+      "Size": 8,
+      "Rss": 8,
+      "Pss": 8,
+      "Anonymous": 8
+    },
+    {
+      "mapping": "7ffd03cb5000-7ffd03cd7000 rw-p 00000000 00:00 0                          [stack]",
+      "category": "stack",
+      "Size": 136,
+      "Rss": 108,
+      "Pss": 108,
+      "Anonymous": 108
+    }
+  ]
+}

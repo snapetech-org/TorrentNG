@@ -1,0 +1,2 @@
+   text	   data	    bss	    dec	    hex	filename
+18999160	 681480	   3288	19683928	12c5a58	/workspace/scratch/ca998092d7e5/bench-binaries/candidate-pgo

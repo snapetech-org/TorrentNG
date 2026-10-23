@@ -1,0 +1,33 @@
+{
+  "format": "torrentng-seed-bolt-plan-v1",
+  "declared_before_measurement": true,
+  "source_commit": "7836fa77f4bdd26ac78c5bf436e8d88968bf1f60",
+  "rounds": 3,
+  "tolerance": 0.02,
+  "fixture_seed": 20261026,
+  "size_bytes": 67108864,
+  "offered_bytes_per_second": 4194304,
+  "window": 16,
+  "peers": 1,
+  "fixture_files": 1,
+  "cache_policy": "warm",
+  "client_cpus": "0-1",
+  "leecher_cpus": "2-3",
+  "warmup_seconds": 5,
+  "cooldown_seconds": 2,
+  "primary_comparisons": [
+    [
+      "pgo-relocs",
+      "pgo-bolt"
+    ],
+    [
+      "rtorrent",
+      "pgo-bolt"
+    ]
+  ],
+  "qualification": "Verified payloads plus both CPU/GiB and PSS upper paired bootstrap ratio bounds <=1.02. This is a held-out local screen, not broad qualification of post-link output. All compilation, instrumentation and training complete before scored runs.",
+  "minimum_qualification_rounds": 10,
+  "stage": "exploratory triage before qualification",
+  "decision_rule": "Do not promote from three rounds. If either resource has a paired median ratio above 1.02 against its exact input, reject this configuration without spending the ten-round qualification; otherwise run an independent ten-round qualification with a new fixture seed.",
+  "adaptation_before_measurement": "The post-link functional concurrent multi-file transfer verified, but had unexpectedly high memory. No matched BOLT performance round had run when this triage plan was recorded."
+}

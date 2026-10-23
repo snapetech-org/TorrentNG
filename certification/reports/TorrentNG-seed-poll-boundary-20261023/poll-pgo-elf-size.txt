@@ -1,0 +1,2 @@
+   text	   data	    bss	    dec	    hex	filename
+18722364	 681392	   5488	19409244	128295c	/workspace/scratch/ca998092d7e5/bench-binaries/poll-boundary-pgo

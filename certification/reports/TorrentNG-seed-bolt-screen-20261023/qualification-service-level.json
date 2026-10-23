@@ -1,0 +1,41 @@
+{
+  "pgo-relocs": {
+    "rounds": 10,
+    "all_verified": true,
+    "goodput_MiBps_min_max": [
+      3.9999732849284375,
+      3.9999805985939645
+    ],
+    "first_payload_delay_ms_median": 1.6830410004331497,
+    "first_payload_delay_ms_min_max": [
+      1.4249060004658531,
+      5.201629999646684
+    ]
+  },
+  "pgo-link-order": {
+    "rounds": 10,
+    "all_verified": true,
+    "goodput_MiBps_min_max": [
+      3.9998175645706326,
+      3.9999790351101336
+    ],
+    "first_payload_delay_ms_median": 1.7189425016113091,
+    "first_payload_delay_ms_min_max": [
+      1.395590999891283,
+      2.769753999018576
+    ]
+  },
+  "rtorrent": {
+    "rounds": 10,
+    "all_verified": true,
+    "goodput_MiBps_min_max": [
+      3.999955283499405,
+      3.9999803593464422
+    ],
+    "first_payload_delay_ms_median": 1.6819724987726659,
+    "first_payload_delay_ms_min_max": [
+      1.1396030022297055,
+      3.3435549994464964
+    ]
+  }
+}
