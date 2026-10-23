@@ -3,8 +3,8 @@
   "files": [
     {
       "path": "README.md",
-      "bytes": 5201,
-      "sha256": "71624bcddc0c6938c60b5346b8cc097cdcd5c8271d30012116a66aaafab976f2"
+      "bytes": 5614,
+      "sha256": "c46b3f4ab9efd6023825e71eecb47e77cfa2c27733d26226646412e100f267c7"
     },
     {
       "path": "active-stream-current-main-screen-20261023/README.md",
@@ -1460,6 +1460,836 @@
       "path": "io-uring-queue-depth-followup-20261022/runs/depth8-16m-round-01-uring8.config.toml",
       "bytes": 438,
       "sha256": "fbd7ffa3ba7f30fe16832114ff561bed285b577ef65e52f101657f2fdd8d272f"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/README.md",
+      "bytes": 5934,
+      "sha256": "dd0bbc3997e7837057f96498c958788d2358cc75e89735700f4205c2459ee184"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/binary-sha256.txt",
+      "bytes": 634,
+      "sha256": "cf05031adc620d283adfba25eeb5d8b26cd23a0975567da1695c760e052f6250"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/commands.txt",
+      "bytes": 1697,
+      "sha256": "bf6ecb7af556a0babbfb52ee6a3ea4b44aca1854ed03d17bf3b31e0d187f3277"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/failed-attempts/launch-client-kind-mismatch/cause.txt",
+      "bytes": 135,
+      "sha256": "dfb1fa86697c8d4348b632e4c2f143d31a6449ad6856dcc45578f66cf67913f2"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/failed-attempts/launch-client-kind-mismatch/run-01-rt-client.log",
+      "bytes": 1052,
+      "sha256": "4941c57cec2c2a1c4ce0a3783aa16ff095bff608b0720d3b9f5d38a359058faf"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/failed-attempts/launch-client-kind-mismatch/run-01-rt-config.toml",
+      "bytes": 548,
+      "sha256": "c974e664c693327c723cc43ae0924e39e5297e2b409b8972311f5448150963f0"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/failed-attempts/launch-client-kind-mismatch/summary.json",
+      "bytes": 1431,
+      "sha256": "d3ad4fe5beb1a9c679351af21a794c6d0a4e728d49e3fd4a1784501f450599a6"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/failed-attempts/launch-pythonpath-missing/cause.txt",
+      "bytes": 153,
+      "sha256": "97b01c977cd470383cf65f38f23d10abf7e54f485f2bc06a551f4530564e8bc8"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/failed-attempts/launch-pythonpath-missing/run-01-rt-client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/failed-attempts/launch-pythonpath-missing/run-01-rt-rtorrent.rc",
+      "bytes": 450,
+      "sha256": "46aad8173445092db9aea4c563e0c63000b41371f33cf55ca1ffb2c6004b4068"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/failed-attempts/launch-pythonpath-missing/summary.json",
+      "bytes": 1433,
+      "sha256": "111f9f5c877cf01654d7c2c4030eaa487a13051ca12979fe72d5ac95cb96a65a"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/fixture.torrent",
+      "bytes": 1377,
+      "sha256": "c3dcc6124dcd3bbb0bc2ead7b754361db71ddef1a98e0094f851cb255e4cf7d7"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/host-load-snapshots.txt",
+      "bytes": 676,
+      "sha256": "5bb680459ed33654cb85413b2de49b316fb378f873deb6983d04756f5ae21df0"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/commands.txt",
+      "bytes": 973,
+      "sha256": "88e4a74bc2adb5cb2d0e6e1d97732bc2b7a551b3d194e6719164dec22a35e3ce"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/failed-attempts/comparator-path-mismatch/cause.txt",
+      "bytes": 345,
+      "sha256": "a78a4565ed869aeb28960e3156cbb844c481052d4653ed08c218fc62257572b8"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/failed-attempts/comparator-path-mismatch/run-01-control-control-client.log",
+      "bytes": 457,
+      "sha256": "cf8e91de59eb184fb0f1685fd6c4874737430be00b0eed3587ed2b8bba750c9f"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/failed-attempts/comparator-path-mismatch/run-01-control-control-config.toml",
+      "bytes": 593,
+      "sha256": "91397f2d97568f8dce19abdb71670a8eeaa40402155aeb76786f470315445fcd"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/failed-attempts/comparator-path-mismatch/run-02-one_worker-one_worker-client.log",
+      "bytes": 457,
+      "sha256": "687018163f6084339b5880c503778fdddc0813d7e42b1c157bb601adf7b9c2e7"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/failed-attempts/comparator-path-mismatch/run-02-one_worker-one_worker-config.toml",
+      "bytes": 611,
+      "sha256": "a28fb95d6a97cb14db5c39ede18bf8d060d7290cf08a9b5731cf7a3f87fcf78d"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/failed-attempts/comparator-path-mismatch/run-03-rt-rt-client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/failed-attempts/comparator-path-mismatch/run-03-rt-rt-rtorrent.rc",
+      "bytes": 460,
+      "sha256": "a1367a33718114290a96dc30c02053f7e4af316e48f82dc87761124004b6983e"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/failed-attempts/comparator-path-mismatch/summary.json",
+      "bytes": 3884,
+      "sha256": "de5176e731d1357a65b8cb33f1fa0acb3ddd07649edd3d010b8f2ff044cb09ed"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/fixture.torrent",
+      "bytes": 1377,
+      "sha256": "c3dcc6124dcd3bbb0bc2ead7b754361db71ddef1a98e0094f851cb255e4cf7d7"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/load-before-screen-01.txt",
+      "bytes": 108,
+      "sha256": "3e7870d7607eae82b4af18b5e5c2efa8f6a0cc6543cf9db3a3a263b8c660a712"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/load-snapshots.txt",
+      "bytes": 405,
+      "sha256": "d713882c988fdab5a1eaf864755ce3c6fda4bf62f183ec0dea6dbcb83a5475c7"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/native_seed_cpu_ram_probe.py",
+      "bytes": 57374,
+      "sha256": "44050f98043f93ccc33bc696e2d1fa66382ff211f963a3366613af423b2e9404"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/round-01.json",
+      "bytes": 5347,
+      "sha256": "cc1fc20c437e15580d489bfbc0237799032a0a90b9a48faaf011de65df8e1675"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/round-02.json",
+      "bytes": 5352,
+      "sha256": "0ae0636c56ea7bc1c1ec4577f103a370619b1c77a72dbff894b3f1702db8d58c"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/round-03.json",
+      "bytes": 5348,
+      "sha256": "a001cb6cff3609176f927f3e500fb57ede5aedf56e5ec8df66b07215b6ed519a"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runner-as-run.py",
+      "bytes": 6562,
+      "sha256": "7a6c7653398a7d3cac5e4c888b0a0e70cbd159bea6417b6a3cbb8fa2aa1ff632"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runner-reproducibility-notes.txt",
+      "bytes": 313,
+      "sha256": "b378a7e89d33df6426b280021368c84fcfe4c0a057e1a2240887970810789581"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runner.py",
+      "bytes": 6583,
+      "sha256": "d4f88d95c5a162298d80c1e0f41d9ac06afb63487a0a80fe9b22bcda691132e5"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-02/run-01-control/control/client.log",
+      "bytes": 457,
+      "sha256": "5b0e62cf80d4eba6278befa34268062ce3c920251099b870ea6567998b3ad6c9"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-02/run-01-control/control/config.toml",
+      "bytes": 593,
+      "sha256": "ffed846e347faa2ad0eef99907050ae313efd195acb9f5f8d9b03eedec1c8daa"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-02/run-01-control/control/diagnostics/after-seed-recheck-pid-2906289.smaps.gz",
+      "bytes": 2344,
+      "sha256": "c0dfc76598aab747a6f5224ecbdbb3869ab1aea8470781f1450d4fef72281a52"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-02/run-01-control/control/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "460023adf79983d6d92d71b62daa8434a68bf0d665a7f81b77ceb4b61328c8b9"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-02/run-01-control/control/diagnostics/before-torrent-add-pid-2906289.smaps.gz",
+      "bytes": 2043,
+      "sha256": "d24c8ebc272355bb68b6164813d2b89bc2cd9323f56eddf75fd7f4423838afd0"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-02/run-01-control/control/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "ab12821f4c83e6999a837ada076cef8c0cb8f949f63962674bc7517dc911a848"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-02/run-02-one_worker/one_worker/client.log",
+      "bytes": 457,
+      "sha256": "64e2a857bd3344942fd158f531b2b53be88b6569df1ed83996371f554eed4298"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-02/run-02-one_worker/one_worker/config.toml",
+      "bytes": 611,
+      "sha256": "fa73689e0cb2c896827e7ced6e166f44dfef55c0a841329d24d1f1c807eb8e08"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-02/run-02-one_worker/one_worker/diagnostics/after-seed-recheck-pid-2907893.smaps.gz",
+      "bytes": 2254,
+      "sha256": "de7db7333a2b98be2d874ca1c7687f99e437c5496268b97319bf2ef2630ea02b"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-02/run-02-one_worker/one_worker/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "df7f38e09951db21094ce9d9443a23b6ec1e5639826c2812f3b58a2d876346df"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-02/run-02-one_worker/one_worker/diagnostics/before-torrent-add-pid-2907893.smaps.gz",
+      "bytes": 2039,
+      "sha256": "fc798a75f6a3dd80b01e504ad2a8ac9ce851ad311a95300c32807afc6b9cfa3b"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-02/run-02-one_worker/one_worker/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "29a39764c1a668d113708eb14e27719e43f98ba108e305a7e2687ae6e1818179"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-02/run-03-rt/rt/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-02/run-03-rt/rt/rtorrent.rc",
+      "bytes": 460,
+      "sha256": "f11958f3fd60ae4944cac1cf2904c261a8779de8ae0a4b5f15ff0e731197cad8"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-03/run-01-one_worker/one_worker/client.log",
+      "bytes": 457,
+      "sha256": "f3ab0defae4d50e0aa45aa3e630fa6e49f54cd9a9077455b4f7b93028b9a8357"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-03/run-01-one_worker/one_worker/config.toml",
+      "bytes": 611,
+      "sha256": "9853e99eb619f77a1e521c501665d79c3adb0990bdc21a6d5d4b7469546c1a73"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-03/run-01-one_worker/one_worker/diagnostics/after-seed-recheck-pid-2915801.smaps.gz",
+      "bytes": 2258,
+      "sha256": "519ae135c2cacd45d14dd42f692f921c5e23fa32b9382032b3ddd0821697130d"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-03/run-01-one_worker/one_worker/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "3da823083678f3fab9ed24513adaac90d2e27882c79a20def046e55fcbb2e49d"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-03/run-01-one_worker/one_worker/diagnostics/before-torrent-add-pid-2915801.smaps.gz",
+      "bytes": 2044,
+      "sha256": "719aaa83c9a934c5c7a3b334231880e06b5c4ff620046dbf755deaca6f38c7d5"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-03/run-01-one_worker/one_worker/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "ac16b3cdf334511e4e8773b79d98d40b3a924568e121a26e34caa9644c27c3bf"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-03/run-02-control/control/client.log",
+      "bytes": 457,
+      "sha256": "d8963ff1b03ae917a21f8904fb902054706b6ac46b847f9e4988dd855af56754"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-03/run-02-control/control/config.toml",
+      "bytes": 593,
+      "sha256": "7938284fa7cd797bb9770996f5f351753fb29fcf90a46ba37e5bbc68f68ebf41"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-03/run-02-control/control/diagnostics/after-seed-recheck-pid-2918303.smaps.gz",
+      "bytes": 2339,
+      "sha256": "85f5f17d675015ba3f6e7e2de3b63b856e5f4856955c36ff757e53f7e80635ab"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-03/run-02-control/control/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "159cd4705ef80a752e717547909240f1a94d1210ccf297822beab84c5e6757a8"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-03/run-02-control/control/diagnostics/before-torrent-add-pid-2918303.smaps.gz",
+      "bytes": 2046,
+      "sha256": "93bd2009ab9a235751321abc29259c00931e2b91a483cbe583b873dddcb54cbb"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-03/run-02-control/control/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "3cc2bfd5e2919a096f5300f56a42c53a6e728ec19cf97194cb53fba30133f524"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-03/run-03-rt/rt/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-03/run-03-rt/rt/rtorrent.rc",
+      "bytes": 460,
+      "sha256": "305a84e29dd825e8f1ae02e48c5be84a0d0826a8f0a8f567ab1a7a5f73f341d7"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-04/run-01-rt/rt/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-04/run-01-rt/rt/rtorrent.rc",
+      "bytes": 460,
+      "sha256": "41145e9ff2ce5a086248d224447f18a86e9e23282b0f626d23eb568fc2c66c73"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-04/run-02-control/control/client.log",
+      "bytes": 457,
+      "sha256": "96ef2a57cc9dd5f8ae6bf28634ab20dacf316f2dbd47d0c6dbb7baf84de5a30f"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-04/run-02-control/control/config.toml",
+      "bytes": 593,
+      "sha256": "79541cb56439362b3e3f6cf17a805bcd270fe0c5abe5a95d940b466a02546a23"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-04/run-02-control/control/diagnostics/after-seed-recheck-pid-2928070.smaps.gz",
+      "bytes": 2350,
+      "sha256": "b1500ac45a358ba3f7f25d5cdd9a3d58163899cfaf5cf49af00d1e6948c4970a"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-04/run-02-control/control/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "9560062b4bad2791ad7b449bd7eacb48d124f99504ab1877b7252a90cc700697"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-04/run-02-control/control/diagnostics/before-torrent-add-pid-2928070.smaps.gz",
+      "bytes": 2046,
+      "sha256": "df7423efad94400f606def68d9f46ba3b42d360c00bd8ffadf7987b1eab7d0bd"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-04/run-02-control/control/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "bac3a636fb9c33dc53b8a6862241a7b2c85ea051853576bf6b68a860d244ff2b"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-04/run-03-one_worker/one_worker/client.log",
+      "bytes": 457,
+      "sha256": "8b5b360d13910cda7a209416bedf9d5e1fe8eb1e0bc5d898f592299d987ad854"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-04/run-03-one_worker/one_worker/config.toml",
+      "bytes": 611,
+      "sha256": "197893de22e82ceb12ab9aee092663acc07158762863c0a8e0e654f13164ff2b"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-04/run-03-one_worker/one_worker/diagnostics/after-seed-recheck-pid-2929457.smaps.gz",
+      "bytes": 2258,
+      "sha256": "46696a23b6d30a280b1c983e32c53b6d29356335384ed0e0d1ffafcfbf316e1c"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-04/run-03-one_worker/one_worker/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "218bf741dd91cc7b589b3426f71c73922b992feef71273d5affe1779ff84b633"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-04/run-03-one_worker/one_worker/diagnostics/before-torrent-add-pid-2929457.smaps.gz",
+      "bytes": 2044,
+      "sha256": "4850d0661bb2684fca204ab46253d6099b6a4ca5311fa19d59a630a88aacc3ff"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-04/run-03-one_worker/one_worker/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "fad7674758657bc5700b5e26f770c32801c714b204d9bed71c80d4b6425ba8a4"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-05/run-01-control/control/client.log",
+      "bytes": 457,
+      "sha256": "7a11c3398582dc2c7bf56c72c0bf286c6dfb714f40c5ac046bfae0d3f454afa9"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-05/run-01-control/control/config.toml",
+      "bytes": 593,
+      "sha256": "4e99d24ae3f7e7bf7bce7eb6fc98e973b38a407d7432f2d0205ddb64c09a0ffd"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-05/run-01-control/control/diagnostics/after-seed-recheck-pid-2932811.smaps.gz",
+      "bytes": 2353,
+      "sha256": "efede02b8c352f86f791b456d7c90b6b11bde670f4b10765d486d674a26264c6"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-05/run-01-control/control/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "05f58013f3a9179b1f52b4c28063ccaf04515085729fc24ec03c6adf97b5769f"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-05/run-01-control/control/diagnostics/before-torrent-add-pid-2932811.smaps.gz",
+      "bytes": 2043,
+      "sha256": "06a4d91cd9723b22b3d6da7a92d274c4574131de032e6f0164ec2a53659a4fe0"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-05/run-01-control/control/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "20eb1a4e9aede81a37af0271b247712a72ac96c8f1bd7242d6b3432e88538d13"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-05/run-02-one_worker/one_worker/client.log",
+      "bytes": 457,
+      "sha256": "c93599b5ff39e69a57be275dcacfb4293e2c8ff92b89b1763c937b4838429897"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-05/run-02-one_worker/one_worker/config.toml",
+      "bytes": 611,
+      "sha256": "a976aed0512707aba60d42a9da2a5312494a2c5482cfb98864ce54fe2ed6b688"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-05/run-02-one_worker/one_worker/diagnostics/after-seed-recheck-pid-2935813.smaps.gz",
+      "bytes": 2246,
+      "sha256": "fd2010353f920e34ae7087cb9ee66014ac1099fe83a3ead6315d696355130457"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-05/run-02-one_worker/one_worker/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "fb125179e27666b55dcf7a63009fc386b5a3c342d2c60f7e39319a5f3465cd22"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-05/run-02-one_worker/one_worker/diagnostics/before-torrent-add-pid-2935813.smaps.gz",
+      "bytes": 2030,
+      "sha256": "2f92c91b8b146764b731573abaaba337aca34bfe651199b85e4237f17c27eef7"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-05/run-02-one_worker/one_worker/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "d0eab665f32f4a4a155f48e63a43e27956c31cee68136383012a118dc121ddcd"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-05/run-03-rt/rt/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/runs/trial-05/run-03-rt/rt/rtorrent.rc",
+      "bytes": 460,
+      "sha256": "57a274e9fd8302aa8b59ec4bd84d7634b41a71d7b0b0704f399b9e1b2a2f64da"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/multi-peer/summary-screen-01.json",
+      "bytes": 5353,
+      "sha256": "c5e8757ae5bc7aa733475961da9281971ee00364f8d0de607a9b9ffe1c893023"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/probe-config-override.patch",
+      "bytes": 1182,
+      "sha256": "cb0ac65a917fd9ea885fec95099395501aa786254322b66a82bee0334910cc2b"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/probe-io-worker-count.py",
+      "bytes": 57374,
+      "sha256": "44050f98043f93ccc33bc696e2d1fa66382ff211f963a3366613af423b2e9404"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-01-control/control/client.log",
+      "bytes": 457,
+      "sha256": "abf7edc5efe58c9bce9e3aaf5f6f2f575b665c0da35227f5c890d00bab57e4ef"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-01-control/control/config.toml",
+      "bytes": 578,
+      "sha256": "b73339fa456dd3443d263401aca6c94f860cd54e5ce4f7c2a346130629dd3af7"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-01-control/control/diagnostics/after-seed-recheck-pid-2858240.smaps.gz",
+      "bytes": 2329,
+      "sha256": "da81a4f6840911f82dcf88501d54e4c04d249fd0c6796985b7c918fbc78fadb0"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-01-control/control/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "72451a56b8421a5440e33c9bdcea30bae08ccbb2268647822a9f6d96dc6b9539"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-01-control/control/diagnostics/after-transfer-pid-2858240.smaps.gz",
+      "bytes": 2323,
+      "sha256": "aa7b6f4532a932ea37a62093222ca993d519fc3311eaabe08e232deea9f98283"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-01-control/control/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63173,
+      "sha256": "cecd96442e2346930fd1fa6f88ee3486f77904865a1ded3d21653090809ed561"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-01-control/control/diagnostics/before-torrent-add-pid-2858240.smaps.gz",
+      "bytes": 2038,
+      "sha256": "92c61533e56aeaba6624abd5ee3229a0e07718e8759025a45fcb5915c519def9"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-01-control/control/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "f7eb09773304eb7140e3f0854febaf56ed3c49ff8a40e68ff27b70d7e3c0ae80"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-01-one_worker/one_worker/client.log",
+      "bytes": 457,
+      "sha256": "5451ab2e46f16317ba79fc3260ccb7a0e7f13f122c65b870732a30c8a0e9a78f"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-01-one_worker/one_worker/config.toml",
+      "bytes": 596,
+      "sha256": "408305072ef71bffc38589ff5d0dd87fc0cce1946d1edb689f4b1058c2599ae9"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-01-one_worker/one_worker/diagnostics/after-seed-recheck-pid-2856591.smaps.gz",
+      "bytes": 2286,
+      "sha256": "1fa3f4bd405edb2be5cc87fd75aca744f4389aa17911f3ec64e561abacd5c138"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-01-one_worker/one_worker/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "c03108df5c7751d88c2c6d64a0d42018c3ad703eaa8d1161bda763ddae020679"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-01-one_worker/one_worker/diagnostics/after-transfer-pid-2856591.smaps.gz",
+      "bytes": 2260,
+      "sha256": "bde14097449da43509538997d4d4349bd97071b602510b0702b9aeb9b7fde75f"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-01-one_worker/one_worker/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63173,
+      "sha256": "862f8c1ecb851a395e48042ec8424e950777ace566b9586623d547b6e0aeb7ad"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-01-one_worker/one_worker/diagnostics/before-torrent-add-pid-2856591.smaps.gz",
+      "bytes": 2034,
+      "sha256": "34a0759507d0353459c97c6e41d62b2171f14f225494c7f4707733ba6d37f5db"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-01-one_worker/one_worker/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "95f0f7a15f2719dba4098a6ddce56ee3cd596e32e4e8ec9ac4758901bbf40462"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-01-rt/rt/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-01-rt/rt/rtorrent.rc",
+      "bytes": 450,
+      "sha256": "5978ff125352b2f411627c53b8085f2001a97b9ec9ebc2ecb67e368660b7f5c5"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-02-control/control/client.log",
+      "bytes": 457,
+      "sha256": "2bab5a01d4eb8ce6f26f66f0ef9b18c2da7ddeb3df032997d2f4bd1b73f9d34b"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-02-control/control/config.toml",
+      "bytes": 578,
+      "sha256": "b68f4b176677209ce5a582ac895685ee69ae95fed9aafd777e8bf98da346786a"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-02-control/control/diagnostics/after-seed-recheck-pid-2862912.smaps.gz",
+      "bytes": 2330,
+      "sha256": "97e0326ce8feeb8fd491a080f5fcef77a2b889c2a899dd7cbb1d8ef6e2b73fec"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-02-control/control/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "ad951bcfc1b9028e2475d2132884e8fd8ff42f15872219a67b1fe9e81628f5ef"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-02-control/control/diagnostics/after-transfer-pid-2862912.smaps.gz",
+      "bytes": 2373,
+      "sha256": "f6dad454075a00887c055caf6a815537d51f5bb2a6f27823488c6355e4b89535"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-02-control/control/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63173,
+      "sha256": "ceab4937f6839107182fbbf51657292b1a42b01f8f0f947652fc0b3fd05b449f"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-02-control/control/diagnostics/before-torrent-add-pid-2862912.smaps.gz",
+      "bytes": 2040,
+      "sha256": "a462273d78ab58f5b666bfab0a619510203fb6fb87727e0f1840fdd7a1a36019"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-02-control/control/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "6a1e04c262e0401534df1eddfc9045d020760ff95955b0b63c14102834ef9915"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-02-one_worker/one_worker/client.log",
+      "bytes": 457,
+      "sha256": "ad74b3e5241e5bdf2580e1b59df4bcda0463567bf378ce6983b1eea316e20d91"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-02-one_worker/one_worker/config.toml",
+      "bytes": 596,
+      "sha256": "826b721b826fd3bbf43014d52b17aa523f72c58323c8dad0df79c40df99a4177"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-02-one_worker/one_worker/diagnostics/after-seed-recheck-pid-2859662.smaps.gz",
+      "bytes": 2262,
+      "sha256": "98260b0bf5b18de7e385efa6bc367d3928982d62d8bb3342637e7d7744bc72bf"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-02-one_worker/one_worker/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "d3d1084d5b01fedabc21a9011b5b7e903411a00a42a3fade654d782fe5d47525"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-02-one_worker/one_worker/diagnostics/after-transfer-pid-2859662.smaps.gz",
+      "bytes": 2244,
+      "sha256": "5d9d1ae02a1346d1b521f27f4bc761f82b6aa18b75a237545cbc9aa5453af939"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-02-one_worker/one_worker/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63173,
+      "sha256": "2ece290c9a6d4990e6860e7313f0d42c526e444cae97e2850309aa69435379f8"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-02-one_worker/one_worker/diagnostics/before-torrent-add-pid-2859662.smaps.gz",
+      "bytes": 2047,
+      "sha256": "ae8c18e26ff449801cf4828237e67bb641f57e34c848f80af62ba1916415724f"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-02-one_worker/one_worker/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "c5187398d0d576800c50499c4950751ed17801f93f8e3a2d3401795091f3abdc"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-02-rt/rt/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-02-rt/rt/rtorrent.rc",
+      "bytes": 450,
+      "sha256": "57d3d7ca77b0221facdf0669131fcf9061d4769b072139b481989adb546ad45c"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-03-control/control/client.log",
+      "bytes": 457,
+      "sha256": "9c25eeaac7b1b68e9332e9ce215ce19d0187c43d7f2531bb0272c244027ff5aa"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-03-control/control/config.toml",
+      "bytes": 578,
+      "sha256": "e27cba2e5b1818d7365c01833911a3383f2af744c0c1563d3318c76b6c0f79eb"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-03-control/control/diagnostics/after-seed-recheck-pid-2866000.smaps.gz",
+      "bytes": 2335,
+      "sha256": "427a87ea3dcf3faa2c66d936b5c39ffc94e5f24b28d8c58807a0248f037702e4"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-03-control/control/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "ec23fb6e7d456b226041996d94c5018d1649f5179a290e7069e1ae9c77a00dd2"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-03-control/control/diagnostics/after-transfer-pid-2866000.smaps.gz",
+      "bytes": 2356,
+      "sha256": "6c0d4ccb3b8df137e146c89bf4164d4cdb4d7e1fe3215a1c1bdc854a36883652"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-03-control/control/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63173,
+      "sha256": "cb466a14a4dca89f9bdba678351abdd7486e711494b32f2f291cf8796c3d8091"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-03-control/control/diagnostics/before-torrent-add-pid-2866000.smaps.gz",
+      "bytes": 2043,
+      "sha256": "a2ba1b4fc0989e9927921ecac9151107781ab5f3ec247cda0acb7fa5d4073519"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-03-control/control/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "056f107b183fc74ff96f83d5ea80aed3d52e32fce1e57b3149cdd86c57d6ce7a"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-03-one_worker/one_worker/client.log",
+      "bytes": 457,
+      "sha256": "000f2a775b5ed0fe0ba668954473857b1ef4191a446138c0956d9dd6ad2fff2f"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-03-one_worker/one_worker/config.toml",
+      "bytes": 596,
+      "sha256": "b9177f151a4186e5a1a6f6294ecd09bfed5ee736e0b28903075f6700029961da"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-03-one_worker/one_worker/diagnostics/after-seed-recheck-pid-2867322.smaps.gz",
+      "bytes": 2258,
+      "sha256": "3fc5c9ab2443a9165b0988396866abd6d2f63e46fa7540beded6e46affa680b1"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-03-one_worker/one_worker/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "1bc283cd2f43a6a2175f318c23a13f395c834a4ca34f951014ae7ec0a858839d"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-03-one_worker/one_worker/diagnostics/after-transfer-pid-2867322.smaps.gz",
+      "bytes": 2235,
+      "sha256": "072840ab3b5498fd1792b4130b0ac939496dea5b4ee28a77aa8d6e21d39a497d"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-03-one_worker/one_worker/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63173,
+      "sha256": "4777ec349b53e769ab4e8d3879eee14012d47dfaca4a3e6fd682451d0863e1dd"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-03-one_worker/one_worker/diagnostics/before-torrent-add-pid-2867322.smaps.gz",
+      "bytes": 2043,
+      "sha256": "f7db12246fe70621984c47dfb27cc3ee396556e6ce90fc7eba30a34003d726be"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-03-one_worker/one_worker/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "a090a06e10edc4036a926b300b036f6679ffd517b945c20e23a958efd10dc1fe"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-03-rt/rt/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/confirm-03/run-03-rt/rt/rtorrent.rc",
+      "bytes": 450,
+      "sha256": "f71730bddca5adb82a9a03219dad7d917c5c54d1b4f9b1a2d842c513be0dc91a"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/screen-01/run-01-control/control/client.log",
+      "bytes": 457,
+      "sha256": "7b838dd438ec37f795c25c0c496e89d3e85e3aa3347c0632e2ee0c64c1f45dfc"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/screen-01/run-01-control/control/config.toml",
+      "bytes": 578,
+      "sha256": "9538165de7d5e0bfb4fe43369f6e41a8613c1ee3b6a970c29bbb2e1b060a9b19"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/screen-01/run-01-control/control/diagnostics/after-seed-recheck-pid-2851931.smaps.gz",
+      "bytes": 2325,
+      "sha256": "4fbff42b8b405cdceeaf97da6214ca452e3fadab5796483ed66b8979c362913a"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/screen-01/run-01-control/control/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "8547e85accc02b55a35e8c1358d5b7e9b8736574ffb7b97f8e75a2de29158539"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/screen-01/run-01-control/control/diagnostics/after-transfer-pid-2851931.smaps.gz",
+      "bytes": 2316,
+      "sha256": "7daa7c944ec985f44c5f80d6de47abe2a1001136911b6e59d63cfbec25f855ce"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/screen-01/run-01-control/control/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63173,
+      "sha256": "2ddd8a32a09ec53bd37a8a767cd2fc60999a480008509163c609e8b02dd468e2"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/screen-01/run-01-control/control/diagnostics/before-torrent-add-pid-2851931.smaps.gz",
+      "bytes": 2026,
+      "sha256": "87e6cd8855bade9ccea031b3cf8ab6fc8b589621c4ec9caec10ae0a9e72ac050"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/screen-01/run-01-control/control/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "457cca19989a6f3014bab39ce1f9f8dd171c8a78abdde729a646c348cac88b97"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/screen-01/run-01-one_worker/one_worker/client.log",
+      "bytes": 457,
+      "sha256": "9b6a459cc8859d57d98821b2c8cd85b0fc6b7688a2bc2dfe6c0e51cf16e3d4b7"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/screen-01/run-01-one_worker/one_worker/config.toml",
+      "bytes": 596,
+      "sha256": "46a81bdeed47175e4f4020d6a548b77ca98239075b410d91b38d4206d674efda"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/screen-01/run-01-one_worker/one_worker/diagnostics/after-seed-recheck-pid-2849817.smaps.gz",
+      "bytes": 2256,
+      "sha256": "78f16d12abf0f863765a5720db230655566e3976eb56872dc51a7a3beb048ba8"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/screen-01/run-01-one_worker/one_worker/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "a9a33ba681e5d633b2f8839a834313b72fbea3b64a79a69814085386ef5cf552"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/screen-01/run-01-one_worker/one_worker/diagnostics/after-transfer-pid-2849817.smaps.gz",
+      "bytes": 2234,
+      "sha256": "654b9f2abc6a18e4ab44c2530f854bbcd099fefb4fc32d81db623085c614a0a1"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/screen-01/run-01-one_worker/one_worker/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63168,
+      "sha256": "9653bec79c2439b1cefdb43aed89c04bb423a7e238221a6afe8bef48a93c2f1b"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/screen-01/run-01-one_worker/one_worker/diagnostics/before-torrent-add-pid-2849817.smaps.gz",
+      "bytes": 2038,
+      "sha256": "3738e3eb6c7059c3066e265de635547be4ebfbd473c145e94b568240b420c136"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/screen-01/run-01-one_worker/one_worker/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "3d2b16414ff1b989b86235776e13be4f770916e7043c00dd0352580840249d0d"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/screen-01/run-01-rt/rt/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/runs/screen-01/run-01-rt/rt/rtorrent.rc",
+      "bytes": 450,
+      "sha256": "0d7beb9344d2eeb8a11d98c19e1c498ad984cb848939bff72fe715872c56a8fb"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/source-revision.txt",
+      "bytes": 330,
+      "sha256": "7e86ae6b281fdd570c16c45d1ec10c9ad5bc8d1ab2697ed5dba1404c5860ee55"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/summary-confirm-03.json",
+      "bytes": 158484,
+      "sha256": "0d5c3b50835c9bfefb9368535afb0320b8eb9cea51d0608317cace6ae24d15c6"
+    },
+    {
+      "path": "io-worker-count-screen-20261023/summary-screen-01.json",
+      "bytes": 53695,
+      "sha256": "6bce6711d8afeb691a254283c41e6e949d3eb8e99f66e622b6d35e04730ddda5"
     },
     {
       "path": "low-risk-tuning-screen-20261022/README.md",

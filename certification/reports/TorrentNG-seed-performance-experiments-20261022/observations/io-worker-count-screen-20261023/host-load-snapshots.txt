@@ -1,0 +1,7 @@
+Host: kspld0; 32 logical CPUs reported by nproc.
+08:34:15, before the one-round screen: load average 21.09 / 18.95 / 15.23.
+08:36:04, after the one-round screen and before the confirmation: 15.91 / 17.61 / 15.15.
+08:39:43, after the three-round confirmation: 20.19 / 18.34 / 15.89.
+08:40:14, shortly after confirmation: 23.05 / 19.26 / 16.28. Other CPU-heavy VM/build activity was visible in the process list.
+
+The native seed probe does not record host CPU load per trial. These snapshots show substantial background activity, so treat the CPU screen as promising but screening-only. Memory measurements came from the benchmarked process and were lower in each paired round.

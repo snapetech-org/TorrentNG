@@ -1,0 +1,4 @@
+Host kspld0, 32 logical CPUs. Background load was high throughout.
+Single three-peer screen: before 08:45:53 load average 17.72 / 20.08 / 17.83; after 08:46:57 17.79 / 19.69 / 17.85.
+Three-round confirmation: before 08:47:18 load average 17.53 / 19.50 / 17.83; after 08:50:34 22.25 / 20.33 / 18.45.
+The native runner did not record host load per client run; use these as context, not per-run attribution.

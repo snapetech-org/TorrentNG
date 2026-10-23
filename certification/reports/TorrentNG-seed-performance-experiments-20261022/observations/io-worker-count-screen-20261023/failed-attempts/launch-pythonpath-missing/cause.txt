@@ -1,0 +1,2 @@
+The benchmark probe could not import transfer_rebuild.xmlrpc_safety because PYTHONPATH did not include scripts/.
+No valid benchmark result was recorded.

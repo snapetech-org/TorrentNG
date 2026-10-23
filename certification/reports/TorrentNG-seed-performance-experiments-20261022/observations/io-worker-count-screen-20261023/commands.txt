@@ -1,0 +1,31 @@
+# Test-only runner: probe-io-worker-count.py explicitly configures 2 workers for
+# label "control" and 1 worker for label "one_worker". Both use the same binary.
+export PYTHONPATH="$PWD/scripts"
+PROBE='certification/reports/TorrentNG-seed-performance-experiments-20261022/observations/io-worker-count-screen-20261023/probe-io-worker-count.py'
+TNG="$PWD/target/release/torrentngd"
+RT='/tmp/torrentng-seed-goal-20261022/rtorrent-rootfs/usr/local/bin/rtorrent'
+RT_LIBS='/tmp/torrentng-seed-goal-20261022/rtorrent-libs:/tmp/torrentng-seed-goal-20261022/rtorrent-rootfs/usr/local/lib'
+
+# Initial one-round screen
+PYTHONPATH="$PYTHONPATH" python3 "$PROBE" \
+  --client "control=torrentngd:$TNG" \
+  --client "one_worker=torrentngd:$TNG" \
+  --client "rt=rtorrent:$RT" \
+  --client-env control:TNG_STORAGE_BACKEND=pread \
+  --client-env one_worker:TNG_STORAGE_BACKEND=pread \
+  --client-env "rt:LD_LIBRARY_PATH=$RT_LIBS" \
+  --size 67108864 --seed 20261022 --warmup 2 --cooldown 2 \
+  --timeout 120 --ready-timeout 180 --order-seed 1407 --repeats 1 \
+  --output /tmp/torrentng-seed-goal-20261022/io-worker-count-screen-20261023-01/trial-03
+
+# Three-round randomized confirmation
+PYTHONPATH="$PYTHONPATH" python3 "$PROBE" \
+  --client "control=torrentngd:$TNG" \
+  --client "one_worker=torrentngd:$TNG" \
+  --client "rt=rtorrent:$RT" \
+  --client-env control:TNG_STORAGE_BACKEND=pread \
+  --client-env one_worker:TNG_STORAGE_BACKEND=pread \
+  --client-env "rt:LD_LIBRARY_PATH=$RT_LIBS" \
+  --size 67108864 --seed 20261022 --warmup 2 --cooldown 2 \
+  --timeout 120 --ready-timeout 180 --order-seed 1407 --repeats 3 \
+  --output /tmp/torrentng-seed-goal-20261022/io-worker-count-screen-20261023-01/trial-04

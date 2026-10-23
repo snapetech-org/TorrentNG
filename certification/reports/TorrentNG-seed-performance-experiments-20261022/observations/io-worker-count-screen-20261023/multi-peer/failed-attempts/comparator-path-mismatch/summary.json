@@ -1,0 +1,102 @@
+{
+  "status": "failed",
+  "method": "three simultaneous loopback leechers per one seed daemon; each receives the same deterministic fixture at 4 MiB/s; process CPU normalized over total verified bytes",
+  "fixture_bytes_per_peer": 67108864,
+  "peer_count": 3,
+  "total_payload_bytes": 201326592,
+  "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+  "info_hash": "5ceff928c8833b0f7994370f398ba4b14b28034a",
+  "binary_hashes": {
+    "control": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+    "one_worker": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276"
+  },
+  "leecher_rate_bytes_per_second": 4194304,
+  "randomized_order": [
+    "control",
+    "one_worker",
+    "rt"
+  ],
+  "runs": [
+    {
+      "round": 1,
+      "name": "control",
+      "kind": "torrentngd",
+      "binary": "/home/keith/Documents/code/TorrentNG/target/release/torrentngd",
+      "binary_sha256": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+      "environment_overrides": {
+        "TNG_STORAGE_BACKEND": "pread"
+      },
+      "verified_peers": 3,
+      "peer_transfers": [
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.00054773897864,
+          "elapsed_seconds": 16.7720858809771
+        },
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.000034135009628,
+          "elapsed_seconds": 16.772895708010765
+        },
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.000023683998734,
+          "elapsed_seconds": 16.771872506011277
+        }
+      ],
+      "total_verified_bytes": 201326592,
+      "elapsed_wall_seconds": 16.785400863009272,
+      "process_cpu_seconds": 0.644569185,
+      "cpu_seconds_per_gib": 3.43770232,
+      "peak_pss_bytes": 19682304,
+      "peak_anonymous_bytes": 6467584,
+      "peak_rss_bytes": 22708224,
+      "samples_count": 30,
+      "sampler_error": []
+    },
+    {
+      "round": 2,
+      "name": "one_worker",
+      "kind": "torrentngd",
+      "binary": "/home/keith/Documents/code/TorrentNG/target/release/torrentngd",
+      "binary_sha256": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+      "environment_overrides": {
+        "TNG_STORAGE_BACKEND": "pread"
+      },
+      "verified_peers": 3,
+      "peer_transfers": [
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.000057233002735,
+          "elapsed_seconds": 16.723927187995287
+        },
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.00006161100464,
+          "elapsed_seconds": 16.721775251993677
+        },
+        {
+          "bytes": 67108864,
+          "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+          "payload_elapsed_seconds": 16.00006490800297,
+          "elapsed_seconds": 16.720643553009722
+        }
+      ],
+      "total_verified_bytes": 201326592,
+      "elapsed_wall_seconds": 16.724580799986143,
+      "process_cpu_seconds": 0.633373187,
+      "cpu_seconds_per_gib": 3.3779903306666665,
+      "peak_pss_bytes": 19366912,
+      "peak_anonymous_bytes": 6152192,
+      "peak_rss_bytes": 22409216,
+      "samples_count": 30,
+      "sampler_error": []
+    }
+  ],
+  "error": "FileNotFoundError: [Errno 2] No such file or directory: '/tmp/torrentng-seed-goal-20261022/io-worker-concurrent-screen-20261023-01/rtorrent-rootfs/usr/local/bin/rtorrent'"
+}

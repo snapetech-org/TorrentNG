@@ -1,0 +1,2 @@
+The rTorrent binary was mislabeled as kind=torrentngd; startup exited before a valid transfer.
+No valid benchmark result was recorded.

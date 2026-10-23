@@ -1,0 +1,19 @@
+[daemon]
+api_bind = "127.0.0.1:40629"
+session_dir = "/tmp/torrentng-seed-goal-20261022/io-worker-concurrent-screen-20261023-01/trial-05/run-02-one_worker/one_worker/session"
+log_level = "warn"
+
+[network]
+listen_port = 54937
+max_peers = 8
+max_incoming_handshakes = 32
+
+[storage]
+io_worker_threads = 1
+download_dir = "/tmp/torrentng-seed-goal-20261022/io-worker-concurrent-screen-20261023-01/trial-05/run-02-one_worker/one_worker/download"
+
+[dht]
+enabled = false
+
+[auth]
+api_tokens_file = "/tmp/torrentng-seed-goal-20261022/io-worker-concurrent-screen-20261023-01/trial-05/run-02-one_worker/one_worker/api-token"

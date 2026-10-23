@@ -2,6 +2,8 @@
 
 **Status:** main commit `39554462` now collects upload reads for up to 32 ms and batches up to eight contiguous 16 KiB blocks. Three-round release and PGO screens show lower CPU with small PSS reductions; PGO remains opt-in. The current rTorrent 0.16.25 parity goal remains unmet. io_uring stays selectable after its startup fix, but its repeated screen did not beat `pread` on CPU.
 
+A current-source configuration screen found a single-peer win with `storage.io_worker_threads = 1`: three-round median CPU fell 23.6%, PSS 6.0%, and anonymous peak 14.2% against the default of two workers. A randomized three-peer follow-up reversed CPU in all rounds (+11.9% to +19.0%) while PSS fell 4.5–5.6% and anonymous peak fell 13.4–18.0%. Keep the default at two; a bounded lazy second worker is the next prototype to evaluate. Full results are in [`observations/io-worker-count-screen-20261023/`](observations/io-worker-count-screen-20261023/).
+
 A bounded batch-rate-admission refactor was screened against the current 16 ms release and rTorrent 0.16.25. It did not establish a CPU and PSS win together and was not promoted; its patch and complete two-screen evidence are in [`observations/upload-rate-batch-20261022/`](observations/upload-rate-batch-20261022/).
 
 The objective remains to meet or beat current rTorrent in both process CPU and memory. These local tests do not reach that objective. The last published whole-client comparison remains the reference: TorrentNG at 1.90 CPU seconds and 19.82 MiB PSS versus rTorrent at 0.73 seconds and 10.74 MiB PSS.
