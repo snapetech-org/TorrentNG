@@ -518,6 +518,27 @@ impl RateTree {
         }
     }
 
+    /// Choose a grant size under the same lock as the grant attempt. A
+    /// concurrent settings update cannot turn a large unlimited reservation
+    /// into a larger-than-before limited burst.
+    pub(crate) fn upload_batch_bytes(
+        &self,
+        peer_id: RatePeerId,
+        requested: u64,
+        first: u64,
+    ) -> u64 {
+        let limited_or_competing = self.global.limit.is_some()
+            || self.torrents.get(&peer_id.torrent).is_none_or(|torrent| {
+                torrent.bucket.limit.is_some()
+                    || torrent.waiting.iter().any(|(_, _, peer)| *peer != peer_id)
+            });
+        if limited_or_competing {
+            first.min(requested)
+        } else {
+            requested
+        }
+    }
+
     /// Try to spend `bytes` for `peer_id` at every level at once.
     pub fn try_grant(&mut self, peer_id: RatePeerId, bytes: u64, now: Nanos) -> Grant {
         self.try_grant_tracked(peer_id, bytes, now).0

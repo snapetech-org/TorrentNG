@@ -1,0 +1,26 @@
+{
+  "build_host": "Linux 9abbd14010f5 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux",
+  "compiler": "g++ (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0\nCopyright (C) 2023 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n",
+  "prefix": "/workspace/scratch/ca998092d7e5/rtorrent-prefix",
+  "builds": {
+    "libtorrent": {
+      "commit": "6ad3fecf3e7e7aa86855445587b532a91256f344",
+      "tree": "b0fc048af15969474262199044f2a63f6b03c4ea",
+      "status": "",
+      "configure_command": "/workspace/scratch/ca998092d7e5/comparator-libtorrent/configure --prefix=/workspace/scratch/ca998092d7e5/rtorrent-prefix --disable-debug",
+      "config_log_sha256": "42176fd8113fbda7b5426eded57d60cf628085800a3a446f21556d03179fb21e",
+      "CXXFLAGS": "CXXFLAGS = -I/usr/include/x86_64-linux-gnu   -pthread  -g -O2 -DNDEBUG -Wall -fvisibility=hidden ",
+      "LDFLAGS": "LDFLAGS = "
+    },
+    "rtorrent": {
+      "commit": "15ccae27deb9aa1dc8e46ea0ed218a673ccc5732",
+      "tree": "333e31dc5b3b71a981d568666b76e7842e1e1cbe",
+      "status": "",
+      "configure_command": "/workspace/scratch/ca998092d7e5/comparator-rtorrent/configure --prefix=/workspace/scratch/ca998092d7e5/rtorrent-prefix --disable-debug --with-xmlrpc-c",
+      "config_log_sha256": "34270a746e2da8b347d8cc4f0f5a55f9c2383e07a99c284ab0998963fd345f62",
+      "CXXFLAGS": "CXXFLAGS = -g -O2 -DNDEBUG -Wall -I/usr/include  -pthread -D_DEFAULT_SOURCE -D_XOPEN_SOURCE=600   -I/workspace/scratch/ca998092d7e5/rtorrent-prefix/include -I/usr/include/x86_64-linux-gnu ",
+      "LDFLAGS": "LDFLAGS = -Wl,-rpath,/workspace/scratch/ca998092d7e5/rtorrent-prefix/lib"
+    }
+  },
+  "native_build_note": "Matches the repository comparator source tags and configure optimization settings. Built natively on Ubuntu with GCC 13.3 and host libraries, not the Debian comparator container; compare only against clients run in this same experiment."
+}

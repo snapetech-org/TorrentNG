@@ -9,6 +9,8 @@ Completion time is recorded as a validity check, not a performance target.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
+from seed_efficiency_tools import balanced_orders, host_snapshot, verify_manifest
 import ctypes
 import ctypes.util
 import hashlib
@@ -53,6 +55,13 @@ SAFE_CONTROL_VALUES = {
     "GLIBC_TUNABLES", "LD_PRELOAD", "RUST_LOG",
 }
 DIAGNOSTIC_METRICS = {
+    "torrentng_storage_prepared_slot_allocations_total",
+    "torrentng_storage_prepared_slot_reuses_total",
+    "torrentng_storage_prepared_active_jobs",
+    "torrentng_storage_prepared_queue_wait_ns_total",
+    "torrentng_storage_prepared_run_ns_total",
+    "torrentng_storage_mapped_upload_cache_bytes",
+
     "torrentng_storage_peer_read_cache_entries",
     "torrentng_storage_peer_read_cache_bytes",
     "torrentng_storage_peer_read_cache_global_backing_bytes",
@@ -74,7 +83,7 @@ def bencode(v):
     raise TypeError(v)
 
 
-def make_fixture(folder: Path, size: int, seed: int):
+def make_fixture(folder: Path, size: int, seed: int, file_count=1):
     folder.mkdir()
     payload = folder / "payload.bin"
     key, digest, hashes, pending = seed.to_bytes(8, "big"), hashlib.sha256(), bytearray(), bytearray()
@@ -94,6 +103,17 @@ def make_fixture(folder: Path, size: int, seed: int):
         hashes.extend(hashlib.sha1(pending, usedforsecurity=False).digest())
     info = {b"length": size, b"name": b"payload.bin", b"piece length": PIECE,
             b"pieces": bytes(hashes), b"private": 1}
+    if not 1 <= file_count <= min(size, 64):
+        raise ValueError("fixture file count must be 1–64 and fit its payload")
+    if file_count > 1:
+        # Unaligned boundaries exercise cross-file block fallback.
+        lengths = [size // file_count] * file_count
+        lengths[-1] += size - sum(lengths)
+        info.pop(b"length")
+        info[b"name"] = b"payload-set"
+        info[b"files"] = [{b"length": length, b"path": [f"part-{index}.bin".encode()]}
+                           for index, length in enumerate(lengths)]
+        (folder / "layout.json").write_text(json.dumps(lengths))
     torrent = bencode({b"info": info})
     (folder / "fixture.torrent").write_bytes(torrent)
     # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- BEP 3 defines the torrent info-hash as SHA-1.
@@ -132,8 +152,16 @@ def update_available_pieces(body, pieces, available):
     return available
 
 
-def pacing_deadline(first_payload_time, bytes_received):
-    return first_payload_time + bytes_received / RATE
+def pacing_deadline(first_payload_time, bytes_received, rate=RATE):
+    return first_payload_time + bytes_received / rate
+
+
+def peer_identity(peer_number=None):
+    if peer_number is None:
+        return PEER_ID
+    if not 0 <= peer_number < 32:
+        raise ValueError("peer number is outside the bounded concurrent probe")
+    return f"-TNG0001-{peer_number:011d}".encode()
 
 
 def pacing_delay(deadline, now):
@@ -216,7 +244,8 @@ continue
 
 def leecher(port, ih, size, target, expected, timeout, sample_process,
             diagnostic_callback=None, register_peer=None, peer_state_callback=None,
-            cpu_profile_callback=None):
+            cpu_profile_callback=None, *, rate=RATE, window=WINDOW,
+            request_pattern="sequential", request_seed=0, peer_number=None):
     started, deadline = time.monotonic(), time.monotonic() + timeout
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     with sock:
@@ -238,13 +267,16 @@ def leecher(port, ih, size, target, expected, timeout, sample_process,
             output.truncate(size)
             sock.settimeout(1)
             client_messages = []
-            handshake = b"\x13BitTorrent protocol" + bytes(8) + ih + PEER_ID
+            peer_id = peer_identity(peer_number)
+            handshake = b"\x13BitTorrent protocol" + bytes(8) + ih + peer_id
             sock.sendall(handshake)
             client_messages.append({"type": "handshake", "bytes_hex": handshake.hex()})
             hello = recv_exact(sock, 68, deadline)
             if hello[:20] != b"\x13BitTorrent protocol" or hello[28:48] != ih:
                 raise RuntimeError("peer handshake mismatch")
             blocks = (size + BLOCK - 1) // BLOCK
+            block_order = list(range(blocks))
+            if request_pattern == "random": random.Random(request_seed).shuffle(block_order)
             pieces = (size + PIECE - 1) // PIECE
             empty_bitfield = bytes((pieces + 7) // 8)
             bitfield_frame = struct.pack(">I", len(empty_bitfield) + 1) + b"\x05" + empty_bitfield
@@ -263,8 +295,8 @@ def leecher(port, ih, size, target, expected, timeout, sample_process,
                     raise TimeoutError(f"transfer stopped after {len(done)} blocks; unchoked={unchoked}; "
                         f"available_pieces={len(available)}/{pieces}; server_message_ids={server_messages[:32]}")
                 if unchoked and full_bitfield:
-                    while len(outstanding) < WINDOW and next_block < blocks:
-                        absolute = next_block * BLOCK
+                    while len(outstanding) < window and next_block < blocks:
+                        absolute = block_order[next_block] * BLOCK
                         piece, offset = divmod(absolute, PIECE)
                         length = min(BLOCK, size - absolute)
                         send_msg(sock, 6, struct.pack(">III", piece, offset, length))
@@ -306,7 +338,7 @@ def leecher(port, ih, size, target, expected, timeout, sample_process,
                     output.seek(absolute); output.write(data)
                     done.add(absolute // BLOCK)
                     bytes_received += len(data)
-                    wait_until = pacing_deadline(first_payload_time, bytes_received)
+                    wait_until = pacing_deadline(first_payload_time, bytes_received, rate)
                     delay = pacing_delay(wait_until, time.monotonic())
                     if delay: time.sleep(delay)
                     if (diagnostic_callback is not None and mid_transfer_diagnostics is None
@@ -327,7 +359,7 @@ def leecher(port, ih, size, target, expected, timeout, sample_process,
             "elapsed_seconds": time.monotonic() - started,
             "first_payload_delay_seconds": first_payload_time - connection_started,
             "payload_elapsed_seconds": payload_complete_time - first_payload_time,
-            "offered_rate_bytes_per_second": RATE,
+            "offered_rate_bytes_per_second": rate,
             "connection_start_sample": connection_sample,
             "leecher_address": list(leecher_address),
             "first_payload_sample": first_payload_sample,
@@ -336,6 +368,25 @@ def leecher(port, ih, size, target, expected, timeout, sample_process,
             "initial_client_messages": client_messages,
             "peer_state_snapshots": peer_state_snapshots,
             "mid_transfer_diagnostics": mid_transfer_diagnostics}
+
+
+def concurrent_leechers(count, port, ih, size, directory, digest, timeout, sample, register, rate, window, pattern, seed):
+    with concurrent.futures.ThreadPoolExecutor(max_workers=count) as workers:
+        results = list(workers.map(lambda index: leecher(
+            port, ih, size, directory / f"downloaded-{index}.bin", digest, timeout, sample,
+            register_peer=register, rate=rate, window=window, request_pattern=pattern,
+            request_seed=seed + index, peer_number=index), range(count)))
+    first = min(results, key=lambda result: result["first_payload_sample"]["monotonic"])
+    last = max(results, key=lambda result: result["payload_complete_sample"]["monotonic"])
+    combined = dict(first)
+    combined.update({"bytes": size * count, "verified": all(r["verified"] for r in results),
+        "peer_transfers": results, "offered_rate_bytes_per_second": rate * count,
+        "payload_elapsed_seconds": last["payload_complete_sample"]["monotonic"] - first["first_payload_sample"]["monotonic"],
+        "connection_start_sample": min((r["connection_start_sample"] for r in results), key=lambda v: v["monotonic"]),
+        "payload_complete_sample": last["payload_complete_sample"],
+        "post_leecher_sample": max((r["post_leecher_sample"] for r in results), key=lambda v: v["monotonic"]),
+    })
+    return combined
 
 
 def process_sample(root_pid):
@@ -385,7 +436,7 @@ def process_tree_cpu_time_ns(root_pid, pids):
     sampled = False
     for pid in pids:
         try:
-            clock_id = process_cpu_clock_id(pid)
+            clock_id = process_cpu_clock_id(cpu_clock_pid(pid))
             if clock_id is None:
                 continue
             total += time.clock_gettime_ns(clock_id)
@@ -394,6 +445,27 @@ def process_tree_cpu_time_ns(root_pid, pids):
             if pid == root_pid:
                 return None
     return total if sampled else None
+
+
+def cpu_clock_pid(proc_pid):
+    """Translate an ancestor-mounted /proc PID into the caller's PID namespace.
+
+    Resource files use proc_pid; clock_getcpuclockid resolves a namespace-local
+    PID. Mixing them silently loses precise clocks in containerized probes.
+    """
+    def namespace_pids(path):
+        for line in path.read_text().splitlines():
+            if line.startswith("NSpid:"):
+                return [int(value) for value in line.split()[1:]]
+        return []
+    try:
+        depth = len(namespace_pids(Path("/proc/self/status")))
+        target = namespace_pids(Path(f"/proc/{proc_pid}/status"))
+        if depth and len(target) >= depth:
+            return target[depth - 1]
+    except (OSError, ValueError):
+        pass
+    return proc_pid
 
 
 def process_cpu_clock_id(pid):
@@ -422,12 +494,24 @@ def cpu_seconds_between(start, end, ticks_per_second):
 
 
 def collect_diagnostics(api_port, root_pid, directory, label):
-    """Write detailed process maps and the selected TorrentNG metrics outside CPU windows."""
+    """Write process maps and optional TorrentNG metrics outside CPU windows."""
     directory.mkdir(parents=True, exist_ok=True)
     result = {"label": label, "captured_unix": time.time(),
-              "process": process_sample(root_pid), "smaps": [], "metrics": {}}
+              "process": process_sample(root_pid), "smaps": [], "metrics": {}, "threads": []}
     smaps_totals = {}
     for pid in result["process"]["pids"]:
+        # Per-thread counters are diagnostic snapshots, not added to the
+        # measured process CPU totals (which already include these threads).
+        for task in sorted(Path(f"/proc/{pid}/task").glob("[0-9]*")):
+            try:
+                raw_stat = (task / "stat").read_text()
+                fields = raw_stat[raw_stat.rfind(")") + 2:].split()
+                result["threads"].append({"pid": pid, "tid": int(task.name),
+                    "name": (task / "comm").read_text().strip(),
+                    "cpu_ticks_user_system": int(fields[11]) + int(fields[12]),
+                    "schedstat": (task / "schedstat").read_text().strip()})
+            except (OSError, ValueError, IndexError):
+                pass
         source = Path(f"/proc/{pid}/smaps")
         try:
             raw = source.read_text(errors="replace")
@@ -451,6 +535,8 @@ def collect_diagnostics(api_port, root_pid, directory, label):
         for key in ("Size", "Rss", "Pss", "Anonymous", "Private_Clean", "Private_Dirty",
                     "Shared_Clean", "Shared_Dirty", "Swap")
     }
+    if api_port is None:
+        return result
     metrics_path = directory / f"{label}.metrics.prom"
     try:
         request = urllib.request.Request(f"http://127.0.0.1:{api_port}/metrics",
@@ -781,7 +867,9 @@ def storage_io_worker_threads_line(worker_threads):
 def cleanup_run_payloads(run_dir, client_name):
     """Remove generated payload copies, refusing paths that escape this run directory."""
     root = Path(run_dir).resolve(strict=True)
-    candidates = (root / "downloaded.bin", root / client_name / "download" / "payload.bin")
+    candidates = (root / "downloaded.bin", root / client_name / "download" / "payload.bin",
+                  *sorted(root.glob("downloaded-*.bin")),
+                  *sorted((root / client_name / "download/payload-set").glob("part-*.bin")))
     removed = []
     for path in candidates:
         resolved = path.resolve(strict=False)
@@ -797,11 +885,25 @@ def cleanup_run_payloads(run_dir, client_name):
 
 def start_client(client, run_dir, fixture_dir, torrent, ih, ready_timeout, env_overrides=None,
                  profile_preload=None, profile_path=None, pgo_profile_path=None,
-                 storage_io_queue_depth=None, storage_io_worker_threads=None):
+                 storage_io_queue_depth=None, storage_io_worker_threads=None, client_cpus=None, max_peers=8, upload_limit=0):
     name, kind, binary = client
     work = run_dir / name; work.mkdir()
     download = work / "download"; download.mkdir()
-    shutil.copyfile(fixture_dir / "payload.bin", download / "payload.bin")
+    layout = fixture_dir / "layout.json"
+    if layout.is_file():
+        parts = download / "payload-set"
+        parts.mkdir()
+        with (fixture_dir / "payload.bin").open("rb") as source:
+            for index, length in enumerate(json.loads(layout.read_text())):
+                with (parts / f"part-{index}.bin").open("wb") as target:
+                    remaining = length
+                    while remaining:
+                        chunk = source.read(min(1024**2, remaining))
+                        if not chunk: raise ValueError("truncated multi-file fixture")
+                        target.write(chunk)
+                        remaining -= len(chunk)
+    else:
+        shutil.copyfile(fixture_dir / "payload.bin", download / "payload.bin")
     peer_port, api_port = free_port(), free_port()
     env, inherited_controls = sanitize_client_environment(os.environ, env_overrides)
     if pgo_profile_path is not None:
@@ -822,7 +924,7 @@ def start_client(client, run_dir, fixture_dir, torrent, ih, ready_timeout, env_o
         token_file = work / "api-token"; token_file.write_text(TOKEN + "\n"); token_file.chmod(0o600)
         storage_queue_depth = storage_io_queue_depth_line(storage_io_queue_depth)
         storage_worker_threads = storage_io_worker_threads_line(storage_io_worker_threads)
-        config.write_text(f'''[daemon]\napi_bind = "127.0.0.1:{api_port}"\nsession_dir = "{work}/session"\nlog_level = "warn"\n\n[network]\nlisten_port = {peer_port}\nmax_peers = 8\nmax_incoming_handshakes = 32\n\n[storage]\ndownload_dir = "{download}"\n{storage_queue_depth}{storage_worker_threads}\n[dht]\nenabled = false\n\n[auth]\napi_tokens_file = "{token_file}"\n''')
+        config.write_text(f'''[daemon]\napi_bind = "127.0.0.1:{api_port}"\nsession_dir = "{work}/session"\nlog_level = "warn"\n\n[network]\nlisten_port = {peer_port}\nmax_peers = {max_peers}\nupload_rate_limit = {upload_limit}\nmax_incoming_handshakes = 32\n\n[storage]\ndownload_dir = "{download}"\n{storage_queue_depth}{storage_worker_threads}\n[dht]\nenabled = false\n\n[auth]\napi_tokens_file = "{token_file}"\n''')
         env["TORRENTNGD_CONFIG"] = str(config)
         if pgo_profile_path is None:
             command = [binary]
@@ -836,8 +938,10 @@ def start_client(client, run_dir, fixture_dir, torrent, ih, ready_timeout, env_o
         scgi_port = free_port()
         scgi_endpoint = ("127.0.0.1", scgi_port)
         (work / "session").mkdir()
-        config.write_text(rtorrent_config_text(download, work / "session", peer_port, scgi_port))
+        config.write_text(rtorrent_config_text(download, work / "session", peer_port, scgi_port) + f"throttle.global_up.max_rate.set_kb = {upload_limit // 1024}\n")
         command = [binary, "-n", "-o", f"import={config}", "-o", "system.daemon.set=true"]
+    if client_cpus:
+        command = ["taskset", "--cpu-list", client_cpus, *command]
     logfile = (work / "client.log").open("wb")
     proc = subprocess.Popen(command, cwd=work, env=env, stdout=logfile, stderr=subprocess.STDOUT, start_new_session=True)
     try:
@@ -894,6 +998,15 @@ def parse_args():
     p.add_argument("--keep-payloads", action="store_true",
         help="retain per-run seed and downloaded payload copies after a successful verified transfer")
     p.add_argument("--size", type=int, default=128 * 1024**2, help="payload bytes, 16 MiB to 4 GiB")
+    p.add_argument("--fixture-files", type=int, default=1, help="files per torrent (1–64); unaligned boundaries exercise fallback")
+    p.add_argument("--cache-policy", choices=("warm", "drop-file-pages"), default="warm")
+    p.add_argument("--upload-limit", type=int, default=0, help="daemon upload limit in bytes/s (0 unlimited; multiples of 1024)")
+    p.add_argument("--rate", type=int, default=RATE, help="offered bytes/s per peer")
+    p.add_argument("--window", type=int, default=WINDOW, help="outstanding requests per peer")
+    p.add_argument("--peers", type=int, default=1, help="concurrent verified leechers (1–32)")
+    p.add_argument("--request-pattern", choices=("sequential", "random"), default="sequential")
+    p.add_argument("--client-cpus", help="taskset CPU list for every daemon, excluding leecher CPUs")
+    p.add_argument("--client-manifest", action="append", default=[], metavar="LABEL=JSON")
     p.add_argument("--seed", type=int, default=20261022)
     p.add_argument("--storage-io-queue-depth", type=int,
         help="set [storage].io_queue_depth on TorrentNG clients for backend sizing screens")
@@ -938,6 +1051,20 @@ def main():
         validate_client_count(len(args.client), args.repeats, args.allow_single_client)
     except ValueError as error:
         raise SystemExit(str(error)) from error
+    if not 0 <= args.upload_limit <= 1024**3 or args.upload_limit % 1024:
+        raise SystemExit("upload limit must be 0 or a KiB-aligned value up to 1 GiB/s")
+    if not (1 <= args.peers <= 32 and 1 <= args.window <= 256 and 1 <= args.rate <= 1024**3):
+        raise SystemExit("invalid peer count, request window or rate")
+    if args.peers > 1 and (args.diagnostics or args.cpu_profile or args.pgo_profile_window or args.peer_debug):
+        raise SystemExit("concurrent runs require uninstrumented scoring; profile a separate single-peer run")
+    manifests = {}
+    for value in args.client_manifest:
+        name, path = value.split("=", 1)
+        client = next((client for client in args.client if client[0] == name), None)
+        if client is None or name in manifests: raise SystemExit("unknown or duplicate manifest label")
+        data = json.loads(Path(path).read_text())
+        verify_manifest(data, client[2])
+        manifests[name] = data
     if args.output:
         output = Path(args.output).resolve()
         output.mkdir(parents=True, exist_ok=False)
@@ -958,8 +1085,8 @@ def main():
     if not 0 <= args.seed < 2**64:
         raise SystemExit("--seed must be an unsigned 64-bit integer")
     fixture_dir = output / "fixture"
-    _, torrent, ih, digest = make_fixture(fixture_dir, args.size, args.seed)
-    rng, runs, round_orders = random.Random(args.order_seed), [], []
+    _, torrent, ih, digest = make_fixture(fixture_dir, args.size, args.seed, args.fixture_files)
+    runs, round_orders = [], []
     if args.cpu_profile:
         if len(args.client) != 1 or args.client[0][1] != "torrentngd" or args.repeats != 1:
             raise SystemExit("--cpu-profile requires exactly one TorrentNG client and --repeats 1")
@@ -979,6 +1106,8 @@ def main():
         if shutil.which("gdb") is None:
             raise SystemExit("--pgo-profile-window requires gdb")
     report = {"format": "native-seed-cpu-ram-v1", "status": "running",
+        "probe_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "qualification_tools_sha256": hashlib.sha256(Path(__file__).with_name("seed_efficiency_tools.py").read_bytes()).hexdigest(),
         "cpu_measurement": "process CPU clock nanoseconds where available; /proc user+system ticks fallback",
         "diagnostic_run": bool(args.diagnostics or args.peer_debug or args.cpu_profile or args.pgo_profile_window), "peer_debug": bool(args.peer_debug),
         "cpu_profile": ({"method": "gperftools, started/stopped by GDB at payload boundaries",
@@ -988,12 +1117,13 @@ def main():
         "pgo_profile_window": ({"method": "LLVM_PROFILE_FILE with GDB counter reset",
                                  "sampling_window": "first scheduled upload batch through daemon shutdown",
                                  "client": args.client[0][0]} if args.pgo_profile_window else None),
-        "fixture_bytes": args.size, "fixture_seed": args.seed,
+        "fixture_bytes": args.size, "fixture_seed": args.seed, "fixture_files": args.fixture_files, "upload_limit": args.upload_limit,
         "storage_io_queue_depth": args.storage_io_queue_depth,
         "storage_io_worker_threads": args.storage_io_worker_threads,
         "client_storage_io_worker_threads": worker_thread_overrides,
-        "fixture_sha256": digest, "info_hash": ih.hex(), "offered_rate_bytes_per_second": RATE,
-        "block_bytes": BLOCK, "request_window": WINDOW, "dht": False, "pex": False,
+        "fixture_sha256": digest, "info_hash": ih.hex(), "offered_rate_bytes_per_second": args.rate,
+        "block_bytes": BLOCK, "request_window": args.window, "peer_count": args.peers,
+        "request_pattern": args.request_pattern, "cache_policy": args.cache_policy, "build_manifests": manifests, "client_cpus": args.client_cpus, "dht": False, "pex": False,
         "tracker": False, "bind_address": "127.0.0.1", "paired": len(args.client) >= 2,
         "payload_cleanup_policy": "remove per-run seed and downloaded payload copies after a verified transfer and client shutdown",
         "keep_payloads": bool(args.keep_payloads), "randomized_orders": round_orders, "runs": runs}
@@ -1002,18 +1132,20 @@ def main():
     write_summary(output, report)
     try:
       for round_index in range(args.repeats):
-        order = list(range(len(args.client))); rng.shuffle(order)
+        order = balanced_orders(len(args.client), args.repeats, args.order_seed)[round_index]
         round_orders.append([args.client[i][0] for i in order])
         write_summary(output, report)
         for index in order:
             client = args.client[index]; run_dir = output / f"run-{round_index + 1:02d}-{client[0]}"; run_dir.mkdir()
+            host_before = host_snapshot()
             active, stop = [], threading.Event()
             profile_path = run_dir / "payload-window.prof" if args.cpu_profile else None
             pgo_profile_path = run_dir / "transfer-window.profraw" if args.pgo_profile_window else None
             item = start_client(client, run_dir, fixture_dir, torrent, ih, args.ready_timeout,
                                 env_overrides.get(client[0], {}), profile_preload, profile_path,
                                 pgo_profile_path, args.storage_io_queue_depth,
-                                worker_thread_overrides.get(client[0], args.storage_io_worker_threads))
+                                worker_thread_overrides.get(client[0], args.storage_io_worker_threads),
+                                args.client_cpus, max(8, args.peers + 4), args.upload_limit)
             successful_run, run_record = False, None
             def sample_loop():
                 while not stop.is_set(): active.append(process_sample(item["proc_pid"])); stop.wait(1)
@@ -1021,6 +1153,13 @@ def main():
                 idle_before = []
                 for _ in range(args.warmup):
                     idle_before.append(process_sample(item["proc_pid"])); time.sleep(1)
+                if args.cache_policy == "drop-file-pages":
+                    download = run_dir / client[0] / "download"
+                    payloads = [download / "payload.bin"] if args.fixture_files == 1 else sorted((download / "payload-set").glob("part-*.bin"))
+                    for path in payloads:
+                        with path.open("rb") as payload:
+                            os.fsync(payload.fileno())
+                            os.posix_fadvise(payload.fileno(), 0, 0, os.POSIX_FADV_DONTNEED)
                 sampler = threading.Thread(target=sample_loop, daemon=True); sampler.start()
                 pre_leecher_sample = process_sample(item["proc_pid"])
                 during_transfer_capture = None
@@ -1045,15 +1184,21 @@ def main():
                         peer_state_path.write_text(json.dumps(item["peer_state_snapshots"], indent=2) + "\n")
                         return snapshot
                     peer_state_callback = capture_rtorrent_state
-                transfer = leecher(item["peer_port"], ih, args.size, run_dir / "downloaded.bin", digest,
-                                   args.timeout, lambda: process_sample(item["proc_pid"]),
-                                   during_transfer_capture, peer_registration, peer_state_callback,
-                                   profile_control)
+                if args.peers == 1:
+                    transfer = leecher(item["peer_port"], ih, args.size, run_dir / "downloaded.bin", digest,
+                        args.timeout, lambda: process_sample(item["proc_pid"]),
+                        during_transfer_capture, peer_registration, peer_state_callback, profile_control,
+                        rate=args.rate, window=args.window, request_pattern=args.request_pattern,
+                        request_seed=args.seed)
+                else:
+                    transfer = concurrent_leechers(args.peers, item["peer_port"], ih, args.size, run_dir, digest,
+                        args.timeout, lambda: process_sample(item["proc_pid"]), peer_registration,
+                        args.rate, args.window, args.request_pattern, args.seed)
+
                 stop.set(); sampler.join()
-                post_transfer_diagnostics = None
-                if client[1] == "torrentngd":
-                    post_transfer_diagnostics = collect_diagnostics(
-                        item["api_port"], item["proc_pid"], Path(item["diagnostics_dir"]), "after-transfer")
+                post_transfer_diagnostics = collect_diagnostics(
+                    item["api_port"] if client[1] == "torrentngd" else None,
+                    item["proc_pid"], Path(item["diagnostics_dir"]), "after-transfer")
                 idle_after = []
                 for _ in range(args.cooldown): idle_after.append(process_sample(item["proc_pid"])); time.sleep(1)
                 hz = os.sysconf(os.sysconf_names["SC_CLK_TCK"])
@@ -1063,6 +1208,8 @@ def main():
                 post_leecher_sample = transfer["post_leecher_sample"]
                 resource_samples = active + [pre_leecher_sample, connection, payload_start,
                                              payload_end, post_leecher_sample]
+                for peer in transfer.get("peer_transfers", []):
+                    resource_samples.extend(peer[key] for key in ("connection_start_sample", "first_payload_sample", "payload_complete_sample", "post_leecher_sample"))
                 active_cpu_seconds = cpu_seconds_between(payload_start, payload_end, hz)
                 connection_wait_cpu_seconds = cpu_seconds_between(connection, payload_start, hz)
                 connection_to_payload_cpu_seconds = cpu_seconds_between(connection, payload_end, hz)
@@ -1077,6 +1224,7 @@ def main():
                     "inherited_measurement_controls": item["inherited_measurement_controls"],
                     "namespace_pid": item["process"].pid, "proc_pid": item["proc_pid"],
                     "transfer": transfer, "pre_leecher_sample": pre_leecher_sample,
+                    "host_before": host_before, "host_after": host_snapshot(),
                     "cpu_tick_hz": hz,
                     "payload_cpu_seconds_user_system": active_cpu_seconds,
                     "connection_to_payload_cpu_seconds_user_system": connection_to_payload_cpu_seconds,
@@ -1094,6 +1242,8 @@ def main():
                         "during_transfer": transfer["mid_transfer_diagnostics"],
                         "after_transfer": post_transfer_diagnostics,
                     } if client[1] == "torrentngd" else None),
+                    "rtorrent_diagnostics": ({"after_transfer": post_transfer_diagnostics}
+                                              if client[1] == "rtorrent" else None),
                     "payload_cleanup": ({"policy": "keep_payloads", "status": "retained-by-option"}
                                         if args.keep_payloads else
                                         {"policy": "after-verified-transfer-and-client-shutdown", "status": "pending"})}

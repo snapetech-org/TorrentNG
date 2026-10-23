@@ -6,6 +6,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+seed-mmap = ["rt-storage/seed-mmap"]
+
 [dependencies]
 tokio.workspace = true
 tokio-util.workspace = true

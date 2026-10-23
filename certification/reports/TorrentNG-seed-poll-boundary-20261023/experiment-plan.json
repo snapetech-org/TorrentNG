@@ -1,0 +1,29 @@
+{
+  "format": "torrentng-seed-poll-plan-v1",
+  "declared_before_measurement": true,
+  "rounds": 10,
+  "tolerance": 0.02,
+  "fixture_seed": 20261025,
+  "size_bytes": 67108864,
+  "offered_bytes_per_second": 4194304,
+  "window": 16,
+  "peers": 1,
+  "fixture_files": 1,
+  "cache_policy": "warm",
+  "client_cpus": "0-1",
+  "leecher_cpus": "2-3",
+  "primary_comparisons": [
+    [
+      "main",
+      "poll"
+    ],
+    [
+      "main-pgo",
+      "poll-pgo"
+    ]
+  ],
+  "comparator": "rtorrent-0.16.25 with libtorrent-0.16.25; native GCC 13.3 -O2 -DNDEBUG",
+  "qualification": "Both CPU/GiB and peak PSS must satisfy the existing paired bootstrap upper bound <=1.02; verified bytes and goodput are mandatory. No parity claim unless matched rTorrent measurements support both resources. Any BOLT trial remains exploratory and is scored separately.",
+  "warmup_seconds": 5,
+  "cooldown_seconds": 2
+}

@@ -1,0 +1,48 @@
+{
+  "format": "torrentng-seed-link-order-qualification-plan-v1",
+  "declared_before_measurement": true,
+  "source_commit": "7836fa77f4bdd26ac78c5bf436e8d88968bf1f60",
+  "rounds": 10,
+  "tolerance": 0.02,
+  "fixture_seed": 20261028,
+  "size_bytes": 67108864,
+  "offered_bytes_per_second": 4194304,
+  "window": 16,
+  "peers": 1,
+  "fixture_files": 1,
+  "cache_policy": "warm",
+  "client_cpus": "0-1",
+  "leecher_cpus": "2-3",
+  "warmup_seconds": 5,
+  "cooldown_seconds": 2,
+  "primary_comparisons": [
+    [
+      "pgo-relocs",
+      "pgo-link-order"
+    ],
+    [
+      "rtorrent",
+      "pgo-link-order"
+    ]
+  ],
+  "qualification": "Verified payloads plus both CPU/GiB and PSS upper paired bootstrap ratio bounds <=1.02. This is a held-out local screen, not broad qualification of post-link output. All compilation, instrumentation and training complete before scored runs.",
+  "minimum_qualification_rounds": 10,
+  "stage": "conditional independent qualification after completed three-round triage",
+  "decision_rule": "Do not promote if either primary resource upper paired bootstrap ratio bound exceeds 1.02 versus the input. Compare rTorrent independently; input improvement is not parity.",
+  "adaptation_before_measurement": "This conditional ten-round plan was recorded during the follow-up triage, before any qualification measurements. Artifact identities and training remain fixed.",
+  "treatments": [
+    "pgo-relocs",
+    "pgo-link-order",
+    "rtorrent"
+  ],
+  "cpu_measurement": "process user+system CPU clock, first payload through completion",
+  "pss_measurement": "maximum sampled whole-process PSS from connection through transfer",
+  "secondary_metrics": [
+    "anonymous memory",
+    "first payload delay",
+    "verified goodput"
+  ],
+  "triage_rule_per_candidate": "paired median CPU and PSS ratios must both be <=1.02 to proceed; no promotion from triage",
+  "qualification_rule": "independent ten-round experiment with new fixture seed; both 97.5% bootstrap upper ratio bounds <=1.02; functional multi-peer/multi-file checks required",
+  "condition": "Run only if both paired CPU and PSS median ratios for link-order in the follow-up triage are <=1.02."
+}

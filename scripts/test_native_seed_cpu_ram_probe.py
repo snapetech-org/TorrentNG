@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import argparse
+import os
 import socket
 import sys
 import tempfile
@@ -44,6 +45,24 @@ def decode(data):
 
 
 class ProbeTests(unittest.TestCase):
+    def test_concurrent_peer_ids_are_unique_and_exactly_twenty_wire_bytes(self):
+        identities = {probe.peer_identity(index) for index in range(32)}
+        self.assertEqual(len(identities), 32)
+        self.assertTrue(all(len(identity) == 20 for identity in identities))
+        self.assertEqual(len(probe.peer_identity()), 20)
+        with self.assertRaises(ValueError): probe.peer_identity(32)
+
+    def test_multi_file_fixture_preserves_hashes_and_unaligned_extents(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary) / "fixture"
+            payload, torrent, _, digest = probe.make_fixture(folder, 2 * probe.PIECE + 37, 123, 3)
+            info = decode(torrent)[b"info"]
+            self.assertNotIn(b"length", info)
+            self.assertEqual(info[b"name"], b"payload-set")
+            self.assertEqual(sum(file[b"length"] for file in info[b"files"]), payload.stat().st_size)
+            self.assertNotEqual(info[b"files"][0][b"length"] % probe.BLOCK, 0)
+            self.assertEqual(hashlib.sha256(payload.read_bytes()).hexdigest(), digest)
+
     def test_fixture_is_private_and_piece_hashes_match_payload(self):
         with tempfile.TemporaryDirectory() as temporary:
             payload, torrent, info_hash, expected = probe.make_fixture(
@@ -122,7 +141,14 @@ class ProbeTests(unittest.TestCase):
     def test_process_tree_cpu_clock_sums_root_and_children(self, get_clock_id, get_time_ns):
         get_clock_id.side_effect = {10: 100, 11: 101}.__getitem__
         get_time_ns.side_effect = {100: 1_000_000_000, 101: 250_000_000}.__getitem__
-        self.assertEqual(probe.process_tree_cpu_time_ns(10, {10, 11}), 1_250_000_000)
+        with patch.object(probe, "cpu_clock_pid", side_effect=lambda pid: pid):
+            self.assertEqual(probe.process_tree_cpu_time_ns(10, {10, 11}), 1_250_000_000)
+
+    @unittest.skipUnless(Path("/proc/self/status").exists(), "Linux proc namespace test")
+    def test_precise_cpu_clock_resolves_the_current_namespace(self):
+        proc_pid = int(os.readlink("/proc/self"))
+        self.assertEqual(probe.cpu_clock_pid(proc_pid), os.getpid())
+        self.assertGreater(probe.process_tree_cpu_time_ns(proc_pid, {proc_pid}), 0)
 
     def test_cpu_delta_prefers_precise_clock_and_keeps_tick_fallback(self):
         precise_start = {"cpu_ticks_user_system": 100, "cpu_time_user_system_ns": 10_000}
@@ -264,6 +290,16 @@ class ProbeTests(unittest.TestCase):
             probe.parse_selected_metrics(metrics),
             {"storage_scheduler_selected_backends": ["uring"]},
         )
+
+    def test_comparator_process_diagnostics_do_not_request_a_torrentng_api(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(probe, "process_sample", return_value={"pids": []}), \
+                patch.object(probe.urllib.request, "urlopen") as request:
+            result = probe.collect_diagnostics(None, 123, Path(temporary), "after-transfer")
+            request.assert_not_called()
+            self.assertEqual(result["metrics"], {})
+            self.assertNotIn("metrics_error", result)
+            self.assertEqual(result["smaps_totals_bytes"]["Pss"], 0)
 
     def test_payload_cleanup_removes_only_generated_copies_inside_run(self):
         with tempfile.TemporaryDirectory() as temporary:

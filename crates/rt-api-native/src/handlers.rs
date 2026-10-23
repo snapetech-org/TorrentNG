@@ -8122,6 +8122,48 @@ fn render_metrics_with_health(
     );
     metric(
         &mut out,
+        "torrentng_storage_prepared_slot_allocations_total",
+        "counter",
+        "Prepared upload storage prepared slot allocations",
+        stats.storage_prepared_slot_allocations,
+    );
+    metric(
+        &mut out,
+        "torrentng_storage_prepared_slot_reuses_total",
+        "counter",
+        "Prepared upload storage prepared slot reuses",
+        stats.storage_prepared_slot_reuses,
+    );
+    metric(
+        &mut out,
+        "torrentng_storage_prepared_active_jobs",
+        "gauge",
+        "Prepared upload storage prepared active jobs",
+        stats.storage_prepared_active_jobs,
+    );
+    metric(
+        &mut out,
+        "torrentng_storage_prepared_queue_wait_ns_total",
+        "counter",
+        "Prepared upload storage prepared queue wait ns",
+        stats.storage_prepared_queue_wait_ns,
+    );
+    metric(
+        &mut out,
+        "torrentng_storage_prepared_run_ns_total",
+        "counter",
+        "Prepared upload storage prepared run ns",
+        stats.storage_prepared_run_ns,
+    );
+    metric(
+        &mut out,
+        "torrentng_storage_mapped_upload_cache_bytes",
+        "gauge",
+        "Prepared upload storage mapped upload cache bytes",
+        stats.storage_mapped_upload_cache_bytes,
+    );
+    metric(
+        &mut out,
         "torrentng_storage_peer_read_cache_entries",
         "gauge",
         "Peer-read readahead cache entries across running torrent schedulers",
