@@ -1,0 +1,6 @@
+Host snapshots for the arena cap screen — 2026-10-23
+
+Before: CPU PSI some avg10/avg60/avg300 = 0.96/1.06/3.60%; full = 0.00%. Load average was not captured in this snapshot.
+After: CPU PSI some avg10/avg60/avg300 = 3.33/7.99/5.71%; full = 0.00%. Load average = 28.54/24.88/24.37.
+
+A later idle-period check rose further to CPU PSI 7.56/9.12/6.33% and load average 27.55/25.11/24.47. This later check is not a per-transfer measurement; it confirms the host remained busy after the scored run.

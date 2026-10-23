@@ -1,0 +1,149 @@
+{
+  "format": "native-seed-cpu-ram-screen-v1",
+  "decision": "promising memory screen; do not promote until an order-balanced quiet-host repeat confirms CPU",
+  "base_commit": "23f67541",
+  "control_source_commit": "c10e914db6ee6b707cda1cf9eac91243927a2de8",
+  "toolchain": "Rust 1.94.0 release binary, same executable for both treatments",
+  "binary_sha256": "b13f157809d98bdc052017f83bd2369685f7221116d8269837120f6af07cd263",
+  "treatment": "Set MALLOC_ARENA_MAX=2 for only the arena2 daemon process.",
+  "workload": {
+    "fixture_bytes": 67108864,
+    "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+    "block_bytes": 16384,
+    "request_window": 32,
+    "offered_rate_bytes_per_second": 4194304,
+    "storage_backend": "pread",
+    "bind_address": "127.0.0.1",
+    "dht": false,
+    "pex": false,
+    "tracker": false,
+    "repeats": 3,
+    "order_seed": 20261024,
+    "randomized_orders": [
+      [
+        "arena2",
+        "current"
+      ],
+      [
+        "arena2",
+        "current"
+      ],
+      [
+        "current",
+        "arena2"
+      ]
+    ],
+    "all_transfers_verified": true
+  },
+  "host_pressure": {
+    "before_cpu_psi_avg10_avg60_avg300_pct": [
+      0.96,
+      1.06,
+      3.6
+    ],
+    "after_cpu_psi_avg10_avg60_avg300_pct": [
+      3.33,
+      7.99,
+      5.71
+    ],
+    "after_loadavg_1_5_15": "28.54 24.88 24.37",
+    "note": "CPU pressure rose across the run; the candidate ran first in two pairs and CPU direction was inconsistent."
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "order": [
+        "arena2",
+        "current"
+      ],
+      "current": {
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+        "cpu_seconds_per_gib": 5.480324336,
+        "peak_pss_mib": 18.0478515625,
+        "peak_anonymous_mib": 5.5078125
+      },
+      "arena2": {
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+        "cpu_seconds_per_gib": 4.617714432,
+        "peak_pss_mib": 17.9384765625,
+        "peak_anonymous_mib": 5.12109375
+      },
+      "arena2_change_pct": {
+        "cpu_seconds_per_gib": -15.740125056715259,
+        "peak_pss_mib": -0.6060278123478202,
+        "peak_anonymous_mib": -7.021276595744686
+      }
+    },
+    {
+      "round": 2,
+      "order": [
+        "arena2",
+        "current"
+      ],
+      "current": {
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+        "cpu_seconds_per_gib": 4.767357616,
+        "peak_pss_mib": 18.7470703125,
+        "peak_anonymous_mib": 6.140625
+      },
+      "arena2": {
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+        "cpu_seconds_per_gib": 7.766247104,
+        "peak_pss_mib": 17.2275390625,
+        "peak_anonymous_mib": 4.609375
+      },
+      "arena2_change_pct": {
+        "cpu_seconds_per_gib": 62.90464717677684,
+        "peak_pss_mib": -8.105433140594887,
+        "peak_anonymous_mib": -24.93638676844784
+      }
+    },
+    {
+      "round": 3,
+      "order": [
+        "current",
+        "arena2"
+      ],
+      "current": {
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+        "cpu_seconds_per_gib": 4.39540168,
+        "peak_pss_mib": 18.1142578125,
+        "peak_anonymous_mib": 5.1640625
+      },
+      "arena2": {
+        "verified": true,
+        "sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+        "cpu_seconds_per_gib": 4.559334816,
+        "peak_pss_mib": 17.7509765625,
+        "peak_anonymous_mib": 5.0390625
+      },
+      "arena2_change_pct": {
+        "cpu_seconds_per_gib": 3.7296508472918433,
+        "peak_pss_mib": -2.0054989487303887,
+        "peak_anonymous_mib": -2.4205748865355536
+      }
+    }
+  ],
+  "medians": {
+    "current": {
+      "cpu_seconds_per_gib": 4.767357616,
+      "peak_pss_mib": 18.1142578125,
+      "peak_anonymous_mib": 5.5078125
+    },
+    "arena2": {
+      "cpu_seconds_per_gib": 4.617714432,
+      "peak_pss_mib": 17.7509765625,
+      "peak_anonymous_mib": 5.0390625
+    },
+    "arena2_change_pct": {
+      "cpu_seconds_per_gib": -3.138912497308244,
+      "peak_pss_mib": -2.0054989487303887,
+      "peak_anonymous_mib": -8.510638297872342
+    }
+  }
+}

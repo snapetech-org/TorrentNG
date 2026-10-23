@@ -1,0 +1,4 @@
+Command:
+python3 scripts/native_seed_cpu_ram_probe.py --client current=torrentngd:/home/keith/Documents/code/TorrentNG/target/release/torrentngd --client arena2=torrentngd:/home/keith/Documents/code/TorrentNG/target/release/torrentngd --client-env arena2:MALLOC_ARENA_MAX=2 --size 67108864 --repeats 3 --order-seed 20261024 --warmup 0 --cooldown 0
+
+Result: completed; six transfers verified the same fixture SHA-256. Same Rust 1.94 release executable used for both treatments. No candidate build or source patch.
