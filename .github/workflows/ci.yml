@@ -60,7 +60,7 @@ jobs:
         run: python3 scripts/test_workflow_runner_policy.py
 
       - name: Test seed efficiency measurement and provenance
-        run: python3 -m unittest scripts.test_native_seed_cpu_ram_probe scripts.test_seed_efficiency_tools
+        run: python3 -m unittest scripts.test_native_seed_cpu_ram_probe scripts.test_seed_efficiency_tools scripts.test_native_seed_function_order
 
       - name: Validate TorrentNG API contract
         run: python3 scripts/validate_openapi.py

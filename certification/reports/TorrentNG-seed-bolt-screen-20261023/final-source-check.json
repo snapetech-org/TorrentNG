@@ -1,0 +1,24 @@
+{
+  "pgo-relocs": {
+    "source_digest": "ea1f6512663de8490d7d276f8b5f1d36e335487039cf290ed3e5536a5b5c792e",
+    "file_count": 258,
+    "mismatches": [],
+    "matches_final_runtime_source": true
+  },
+  "pgo-link-order": {
+    "source_digest": "ea1f6512663de8490d7d276f8b5f1d36e335487039cf290ed3e5536a5b5c792e",
+    "file_count": 258,
+    "mismatches": [],
+    "matches_final_runtime_source": true
+  },
+  "harness": {
+    "probe_sha256": {
+      "recorded": "93329f296e4033da4e5ab491429511247cef6829d32a7192d1e8515bb2154882",
+      "current": "93329f296e4033da4e5ab491429511247cef6829d32a7192d1e8515bb2154882"
+    },
+    "qualification_tools_sha256": {
+      "recorded": "9b72b36f02527374784c3ea9bf30e368ce2745032dacd71c81a5e812dc6779d8",
+      "current": "9b72b36f02527374784c3ea9bf30e368ce2745032dacd71c81a5e812dc6779d8"
+    }
+  }
+}

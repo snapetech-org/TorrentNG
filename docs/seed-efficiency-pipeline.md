@@ -161,6 +161,46 @@ recorded shared libraries still match before measuring, so replacing a library
 without replacing its manifest fails attribution. Record compiler/configure flags
 and compare clients on the same host; an older rTorrent score is not a control.
 
+## Experimental PGO function ordering
+
+The code-placement experiment uses LLVM BOLT to learn a function order and LLD
+to apply it during the normal Rust PGO link. It does not execute BOLT's rewritten
+planner output. Full BOLT rewriting and regular-page rewriting remain rejected
+configurations in the [layout report](../certification/reports/TorrentNG-seed-bolt-screen-20261023/README.md).
+The same report records the separate link-order qualification, its exact binary
+identities, and the remaining rTorrent gap. Do not infer CPU improvement from a
+smaller resident executable or promote a new build from the archived scores.
+
+On Linux with LLVM BOLT 20 and `merge-fdata-20`, train the layout against a clean
+source checkout and its already validated PGO profile:
+
+```sh
+python3 scripts/native_seed_function_order.py train \
+  --repo /absolute/path/source --pgo-profile /absolute/path/training/seed.profdata \
+  --output /absolute/path/layout-training --client-cpus 0-1
+scripts/build_native_pgo_release.sh /absolute/path/training/seed.profdata \
+  /absolute/path/ordered-build /absolute/path/source \
+  /absolute/path/layout-training/function-order.txt
+```
+
+Training builds a PGO input with relocations, freezes that executable, instruments
+it, runs the four-shape corpus, and merges only its daemon profiles. The input,
+instrumentation, corpus, tools, merged profile and generated order are recorded.
+The `generate` subcommand also accepts an existing pinned input binary and BOLT
+profile with their manifests, avoiding unnecessary retraining during analysis.
+
+The fourth build argument is optional. Without it the PGO build path is unchanged.
+With it, the build checks order contents, source digest, compiler, PGO profile and
+default feature identity before linking, and records the order in the output
+manifest. Changed inputs require retraining. No application release setting,
+worker count, allocator or storage policy is changed by this option. Every output
+artifact needs independent paired CPU/PSS validation and functional coverage;
+the helper does not declare a performance pass.
+
+Unset `CARGO_ENCODED_RUSTFLAGS` even when its value is empty. Cargo gives it
+[precedence over `RUSTFLAGS`](https://doc.rust-lang.org/cargo/reference/config.html#buildrustflags),
+so accepting an empty override could silently omit the intended PGO flags.
+
 Direct ready-range hits, duplicate-miss coalescing, and worker activation hysteresis
 were conditional research suggestions, not established improvements. The typed
 storage lifecycle and diagnostics implement their prerequisites. They deliberately
