@@ -3,8 +3,8 @@
   "files": [
     {
       "path": "README.md",
-      "bytes": 5614,
-      "sha256": "c46b3f4ab9efd6023825e71eecb47e77cfa2c27733d26226646412e100f267c7"
+      "bytes": 6444,
+      "sha256": "a017f7fe79f98c6e90128127b9f78401c3449980022a3171db3843c9527fbb4e"
     },
     {
       "path": "active-stream-current-main-screen-20261023/README.md",
@@ -263,8 +263,8 @@
     },
     {
       "path": "arena-cap-concurrent-followup-20261023/README.md",
-      "bytes": 2467,
-      "sha256": "33827298b8a534d39ff012686cfa1559c1ca863b3b7f619a5f3fa596b1b2532d"
+      "bytes": 3287,
+      "sha256": "ef87f60874411185ae2458cdba5cf26eb5194c241a6e0fa8581ac9f3abeb0f81"
     },
     {
       "path": "arena-cap-concurrent-followup-20261023/binary-identities.txt",
@@ -365,6 +365,11 @@
       "path": "arena-cap-concurrent-followup-20261023/cap1-screen/summary.json",
       "bytes": 5375,
       "sha256": "998b08d3c9b813be2f4dac56befd40498ecb41de6fb89967dcb6671c4bee2e55"
+    },
+    {
+      "path": "arena-cap-concurrent-followup-20261023/cap1-three-round-followup.json",
+      "bytes": 4081,
+      "sha256": "94dac9e4b6053ede1b1098e4f245da0ff03ef68f344814ee4d66a3edaad07d09"
     },
     {
       "path": "arena-cap-concurrent-followup-20261023/cap2-round-01/fixture.torrent",
@@ -2292,6 +2297,36 @@
       "sha256": "6bce6711d8afeb691a254283c41e6e949d3eb8e99f66e622b6d35e04730ddda5"
     },
     {
+      "path": "lazy-worker-trigger-screen-20261023/README.md",
+      "bytes": 3474,
+      "sha256": "22a132c0a61f16606365e8280fd3aeec44ba76e0bb550507f22c5c038c59289c"
+    },
+    {
+      "path": "lazy-worker-trigger-screen-20261023/active-queue-lazy-worker.patch.gz",
+      "bytes": 2874,
+      "sha256": "9bb12cc85dc12419409cf16d38c3a4874024dad70484f7d54e7a50a2847e3a19"
+    },
+    {
+      "path": "lazy-worker-trigger-screen-20261023/inflight-thread-snapshots.jsonl",
+      "bytes": 24667,
+      "sha256": "eb2bb229ca651be954a5661bb5a7e086f8e1a86841adadf857d4d3107d44196e"
+    },
+    {
+      "path": "lazy-worker-trigger-screen-20261023/queue-only-lazy-worker.patch.gz",
+      "bytes": 2483,
+      "sha256": "781fc838c43141e9c68b3e9a4d1c20dca84778e38229b557b04a6eb7c4f9b54d"
+    },
+    {
+      "path": "lazy-worker-trigger-screen-20261023/queue-only-thread-snapshots.jsonl",
+      "bytes": 20523,
+      "sha256": "2d148c3cc0a448eb88a8fcb93fb1ebc7ff30cb627cb22ccd4f5725ae38658ade"
+    },
+    {
+      "path": "lazy-worker-trigger-screen-20261023/summary.json",
+      "bytes": 4033,
+      "sha256": "03f312142ba05df3ecc8ca34723077a7ead61f07465bef4256cd383cbef5e54e"
+    },
+    {
       "path": "low-risk-tuning-screen-20261022/README.md",
       "bytes": 6098,
       "sha256": "4588e87165ea6821b53ae858e1e3e99895d6c367a362c7862d7ee0752cede9b5"
@@ -2375,6 +2410,36 @@
       "path": "mapped-window-read-probe-20261022/results.txt",
       "bytes": 1564,
       "sha256": "24b0588c170bfa0430f9664aa242d8534398d2d8bb6921abd78d345a43f76233"
+    },
+    {
+      "path": "mapped-window-writev-probe-20261023/README.md",
+      "bytes": 2666,
+      "sha256": "53c3338bd1bbe3590773b9189c7d29d8adc2f839462cf02d03981ecc0898bb67"
+    },
+    {
+      "path": "mapped-window-writev-probe-20261023/build-command.txt",
+      "bytes": 84,
+      "sha256": "94800500bfdc83df4ad6d4ecdce43b5bbdefc4560b3b20dca2bcc4e20197172e"
+    },
+    {
+      "path": "mapped-window-writev-probe-20261023/fixture-sha256.txt",
+      "bytes": 101,
+      "sha256": "bc9fceb845f339c9e90f8ded5191d0e5c076ec1f0d33355bcda581716fa5aa82"
+    },
+    {
+      "path": "mapped-window-writev-probe-20261023/mapped_writev_probe.c",
+      "bytes": 11389,
+      "sha256": "cf27a6115d6e0b3d1430330acd1b14ddfdb790918fc5319d0eee639bc8dbf8ec"
+    },
+    {
+      "path": "mapped-window-writev-probe-20261023/results-counter-balanced.csv",
+      "bytes": 599,
+      "sha256": "9ba83909a6daa07876326503bdfdb4d581c6562c0a6638152af6018c446cface"
+    },
+    {
+      "path": "mapped-window-writev-probe-20261023/results-initial-order-biased.csv",
+      "bytes": 470,
+      "sha256": "acea585048a0c6b7a0c9fe5ea13180d9229b00a579e8dd25514c8b1d04b26f70"
     },
     {
       "path": "mimalloc-current-source-screen-20261022/README.md",

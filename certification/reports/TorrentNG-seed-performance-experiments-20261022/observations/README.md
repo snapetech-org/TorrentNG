@@ -76,8 +76,21 @@ No production or build default changed.
 versus two shared storage I/O workers on the current source. One worker lowered
 CPU and memory in three single-peer rounds, then used 12–19% more CPU in each of
 three randomized rounds with three concurrent peers while lowering memory.
-Keep the production default at two; the evidence motivates testing a bounded
-lazy second worker.
+Keep the production default at two. The follow-up
+[`lazy-worker-trigger-screen-20261023/`](lazy-worker-trigger-screen-20261023/)
+preserves two lazy-worker prototypes; neither started worker two under the
+three-peer workload, and neither showed a repeatable CPU/PSS improvement.
+
+[`mapped-window-writev-probe-20261023/`](mapped-window-writev-probe-20261023/)
+compares a 128 KiB `pread` buffer and a 1 MiB mmap window when both feed the
+same eight-frame loopback `writev` path. The four counter-balanced pairs had
+mixed CPU results and no memory measurement, so the mmap path remains a
+microprobe rather than a production candidate.
+
+The later `MALLOC_ARENA_MAX=1` three-peer follow-up is also captured in
+[`arena-cap-concurrent-followup-20261023/`](arena-cap-concurrent-followup-20261023/):
+it reduced memory but increased CPU in all three randomized rounds, replacing
+the earlier high-load, one-round inconclusive description.
 
 `pgo-hotpath-profile-20261022/` retains one exact-binary 256 MiB PGO CPU
 profile. It did not provide a matched performance result; the peer-read stream
