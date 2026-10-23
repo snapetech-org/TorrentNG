@@ -51,7 +51,7 @@ services:
 
   qbittorrent:
     <<: *interop-dns
-    image: lscr.io/linuxserver/qbittorrent@sha256:2be038f3421f60f62e8e4bf201f66f385b68e4fbc9ed3ab79051069ea22e2650
+    image: lscr.io/linuxserver/qbittorrent@sha256:e887804fa9de4c60f5f0fb1f3a7e4febe40a8f69fe736f70c4e8589b1f868dab
     restart: unless-stopped
     ports:
       - "127.0.0.1:${INTEROP_QBIT_HOST_PORT:-28181}:8080"
@@ -72,7 +72,7 @@ services:
 
   transmission:
     <<: *interop-dns
-    image: lscr.io/linuxserver/transmission@sha256:1a12fef3c89eca48b7be9e7d36b17b4eb4e1bcf5e1ee7fbf372e3a38b562939d
+    image: lscr.io/linuxserver/transmission@sha256:55aaeedf9fc354d34136387e15ee0ba4679096f20398dd2875867e5cd5cf8be5
     restart: unless-stopped
     ports:
       - "127.0.0.1:${INTEROP_TRANSMISSION_HOST_PORT:-28191}:9091"
@@ -93,7 +93,7 @@ services:
 
   deluge:
     <<: *interop-dns
-    image: lscr.io/linuxserver/deluge@sha256:9505c64720afa9e5f0ac1576e660dd6d1e9d4a6733b791f4821e8f496f19f41f
+    image: lscr.io/linuxserver/deluge@sha256:bf306ddd5e6d4a85d3d05ce1b947ab6e344e7fca1b7740b77c58ce170118c7ff
     restart: unless-stopped
     ports:
       - "127.0.0.1:${INTEROP_DELUGE_HOST_PORT:-28212}:8112"
