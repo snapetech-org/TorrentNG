@@ -1,0 +1,173 @@
+{
+  "format": "torrentng-upload-batch-16-screen-v1",
+  "source_revision": "395b1dd9",
+  "fixture_bytes": 16777216,
+  "fixture_sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3",
+  "settings": {
+    "offered_rate_bytes_per_second": 4194304,
+    "block_bytes": 16384,
+    "request_window": 32,
+    "storage": "pread",
+    "dht": false,
+    "pex": false,
+    "tracker": false
+  },
+  "executables": {
+    "current_batch8": {
+      "sha256": "b13f157809d98bdc052017f83bd2369685f7221116d8269837120f6af07cd263",
+      "bytes": 24663632
+    },
+    "candidate_batch16": {
+      "sha256": "d021ed061ba6e1e551d67c0723ea3118de8c4c338147ca99ada31239cfee4551",
+      "bytes": 24664448
+    }
+  },
+  "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+  "orders": [
+    [
+      "current",
+      "batch16"
+    ],
+    [
+      "current",
+      "batch16"
+    ],
+    [
+      "batch16",
+      "current"
+    ]
+  ],
+  "pairs": [
+    {
+      "round": 1,
+      "order": [
+        "current",
+        "batch16"
+      ],
+      "current": {
+        "cpu_seconds_per_gib": 4.185271936,
+        "peak_pss_mib": 18.05078125,
+        "peak_anonymous_mib": 5.4453125,
+        "verified": true,
+        "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+      },
+      "batch16": {
+        "cpu_seconds_per_gib": 5.116197824,
+        "peak_pss_mib": 18.53515625,
+        "peak_anonymous_mib": 5.97265625,
+        "verified": true,
+        "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+      },
+      "batch16_delta_percent": {
+        "cpu_seconds_per_gib": 22.2429008732397,
+        "peak_pss_mib": 2.6834018610690347,
+        "peak_anonymous_mib": 9.684361549497854
+      }
+    },
+    {
+      "round": 2,
+      "order": [
+        "current",
+        "batch16"
+      ],
+      "current": {
+        "cpu_seconds_per_gib": 3.619886848,
+        "peak_pss_mib": 17.9453125,
+        "peak_anonymous_mib": 5.3828125,
+        "verified": true,
+        "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+      },
+      "batch16": {
+        "cpu_seconds_per_gib": 4.121759488,
+        "peak_pss_mib": 18.2109375,
+        "peak_anonymous_mib": 5.60546875,
+        "verified": true,
+        "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+      },
+      "batch16_delta_percent": {
+        "cpu_seconds_per_gib": 13.864318446232282,
+        "peak_pss_mib": 1.480191554201138,
+        "peak_anonymous_mib": 4.136429608127723
+      }
+    },
+    {
+      "round": 3,
+      "order": [
+        "batch16",
+        "current"
+      ],
+      "current": {
+        "cpu_seconds_per_gib": 3.654722624,
+        "peak_pss_mib": 18.07421875,
+        "peak_anonymous_mib": 5.46484375,
+        "verified": true,
+        "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+      },
+      "batch16": {
+        "cpu_seconds_per_gib": 3.914062016,
+        "peak_pss_mib": 19.6015625,
+        "peak_anonymous_mib": 6.91796875,
+        "verified": true,
+        "sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3"
+      },
+      "batch16_delta_percent": {
+        "cpu_seconds_per_gib": 7.096007513592362,
+        "peak_pss_mib": 8.450399827101784,
+        "peak_anonymous_mib": 26.590421729807012
+      }
+    }
+  ],
+  "aggregate": {
+    "cpu_seconds_per_gib": {
+      "current_median": 3.654722624,
+      "candidate_median": 4.121759488,
+      "paired_median_change_percent": 13.864318446232282,
+      "paired_changes_percent": [
+        22.2429008732397,
+        13.864318446232282,
+        7.096007513592362
+      ],
+      "candidate_wins": 0,
+      "pairs": 3
+    },
+    "peak_pss_mib": {
+      "current_median": 18.05078125,
+      "candidate_median": 18.53515625,
+      "paired_median_change_percent": 2.6834018610690347,
+      "paired_changes_percent": [
+        2.6834018610690347,
+        1.480191554201138,
+        8.450399827101784
+      ],
+      "candidate_wins": 0,
+      "pairs": 3
+    },
+    "peak_anonymous_mib": {
+      "current_median": 5.4453125,
+      "candidate_median": 5.97265625,
+      "paired_median_change_percent": 9.684361549497854,
+      "paired_changes_percent": [
+        9.684361549497854,
+        4.136429608127723,
+        26.590421729807012
+      ],
+      "candidate_wins": 0,
+      "pairs": 3
+    }
+  },
+  "host_cpu_pressure": {
+    "before_time": "2026-10-23T12:09:10-06:00",
+    "before_psi_some_avg10_avg60_avg300_percent": [
+      1.74,
+      9.57,
+      9.88
+    ],
+    "after_time": "2026-10-23T12:09:53-06:00",
+    "after_psi_some_avg10_avg60_avg300_percent": [
+      0.47,
+      5.02,
+      8.62
+    ]
+  },
+  "decision": "Do not expand/promote: batch16 lost CPU, PSS, and anonymous memory in all three paired 16 MiB screens. All six transfers verified. The current release executable was restored."
+}

@@ -8460,6 +8460,36 @@
       "path": "release-optz-codegen-screen-20261023/validation.txt",
       "bytes": 1104,
       "sha256": "df4670f37905e894b638049e730470fea53f2a6dd79d93af6021c46be3163aef"
+    },
+    {
+      "path": "upload-batch-16-screen-20261023/README.md",
+      "bytes": 2081,
+      "sha256": "63db8573b2c1408161fcbe621d7aab2249f3353928fa1e2b9bd74e0d8d066c99"
+    },
+    {
+      "path": "upload-batch-16-screen-20261023/batch-distribution.json",
+      "bytes": 1129,
+      "sha256": "f50f5747db00f17ef87f2476564813a9a1a849a03d8368718be4695a9f072488"
+    },
+    {
+      "path": "upload-batch-16-screen-20261023/candidate.patch",
+      "bytes": 2237,
+      "sha256": "8229a6d41917e0afce53edfdeed7417c52583f01a4bc2a04def9cd62fcb1d131"
+    },
+    {
+      "path": "upload-batch-16-screen-20261023/host-load.txt",
+      "bytes": 399,
+      "sha256": "0f79d3be6aadb4bbd582d768cb5a4be2467894f2ed11e6e8b92c715681170b3e"
+    },
+    {
+      "path": "upload-batch-16-screen-20261023/summary.json",
+      "bytes": 4854,
+      "sha256": "77ee08e66b7c553af7046d6cd52b2643fdcb4b54f7813c1cc0c46fe25dbdbc3d"
+    },
+    {
+      "path": "upload-batch-16-screen-20261023/validation.txt",
+      "bytes": 1099,
+      "sha256": "a3c060a1e17b254434f5c375b17fa801b20ec124c061b549a09d1c7daddf313d"
     }
   ]
 }

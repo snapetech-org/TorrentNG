@@ -1,0 +1,13 @@
+Candidate source: detached worktree at source revision 395b1dd9; patch is candidate.patch.
+
+Build:
+CARGO_TARGET_DIR=/home/keith/Documents/code/TorrentNG/target CARGO_BUILD_JOBS=4 cargo build --locked --release --package torrentngd --bin torrentngd
+Result: success. Current opt-level=s executable was saved before build and restored afterwards.
+
+Tests:
+CARGO_TARGET_DIR=/home/keith/Documents/code/TorrentNG/target CARGO_BUILD_JOBS=4 cargo test --locked --package rt-engine --lib
+Final result: 769 passed, 0 failed. An initial candidate run exposed two assumptions tied to the old per-connection batch limit of 8; the candidate then tied the pending-read and per-connection job caps to 16, and the full suite passed.
+
+Transfer score:
+python3 scripts/native_seed_cpu_ram_probe.py --client current=torrentngd:<batch8-binary> --client batch16=torrentngd:<candidate-binary> --size 16777216 --repeats 3 --order-seed 20261025 --warmup 0 --cooldown 0
+Result: complete; all six transfers verified fixture SHA-256 132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3. No production source changed.
