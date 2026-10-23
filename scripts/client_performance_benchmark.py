@@ -34,11 +34,11 @@ from transfer_rebuild.observe import process_tree, sample_process_tree
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_FILE = ROOT / "deploy/interop/compose.yml"
 CURRENT_RTORRENT_COMPOSE_FILE = ROOT / "deploy/interop/compose.benchmark-rtorrent-current.yml"
-CURRENT_RTORRENT_IMAGE = "torrentng/rtorrent-benchmark:v0.16.25-15ccae27-lib6ad3fecf"
-CURRENT_RTORRENT_VERSION = "v0.16.25"
-CURRENT_RTORRENT_COMMIT = "15ccae27deb9aa1dc8e46ea0ed218a673ccc5732"
-CURRENT_LIBTORRENT_VERSION = "v0.16.25"
-CURRENT_LIBTORRENT_COMMIT = "6ad3fecf3e7e7aa86855445587b532a91256f344"
+CURRENT_RTORRENT_IMAGE = "torrentng/rtorrent-benchmark:v0.16.26-62899bd-lib21daa3b"
+CURRENT_RTORRENT_VERSION = "v0.16.26"
+CURRENT_RTORRENT_COMMIT = "62899bd053c39b70380464e8f64dbcfce92579aa"
+CURRENT_LIBTORRENT_VERSION = "v0.16.26"
+CURRENT_LIBTORRENT_COMMIT = "21daa3b96a3b8cfe14961545b5115de7ed12da95"
 LEGACY_RTORRENT_IMAGE = (
     "jesec/rtorrent@sha256:994728c59953e5f19c643827024dd06e9ffaf62b8d903a3f1468794415e72e03"
 )
@@ -4567,7 +4567,7 @@ def main():
 
 By default, runs one current Debian amd64 netinst public download and one
 controlled private seed transfer for TorrentNG, qBittorrent, Transmission,
-Deluge, and upstream rTorrent/libtorrent v0.16.25 built from pinned official
+Deluge, and upstream rTorrent/libtorrent v0.16.26 built from pinned official
 source commits. Set TNG_CLIENT_BENCH_MODE=controlled-seed to skip all
 public metadata and swarm requests and run only private seeding from a
 SHA-256-pinned local fixture. Public-swarm testing remains a separate
@@ -4580,7 +4580,7 @@ TorrentNG-specific cache bounded to 16 GB. The builder is removed after its
 build and before measurement, while its cache volume is retained. Build CPUs default to available host
 capacity, capped at eight; set TNG_CLIENT_BENCH_BUILD_CPUS to override. Reference
 client images are pinned by digest in deploy/interop/compose.yml; rTorrent defaults
-to the source-built upstream v0.16.25 profile. Use
+to the source-built upstream v0.16.26 profile. Use
 TNG_CLIENT_BENCH_RTORRENT_PROFILE=legacy only to reproduce historical runs
 against the old rTorrent 0.9.8 image.
 
