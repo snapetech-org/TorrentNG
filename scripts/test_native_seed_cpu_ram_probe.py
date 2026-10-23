@@ -228,6 +228,17 @@ class ProbeTests(unittest.TestCase):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 probe.storage_io_queue_depth_line(invalid)
 
+    def test_storage_io_worker_threads_config_is_optional_and_bounded(self):
+        self.assertEqual(probe.storage_io_worker_threads_line(None), "")
+        self.assertEqual(probe.storage_io_worker_threads_line(1), "io_worker_threads = 1\n")
+        self.assertEqual(
+            probe.storage_io_worker_threads_line(probe.MAX_STORAGE_IO_WORKER_THREADS),
+            f"io_worker_threads = {probe.MAX_STORAGE_IO_WORKER_THREADS}\n",
+        )
+        for invalid in (0, -1, probe.MAX_STORAGE_IO_WORKER_THREADS + 1):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                probe.storage_io_worker_threads_line(invalid)
+
     def test_selected_backend_diagnostic_preserves_backend_label(self):
         metrics = "\n".join((
             'torrentng_storage_scheduler_backend_selected{backend="pread",scheduler_group="1"} 0',
