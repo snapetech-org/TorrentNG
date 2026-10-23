@@ -223,6 +223,30 @@ support the peer-read map refactor as a large target. The run changed no source
 or defaults; limits and the raw profile are in the
 [hot-path profile note](certification/reports/TorrentNG-seed-performance-experiments-20261022/observations/pgo-hotpath-profile-20261022/README.md).
 
+## Latest controlled-seed comparison (2026-10-23)
+
+Three randomized rounds compared the current native engine with qBittorrent
+5.3.0, Transmission 4.1.3, Deluge 2.2.0, and source-built rTorrent 0.16.26.
+All 15 local 64 MiB transfers passed SHA-256 verification.
+
+| Client | CPU (s/GiB) ↓ | Peak cgroup anonymous (MiB) ↓ |
+|---|---:|---:|
+| TorrentNG | 2.94 | 7.6 |
+| qBittorrent | 2.65 | 6.4 |
+| Transmission | 1.92 | 15.1 |
+| Deluge | 3.05 | 80.7 |
+| rTorrent | 1.01 | 3.1 |
+
+TorrentNG remains above rTorrent by 2.9× in whole-window CPU and 2.45× in
+anonymous memory; active-window CPU was 4.1× higher. Its process-tree PSS was
+21.0 MiB versus rTorrent's 19.4 MiB. TorrentNG used less anonymous memory than
+Transmission and Deluge, but slightly more than qBittorrent. The desktop was
+under sustained I/O pressure, and TorrentNG's active goodput was lower than
+the other clients, so these are screening results rather than a parity claim.
+The [full comparison report](certification/reports/TorrentNG-current-client-seed-comparison-20261023/README.md)
+includes current version pins, the methodology, separate memory categories,
+all three raw reports and profiles, host pressure, and excluded attempts.
+
 ## Learn more
 
 - [Install TorrentNG Desktop](docs/DESKTOP.md)

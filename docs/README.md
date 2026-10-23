@@ -105,6 +105,7 @@ Supported features vary by client; the compatibility guides list the limits.
 
 ## Performance And Test Evidence
 
+- [Latest five-client seed comparison](../certification/reports/TorrentNG-current-client-seed-comparison-20261023/README.md) - three randomized, hash-verified local rounds against current qBittorrent, Transmission, Deluge, and rTorrent builds; CPU, memory categories, host pressure, and raw evidence.
 - [Client performance benchmark](CLIENT_PERFORMANCE_BENCHMARK.md) - how to
   compare real Debian ISO downloads and controlled seeding across TorrentNG,
   qBittorrent, Transmission, Deluge, and rTorrent, including storage options

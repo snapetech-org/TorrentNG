@@ -6,20 +6,34 @@ Install the pinned Python dependencies before running the harness:
 This benchmark compares TorrentNG's native engine with qBittorrent,
 Transmission, Deluge, and rTorrent using an official Debian amd64 netinst
 torrent. It records public download behavior and a separate controlled seed
-transfer for each client. The previous upload-accounting comparison used
-commit `3191f56e` and is recorded in
-[`client-performance-benchmark-3191f56e-20261020-upload-accounting-cache-disabled.md`](../certification/reports/client-performance-benchmark-3191f56e-20261020-upload-accounting-cache-disabled.md).
-All five controlled seeds passed SHA-256 checks. At a shared 4 MiB/s receiver
-cap, TorrentNG used 3.84 CPU-s/GiB, above qBittorrent (2.33), Transmission
-(1.47), Deluge (2.54), and rTorrent (0.72). Its cgroup anonymous peak was
-13.0 MiB; the same profile's TorrentNG process anonymous peak was 6.8 MiB,
-which does not reconcile with the cgroup reading. The other clients' cgroup
-anonymous peaks were 20.6, 23.3, 91.1, and 1.7 MiB, respectively, so the
-TorrentNG memory row needs attribution before using it to rank memory use.
-Block reads were 1,031.77 MiB/GiB and writes 0.67 MiB/GiB. This is one
-sequential pass on a loaded host. TorrentNG, Transmission, and Deluge did not
-finish the 60-second public-swarm phase, so those rows are not download
-rankings.
+transfer for each client. The latest matched local seed screen is summarized
+below; its full method, current version pins, limits, and raw measurements are
+in the [2026-10-23 comparison report](../certification/reports/TorrentNG-current-client-seed-comparison-20261023/README.md).
+
+## Current five-client seed comparison (2026-10-23)
+
+Three randomized rounds transferred the same SHA-256-pinned 64 MiB fixture
+through an isolated local tracker. All 15 transfers passed the final hash
+check. CPU is cgroup v2 CPU time per verified GiB; active CPU excludes the
+wait before first observed payload. Anonymous memory excludes file cache.
+
+| Client | CPU (s/GiB) ↓ | Active CPU (s/GiB) ↓ | Peak anonymous (MiB) ↓ |
+|---|---:|---:|---:|
+| TorrentNG | 2.94 | 2.89 | 7.6 |
+| qBittorrent 5.3.0 | 2.65 | 2.65 | 6.4 |
+| Transmission 4.1.3 | 1.92 | 1.33 | 15.1 |
+| Deluge 2.2.0 | 3.05 | 3.05 | 80.7 |
+| rTorrent 0.16.26 | 1.01 | 0.70 | 3.1 |
+
+TorrentNG used 2.9 times rTorrent's whole-window CPU and 4.1 times its
+active-window CPU, with 2.45 times its cgroup anonymous memory. Process-tree
+PSS was 21.0 MiB for TorrentNG and 19.4 MiB for rTorrent; PSS was unavailable
+for the other three clients. TorrentNG's active goodput was 3.02 MiB/s versus
+3.51–3.52 MiB/s for the others, and rTorrent's first payload arrived after
+63.6 seconds. The desktop had sustained host I/O pressure, so this is a local
+screen, not a parity qualification or broad ranking. The detailed report keeps
+cgroup anonymous, file cache, total memory, RSS, and PSS separate and records
+the host pressure and every raw run.
 
 ## Owner's measurement priority
 
