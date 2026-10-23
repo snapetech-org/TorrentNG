@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import argparse
+import os
 import socket
 import sys
 import tempfile
@@ -140,7 +141,14 @@ class ProbeTests(unittest.TestCase):
     def test_process_tree_cpu_clock_sums_root_and_children(self, get_clock_id, get_time_ns):
         get_clock_id.side_effect = {10: 100, 11: 101}.__getitem__
         get_time_ns.side_effect = {100: 1_000_000_000, 101: 250_000_000}.__getitem__
-        self.assertEqual(probe.process_tree_cpu_time_ns(10, {10, 11}), 1_250_000_000)
+        with patch.object(probe, "cpu_clock_pid", side_effect=lambda pid: pid):
+            self.assertEqual(probe.process_tree_cpu_time_ns(10, {10, 11}), 1_250_000_000)
+
+    @unittest.skipUnless(Path("/proc/self/status").exists(), "Linux proc namespace test")
+    def test_precise_cpu_clock_resolves_the_current_namespace(self):
+        proc_pid = int(os.readlink("/proc/self"))
+        self.assertEqual(probe.cpu_clock_pid(proc_pid), os.getpid())
+        self.assertGreater(probe.process_tree_cpu_time_ns(proc_pid, {proc_pid}), 0)
 
     def test_cpu_delta_prefers_precise_clock_and_keeps_tick_fallback(self):
         precise_start = {"cpu_ticks_user_system": 100, "cpu_time_user_system_ns": 10_000}

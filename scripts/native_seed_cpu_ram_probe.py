@@ -436,7 +436,7 @@ def process_tree_cpu_time_ns(root_pid, pids):
     sampled = False
     for pid in pids:
         try:
-            clock_id = process_cpu_clock_id(pid)
+            clock_id = process_cpu_clock_id(cpu_clock_pid(pid))
             if clock_id is None:
                 continue
             total += time.clock_gettime_ns(clock_id)
@@ -445,6 +445,27 @@ def process_tree_cpu_time_ns(root_pid, pids):
             if pid == root_pid:
                 return None
     return total if sampled else None
+
+
+def cpu_clock_pid(proc_pid):
+    """Translate an ancestor-mounted /proc PID into the caller's PID namespace.
+
+    Resource files use proc_pid; clock_getcpuclockid resolves a namespace-local
+    PID. Mixing them silently loses precise clocks in containerized probes.
+    """
+    def namespace_pids(path):
+        for line in path.read_text().splitlines():
+            if line.startswith("NSpid:"):
+                return [int(value) for value in line.split()[1:]]
+        return []
+    try:
+        depth = len(namespace_pids(Path("/proc/self/status")))
+        target = namespace_pids(Path(f"/proc/{proc_pid}/status"))
+        if depth and len(target) >= depth:
+            return target[depth - 1]
+    except (OSError, ValueError):
+        pass
+    return proc_pid
 
 
 def process_cpu_clock_id(pid):
