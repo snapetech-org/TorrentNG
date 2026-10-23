@@ -291,6 +291,16 @@ class ProbeTests(unittest.TestCase):
             {"storage_scheduler_selected_backends": ["uring"]},
         )
 
+    def test_comparator_process_diagnostics_do_not_request_a_torrentng_api(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(probe, "process_sample", return_value={"pids": []}), \
+                patch.object(probe.urllib.request, "urlopen") as request:
+            result = probe.collect_diagnostics(None, 123, Path(temporary), "after-transfer")
+            request.assert_not_called()
+            self.assertEqual(result["metrics"], {})
+            self.assertNotIn("metrics_error", result)
+            self.assertEqual(result["smaps_totals_bytes"]["Pss"], 0)
+
     def test_payload_cleanup_removes_only_generated_copies_inside_run(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "run-01-client"

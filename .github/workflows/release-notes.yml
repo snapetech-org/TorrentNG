@@ -41,13 +41,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_BODY: ${{ github.event_name == 'pull_request' && github.event.pull_request.body || github.event.head_commit.message || '' }}
-          PR_BASE_REF: ${{ github.base_ref }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
-            base="origin/${PR_BASE_REF}"
+            # A queued PR job may start after merge. The moving branch then
+            # already contains head and hides the fragment from the diff.
+            base="$PR_BASE_SHA"
             head="$PR_HEAD_SHA"
           else
             head="$GITHUB_SHA"

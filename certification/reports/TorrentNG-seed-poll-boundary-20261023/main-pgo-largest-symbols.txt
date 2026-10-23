@@ -1,0 +1,30 @@
+00000000011e8f46 00000000000063ff t sqlite3VdbeExec
+0000000000f898ed 0000000000006581 t <rt_engine::engine::Engine>::finish_pure_v2_recheck::{closure#0}
+0000000000f5e036 000000000000690b t rt_engine::torrent_task_v2::run_v2_peer_protocol::{closure#0}::{closure#1}
+0000000000f6e5c7 0000000000006a79 t rt_engine::torrent_task_v2_reference::run_v2_peer_protocol::{closure#0}::{closure#0}
+0000000000827f60 0000000000006bd9 t rt_engine::peer_listener::run::{closure#0}
+000000000104b247 0000000000006e79 t <rt_engine::torrent_task_reference::TorrentTask>::run_recheck_inner::{closure#0}
+0000000000554750 000000000000717f t <rt_engine::torrent_task::TorrentTask>::handle_peer_event::{closure#0}
+000000000056cbe6 000000000000724a T <tokio::runtime::context::scoped::Scoped<tokio::runtime::scheduler::Context>>::set::<tokio::runtime::scheduler::multi_thread::worker::run::{closure#0}::{closure#0}, ()>
+0000000000f92d3a 00000000000076b3 t <rt_engine::engine::Engine>::finish_storage_move::{closure#0}
+0000000000841757 00000000000077a7 t <rt_engine::engine::Engine>::resume_recovered_storage_jobs::{closure#0}
+00000000010115a4 0000000000007d47 t <rt_engine::torrent_task_v2::V2TorrentTask>::run::{closure#0}
+0000000000680eec 000000000000896b t <rt_engine::torrent_task::TorrentTask>::run_recheck_with_receiver::{closure#0}
+0000000000f64c91 0000000000008f0a t rt_engine::torrent_task_reference::run_peer_loop::{closure#0}::{closure#0}
+00000000004f5159 0000000000008fe7 t rt_api_qbit::handlers::torrents_add::{closure#0}
+00000000006c8da4 00000000000093fd T <axum::routing::method_routing::MethodRouter<rt_api_qbit::state::AppState>>::layer::<axum::middleware::from_fn::FromFnLayer<rt_api_qbit::router::qbit_auth_guard, rt_api_qbit::state::AppState, (axum::extract::state::State<rt_api_qbit::state::AppState>, http::request::Request<axum_core::body::Body>)>, core::convert::Infallible>
+00000000006e4a3d 00000000000093fd T <axum::routing::method_routing::MethodRouter<rt_api_qbit::state::AppState>>::layer::<axum::middleware::from_fn::FromFnLayer<rt_api_qbit::router::qbit_idempotency_guard, rt_api_qbit::state::AppState, (axum::extract::state::State<rt_api_qbit::state::AppState>, http::request::Request<axum_core::body::Body>)>, core::convert::Infallible>
+00000000005f5e4f 00000000000096e5 T rt_api_native::handlers::render_metrics_with_health
+00000000010bb93f 000000000000a6a2 t rt_engine::torrent_task::upload_pipeline::upload_read_batch_future::{closure#0}
+000000000122c140 000000000000b000 d anon.f418b329fb1ba7b432351071ca653ef2.3324.llvm.3955679823410500824
+000000000057a387 000000000000b76c t <rt_storage::scheduler::PreparedPread>::execute_miss
+000000000085c3e9 000000000000c21e t <rt_engine::engine::Engine>::load_persisted_torrents::{closure#0}
+000000000084b6a8 000000000000e0d1 t <rt_engine::engine::Engine>::start::{closure#0}
+00000000007569fb 000000000001154a t torrentngd::torrentngd_main::{closure#0}
+0000000001067b44 0000000000011c35 t <rt_engine::torrent_task_reference::TorrentTask>::run::{closure#0}
+0000000000539107 000000000001b55c t <core::pin::Pin<alloc::boxed::Box<rt_engine::engine::subsystems::spawn_supervised<<rt_engine::torrent_task::TorrentTask>::run::{closure#0}>::{closure#0}>> as core::future::future::Future>::poll
+000000000061d881 000000000001ca75 t <rt_engine::engine::Engine>::handle_cmd::{closure#0}
+000000000108106b 000000000001cd12 t rt_engine::torrent_task::run_peer_loop::{closure#0}
+0000000000f17b32 000000000001e11b t <rt_engine::torrent_task::TorrentTask>::accept_peer::{closure#0}::{closure#0}
+00000000001e7000 0000000000025000 r ecp_nistz256_precomputed
+00000000004fe7db 0000000000030f23 t tokio::runtime::task::raw::poll::<<rt_engine::torrent_task::TorrentTask>::accept_peer::{closure#0}::{closure#0}, alloc::sync::Arc<tokio::runtime::scheduler::multi_thread::handle::Handle>>

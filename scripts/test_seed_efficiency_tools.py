@@ -31,6 +31,56 @@ def experiment(control, candidate, *, clean=True):
 
 
 class QualificationTests(unittest.TestCase):
+    def test_tree_identity_survives_commit_metadata_changes_but_source_edits_do_not(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            def git(*args):
+                return tools.command("git", "-c", "user.name=Manifest Test", "-c",
+                                     "user.email=manifest@example.invalid", *args, cwd=repo)
+            git("init", "-q")
+            (repo / "Cargo.toml").write_text("original source")
+            git("add", "Cargo.toml")
+            git("commit", "-qm", "local metadata")
+            original = tools.source_provenance(repo)
+            git("commit", "--amend", "-qm", "published metadata")
+            published = tools.source_provenance(repo)
+            self.assertNotEqual(original["source_commit"], published["source_commit"])
+            self.assertEqual(original["source_tree"], published["source_tree"])
+            self.assertEqual(original["source_digest"], published["source_digest"])
+            self.assertFalse(published["dirty"])
+            (repo / "Cargo.toml").write_text("changed source")
+            dirty = tools.source_provenance(repo)
+            self.assertEqual(dirty["source_tree"], published["source_tree"])
+            self.assertNotEqual(dirty["source_digest"], published["source_digest"])
+            self.assertTrue(dirty["dirty"])
+
+    def test_dependency_source_edits_make_the_entire_manifest_dirty(self):
+        source = {"dirty": False, "source_commit": "app", "source_tree": "app-tree"}
+        dependency = {"dirty": True, "source_commit": "lib", "source_tree": "lib-tree"}
+        with patch.object(tools, "source_provenance", side_effect=[source, dependency]), \
+                patch.object(tools, "sha256", return_value="hash"), \
+                patch.object(tools, "command", return_value="compiler"):
+            result = tools.manifest("/binary", "/app", kind="rtorrent",
+                                    dependency_repos={"libtorrent": "/libtorrent"})
+        self.assertTrue(result["dirty"])
+        self.assertEqual(result["dependency_sources"]["libtorrent"], dependency)
+
+    def test_runtime_shared_library_must_still_match_the_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            binary, library = Path(directory) / "app", Path(directory) / "lib.so"
+            binary.write_bytes(b"app")
+            library.write_bytes(b"library")
+            data = {"format": "torrentng-build-manifest-v1", "kind": "rtorrent",
+                    "source_digest": "source", "binary_sha256": tools.sha256(binary),
+                    "shared_libraries_sha256": {str(library): tools.sha256(library)}}
+            tools.verify_manifest(data, binary)
+            library.write_bytes(b"changed")
+            with self.assertRaisesRegex(ValueError, "shared library differs"):
+                tools.verify_manifest(data, binary)
+            library.unlink()
+            with self.assertRaisesRegex(ValueError, "shared library differs"):
+                tools.verify_manifest(data, binary)
+
     def test_training_can_use_an_older_clean_checkout_without_copying_tools(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

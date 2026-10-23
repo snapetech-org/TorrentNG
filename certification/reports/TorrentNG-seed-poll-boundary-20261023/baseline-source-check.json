@@ -1,0 +1,14 @@
+{
+  "candidate": {
+    "source_file_count": 258,
+    "matches_main_7836fa7": true,
+    "manifest_source_commit": "f06de86a68446573eab4ec5050e4b8880514eacf",
+    "binary_sha256": "403e571702a259aaec31e4c5beb5291e560bbfbe0e7c68fb27fb5dc3c764ad19"
+  },
+  "candidate-pgo": {
+    "source_file_count": 258,
+    "matches_main_7836fa7": true,
+    "manifest_source_commit": "f06de86a68446573eab4ec5050e4b8880514eacf",
+    "binary_sha256": "db4bca2a54597fcb1108eaf0ba772788de2edeb1100b72f9ed37d03a9009ee51"
+  }
+}

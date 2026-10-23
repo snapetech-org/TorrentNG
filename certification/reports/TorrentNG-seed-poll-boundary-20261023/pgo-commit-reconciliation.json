@@ -1,0 +1,15 @@
+{
+  "format": "torrentng-commit-tree-reconciliation-v1",
+  "original_manifest": "certification/reports/TorrentNG-owned-seed-pipeline-20261023/pgo-training.manifest.json.gz",
+  "local_commit": "f8772ff26b28e919431ff7dd73cd1917e3121f2d",
+  "published_commit": "a826610742469278cd0d3a77aa897dd934e09bd8",
+  "local_tree": "91051f264644241d37150143ef95d00babfd3ea2",
+  "published_tree": "91051f264644241d37150143ef95d00babfd3ea2",
+  "local_parent": "f878bcd0037f604975031002aa6569dca5ca664a",
+  "published_parent": "f878bcd0037f604975031002aa6569dca5ca664a",
+  "training_source_digest": "ea1f6512663de8490d7d276f8b5f1d36e335487039cf290ed3e5536a5b5c792e",
+  "source_files_match_published": true,
+  "source_file_count": 258,
+  "tree_identical": true,
+  "explanation": "Publishing through the GitHub Git-data API created new commit metadata over the identical tree. The historical manifest is preserved unchanged; content equality is established by tree identity and all recorded input hashes."
+}
