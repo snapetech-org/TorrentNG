@@ -185,6 +185,17 @@ The first three-client attempt is preserved but invalid: the harness correctly r
 
 The experiments also keep evidence that did not fit a clean score: an initial rTorrent launch failed because its loader could not find `libtorrent.so.53`; the later valid runs use a pinned `LD_LIBRARY_PATH`. Failed and diagnostic summaries remain in the observations directory and are excluded from performance claims.
 
+## Runtime and codegen screens
+
+Fat-LTO PGO produced a smaller executable but did not improve runtime resources:
+one verified 64 MiB round measured 3.8804 CPU-s/GiB and 18.96 MiB PSS, versus
+3.6020 and 16.50 MiB for the PGO control. `MALLOC_ARENA_MAX=1` was a repeatable
+memory tradeoff: across three rounds it reduced median PSS by 7.4% and anonymous
+memory by 19.5%, while increasing CPU by 5.4%. A one-round `MALLOC_ARENA_MAX=2`
+screen raised CPU by 42.3% for 4.0% less PSS. None changes the release or PGO
+defaults; all raw evidence and the retained fat-LTO executable are in
+[`observations/runtime-tuning-screen-20261022/`](observations/runtime-tuning-screen-20261022/).
+
 ## Upstream rTorrent path and next source experiment
 
 The comparator is built from the official [rTorrent v0.16.25 release](https://github.com/rakshasa/rtorrent/releases/tag/v0.16.25). Its paired [libTorrent v0.16.25 README](https://github.com/rakshasa/libtorrent/blob/v0.16.25/README.md) describes transferring directly from file pages to the network stack. That supports testing file-page-backed payload ownership. It does not establish that raw `sendfile` is the right implementation: our sendfile measurement traded a large anonymous-memory reduction for a 4.14× CPU increase.

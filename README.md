@@ -190,6 +190,13 @@ profiles looked promising in one pass, then lost its three-round screen: CPU
 was 5.9% higher and PSS 9.3% higher than the PGO control, though anonymous
 memory was 5.2% lower. The initial and repeated results, binary, and merged
 profile are preserved in the [PGO blend screen](certification/reports/TorrentNG-seed-performance-experiments-20261022/observations/pgo-profile-blend-20261022/README.md).
+Fat-LTO PGO made the executable smaller but raised CPU by 7.7% and PSS by
+15.0% versus the PGO control in its verified screen. A three-round
+`MALLOC_ARENA_MAX=1` run lowered PSS by 7.4% and anonymous memory by 19.5%,
+with 5.4% more CPU; this remains an optional memory tradeoff, not a new default.
+The one-round arena-cap-2 screen raised CPU by 42.3%. Exact results and
+reproducible artifacts are in the
+[runtime and codegen screen](certification/reports/TorrentNG-seed-performance-experiments-20261022/observations/runtime-tuning-screen-20261022/README.md).
 
 ## Learn more
 

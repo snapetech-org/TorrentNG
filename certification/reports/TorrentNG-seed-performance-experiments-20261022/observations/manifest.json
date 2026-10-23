@@ -3,8 +3,8 @@
   "files": [
     {
       "path": "README.md",
-      "bytes": 3668,
-      "sha256": "fbf8d0024676fed9cf3effa3b28867e6f2e2b452390b4e9e4f15b939adb13dc1"
+      "bytes": 4095,
+      "sha256": "81664339c147ea89ae8e7721cae64551e642854e8142e1415d31c5f38a99b50a"
     },
     {
       "path": "batch-distribution-16m/logs/run-01-batches-batches.client.log",
@@ -1832,6 +1832,546 @@
       "sha256": "787ae41898685cdfed0e22fbee8c7d61aeec338dbd11ac3fa59b24c7c2c2af8b"
     },
     {
+      "path": "runtime-tuning-screen-20261022/README.md",
+      "bytes": 3341,
+      "sha256": "e376e9ef183a5d207cf07c345d479a4fe7d5164b9e43b862cbf08c3367fcaae8"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/SHA256SUMS.uncompressed",
+      "bytes": 106,
+      "sha256": "a5a6c1dd26d06a82ca0d69e14a292860bce6b3709fba9c76fdcee7ece7130c84"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/executables/torrentngd-pgo-fat-lto.gz",
+      "bytes": 8028197,
+      "sha256": "57e497cf88633bc09eb52f7468e034d477280530ed966c60203ebba05cfb2ded"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/fixture.torrent",
+      "bytes": 1377,
+      "sha256": "c3dcc6124dcd3bbb0bc2ead7b754361db71ddef1a98e0094f851cb255e4cf7d7"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/round-01/fat-lto-pgo/client.log",
+      "bytes": 457,
+      "sha256": "2974790fc34b6bd5a2ca13ccecea3f2301976d3910e6298cdf5b77e1704747ea"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/round-01/fat-lto-pgo/diagnostics/after-seed-recheck-pid-155969.smaps.gz",
+      "bytes": 2342,
+      "sha256": "f4245f9049b5a1709927c9db49ad55d6b98c73d5119fee41c4ecdab9de1d8b8e"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/round-01/fat-lto-pgo/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "f03817ca17c1218685be3c7092b89052adb7f70f734aef70bd6bf3d802c96298"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/round-01/fat-lto-pgo/diagnostics/after-transfer-pid-155969.smaps.gz",
+      "bytes": 2367,
+      "sha256": "4350e89dfb61c91cf50557947cf3f01b7883e9e96801643d59a61235cd05f827"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/round-01/fat-lto-pgo/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63173,
+      "sha256": "3e072a0d0e8cf6f43e9476f2ba85ba2d9caeb46d9ea320337ee8af17eec2345e"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/round-01/fat-lto-pgo/diagnostics/before-torrent-add-pid-155969.smaps.gz",
+      "bytes": 2018,
+      "sha256": "c878a2da69b6af21d2e0fcb7e310918466c6bb1a4b707a85ae8c611c210b3768"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/round-01/fat-lto-pgo/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "f9ebafb18738a5e862cc724291edd8baf4de73bf433d7de74439079599322a1b"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/round-01/pgo-control/client.log",
+      "bytes": 457,
+      "sha256": "8b8b7cdf636c201ce7c954da1eabbefcb42f9d3f8e37bb9954231a6170b86711"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/round-01/pgo-control/diagnostics/after-seed-recheck-pid-166126.smaps.gz",
+      "bytes": 2279,
+      "sha256": "c62d8f25f208c0f40f4e932285522d8cef9e9d434b9c43734f48a97aa5382dfc"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/round-01/pgo-control/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "9683bc3e6e1fa80cc0e2e054d5d995fb5a1394c32674d943d96ddd54f2ab3c70"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/round-01/pgo-control/diagnostics/after-transfer-pid-166126.smaps.gz",
+      "bytes": 2315,
+      "sha256": "716a0dd1b48bc17856feeb5b4bb23192cbf02e591355d1a06d740061f498a560"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/round-01/pgo-control/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63173,
+      "sha256": "ee27879dd96611fd44ad91ce8ac7270c068e942f4070d89689d5006437768b6f"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/round-01/pgo-control/diagnostics/before-torrent-add-pid-166126.smaps.gz",
+      "bytes": 1999,
+      "sha256": "8c8cb011ed15ecea55e540d1f2e20739c5ef36b3a264781b0a5b6791173a0b77"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/round-01/pgo-control/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "7fdc728cb3946393708654af01610e1c992f734a08fbe6bc4559deb0b9bfbe8b"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/round-01/rtorrent/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/round-01/transfer-pgo/client.log",
+      "bytes": 457,
+      "sha256": "7f6499f430ce86a3609a902abbffa3294ffdc49828261cb9254db00e715dc296"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/round-01/transfer-pgo/diagnostics/after-seed-recheck-pid-172835.smaps.gz",
+      "bytes": 2314,
+      "sha256": "241eeb93068c5f826f8e41c5e7d9db8839a884c58503cc003678c39826bc7a3c"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/round-01/transfer-pgo/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "dd13ce4fc67802757e6f42dbbfb5fa48800e92e07726aa9c17180b573de0fb1b"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/round-01/transfer-pgo/diagnostics/after-transfer-pid-172835.smaps.gz",
+      "bytes": 2337,
+      "sha256": "2eecd945d8a621b5ca8b8b47d84a05605f99a5140e7541527a9acb9697927270"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/round-01/transfer-pgo/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63169,
+      "sha256": "5e8c8e9ac82f016d4992167c6dff6cf34c2876448f98813e8c93c6f2a8204d70"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/round-01/transfer-pgo/diagnostics/before-torrent-add-pid-172835.smaps.gz",
+      "bytes": 2009,
+      "sha256": "bb827c0ad3b7c24441476372f412d260674a84e5b6faa60b0f31d727354b706e"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/round-01/transfer-pgo/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "d0015b429f7c3037f02e9c1d2c75062ac312c0aca8a8b58d7d8e13a0d9a5f82e"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/fat-lto-one-round/summary.json",
+      "bytes": 81093,
+      "sha256": "dd10c5c56a095aa72c0fb5aabe2bc43c34d88f14e8aabdd6b907259f97f0bc5f"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-one-round/fixture.torrent",
+      "bytes": 1377,
+      "sha256": "c3dcc6124dcd3bbb0bc2ead7b754361db71ddef1a98e0094f851cb255e4cf7d7"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-one-round/round-01/pgo-arena1/client.log",
+      "bytes": 457,
+      "sha256": "2e55436c2193499c342277221b7684a3a98779c543cc4ccdb1f6d6caf3a93a05"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-one-round/round-01/pgo-arena1/diagnostics/after-seed-recheck-pid-183752.smaps.gz",
+      "bytes": 1982,
+      "sha256": "a57f927a15d23029c48d4a1f7137e513e276b1861d0633ac1723c93091332df8"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-one-round/round-01/pgo-arena1/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "1110bce43addd4205f943e2f7b93a0534d2d11ba52bb7703bb62d42bfb8085e8"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-one-round/round-01/pgo-arena1/diagnostics/after-transfer-pid-183752.smaps.gz",
+      "bytes": 1959,
+      "sha256": "3a668857f8b70e60071d0f9f5cd982de2d2d60521a373a86506597776b2f1e90"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-one-round/round-01/pgo-arena1/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63169,
+      "sha256": "b08c9e3ee1519f284b65f521645c38b72628313252cf21f8b574d3e5bf72cab5"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-one-round/round-01/pgo-arena1/diagnostics/before-torrent-add-pid-183752.smaps.gz",
+      "bytes": 1855,
+      "sha256": "553506dd22b43418d0f4ce5693e39e1d03e501c12bf8ef77fb412760a3019c75"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-one-round/round-01/pgo-arena1/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "76d3d7487fb2a83f47d38ad455becb3e9786d4899c1b77beeb90d1a3bf3ab62b"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-one-round/round-01/pgo-default/client.log",
+      "bytes": 457,
+      "sha256": "1d761b6a6f6c8e0098560e76ed97911877dc262c886c4bafc6af33fefa5910b7"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-one-round/round-01/pgo-default/diagnostics/after-seed-recheck-pid-190032.smaps.gz",
+      "bytes": 2298,
+      "sha256": "1a50029ff4feafb363b73f508e3e65aa7c1b880f96db089b6cdd677dca38b4b1"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-one-round/round-01/pgo-default/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "2f9667543f6da82e596073644fbfedb7e0fb6f8cdd960973f0a9536812ed0960"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-one-round/round-01/pgo-default/diagnostics/after-transfer-pid-190032.smaps.gz",
+      "bytes": 2327,
+      "sha256": "95bd06899c5fd70672ea699652491aff3386b46565b3524bd8cffd5589c4b732"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-one-round/round-01/pgo-default/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63169,
+      "sha256": "1efaae90d5f40ec389f824c571af4346755dc5b165ee0387e7ffd18ba4b677bc"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-one-round/round-01/pgo-default/diagnostics/before-torrent-add-pid-190032.smaps.gz",
+      "bytes": 2004,
+      "sha256": "ffc47c30c92bf034eea1ca2344eaf18cd1f945b2a9afd510201a4e5688798de4"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-one-round/round-01/pgo-default/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "790cc3be98f94874743ecbdcbf07c8c5d65d5228776ef770793a0ef4b6f2a0f9"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-one-round/round-01/rtorrent/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-one-round/summary.json",
+      "bytes": 59114,
+      "sha256": "b96a5e592ff51bab5b1c8cdbfacbb75050797f1b65a2099cb76d3e5219b8431d"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/fixture.torrent",
+      "bytes": 1377,
+      "sha256": "c3dcc6124dcd3bbb0bc2ead7b754361db71ddef1a98e0094f851cb255e4cf7d7"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-01/pgo-arena1/client.log",
+      "bytes": 457,
+      "sha256": "7c18ad7a3b74c29ca6a0eaba3382fb458036e1d0176f31ef84b524dd26c960e4"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-01/pgo-arena1/diagnostics/after-seed-recheck-pid-195828.smaps.gz",
+      "bytes": 2011,
+      "sha256": "e6b5c6405b98d384e8417842b86645cc7a20df868325a60dae5ff5b4fe2f81c6"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-01/pgo-arena1/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "7abbde12f0753f0d362124f85702b101f5fc69f5654cdd9b0b7954af7ac739b7"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-01/pgo-arena1/diagnostics/after-transfer-pid-195828.smaps.gz",
+      "bytes": 1971,
+      "sha256": "ffa68e28e2606a6a31ca237e84e9a2f8ad2c806b25eee4916bc3917fb32fc3a8"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-01/pgo-arena1/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63173,
+      "sha256": "cb7c40922c1ce9c3e53645a0acaf5f0e360d4c5ee2fe012b0ce5f6b50fbb4847"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-01/pgo-arena1/diagnostics/before-torrent-add-pid-195828.smaps.gz",
+      "bytes": 1857,
+      "sha256": "e8eaefa4e616909582d39141517b8e7bb9e06454b908ea72bee2be446ab8c0b0"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-01/pgo-arena1/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "4be7ff899a05aa572ac4eeab4e83989528befdcd780c58c76ae5e9d92c7335e6"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-01/pgo-default/client.log",
+      "bytes": 457,
+      "sha256": "05bd8eab3988cc9befc767d0221933dda25a15819e74bf86f1d277ba5ec4f0eb"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-01/pgo-default/diagnostics/after-seed-recheck-pid-203813.smaps.gz",
+      "bytes": 2401,
+      "sha256": "0d4beac9e8605dbfe7ce8e42ac20aaad80d6afa3c52ddf4a510640139bf6fc7b"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-01/pgo-default/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "a44fd90002b1124acfdf09ee520c11efdf70511ed896ddb547c363f230604f33"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-01/pgo-default/diagnostics/after-transfer-pid-203813.smaps.gz",
+      "bytes": 2358,
+      "sha256": "78b12d96041b7512b88f776c7903714462324df01153a4b152ee0944f2df76c1"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-01/pgo-default/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63169,
+      "sha256": "dd5ef693a64d512b3f45896fb51134a0d86c3cba1d25f5deb54a31c0fd467d27"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-01/pgo-default/diagnostics/before-torrent-add-pid-203813.smaps.gz",
+      "bytes": 2008,
+      "sha256": "305ceb48954f2bd2b4d36ab8467ebaa1604d57ae14488d7d7c74622ad34e2252"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-01/pgo-default/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "9d2e2e118f001a6ba244f7421b88a7e2cb2fbd38b8cdea764dfb8952e271732a"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-01/rtorrent/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-02/pgo-arena1/client.log",
+      "bytes": 457,
+      "sha256": "08cce0829e573750ac83837d8201051df33f971ee9b6383c99327dcb56a89071"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-02/pgo-arena1/diagnostics/after-seed-recheck-pid-207479.smaps.gz",
+      "bytes": 1976,
+      "sha256": "05a04fbdfe45f9831969b43bd1c7ec17b13dec4135e3adc01f71cf3a5b1914a6"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-02/pgo-arena1/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "06b7d21b4e0fe1c769dfb220fb72943e69f0e270ef3fd2d022ebe4e58b4a5c11"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-02/pgo-arena1/diagnostics/after-transfer-pid-207479.smaps.gz",
+      "bytes": 1953,
+      "sha256": "3803bd798a985bd5ef37e28ba05ff5dd77ac8a25382b31ec055fe402121fa581"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-02/pgo-arena1/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63169,
+      "sha256": "5045e159a4e0a0365cdd7142b6619ff5d4245f1c48e6daa7ffa1b289378116a3"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-02/pgo-arena1/diagnostics/before-torrent-add-pid-207479.smaps.gz",
+      "bytes": 1859,
+      "sha256": "69cdea0bc2eb7a179f85ae614da989b489457c390b3d9a12f2bea9352d9edfd5"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-02/pgo-arena1/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "8d5a2138cbd5a676a703a635a96302e50537a1fddc399614c650fd6f6e4f695b"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-02/pgo-default/client.log",
+      "bytes": 457,
+      "sha256": "4ad8205af8d4ddbed800b14dc9cd56526904c624c8cb19ce86f8d69535d92a1e"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-02/pgo-default/diagnostics/after-seed-recheck-pid-212973.smaps.gz",
+      "bytes": 2278,
+      "sha256": "9d44b2eea6d3a4e10d1cb6bd0d8ee0dcc15b6588fe7bc7ebeb3999ab1709925d"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-02/pgo-default/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "091828231a250962f3af297208c4a17cfe2e7c8439bc5484cae676ce753e38e4"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-02/pgo-default/diagnostics/after-transfer-pid-212973.smaps.gz",
+      "bytes": 2278,
+      "sha256": "7524040ceda48323d8eceaa4320f1efb6dd8a4de897a5fd9e934a13d5f8b9e51"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-02/pgo-default/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63169,
+      "sha256": "9145af6f26c53898b2b922eefc55e5b7de0c7ee1e84a881515cd87345c049579"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-02/pgo-default/diagnostics/before-torrent-add-pid-212973.smaps.gz",
+      "bytes": 2005,
+      "sha256": "9b808d3bc63bdd7c0316fe9157ac74f1505d8646421a8b3f141a14244a85a432"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-02/pgo-default/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "e0adb52eab7ac405066f99b139afef441f4371d07afaac2d3ea945112d80e0db"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-02/rtorrent/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-03/pgo-arena1/client.log",
+      "bytes": 457,
+      "sha256": "f610f965354cc3c1aa9c5124bd7c4736353ec55ea1e64f4a34f3b9f0df94484d"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-03/pgo-arena1/diagnostics/after-seed-recheck-pid-217761.smaps.gz",
+      "bytes": 1969,
+      "sha256": "631123ba6b5513ab45c96524aa13262ae3618dc3672b83f535d00f48694fc04a"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-03/pgo-arena1/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "28daf0cb92c8cc54c440bde268d8f22bf0ab1113cbdc054a7e899655aa454bfa"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-03/pgo-arena1/diagnostics/after-transfer-pid-217761.smaps.gz",
+      "bytes": 1941,
+      "sha256": "8c56bea824ee60cc65ff2921d577234c0960ebf5453f3535e8ef2b23499f3d85"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-03/pgo-arena1/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63173,
+      "sha256": "02c1f2a73433ef304277d6d50ccd60dc0438f53bf9f3c8f13a1b5737b98f5eb9"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-03/pgo-arena1/diagnostics/before-torrent-add-pid-217761.smaps.gz",
+      "bytes": 1854,
+      "sha256": "10ceeaf7e50c2bd2d4bdea8a65c3a2f28d3a38a301cd847e2e3d2c4742da128e"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-03/pgo-arena1/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "45f1c42e913ce575b327e5b053f99b9ae906862f4c582604c37d88c86d6672e3"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-03/pgo-default/client.log",
+      "bytes": 457,
+      "sha256": "e24221b992ab3314cb955c8cbc6e2688845647be423edc6800821a70a171fff0"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-03/pgo-default/diagnostics/after-seed-recheck-pid-220599.smaps.gz",
+      "bytes": 2340,
+      "sha256": "03a0c0c2c644d2f522dc5da94f8e9631278c446b0a3ac6bdb5e51c7e6cb01864"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-03/pgo-default/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "804a7e84cb060372c0bf94a5b692cf6bc88a3983ecd40794dc1a2f1a25dc6f90"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-03/pgo-default/diagnostics/after-transfer-pid-220599.smaps.gz",
+      "bytes": 2312,
+      "sha256": "d2945574be664ac2ca1493bdeaef494cb0b2c36d431a28f6a3cbb568f40465ef"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-03/pgo-default/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63169,
+      "sha256": "401efab4b8b2e2a399fc48b9b480185db8c57fb713b928660932839a3eabd81a"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-03/pgo-default/diagnostics/before-torrent-add-pid-220599.smaps.gz",
+      "bytes": 2003,
+      "sha256": "107b4682e8d0e0ebf8a2e845dac870f4523ad0af41ac8086d1498331383262a6"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-03/pgo-default/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "441a4be21ec60d98a7b41a822359b490fd219d958cbab6d51cc640898872935b"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/round-03/rtorrent/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena1-three-rounds/summary.json",
+      "bytes": 174809,
+      "sha256": "47a2856d152e1eb0dbd29aca9babfd6eeb7975cbe66fd7b5c3919d70b2b79920"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena2-one-round/fixture.torrent",
+      "bytes": 1377,
+      "sha256": "c3dcc6124dcd3bbb0bc2ead7b754361db71ddef1a98e0094f851cb255e4cf7d7"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena2-one-round/round-01/pgo-arena2/client.log",
+      "bytes": 457,
+      "sha256": "4f7d49d783f1597946050c2dc2e6ecb0e481652aac091204c56eee3e9361849d"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena2-one-round/round-01/pgo-arena2/diagnostics/after-seed-recheck-pid-225852.smaps.gz",
+      "bytes": 2040,
+      "sha256": "2b34593265bb8d6cf52230bcb5a7c572507db07265d25aecc43448a282bcef76"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena2-one-round/round-01/pgo-arena2/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "ce2ce1cdb4edd0bd0d1d98b481b1e0189e1847041ee753a6b97e71b20e597c79"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena2-one-round/round-01/pgo-arena2/diagnostics/after-transfer-pid-225852.smaps.gz",
+      "bytes": 2012,
+      "sha256": "df205d65c919f4c581d3fca12eee4c39d3806ee581b66a11353111445cc6d302"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena2-one-round/round-01/pgo-arena2/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63169,
+      "sha256": "84c91d5cda281a34c244b4251b09a997122efc306805132063c82a108ec3001f"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena2-one-round/round-01/pgo-arena2/diagnostics/before-torrent-add-pid-225852.smaps.gz",
+      "bytes": 1893,
+      "sha256": "984e1c63ec7f75be2b5ceacd98564ec23c50556f6cfbb1e210f83c785a3d6b82"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena2-one-round/round-01/pgo-arena2/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "d19bc380104f61b3f641e820dae7cdccb4c935534f12b016e32d6f50e31c2a9d"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena2-one-round/round-01/pgo-default/client.log",
+      "bytes": 457,
+      "sha256": "d9894c21216383255b719951dc6a12d21a89e063007333893ae78ea1f98de74d"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena2-one-round/round-01/pgo-default/diagnostics/after-seed-recheck-pid-230780.smaps.gz",
+      "bytes": 2349,
+      "sha256": "c3a643ac6f22e461d8ac60338f2fcc8ca180e546fe931cd1f09c8c711685e0ea"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena2-one-round/round-01/pgo-default/diagnostics/after-seed-recheck.metrics.prom",
+      "bytes": 55639,
+      "sha256": "d7683bb1b545a3ca96eea9fe321adcc1d03c82c3815f39fb9ba772662e1c7f71"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena2-one-round/round-01/pgo-default/diagnostics/after-transfer-pid-230780.smaps.gz",
+      "bytes": 2360,
+      "sha256": "f2302934ed788b78ca713061722a31905d7330a96e6a277a5fa01ae20c85bf3f"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena2-one-round/round-01/pgo-default/diagnostics/after-transfer.metrics.prom",
+      "bytes": 63169,
+      "sha256": "6038e6eaa814cc96cd71a08aa20df9dd649e6cb271e22561b8bf925790907b6d"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena2-one-round/round-01/pgo-default/diagnostics/before-torrent-add-pid-230780.smaps.gz",
+      "bytes": 2032,
+      "sha256": "92ba8ed04d3505ecd7647110a7aebaf257ad65199a459b42959ee60910f4cab7"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena2-one-round/round-01/pgo-default/diagnostics/before-torrent-add.metrics.prom",
+      "bytes": 54843,
+      "sha256": "4dba134ba5a25ea491fd4c0a514e33b26d9cbe43d2632b52fcc62677a358d8cb"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena2-one-round/round-01/rtorrent/client.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "runtime-tuning-screen-20261022/runs/glibc-arena2-one-round/summary.json",
+      "bytes": 59480,
+      "sha256": "b5a95d740d6d6a75a172327e4cdeecfe68bc3d6db93a1222d8a8bdf292fbcb31"
+    },
+    {
       "path": "screen-batch8-64m-1x/logs/run-01-baseline-baseline.client.log",
       "bytes": 457,
       "sha256": "e6f38aaa2bab6f49e0f98291aa099c024f0042be64f8204e34b3ba4c06ef09da"
@@ -1850,16 +2390,6 @@
       "path": "screen-batch8-64m-1x/summary.json",
       "bytes": 50886,
       "sha256": "2cae7c3d70d23d6031cc2c5ef7041dc8ef94bf4f8a7e6fa1b5e34b69ccd85b00"
-    },
-    {
-      "path": "screen-cache-hit-64m-1x-launch-failure/logs/run-01-rtorrent-rtorrent.client.log",
-      "bytes": 188,
-      "sha256": "26cb6752a4413fdfd2db8d2b1b5ac6594748156a5812784b047ba71e475f9d5d"
-    },
-    {
-      "path": "screen-cache-hit-64m-1x-launch-failure/summary.json",
-      "bytes": 1114,
-      "sha256": "cfed76a85fc08c2c6a59c22efb026d4f77eeb4707ce24a5e5e2e3731fab38a75"
     },
     {
       "path": "screen-cache-hit-64m-1x/logs/run-01-baseline-baseline.client.log",
@@ -1885,6 +2415,16 @@
       "path": "screen-cache-hit-64m-1x/summary.json",
       "bytes": 80470,
       "sha256": "9ff1dd866afaaa69334a81ce0128058bea1f9fc78d4ce16546216049bbf75bb7"
+    },
+    {
+      "path": "screen-cache-hit-64m-1x-launch-failure/logs/run-01-rtorrent-rtorrent.client.log",
+      "bytes": 188,
+      "sha256": "26cb6752a4413fdfd2db8d2b1b5ac6594748156a5812784b047ba71e475f9d5d"
+    },
+    {
+      "path": "screen-cache-hit-64m-1x-launch-failure/summary.json",
+      "bytes": 1114,
+      "sha256": "cfed76a85fc08c2c6a59c22efb026d4f77eeb4707ce24a5e5e2e3731fab38a75"
     },
     {
       "path": "screen-cache-hit-64m-3x/logs/run-01-baseline-baseline.client.log",

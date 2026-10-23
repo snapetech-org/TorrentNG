@@ -60,3 +60,10 @@ looked better, but three randomized rounds used more CPU and PSS than the
 retained PGO control. The initial and repeated verified summaries, exact
 merged profile, candidate binary, logs, metrics, and compressed process maps
 are retained so the tradeoff can be revisited.
+
+`runtime-tuning-screen-20261022/` preserves a fat-LTO PGO screen and glibc
+arena-cap screens. Fat LTO reduced executable size but used more CPU and PSS.
+`MALLOC_ARENA_MAX=1` reduced PSS and anonymous memory in three rounds while
+raising median CPU by 5.4%; cap 2 raised CPU by 42.3% in its one-round screen.
+The archive includes exact summaries and diagnostics plus the fat-LTO binary.
+No production or build default changed.
