@@ -74,7 +74,6 @@ export function AppearancePanel({ mediaInference, onMediaInference, themes = [],
             <button
               type="button"
               onClick={() => onThemeMode?.(alternateMode)}
-              aria-label={t('Switch to {mode} theme', { mode: t(alternateMode === 'dark' ? 'Dark' : 'Light') })}
               {...textProps('Switch to {mode} theme')}
               aria-pressed={themeMode === 'dark'}
               style={{
@@ -97,7 +96,6 @@ export function AppearancePanel({ mediaInference, onMediaInference, themes = [],
                   type="button"
                   className="tng-theme-card"
                   data-active={active ? 'true' : 'false'}
-                  aria-label={t(active ? 'Active theme {name}' : 'Select theme {name}', { name: themeLabel })}
                   {...textProps(active ? 'Active theme {name}' : 'Select theme {name}')}
                   aria-pressed={active}
                   onClick={() => onTheme?.(theme.id)}
