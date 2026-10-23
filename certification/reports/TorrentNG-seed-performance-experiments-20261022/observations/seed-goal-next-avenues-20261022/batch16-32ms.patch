@@ -1,0 +1,53 @@
+diff --git a/crates/rt-engine/src/torrent_task.rs b/crates/rt-engine/src/torrent_task.rs
+index 16ca80a3..9c4c8a29 100644
+--- a/crates/rt-engine/src/torrent_task.rs
++++ b/crates/rt-engine/src/torrent_task.rs
+@@ -161,7 +161,7 @@ const PEER_SOCKET_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+ // derived from a 64 MiB test fixture capped a continuously used connection at
+ // about 6.4 MiB/s and silently dropped valid requests beyond it.
+ const MAX_PENDING_UPLOAD_READS: usize = 16;
+-// This experiment bounds storage reads at 128 KiB: eight legal 16 KiB wire
++// This experiment bounds storage reads at 256 KiB: sixteen legal 16 KiB wire
+ // requests share one pread while keeping response obligations and rate grants
+ // separate.
+ const MAX_UPLOAD_READ_BATCH_BLOCKS: usize = MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS;
+@@ -17360,7 +17360,7 @@ mod tests {
+             ));
+             batch_bytes += MAX_BLOCK_SIZE as usize;
+         }
+-        let ninth = UploadReadSpec {
++        let next = UploadReadSpec {
+             request: UploadRequest::from_wire(BlockExtent::new(
+                 0,
+                 MAX_UPLOAD_READ_BATCH_BLOCKS as u32 * MAX_BLOCK_SIZE,
+@@ -17373,7 +17373,7 @@ mod tests {
+             }),
+             choke_critical: false,
+         };
+-        assert!(!can_append_upload_read(&specs, &ninth, batch_bytes));
++        assert!(!can_append_upload_read(&specs, &next, batch_bytes));
+         let reads_before: u64 = read_context.storage.stats().read_ops_by_class.iter().sum();
+ 
+         let blocks = read_upload_batch_blocks(&read_context, &specs)
+diff --git a/crates/rt-engine/src/transfer/upload_scheduler.rs b/crates/rt-engine/src/transfer/upload_scheduler.rs
+index f7c93424..e99c4b91 100644
+--- a/crates/rt-engine/src/transfer/upload_scheduler.rs
++++ b/crates/rt-engine/src/transfer/upload_scheduler.rs
+@@ -14,7 +14,7 @@ use tokio::sync::oneshot;
+ use super::coords::{BlockExtent, BLOCK_SIZE};
+ use super::rate::RatePeerId;
+ 
+-pub(crate) const MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS: usize = 8;
++pub(crate) const MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS: usize = 16;
+ 
+ pub(crate) type UploadReadPermits =
+     smallvec::SmallVec<[UploadReadPermit; MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS]>;
+@@ -34,7 +34,7 @@ impl Default for UploadReadLimits {
+             max_connections: 200,
+             max_in_flight_jobs: 64,
+             max_in_flight_bytes: 16 * 1024 * 1024,
+-            max_in_flight_per_connection: 8,
++            max_in_flight_per_connection: MAX_UPLOAD_READ_ADMISSION_BATCH_JOBS,
+             max_queued_per_connection: 8,
+         }
+     }

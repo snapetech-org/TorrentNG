@@ -1,0 +1,1453 @@
+diff --git a/crates/rt-engine/src/torrent_task.rs b/crates/rt-engine/src/torrent_task.rs
+index 4dfb0518..7abf2e1b 100644
+--- a/crates/rt-engine/src/torrent_task.rs
++++ b/crates/rt-engine/src/torrent_task.rs
+@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
+ use std::hash::{Hash, Hasher};
+ use std::io::IoSlice;
+ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
++#[cfg(target_os = "linux")]
+ use std::path::PathBuf;
+ use std::pin::Pin;
+ use std::sync::atomic::{AtomicU64, Ordering};
+@@ -55,6 +56,8 @@ use rt_peer_wire::{
+ use rt_piece_map::{FileSpan, PieceMap, V2FileSpan, V2PieceMap};
+ use rt_piece_picker::{Availability, BlockRequest, PieceAvailability, PiecePicker, MAX_BLOCK_SIZE};
+ use rt_session::{SessionRegistry, TorrentEntry, TorrentState};
++#[cfg(target_os = "linux")]
++use rt_storage::MappedFileRange;
+ use rt_storage::{
+     scheduler::{scheduled_write, scheduled_write_with_shared_payload_lease},
+     HybridV2PieceExpectation, IoClass, IoRequestPriority, MountScheduler, PieceVerifier,
+@@ -2189,6 +2192,7 @@ struct UploadReadContext {
+     upload_control: RateLimitCancellation,
+     upload_rate: UploadRateAdmission,
+     read_admission: SharedUploadReadHandle,
++    file_range_enabled: bool,
+ }
+ 
+ #[derive(Clone)]
+@@ -2199,9 +2203,21 @@ struct UploadRateAdmission {
+ 
+ struct LeasedUploadBlock {
+     data: bytes::Bytes,
+-    _lease: UploadMemoryLease,
++    file_range: Option<UploadReadSpan>,
++    #[cfg(target_os = "linux")]
++    mapped_range: Option<Arc<MappedFileRange>>,
++    _lease: Option<UploadMemoryLease>,
+     _read_permit: UploadReadPermit,
+     rate_grant: Option<RateAdmissionGrant>,
++    choke_critical: bool,
++}
++
++impl LeasedUploadBlock {
++    fn len(&self) -> usize {
++        self.file_range
++            .map(|range| range.length)
++            .unwrap_or_else(|| self.data.len())
++    }
+ }
+ 
+ /// A single block has one owner. Only slices of a multi-block backing need
+@@ -8356,15 +8372,7 @@ impl PeerIo {
+                     // Preserve wire order with any control frame still held
+                     // in Framed before bypassing its copying encoder.
+                     framed.flush().await?;
+-                    let message_len = 9usize
+-                        .checked_add(data.len())
+-                        .and_then(|len| u32::try_from(len).ok())
+-                        .ok_or_else(|| anyhow::anyhow!("piece frame length exceeds u32"))?;
+-                    let mut header = [0u8; 13];
+-                    header[..4].copy_from_slice(&message_len.to_be_bytes());
+-                    header[4] = 7;
+-                    header[5..9].copy_from_slice(&piece.to_be_bytes());
+-                    header[9..13].copy_from_slice(&begin.to_be_bytes());
++                    let header = piece_frame_header(piece, begin, data.len())?;
+                     write_piece_vectored(framed.get_mut(), &header, &data).await?;
+                     Ok(())
+                 }
+@@ -8439,6 +8447,171 @@ impl PeerIo {
+         }
+     }
+ 
++    async fn send_upload_blocks(
++        &mut self,
++        blocks: &[(UploadRequest, LeasedUploadBlock)],
++        upload: &UploadReadContext,
++    ) -> Result<usize, (usize, anyhow::Error)> {
++        if blocks.is_empty() {
++            return Ok(0);
++        }
++        if blocks.iter().all(|(_, block)| block.file_range.is_none()) {
++            let frames = blocks
++                .iter()
++                .map(|(request, block)| (request.wire_piece, request.wire_begin, &block.data))
++                .collect::<UploadBatch<_>>();
++            return self.send_pieces(&frames).await;
++        }
++
++        #[cfg(target_os = "linux")]
++        {
++            let PeerIo::Tcp(framed) = self else {
++                return Err((
++                    0,
++                    anyhow::anyhow!("file-range upload reached a non-TCP peer"),
++                ));
++            };
++            let deadline = Instant::now() + PEER_SOCKET_WRITE_TIMEOUT;
++            match timeout(remaining_peer_write_time(deadline), framed.flush()).await {
++                Ok(Ok(())) => {}
++                Ok(Err(error)) => return Err((0, error.into())),
++                Err(_) => {
++                    return Err((0, anyhow::anyhow!("peer socket write timed out")));
++                }
++            }
++
++            let stream = framed.get_mut();
++            let mut completed = 0usize;
++            let mut index = 0usize;
++            while index < blocks.len() {
++                let (request, block) = &blocks[index];
++                if let Some(first_range) = block.file_range {
++                    let mut end = (index + MAX_UPLOAD_READ_BATCH_BLOCKS).min(blocks.len());
++                    let mut scan = index + 1;
++                    let mut range_len = first_range.length;
++                    let Some(mapping) = block.mapped_range.as_ref() else {
++                        return Err((
++                            completed,
++                            anyhow::anyhow!("file-range upload is missing its mapped window"),
++                        ));
++                    };
++                    while scan < end {
++                        let (next_request, next_block) = &blocks[scan];
++                        let Some(next) = next_block.file_range else {
++                            break;
++                        };
++                        let same_mapping = next_block
++                            .mapped_range
++                            .as_ref()
++                            .is_some_and(|candidate| Arc::ptr_eq(mapping, candidate));
++                        let previous = blocks[scan - 1]
++                            .1
++                            .file_range
++                            .expect("file-range run has a prior range");
++                        if next.file_ordinal != first_range.file_ordinal
++                            || next.offset != previous.offset + previous.length as u64
++                            || next_block.choke_critical != block.choke_critical
++                            || !same_mapping
++                            || next_request.wire_piece != request.wire_piece
++                        {
++                            end = scan;
++                            break;
++                        }
++                        let Some(total) = range_len.checked_add(next.length) else {
++                            return Err((
++                                completed,
++                                anyhow::anyhow!("file-range upload batch length overflow"),
++                            ));
++                        };
++                        range_len = total;
++                        scan += 1;
++                    }
++                    let Some(file) = upload.piece_map.file_by_ordinal(first_range.file_ordinal)
++                    else {
++                        return Err((
++                            completed,
++                            anyhow::anyhow!("file-range upload is outside the piece map"),
++                        ));
++                    };
++                    let path = file.path.resolve(&upload.save_root);
++                    let path_matches = mapping
++                        .matches_current_path(&path)
++                        .map_err(|error| (completed, anyhow::Error::from(error)))?;
++                    if !path_matches {
++                        return Err((
++                            completed,
++                            anyhow::anyhow!("mapped upload file no longer matches its path"),
++                        ));
++                    }
++                    match timeout(
++                        remaining_peer_write_time(deadline),
++                        send_mapped_file_range_frames(
++                            stream,
++                            &blocks[index..end],
++                            mapping.window_offset(),
++                            mapping.as_ref(),
++                        ),
++                    )
++                    .await
++                    {
++                        Ok(Ok(frames)) => completed += frames,
++                        Ok(Err((frames, error))) => return Err((completed + frames, error.into())),
++                        Err(_) => {
++                            return Err((
++                                completed,
++                                anyhow::anyhow!("peer socket write timed out"),
++                            ));
++                        }
++                    }
++                    let path_matches = mapping
++                        .matches_current_path(&path)
++                        .map_err(|error| (completed, anyhow::Error::from(error)))?;
++                    if !path_matches {
++                        return Err((
++                            completed,
++                            anyhow::anyhow!("mapped upload file changed during socket write"),
++                        ));
++                    }
++                    index = end;
++                } else {
++                    let header = match piece_frame_header(
++                        request.wire_piece,
++                        request.wire_begin,
++                        block.data.len(),
++                    ) {
++                        Ok(header) => header,
++                        Err(error) => return Err((completed, error)),
++                    };
++                    match timeout(
++                        remaining_peer_write_time(deadline),
++                        write_piece_vectored(stream, &header, &block.data),
++                    )
++                    .await
++                    {
++                        Ok(Ok(())) => completed += 1,
++                        Ok(Err(error)) => return Err((completed, error.into())),
++                        Err(_) => {
++                            return Err((
++                                completed,
++                                anyhow::anyhow!("peer socket write timed out"),
++                            ));
++                        }
++                    }
++                    index += 1;
++                }
++            }
++            Ok(completed)
++        }
++
++        #[cfg(not(target_os = "linux"))]
++        {
++            Err((
++                0,
++                anyhow::anyhow!("file-range uploads are unavailable on this platform"),
++            ))
++        }
++    }
++
+     pub(crate) async fn next(&mut self) -> anyhow::Result<Option<Message>> {
+         match self {
+             PeerIo::Tcp(framed) => match framed.next().await {
+@@ -8454,6 +8627,205 @@ impl PeerIo {
+     }
+ }
+ 
++fn piece_frame_header(piece: u32, begin: u32, payload_len: usize) -> anyhow::Result<[u8; 13]> {
++    let message_len = 9usize
++        .checked_add(payload_len)
++        .and_then(|length| u32::try_from(length).ok())
++        .ok_or_else(|| anyhow::anyhow!("piece frame length exceeds u32"))?;
++    let mut header = [0u8; 13];
++    header[..4].copy_from_slice(&message_len.to_be_bytes());
++    header[4] = 7;
++    header[5..9].copy_from_slice(&piece.to_be_bytes());
++    header[9..13].copy_from_slice(&begin.to_be_bytes());
++    Ok(header)
++}
++
++fn remaining_peer_write_time(deadline: Instant) -> Duration {
++    deadline.saturating_duration_since(Instant::now())
++}
++
++#[cfg(target_os = "linux")]
++async fn send_mapped_file_range_frames(
++    stream: &mut TcpStream,
++    blocks: &[(UploadRequest, LeasedUploadBlock)],
++    range_offset: u64,
++    mapping: &MappedFileRange,
++) -> Result<usize, (usize, std::io::Error)> {
++    use std::os::fd::AsRawFd;
++    use tokio::io::Interest;
++
++    if blocks.is_empty() || blocks.len() > MAX_UPLOAD_READ_BATCH_BLOCKS {
++        return Err((
++            0,
++            std::io::Error::new(
++                std::io::ErrorKind::InvalidInput,
++                "mapped Piece frame group exceeds its bound",
++            ),
++        ));
++    }
++
++    let mut headers = [[0u8; 13]; MAX_UPLOAD_READ_BATCH_BLOCKS];
++    let mut cursors = [(0usize, 0usize); MAX_UPLOAD_READ_BATCH_BLOCKS];
++    for (index, (request, block)) in blocks.iter().enumerate() {
++        let Some(range) = block.file_range else {
++            return Err((
++                0,
++                std::io::Error::new(
++                    std::io::ErrorKind::InvalidInput,
++                    "mapped Piece frame lacks a file range",
++                ),
++            ));
++        };
++        let header = piece_frame_header(request.wire_piece, request.wire_begin, range.length)
++            .map_err(|error| {
++                (
++                    0,
++                    std::io::Error::new(std::io::ErrorKind::InvalidInput, error.to_string()),
++                )
++            })?;
++        headers[index] = header;
++        let relative = range.offset.checked_sub(range_offset).ok_or_else(|| {
++            (
++                0,
++                std::io::Error::new(
++                    std::io::ErrorKind::InvalidInput,
++                    "mapped Piece range precedes its mapping",
++                ),
++            )
++        })?;
++        let relative = usize::try_from(relative).map_err(|_| {
++            (
++                0,
++                std::io::Error::new(
++                    std::io::ErrorKind::InvalidInput,
++                    "mapped Piece offset exceeds usize",
++                ),
++            )
++        })?;
++        if relative
++            .checked_add(range.length)
++            .is_none_or(|end| end > mapping.len())
++        {
++            return Err((
++                0,
++                std::io::Error::new(
++                    std::io::ErrorKind::InvalidInput,
++                    "mapped Piece range exceeds its mapping",
++                ),
++            ));
++        }
++    }
++
++    let fd = stream.as_raw_fd();
++    loop {
++        let completed = blocks
++            .iter()
++            .enumerate()
++            .take_while(|(index, (_, block))| {
++                let length = block.file_range.map_or(0, |range| range.length);
++                cursors[*index].0 == headers[*index].len() && cursors[*index].1 == length
++            })
++            .count();
++        if completed == blocks.len() {
++            return Ok(completed);
++        }
++
++        let write_result = {
++            let mut iovecs: [libc::iovec; MAX_UPLOAD_READ_BATCH_BLOCKS * 2] =
++                std::array::from_fn(|_| libc::iovec {
++                    iov_base: std::ptr::null_mut(),
++                    iov_len: 0,
++                });
++            let mut iovec_count = 0usize;
++            for (index, (_, block)) in blocks.iter().enumerate().skip(completed) {
++                let range = block.file_range.expect("mapped group checked above");
++                let (header_offset, payload_offset) = cursors[index];
++                if header_offset < headers[index].len() {
++                    iovecs[iovec_count] = libc::iovec {
++                        iov_base: headers[index][header_offset..].as_ptr() as *mut libc::c_void,
++                        iov_len: headers[index].len() - header_offset,
++                    };
++                    iovec_count += 1;
++                }
++                if payload_offset < range.length {
++                    let relative = usize::try_from(range.offset - range_offset)
++                        .expect("mapped group offset checked above");
++                    let pointer = mapping
++                        .pointer_at(relative + payload_offset)
++                        .expect("mapped payload offset checked above");
++                    iovecs[iovec_count] = libc::iovec {
++                        iov_base: pointer as *mut libc::c_void,
++                        iov_len: range.length - payload_offset,
++                    };
++                    iovec_count += 1;
++                }
++            }
++
++            // SAFETY: the iovecs and their header storage live through this syscall.
++            // Payload pointers belong to mapping, retained for the entire function.
++            // No Rust slice or reference is formed over mmap data.
++            let mut message: libc::msghdr = unsafe { std::mem::zeroed() };
++            message.msg_iov = iovecs.as_mut_ptr();
++            message.msg_iovlen = iovec_count;
++            stream.try_io(Interest::WRITABLE, || {
++                // SAFETY: fd is the live nonblocking TcpStream; each iovec refers to
++                // live header storage or a retained read-only mapping, consumed only
++                // for this synchronous sendmsg call.
++                let sent =
++                    unsafe { libc::sendmsg(fd, &message, libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL) };
++                if sent < 0 {
++                    Err(std::io::Error::last_os_error())
++                } else {
++                    Ok(sent as usize)
++                }
++            })
++        };
++        match write_result {
++            Ok(0) => {
++                return Err((
++                    completed,
++                    std::io::Error::new(
++                        std::io::ErrorKind::WriteZero,
++                        "mapped Piece send made no progress",
++                    ),
++                ));
++            }
++            Ok(sent) => {
++                let mut remaining = sent;
++                for (index, (_, block)) in blocks.iter().enumerate().skip(completed) {
++                    if remaining == 0 {
++                        break;
++                    }
++                    let range = block.file_range.expect("mapped group checked above");
++                    let header_remaining = headers[index].len() - cursors[index].0;
++                    let header_sent = remaining.min(header_remaining);
++                    cursors[index].0 += header_sent;
++                    remaining -= header_sent;
++                    let payload_remaining = range.length - cursors[index].1;
++                    let payload_sent = remaining.min(payload_remaining);
++                    cursors[index].1 += payload_sent;
++                    remaining -= payload_sent;
++                }
++                if remaining != 0 {
++                    return Err((
++                        completed,
++                        std::io::Error::new(
++                            std::io::ErrorKind::InvalidData,
++                            "sendmsg reported more bytes than the mapped iovecs",
++                        ),
++                    ));
++                }
++            }
++            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
++                if let Err(error) = stream.writable().await {
++                    return Err((completed, error));
++                }
++            }
++            Err(error) => return Err((completed, error)),
++        }
++    }
++}
++
+ async fn write_piece_vectored<W>(
+     stream: &mut W,
+     header: &[u8; 13],
+@@ -9005,6 +9377,12 @@ where
+         upload_control: upload.upload_control.clone(),
+         upload_rate: upload.upload_rate.clone(),
+         read_admission: upload_obligations.read_admission(),
++        // Peer-loop unit tests keep exercising the buffered scheduler path
++        // unless they explicitly opt in; the dedicated file-range test below
++        // covers the production Linux TCP fast path.
++        file_range_enabled: cfg!(target_os = "linux")
++            && !cfg!(test)
++            && matches!(&peer_io, PeerIo::Tcp(_)),
+     });
+     // BEP 10 extension ids are negotiated per peer. The id in our outgoing
+     // handshake is the id this loop receives from the peer; responses must
+@@ -9903,24 +10281,20 @@ where
+                 }
+ 
+                 if !ready_uploads.is_empty() {
+-                    let frames = ready_uploads
+-                        .iter()
+-                        .map(|(request, block)| {
+-                            (request.wire_piece, request.wire_begin, &block.data)
+-                        })
+-                        .collect::<UploadBatch<_>>();
+-                    let (completed_frames, send_error) = match peer_io.send_pieces(&frames).await {
++                    let (completed_frames, send_error) = match peer_io
++                        .send_upload_blocks(&ready_uploads, &upload_read_context)
++                        .await
++                    {
+                         Ok(completed) => (completed, None),
+                         Err((completed, error)) => (completed, Some(error)),
+                     };
+-                    drop(frames);
+                     let completed_frames = completed_frames.min(ready_uploads.len());
+                     let mut upload_event_due = false;
+                     for (request, mut block) in ready_uploads
+                         .into_iter()
+                         .take(completed_frames)
+                     {
+-                        let bytes = block.data.len() as u64;
++                        let bytes = block.len() as u64;
+                         if let Some(grant) = block.rate_grant.take() {
+                             grant.settle(bytes);
+                         }
+@@ -10355,9 +10729,13 @@ async fn read_upload_block_with_span(
+     );
+     Ok(LeasedUploadBlock {
+         data,
+-        _lease: UploadMemoryLease::Single { _lease: lease },
++        file_range: None,
++        #[cfg(target_os = "linux")]
++        mapped_range: None,
++        _lease: Some(UploadMemoryLease::Single { _lease: lease }),
+         _read_permit,
+         rate_grant: None,
++        choke_critical,
+     })
+ }
+ 
+@@ -10488,6 +10866,12 @@ async fn read_upload_batch_blocks(
+         !specs.is_empty() && specs.len() <= MAX_UPLOAD_READ_BATCH_BLOCKS,
+         "upload batch has an invalid request count"
+     );
++    #[cfg(target_os = "linux")]
++    if upload.file_range_enabled && specs.iter().all(|spec| spec.span.is_some()) {
++        if let Some(blocks) = read_upload_file_range_blocks(upload, specs).await? {
++            return Ok(blocks);
++        }
++    }
+     if specs.len() == 1 || specs.iter().any(|spec| spec.span.is_none()) {
+         let mut blocks = UploadBatch::new();
+         for spec in specs {
+@@ -10594,11 +10978,15 @@ async fn read_upload_batch_blocks(
+         let end = offset + length;
+         blocks.push(LeasedUploadBlock {
+             data: backing.slice(offset..end),
+-            _lease: UploadMemoryLease::Shared {
++            file_range: None,
++            #[cfg(target_os = "linux")]
++            mapped_range: None,
++            _lease: Some(UploadMemoryLease::Shared {
+                 _lease: Arc::clone(&shared_lease),
+-            },
++            }),
+             _read_permit: read_permit,
+             rate_grant: None,
++            choke_critical: spec.choke_critical,
+         });
+         offset = end;
+     }
+@@ -10606,6 +10994,95 @@ async fn read_upload_batch_blocks(
+     Ok(blocks)
+ }
+ 
++#[cfg(target_os = "linux")]
++async fn read_upload_file_range_blocks(
++    upload: &UploadReadContext,
++    specs: &[UploadReadSpec],
++) -> anyhow::Result<Option<UploadBatch<LeasedUploadBlock>>> {
++    anyhow::ensure!(
++        upload.file_range_enabled && upload.plane == Plane::V1,
++        "file-range uploads require the enabled v1 fast path"
++    );
++    let first = specs.first().expect("nonempty upload batch checked above");
++    let first_span = first.span.expect("file-range spans checked above");
++    let mut blocks = [BlockExtent::new(0, 0, 1); MAX_UPLOAD_READ_BATCH_BLOCKS];
++    let mut total_len = 0usize;
++    for (index, spec) in specs.iter().enumerate() {
++        let span = spec.span.expect("file-range spans checked above");
++        let request = spec.request;
++        let block = request.canonical_block();
++        anyhow::ensure!(
++            request.wire_block() == block
++                && block.length > 0
++                && block.length <= MAX_BLOCK_SIZE
++                && span.length == block.length as usize
++                && spec.choke_critical == first.choke_critical,
++            "file-range upload has an invalid request or extent"
++        );
++        if index > 0 {
++            let previous = &specs[index - 1];
++            let previous_span = previous.span.expect("file-range spans checked above");
++            anyhow::ensure!(
++                block.piece == previous.request.piece
++                    && span.file_ordinal == first_span.file_ordinal
++                    && previous_span
++                        .offset
++                        .checked_add(previous_span.length as u64)
++                        == Some(span.offset),
++                "file-range upload batch crossed a piece, file, or non-contiguous extent"
++            );
++        }
++        blocks[index] = block;
++        total_len = total_len
++            .checked_add(span.length)
++            .ok_or_else(|| anyhow::anyhow!("file-range upload batch length overflow"))?;
++    }
++
++    anyhow::ensure!(
++        total_len <= MAX_UPLOAD_READ_BATCH_BYTES,
++        "file-range upload batch exceeds its bounded size"
++    );
++
++    let file = upload
++        .piece_map
++        .file_by_ordinal(first_span.file_ordinal)
++        .ok_or_else(|| anyhow::anyhow!("file-range upload is outside the piece map"))?;
++    let path = file.path.resolve(&upload.save_root);
++    let deadline = Instant::now() + PEER_SOCKET_WRITE_TIMEOUT;
++    let priority = if first.choke_critical {
++        IoRequestPriority::choke_critical(deadline)
++    } else {
++        IoRequestPriority::deadline(deadline)
++    };
++    let Some(mapping) = upload
++        .storage
++        .map_file_range_lease(&path, first_span.offset, total_len, priority)
++        .await?
++    else {
++        return Ok(None);
++    };
++
++    let read_permits = upload
++        .read_admission
++        .acquire_read_batch(&blocks[..specs.len()])
++        .await
++        .map_err(|error| anyhow::anyhow!("global upload read admission failed: {error:?}"))?;
++    let mut result = UploadBatch::new();
++    for (spec, read_permit) in specs.iter().zip(read_permits) {
++        let span = spec.span.expect("file-range spans checked above");
++        result.push(LeasedUploadBlock {
++            data: bytes::Bytes::new(),
++            file_range: Some(span),
++            mapped_range: Some(Arc::clone(&mapping)),
++            _lease: None,
++            _read_permit: read_permit,
++            rate_grant: None,
++            choke_critical: spec.choke_critical,
++        });
++    }
++    Ok(Some(result))
++}
++
+ async fn upload_read_batch_future(
+     specs: UploadBatch<UploadReadSpec>,
+     read_context: Arc<UploadReadContext>,
+@@ -10648,7 +11125,7 @@ async fn upload_read_batch_future(
+             };
+             match result {
+                 Ok(mut block) => {
+-                    let bytes = block.data.len() as u64;
++                    let bytes = block.len() as u64;
+                     let (result, rate_interrupted) = match read_context
+                         .upload_rate
+                         .network_budget
+@@ -10909,6 +11386,8 @@ fn webseed_error_for_log(error: &anyhow::Error) -> String {
+ 
+ #[cfg(test)]
+ mod tests {
++    use std::os::fd::AsRawFd;
++
+     use rt_fastresume::PreviousRun;
+     use rt_path::SafeRelPath;
+     use sha1::{Digest, Sha1};
+@@ -11371,6 +11850,7 @@ mod tests {
+             upload_control: RateLimitCancellation::default(),
+             upload_rate,
+             read_admission: upload_registration.read_admission(),
++            file_range_enabled: false,
+         };
+         let block = read_upload_block(&upload, UploadRequest::new(canonical, wire), false)
+             .await
+@@ -11378,7 +11858,10 @@ mod tests {
+ 
+         assert_eq!(block.data.as_ref(), b"abc");
+         assert_eq!(block.data.len(), wire.length as usize);
+-        assert_eq!(block._lease.bytes(), u64::from(canonical.length));
++        assert_eq!(
++            block._lease.as_ref().unwrap().bytes(),
++            u64::from(canonical.length)
++        );
+         drop(block);
+         assert_eq!(
+             resources.snapshot().classes[MemoryClass::PeerBuffer as usize].used_bytes,
+@@ -17275,6 +17758,7 @@ mod tests {
+             upload_control: upload.upload_control.clone(),
+             upload_rate: upload.upload_rate.clone(),
+             read_admission: upload_registration.read_admission(),
++            file_range_enabled: false,
+         };
+         let extent = BlockExtent::new(0, 0, 16 * 1024);
+         let block = read_upload_block(&read_context, UploadRequest::from_wire(extent), false)
+@@ -17336,6 +17820,7 @@ mod tests {
+             upload_control: RateLimitCancellation::default(),
+             upload_rate,
+             read_admission: upload_registration.read_admission(),
++            file_range_enabled: false,
+         };
+         let first_request = UploadRequest::from_wire(BlockExtent::new(0, 0, MAX_BLOCK_SIZE));
+         let second_request =
+@@ -17373,6 +17858,205 @@ mod tests {
+         );
+     }
+ 
++    #[cfg(target_os = "linux")]
++    #[tokio::test]
++    async fn tcp_upload_sends_verified_file_range_as_a_piece_frame() {
++        let dir = tempfile::tempdir().unwrap();
++        let payload = vec![0x6d; MAX_BLOCK_SIZE as usize];
++        std::fs::write(dir.path().join("payload.bin"), &payload).unwrap();
++        let piece_map = Arc::new(
++            PieceMap::new(
++                u64::from(MAX_BLOCK_SIZE),
++                vec![FileSpan {
++                    file_index: 0,
++                    path: SafeRelPath::from_name("payload.bin", false).unwrap(),
++                    content_offset: 0,
++                    length: u64::from(MAX_BLOCK_SIZE),
++                }],
++            )
++            .unwrap(),
++        );
++        let upload_rate = test_upload_rate_admission(None, 0).await;
++        let registration = upload_rate
++            .network_budget
++            .upload_service()
++            .register(upload_rate.peer, false, MAX_UPLOAD_WORK)
++            .unwrap();
++        let upload = UploadReadContext {
++            save_root: dir.path().to_path_buf(),
++            piece_map,
++            hybrid_v2: None,
++            plane: Plane::V1,
++            storage: MountScheduler::new_for_path(
++                StorageRootId::new(),
++                dir.path(),
++                &SchedulerConfig {
++                    profile: StorageProfile::Unknown,
++                    ..Default::default()
++                },
++            ),
++            resources: ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default()),
++            upload_control: RateLimitCancellation::default(),
++            upload_rate,
++            read_admission: registration.read_admission(),
++            file_range_enabled: true,
++        };
++        let extent = BlockExtent::new(0, 0, MAX_BLOCK_SIZE);
++        let request = UploadRequest::from_wire(extent);
++        let spec = UploadReadSpec {
++            request,
++            span: upload_read_span(&upload, request),
++            choke_critical: false,
++        };
++        let mut blocks = read_upload_batch_blocks(&upload, &[spec]).await.unwrap();
++        assert!(blocks[0].data.is_empty());
++        assert_eq!(blocks[0].len(), payload.len());
++        assert!(blocks[0]._lease.is_none());
++
++        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let remote = TcpStream::connect(listener.local_addr().unwrap())
++            .await
++            .unwrap();
++        let (server, _) = listener.accept().await.unwrap();
++        let mut peer_io = PeerIo::Tcp(Framed::new(server, PeerCodec::default()));
++        let mut ready = UploadBatch::new();
++        ready.push((request, blocks.pop().unwrap()));
++        assert_eq!(
++            peer_io.send_upload_blocks(&ready, &upload).await.unwrap(),
++            1
++        );
++
++        let mut remote = Framed::new(remote, PeerCodec::default());
++        let message = timeout(Duration::from_secs(2), remote.next())
++            .await
++            .expect("file-range Piece frame should arrive")
++            .expect("peer should remain connected")
++            .expect("Piece frame should decode");
++        assert!(matches!(
++            message,
++            Message::Piece { piece: 0, begin: 0, data } if data.as_ref() == payload.as_slice()
++        ));
++    }
++
++    #[cfg(target_os = "linux")]
++    #[tokio::test]
++    async fn tcp_file_range_upload_recovers_from_socket_backpressure() {
++        const BLOCKS: usize = 16;
++        let dir = tempfile::tempdir().unwrap();
++        let block_size = MAX_BLOCK_SIZE as usize;
++        let payload: Vec<u8> = (0..BLOCKS)
++            .flat_map(|index| std::iter::repeat_n(index as u8, block_size))
++            .collect();
++        std::fs::write(dir.path().join("payload.bin"), &payload).unwrap();
++        let piece_map = Arc::new(
++            PieceMap::new(
++                payload.len() as u64,
++                vec![FileSpan {
++                    file_index: 0,
++                    path: SafeRelPath::from_name("payload.bin", false).unwrap(),
++                    content_offset: 0,
++                    length: payload.len() as u64,
++                }],
++            )
++            .unwrap(),
++        );
++        let upload_rate = test_upload_rate_admission(None, 0).await;
++        let registration = upload_rate
++            .network_budget
++            .upload_service()
++            .register(upload_rate.peer, false, MAX_UPLOAD_WORK)
++            .unwrap();
++        let upload = UploadReadContext {
++            save_root: dir.path().to_path_buf(),
++            piece_map,
++            hybrid_v2: None,
++            plane: Plane::V1,
++            storage: MountScheduler::new_for_path(
++                StorageRootId::new(),
++                dir.path(),
++                &SchedulerConfig {
++                    profile: StorageProfile::Unknown,
++                    ..Default::default()
++                },
++            ),
++            resources: ResourceGovernor::new(rt_metrics::ResourceGovernorConfig::default()),
++            upload_control: RateLimitCancellation::default(),
++            upload_rate,
++            read_admission: registration.read_admission(),
++            file_range_enabled: true,
++        };
++        let specs: Vec<_> = (0..BLOCKS)
++            .map(|index| {
++                let request = UploadRequest::from_wire(BlockExtent::new(
++                    0,
++                    index as u32 * MAX_BLOCK_SIZE,
++                    MAX_BLOCK_SIZE,
++                ));
++                UploadReadSpec {
++                    request,
++                    span: upload_read_span(&upload, request),
++                    choke_critical: false,
++                }
++            })
++            .collect();
++        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let remote = TcpStream::connect(listener.local_addr().unwrap())
++            .await
++            .unwrap();
++        let (server, _) = listener.accept().await.unwrap();
++        let send_buffer: libc::c_int = 4096;
++        // SAFETY: `server` owns a live socket; the option value and length are
++        // valid for SO_SNDBUF.
++        let result = unsafe {
++            libc::setsockopt(
++                server.as_raw_fd(),
++                libc::SOL_SOCKET,
++                libc::SO_SNDBUF,
++                (&send_buffer as *const libc::c_int).cast(),
++                std::mem::size_of_val(&send_buffer) as libc::socklen_t,
++            )
++        };
++        assert_eq!(result, 0, "could not constrain test socket send buffer");
++        let reader = tokio::spawn(async move {
++            sleep(Duration::from_millis(25)).await;
++            let mut remote = Framed::new(remote, PeerCodec::default());
++            for index in 0..BLOCKS {
++                let message = timeout(Duration::from_secs(5), remote.next())
++                    .await
++                    .expect("backpressured Piece frame should arrive")
++                    .expect("remote peer should remain connected")
++                    .expect("Piece frame should decode");
++                match message {
++                    Message::Piece { piece, begin, data } => {
++                        assert_eq!(piece, 0);
++                        assert_eq!(begin, index as u32 * MAX_BLOCK_SIZE);
++                        assert_eq!(data.as_ref(), &vec![index as u8; block_size]);
++                    }
++                    other => panic!("expected Piece frame, received {other:?}"),
++                }
++            }
++        });
++
++        let mut peer_io = PeerIo::Tcp(Framed::new(server, PeerCodec::default()));
++        let started = Instant::now();
++        for batch in specs.chunks(MAX_UPLOAD_READ_BATCH_BLOCKS) {
++            let blocks = read_upload_batch_blocks(&upload, batch).await.unwrap();
++            let mut ready = UploadBatch::new();
++            for (spec, block) in batch.iter().zip(blocks) {
++                ready.push((spec.request, block));
++            }
++            assert_eq!(
++                peer_io.send_upload_blocks(&ready, &upload).await.unwrap(),
++                batch.len()
++            );
++        }
++        assert!(
++            started.elapsed() >= Duration::from_millis(20),
++            "test socket did not apply backpressure"
++        );
++        reader.await.unwrap();
++    }
++
+     #[tokio::test]
+     async fn upload_batch_resource_denial_fails_all_members_without_partial_admission() {
+         let dir = tempfile::tempdir().unwrap();
+@@ -17418,6 +18102,7 @@ mod tests {
+             upload_control: RateLimitCancellation::default(),
+             upload_rate,
+             read_admission: upload_registration.read_admission(),
++            file_range_enabled: false,
+         };
+         let requests = [
+             BlockExtent::new(0, 0, MAX_BLOCK_SIZE),
+@@ -17492,6 +18177,7 @@ mod tests {
+             upload_rate,
+             upload_control: RateLimitCancellation::default(),
+             read_admission: upload_registration.read_admission(),
++            file_range_enabled: false,
+         };
+ 
+         let extent = BlockExtent::new(0, 0, 16);
+diff --git a/crates/rt-storage/src/handle_cache.rs b/crates/rt-storage/src/handle_cache.rs
+index 929de592..86f080c2 100644
+--- a/crates/rt-storage/src/handle_cache.rs
++++ b/crates/rt-storage/src/handle_cache.rs
+@@ -52,6 +52,14 @@ impl OpenFile {
+         &self.file
+     }
+ 
++    /// Whether this descriptor still names the current filesystem object at
++    /// `path`. File-range users hold the open descriptor across asynchronous
++    /// socket writes, so they must recheck the path generation at each I/O
++    /// boundary just like the positioned-read path does.
++    pub fn matches_current_path(&self, path: &Path) -> io::Result<bool> {
++        identity_matches_path(path, self.file.identity())
++    }
++
+     pub(crate) fn leased_handle(&self) -> Arc<LeasedFileHandle> {
+         Arc::new(LeasedFileHandle::new(Arc::clone(&self.file)))
+     }
+diff --git a/crates/rt-storage/src/lib.rs b/crates/rt-storage/src/lib.rs
+index b4851adc..90d91bd5 100644
+--- a/crates/rt-storage/src/lib.rs
++++ b/crates/rt-storage/src/lib.rs
+@@ -67,6 +67,8 @@ pub use plan::{
+     ImportPlanRequest, MovePlanRequest, PlanIssue, PlannedStorageAction, StoragePlan,
+     StoragePlanExecution, StoragePlanStep,
+ };
++#[cfg(target_os = "linux")]
++pub use scheduler::MappedFileRange;
+ pub use scheduler::{
+     active_storage_backend_snapshot, preallocation_mode_for_topology, ActiveStorageBackend,
+     ActiveStorageBackendSnapshot, DurabilityBarrierEvidence, DurabilityMode, FilePoolStats,
+diff --git a/crates/rt-storage/src/scheduler.rs b/crates/rt-storage/src/scheduler.rs
+index 712500ec..f772a036 100644
+--- a/crates/rt-storage/src/scheduler.rs
++++ b/crates/rt-storage/src/scheduler.rs
+@@ -1,6 +1,8 @@
+ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+ use std::fs::File;
+ use std::io;
++#[cfg(target_os = "linux")]
++use std::os::fd::AsRawFd;
+ use std::path::{Path, PathBuf};
+ use std::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
+ use std::sync::{mpsc, Arc, Mutex, MutexGuard, Weak};
+@@ -32,7 +34,7 @@ use crate::{
+     fd_limit::process_handle_cache_capacity,
+     file_handle::{LeasedFile, LeasedFileHandle},
+     frame::{global_frame_pool, try_global_frame_pool, Frame},
+-    handle_cache::HandleCache,
++    handle_cache::{HandleCache, OpenFile},
+     io_class::IoClass,
+     open::{create_dir_all_no_follow, normalized_storage_path, FileIdentity},
+ };
+@@ -388,6 +390,89 @@ pub enum StorageRead {
+     Bytes(bytes::Bytes),
+ }
+ 
++/// One bounded nonblocking file-to-socket operation on Linux.
++/// A bounded read-only file mapping held across a direct TCP write.
++///
++/// The payload is exposed only as a raw pointer for a synchronous `sendmsg`
++/// call. Callers must not construct Rust references from it: another process
++/// can modify or truncate the backing file outside TorrentNG's storage locks.
++#[cfg(target_os = "linux")]
++#[derive(Debug)]
++pub struct MappedFileRange {
++    base: usize,
++    mapped_len: usize,
++    window_offset: u64,
++    length: usize,
++    file: Arc<OpenFile>,
++    _budget: OwnedSemaphorePermit,
++}
++
++#[cfg(target_os = "linux")]
++const MAPPED_UPLOAD_WINDOW_BYTES: u64 = 1024 * 1024;
++
++#[cfg(target_os = "linux")]
++static MAPPED_UPLOAD_WINDOW_BUDGET: Lazy<Arc<Semaphore>> =
++    Lazy::new(|| Arc::new(Semaphore::new(1)));
++
++#[cfg(target_os = "linux")]
++static MAPPED_UPLOAD_WINDOW_CACHE: Lazy<Mutex<VecDeque<(PathBuf, u64, Arc<MappedFileRange>)>>> =
++    Lazy::new(|| Mutex::new(VecDeque::with_capacity(1)));
++
++#[cfg(target_os = "linux")]
++impl MappedFileRange {
++    pub fn len(&self) -> usize {
++        self.length
++    }
++
++    pub fn is_empty(&self) -> bool {
++        self.length == 0
++    }
++
++    pub fn window_offset(&self) -> u64 {
++        self.window_offset
++    }
++
++    pub fn covers_file_range(&self, offset: u64, length: usize) -> bool {
++        let Ok(length) = u64::try_from(length) else {
++            return false;
++        };
++        let Some(end) = offset.checked_add(length) else {
++            return false;
++        };
++        let Some(window_end) = self.window_offset.checked_add(self.length as u64) else {
++            return false;
++        };
++        offset >= self.window_offset && end <= window_end
++    }
++
++    /// Return a raw pointer into the mapped window at a window-relative byte
++    /// offset. The pointer is valid only while `self` remains alive and must
++    /// be used synchronously without creating a Rust reference.
++    pub fn pointer_at(&self, offset: usize) -> Option<*const u8> {
++        if offset >= self.length {
++            return None;
++        }
++        self.base
++            .checked_add(offset)
++            .map(|address| address as *const u8)
++    }
++
++    pub fn matches_current_path(&self, path: &Path) -> io::Result<bool> {
++        self.file.matches_current_path(path)
++    }
++}
++
++#[cfg(target_os = "linux")]
++impl Drop for MappedFileRange {
++    fn drop(&mut self) {
++        // SAFETY: `base` and `mapped_len` are the exact successful mmap pair
++        // created by `map_file_range_lease`, and this owner unmaps them once.
++        unsafe {
++            libc::munmap(self.base as *mut libc::c_void, self.mapped_len);
++        }
++    }
++}
++
+ impl StorageRead {
+     pub fn len(&self) -> usize {
+         match self {
+@@ -1058,6 +1143,28 @@ fn current_file_identity(
+     verify_path_identity(path, file.identity(), operation)
+ }
+ 
++#[cfg(target_os = "linux")]
++fn verify_open_file_path(
++    path: &Path,
++    file: &OpenFile,
++    operation: &'static str,
++) -> Result<(), StorageError> {
++    match file.matches_current_path(path) {
++        Ok(true) => Ok(()),
++        Ok(false) => Err(StorageError::FilesystemStateUncertain {
++            step: operation,
++            reason: format!(
++                "file path {} was replaced during storage I/O",
++                path.display()
++            ),
++        }),
++        Err(error) => Err(StorageError::FilesystemStateUncertain {
++            step: operation,
++            reason: format!("cannot verify file path {}: {error}", path.display()),
++        }),
++    }
++}
++
+ fn verify_path_identity(
+     path: &Path,
+     identity: FileIdentity,
+@@ -4185,13 +4292,45 @@ impl MountScheduler {
+         additional_paths: &[PathBuf],
+         operation: F,
+     ) -> Result<T, StorageError>
++    where
++        T: Send + 'static,
++        F: FnOnce() -> Result<T, StorageError> + Send + 'static,
++    {
++        self.run_device_operation_with_paths_priority(
++            class,
++            queued_bytes,
++            additional_paths,
++            IoRequestPriority::normal(),
++            operation,
++        )
++        .await
++    }
++
++    /// Priority-aware form of [`MountScheduler::run_device_operation_with_paths`].
++    /// Urgent peer obligations use the same shared physical-device queue as
++    /// positioned reads, so file-range serving does not bypass choke-critical
++    /// or deadline admission.
++    pub async fn run_device_operation_with_paths_priority<T, F>(
++        &self,
++        class: IoClass,
++        queued_bytes: u64,
++        additional_paths: &[PathBuf],
++        priority: IoRequestPriority,
++        operation: F,
++    ) -> Result<T, StorageError>
+     where
+         T: Send + 'static,
+         F: FnOnce() -> Result<T, StorageError> + Send + 'static,
+     {
+         let queues = self.device_queue_set_for_paths(additional_paths);
+-        self.run_device_operation_with_queue_set(class, queued_bytes, &queues, operation)
+-            .await
++        self.run_device_operation_with_queues_priority(
++            class,
++            queued_bytes,
++            queues.additional_queues.clone(),
++            priority,
++            operation,
++        )
++        .await
+     }
+ 
+     pub(crate) fn device_queue_set_for_paths(&self, paths: &[PathBuf]) -> DeviceQueueSet {
+@@ -4244,6 +4383,28 @@ impl MountScheduler {
+         additional_queues: Vec<(String, String, Arc<DeviceQueue>)>,
+         operation: F,
+     ) -> Result<T, StorageError>
++    where
++        T: Send + 'static,
++        F: FnOnce() -> Result<T, StorageError> + Send + 'static,
++    {
++        self.run_device_operation_with_queues_priority(
++            class,
++            queued_bytes,
++            additional_queues,
++            IoRequestPriority::normal(),
++            operation,
++        )
++        .await
++    }
++
++    async fn run_device_operation_with_queues_priority<T, F>(
++        &self,
++        class: IoClass,
++        queued_bytes: u64,
++        additional_queues: Vec<(String, String, Arc<DeviceQueue>)>,
++        priority: IoRequestPriority,
++        operation: F,
++    ) -> Result<T, StorageError>
+     where
+         T: Send + 'static,
+         F: FnOnce() -> Result<T, StorageError> + Send + 'static,
+@@ -4262,7 +4423,7 @@ impl MountScheduler {
+         let mut submission = self.reserve_mount_submission(queued_bytes)?;
+         let mut permits = Vec::with_capacity(queues.len());
+         for (_, mount, queue) in queues {
+-            match queue.acquire(class, mount).await {
++            match queue.acquire_with_priority(class, mount, priority).await {
+                 Ok(permit) => permits.push(permit),
+                 Err(error) => {
+                     if matches!(error, StorageError::QueueFull { .. }) {
+@@ -4435,6 +4596,242 @@ impl MountScheduler {
+             .map(StorageRead::into_bytes)
+     }
+ 
++    /// Map a bounded file range and fault its pages on the storage worker.
++    /// The returned owner keeps the descriptor and mapping alive while the TCP
++    /// writer passes raw pointers to a synchronous, nonblocking sendmsg call.
++    #[cfg(target_os = "linux")]
++    pub async fn map_file_range_lease(
++        &self,
++        path: &Path,
++        offset: u64,
++        length: usize,
++        priority: IoRequestPriority,
++    ) -> Result<Option<Arc<MappedFileRange>>, StorageError> {
++        const MAX_MAPPED_RANGE: usize = 1024 * 1024;
++
++        if length == 0 || length > MAX_MAPPED_RANGE {
++            return Err(StorageError::io(
++                path.display().to_string(),
++                io::Error::new(
++                    io::ErrorKind::InvalidInput,
++                    "mapped range size is outside limits",
++                ),
++            ));
++        }
++        let range_length = u64::try_from(length).map_err(|_| {
++            StorageError::io(
++                path.display().to_string(),
++                io::Error::new(
++                    io::ErrorKind::InvalidInput,
++                    "mapped range length exceeds u64",
++                ),
++            )
++        })?;
++        let range_end = checked_file_range_end(path, offset, range_length)?;
++        let window_offset = offset / MAPPED_UPLOAD_WINDOW_BYTES * MAPPED_UPLOAD_WINDOW_BYTES;
++        let window_limit = window_offset
++            .checked_add(MAPPED_UPLOAD_WINDOW_BYTES)
++            .ok_or_else(|| {
++                StorageError::io(
++                    path.display().to_string(),
++                    io::Error::new(io::ErrorKind::InvalidInput, "mapped window overflows"),
++                )
++            })?;
++        if range_end > window_limit {
++            return Ok(None);
++        }
++
++        let started = Instant::now();
++        let counters = Arc::clone(&self.counters);
++        let cached = {
++            let mut cache = MAPPED_UPLOAD_WINDOW_CACHE
++                .lock()
++                .unwrap_or_else(std::sync::PoisonError::into_inner);
++            let index = cache.iter().position(|(cached_path, cached_offset, _)| {
++                cached_path == path && *cached_offset == window_offset
++            });
++            index.map(|index| {
++                let entry = cache
++                    .remove(index)
++                    .expect("mapped cache index came from this deque");
++                let mapping = Arc::clone(&entry.2);
++                cache.push_front(entry);
++                mapping
++            })
++        };
++        if let Some(mapping) = cached {
++            match mapping.matches_current_path(path) {
++                Ok(true) if mapping.covers_file_range(offset, length) => {
++                    let class = class_index(IoClass::PeerRead);
++                    counters.read_ops_by_class[class].fetch_add(1, Ordering::Relaxed);
++                    counters.bytes_read_by_class[class].fetch_add(range_length, Ordering::Relaxed);
++                    let latency_ns = latency_ns_since(started);
++                    counters.read_latency_ns_by_class[class]
++                        .fetch_add(latency_ns, Ordering::Relaxed);
++                    record_latency_bucket(&counters.read_latency_buckets, latency_ns);
++                    return Ok(Some(mapping));
++                }
++                Ok(false) => {}
++                Ok(true) => {}
++                Err(error) => return Err(StorageError::io(path.display().to_string(), error)),
++            }
++            let mut cache = MAPPED_UPLOAD_WINDOW_CACHE
++                .lock()
++                .unwrap_or_else(std::sync::PoisonError::into_inner);
++            cache.retain(|(_, _, candidate)| !Arc::ptr_eq(candidate, &mapping));
++        }
++
++        // Only one shared mapped window is retained process-wide. Eviction
++        // drops the mapping when no upload still owns it; the semaphore also
++        // bounds transient in-flight windows. If another send still owns the
++        // old window, fall back to the normal buffered scheduler path.
++        MAPPED_UPLOAD_WINDOW_CACHE
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .clear();
++        let window_budget = match Arc::clone(&MAPPED_UPLOAD_WINDOW_BUDGET).try_acquire_owned() {
++            Ok(permit) => permit,
++            Err(_) => return Ok(None),
++        };
++        let Some(peer_read_permit) = self.try_acquire(IoClass::PeerRead) else {
++            return Ok(None);
++        };
++        let pool = Arc::clone(&self.file_pool);
++        let path = path.to_path_buf();
++        let cache_key_path = path.clone();
++        let additional_paths = [path.clone()];
++        let mapping = self
++            .run_device_operation_with_paths_priority(
++                IoClass::PeerRead,
++                MAPPED_UPLOAD_WINDOW_BYTES,
++                &additional_paths,
++                priority,
++                move || {
++                    let _peer_read_permit = peer_read_permit;
++                    let file = pool
++                        .catalog
++                        .get_or_open(&path, false, false)
++                        .map_err(|error| StorageError::io(path.display().to_string(), error))?;
++                    verify_open_file_path(&path, &file, "file_range_map_open")?;
++                    let file_length = file
++                        .file()
++                        .metadata()
++                        .map_err(|error| StorageError::io(path.display().to_string(), error))?
++                        .len();
++                    if range_end > file_length {
++                        let available = file_length.saturating_sub(offset);
++                        return Err(StorageError::ShortIo {
++                            path: path.display().to_string(),
++                            expected: length,
++                            actual: usize::try_from(available).unwrap_or(usize::MAX),
++                        });
++                    }
++                    let window_end = window_offset
++                        .saturating_add(MAPPED_UPLOAD_WINDOW_BYTES)
++                        .min(file_length);
++                    let window_length =
++                        usize::try_from(window_end - window_offset).map_err(|_| {
++                            StorageError::io(
++                                path.display().to_string(),
++                                io::Error::new(
++                                    io::ErrorKind::InvalidInput,
++                                    "mapped window exceeds usize",
++                                ),
++                            )
++                        })?;
++
++                    let raw_page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
++                    if raw_page_size <= 0 {
++                        return Err(StorageError::io(
++                            path.display().to_string(),
++                            io::Error::last_os_error(),
++                        ));
++                    }
++                    let page_size = usize::try_from(raw_page_size).map_err(|_| {
++                        StorageError::io(
++                            path.display().to_string(),
++                            io::Error::new(io::ErrorKind::InvalidData, "invalid page size"),
++                        )
++                    })?;
++                    let mapped_len = window_length
++                        .checked_add(page_size - 1)
++                        .map(|size| size / page_size * page_size)
++                        .ok_or_else(|| {
++                            StorageError::io(
++                                path.display().to_string(),
++                                io::Error::new(
++                                    io::ErrorKind::InvalidInput,
++                                    "mapped length overflow",
++                                ),
++                            )
++                        })?;
++                    let map_offset = libc::off_t::try_from(window_offset).map_err(|_| {
++                        StorageError::io(
++                            path.display().to_string(),
++                            io::Error::new(io::ErrorKind::InvalidInput, "offset exceeds off_t"),
++                        )
++                    })?;
++                    // SAFETY: the open-file lease is retained by the mapping,
++                    // the requested bytes fit the checked file length, and
++                    // the mapping is read-only and aligned to the 1 MiB window.
++                    let base = unsafe {
++                        libc::mmap(
++                            std::ptr::null_mut(),
++                            mapped_len,
++                            libc::PROT_READ,
++                            libc::MAP_SHARED,
++                            file.file().as_raw_fd(),
++                            map_offset,
++                        )
++                    };
++                    if base == libc::MAP_FAILED {
++                        return Err(StorageError::io(
++                            path.display().to_string(),
++                            io::Error::last_os_error(),
++                        ));
++                    }
++                    let mapping = MappedFileRange {
++                        base: base as usize,
++                        mapped_len,
++                        window_offset,
++                        length: window_length,
++                        file,
++                        _budget: window_budget,
++                    };
++
++                    // Warm a bounded mapped window on the storage worker so
++                    // cold faults do not run on the Tokio peer task. Truncation
++                    // by an external writer remains a known SIGBUS limitation.
++                    for page_offset in (0..window_length).step_by(page_size) {
++                        // SAFETY: this page begins within the validated file
++                        // window and is read without forming a Rust reference.
++                        unsafe {
++                            std::ptr::read_volatile((mapping.base + page_offset) as *const u8);
++                        }
++                    }
++                    verify_open_file_path(&path, &mapping.file, "file_range_map_after")?;
++                    Ok(mapping)
++                },
++            )
++            .await?;
++
++        let mapping = Arc::new(mapping);
++        {
++            let mut cache = MAPPED_UPLOAD_WINDOW_CACHE
++                .lock()
++                .unwrap_or_else(std::sync::PoisonError::into_inner);
++            cache.clear();
++            cache.push_front((cache_key_path, window_offset, Arc::clone(&mapping)));
++        }
++        let class = class_index(IoClass::PeerRead);
++        counters.read_ops_by_class[class].fetch_add(1, Ordering::Relaxed);
++        counters.bytes_read_by_class[class].fetch_add(range_length, Ordering::Relaxed);
++        let latency_ns = latency_ns_since(started);
++        counters.read_latency_ns_by_class[class].fetch_add(latency_ns, Ordering::Relaxed);
++        record_latency_bucket(&counters.read_latency_buckets, latency_ns);
++        Ok(Some(mapping))
++    }
++
+     pub async fn read_owned_at(
+         &self,
+         class: IoClass,
+@@ -8453,6 +8850,42 @@ mod tests {
+         ));
+     }
+ 
++    #[cfg(target_os = "linux")]
++    #[tokio::test]
++    async fn mapped_upload_range_reads_exact_bytes_and_detects_replaced_path() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("payload.bin");
++        std::fs::write(&path, b"0123456789abcdef").unwrap();
++        let scheduler = MountScheduler::new_for_path(
++            StorageRootId::new(),
++            dir.path(),
++            &SchedulerConfig::default(),
++        );
++        let mapping = scheduler
++            .map_file_range_lease(&path, 4, 6, IoRequestPriority::normal())
++            .await
++            .unwrap()
++            .expect("first map request should acquire the bounded window");
++        let reused = scheduler
++            .map_file_range_lease(&path, 8, 4, IoRequestPriority::normal())
++            .await
++            .unwrap()
++            .expect("second map request should reuse the same window");
++        assert!(Arc::ptr_eq(&mapping, &reused));
++        let pointer = mapping
++            .pointer_at((4 - mapping.window_offset()) as usize)
++            .unwrap();
++        // SAFETY: the temporary payload is stable for the lifetime of this
++        // test mapping, and the slice remains within its six-byte range.
++        let bytes = unsafe { std::slice::from_raw_parts(pointer, 6) };
++        assert_eq!(bytes, b"456789");
++
++        let replacement = dir.path().join("replacement.bin");
++        std::fs::write(&replacement, b"replacement").unwrap();
++        std::fs::rename(&replacement, &path).unwrap();
++        assert!(!mapping.matches_current_path(&path).unwrap());
++    }
++
+     #[tokio::test]
+     async fn file_pool_records_hits_and_evictions() {
+         let dir = tempfile::tempdir().unwrap();

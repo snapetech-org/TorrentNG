@@ -1,0 +1,144 @@
+diff --git a/crates/rt-storage/src/scheduler.rs b/crates/rt-storage/src/scheduler.rs
+index 712500ec..eb48cde2 100644
+--- a/crates/rt-storage/src/scheduler.rs
++++ b/crates/rt-storage/src/scheduler.rs
+@@ -879,6 +879,7 @@ fn local_scheduler_resources(io_config: &StorageIoConfig) -> Arc<SharedScheduler
+ /// history.
+ #[derive(Debug, Default)]
+ struct PeerReadStreams {
++    active: Option<(PathBuf, PeerReadStream)>,
+     files: HashMap<PathBuf, PeerReadStream>,
+     sequence: u64,
+ }
+@@ -894,6 +895,42 @@ struct PeerReadStream {
+ impl PeerReadStreams {
+     const MAX_TRACKED_FILES: usize = 1024;
+ 
++    #[cfg(test)]
++    fn len(&self) -> usize {
++        self.files.len() + usize::from(self.active.is_some())
++    }
++
++    fn update_stream(
++        stream: &mut PeerReadStream,
++        offset: u64,
++        len: usize,
++        max_readahead_bytes: usize,
++        cache_hit: bool,
++        last_used: u64,
++    ) -> (bool, usize) {
++        let end = offset.saturating_add(len as u64);
++        let sequential = stream.next_offset == offset;
++        if sequential {
++            let next = if stream.sequential_reads == 0 {
++                len.saturating_mul(2)
++            } else if cache_hit {
++                stream
++                    .recommended_bytes
++                    .saturating_add((stream.recommended_bytes / 4).max(len))
++            } else {
++                stream.recommended_bytes
++            };
++            stream.sequential_reads = stream.sequential_reads.saturating_add(1);
++            stream.recommended_bytes = next.min(max_readahead_bytes.max(len));
++        } else {
++            stream.sequential_reads = 0;
++            stream.recommended_bytes = len;
++        }
++        stream.next_offset = end;
++        stream.last_used = last_used;
++        (sequential, stream.recommended_bytes)
++    }
++
+     /// Record a read and return whether it continued plus its current
+     /// reuse-driven readahead recommendation.
+     fn observe(
+@@ -907,28 +944,35 @@ impl PeerReadStreams {
+         self.sequence = self.sequence.saturating_add(1).max(1);
+         let last_used = self.sequence;
+         let end = offset.saturating_add(len as u64);
+-        if let Some(stream) = self.files.get_mut(key) {
+-            let sequential = stream.next_offset == offset;
+-            if sequential {
+-                let next = if stream.sequential_reads == 0 {
+-                    len.saturating_mul(2)
+-                } else if cache_hit {
+-                    stream
+-                        .recommended_bytes
+-                        .saturating_add((stream.recommended_bytes / 4).max(len))
+-                } else {
+-                    stream.recommended_bytes
+-                };
+-                stream.sequential_reads = stream.sequential_reads.saturating_add(1);
+-                stream.recommended_bytes = next.min(max_readahead_bytes.max(len));
+-            } else {
+-                stream.sequential_reads = 0;
+-                stream.recommended_bytes = len;
++        if let Some((active_path, stream)) = self.active.as_mut() {
++            if active_path == key {
++                return Self::update_stream(
++                    stream,
++                    offset,
++                    len,
++                    max_readahead_bytes,
++                    cache_hit,
++                    last_used,
++                );
+             }
+-            stream.next_offset = end;
+-            stream.last_used = last_used;
+-            return (sequential, stream.recommended_bytes);
+         }
++
++        if let Some((active_path, active_stream)) = self.active.take() {
++            self.files.insert(active_path, active_stream);
++        }
++        if let Some(mut stream) = self.files.remove(key) {
++            let result = Self::update_stream(
++                &mut stream,
++                offset,
++                len,
++                max_readahead_bytes,
++                cache_hit,
++                last_used,
++            );
++            self.active = Some((key.to_path_buf(), stream));
++            return result;
++        }
++
+         if self.files.len() >= Self::MAX_TRACKED_FILES {
+             if let Some(oldest) = self
+                 .files
+@@ -939,7 +983,7 @@ impl PeerReadStreams {
+                 self.files.remove(&oldest);
+             }
+         }
+-        self.files.insert(
++        self.active = Some((
+             key.to_path_buf(),
+             PeerReadStream {
+                 next_offset: end,
+@@ -947,7 +991,7 @@ impl PeerReadStreams {
+                 recommended_bytes: len,
+                 last_used,
+             },
+-        );
++        ));
+         (false, len)
+     }
+ }
+@@ -11976,12 +12020,12 @@ mod tests {
+             let path = PathBuf::from(format!("/payload/{index}.bin"));
+             streams.observe(&path, 0, 16, 128, false);
+         }
+-        assert_eq!(streams.files.len(), PeerReadStreams::MAX_TRACKED_FILES);
++        assert_eq!(streams.len(), PeerReadStreams::MAX_TRACKED_FILES);
+ 
+         assert!(streams.observe(hot, 32, 16, 128, false).0);
+         streams.observe(Path::new("/payload/overflow.bin"), 0, 16, 128, false);
+ 
+-        assert_eq!(streams.files.len(), PeerReadStreams::MAX_TRACKED_FILES);
++        assert_eq!(streams.len(), PeerReadStreams::MAX_TRACKED_FILES);
+         assert!(streams.observe(hot, 48, 16, 128, false).0);
+         assert!(
+             !streams
