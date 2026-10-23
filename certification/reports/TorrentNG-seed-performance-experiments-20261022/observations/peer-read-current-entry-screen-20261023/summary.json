@@ -1,0 +1,220 @@
+{
+  "format": "torrentng-peer-read-current-entry-screen-v1",
+  "source_revision": "4d13f9d0ecdc13f877be73f3d0a266ef1f52abea",
+  "candidate_binary_sha256": "a341021e406ec94291e6f5b124d7a1d39f074f6b3005ab2c57f90b40f75f5e9f",
+  "control_binary_sha256": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+  "rtorrent_binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+  "fixture_seed": 20261022,
+  "backend": "pread",
+  "rate_bytes_per_second": 4194304,
+  "screens": [
+    {
+      "fixture_bytes": 16777216,
+      "fixture_sha256": "8720b45a392e63940e529552c5cb8be01e422e0fc58b538302c952f19c37f012",
+      "randomized_orders": [
+        [
+          "control",
+          "candidate",
+          "rt"
+        ],
+        [
+          "control",
+          "rt",
+          "candidate"
+        ],
+        [
+          "candidate",
+          "control",
+          "rt"
+        ]
+      ],
+      "runs": [
+        {
+          "round": 1,
+          "name": "control",
+          "binary_sha256": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+          "cpu_seconds_per_gib": 4.114813,
+          "peak_pss_mib": 18.93,
+          "peak_anonymous_mib": 6.422,
+          "verified": true,
+          "verified_bytes": 16777216,
+          "payload_sha256": "8720b45a392e63940e529552c5cb8be01e422e0fc58b538302c952f19c37f012"
+        },
+        {
+          "round": 1,
+          "name": "candidate",
+          "binary_sha256": "a341021e406ec94291e6f5b124d7a1d39f074f6b3005ab2c57f90b40f75f5e9f",
+          "cpu_seconds_per_gib": 5.145642,
+          "peak_pss_mib": 18.477,
+          "peak_anonymous_mib": 5.992,
+          "verified": true,
+          "verified_bytes": 16777216,
+          "payload_sha256": "8720b45a392e63940e529552c5cb8be01e422e0fc58b538302c952f19c37f012"
+        },
+        {
+          "round": 1,
+          "name": "rt",
+          "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+          "cpu_seconds_per_gib": 3.422584,
+          "peak_pss_mib": 7.22,
+          "peak_anonymous_mib": 3.09,
+          "verified": true,
+          "verified_bytes": 16777216,
+          "payload_sha256": "8720b45a392e63940e529552c5cb8be01e422e0fc58b538302c952f19c37f012"
+        },
+        {
+          "round": 2,
+          "name": "control",
+          "binary_sha256": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+          "cpu_seconds_per_gib": 6.119035,
+          "peak_pss_mib": 18.762,
+          "peak_anonymous_mib": 6.039,
+          "verified": true,
+          "verified_bytes": 16777216,
+          "payload_sha256": "8720b45a392e63940e529552c5cb8be01e422e0fc58b538302c952f19c37f012"
+        },
+        {
+          "round": 2,
+          "name": "rt",
+          "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+          "cpu_seconds_per_gib": 2.881894,
+          "peak_pss_mib": 7.452,
+          "peak_anonymous_mib": 3.086,
+          "verified": true,
+          "verified_bytes": 16777216,
+          "payload_sha256": "8720b45a392e63940e529552c5cb8be01e422e0fc58b538302c952f19c37f012"
+        },
+        {
+          "round": 2,
+          "name": "candidate",
+          "binary_sha256": "a341021e406ec94291e6f5b124d7a1d39f074f6b3005ab2c57f90b40f75f5e9f",
+          "cpu_seconds_per_gib": 4.88117,
+          "peak_pss_mib": 18.863,
+          "peak_anonymous_mib": 5.965,
+          "verified": true,
+          "verified_bytes": 16777216,
+          "payload_sha256": "8720b45a392e63940e529552c5cb8be01e422e0fc58b538302c952f19c37f012"
+        },
+        {
+          "round": 3,
+          "name": "candidate",
+          "binary_sha256": "a341021e406ec94291e6f5b124d7a1d39f074f6b3005ab2c57f90b40f75f5e9f",
+          "cpu_seconds_per_gib": 4.285556,
+          "peak_pss_mib": 18.724,
+          "peak_anonymous_mib": 6.172,
+          "verified": true,
+          "verified_bytes": 16777216,
+          "payload_sha256": "8720b45a392e63940e529552c5cb8be01e422e0fc58b538302c952f19c37f012"
+        },
+        {
+          "round": 3,
+          "name": "control",
+          "binary_sha256": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+          "cpu_seconds_per_gib": 5.107114,
+          "peak_pss_mib": 18.587,
+          "peak_anonymous_mib": 5.965,
+          "verified": true,
+          "verified_bytes": 16777216,
+          "payload_sha256": "8720b45a392e63940e529552c5cb8be01e422e0fc58b538302c952f19c37f012"
+        },
+        {
+          "round": 3,
+          "name": "rt",
+          "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+          "cpu_seconds_per_gib": 1.887111,
+          "peak_pss_mib": 7.455,
+          "peak_anonymous_mib": 3.082,
+          "verified": true,
+          "verified_bytes": 16777216,
+          "payload_sha256": "8720b45a392e63940e529552c5cb8be01e422e0fc58b538302c952f19c37f012"
+        }
+      ]
+    },
+    {
+      "fixture_bytes": 67108864,
+      "fixture_sha256": "8af49d1a03a46b0c37cec828399114fa8cdff11c13a32820a33dab5824646737",
+      "randomized_orders": [
+        [
+          "control",
+          "candidate"
+        ],
+        [
+          "control",
+          "candidate"
+        ],
+        [
+          "candidate",
+          "control"
+        ]
+      ],
+      "runs": [
+        {
+          "round": 1,
+          "name": "control",
+          "binary_sha256": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+          "cpu_seconds_per_gib": 3.516686,
+          "peak_pss_mib": 18.731,
+          "peak_anonymous_mib": 6.027,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "8af49d1a03a46b0c37cec828399114fa8cdff11c13a32820a33dab5824646737"
+        },
+        {
+          "round": 1,
+          "name": "candidate",
+          "binary_sha256": "a341021e406ec94291e6f5b124d7a1d39f074f6b3005ab2c57f90b40f75f5e9f",
+          "cpu_seconds_per_gib": 3.787376,
+          "peak_pss_mib": 18.642,
+          "peak_anonymous_mib": 6.039,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "8af49d1a03a46b0c37cec828399114fa8cdff11c13a32820a33dab5824646737"
+        },
+        {
+          "round": 2,
+          "name": "control",
+          "binary_sha256": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+          "cpu_seconds_per_gib": 3.59479,
+          "peak_pss_mib": 19.044,
+          "peak_anonymous_mib": 6.48,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "8af49d1a03a46b0c37cec828399114fa8cdff11c13a32820a33dab5824646737"
+        },
+        {
+          "round": 2,
+          "name": "candidate",
+          "binary_sha256": "a341021e406ec94291e6f5b124d7a1d39f074f6b3005ab2c57f90b40f75f5e9f",
+          "cpu_seconds_per_gib": 4.061478,
+          "peak_pss_mib": 19.018,
+          "peak_anonymous_mib": 6.465,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "8af49d1a03a46b0c37cec828399114fa8cdff11c13a32820a33dab5824646737"
+        },
+        {
+          "round": 3,
+          "name": "candidate",
+          "binary_sha256": "a341021e406ec94291e6f5b124d7a1d39f074f6b3005ab2c57f90b40f75f5e9f",
+          "cpu_seconds_per_gib": 4.322729,
+          "peak_pss_mib": 18.591,
+          "peak_anonymous_mib": 5.988,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "8af49d1a03a46b0c37cec828399114fa8cdff11c13a32820a33dab5824646737"
+        },
+        {
+          "round": 3,
+          "name": "control",
+          "binary_sha256": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+          "cpu_seconds_per_gib": 5.992285,
+          "peak_pss_mib": 18.63,
+          "peak_anonymous_mib": 6.027,
+          "verified": true,
+          "verified_bytes": 67108864,
+          "payload_sha256": "8af49d1a03a46b0c37cec828399114fa8cdff11c13a32820a33dab5824646737"
+        }
+      ]
+    }
+  ]
+}

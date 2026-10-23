@@ -87,6 +87,11 @@ same eight-frame loopback `writev` path. The four counter-balanced pairs had
 mixed CPU results and no memory measurement, so the mmap path remains a
 microprobe rather than a production candidate.
 
+[`peer-read-current-entry-screen-20261023/`](peer-read-current-entry-screen-20261023/)
+preserves a separate `PeerReadStreams` current-entry cache candidate. It used
+4.4% less CPU in the 16 MiB screen, then 13.0% more CPU in the 64 MiB screen;
+PSS and anonymous memory were effectively tied. Keep the existing cache path.
+
 The later `MALLOC_ARENA_MAX=1` three-peer follow-up is also captured in
 [`arena-cap-concurrent-followup-20261023/`](arena-cap-concurrent-followup-20261023/):
 it reduced memory but increased CPU in all three randomized rounds, replacing
