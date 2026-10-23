@@ -1,0 +1,315 @@
+{
+  "candidate": {
+    "binary_artifact": "candidate.torrentngd.gz",
+    "binary_sha256": "42a4432424d6d7ababe4a1f341bec7b11ce9b2811d55226099c07b2eaa2c9e94",
+    "change": "Skip the completed-frame read-capacity admission call when the existing PeerBuffer lease already covers BytesMut capacity; keep the admission path for uncharged prefilled buffers and later growth.",
+    "patch_artifact": "candidate.patch.gz",
+    "patch_sha256": "b2de0d0aadb118a1fe62c351ead8eaf611c80c74a540721e2e456262e9ab05c8",
+    "patch_sha256_scope": "SHA-256 of the patch after decompressing candidate.patch.gz",
+    "source_parent": "6683d993"
+  },
+  "confirmation_three_round": {
+    "guard_vs_control_percent_change": {
+      "cpu_seconds_per_gib": 44.54,
+      "peak_anonymous_mib": 5.16,
+      "peak_pss_mib": 0.75
+    },
+    "median": {
+      "control": {
+        "cpu_seconds_per_gib": 6.182778544,
+        "peak_anonymous_mib": 5.984375,
+        "peak_pss_mib": 18.6611328125
+      },
+      "guard": {
+        "cpu_seconds_per_gib": 8.936853888,
+        "peak_anonymous_mib": 6.29296875,
+        "peak_pss_mib": 18.8017578125
+      },
+      "rt": {
+        "cpu_seconds_per_gib": 3.263675168,
+        "peak_anonymous_mib": 3.09765625,
+        "peak_pss_mib": 7.5029296875
+      }
+    },
+    "paired_cpu_percent_change_by_round": {
+      "1": -11.62,
+      "2": 81.94,
+      "3": 68.02
+    },
+    "randomized_orders": [
+      [
+        "control",
+        "rt",
+        "guard"
+      ],
+      [
+        "guard",
+        "rt",
+        "control"
+      ],
+      [
+        "rt",
+        "control",
+        "guard"
+      ]
+    ],
+    "runs": [
+      {
+        "binary_sha256": "844479163668b69bfe378838540dd9973fb60b3a781c237a2eefbd0d33d2fd07",
+        "client": "control",
+        "cpu_seconds_per_gib": 10.112124624,
+        "kind": "torrentngd",
+        "payload_cpu_seconds": 0.632007789,
+        "payload_seconds": 16.000887247995706,
+        "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8",
+        "peak_anonymous_mib": 5.984375,
+        "peak_pss_mib": 18.81640625,
+        "peak_rss_mib": 21.7109375,
+        "round": 1,
+        "screen": "randomized-three-round",
+        "verified": true
+      },
+      {
+        "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+        "client": "rt",
+        "cpu_seconds_per_gib": 3.202000608,
+        "kind": "rtorrent",
+        "payload_cpu_seconds": 0.200125038,
+        "payload_seconds": 16.000062809005613,
+        "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8",
+        "peak_anonymous_mib": 3.09765625,
+        "peak_pss_mib": 7.4638671875,
+        "peak_rss_mib": 20.5546875,
+        "round": 1,
+        "screen": "randomized-three-round",
+        "verified": true
+      },
+      {
+        "binary_sha256": "42a4432424d6d7ababe4a1f341bec7b11ce9b2811d55226099c07b2eaa2c9e94",
+        "client": "guard",
+        "cpu_seconds_per_gib": 8.936853888,
+        "kind": "torrentngd",
+        "payload_cpu_seconds": 0.558553368,
+        "payload_seconds": 16.002920589002315,
+        "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8",
+        "peak_anonymous_mib": 5.98828125,
+        "peak_pss_mib": 18.7666015625,
+        "peak_rss_mib": 21.65234375,
+        "round": 1,
+        "screen": "randomized-three-round",
+        "verified": true
+      },
+      {
+        "binary_sha256": "42a4432424d6d7ababe4a1f341bec7b11ce9b2811d55226099c07b2eaa2c9e94",
+        "client": "guard",
+        "cpu_seconds_per_gib": 11.248824736,
+        "kind": "torrentngd",
+        "payload_cpu_seconds": 0.703051546,
+        "payload_seconds": 16.000081709004007,
+        "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8",
+        "peak_anonymous_mib": 6.29296875,
+        "peak_pss_mib": 18.8017578125,
+        "peak_rss_mib": 21.6640625,
+        "round": 2,
+        "screen": "randomized-three-round",
+        "verified": true
+      },
+      {
+        "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+        "client": "rt",
+        "cpu_seconds_per_gib": 3.445581792,
+        "kind": "rtorrent",
+        "payload_cpu_seconds": 0.215348862,
+        "payload_seconds": 16.000082903978182,
+        "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8",
+        "peak_anonymous_mib": 3.09765625,
+        "peak_pss_mib": 7.5732421875,
+        "peak_rss_mib": 20.64453125,
+        "round": 2,
+        "screen": "randomized-three-round",
+        "verified": true
+      },
+      {
+        "binary_sha256": "844479163668b69bfe378838540dd9973fb60b3a781c237a2eefbd0d33d2fd07",
+        "client": "control",
+        "cpu_seconds_per_gib": 6.182778544,
+        "kind": "torrentngd",
+        "payload_cpu_seconds": 0.386423659,
+        "payload_seconds": 16.00010034799925,
+        "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8",
+        "peak_anonymous_mib": 6.00390625,
+        "peak_pss_mib": 18.6611328125,
+        "peak_rss_mib": 21.52734375,
+        "round": 2,
+        "screen": "randomized-three-round",
+        "verified": true
+      },
+      {
+        "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+        "client": "rt",
+        "cpu_seconds_per_gib": 3.263675168,
+        "kind": "rtorrent",
+        "payload_cpu_seconds": 0.203979698,
+        "payload_seconds": 16.000079959980212,
+        "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8",
+        "peak_anonymous_mib": 3.09765625,
+        "peak_pss_mib": 7.5029296875,
+        "peak_rss_mib": 20.3984375,
+        "round": 3,
+        "screen": "randomized-three-round",
+        "verified": true
+      },
+      {
+        "binary_sha256": "844479163668b69bfe378838540dd9973fb60b3a781c237a2eefbd0d33d2fd07",
+        "client": "control",
+        "cpu_seconds_per_gib": 5.28798512,
+        "kind": "torrentngd",
+        "payload_cpu_seconds": 0.33049907,
+        "payload_seconds": 16.000088888016762,
+        "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8",
+        "peak_anonymous_mib": 5.96875,
+        "peak_pss_mib": 18.4775390625,
+        "peak_rss_mib": 21.36328125,
+        "round": 3,
+        "screen": "randomized-three-round",
+        "verified": true
+      },
+      {
+        "binary_sha256": "42a4432424d6d7ababe4a1f341bec7b11ce9b2811d55226099c07b2eaa2c9e94",
+        "client": "guard",
+        "cpu_seconds_per_gib": 8.884689808,
+        "kind": "torrentngd",
+        "payload_cpu_seconds": 0.555293113,
+        "payload_seconds": 16.000110910012154,
+        "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8",
+        "peak_anonymous_mib": 6.4921875,
+        "peak_pss_mib": 19.0478515625,
+        "peak_rss_mib": 21.93359375,
+        "round": 3,
+        "screen": "randomized-three-round",
+        "verified": true
+      }
+    ]
+  },
+  "control": {
+    "binary_sha256": "844479163668b69bfe378838540dd9973fb60b3a781c237a2eefbd0d33d2fd07"
+  },
+  "decision": "Do not promote. On the three-round median the candidate used 44.5% more CPU, 0.8% more PSS, and 5.2% more anonymous memory. CPU improved in only one of three pairs; the host load prevents treating the median as a stable regression. Preserve the source patch and exact candidate binary for a quieter retest if a future profile points to this guard.",
+  "format": "torrentng-peer-codec-capacity-fastpath-screen-v1",
+  "initial_one_round": {
+    "randomized_orders": [
+      [
+        "control",
+        "rt",
+        "guard"
+      ]
+    ],
+    "runs": [
+      {
+        "binary_sha256": "844479163668b69bfe378838540dd9973fb60b3a781c237a2eefbd0d33d2fd07",
+        "client": "control",
+        "cpu_seconds_per_gib": 5.874449552,
+        "kind": "torrentngd",
+        "payload_cpu_seconds": 0.367153097,
+        "payload_seconds": 16.000066623993916,
+        "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8",
+        "peak_anonymous_mib": 6.1328125,
+        "peak_pss_mib": 18.96875,
+        "peak_rss_mib": 21.86328125,
+        "round": 1,
+        "screen": "initial-one-round",
+        "verified": true
+      },
+      {
+        "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+        "client": "rt",
+        "cpu_seconds_per_gib": 1.8014952,
+        "kind": "rtorrent",
+        "payload_cpu_seconds": 0.11259345,
+        "payload_seconds": 16.000059817015426,
+        "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8",
+        "peak_anonymous_mib": 3.09765625,
+        "peak_pss_mib": 7.4677734375,
+        "peak_rss_mib": 20.59375,
+        "round": 1,
+        "screen": "initial-one-round",
+        "verified": true
+      },
+      {
+        "binary_sha256": "42a4432424d6d7ababe4a1f341bec7b11ce9b2811d55226099c07b2eaa2c9e94",
+        "client": "guard",
+        "cpu_seconds_per_gib": 3.427845824,
+        "kind": "torrentngd",
+        "payload_cpu_seconds": 0.214240364,
+        "payload_seconds": 16.000060250982642,
+        "payload_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8",
+        "peak_anonymous_mib": 5.96875,
+        "peak_pss_mib": 18.8681640625,
+        "peak_rss_mib": 21.75,
+        "round": 1,
+        "screen": "initial-one-round",
+        "verified": true
+      }
+    ]
+  },
+  "rtorrent": {
+    "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+    "version": "0.16.25"
+  },
+  "screening_conditions": {
+    "confirmation_cpu_affinity": [
+      8
+    ],
+    "confirmation_load_average_after": "24.64 26.10 22.45",
+    "confirmation_load_average_before": "27.05 26.28 21.01",
+    "confirmation_randomized_orders": [
+      [
+        "control",
+        "rt",
+        "guard"
+      ],
+      [
+        "guard",
+        "rt",
+        "control"
+      ],
+      [
+        "rt",
+        "control",
+        "guard"
+      ]
+    ],
+    "cpu8_sibling": "24",
+    "initial_cpu_affinity": [
+      4
+    ],
+    "initial_load_average_after": "32.74 26.61 20.66",
+    "initial_load_average_before": "29.82 22.72 18.64",
+    "initial_order": [
+      "control",
+      "rt",
+      "guard"
+    ],
+    "machine": "kspld0",
+    "note": "Host was heavily loaded. CPU values varied substantially by round and this is not a clean performance determination.",
+    "sibling_24_busy_percent_in_one_second_sample": 96.0
+  },
+  "status": "not-promoted-no-stable-resource-win",
+  "validation": {
+    "all_transfers_verified": true,
+    "format_check": "passed",
+    "peer_wire_tests": "60 passed, 0 failed, 1 ignored",
+    "release_build": "cargo +1.94.0 build --locked --release -p torrentngd",
+    "verified_transfer_count": 12
+  },
+  "workload": {
+    "block_bytes": 16384,
+    "fixture_bytes": 67108864,
+    "fixture_seed": 20261023,
+    "fixture_sha256": "6a7477ab1cb9ad9fa86da28fbc3a2b1d1f11aa299919f2c643011e9668459cd8",
+    "offered_rate_bytes_per_second": 4194304,
+    "request_window": 32,
+    "storage_backend": "pread",
+    "transport": "loopback TCP"
+  }
+}

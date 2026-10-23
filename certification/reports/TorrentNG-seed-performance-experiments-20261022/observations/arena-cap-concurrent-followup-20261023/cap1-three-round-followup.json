@@ -1,0 +1,139 @@
+{
+  "format": "torrentng-seed-arena1-multipeer-followup-v1",
+  "payload_mib_per_peer": 16,
+  "peer_count": 3,
+  "leecher_rate_bytes_per_second": 4194304,
+  "rounds": [
+    {
+      "round": 1,
+      "order": [
+        "arena",
+        "control",
+        "rt"
+      ],
+      "fixture_sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3",
+      "runs": [
+        {
+          "name": "arena",
+          "binary_sha256": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+          "cpu_seconds_per_gib": 2.844794,
+          "peak_pss_mib": 16.923,
+          "peak_anonymous_mib": 4.367,
+          "verified_peers": 3,
+          "verified_bytes": 50331648
+        },
+        {
+          "name": "control",
+          "binary_sha256": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+          "cpu_seconds_per_gib": 2.027349,
+          "peak_pss_mib": 18.61,
+          "peak_anonymous_mib": 6.055,
+          "verified_peers": 3,
+          "verified_bytes": 50331648
+        },
+        {
+          "name": "rt",
+          "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+          "cpu_seconds_per_gib": 1.214221,
+          "peak_pss_mib": 7.606,
+          "peak_anonymous_mib": 3.086,
+          "verified_peers": 3,
+          "verified_bytes": 50331648
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "order": [
+        "rt",
+        "control",
+        "arena"
+      ],
+      "fixture_sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3",
+      "runs": [
+        {
+          "name": "rt",
+          "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+          "cpu_seconds_per_gib": 1.73877,
+          "peak_pss_mib": 7.421,
+          "peak_anonymous_mib": 3.082,
+          "verified_peers": 3,
+          "verified_bytes": 50331648
+        },
+        {
+          "name": "control",
+          "binary_sha256": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+          "cpu_seconds_per_gib": 2.545347,
+          "peak_pss_mib": 18.739,
+          "peak_anonymous_mib": 6.035,
+          "verified_peers": 3,
+          "verified_bytes": 50331648
+        },
+        {
+          "name": "arena",
+          "binary_sha256": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+          "cpu_seconds_per_gib": 2.957212,
+          "peak_pss_mib": 17.746,
+          "peak_anonymous_mib": 4.969,
+          "verified_peers": 3,
+          "verified_bytes": 50331648
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "order": [
+        "control",
+        "arena",
+        "rt"
+      ],
+      "fixture_sha256": "132646868d8a9abf88d5fe16244ec101009f6b76613437514dbd41769d3943d3",
+      "runs": [
+        {
+          "name": "control",
+          "binary_sha256": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+          "cpu_seconds_per_gib": 1.919195,
+          "peak_pss_mib": 19.071,
+          "peak_anonymous_mib": 6.301,
+          "verified_peers": 3,
+          "verified_bytes": 50331648
+        },
+        {
+          "name": "arena",
+          "binary_sha256": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+          "cpu_seconds_per_gib": 2.10366,
+          "peak_pss_mib": 17.263,
+          "peak_anonymous_mib": 4.363,
+          "verified_peers": 3,
+          "verified_bytes": 50331648
+        },
+        {
+          "name": "rt",
+          "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+          "cpu_seconds_per_gib": 1.175993,
+          "peak_pss_mib": 7.629,
+          "peak_anonymous_mib": 3.086,
+          "verified_peers": 3,
+          "verified_bytes": 50331648
+        }
+      ]
+    }
+  ],
+  "median_cpu_seconds_per_gib": {
+    "control": 2.027349,
+    "arena1": 2.844794
+  },
+  "median_peak_pss_mib": {
+    "control": 18.739,
+    "arena1": 17.263
+  },
+  "median_peak_anonymous_mib": {
+    "control": 6.055,
+    "arena1": 4.367
+  },
+  "cpu_change_percent_by_round": [
+    40.3,
+    16.2,
+    9.6
+  ]
+}

@@ -1,0 +1,122 @@
+{
+  "format": "torrentng-seed-worker-screen-v1",
+  "source_revision": "dc298249eb74ab7066d28d7bb667568d553ccf3e",
+  "host": "kspld0",
+  "rust_toolchain": "1.94.0",
+  "storage_backend": "pread",
+  "fixture_bytes_per_peer": 67108864,
+  "fixture_sha256": "b5ae92fdc692ec945b19d5a8beea2b0640bf3b4f1675c961dc44a988d0721901",
+  "leecher_rate_bytes_per_second": 4194304,
+  "queue_only_candidate": {
+    "binary_sha256": "d48735df1f953d3aec53cc049d9c00b68aaf1c1f0fafbf487ad543b53fa1185c",
+    "single_peer_one_round": [
+      {
+        "name": "lazy",
+        "binary_sha256": "d48735df1f953d3aec53cc049d9c00b68aaf1c1f0fafbf487ad543b53fa1185c",
+        "cpu_seconds_per_gib": 4.212793,
+        "peak_pss_mib": 18.47,
+        "peak_anonymous_mib": 5.984,
+        "verified_peers": 1,
+        "verified_bytes": 67108864
+      },
+      {
+        "name": "control",
+        "binary_sha256": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+        "cpu_seconds_per_gib": 4.561087,
+        "peak_pss_mib": 18.629,
+        "peak_anonymous_mib": 6.027,
+        "verified_peers": 1,
+        "verified_bytes": 67108864
+      },
+      {
+        "name": "rt",
+        "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+        "cpu_seconds_per_gib": 2.337792,
+        "peak_pss_mib": 7.581,
+        "peak_anonymous_mib": 3.086,
+        "verified_peers": 1,
+        "verified_bytes": 67108864
+      }
+    ],
+    "three_peer_one_round_order": [
+      "rt",
+      "control",
+      "lazy"
+    ],
+    "three_peer_one_round": [
+      {
+        "name": "rt",
+        "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+        "cpu_seconds_per_gib": 2.764772,
+        "peak_pss_mib": 7.698,
+        "peak_anonymous_mib": 3.09,
+        "verified_peers": 3,
+        "verified_bytes": 201326592
+      },
+      {
+        "name": "control",
+        "binary_sha256": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+        "cpu_seconds_per_gib": 4.244845,
+        "peak_pss_mib": 18.97,
+        "peak_anonymous_mib": 6.199,
+        "verified_peers": 3,
+        "verified_bytes": 201326592
+      },
+      {
+        "name": "lazy",
+        "binary_sha256": "d48735df1f953d3aec53cc049d9c00b68aaf1c1f0fafbf487ad543b53fa1185c",
+        "cpu_seconds_per_gib": 5.468832,
+        "peak_pss_mib": 19.312,
+        "peak_anonymous_mib": 6.656,
+        "verified_peers": 3,
+        "verified_bytes": 201326592
+      }
+    ],
+    "thread_snapshots": 110,
+    "second_worker_observed": false
+  },
+  "active_plus_queued_candidate": {
+    "binary_sha256": "844479163668b69bfe378838540dd9973fb60b3a781c237a2eefbd0d33d2fd07",
+    "three_peer_one_round_order": [
+      "control",
+      "lazy",
+      "rt"
+    ],
+    "three_peer_one_round": [
+      {
+        "name": "control",
+        "binary_sha256": "e4e63a0446632660200781f9c0f355a47c80b123be5cf6001125782c79dad276",
+        "cpu_seconds_per_gib": 3.122123,
+        "peak_pss_mib": 18.617,
+        "peak_anonymous_mib": 6.133,
+        "verified_peers": 3,
+        "verified_bytes": 201326592
+      },
+      {
+        "name": "lazy",
+        "binary_sha256": "844479163668b69bfe378838540dd9973fb60b3a781c237a2eefbd0d33d2fd07",
+        "cpu_seconds_per_gib": 3.030781,
+        "peak_pss_mib": 18.802,
+        "peak_anonymous_mib": 6.145,
+        "verified_peers": 3,
+        "verified_bytes": 201326592
+      },
+      {
+        "name": "rt",
+        "binary_sha256": "698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46",
+        "cpu_seconds_per_gib": 2.26632,
+        "peak_pss_mib": 7.842,
+        "peak_anonymous_mib": 3.086,
+        "verified_peers": 3,
+        "verified_bytes": 201326592
+      }
+    ],
+    "thread_snapshots": 132,
+    "second_worker_observed": false
+  },
+  "validation": {
+    "rt_storage_lib_tests": "354 passed",
+    "cargo_fmt_check": "passed"
+  },
+  "decision": "Neither lazy-worker candidate showed a reliable whole-client CPU/PSS improvement; preserve patches and do not promote."
+}

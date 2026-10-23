@@ -14,6 +14,22 @@ One TorrentNG seed served three independent loopback peers at 4 MiB/s each. Each
 
 Cap 1 is a memory-only option for this workload; it did not improve CPU.
 
+A separate randomized three-round follow-up used three 16 MiB peers per run.
+It confirmed the same tradeoff on every round: cap 1 used 9.6% to 40.3% more
+CPU while PSS and anonymous memory were lower. Median results were:
+
+| Build | Median CPU-s/GiB | Median PSS | Median anonymous |
+|---|---:|---:|---:|
+| Default arenas | 2.027 | 18.739 MiB | 6.055 MiB |
+| `MALLOC_ARENA_MAX=1` | 2.845 (+40.3%) | 17.263 MiB (-7.9%) | 4.367 MiB (-27.9%) |
+| rTorrent 0.16.25 | 1.214 | 7.606 MiB | 3.086 MiB |
+
+Per-round CPU changes were +40.3%, +16.2%, and +9.6%. The compact
+measurements and binary/fixture identities are in
+[`cap1-three-round-followup.json`](cap1-three-round-followup.json). This
+supersedes the earlier description of the cap 1 multi-peer result as
+inconclusive; use it only as an optional memory-for-CPU tradeoff.
+
 ## Cap 2 three-round follow-up
 
 | Build | Median CPU-s/GiB | Median PSS | Median anonymous |

@@ -1,0 +1,8 @@
+The pinned rTorrent 0.16.25 host binary had the expected SHA-256:
+698a91e38ee6624aa5c3c6a63aa835c182e41956a2b4156f61da3511d3411f46
+
+The local seed probe launched it with its bundled libraries from
+/tmp/torrentng-seed-goal-20261022/rtorrent-rootfs. The process exited with
+signal 11 before the SCGI control socket became ready. No transfer started and
+no rTorrent performance measurement was recorded. Use the pinned container/runtime
+for any future rTorrent comparison; this host launch failure is not a score.
