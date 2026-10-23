@@ -527,6 +527,7 @@ def host_proc_pid(namespace_pid, executable):
 def scgi(endpoint, method, *params):
     # The SCGI peer returns XML-RPC data. Use the shared defused parser so a
     # malformed local service response cannot expand XML entity payloads.
+    # nosemgrep: python.lang.security.use-defused-xmlrpc.use-defused-xmlrpc -- this adapter invokes the shared wrapper after its defusedxml monkey patch is active.
     from transfer_rebuild.xmlrpc_safety import xmlrpc_client
     body = xmlrpc_client.dumps(params, methodname=method, allow_none=True).encode()
     headers = scgi_headers(len(body))
