@@ -1,0 +1,195 @@
+{
+  "captured_from": "kspld0",
+  "files": [
+    {
+      "bytes": 3847,
+      "path": "README.md",
+      "sha256": "ac066a60384e3e9ba834480f028f49c2978875a04286f60625cfad40dab2a100"
+    },
+    {
+      "bytes": 5941,
+      "path": "active-stream-current-main-worktree.patch",
+      "sha256": "a91518a2c292898453631760c27636901f9ffced00856f38b252afc103561aa4"
+    },
+    {
+      "bytes": 5900,
+      "path": "current-thread-runtime-worktree.patch",
+      "sha256": "66df264a1618591e885e6ab21e1dc476f9d4d1fa54b1f3c1274066cd7aa3c70c"
+    },
+    {
+      "bytes": 12010,
+      "path": "lazy-second-worker-worktree.patch",
+      "sha256": "0b909381ab0066cde08c751560558c2e13d5087f4b04e1f679b4adf053755da3"
+    },
+    {
+      "bytes": 2107,
+      "path": "peer-codec-admission-fastpath-worktree.patch",
+      "sha256": "fab4839447ec64f431f154ca80d46f3596b1b017bff6c363c2569e22f6168b6c"
+    },
+    {
+      "bytes": 7577,
+      "path": "peer-read-current-stream-worktree.patch",
+      "sha256": "94d1b0a4614e01c0432d219f6afe4bd25cd6ca54fcbbf881ecf1dd65d00c36ca"
+    },
+    {
+      "bytes": 3550,
+      "path": "peer-request-decode-screen-20261023-worktree.patch",
+      "sha256": "e526b3e7bab5bb59e8094219a5f71ccc7f8d7504b86b36d58ee14e41cbc7cfc6"
+    },
+    {
+      "bytes": 557,
+      "path": "select-biased-worktree.patch",
+      "sha256": "15b8fdbfca72e12a30aa30b6d79762908459dfcc16150a3830295cb2f91373c2"
+    },
+    {
+      "bytes": 9030327,
+      "path": "torrentngd-lazy-worker.elf.gz",
+      "sha256": "5402cb531f009ac6775221e6ed35b87315c870986ad3f93aadcd048be2103e3b"
+    },
+    {
+      "bytes": 2237,
+      "path": "upload-batch-16-screen-20261023-worktree.patch",
+      "sha256": "8229a6d41917e0afce53edfdeed7417c52583f01a4bc2a04def9cd62fcb1d131"
+    },
+    {
+      "bytes": 6135,
+      "path": "upload-mutex-batch-screen-20261023-worktree.patch",
+      "sha256": "09201958bd7176b8929283ca98426125655c373f3cf16f3764b9e29731778253"
+    }
+  ],
+  "format": "torrentng-dirty-worktree-snapshot-v1",
+  "worktrees": [
+    {
+      "branch": "codex/active-stream-current-main-screen-20261023",
+      "head": "4b187a8deda84e728f66b9d4a75445f7b01d86a5",
+      "patch": "active-stream-current-main-worktree.patch",
+      "patch_bytes": 5941,
+      "patch_sha256": "a91518a2c292898453631760c27636901f9ffced00856f38b252afc103561aa4",
+      "screen_record": "../active-stream-current-main-screen-20261023/README.md",
+      "status": [
+        " M crates/rt-storage/src/scheduler.rs"
+      ],
+      "untracked": [],
+      "worktree": "active-stream-current-main-worktree"
+    },
+    {
+      "branch": "codex/current-thread-runtime-screen-20261023",
+      "head": "a48a9c0b0f79976c5ba0564e3b036e4752995a97",
+      "patch": "current-thread-runtime-worktree.patch",
+      "patch_bytes": 5900,
+      "patch_sha256": "66df264a1618591e885e6ab21e1dc476f9d4d1fa54b1f3c1274066cd7aa3c70c",
+      "screen_record": "../current-thread-runtime-screen-20261022/README.md",
+      "status": [
+        "A  certification/reports/TorrentNG-seed-performance-experiments-20261022/experiments/current-thread-runtime.patch",
+        " M crates/torrentngd/src/main.rs"
+      ],
+      "untracked": [],
+      "worktree": "current-thread-runtime-worktree"
+    },
+    {
+      "branch": "detached",
+      "head": "dc298249eb74ab7066d28d7bb667568d553ccf3e",
+      "patch": "lazy-second-worker-worktree.patch",
+      "patch_bytes": 12010,
+      "patch_sha256": "0b909381ab0066cde08c751560558c2e13d5087f4b04e1f679b4adf053755da3",
+      "screen_record": "../lazy-worker-trigger-screen-20261023/README.md",
+      "status": [
+        " M crates/rt-storage/src/scheduler.rs",
+        "?? torrentngd-lazy-worker"
+      ],
+      "untracked": [
+        {
+          "archive": "torrentngd-lazy-worker.elf.gz",
+          "bytes": 24666576,
+          "compressed_bytes": 9030327,
+          "compressed_sha256": "5402cb531f009ac6775221e6ed35b87315c870986ad3f93aadcd048be2103e3b",
+          "path": "torrentngd-lazy-worker",
+          "sha256": "844479163668b69bfe378838540dd9973fb60b3a781c237a2eefbd0d33d2fd07"
+        }
+      ],
+      "worktree": "lazy-second-worker-worktree"
+    },
+    {
+      "branch": "detached",
+      "head": "6683d993a979bfe3aa521a703e94fb99cf908484",
+      "patch": "peer-codec-admission-fastpath-worktree.patch",
+      "patch_bytes": 2107,
+      "patch_sha256": "fab4839447ec64f431f154ca80d46f3596b1b017bff6c363c2569e22f6168b6c",
+      "screen_record": "../peer-codec-capacity-fastpath-screen-20261023/README.md",
+      "status": [
+        " M crates/rt-peer-wire/src/codec.rs"
+      ],
+      "untracked": [],
+      "worktree": "peer-codec-admission-fastpath-worktree"
+    },
+    {
+      "branch": "detached",
+      "head": "4d13f9d0ecdc13f877be73f3d0a266ef1f52abea",
+      "patch": "peer-read-current-stream-worktree.patch",
+      "patch_bytes": 7577,
+      "patch_sha256": "94d1b0a4614e01c0432d219f6afe4bd25cd6ca54fcbbf881ecf1dd65d00c36ca",
+      "screen_record": "../peer-read-current-entry-screen-20261023/README.md",
+      "status": [
+        " M crates/rt-storage/src/scheduler.rs"
+      ],
+      "untracked": [],
+      "worktree": "peer-read-current-stream-worktree"
+    },
+    {
+      "branch": "detached",
+      "head": "c10e914db6ee6b707cda1cf9eac91243927a2de8",
+      "patch": "peer-request-decode-screen-20261023-worktree.patch",
+      "patch_bytes": 3550,
+      "patch_sha256": "e526b3e7bab5bb59e8094219a5f71ccc7f8d7504b86b36d58ee14e41cbc7cfc6",
+      "screen_record": "../peer-request-decode-fastpath-screen-20261023/README.md",
+      "status": [
+        " M crates/rt-peer-wire/src/codec.rs",
+        " M crates/rt-peer-wire/src/message.rs"
+      ],
+      "untracked": [],
+      "worktree": "peer-request-decode-screen-20261023-worktree"
+    },
+    {
+      "branch": "detached",
+      "head": "672e5233fb773b72897511f8d914b9d126dbfe59",
+      "patch": "select-biased-worktree.patch",
+      "patch_bytes": 557,
+      "patch_sha256": "15b8fdbfca72e12a30aa30b6d79762908459dfcc16150a3830295cb2f91373c2",
+      "screen_record": "../peer-select-biased-screen-20261023/README.md",
+      "status": [
+        " M crates/rt-engine/src/torrent_task.rs"
+      ],
+      "untracked": [],
+      "worktree": "select-biased-worktree"
+    },
+    {
+      "branch": "detached",
+      "head": "395b1dd9ab034bfa5d3c71b24df93f16cad17d30",
+      "patch": "upload-batch-16-screen-20261023-worktree.patch",
+      "patch_bytes": 2237,
+      "patch_sha256": "8229a6d41917e0afce53edfdeed7417c52583f01a4bc2a04def9cd62fcb1d131",
+      "screen_record": "../upload-batch-16-screen-20261023/README.md",
+      "status": [
+        " M crates/rt-engine/src/torrent_task.rs",
+        " M crates/rt-engine/src/transfer/upload_scheduler.rs"
+      ],
+      "untracked": [],
+      "worktree": "upload-batch-16-screen-20261023-worktree"
+    },
+    {
+      "branch": "detached",
+      "head": "acf6610eed93f388ff50035a152464eea68a235a",
+      "patch": "upload-mutex-batch-screen-20261023-worktree.patch",
+      "patch_bytes": 6135,
+      "patch_sha256": "09201958bd7176b8929283ca98426125655c373f3cf16f3764b9e29731778253",
+      "screen_record": "../upload-obligation-lock-batch-screen-20261023/README.md",
+      "status": [
+        " M crates/rt-engine/src/torrent_task.rs",
+        " M crates/rt-engine/src/transfer/obligations.rs",
+        " M crates/rt-engine/src/transfer/shared_upload.rs"
+      ],
+      "untracked": [],
+      "worktree": "upload-mutex-batch-screen-20261023-worktree"
+    }
+  ]
+}

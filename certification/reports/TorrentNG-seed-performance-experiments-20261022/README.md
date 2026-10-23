@@ -315,3 +315,7 @@ TorrentNG currently resolves a verified v1 upload to a file span, then calls `re
 The benchmark probe's regression tests cover its process sampling, profile-window setup, configuration, and cleanup behavior. They must pass before another qualification run. The 32 ms/eight-block source change is already on main after randomized paired 64 MiB release and 64/128 MiB PGO screens; future candidates must use current main as control, keep the exact current rTorrent binary, repeat at 128 and 256 MiB, and pass correctness plus the official release comparison before any further default change.
 
 The separate supplied source-review archive is assessed in [`TorrentNG-rtorrent-hot-path-review-20261022/README.md`](../TorrentNG-rtorrent-hot-path-review-20261022/README.md). Its source files match the reviewed `7ba8bb6a` checkout, so it adds no code change.
+
+## Dirty worktree snapshots preserved for Astra review
+
+The final integration audit found nine dirty performance worktrees whose committed bases were already on `main`. Their exact tracked diffs and the one untracked lazy-worker executable are preserved in [`observations/dirty-worktree-snapshots-20261023/`](observations/dirty-worktree-snapshots-20261023/). These are review artifacts: the associated measurements did not justify promoting them, and the captured deltas were not separately rebenchmarked.

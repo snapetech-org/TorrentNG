@@ -1,0 +1,96 @@
+diff --git a/crates/rt-peer-wire/src/codec.rs b/crates/rt-peer-wire/src/codec.rs
+index 8dcc81f9..34d66829 100644
+--- a/crates/rt-peer-wire/src/codec.rs
++++ b/crates/rt-peer-wire/src/codec.rs
+@@ -323,6 +323,13 @@ impl Decoder for PeerCodec {
+         if self.resources.is_some() && src.capacity() > 0 {
+             self.reserve_capacity(src, src.capacity())?;
+         }
++        if len == 13 && src[4] == 6 {
++            let request = Message::parse_request_body(&src[5..total]);
++            // Match the regular decode path: a malformed complete frame is
++            // consumed before its parse error is returned.
++            src.advance(total);
++            return request.map(Some);
++        }
+         let copied_payload_bytes = Message::copied_payload_bytes(&src[4..total]);
+         let message_memory_lease = if copied_payload_bytes == 0 {
+             None
+@@ -455,6 +462,35 @@ mod tests {
+         assert_eq!(m2, Message::Interested);
+     }
+ 
++    #[test]
++    fn codec_decodes_request_frames_directly_and_consumes_them() {
++        let request = Message::Request {
++            piece: 23,
++            begin: 32_768,
++            length: 16_384,
++        };
++        let mut buf = encode_msg(request.clone());
++        let decoded = PeerCodec::default().decode(&mut buf).unwrap().unwrap();
++        assert_eq!(decoded, request);
++        assert!(buf.is_empty());
++    }
++
++    #[test]
++    fn codec_consumes_invalid_request_before_returning_error() {
++        let mut buf = BytesMut::new();
++        buf.put_u32(13);
++        buf.put_u8(6);
++        buf.put_u32(23);
++        buf.put_u32(32_768);
++        buf.put_u32(0);
++
++        assert!(matches!(
++            PeerCodec::default().decode(&mut buf),
++            Err(WireError::InvalidMessage(_))
++        ));
++        assert!(buf.is_empty());
++    }
++
+     #[test]
+     fn codec_roundtrip_piece_bytes() {
+         let data = bytes::Bytes::from(vec![0x42u8; 4096]);
+diff --git a/crates/rt-peer-wire/src/message.rs b/crates/rt-peer-wire/src/message.rs
+index 7f2ea5b7..93cbe6f6 100644
+--- a/crates/rt-peer-wire/src/message.rs
++++ b/crates/rt-peer-wire/src/message.rs
+@@ -318,16 +318,7 @@ impl Message {
+                 )))
+             }
+             5 => Ok(Message::Bitfield(body.to_vec())),
+-            6 => {
+-                expect_len(body, 12, "Request")?;
+-                let (piece, begin, length) = parse_3u32(body);
+-                validate_request(length)?;
+-                Ok(Message::Request {
+-                    piece,
+-                    begin,
+-                    length,
+-                })
+-            }
++            6 => Self::parse_request_body(body),
+             7 => {
+                 if body.len() < 8 {
+                     return Err(WireError::InvalidMessage("Piece body too short".into()));
+@@ -454,6 +445,19 @@ impl Message {
+         })
+     }
+ 
++    /// Parse the fixed-size Request body without first creating an owned frame
++    /// payload. The peer codec uses this on the common incoming request path.
++    pub(crate) fn parse_request_body(body: &[u8]) -> Result<Self, WireError> {
++        expect_len(body, 12, "Request")?;
++        let (piece, begin, length) = parse_3u32(body);
++        validate_request(length)?;
++        Ok(Message::Request {
++            piece,
++            begin,
++            length,
++        })
++    }
++
+     /// Estimate heap payload copied by parsing this complete message body.
+     /// The codec acquires this charge before parsing and stores it with the
+     /// resulting Message for its full lifetime.

@@ -1,0 +1,12 @@
+diff --git a/crates/rt-engine/src/torrent_task.rs b/crates/rt-engine/src/torrent_task.rs
+index 16ca80a3..151ac0a2 100644
+--- a/crates/rt-engine/src/torrent_task.rs
++++ b/crates/rt-engine/src/torrent_task.rs
+@@ -9054,6 +9054,7 @@ where
+                 || upload_intake_messages >= upload_pipeline_width
+                 || upload_coalescing_expired);
+         tokio::select! {
++            biased;
+             cmd = peer_cmd_rx.recv() => {
+                 let Some(cmd) = cmd else {
+                     // A dropped command sender means the owner can no

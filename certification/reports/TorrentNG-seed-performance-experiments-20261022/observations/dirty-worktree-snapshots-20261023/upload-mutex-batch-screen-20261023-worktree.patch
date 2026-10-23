@@ -1,0 +1,140 @@
+diff --git a/crates/rt-engine/src/torrent_task.rs b/crates/rt-engine/src/torrent_task.rs
+index 16ca80a3..5e0d7699 100644
+--- a/crates/rt-engine/src/torrent_task.rs
++++ b/crates/rt-engine/src/torrent_task.rs
+@@ -10417,14 +10417,8 @@ fn upload_read_spec(
+     read_context: &UploadReadContext,
+     obligations: &SharedUploadPeer,
+     block: BlockExtent,
+-    queued: bool,
++    choke_critical: bool,
+ ) -> anyhow::Result<UploadReadSpec> {
+-    let choke_critical = obligations.is_choked()
+-        && if queued {
+-            obligations.is_allowed_fast(block.piece)
+-        } else {
+-            obligations.may_send(&block)
+-        };
+     let Some(wire_block) = upload.canonical_to_wire_block(block) else {
+         obligations.close();
+         anyhow::bail!("accepted upload obligation has no matching wire extent");
+@@ -10706,7 +10700,7 @@ where
+     F: std::future::Future<Output = UploadBatch<UploadReadCompletion>> + Send + 'static,
+ {
+     while upload_reads.pending_request_count() < MAX_PENDING_UPLOAD_READS {
+-        let Some(block) = obligations.next_request() else {
++        let Some((block, choke_critical)) = obligations.next_request_with_choke_priority() else {
+             break;
+         };
+         let mut batch: UploadBatch<UploadReadSpec> = smallvec::smallvec![upload_read_spec(
+@@ -10714,7 +10708,7 @@ where
+             read_context,
+             obligations,
+             block,
+-            false,
++            choke_critical,
+         )?];
+         let mut batch_bytes = batch[0]
+             .span
+@@ -10726,21 +10720,19 @@ where
+             && batch.len() < MAX_UPLOAD_READ_BATCH_BLOCKS
+             && batch_bytes < MAX_UPLOAD_READ_BATCH_BYTES
+         {
+-            let Some(next_block) = obligations.peek_request() else {
++            let Some((next_block, choke_critical)) = obligations.next_request_with_choke_priority()
++            else {
+                 break;
+             };
+-            if obligations.is_choked() && !obligations.is_allowed_fast(next_block.piece) {
+-                break;
+-            }
+-            let next_spec = upload_read_spec(upload, read_context, obligations, next_block, true)?;
++            let next_spec = upload_read_spec(
++                upload,
++                read_context,
++                obligations,
++                next_block,
++                choke_critical,
++            )?;
+             if !can_append_upload_read(&batch, &next_spec, batch_bytes) {
+-                break;
+-            }
+-            let Some(dequeued) = obligations.next_request() else {
+-                break;
+-            };
+-            if dequeued != next_block {
+-                if !obligations.requeue_front(dequeued) {
++                if !obligations.requeue_front(next_block) {
+                     obligations.close();
+                     anyhow::bail!("upload request changed during bounded batch admission");
+                 }
+diff --git a/crates/rt-engine/src/transfer/obligations.rs b/crates/rt-engine/src/transfer/obligations.rs
+index fdc41423..37bfc645 100644
+--- a/crates/rt-engine/src/transfer/obligations.rs
++++ b/crates/rt-engine/src/transfer/obligations.rs
+@@ -265,15 +265,24 @@ impl InboundObligations {
+ 
+     /// Next request to serve, if any.
+     pub fn next_request(&mut self) -> Option<BlockExtent> {
++        self.next_request_with_choke_priority()
++            .map(|(block, _)| block)
++    }
++
++    /// Dequeue one request and return whether it remains eligible because of
++    /// allowed-fast while choked. The caller can carry this scheduling fact
++    /// forward without re-locking the peer state to ask the same question.
++    pub(crate) fn next_request_with_choke_priority(&mut self) -> Option<(BlockExtent, bool)> {
+         let next = self.queue.front().copied()?;
+-        if self.choked && !self.is_allowed_fast(next.piece) {
++        let choke_critical = self.choked && self.is_allowed_fast(next.piece);
++        if self.choked && !choke_critical {
+             return None;
+         }
+         let block = self.queue.pop_front()?;
+         let state = self.outstanding.get_mut(&block)?;
+         *state = RequestState::InService;
+         self.in_service_len = self.in_service_len.saturating_add(1);
+-        Some(block)
++        Some((block, choke_critical))
+     }
+ 
+     /// Return an in-service request to the front of the queue when a
+@@ -443,7 +452,11 @@ mod tests {
+         ob.on_local_unchoke();
+         assert_eq!(ob.on_request(b(1), true), InboundDecision::Queue);
+         assert_eq!(ob.on_request(b(1), true), InboundDecision::Duplicate);
+-        let block = ob.next_request().unwrap();
++        let (block, choke_critical) = ob.next_request_with_choke_priority().unwrap();
++        assert!(
++            !choke_critical,
++            "an unchoked request needs no priority boost"
++        );
+         assert_eq!(ob.on_request(block, true), InboundDecision::Duplicate);
+         assert_eq!(ob.finish(block, Served::Sent), None);
+         // Once served, the same coordinates are a fresh request.
+@@ -524,7 +537,7 @@ mod tests {
+         assert_eq!(ob.on_request(b(7), true), InboundDecision::Duplicate);
+         ob.allow_fast(8);
+         assert_eq!(ob.on_request(b(8), true), InboundDecision::Queue);
+-        assert_eq!(ob.next_request(), Some(b(7)));
++        assert_eq!(ob.next_request_with_choke_priority(), Some((b(7), true)));
+         assert!(ob.may_send(&b(7)));
+         ob.check_invariants().unwrap();
+     }
+diff --git a/crates/rt-engine/src/transfer/shared_upload.rs b/crates/rt-engine/src/transfer/shared_upload.rs
+index ea75bfa8..74db70a1 100644
+--- a/crates/rt-engine/src/transfer/shared_upload.rs
++++ b/crates/rt-engine/src/transfer/shared_upload.rs
+@@ -348,6 +348,12 @@ impl SharedUploadConnection {
+         lock(&self.state).obligations.next_request()
+     }
+ 
++    pub(crate) fn next_request_with_choke_priority(&self) -> Option<(BlockExtent, bool)> {
++        lock(&self.state)
++            .obligations
++            .next_request_with_choke_priority()
++    }
++
+     pub(crate) fn peek_request(&self) -> Option<BlockExtent> {
+         lock(&self.state).obligations.peek_request()
+     }

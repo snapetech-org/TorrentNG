@@ -1,0 +1,208 @@
+diff --git a/crates/rt-storage/src/scheduler.rs b/crates/rt-storage/src/scheduler.rs
+index 712500ec..493be51f 100644
+--- a/crates/rt-storage/src/scheduler.rs
++++ b/crates/rt-storage/src/scheduler.rs
+@@ -880,6 +880,7 @@ fn local_scheduler_resources(io_config: &StorageIoConfig) -> Arc<SharedScheduler
+ #[derive(Debug, Default)]
+ struct PeerReadStreams {
+     files: HashMap<PathBuf, PeerReadStream>,
++    current: Option<(PathBuf, PeerReadStream)>,
+     sequence: u64,
+ }
+ 
+@@ -907,49 +908,109 @@ impl PeerReadStreams {
+         self.sequence = self.sequence.saturating_add(1).max(1);
+         let last_used = self.sequence;
+         let end = offset.saturating_add(len as u64);
+-        if let Some(stream) = self.files.get_mut(key) {
+-            let sequential = stream.next_offset == offset;
+-            if sequential {
+-                let next = if stream.sequential_reads == 0 {
+-                    len.saturating_mul(2)
+-                } else if cache_hit {
+-                    stream
+-                        .recommended_bytes
+-                        .saturating_add((stream.recommended_bytes / 4).max(len))
+-                } else {
+-                    stream.recommended_bytes
+-                };
+-                stream.sequential_reads = stream.sequential_reads.saturating_add(1);
+-                stream.recommended_bytes = next.min(max_readahead_bytes.max(len));
+-            } else {
+-                stream.sequential_reads = 0;
+-                stream.recommended_bytes = len;
++        if let Some((current_key, stream)) = self.current.as_mut() {
++            if current_key.as_path() == key {
++                return observe_peer_read_stream(
++                    stream,
++                    offset,
++                    end,
++                    len,
++                    max_readahead_bytes,
++                    cache_hit,
++                    last_used,
++                );
+             }
+-            stream.next_offset = end;
+-            stream.last_used = last_used;
+-            return (sequential, stream.recommended_bytes);
+         }
+-        if self.files.len() >= Self::MAX_TRACKED_FILES {
+-            if let Some(oldest) = self
+-                .files
+-                .iter()
+-                .min_by_key(|(_, stream)| stream.last_used)
+-                .map(|(path, _)| path.clone())
+-            {
+-                self.files.remove(&oldest);
+-            }
++
++        // Promote this path into the one-entry hot slot. The previous hot
++        // stream becomes an ordinary LRU entry only when another path is
++        // observed, avoiding a hash lookup and PathBuf clone on the common
++        // same-file sequential read.
++        if let Some((current_key, current_stream)) = self.current.take() {
++            self.files.insert(current_key, current_stream);
+         }
+-        self.files.insert(
+-            key.to_path_buf(),
+-            PeerReadStream {
+-                next_offset: end,
+-                sequential_reads: 0,
+-                recommended_bytes: len,
++        let (current_key, mut stream, is_new) = match self.files.remove_entry(key) {
++            Some((path, stream)) => (path, stream, false),
++            None => {
++                if self.files.len() >= Self::MAX_TRACKED_FILES {
++                    self.evict_oldest();
++                }
++                (
++                    key.to_path_buf(),
++                    PeerReadStream {
++                        next_offset: end,
++                        sequential_reads: 0,
++                        recommended_bytes: len,
++                        last_used,
++                    },
++                    true,
++                )
++            }
++        };
++        let result = if is_new {
++            // A newly observed path already contains the state for this read.
++            (false, stream.recommended_bytes)
++        } else {
++            observe_peer_read_stream(
++                &mut stream,
++                offset,
++                end,
++                len,
++                max_readahead_bytes,
++                cache_hit,
+                 last_used,
+-            },
+-        );
+-        (false, len)
++            )
++        };
++        self.current = Some((current_key, stream));
++        result
+     }
++
++    fn evict_oldest(&mut self) {
++        if let Some(oldest) = self
++            .files
++            .iter()
++            .min_by_key(|(_, stream)| stream.last_used)
++            .map(|(path, _)| path.clone())
++        {
++            self.files.remove(&oldest);
++        }
++    }
++
++    #[cfg(test)]
++    fn tracked_file_count(&self) -> usize {
++        self.files.len() + usize::from(self.current.is_some())
++    }
++}
++
++fn observe_peer_read_stream(
++    stream: &mut PeerReadStream,
++    offset: u64,
++    end: u64,
++    len: usize,
++    max_readahead_bytes: usize,
++    cache_hit: bool,
++    last_used: u64,
++) -> (bool, usize) {
++    let sequential = stream.next_offset == offset;
++    if sequential {
++        let next = if stream.sequential_reads == 0 {
++            len.saturating_mul(2)
++        } else if cache_hit {
++            stream
++                .recommended_bytes
++                .saturating_add((stream.recommended_bytes / 4).max(len))
++        } else {
++            stream.recommended_bytes
++        };
++        stream.sequential_reads = stream.sequential_reads.saturating_add(1);
++        stream.recommended_bytes = next.min(max_readahead_bytes.max(len));
++    } else {
++        stream.sequential_reads = 0;
++        stream.recommended_bytes = len;
++    }
++    stream.next_offset = end;
++    stream.last_used = last_used;
++    (sequential, stream.recommended_bytes)
+ }
+ 
+ fn next_saturating_sequence(sequence: &AtomicU64) -> u64 {
+@@ -11965,6 +12026,26 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn current_peer_read_stream_bypasses_map_and_promotes_with_history() {
++        let mut streams = PeerReadStreams::default();
++        let hot = Path::new("/payload/hot.bin");
++        let other = Path::new("/payload/other.bin");
++
++        assert_eq!(streams.observe(hot, 0, 16, 128, false), (false, 16));
++        assert_eq!(streams.observe(hot, 16, 16, 128, false), (true, 32));
++        assert!(
++            streams.files.is_empty(),
++            "the current stream stays outside the map"
++        );
++
++        assert_eq!(streams.observe(other, 0, 16, 128, false), (false, 16));
++        assert!(streams.files.contains_key(hot));
++        assert_eq!(streams.observe(hot, 32, 16, 128, false), (true, 32));
++        assert!(streams.files.contains_key(other));
++        assert_eq!(streams.tracked_file_count(), 2);
++    }
++
+     #[test]
+     fn peer_read_stream_bound_evicts_one_least_recent_stream() {
+         let mut streams = PeerReadStreams::default();
+@@ -11976,12 +12057,18 @@ mod tests {
+             let path = PathBuf::from(format!("/payload/{index}.bin"));
+             streams.observe(&path, 0, 16, 128, false);
+         }
+-        assert_eq!(streams.files.len(), PeerReadStreams::MAX_TRACKED_FILES);
++        assert_eq!(
++            streams.tracked_file_count(),
++            PeerReadStreams::MAX_TRACKED_FILES
++        );
+ 
+         assert!(streams.observe(hot, 32, 16, 128, false).0);
+         streams.observe(Path::new("/payload/overflow.bin"), 0, 16, 128, false);
+ 
+-        assert_eq!(streams.files.len(), PeerReadStreams::MAX_TRACKED_FILES);
++        assert_eq!(
++            streams.tracked_file_count(),
++            PeerReadStreams::MAX_TRACKED_FILES
++        );
+         assert!(streams.observe(hot, 48, 16, 128, false).0);
+         assert!(
+             !streams

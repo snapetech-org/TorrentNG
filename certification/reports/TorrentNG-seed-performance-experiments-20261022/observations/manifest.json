@@ -8545,6 +8545,66 @@
       "path": "pgo-worker-count-rtorrent-screen-20261023/validation.txt",
       "bytes": 704,
       "sha256": "8ea8293dad443a440ffc33b46d654d81d50ebfec94a88e36bac62b335286f574"
+    },
+    {
+      "path": "dirty-worktree-snapshots-20261023/README.md",
+      "bytes": 3847,
+      "sha256": "ac066a60384e3e9ba834480f028f49c2978875a04286f60625cfad40dab2a100"
+    },
+    {
+      "path": "dirty-worktree-snapshots-20261023/active-stream-current-main-worktree.patch",
+      "bytes": 5941,
+      "sha256": "a91518a2c292898453631760c27636901f9ffced00856f38b252afc103561aa4"
+    },
+    {
+      "path": "dirty-worktree-snapshots-20261023/current-thread-runtime-worktree.patch",
+      "bytes": 5900,
+      "sha256": "66df264a1618591e885e6ab21e1dc476f9d4d1fa54b1f3c1274066cd7aa3c70c"
+    },
+    {
+      "path": "dirty-worktree-snapshots-20261023/lazy-second-worker-worktree.patch",
+      "bytes": 12010,
+      "sha256": "0b909381ab0066cde08c751560558c2e13d5087f4b04e1f679b4adf053755da3"
+    },
+    {
+      "path": "dirty-worktree-snapshots-20261023/manifest.json",
+      "bytes": 7439,
+      "sha256": "4c2c20196cc4b1cb0354d50362bb2f976fba23af8386c000f20bb63b8ddfed33"
+    },
+    {
+      "path": "dirty-worktree-snapshots-20261023/peer-codec-admission-fastpath-worktree.patch",
+      "bytes": 2107,
+      "sha256": "fab4839447ec64f431f154ca80d46f3596b1b017bff6c363c2569e22f6168b6c"
+    },
+    {
+      "path": "dirty-worktree-snapshots-20261023/peer-read-current-stream-worktree.patch",
+      "bytes": 7577,
+      "sha256": "94d1b0a4614e01c0432d219f6afe4bd25cd6ca54fcbbf881ecf1dd65d00c36ca"
+    },
+    {
+      "path": "dirty-worktree-snapshots-20261023/peer-request-decode-screen-20261023-worktree.patch",
+      "bytes": 3550,
+      "sha256": "e526b3e7bab5bb59e8094219a5f71ccc7f8d7504b86b36d58ee14e41cbc7cfc6"
+    },
+    {
+      "path": "dirty-worktree-snapshots-20261023/select-biased-worktree.patch",
+      "bytes": 557,
+      "sha256": "15b8fdbfca72e12a30aa30b6d79762908459dfcc16150a3830295cb2f91373c2"
+    },
+    {
+      "path": "dirty-worktree-snapshots-20261023/torrentngd-lazy-worker.elf.gz",
+      "bytes": 9030327,
+      "sha256": "5402cb531f009ac6775221e6ed35b87315c870986ad3f93aadcd048be2103e3b"
+    },
+    {
+      "path": "dirty-worktree-snapshots-20261023/upload-batch-16-screen-20261023-worktree.patch",
+      "bytes": 2237,
+      "sha256": "8229a6d41917e0afce53edfdeed7417c52583f01a4bc2a04def9cd62fcb1d131"
+    },
+    {
+      "path": "dirty-worktree-snapshots-20261023/upload-mutex-batch-screen-20261023-worktree.patch",
+      "bytes": 6135,
+      "sha256": "09201958bd7176b8929283ca98426125655c373f3cf16f3764b9e29731778253"
     }
   ]
 }
