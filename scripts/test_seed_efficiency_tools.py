@@ -125,7 +125,18 @@ class QualificationTests(unittest.TestCase):
         argv = ["native_seed_pgo.py", "validate", "--repo", str(source), "--profile", "seed.profdata"]
         with patch.object(sys, "argv", argv), patch.object(pgo, "validate_profile") as validate:
             pgo.main()
-        validate.assert_called_once_with(Path("seed.profdata"), source)
+            validate.assert_called_once_with(Path("seed.profdata"), source, "default")
+
+    def test_mapped_training_exercises_activation_and_buffered_fallback(self):
+        workloads = [{"mib": 16, "peers": 1, "environment": {"TNG_SEED_DRIVER": "1"}}]
+        self.assertEqual(pgo.training_workloads({"training": workloads}, "default"), workloads)
+        variants = pgo.training_workloads({"training": workloads}, "seed-mmap")
+        self.assertEqual([w["environment"]["TNG_SEED_MMAP"] for w in variants], ["0", "1"])
+        self.assertTrue(all(w["environment"]["TNG_SEED_DRIVER"] == "1" for w in variants))
+        self.assertEqual(pgo.feature_identity("seed-mmap,full-compat,default,seed-mmap"),
+                         "full-compat,seed-mmap")
+        for bad in ("", "seed-mmap --release", "x/y", ",seed-mmap"):
+            with self.assertRaises(ValueError): pgo.feature_identity(bad)
 
     def test_paired_ratios_not_ratio_of_unrelated_medians(self):
         result = tools.paired_analysis(experiment([1, 100, 101], [2, 50, 202]),
@@ -190,6 +201,8 @@ class QualificationTests(unittest.TestCase):
             Path(str(profile) + ".manifest.json").write_text(json.dumps(metadata))
             with patch.object(pgo, "source_digest", return_value="source"), patch.object(pgo, "command", return_value="compiler"):
                 pgo.validate_profile(profile)
+                with self.assertRaisesRegex(ValueError, "features"):
+                    pgo.validate_profile(profile, features="seed-mmap")
                 compressed = Path(str(profile) + ".gz")
                 with gzip.open(compressed, "wb") as stream: stream.write(profile.read_bytes())
                 Path(str(compressed) + ".manifest.json").write_text(json.dumps(metadata))

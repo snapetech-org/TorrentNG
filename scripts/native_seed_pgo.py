@@ -10,6 +10,7 @@ import gzip
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -32,13 +33,41 @@ def workload_args(workload):
             "--upload-limit", str(workload.get("upload_limit", 0))]
 
 
-def validate_profile(profile, repo=REPO):
+def feature_identity(features):
+    names = sorted(set(features.split(",")) - {"default"})
+    if any(not re.fullmatch(r"[a-z][a-z0-9_-]*", name) for name in names):
+        raise ValueError("features must be comma-separated Cargo feature names")
+    return ",".join(names) or "default"
+
+
+def feature_args(features):
+    features = feature_identity(features)
+    return [] if features == "default" else ["--features", features]
+
+
+def training_workloads(corpus, features):
+    # Exercise both the portable fallback and mapped activation in the SAME
+    # feature-enabled executable. This avoids training only the selected arm.
+    if "seed-mmap" not in feature_identity(features).split(","):
+        return corpus["training"]
+    return [{**workload, "environment": {**workload.get("environment", {}), "TNG_SEED_MMAP": enabled}}
+            for workload in corpus["training"] for enabled in ("0", "1")]
+
+
+def workload_environment(workload, label="training"):
+    return [arg for key, value in sorted(workload.get("environment", {}).items())
+            for arg in ("--client-env", f"{label}:{key}={value}")]
+
+
+def validate_profile(profile, repo=REPO, features="default"):
     profile = Path(profile).resolve()
     metadata = json.loads(Path(str(profile) + ".manifest.json").read_text())
     if metadata["source_digest"] != source_digest(repo):
         raise ValueError("PGO training source differs from this build")
     if metadata["rustc"] != command("rustc", "+1.97.0", "-Vv"):
         raise ValueError("PGO training compiler differs from this build")
+    if feature_identity(metadata.get("features", "default")) != feature_identity(features):
+        raise ValueError("PGO training features differ from this build")
     if profile.suffix == ".gz":
         digest = hashlib.sha256()
         with gzip.open(profile, "rb") as stream:
@@ -64,12 +93,15 @@ def main():
     parser.add_argument("--client-manifest", action="append", default=[])
     parser.add_argument("--repeats", type=int, default=10)
     parser.add_argument("--client-cpus")
+    parser.add_argument("--features", default="default")
+    parser.add_argument("--target-dir", type=Path, help="reuse an instrumented build cache")
     args = parser.parse_args()
     source_repo = args.repo.resolve()
+    features = feature_identity(args.features)
     if args.command == "validate":
         if args.profile is None:
             parser.error("--profile is required")
-        validate_profile(args.profile, source_repo)
+        validate_profile(args.profile, source_repo, features)
         return
     if args.output is None:
         parser.error("--output is required")
@@ -96,20 +128,24 @@ def main():
         before = source_digest(source_repo)
         profile_dir = output / "raw"
         profile_dir.mkdir()
-        target = output / "instrumented"
+        target = args.target_dir.resolve() if args.target_dir else output / "instrumented"
         environment = dict(os.environ)
-        if any(value for key, value in environment.items() if key.startswith("CARGO_PROFILE_")
-               or key in {"RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "RUSTC", "RUSTC_WRAPPER",
-                          "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_RUSTC", "CARGO_BUILD_RUSTFLAGS"}):
+        if ("CARGO_ENCODED_RUSTFLAGS" in environment
+                or any(key.startswith("CARGO_PROFILE_") or bool(value) for key, value in environment.items()
+                       if key.startswith("CARGO_PROFILE_")
+                       or key in {"RUSTFLAGS", "RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER",
+                                  "CARGO_BUILD_RUSTC", "CARGO_BUILD_RUSTFLAGS"})):
             parser.error("unset compiler, flag and release-profile overrides before PGO training")
         environment["RUSTFLAGS"] = f"-Cprofile-generate={profile_dir}"
-        run(["cargo", "+1.97.0", "build", "--locked", "--release", "-p", "torrentngd", "--target-dir", target], env=environment, cwd=source_repo)
+        run(["cargo", "+1.97.0", "build", "--locked", "--release", "-p", "torrentngd", "--target-dir", target,
+             *feature_args(features)], env=environment, cwd=source_repo)
         binary = target / "release/torrentngd"
-        for index, workload in enumerate(corpus["training"]):
+        workloads = training_workloads(corpus, features)
+        for index, workload in enumerate(workloads):
             argv = [sys.executable, PROBE, "--client", f"training=torrentngd:{binary}",
                     "--allow-single-client", "--repeats", "1", "--output", output / f"training-{index}",
                     "--client-env", f"training:LLVM_PROFILE_FILE={profile_dir}/daemon-{index}-%p.profraw",
-                    *workload_args(workload)]
+                    *workload_args(workload), *workload_environment(workload)]
             if args.client_cpus: argv += ["--client-cpus", args.client_cpus]
             run(argv)
         sysroot = Path(command("rustc", "+1.97.0", "--print", "sysroot"))
@@ -122,8 +158,8 @@ def main():
         profile = output / "seed.profdata"
         run([profdata, "merge", "-o", profile, *profiles])
         if before != source_digest(source_repo): raise RuntimeError("source changed during training")
-        metadata = manifest(binary, source_repo, profile)
-        metadata["training_corpus"] = corpus["training"]
+        metadata = manifest(binary, source_repo, profile, features=features)
+        metadata["training_corpus"] = workloads
         metadata["training_binary_sha256"] = sha256(binary)
         metadata["instrumentation_flags"] = environment["RUSTFLAGS"]
         Path(str(profile) + ".manifest.json").write_text(json.dumps(metadata, indent=2) + "\n")

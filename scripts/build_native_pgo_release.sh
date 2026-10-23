@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/build_native_pgo_release.sh PROFILE.profdata[.gz] [TARGET_DIR] [SOURCE_REPO] [FUNCTION_ORDER]
+Usage: scripts/build_native_pgo_release.sh PROFILE.profdata[.gz] [TARGET_DIR] [SOURCE_REPO] [FUNCTION_ORDER] [FEATURES]
 
 Build torrentngd with LLVM profile-guided optimization using the pinned Rust
 toolchain and the workspace's normal release profile. This experimental build
@@ -13,6 +13,7 @@ SOURCE_REPO can select an older clean baseline without copying scripts into it.
 FUNCTION_ORDER optionally selects a source/compiler/PGO-matched order generated
 by native_seed_function_order.py. It needs its manifest sidecar. This remains
 experimental and requires independent matched CPU/PSS qualification.
+FEATURES defaults to default; pass an empty FUNCTION_ORDER to select only features.
 EOF
 }
 
@@ -21,7 +22,7 @@ if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
   exit 0
 fi
 
-if [[ $# -lt 1 || $# -gt 4 ]]; then
+if [[ $# -lt 1 || $# -gt 5 ]]; then
   usage >&2
   exit 2
 fi
@@ -49,6 +50,11 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source_repo=$(realpath "${3:-$repo_root}")
 profile_input=$(realpath "$1")
 function_order=""
+features=${5:-default}
+cargo_features=()
+if [[ $features != default ]]; then
+  cargo_features=(--features "$features")
+fi
 if [[ -n ${4:-} ]]; then
   function_order=$(realpath "$4")
 fi
@@ -80,26 +86,27 @@ fi
 echo "PGO profile SHA-256: $(sha256sum "$profile_data" | cut -d ' ' -f 1)"
 echo "Target directory: $target_dir"
 cd "$source_repo"
-python3 "$repo_root/scripts/native_seed_pgo.py" validate --profile "$profile_input" --repo "$source_repo"
+python3 "$repo_root/scripts/native_seed_pgo.py" validate --profile "$profile_input" --repo "$source_repo" --features "$features"
 if [[ -n $function_order ]]; then
   python3 "$repo_root/scripts/native_seed_function_order.py" validate \
-    --order "$function_order" --repo "$source_repo" --pgo-profile "$profile_input"
+    --order "$function_order" --repo "$source_repo" --pgo-profile "$profile_input" --features "$features"
   RUSTFLAGS="-Cprofile-use=$profile_data" \
-    cargo +1.97.0 rustc --locked --release -p torrentngd --bin torrentngd --target-dir "$target_dir" -- \
+    cargo +1.97.0 rustc --locked --release -p torrentngd --bin torrentngd --target-dir "$target_dir" "${cargo_features[@]}" -- \
       -Clink-arg=-Wl,--emit-relocs "-Clink-arg=-Wl,--symbol-ordering-file=$function_order"
 else
   RUSTFLAGS="-Cprofile-use=$profile_data" \
-    cargo +1.97.0 build --locked --release -p torrentngd --target-dir "$target_dir"
+    cargo +1.97.0 build --locked --release -p torrentngd --target-dir "$target_dir" "${cargo_features[@]}"
 fi
 
 echo "torrentngd SHA-256: $(sha256sum "$target_dir/release/torrentngd" | cut -d ' ' -f 1)"
 
 RUSTFLAGS="-Cprofile-use=$profile_data" python3 "$repo_root/scripts/seed_efficiency_tools.py" manifest \
   --binary "$target_dir/release/torrentngd" --repo "$source_repo" --profile "$profile_data" \
+  --features "$features" \
   --output "$target_dir/release/torrentngd.manifest.json"
 
 if [[ -n $function_order ]]; then
   python3 "$repo_root/scripts/native_seed_function_order.py" validate \
     --order "$function_order" --repo "$source_repo" --pgo-profile "$profile_input" \
-    --build-manifest "$target_dir/release/torrentngd.manifest.json"
+    --build-manifest "$target_dir/release/torrentngd.manifest.json" --features "$features"
 fi

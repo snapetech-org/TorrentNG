@@ -47,12 +47,20 @@ class FunctionOrderTests(unittest.TestCase):
             return layout.generate(self.binary, self.build_path, self.profile,
                                    self.training_path, self.order, self.bolt)
 
-    def validate(self, build_manifest=None, symbols="0000 t hot\n0010 T warm"):
+    def validate(self, build_manifest=None, symbols="0000 t hot\n0010 T warm", features="default"):
         with patch.object(layout, "validate_profile", return_value={
                 "rustc": "compiler", "profile_sha256": "pgo"}), \
                 patch.object(layout, "source_digest", return_value="source"), \
                 patch.object(layout, "command", return_value=symbols):
-            return layout.validate(self.order, self.root, self.root / "pgo.profdata", build_manifest)
+            return layout.validate(self.order, self.root, self.root / "pgo.profdata", build_manifest, features)
+
+    def test_feature_sets_are_canonical_and_remain_bound_to_the_build(self):
+        self.build["features"] = "seed-mmap,default,full-compat,seed-mmap"
+        data = self.generate()
+        self.assertEqual(data["features"], "full-compat,seed-mmap")
+        self.validate(self.build_path, features="seed-mmap,full-compat")
+        with self.assertRaisesRegex(ValueError, "features"):
+            self.validate(features="default")
 
     def test_generation_preserves_rank_and_binds_training_inputs(self):
         data = self.generate()
@@ -157,8 +165,9 @@ class FunctionOrderTests(unittest.TestCase):
             else:
                 raw = next(arg.split("=", 1)[1] for arg in argv if arg.startswith("-generate-function-order="))
                 Path(raw).write_text("hot/1\n")
-        def build_manifest(binary, repo, profile):
+        def build_manifest(binary, repo, profile, features="default"):
             return {**self.build, "binary": str(binary), "binary_sha256": sha256(binary),
+                    "features": features,
                     "profile_sha256": sha256(profile)}
         with patch.dict(os.environ, {}, clear=True), \
                 patch.object(layout, "validate_profile", return_value={"profile_sha256": sha256(unpacked)}), \
@@ -207,14 +216,24 @@ if name=='cargo':
                            "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_RUSTC", "CARGO_BUILD_RUSTFLAGS"}}
         environment.update(PATH=str(bindir) + os.pathsep + os.environ["PATH"], CALL_LOG=str(log))
         script = Path(__file__).resolve().parent / "build_native_pgo_release.sh"
-        for optional in ([], ["orders/seed order.txt"]):
+        for optional in ([], ["orders/seed order.txt"], ["", "seed-mmap"],
+                         ["orders/seed order.txt", "seed-mmap"]):
             log.write_text("")
             subprocess.run(["bash", str(script), "pgo.profdata", "target", "source repo", *optional],
                            cwd=self.root, env=environment, check=True, capture_output=True, text=True)
             calls = [json.loads(line) for line in log.read_text().splitlines()]
             cargo = next(call["args"] for call in calls if call["name"] == "cargo")
-            self.assertEqual(cargo[1], "rustc" if optional else "build")
-            if optional:
+            has_order = bool(optional and optional[0])
+            self.assertEqual(cargo[1], "rustc" if has_order else "build")
+            if len(optional) == 2:
+                self.assertEqual(cargo[cargo.index("--features") + 1], "seed-mmap")
+                for call in calls:
+                    if call["name"] == "python3":
+                        args = call["args"]
+                        self.assertEqual(args[args.index("--features") + 1], "seed-mmap")
+            else:
+                self.assertNotIn("--features", cargo)
+            if has_order:
                 absolute = str(self.root / "orders/seed order.txt")
                 self.assertIn("-Clink-arg=-Wl,--symbol-ordering-file=" + absolute, cargo)
                 validations = [call["args"] for call in calls if call["name"] == "python3"
