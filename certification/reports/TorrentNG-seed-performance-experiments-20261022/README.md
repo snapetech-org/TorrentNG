@@ -196,6 +196,14 @@ screen raised CPU by 42.3% for 4.0% less PSS. None changes the release or PGO
 defaults; all raw evidence and the retained fat-LTO executable are in
 [`observations/runtime-tuning-screen-20261022/`](observations/runtime-tuning-screen-20261022/).
 
+One exact-binary, 256 MiB PGO CPU profile sampled the broad peer-task poll and
+supervised torrent-task poll most often. Storage preparation accounted for a
+small share; `PeerReadStreams::observe` was not sampled as a separate symbol.
+This is diagnostic evidence only, not a client comparison. It does not justify
+spending a matched-run cycle on the previously proposed path-map refactor; the
+profile, exact summary, and resolution notes are in
+[`observations/pgo-hotpath-profile-20261022/`](observations/pgo-hotpath-profile-20261022/).
+
 ## Upstream rTorrent path and next source experiment
 
 The comparator is built from the official [rTorrent v0.16.25 release](https://github.com/rakshasa/rtorrent/releases/tag/v0.16.25). Its paired [libTorrent v0.16.25 README](https://github.com/rakshasa/libtorrent/blob/v0.16.25/README.md) describes transferring directly from file pages to the network stack. That supports testing file-page-backed payload ownership. It does not establish that raw `sendfile` is the right implementation: our sendfile measurement traded a large anonymous-memory reduction for a 4.14× CPU increase.

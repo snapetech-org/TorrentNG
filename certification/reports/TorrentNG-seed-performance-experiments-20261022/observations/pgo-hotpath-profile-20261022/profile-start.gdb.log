@@ -1,0 +1,14 @@
+[New LWP 267216 (id 2)]
+[New LWP 267215 (id 3)]
+[New LWP 267214 (id 4)]
+[New LWP 267213 (id 5)]
+[New LWP 267212 (id 6)]
+[New LWP 267182 (id 7)]
+[New LWP 267181 (id 8)]
+[New LWP 267180 (id 9)]
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/usr/lib/libthread_db.so.1".
+[Switching to thread 1 (Thread 0x7fd6a8dafa00 (LWP 267179))]
+0x00007fd6a8b1e46d in syscall () from /usr/lib/libc.so.6
+$1 = 1
+[Inferior 1 (process 267179) detached]

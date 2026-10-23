@@ -67,3 +67,7 @@ arena-cap screens. Fat LTO reduced executable size but used more CPU and PSS.
 raising median CPU by 5.4%; cap 2 raised CPU by 42.3% in its one-round screen.
 The archive includes exact summaries and diagnostics plus the fat-LTO binary.
 No production or build default changed.
+
+`pgo-hotpath-profile-20261022/` retains one exact-binary 256 MiB PGO CPU
+profile. It did not provide a matched performance result; the peer-read stream
+map was not a sampled symbol, so a map-only refactor was not selected.

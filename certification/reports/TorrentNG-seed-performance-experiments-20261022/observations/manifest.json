@@ -3,8 +3,8 @@
   "files": [
     {
       "path": "README.md",
-      "bytes": 4095,
-      "sha256": "81664339c147ea89ae8e7721cae64551e642854e8142e1415d31c5f38a99b50a"
+      "bytes": 4319,
+      "sha256": "86319c049ff7403f898cde901117ffe452654825ecc4d2ef5fe994917f48dcbd"
     },
     {
       "path": "batch-distribution-16m/logs/run-01-batches-batches.client.log",
@@ -1250,6 +1250,36 @@
       "path": "pgo-full-training/summary.json",
       "bytes": 18596,
       "sha256": "418255d20546c792adcab41b6b2d89e7e761bd396637ded5a30d13ca412387fe"
+    },
+    {
+      "path": "pgo-hotpath-profile-20261022/README.md",
+      "bytes": 3356,
+      "sha256": "e49333265db05fd1bceba6c306b71b2e8e2419db9eb7c5179c5cf0873dfcc361"
+    },
+    {
+      "path": "pgo-hotpath-profile-20261022/fixture.torrent",
+      "bytes": 5218,
+      "sha256": "0d7b693cbd17871c6d2058fa4b57317576d742ae345333bb01d86b1acf595a64"
+    },
+    {
+      "path": "pgo-hotpath-profile-20261022/payload-window.prof",
+      "bytes": 16599,
+      "sha256": "80fa5d51677fee373c2a3f0140f129129dc0ace13d90750dfc170ec6fed4aacd"
+    },
+    {
+      "path": "pgo-hotpath-profile-20261022/profile-start.gdb.log",
+      "bytes": 464,
+      "sha256": "10cf9dd541e9f452f03bfe0e00e69e2a4a0c7a30bd0e9ae64747e43dbf0fc4bf"
+    },
+    {
+      "path": "pgo-hotpath-profile-20261022/profile-stop.gdb.log",
+      "bytes": 433,
+      "sha256": "5ca2870de6a7584aaeb34f8b192862eb89a3b5e0812296168d46ed18617b2251"
+    },
+    {
+      "path": "pgo-hotpath-profile-20261022/summary.json",
+      "bytes": 38753,
+      "sha256": "e09cff3fa2ba449a40b9e56628d2db838445ac0c01a9aa759ce9eb302f198223"
     },
     {
       "path": "pgo-native-target-screen-20261022/README.md",
