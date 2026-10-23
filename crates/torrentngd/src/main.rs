@@ -230,17 +230,26 @@ fn install_panic_payload_redacting_hook() {
     }));
 }
 
+fn build_tokio_runtime(worker_threads: usize) -> anyhow::Result<tokio::runtime::Runtime> {
+    let runtime = if worker_threads == 1 {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+    } else {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(worker_threads)
+            .enable_all()
+            .build()
+    };
+    runtime.context("failed to build Tokio runtime")
+}
+
 fn main() -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
     disable_transparent_huge_pages();
     install_panic_payload_redacting_hook();
     let worker_threads = configured_tokio_worker_threads()?;
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(worker_threads)
-        .enable_all()
-        .build()
-        .context("failed to build Tokio runtime")?
-        .block_on(torrentngd_main(worker_threads))
+    build_tokio_runtime(worker_threads)?.block_on(torrentngd_main(worker_threads))
 }
 
 fn merge_compatibility_routers(
@@ -1034,10 +1043,11 @@ fn load_auth_credentials(
 #[cfg(test)]
 mod tests {
     use super::{
-        bearer_token, daemon_auth_guard, daemon_public_auth_path, daemon_public_path,
-        install_panic_payload_redacting_hook, load_or_create_bootstrap_password,
-        merge_compatibility_routers, request_id, request_uri_is_bounded, skip_request_log,
-        static_dir, tokio_worker_threads_for, DaemonAuthGate, MAX_REQUEST_URI_BYTES,
+        bearer_token, build_tokio_runtime, daemon_auth_guard, daemon_public_auth_path,
+        daemon_public_path, install_panic_payload_redacting_hook,
+        load_or_create_bootstrap_password, merge_compatibility_routers, request_id,
+        request_uri_is_bounded, skip_request_log, static_dir, tokio_worker_threads_for,
+        DaemonAuthGate, MAX_REQUEST_URI_BYTES,
     };
     use axum::{
         body::Body,
@@ -1055,6 +1065,24 @@ mod tests {
         assert_eq!(tokio_worker_threads_for(None, Some(64)).unwrap(), 1);
         assert_eq!(tokio_worker_threads_for(None, Some(2)).unwrap(), 1);
         assert_eq!(tokio_worker_threads_for(None, None).unwrap(), 1);
+    }
+
+    #[test]
+    fn one_worker_uses_current_thread_runtime() {
+        let runtime = build_tokio_runtime(1).unwrap();
+        assert_eq!(
+            runtime.handle().runtime_flavor(),
+            tokio::runtime::RuntimeFlavor::CurrentThread
+        );
+    }
+
+    #[test]
+    fn explicit_multiple_workers_keep_multithread_runtime() {
+        let runtime = build_tokio_runtime(2).unwrap();
+        assert_eq!(
+            runtime.handle().runtime_flavor(),
+            tokio::runtime::RuntimeFlavor::MultiThread
+        );
     }
 
     #[test]
