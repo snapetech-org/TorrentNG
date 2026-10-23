@@ -2522,6 +2522,31 @@
       "sha256": "c8ee3fab083aa099f3caa14e9b541071aa6fcbc425f5c496334738e88fcdd768"
     },
     {
+      "path": "peer-codec-capacity-fastpath-screen-20261023/README.md",
+      "bytes": 3191,
+      "sha256": "a17b60230c948f6e12936acf21d38b51c4bbe41f9cf140b16fc38cb412860760"
+    },
+    {
+      "path": "peer-codec-capacity-fastpath-screen-20261023/candidate-binary-sha256.txt",
+      "bytes": 65,
+      "sha256": "474e66e5306c69558120221deb93dfd207514f4fda440796e8b9f86100742a37"
+    },
+    {
+      "path": "peer-codec-capacity-fastpath-screen-20261023/candidate.patch.gz",
+      "bytes": 759,
+      "sha256": "a623c1f30f4b7243f1519cc25cfe74c5959143153d929fd18c41f20eb2e1a60f"
+    },
+    {
+      "path": "peer-codec-capacity-fastpath-screen-20261023/candidate.torrentngd.gz",
+      "bytes": 9705757,
+      "sha256": "64073d0e69cf2c348ed831760ec86d1f664ffc5e702f2de1412634b22bbeabdd"
+    },
+    {
+      "path": "peer-codec-capacity-fastpath-screen-20261023/summary.json",
+      "bytes": 11186,
+      "sha256": "a46c9da5156842f5eb4013a253bb2f4c72990e30532fb9ee420679b2fc261e56"
+    },
+    {
       "path": "peer-read-current-entry-screen-20261023/README.md",
       "bytes": 1865,
       "sha256": "bb2266218ca72c6ca15c9514bc92bae9f09bfe0ab6577ea597ebdd5fe470c382"
