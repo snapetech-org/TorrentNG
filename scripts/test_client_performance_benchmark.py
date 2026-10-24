@@ -433,15 +433,25 @@ class CgroupCounterTests(unittest.TestCase):
 
     def test_post_transfer_storage_backend_scrape_runs_only_for_torrentng(self) -> None:
         instance = object.__new__(benchmark.Benchmark)
-        instance._torrentng_request = mock.Mock(return_value=(
+        instance._torrentng_request = mock.Mock(side_effect=(
             b'torrentng_storage_runtime_initialized 0\n'
+            b'torrentng_stats_snapshot_generation 1\n'
+            b'torrentng_stats_snapshot_age_milliseconds 50\n'
             b'torrentng_storage_scheduler_groups 1\n'
             b'torrentng_storage_scheduler_backend_selected{backend="pread",scheduler_group="42"} 1\n'
             b'torrentng_storage_scheduler_backend_fixed_buffers_supported{backend="pread",scheduler_group="42"} 0\n'
-            b'torrentng_storage_scheduler_backend_registered_files_supported{backend="pread",scheduler_group="42"} 0\n'
+            b'torrentng_storage_scheduler_backend_registered_files_supported{backend="pread",scheduler_group="42"} 0\n',
+            b'torrentng_storage_runtime_initialized 0\n'
+            b'torrentng_stats_snapshot_generation 2\n'
+            b'torrentng_stats_snapshot_age_milliseconds 25\n'
+            b'torrentng_storage_scheduler_groups 1\n'
+            b'torrentng_storage_scheduler_backend_selected{backend="pread",scheduler_group="42"} 1\n'
+            b'torrentng_storage_scheduler_backend_fixed_buffers_supported{backend="pread",scheduler_group="42"} 0\n'
+            b'torrentng_storage_scheduler_backend_registered_files_supported{backend="pread",scheduler_group="42"} 0\n',
         ))
 
-        observation = instance._capture_storage_backend_observation("torrentngd")
+        with mock.patch.object(benchmark.time, "sleep"):
+            observation = instance._capture_storage_backend_observation("torrentngd")
 
         self.assertEqual(
             observation["phase"],
@@ -449,11 +459,40 @@ class CgroupCounterTests(unittest.TestCase):
         )
         self.assertEqual(observation["metrics"]["selected_backend"], "pread")
         self.assertEqual(observation["metrics"]["backend_source"], "live_scheduler")
-        instance._torrentng_request.assert_called_once_with("/metrics")
+        self.assertTrue(observation["stats_snapshot_refreshed"])
+        self.assertEqual(observation["scrape_attempts"], 2)
+        self.assertEqual(instance._torrentng_request.call_count, 2)
+        instance._torrentng_request.assert_called_with("/metrics")
 
         instance._torrentng_request.reset_mock()
         self.assertIsNone(instance._capture_storage_backend_observation("qbittorrent"))
         instance._torrentng_request.assert_not_called()
+
+    def test_storage_backend_observation_waits_for_a_fresh_stats_snapshot(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        stale = (
+            b'torrentng_stats_snapshot_generation 0\n'
+            b'torrentng_stats_snapshot_age_milliseconds 18446744073709551615\n'
+            b'torrentng_storage_read_ops_by_class_total{class="peer_read"} 0\n'
+        )
+        fresh = (
+            b'torrentng_stats_snapshot_generation 1\n'
+            b'torrentng_stats_snapshot_age_milliseconds 25\n'
+            b'torrentng_storage_read_ops_by_class_total{class="peer_read"} 120\n'
+            b'torrentng_storage_scheduler_backend_selected{backend="pread",scheduler_group="42"} 1\n'
+        )
+        instance._torrentng_request = mock.Mock(side_effect=(stale, fresh))
+
+        with mock.patch.object(benchmark.time, "sleep") as sleep:
+            observation = instance._capture_storage_backend_observation("torrentngd")
+
+        self.assertTrue(observation["stats_snapshot_refreshed"])
+        self.assertEqual(observation["scrape_attempts"], 2)
+        self.assertEqual(
+            observation["metrics"]["io_classes"]["peer_read"]["read_ops"],
+            120,
+        )
+        self.assertEqual(sleep.call_count, 1)
 
     def test_storage_backend_is_captured_before_pausing_torrentng(self) -> None:
         instance = object.__new__(benchmark.Benchmark)

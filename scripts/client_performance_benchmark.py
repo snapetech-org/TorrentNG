@@ -337,6 +337,8 @@ def parse_torrentng_storage_backend_metrics(text):
     integer_metrics = {
         "torrentng_storage_backend_max_batch_len": "max_batch_len",
         "torrentng_storage_backend_fixed_buffer_bytes": "fixed_buffer_bytes",
+        "torrentng_stats_snapshot_generation": "snapshot_generation",
+        "torrentng_stats_snapshot_age_milliseconds": "snapshot_age_ms",
         "torrentng_storage_prepared_slot_allocations_total": "prepared_slot_allocations",
         "torrentng_storage_prepared_slot_reuses_total": "prepared_slot_reuses",
         "torrentng_storage_prepared_queue_wait_ns_total": "prepared_queue_wait_ns",
@@ -472,6 +474,13 @@ def describe_torrentng_storage_backend(observation):
     def yes_no(value):
         return "yes" if value is True else "no" if value is False else "n/a"
 
+    snapshot = ""
+    if metrics.get("snapshot_generation") is not None:
+        snapshot = (
+            f"; stats snapshot generation={metrics['snapshot_generation']}, "
+            f"age={metrics.get('snapshot_age_ms', 'n/a')} ms"
+        )
+
     if metrics.get("backend_source") == "live_scheduler":
         backends = metrics.get("selected_backends", [])
         backend = backends[0] if len(backends) == 1 else (
@@ -492,7 +501,7 @@ def describe_torrentng_storage_backend(observation):
         if "frame_pool_slots_supported" in metrics:
             details.append(f"frame-pool slots={yes_no(metrics['frame_pool_slots_supported'])}")
         details.extend(_describe_torrentng_upload_storage_metrics(metrics))
-        return ", ".join(details)
+        return ", ".join(details) + snapshot
 
     if metrics.get("backend_source") == "storage_runtime":
         backend = metrics.get("selected_backend", "unknown")
@@ -528,7 +537,7 @@ def describe_torrentng_storage_backend(observation):
     if "frame_pool_slots_supported" in metrics:
         details.append(f"frame-pool slots={yes_no(metrics['frame_pool_slots_supported'])}")
     details.extend(_describe_torrentng_upload_storage_metrics(metrics))
-    return ", ".join(details)
+    return ", ".join(details) + snapshot
 
 
 def _describe_torrentng_upload_storage_metrics(metrics):
@@ -2114,10 +2123,37 @@ class Benchmark:
             "phase": "after_torrentng_seed_window_before_torrent_pause",
         }
         try:
-            body = self._torrentng_request("/metrics").decode("utf-8", "replace")
-            observation["metrics"] = parse_torrentng_storage_backend_metrics(body)
-            if observation["metrics"] is None:
-                observation["error"] = "storage backend metrics were not exported"
+            deadline = time.monotonic() + 3.0
+            attempts = 0
+            initial_generation = None
+            while True:
+                attempts += 1
+                body = self._torrentng_request("/metrics").decode("utf-8", "replace")
+                metrics = parse_torrentng_storage_backend_metrics(body)
+                observation["metrics"] = metrics
+                if metrics is None:
+                    observation["error"] = "storage backend metrics were not exported"
+                    break
+                generation = metrics.get("snapshot_generation")
+                if attempts == 1:
+                    initial_generation = generation
+                snapshot_is_fresh = (
+                    generation is not None
+                    and initial_generation is not None
+                    and generation > initial_generation
+                    and metrics.get("snapshot_age_ms", 2**64 - 1) < 5_000
+                )
+                if snapshot_is_fresh:
+                    observation["stats_snapshot_refreshed"] = True
+                    break
+                if time.monotonic() >= deadline:
+                    observation["stats_snapshot_refreshed"] = False
+                    observation["warning"] = (
+                        "engine stats snapshot did not refresh within 3 seconds"
+                    )
+                    break
+                time.sleep(0.1)
+            observation["scrape_attempts"] = attempts
         except (OSError, urllib.error.URLError, urllib.error.HTTPError, ValueError) as error:
             observation["error"] = type(error).__name__
         self.storage_backend_observation = observation
@@ -2185,8 +2221,10 @@ class Benchmark:
                 "healthchecks_disabled_for_all_measured_clients": True,
                 "process_tree_sample_interval_seconds": PROCESS_TREE_SAMPLE_SECONDS,
                 "storage_backend_observation": (
-                    "when TorrentNG is included, one authenticated /metrics scrape "
-                    "after its transfer windows and before its container stops"
+                    "when TorrentNG is included, authenticated /metrics scrapes after "
+                    "its transfer window continue until the engine stats snapshot "
+                    "generation advances or the bounded 3-second refresh deadline expires; "
+                    "all scrapes are outside the timed transfer window"
                 ),
             },
             "host": self.host,
@@ -2210,10 +2248,10 @@ class Benchmark:
                 "process_identity_snapshots": "Diagnostic-only process IDs, names, RSS, and anonymous RSS captured when TorrentNG cgroup anonymous memory exceeds its process anonymous RSS by more than 1 MiB. Command-line arguments are not recorded.",
                 "engine_metrics": "Diagnostic-only TorrentNG resource-governor leases, estimated peer-buffer capacities, storage-pool gauges, and optional allocator metrics sampled during transfer and at phase boundaries.",
                 "storage_backend_observation": (
-                    "When TorrentNG is included, one authenticated /metrics scrape "
-                    "after its transfer windows and before its container stops records "
-                    "the selected backend and fixed-buffer capabilities without adding "
-                    "scrapes to measured intervals."
+                    "When TorrentNG is included, authenticated /metrics scrapes after "
+                    "its transfer window wait for a newer engine stats snapshot, with "
+                    "a 3-second bound. The scrapes record the selected backend and "
+                    "upload storage counters outside measured intervals."
                 ),
                 "jemalloc_metrics": "Jemalloc allocator gauges are present only when the jemalloc-allocator feature is selected. They describe Jemalloc's allocator state, not total process allocations or RSS.",
                 "source_fingerprint": "SHA-256 derived from commit/tree, a normalized full-index Git diff, and all non-ignored untracked file paths and contents at benchmark start.",
@@ -3688,7 +3726,7 @@ class Benchmark:
             f"- Benchmark mode: {self.mode}",
             f"- Requested TorrentNG runtime/storage worker overrides: {runtime_overrides}",
             f"- Requested TorrentNG memory-cap overrides: {memory_cap_overrides}",
-            "- TorrentNG storage backend (one post-transfer `/metrics` scrape): "
+            "- TorrentNG storage backend (post-transfer `/metrics` snapshot): "
             + describe_torrentng_storage_backend(self.storage_backend_observation),
             "- Measurement instrumentation: healthchecks disabled for all measured clients; "
             f"process-tree RSS/PSS sampled every {PROCESS_TREE_SAMPLE_SECONDS:g}s; "
