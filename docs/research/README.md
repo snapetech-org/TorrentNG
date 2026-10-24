@@ -48,6 +48,7 @@ different categories and should remain separate.
 - [Performance scale-claims audit](../PERFORMANCE_SCALE_CLAIMS_AUDIT.md)
 - [Refactoring performance notes](../REFACTORING_PERFORMANCE.md)
 - [Astra architecture review](../reviews/2026-10-23-astra-architecture-review.md)
+- [Storage-read feedback assessment and proposed diagnostic sequence](../reviews/2026-10-23-storage-read-feedback-assessment.md)
 - [PR #233: measured native-engine work](https://github.com/snapetech-org/TorrentNG/pull/233)
 - [PR #235: comparison harness and results](https://github.com/snapetech-org/TorrentNG/pull/235)
 
