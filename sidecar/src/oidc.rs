@@ -11,19 +11,18 @@ use std::{
 };
 
 use axum::{
-    Json,
     body::Bytes,
     extract::{Query, State},
-    http::{HeaderValue, StatusCode, header},
+    http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Redirect, Response},
+    Json,
 };
 use openidconnect::url::Url;
 use openidconnect::{
-    AuthType, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointMaybeSet,
+    core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata},
+    reqwest, AuthType, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointMaybeSet,
     EndpointNotSet, EndpointSet, IssuerUrl, Nonce, OAuth2TokenResponse, PkceCodeChallenge,
     PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
-    core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata},
-    reqwest,
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -161,28 +160,30 @@ impl OidcAuth {
         if !self.enabled() {
             return Err("OIDC is not configured");
         }
-        let (client, http, _) = self.client().await?;
         let apple = self.is_apple_issuer();
-        let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
-        let request = client
-            .authorize_url(
-                CoreAuthenticationFlow::AuthorizationCode,
-                CsrfToken::new_random,
-                Nonce::new_random,
-            )
-            .add_scope(Scope::new("openid".to_owned()))
-            .add_scope(Scope::new("email".to_owned()))
-            .add_scopes(if apple {
-                Vec::new()
+        let (authorize_url, csrf, nonce, verifier) = {
+            let (client, _http, _) = self.client().await?;
+            let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
+            let request = client
+                .authorize_url(
+                    CoreAuthenticationFlow::AuthorizationCode,
+                    CsrfToken::new_random,
+                    Nonce::new_random,
+                )
+                .add_scope(Scope::new("openid".to_owned()))
+                .add_scope(Scope::new("email".to_owned()))
+                .add_scopes(if apple {
+                    Vec::new()
+                } else {
+                    vec![Scope::new("profile".to_owned())]
+                });
+            let (authorize_url, csrf, nonce) = if apple {
+                request.add_extra_param("response_mode", "form_post").url()
             } else {
-                vec![Scope::new("profile".to_owned())]
-            });
-        let (authorize_url, csrf, nonce) = if apple {
-            request.add_extra_param("response_mode", "form_post").url()
-        } else {
-            request.set_pkce_challenge(challenge).url()
+                request.set_pkce_challenge(challenge).url()
+            };
+            (authorize_url, csrf, nonce, verifier)
         };
-        drop(http);
 
         let state = csrf.secret().clone();
         let pending = PendingFlow {
@@ -758,7 +759,7 @@ mod tests {
     use super::{
         json_boolean, oidc_state_cookie, oidc_state_cookie_name, parse_oidc_callback_form,
     };
-    use axum::http::{HeaderMap, HeaderValue, header};
+    use axum::http::{header, HeaderMap, HeaderValue};
 
     #[test]
     fn apple_form_post_parses_single_bounded_callback_fields() {

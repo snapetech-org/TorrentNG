@@ -14,4 +14,4 @@ jobs:
     if: github.event.pull_request.head.repo.fork == true && github.event.pull_request.base.repo.full_name == 'snapetech-org/TorrentNG' && github.event.pull_request.base.ref == 'main'
     permissions:
       contents: read
-    uses: snapetech-org/TorrentNG/.github/workflows/fork-safe-validation.yml@4f9f9c53fcf43a09a6a6985bcc8cddbdc6cd8bfe
+    uses: snapetech-org/TorrentNG/.github/workflows/fork-safe-validation.yml@7cb3c216a2473fd6db8ec07f70be209ac4fefe46

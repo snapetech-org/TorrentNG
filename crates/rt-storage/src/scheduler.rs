@@ -114,13 +114,13 @@ fn preadv2_nowait(file: &File, frame: &mut Frame, offset: u64) -> io::Result<usi
     let offset = libc::off_t::try_from(offset)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "file offset exceeds off_t"))?;
     let bytes = frame.as_mut_slice();
-    let mut vector = libc::iovec {
+    let vector = libc::iovec {
         iov_base: bytes.as_mut_ptr().cast(),
         iov_len: bytes.len(),
     };
     // SAFETY: the vector points to the exclusively borrowed frame for the
     // duration of the call; the descriptor and range remain leased/alive.
-    let read = unsafe { libc::preadv2(file.as_raw_fd(), &mut vector, 1, offset, libc::RWF_NOWAIT) };
+    let read = unsafe { libc::preadv2(file.as_raw_fd(), &vector, 1, offset, libc::RWF_NOWAIT) };
     if read < 0 {
         Err(io::Error::last_os_error())
     } else {

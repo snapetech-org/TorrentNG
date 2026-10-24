@@ -128,6 +128,8 @@ Supported features vary by client; the compatibility guides list the limits.
 
 ## Security And Review
 
+- [Security scanning](security-scanning.md) - local and hosted Semgrep, Trivy,
+  and RustSec scanning, including the reviewed dependency-advisory exception.
 - [SECURITY_REVIEW.md](SECURITY_REVIEW.md) - script workflow and WebUI/API
   service policy review notes.
 - [THREAT_MODEL.md](THREAT_MODEL.md) - threat model for exposed surfaces.

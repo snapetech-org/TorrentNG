@@ -511,10 +511,12 @@ fn local_session_cookie_valid(state: &AppState, req: &Request<Body>) -> bool {
 
 pub(crate) fn revoke_oidc_session_cookie(state: &AppState, cookie_header: Option<&str>) {
     let Some(value) = cookie_header
-        .and_then(|cookie| cookie.split(';').map(str::trim).find_map(|part| {
-            part.strip_prefix("tng_session=")
-                .or_else(|| part.strip_prefix("SID="))
-        }))
+        .and_then(|cookie| {
+            cookie.split(';').map(str::trim).find_map(|part| {
+                part.strip_prefix("tng_session=")
+                    .or_else(|| part.strip_prefix("SID="))
+            })
+        })
         .and_then(|value| urlencoding::decode(value).ok())
     else {
         return;

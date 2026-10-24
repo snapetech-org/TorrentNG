@@ -199,6 +199,8 @@ class WorkflowSecurityTests(unittest.TestCase):
                 "semgrep-community.yml",
                 "trivy-filesystem.yml",
                 "release.yml",
+                "release-aur.yml",
+                "release-copr.yml",
             }:
                 expressions = re.findall(r"(?m)^\s*runs-on: (?P<runner>[^\n]+)$", source)
                 routed = [expression for expression in expressions if "ng-shared-main-jit" in expression]
@@ -206,18 +208,19 @@ class WorkflowSecurityTests(unittest.TestCase):
                 for expression in routed:
                     self.assertIn('"group":"ng-shared-main-jit"', expression)
                     if workflow_path.name == "release.yml":
-                        self.assertIn(
-                            "contains(fromJSON('[\"push\",\"workflow_dispatch\",\"schedule\",\"release\",\"repository_dispatch\"]'), github.event_name)",
-                            expression,
-                        )
-                        self.assertIn(
-                            "github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v'))",
-                            expression,
-                        )
+                        self.assertIn("github.event_name == 'push'", expression)
+                        self.assertIn("github.ref_type == 'tag'", expression)
+                        self.assertIn("startsWith(github.ref_name, 'v')", expression)
+                        self.assertNotIn("workflow_dispatch", expression)
                         self.assertRegex(
                             expression,
                             r"\|\| (?:'ubuntu-latest'|'ubuntu-24\.04'|matrix\.os)",
                         )
+                    elif workflow_path.name in {"release-aur.yml", "release-copr.yml"}:
+                        self.assertIn("github.event_name == 'workflow_dispatch'", expression)
+                        self.assertIn("github.ref == 'refs/heads/main'", expression)
+                        self.assertNotIn("pull_request", expression)
+                        self.assertIn("|| 'ubuntu-latest'", expression)
                     else:
                         self.assertIn("github.event_name == 'push'", expression)
                         self.assertIn("github.event_name == 'workflow_dispatch'", expression)
@@ -314,7 +317,9 @@ class WorkflowSecurityTests(unittest.TestCase):
         release = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
         self.assertIn('      - "v*"', release)
         self.assertIn("validate-release-tag:", release)
-        self.assertIn("REQUESTED_TAG: ${{ inputs.tag || github.ref_name }}", release)
+        self.assertIn('      - "v*"', release)
+        self.assertNotIn("workflow_dispatch:", release.split("permissions:", 1)[0])
+        self.assertIn("REQUESTED_TAG: ${{ github.ref_name }}", release)
         self.assertIn("git merge-base --is-ancestor", release)
         self.assertIn("needs: validate-release-tag", release)
 

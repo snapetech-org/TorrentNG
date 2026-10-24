@@ -5,4 +5,13 @@ ignore = [
   # it does not decrypt or sign with RSA private keys. RustSec lists no fixed
   # version, so keep this narrowly documented until upstream supplies one.
   "RUSTSEC-2023-0071",
+  # RUSTSEC-2026-0387 reaches the sidecar through openidconnect's P-256/P-384
+  # ID-token signature verification. The verifier consumes provider-supplied
+  # public keys and signatures; TorrentNG does not use crypto-bigint to perform
+  # operations on private key material. Upstream has not yet released a
+  # compatible fixed crypto-bigint 0.5.x dependency chain. Reassess when
+  # openidconnect or its elliptic-curve dependencies move to crypto-bigint
+  # >=0.7.6; this is a scoped non-applicability exception, not a patched
+  # dependency claim.
+  "RUSTSEC-2026-0387",
 ]
