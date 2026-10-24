@@ -84,19 +84,37 @@ jobs:
             echo "Could not resolve the published stable image $source_ref." >&2
             exit 1
           fi
+          pinned_source="${SOURCE_IMAGE}@${expected_digest}"
 
+          tag_args=()
           for alias in $ALIASES; do
             target_ref="${TARGET_IMAGE}:${alias}"
             if [[ "$target_ref" != "$source_ref" ]]; then
-              if ! create_output="$(docker buildx imagetools create --tag "$target_ref" "$source_ref" 2>&1)"; then
-                printf 'Could not copy %s to %s:\n%s\n' "$source_ref" "$target_ref" "$create_output" >&2
-                exit 1
-              fi
+              tag_args+=(--tag "$target_ref")
             fi
-            if ! actual_digest="$(digest_for "$target_ref")"; then
-              printf 'Could not verify destination image %s.\n' "$target_ref" >&2
+          done
+
+          if ((${#tag_args[@]})); then
+            if ! create_output="$(docker buildx imagetools create "${tag_args[@]}" "$pinned_source" 2>&1)"; then
+              printf 'Could not copy %s to legacy aliases:\n%s\n' "$pinned_source" "$create_output" >&2
               exit 1
             fi
+            if [[ -n "$create_output" ]]; then
+              printf '%s\n' "$create_output"
+            fi
+          fi
+
+          for alias in $ALIASES; do
+            target_ref="${TARGET_IMAGE}:${alias}"
+            actual_digest=''
+            for attempt in {1..10}; do
+              actual_digest="$(digest_for "$target_ref" 2>/dev/null || true)"
+              if [[ "$actual_digest" == "$expected_digest" ]]; then
+                break
+              fi
+              printf 'Waiting for %s to report %s (attempt %s/10).\n' "$target_ref" "$expected_digest" "$attempt"
+              sleep 2
+            done
             if [[ "$actual_digest" != "$expected_digest" ]]; then
               echo "$target_ref points to $actual_digest; expected $expected_digest." >&2
               exit 1
