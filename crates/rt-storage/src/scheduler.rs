@@ -6,6 +6,9 @@ use std::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd;
+
 use futures::future::join_all;
 use once_cell::sync::Lazy;
 use tokio::sync::{
@@ -95,6 +98,35 @@ pub const STORAGE_LATENCY_BUCKET_COUNT: usize = STORAGE_LATENCY_BUCKETS_NS.len()
 
 const QUEUED_DISK_JOB_OVERHEAD_BYTES: u64 = 1024;
 const MAX_HASH_QUEUE_RETRIES: usize = 10_000;
+
+#[cfg(target_os = "linux")]
+static PEER_READ_NOWAIT_ENABLED: Lazy<bool> = Lazy::new(|| {
+    std::env::var("TNG_STORAGE_PEER_READ_NOWAIT").is_ok_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+});
+
+#[cfg(target_os = "linux")]
+fn preadv2_nowait(file: &File, frame: &mut Frame, offset: u64) -> io::Result<usize> {
+    let offset = libc::off_t::try_from(offset)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "file offset exceeds off_t"))?;
+    let bytes = frame.as_mut_slice();
+    let mut vector = libc::iovec {
+        iov_base: bytes.as_mut_ptr().cast(),
+        iov_len: bytes.len(),
+    };
+    // SAFETY: the vector points to the exclusively borrowed frame for the
+    // duration of the call; the descriptor and range remain leased/alive.
+    let read = unsafe { libc::preadv2(file.as_raw_fd(), &mut vector, 1, offset, libc::RWF_NOWAIT) };
+    if read < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(read as usize)
+    }
+}
 
 fn checked_file_range_end(path: &Path, offset: u64, len: u64) -> Result<u64, StorageError> {
     offset.checked_add(len).ok_or_else(|| {
@@ -368,6 +400,10 @@ pub struct StorageIoStats {
     pub peer_read_cache_hits: u64,
     pub peer_read_cache_misses: u64,
     pub peer_read_cache_evictions: u64,
+    /// Peer reads completed inline by Linux preadv2(RWF_NOWAIT).
+    pub peer_read_nowait_hits: u64,
+    /// Opt-in inline attempts that fell back to the normal storage path.
+    pub peer_read_nowait_fallbacks: u64,
     pub peer_read_elevator_enabled: bool,
     pub peer_read_elevator_queue_depth: usize,
     pub peer_read_elevator_queued: usize,
@@ -470,6 +506,8 @@ impl Default for StorageIoStats {
             peer_read_cache_hits: 0,
             peer_read_cache_misses: 0,
             peer_read_cache_evictions: 0,
+            peer_read_nowait_hits: 0,
+            peer_read_nowait_fallbacks: 0,
             peer_read_elevator_enabled: false,
             peer_read_elevator_queue_depth: 0,
             peer_read_elevator_queued: 0,
@@ -561,6 +599,15 @@ impl FilePool {
     ) -> Result<LeasedFileHandle, StorageError> {
         self.catalog
             .get_or_open_normalized_lease(key, mode == OpenMode::Write, create)
+            .map_err(|error| StorageError::io(key.display().to_string(), error))
+    }
+
+    fn try_get_cached_normalized(
+        &self,
+        key: &Path,
+    ) -> Result<Option<LeasedFileHandle>, StorageError> {
+        self.catalog
+            .try_get_cached_normalized_lease(key, false)
             .map_err(|error| StorageError::io(key.display().to_string(), error))
     }
 
@@ -1259,6 +1306,8 @@ struct StorageCounters {
     peer_read_cache_hits: AtomicU64,
     peer_read_cache_misses: AtomicU64,
     peer_read_cache_evictions: AtomicU64,
+    peer_read_nowait_hits: AtomicU64,
+    peer_read_nowait_fallbacks: AtomicU64,
     peer_read_elevator_queue_full: AtomicU64,
     peer_read_elevator_batches: AtomicU64,
     peer_read_elevator_coalesced_requests: AtomicU64,
@@ -1302,6 +1351,8 @@ impl Default for StorageCounters {
             peer_read_cache_hits: AtomicU64::new(0),
             peer_read_cache_misses: AtomicU64::new(0),
             peer_read_cache_evictions: AtomicU64::new(0),
+            peer_read_nowait_hits: AtomicU64::new(0),
+            peer_read_nowait_fallbacks: AtomicU64::new(0),
             peer_read_elevator_queue_full: AtomicU64::new(0),
             peer_read_elevator_batches: AtomicU64::new(0),
             peer_read_elevator_coalesced_requests: AtomicU64::new(0),
@@ -4174,6 +4225,11 @@ impl MountScheduler {
                 .counters
                 .peer_read_cache_evictions
                 .load(Ordering::Relaxed),
+            peer_read_nowait_hits: self.counters.peer_read_nowait_hits.load(Ordering::Relaxed),
+            peer_read_nowait_fallbacks: self
+                .counters
+                .peer_read_nowait_fallbacks
+                .load(Ordering::Relaxed),
             peer_read_elevator_enabled: self.peer_read_elevator_enabled,
             peer_read_elevator_queue_depth: self.peer_read_elevator_queue_depth,
             peer_read_elevator_queued,
@@ -4571,6 +4627,106 @@ impl MountScheduler {
         elevator.clone()
     }
 
+    #[cfg(target_os = "linux")]
+    fn try_read_peer_nowait(
+        &self,
+        path: &Path,
+        offset: u64,
+        len: usize,
+    ) -> Result<Option<StorageRead>, StorageError> {
+        let key = normalized_key(path);
+        let fallback = || {
+            self.counters
+                .peer_read_nowait_fallbacks
+                .fetch_add(1, Ordering::Relaxed);
+            None
+        };
+        let file = match self.file_pool.try_get_cached_normalized(&key) {
+            Ok(Some(file)) => file,
+            Ok(None) | Err(_) => return Ok(fallback()),
+        };
+        let identity = file.identity();
+        let readahead_enabled = self.io_config.peer_read_cache_entries > 0
+            && self.io_config.peer_read_cache_bytes > 0
+            && self.io_config.peer_read_readahead_bytes > len;
+        #[cfg(all(target_os = "linux", feature = "seed-mmap"))]
+        let readahead_enabled = readahead_enabled && !crate::mapped_upload::enabled();
+        let readahead_bytes = if readahead_enabled {
+            self.io_config
+                .peer_read_readahead_bytes
+                .min(self.io_config.peer_read_cache_bytes)
+        } else {
+            0
+        };
+        let started = Instant::now();
+        if readahead_enabled {
+            if let Some(bytes) =
+                peer_read_cache_hit(&self.peer_read_cache, &key, identity, offset, len)
+            {
+                current_file_identity(&key, &file, "payload_read")?;
+                lock_recover(&self.peer_read_streams).observe(
+                    &key,
+                    offset,
+                    len,
+                    readahead_bytes,
+                    true,
+                );
+                self.counters
+                    .peer_read_cache_hits
+                    .fetch_add(1, Ordering::Relaxed);
+                self.counters.read_ops_by_class[class_index(IoClass::PeerRead)]
+                    .fetch_add(1, Ordering::Relaxed);
+                self.counters.bytes_read_by_class[class_index(IoClass::PeerRead)]
+                    .fetch_add(len as u64, Ordering::Relaxed);
+                let latency_ns = latency_ns_since(started);
+                self.counters.read_latency_ns_by_class[class_index(IoClass::PeerRead)]
+                    .fetch_add(latency_ns, Ordering::Relaxed);
+                record_latency_bucket(&self.counters.read_latency_buckets, latency_ns);
+                return Ok(Some(StorageRead::Bytes(bytes)));
+            }
+            self.counters
+                .peer_read_cache_misses
+                .fetch_add(1, Ordering::Relaxed);
+        }
+
+        let Some(mut frame) = global_frame_pool().try_acquire_for_overwrite(len) else {
+            return Ok(fallback());
+        };
+        let read = match preadv2_nowait(file.as_file(), &mut frame, offset) {
+            Ok(read) if read == len => read,
+            Ok(_) | Err(_) => return Ok(fallback()),
+        };
+        debug_assert_eq!(read, len);
+        frame.mark_initialized();
+        current_file_identity(&key, &file, "payload_read")?;
+        if readahead_enabled {
+            lock_recover(&self.peer_read_streams).observe(
+                &key,
+                offset,
+                len,
+                readahead_bytes,
+                false,
+            );
+        }
+        lock_reset_derived_cache(&self.peer_read_cache).consume(&key, identity, offset, len);
+        self.counters
+            .peer_read_nowait_hits
+            .fetch_add(1, Ordering::Relaxed);
+        self.counters.read_ops_by_class[class_index(IoClass::PeerRead)]
+            .fetch_add(1, Ordering::Relaxed);
+        self.counters.bytes_read_by_class[class_index(IoClass::PeerRead)]
+            .fetch_add(len as u64, Ordering::Relaxed);
+        self.counters.backend_read_ops_by_class[class_index(IoClass::PeerRead)]
+            .fetch_add(1, Ordering::Relaxed);
+        self.counters.backend_bytes_read_by_class[class_index(IoClass::PeerRead)]
+            .fetch_add(len as u64, Ordering::Relaxed);
+        let latency_ns = latency_ns_since(started);
+        self.counters.read_latency_ns_by_class[class_index(IoClass::PeerRead)]
+            .fetch_add(latency_ns, Ordering::Relaxed);
+        record_latency_bucket(&self.counters.read_latency_buckets, latency_ns);
+        Ok(Some(StorageRead::Frame(frame)))
+    }
+
     /// Experimental immutable-view upload preparation. All filesystem and
     /// faulting work stays on a disk worker; the socket only owns a bounded
     /// mapped range. Unsupported kernels/backends return buffered fallback.
@@ -4660,6 +4816,15 @@ impl MountScheduler {
         priority: IoRequestPriority,
     ) -> Result<StorageRead, StorageError> {
         checked_file_range_end(path, offset, len as u64)?;
+        #[cfg(target_os = "linux")]
+        if class == IoClass::PeerRead
+            && *PEER_READ_NOWAIT_ENABLED
+            && self.disk_backend.uses_pread_workers()
+        {
+            if let Some(read) = self.try_read_peer_nowait(path, offset, len)? {
+                return Ok(read);
+            }
+        }
         let _permit = self.acquire(class).await?;
         let pool = self.file_pool.clone();
         let disk_backend = self.disk_backend.clone();
@@ -10022,6 +10187,52 @@ mod tests {
         assert_eq!(
             stats.backend_bytes_read_by_class[class_index(IoClass::PeerRead)],
             16
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn peer_read_nowait_uses_a_cached_descriptor_for_warm_pages() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nowait-warm.bin");
+        std::fs::write(&path, b"abcdefghijklmnopqrstuvwxyz0123456789").unwrap();
+        let scheduler = MountScheduler::new(
+            StorageRootId::new(),
+            &SchedulerConfig {
+                profile: StorageProfile::Ssd,
+                storage_io: StorageIoConfig {
+                    peer_read_readahead_bytes: 0,
+                    peer_read_cache_entries: 0,
+                    peer_read_cache_bytes: 0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let warmed = scheduler
+            .read_owned_at(IoClass::PeerRead, &path, 0, 16)
+            .await
+            .unwrap();
+        assert_eq!(warmed.as_slice(), b"abcdefghijklmnop");
+
+        let inline = scheduler.try_read_peer_nowait(&path, 16, 16).unwrap();
+        let read = match inline {
+            Some(read) => read,
+            None => scheduler
+                .read_owned_at(IoClass::PeerRead, &path, 16, 16)
+                .await
+                .unwrap(),
+        };
+        match read {
+            StorageRead::Frame(frame) => assert_eq!(frame.as_slice(), b"qrstuvwxyz012345"),
+            StorageRead::Bytes(bytes) => assert_eq!(&bytes[..], b"qrstuvwxyz012345"),
+        }
+        let stats = scheduler.stats();
+        assert!(stats.peer_read_nowait_hits + stats.peer_read_nowait_fallbacks >= 1);
+        assert_eq!(
+            stats.backend_read_ops_by_class[class_index(IoClass::PeerRead)],
+            2
         );
     }
 

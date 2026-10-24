@@ -202,3 +202,42 @@ the other clients, so these are screening results rather than a parity claim.
 The [full comparison report](../../certification/reports/TorrentNG-current-client-seed-comparison-20261023/README.md)
 includes current version pins, the methodology, separate memory categories,
 all three raw reports and profiles, host pressure, and excluded attempts.
+
+## Linux nonblocking seed reads (2026-10-24)
+
+An opt-in Linux `preadv2(RWF_NOWAIT)` path reads warm peer-request blocks inline
+from a cached descriptor, with the bounded storage-worker path as fallback.
+The counters show the intended path was exercised: in the 4 GiB screen, 258,996
+reads completed inline and 3,055 fell back. Prepared storage jobs fell from
+266,236 reuses with NOWAIT off to 7,147 with it on. Backend operations rose by
+about 10%, while backend read size and the recorded block-read bytes/GiB fell;
+this is a cache/readahead tradeoff to recheck under cold and mixed workloads.
+
+In the single 1 GiB off/on pair, TorrentNG used 3.818 versus 2.496 billion
+instructions/GiB and 2.410 versus 1.449 billion user cycles/GiB. Whole-window
+CPU moved from 1.10 to 0.85 CPU-s/GiB; anonymous peak from 9.3 to 6.0 MiB; PSS
+from 22.7 to 19.3 MiB. Host load was similar across those passes. In the single
+4 GiB pair, instructions/GiB also fell 34.7%, but host load was much higher in
+the NOWAIT-off run, so its transfer-time and CPU differences are not causal.
+Both fixture sizes passed SHA-256 for both settings.
+
+The separate 4 GiB rTorrent run measured 0.42 CPU-s/GiB, 10.3 MiB PSS, and
+2.3 MiB anonymous peak; TorrentNG with NOWAIT measured 0.83 CPU-s/GiB, 19.3 MiB
+PSS, and 7.1 MiB anonymous peak. This candidate moved TorrentNG's metrics in
+the right direction but did not meet rTorrent parity. These are diagnostic
+single runs, not qualification medians. Perf data was enabled for 100% of each
+reported interval, but one TorrentNG worker thread exited before the final
+thread-set snapshot in each run. Syscall totals and repeatability remain open.
+NOWAIT remains disabled by default pending randomized repeated tests, varied
+rates, cold-cache behavior, and broader correctness checks.
+
+One additional implementation caveat: `preadv2(RWF_NOWAIT)` itself does not
+wait for cold payload pages, but cached-handle acquisition and post-read path
+identity validation still call synchronous `symlink_metadata` on the peer
+task. Keep the experiment opt-in, especially on remote or slow metadata paths;
+the current results do not establish a fully nonblocking peer task.
+
+The full report includes source fingerprints, fixture hashes, the 1 GiB and
+4 GiB configs, raw perf/process samples, memory profiles, failed tracker waits,
+and the exact harness change:
+[NOWAIT seed-read screen](../../certification/reports/TorrentNG-nowait-seed-screen-20261024/README.md).

@@ -85,6 +85,7 @@ PERSISTENT_BUILDX_BUILDER = "tngbench-client-build-cache-v1"
 DOWNLOAD_TIMEOUT = int(os.environ.get("TNG_CLIENT_BENCH_TIMEOUT_SECS", "1800"))
 SEED_TIMEOUT = int(os.environ.get("TNG_CLIENT_BENCH_SEED_TIMEOUT_SECS", "900"))
 SEED_NO_PEER_TIMEOUT = int(os.environ.get("TNG_CLIENT_BENCH_NO_PEER_TIMEOUT_SECS", "90"))
+TRACKER_POLL_INTERVAL = 2.0
 INTERVAL = float(os.environ.get("TNG_CLIENT_BENCH_SAMPLE_SECS", "2"))
 ALLOCATOR_METRIC_INTERVAL = float(os.environ.get("TNG_CLIENT_BENCH_ALLOCATOR_SAMPLE_SECS", "5"))
 IDLE_SAMPLE_SECONDS = float(os.environ.get("TNG_CLIENT_BENCH_IDLE_SAMPLE_SECS", "8"))
@@ -206,6 +207,15 @@ def select_rtorrent_profile(value=None):
             "TNG_CLIENT_BENCH_RTORRENT_PROFILE must be upstream or legacy"
         )
     return profile
+
+
+def seed_status_ready(client, state):
+    """Require rTorrent's verification pass to finish before timing a seed."""
+    if float(state.get("progress", 0.0)) < 1.0:
+        return False
+    if client == "rtorrent":
+        return bool(state.get("complete")) and not bool(state.get("hashing", True))
+    return True
 
 
 def rtorrent_config_for_profile(text, profile):
@@ -414,6 +424,8 @@ def parse_torrentng_storage_backend_metrics(text):
         "torrentng_storage_prepared_run_ns_total": "prepared_run_ns",
         "torrentng_storage_peer_read_cache_hits_total": "peer_read_cache_hits",
         "torrentng_storage_peer_read_cache_misses_total": "peer_read_cache_misses",
+        "torrentng_storage_peer_read_nowait_hits_total": "peer_read_nowait_hits",
+        "torrentng_storage_peer_read_nowait_fallbacks_total": "peer_read_nowait_fallbacks",
         "torrentng_storage_peer_read_elevator_batches_total": "peer_read_elevator_batches",
         "torrentng_storage_peer_read_elevator_coalesced_requests_total": (
             "peer_read_elevator_coalesced_requests"
@@ -632,6 +644,12 @@ def _describe_torrentng_upload_storage_metrics(metrics):
             "peer-read cache="
             f"{metrics.get('peer_read_cache_hits', 0)} hits/"
             f"{metrics.get('peer_read_cache_misses', 0)} misses"
+        )
+    if "peer_read_nowait_hits" in metrics or "peer_read_nowait_fallbacks" in metrics:
+        details.append(
+            "peer-read NOWAIT="
+            f"{metrics.get('peer_read_nowait_hits', 0)} inline/"
+            f"{metrics.get('peer_read_nowait_fallbacks', 0)} fallbacks"
         )
     if "prepared_slot_allocations" in metrics or "prepared_slot_reuses" in metrics:
         details.append(
@@ -990,6 +1008,9 @@ class Benchmark:
         )
         self.storage_peer_read_cache_bytes = optional_nonnegative_int(
             "TNG_CLIENT_BENCH_STORAGE_PEER_READ_CACHE_BYTES",
+        )
+        self.storage_peer_read_nowait = env_enabled(
+            "TNG_CLIENT_BENCH_STORAGE_PEER_READ_NOWAIT",
         )
         self.piece_assembly_cap_mb = optional_nonnegative_int(
             "TNG_CLIENT_BENCH_PIECE_ASSEMBLY_CAP_MB",
@@ -1385,6 +1406,8 @@ class Benchmark:
             )
         if self.tokio_worker_threads is not None:
             compose_environment["TOKIO_WORKER_THREADS"] = str(self.tokio_worker_threads)
+        if getattr(self, "storage_peer_read_nowait", False):
+            compose_environment["TNG_STORAGE_PEER_READ_NOWAIT"] = "1"
         self.compose_override_path = self.workdir / "compose.benchmark.yml"
         self.compose_override_path.write_text(
             render_benchmark_compose_override(
@@ -1856,19 +1879,21 @@ class Benchmark:
             }
         rows = self._scgi(
             "d.multicall2", "", "main", "d.hash=", "d.name=", "d.complete=",
-            "d.size_bytes=", "d.completed_bytes=", "d.down.rate=", "d.up.rate=",
-            "d.peers_connected=",
+            "d.hashing=", "d.size_bytes=", "d.completed_bytes=", "d.down.rate=",
+            "d.up.rate=", "d.peers_connected=",
         ) or []
         row = next((r for r in rows if str(r[0]).lower() == info_hash.lower()), None)
         if row is None and allow_name_fallback:
             row = next((r for r in rows if r[1] == name), None)
         if row is None:
             return self._empty_status()
-        size = int(row[3])
-        done = int(row[4])
+        size = int(row[4])
+        done = int(row[5])
         return {
             "progress": min(1.0, done / size) if size else float(row[2]),
-            "down": int(row[5]), "up": int(row[6]), "peers": int(row[7]), "total": size,
+            "complete": bool(int(row[2])), "hashing": bool(int(row[3])),
+            "down": int(row[6]), "up": int(row[7]), "peers": int(row[8]),
+            "total": size,
         }
 
     @staticmethod
@@ -2415,11 +2440,15 @@ class Benchmark:
             "client_cpuset": self.client_cpuset,
             "seed_leecher_cpuset": self.seed_leecher_cpuset,
             "diagnostic_only": True,
-            "completion_detection_uncertainty_seconds": INTERVAL,
+            "completion_detection_uncertainty_seconds": max(
+                INTERVAL, TRACKER_POLL_INTERVAL,
+            ),
             "measurement_window": (
-                "after the leecher is registered and seeder reannounced, from the "
-                "transfer timer start through the completed-byte observation; the "
-                "collector stops before the leecher file is SHA-256 checked"
+                "collector attaches after the leecher container is ready and immediately "
+                "before the torrent is added, then stops at the completed-byte observation; "
+                "counts include announce/startup overhead and are normalized by the full "
+                "payload size only after the complete leecher file passes its pinned "
+                "SHA-256 check"
             ),
             "strace_note": (
                 "strace uses ptrace and changes scheduling; its syscall counts are "
@@ -2870,7 +2899,7 @@ class Benchmark:
 
     def _start_seed_leecher(
         self, torrent_path, seeder, *, skip_check=False,
-        upload_limit_bps=RATE_BPS,
+        upload_limit_bps=RATE_BPS, before_add_torrent=None,
     ):
         client = "seed_leecher"
         # Reuse the same controlled infohash with a fresh helper state for each seeder.
@@ -2930,6 +2959,8 @@ class Benchmark:
             key: preferences[key]
             for key in ("dl_limit", "up_limit", "limit_lan_peers")
         }
+        if before_add_torrent is not None:
+            before_add_torrent()
         self._add_torrent(
             client, torrent_path, "/downloads", skip_check=skip_check,
         )
@@ -2971,10 +3002,23 @@ class Benchmark:
             # for a complete peer lets the seeder reannounce before the
             # leecher is registered, so a private torrent has no authorized
             # peer to return and rejects the later inbound connection.
-            if (counts is not None and counts["complete"] >= 1
-                    and counts["incomplete"] >= 1):
-                return
-            time.sleep(2)
+            if counts is not None and counts["complete"] >= 1:
+                if counts["incomplete"] >= 1:
+                    return False
+                # A fast local transfer can finish between tracker polls. In
+                # that case, the tracker retains the completed leecher while
+                # live qBittorrent status confirms it reached 100%. The caller
+                # still requires the pinned fixture SHA-256.
+                if counts["complete"] >= 2:
+                    state = self._seed_leecher_status(info_hash)
+                    if state["total"] > 0 and state["progress"] >= 1.0:
+                        return True
+                    # Both seed and leecher have announced. If the leecher is
+                    # still incomplete, let the normal peer/status loop and
+                    # final SHA check decide the outcome instead of waiting for
+                    # an incomplete count that this tracker no longer reports.
+                    return False
+            time.sleep(TRACKER_POLL_INTERVAL)
         if last_counts is not None:
             detail = (
                 f" (last scrape: {last_counts['complete']} complete, "
@@ -3016,7 +3060,7 @@ class Benchmark:
         deadline = time.monotonic() + 300
         while time.monotonic() < deadline:
             state = self._status(client, info_hash, payload.name, allow_name_fallback=False)
-            if state["progress"] >= 1.0:
+            if seed_status_ready(client, state):
                 break
             time.sleep(2)
         else:
@@ -3032,18 +3076,32 @@ class Benchmark:
         self.partial_seed_setup[client] = 0.0
         next_log = 0
         counter_capture = None
-        try:
-            self._start_seed_leecher(torrent_path, client)
-            self._wait_seed_leecher_tracker(info_hash, tracker_ip)
-            self._reannounce(client, info_hash)
-            self.seed_cache_eviction[client] = evict_file_cache(payload)
+        transfer_started = None
+
+        def start_counter_capture():
+            nonlocal counter_capture, transfer_started
             if self.counter_mode != "off":
                 capture = ProcessCounterCapture(
                     self.container_pids[client], self.counter_mode,
                 )
                 capture.start()
                 counter_capture = capture
-            started = time.monotonic()
+            # Start the transfer window before the leecher announces. Fast
+            # local transfers can finish before the tracker/API poll returns.
+            transfer_started = time.monotonic()
+
+        try:
+            # Evict before introducing a downloader; otherwise the transfer can
+            # fault the fixture back into cache while tracker setup is running.
+            self.seed_cache_eviction[client] = evict_file_cache(payload)
+            self._start_seed_leecher(
+                torrent_path, client, before_add_torrent=start_counter_capture,
+            )
+            self._wait_seed_leecher_tracker(info_hash, tracker_ip)
+            self._reannounce(client, info_hash)
+            if transfer_started is None:
+                raise RuntimeError("controlled-seed transfer start was not recorded")
+            started = transfer_started
             deadline = started + SEED_TIMEOUT
             last_peer = started
             self.partial_seed_setup[client] = started - setup_started
@@ -3108,6 +3166,7 @@ class Benchmark:
     def _record_process_counters(self, client, record, verified_bytes):
         record["client"] = client
         record["transfer_sha256_verified"] = verified_bytes > 0
+        record["counter_window_payload_bytes"] = verified_bytes
         self.process_counter_records.append(
             add_verified_gib_normalization(record, verified_bytes),
         )
@@ -3870,6 +3929,8 @@ class Benchmark:
             if self.storage_peer_read_cache_entries is not None else "",
             f"peer-read cache budget={self.storage_peer_read_cache_bytes}B"
             if self.storage_peer_read_cache_bytes is not None else "",
+            "peer-read preadv2(RWF_NOWAIT)=on"
+            if getattr(self, "storage_peer_read_nowait", False) else "",
         ]
         runtime_overrides = ", ".join(value for value in runtime_overrides if value) or "defaults"
         memory_cap_overrides = ", ".join(
@@ -4110,8 +4171,10 @@ class Benchmark:
                 "",
                 "## Diagnostic process counters",
                 "",
-                "Counters cover the timed controlled-seed transfer and are normalized "
-                "only after the leecher payload passed its pinned SHA-256 check. They "
+                "Counters attach immediately before the leecher adds the torrent and "
+                "stop at the completed-byte observation. They include announce/startup "
+                "overhead and are normalized by the full payload size only after the "
+                "leecher file passes its pinned SHA-256 check. They "
                 "are diagnostic evidence, not scoreable CPU or throughput results. "
                 "`strace` changes scheduling and must not be used to compare CPU time "
                 "or transfer speed.",
@@ -4185,10 +4248,11 @@ class Benchmark:
             f"- Sampling interval: {INTERVAL:g} seconds. A successful download average is "
             "verified payload bytes divided by elapsed wall time; for an incomplete download, "
             "the reported average uses client completed-byte progress and is paired with "
-            "the final percentage. The seed "
-            "transfer timer starts after both clients are ready, the leecher is "
-            "registered, and the seeder has reannounced; leecher setup time is listed "
-            "separately. Peak rates come "
+            "the final percentage. The seed transfer timer starts immediately before "
+            "the leecher adds the torrent and runs through completion observation, so it "
+            "includes announce/setup time and still captures transfers that finish before "
+            "the first tracker poll. Leecher container startup and preference setup are "
+            "listed separately. Peak rates come "
             "from client payload counters. Mean/peak CPU is Docker CPU percent, "
             "where 100% represents one logical core; cgroup CPU seconds per GiB "
             "and block read/write bytes per GiB are listed separately. Each client has an idle baseline "

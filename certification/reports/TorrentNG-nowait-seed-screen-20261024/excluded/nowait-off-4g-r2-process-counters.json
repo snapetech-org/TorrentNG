@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "source_commit": "b27fcd9337a22bc231b74d0640083f4a823a9091",
+  "source_tree": "cfd1a43b00b75f0bf6f75f30aa0ffc33562a014d",
+  "source_fingerprint_sha256": "a92373574c5d01c9030a8449b00a081d3905a5f01e9b5545914a3b093daf206e",
+  "host": "kspld0",
+  "mode": "perf",
+  "perf_event_paranoid": "2",
+  "client_cpuset": "18-19",
+  "seed_leecher_cpuset": "20-21",
+  "diagnostic_only": true,
+  "completion_detection_uncertainty_seconds": 2.0,
+  "measurement_window": "collector attaches after the leecher container is ready and immediately before the torrent is added, then stops at the completed-byte observation; counts include announce/startup overhead and are normalized by the full payload size only after the complete leecher file passes its pinned SHA-256 check",
+  "strace_note": null,
+  "measurements": [
+    {
+      "instructions": 2958983,
+      "cycles": 42435255,
+      "perf_context_switches": 500,
+      "cpu_migrations": 17,
+      "mode": "perf",
+      "root_pid": 2050388,
+      "attached_process_ids": [
+        2050388,
+        2050513
+      ],
+      "collector_exit_code": -2,
+      "collector_stderr": null,
+      "collector_output": "# started on Sat Oct 24 15:18:44 2026\n\n2958983,,instructions:u,17110546,100.00,,\n42435255,,cycles:u,17110546,100.00,,\n500,,context-switches,17110546,100.00,,\n17,,cpu-migrations,17110546,100.00,,",
+      "collector_elapsed_seconds": 90.877716797,
+      "voluntary_context_switches": null,
+      "involuntary_context_switches": null,
+      "stable_process_tree": false,
+      "process_ids_start": [
+        2050388,
+        2050513
+      ],
+      "process_ids_stop": [
+        2050388,
+        2050513
+      ],
+      "thread_ids_start": [
+        2050388,
+        2050513,
+        2050518,
+        2050551,
+        2050557,
+        2051318,
+        2051319,
+        2051321,
+        2051322,
+        2051323
+      ],
+      "thread_ids_stop": [
+        2050388,
+        2050513,
+        2050518,
+        2050551,
+        2051318,
+        2051319,
+        2051321,
+        2051322,
+        2051323
+      ],
+      "client": "torrentngd",
+      "transfer_sha256_verified": false,
+      "counter_window_payload_bytes": 0,
+      "involuntary_context_switches_per_verified_gib": null,
+      "perf_context_switches_per_verified_gib": null,
+      "cycles_per_verified_gib": null,
+      "instructions_per_verified_gib": null,
+      "cpu_migrations_per_verified_gib": null,
+      "voluntary_context_switches_per_verified_gib": null,
+      "errors_per_verified_gib": null,
+      "syscalls_per_verified_gib": null,
+      "verified_bytes": 0
+    }
+  ]
+}

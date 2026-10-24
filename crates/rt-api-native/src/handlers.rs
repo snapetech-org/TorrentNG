@@ -8227,6 +8227,20 @@ fn render_metrics_with_health(
     );
     metric(
         &mut out,
+        "torrentng_storage_peer_read_nowait_hits_total",
+        "counter",
+        "Peer reads completed inline with Linux preadv2 RWF_NOWAIT",
+        stats.storage_peer_read_nowait_hits,
+    );
+    metric(
+        &mut out,
+        "torrentng_storage_peer_read_nowait_fallbacks_total",
+        "counter",
+        "Opt-in inline peer-read attempts that fell back to the storage worker",
+        stats.storage_peer_read_nowait_fallbacks,
+    );
+    metric(
+        &mut out,
         "torrentng_storage_peer_read_elevator_enabled",
         "gauge",
         "Running torrent schedulers with peer-read elevator enabled",
@@ -11096,6 +11110,8 @@ mod tests {
             storage_peer_read_cache_global_budget_bytes: 16 * 1024 * 1024,
             storage_peer_read_cache_hits: 8,
             storage_peer_read_cache_evictions: 58,
+            storage_peer_read_nowait_hits: 59,
+            storage_peer_read_nowait_fallbacks: 60,
             piece_assembly_evictions: 9,
             storage_backend_read_ops: 14,
             storage_backend_bytes_read: 15,
@@ -11230,6 +11246,8 @@ mod tests {
         assert!(rendered.contains("torrentng_storage_peer_read_cache_global_budget_bytes 16777216"));
         assert!(rendered.contains("torrentng_storage_peer_read_cache_hits_total 8"));
         assert!(rendered.contains("torrentng_storage_peer_read_cache_evictions_total 58"));
+        assert!(rendered.contains("torrentng_storage_peer_read_nowait_hits_total 59"));
+        assert!(rendered.contains("torrentng_storage_peer_read_nowait_fallbacks_total 60"));
         assert!(rendered.contains("torrentng_piece_assembly_evictions_total 9"));
         assert!(rendered.contains("torrentng_peer_request_window_reductions_total 40"));
         assert!(rendered.contains("torrentng_peer_rx_buffer_bytes 41"));

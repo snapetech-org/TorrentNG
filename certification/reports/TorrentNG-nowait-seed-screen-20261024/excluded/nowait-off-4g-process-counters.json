@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "source_commit": "b27fcd9337a22bc231b74d0640083f4a823a9091",
+  "source_tree": "cfd1a43b00b75f0bf6f75f30aa0ffc33562a014d",
+  "source_fingerprint_sha256": "de8892b431934ccbc4f9433ef2e8702c51003b451a599568f314f03d951dc33a",
+  "host": "kspld0",
+  "mode": "perf",
+  "perf_event_paranoid": "2",
+  "client_cpuset": "18-19",
+  "seed_leecher_cpuset": "20-21",
+  "diagnostic_only": true,
+  "completion_detection_uncertainty_seconds": 0.5,
+  "measurement_window": "the active controlled-seed window: collector attach is initiated after the first sampled positive leecher progress and stops at the completed-byte observation; normalized by bytes remaining at attach; the collector stops before the complete leecher file is SHA-256 checked",
+  "strace_note": null,
+  "measurements": []
+}
