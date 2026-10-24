@@ -12,6 +12,7 @@ impl Engine {
         if let Some(cache) = self.services.stats_cache.as_ref() {
             if cache.generated_at.elapsed() <= ENGINE_STATS_CACHE_TTL {
                 let mut stats = cache.stats.clone();
+                stamp_snapshot_age(&mut stats, cache.collected_since);
                 self.apply_payload_copy_stats(&mut stats);
                 return Ok(stats);
             }
@@ -19,6 +20,7 @@ impl Engine {
             let stats = self.fast_engine_stats();
             self.services.stats_cache = Some(subsystems::EngineStatsCache {
                 generated_at: Instant::now(),
+                collected_since: None,
                 stats,
                 refresh_started_at: None,
             });
@@ -31,6 +33,13 @@ impl Engine {
             .expect("fast stats initializes the cache")
             .stats
             .clone();
+        stamp_snapshot_age(
+            &mut stats,
+            self.services
+                .stats_cache
+                .as_ref()
+                .and_then(|cache| cache.collected_since),
+        );
         self.apply_payload_copy_stats(&mut stats);
         Ok(stats)
     }
@@ -435,6 +444,7 @@ impl Engine {
         stats.resources = Some(resources);
         self.services.stats_cache = Some(subsystems::EngineStatsCache {
             generated_at: Instant::now(),
+            collected_since: None,
             stats: stats.clone(),
             refresh_started_at: None,
         });
@@ -563,4 +573,14 @@ impl Engine {
             next_actions,
         })
     }
+}
+
+fn stamp_snapshot_age(stats: &mut EngineStats, collected_since: Option<Instant>) {
+    stats.snapshot_age_ms = collected_since.map_or(u64::MAX, |started| {
+        started
+            .elapsed()
+            .as_nanos()
+            .div_ceil(1_000_000)
+            .min(u128::from(u64::MAX)) as u64
+    });
 }

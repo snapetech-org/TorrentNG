@@ -26,3 +26,13 @@ Run the full TorrentNG-client compatibility gate:
 ```sh
 scripts/native_engine_certification_report.sh
 ```
+
+## State ownership
+
+`AppState` is an `Arc`-backed handle so route handlers and middleware share one
+configuration allocation. Cloning the handle does not clone credentials or every
+store handle. Field reads retain their existing syntax through `Deref`; replacing
+a configuration field uses `Arc::make_mut`, preserving clone-local configuration
+changes. Existing lock-backed registry, caches, metrics and mutable API stores
+remain shared across clones, including after a configuration copy-on-write.
+Construct state through `AppState` constructors rather than struct literals.

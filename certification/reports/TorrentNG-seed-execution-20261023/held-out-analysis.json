@@ -1,0 +1,621 @@
+{
+  "format": "torrentng-seed-held-out-service-screen-v1",
+  "verified_runs": 28,
+  "shapes": [
+    {
+      "shape": 0,
+      "fixture_bytes": 134217728,
+      "peers": 1,
+      "window": 16,
+      "pattern": "sequential",
+      "cache_policy": "warm",
+      "files": 1,
+      "offered_aggregate_mib_s": 4.0,
+      "upload_limit_bytes_s": 0,
+      "nominal_target_mib_s": 4.0,
+      "rows": [
+        {
+          "name": "rtorrent",
+          "binary_sha256": "8c27d0f49bfdb9c4b79dc29f9b8b13197dafd6dc55384237429e274d6758dedb",
+          "environment": {},
+          "verified": true,
+          "bytes": 134217728,
+          "payload_goodput_mib_s": 3.9999904542728904,
+          "cpu_seconds_per_gib": 2.378994048,
+          "peak_pss_mib": 10.677734375,
+          "peak_anonymous_mib": 2.61328125,
+          "peer_first_payload_ms": [
+            1.5518990039709024
+          ],
+          "max_peer_first_payload_ms": 1.5518990039709024
+        },
+        {
+          "name": "previous-selected",
+          "binary_sha256": "3c2795978e401c878a8e507b80bf86c6c86c6a7a066b29ebcb37adb2f5eddbbd",
+          "environment": {
+            "TNG_SEED_MMAP": "0",
+            "TNG_STORAGE_ANON_LARGE_FRAMES": "0"
+          },
+          "verified": true,
+          "bytes": 134217728,
+          "payload_goodput_mib_s": 3.9999896497769867,
+          "cpu_seconds_per_gib": 3.117977952,
+          "peak_pss_mib": 13.19921875,
+          "peak_anonymous_mib": 5.984375,
+          "peer_first_payload_ms": [
+            1.606714999070391
+          ],
+          "max_peer_first_payload_ms": 1.606714999070391
+        },
+        {
+          "name": "scoped-ordered-mapped",
+          "binary_sha256": "4f6fc030f19589be5cd6ba71d7f87cc347ac0ed5a33de3a95ef6c08921dfb6d8",
+          "environment": {
+            "TNG_SEED_MMAP": "1",
+            "TNG_STORAGE_ANON_LARGE_FRAMES": "1"
+          },
+          "verified": true,
+          "bytes": 134217728,
+          "payload_goodput_mib_s": 3.999988338283749,
+          "cpu_seconds_per_gib": 3.774122912,
+          "peak_pss_mib": 11.59765625,
+          "peak_anonymous_mib": 3.47265625,
+          "peer_first_payload_ms": [
+            2.9016190019319765
+          ],
+          "max_peer_first_payload_ms": 2.9016190019319765
+        },
+        {
+          "name": "scoped-ordered-buffered",
+          "binary_sha256": "4f6fc030f19589be5cd6ba71d7f87cc347ac0ed5a33de3a95ef6c08921dfb6d8",
+          "environment": {
+            "TNG_SEED_MMAP": "0",
+            "TNG_STORAGE_ANON_LARGE_FRAMES": "1"
+          },
+          "verified": true,
+          "bytes": 134217728,
+          "payload_goodput_mib_s": 3.999990501897444,
+          "cpu_seconds_per_gib": 3.772806968,
+          "peak_pss_mib": 12.625,
+          "peak_anonymous_mib": 5.37109375,
+          "peer_first_payload_ms": [
+            1.691099998424761
+          ],
+          "max_peer_first_payload_ms": 1.691099998424761
+        }
+      ]
+    },
+    {
+      "shape": 1,
+      "fixture_bytes": 134217728,
+      "peers": 4,
+      "window": 64,
+      "pattern": "sequential",
+      "cache_policy": "warm",
+      "files": 1,
+      "offered_aggregate_mib_s": 16.0,
+      "upload_limit_bytes_s": 0,
+      "nominal_target_mib_s": 16.0,
+      "rows": [
+        {
+          "name": "rtorrent",
+          "binary_sha256": "8c27d0f49bfdb9c4b79dc29f9b8b13197dafd6dc55384237429e274d6758dedb",
+          "environment": {},
+          "verified": true,
+          "bytes": 536870912,
+          "payload_goodput_mib_s": 15.99412789888948,
+          "cpu_seconds_per_gib": 1.255928114,
+          "peak_pss_mib": 10.69921875,
+          "peak_anonymous_mib": 2.62109375,
+          "peer_first_payload_ms": [
+            3.6038190010003746,
+            3.6085559986531734,
+            4.578517997288145,
+            2.1760820018243976
+          ],
+          "max_peer_first_payload_ms": 4.578517997288145
+        },
+        {
+          "name": "scoped-ordered-mapped",
+          "binary_sha256": "4f6fc030f19589be5cd6ba71d7f87cc347ac0ed5a33de3a95ef6c08921dfb6d8",
+          "environment": {
+            "TNG_SEED_MMAP": "1",
+            "TNG_STORAGE_ANON_LARGE_FRAMES": "1"
+          },
+          "verified": true,
+          "bytes": 536870912,
+          "payload_goodput_mib_s": 15.992807544668224,
+          "cpu_seconds_per_gib": 2.079340254,
+          "peak_pss_mib": 12.26171875,
+          "peak_anonymous_mib": 3.86328125,
+          "peer_first_payload_ms": [
+            2.502582996385172,
+            4.076869001437444,
+            3.221209997718688,
+            1.5056460033520125
+          ],
+          "max_peer_first_payload_ms": 4.076869001437444
+        },
+        {
+          "name": "previous-selected",
+          "binary_sha256": "3c2795978e401c878a8e507b80bf86c6c86c6a7a066b29ebcb37adb2f5eddbbd",
+          "environment": {
+            "TNG_SEED_MMAP": "0",
+            "TNG_STORAGE_ANON_LARGE_FRAMES": "0"
+          },
+          "verified": true,
+          "bytes": 536870912,
+          "payload_goodput_mib_s": 15.99471652826734,
+          "cpu_seconds_per_gib": 2.345396332,
+          "peak_pss_mib": 13.41796875,
+          "peak_anonymous_mib": 6.0,
+          "peer_first_payload_ms": [
+            12.108345006708987,
+            10.20337700174423,
+            7.881949000875466,
+            11.95392199588241
+          ],
+          "max_peer_first_payload_ms": 12.108345006708987
+        },
+        {
+          "name": "scoped-ordered-buffered",
+          "binary_sha256": "4f6fc030f19589be5cd6ba71d7f87cc347ac0ed5a33de3a95ef6c08921dfb6d8",
+          "environment": {
+            "TNG_SEED_MMAP": "0",
+            "TNG_STORAGE_ANON_LARGE_FRAMES": "1"
+          },
+          "verified": true,
+          "bytes": 536870912,
+          "payload_goodput_mib_s": 15.9973998156284,
+          "cpu_seconds_per_gib": 2.205528772,
+          "peak_pss_mib": 12.9716796875,
+          "peak_anonymous_mib": 5.44140625,
+          "peer_first_payload_ms": [
+            15.745261000120081,
+            2.6472699973965064,
+            17.890900002385024,
+            11.310234003758524
+          ],
+          "max_peer_first_payload_ms": 17.890900002385024
+        }
+      ]
+    },
+    {
+      "shape": 2,
+      "fixture_bytes": 134217728,
+      "peers": 1,
+      "window": 64,
+      "pattern": "random",
+      "cache_policy": "warm",
+      "files": 1,
+      "offered_aggregate_mib_s": 64.0,
+      "upload_limit_bytes_s": 0,
+      "nominal_target_mib_s": 64.0,
+      "rows": [
+        {
+          "name": "scoped-ordered-mapped",
+          "binary_sha256": "4f6fc030f19589be5cd6ba71d7f87cc347ac0ed5a33de3a95ef6c08921dfb6d8",
+          "environment": {
+            "TNG_SEED_MMAP": "1",
+            "TNG_STORAGE_ANON_LARGE_FRAMES": "1"
+          },
+          "verified": true,
+          "bytes": 134217728,
+          "payload_goodput_mib_s": 63.480309684564986,
+          "cpu_seconds_per_gib": 3.840866968,
+          "peak_pss_mib": 11.5791015625,
+          "peak_anonymous_mib": 3.66015625,
+          "peer_first_payload_ms": [
+            3.0481610010610893
+          ],
+          "max_peer_first_payload_ms": 3.0481610010610893
+        },
+        {
+          "name": "rtorrent",
+          "binary_sha256": "8c27d0f49bfdb9c4b79dc29f9b8b13197dafd6dc55384237429e274d6758dedb",
+          "environment": {},
+          "verified": true,
+          "bytes": 134217728,
+          "payload_goodput_mib_s": 63.99731521675016,
+          "cpu_seconds_per_gib": 1.660077416,
+          "peak_pss_mib": 9.2705078125,
+          "peak_anonymous_mib": 2.6171875,
+          "peer_first_payload_ms": [
+            3.1111050047911704
+          ],
+          "max_peer_first_payload_ms": 3.1111050047911704
+        },
+        {
+          "name": "scoped-ordered-buffered",
+          "binary_sha256": "4f6fc030f19589be5cd6ba71d7f87cc347ac0ed5a33de3a95ef6c08921dfb6d8",
+          "environment": {
+            "TNG_SEED_MMAP": "0",
+            "TNG_STORAGE_ANON_LARGE_FRAMES": "1"
+          },
+          "verified": true,
+          "bytes": 134217728,
+          "payload_goodput_mib_s": 63.454933888739156,
+          "cpu_seconds_per_gib": 2.359169776,
+          "peak_pss_mib": 11.6669921875,
+          "peak_anonymous_mib": 3.65234375,
+          "peer_first_payload_ms": [
+            3.034301000298001
+          ],
+          "max_peer_first_payload_ms": 3.034301000298001
+        },
+        {
+          "name": "previous-selected",
+          "binary_sha256": "3c2795978e401c878a8e507b80bf86c6c86c6a7a066b29ebcb37adb2f5eddbbd",
+          "environment": {
+            "TNG_SEED_MMAP": "0",
+            "TNG_STORAGE_ANON_LARGE_FRAMES": "0"
+          },
+          "verified": true,
+          "bytes": 134217728,
+          "payload_goodput_mib_s": 63.4466166113519,
+          "cpu_seconds_per_gib": 1.976860768,
+          "peak_pss_mib": 12.8642578125,
+          "peak_anonymous_mib": 5.51953125,
+          "peer_first_payload_ms": [
+            3.926830002455972
+          ],
+          "max_peer_first_payload_ms": 3.926830002455972
+        }
+      ]
+    },
+    {
+      "shape": 3,
+      "fixture_bytes": 33554432,
+      "peers": 1,
+      "window": 1,
+      "pattern": "sequential",
+      "cache_policy": "warm",
+      "files": 1,
+      "offered_aggregate_mib_s": 1.0,
+      "upload_limit_bytes_s": 0,
+      "nominal_target_mib_s": 1.0,
+      "rows": [
+        {
+          "name": "scoped-ordered-buffered",
+          "binary_sha256": "4f6fc030f19589be5cd6ba71d7f87cc347ac0ed5a33de3a95ef6c08921dfb6d8",
+          "environment": {
+            "TNG_SEED_MMAP": "0",
+            "TNG_STORAGE_ANON_LARGE_FRAMES": "1"
+          },
+          "verified": true,
+          "bytes": 33554432,
+          "payload_goodput_mib_s": 0.9999948798700413,
+          "cpu_seconds_per_gib": 13.41117056,
+          "peak_pss_mib": 11.3564453125,
+          "peak_anonymous_mib": 4.21484375,
+          "peer_first_payload_ms": [
+            1.4106930029811338
+          ],
+          "max_peer_first_payload_ms": 1.4106930029811338
+        },
+        {
+          "name": "previous-selected",
+          "binary_sha256": "3c2795978e401c878a8e507b80bf86c6c86c6a7a066b29ebcb37adb2f5eddbbd",
+          "environment": {
+            "TNG_SEED_MMAP": "0",
+            "TNG_STORAGE_ANON_LARGE_FRAMES": "0"
+          },
+          "verified": true,
+          "bytes": 33554432,
+          "payload_goodput_mib_s": 0.9999969627591716,
+          "cpu_seconds_per_gib": 11.287424928,
+          "peak_pss_mib": 12.5322265625,
+          "peak_anonymous_mib": 5.44140625,
+          "peer_first_payload_ms": [
+            1.252842994290404
+          ],
+          "max_peer_first_payload_ms": 1.252842994290404
+        },
+        {
+          "name": "scoped-ordered-mapped",
+          "binary_sha256": "4f6fc030f19589be5cd6ba71d7f87cc347ac0ed5a33de3a95ef6c08921dfb6d8",
+          "environment": {
+            "TNG_SEED_MMAP": "1",
+            "TNG_STORAGE_ANON_LARGE_FRAMES": "1"
+          },
+          "verified": true,
+          "bytes": 33554432,
+          "payload_goodput_mib_s": 0.9999971314455683,
+          "cpu_seconds_per_gib": 14.255039552,
+          "peak_pss_mib": 11.6083984375,
+          "peak_anonymous_mib": 3.45703125,
+          "peer_first_payload_ms": [
+            1.5538549996563233
+          ],
+          "max_peer_first_payload_ms": 1.5538549996563233
+        },
+        {
+          "name": "rtorrent",
+          "binary_sha256": "8c27d0f49bfdb9c4b79dc29f9b8b13197dafd6dc55384237429e274d6758dedb",
+          "environment": {},
+          "verified": true,
+          "bytes": 33554432,
+          "payload_goodput_mib_s": 0.3545312952546361,
+          "cpu_seconds_per_gib": 7.456415168,
+          "peak_pss_mib": 10.529296875,
+          "peak_anonymous_mib": 2.57421875,
+          "peer_first_payload_ms": [
+            41.52798800350865
+          ],
+          "max_peer_first_payload_ms": 41.52798800350865
+        }
+      ]
+    },
+    {
+      "shape": 4,
+      "fixture_bytes": 134217728,
+      "peers": 3,
+      "window": 32,
+      "pattern": "sequential",
+      "cache_policy": "drop-file-pages",
+      "files": 1,
+      "offered_aggregate_mib_s": 48.0,
+      "upload_limit_bytes_s": 0,
+      "nominal_target_mib_s": 48.0,
+      "rows": [
+        {
+          "name": "scoped-ordered-mapped",
+          "binary_sha256": "4f6fc030f19589be5cd6ba71d7f87cc347ac0ed5a33de3a95ef6c08921dfb6d8",
+          "environment": {
+            "TNG_SEED_MMAP": "1",
+            "TNG_STORAGE_ANON_LARGE_FRAMES": "1"
+          },
+          "verified": true,
+          "bytes": 402653184,
+          "payload_goodput_mib_s": 47.96713859473023,
+          "cpu_seconds_per_gib": 1.5312530933333333,
+          "peak_pss_mib": 11.623046875,
+          "peak_anonymous_mib": 3.66796875,
+          "peer_first_payload_ms": [
+            8.927942995796911,
+            8.872732003510464,
+            8.81066000147257
+          ],
+          "max_peer_first_payload_ms": 8.927942995796911
+        },
+        {
+          "name": "scoped-ordered-buffered",
+          "binary_sha256": "4f6fc030f19589be5cd6ba71d7f87cc347ac0ed5a33de3a95ef6c08921dfb6d8",
+          "environment": {
+            "TNG_SEED_MMAP": "0",
+            "TNG_STORAGE_ANON_LARGE_FRAMES": "1"
+          },
+          "verified": true,
+          "bytes": 402653184,
+          "payload_goodput_mib_s": 47.979642279745114,
+          "cpu_seconds_per_gib": 1.3979070506666667,
+          "peak_pss_mib": 12.03515625,
+          "peak_anonymous_mib": 4.40234375,
+          "peer_first_payload_ms": [
+            5.522218001715373,
+            4.424305996508338,
+            3.2042940001701936
+          ],
+          "max_peer_first_payload_ms": 5.522218001715373
+        },
+        {
+          "name": "previous-selected",
+          "binary_sha256": "3c2795978e401c878a8e507b80bf86c6c86c6a7a066b29ebcb37adb2f5eddbbd",
+          "environment": {
+            "TNG_SEED_MMAP": "0",
+            "TNG_STORAGE_ANON_LARGE_FRAMES": "0"
+          },
+          "verified": true,
+          "bytes": 402653184,
+          "payload_goodput_mib_s": 47.93873053917886,
+          "cpu_seconds_per_gib": 1.6273311786666669,
+          "peak_pss_mib": 12.76953125,
+          "peak_anonymous_mib": 5.6953125,
+          "peer_first_payload_ms": [
+            7.5372510036686435,
+            9.565355998347513,
+            4.123140002775472
+          ],
+          "max_peer_first_payload_ms": 9.565355998347513
+        },
+        {
+          "name": "rtorrent",
+          "binary_sha256": "8c27d0f49bfdb9c4b79dc29f9b8b13197dafd6dc55384237429e274d6758dedb",
+          "environment": {},
+          "verified": true,
+          "bytes": 402653184,
+          "payload_goodput_mib_s": 47.97973618423513,
+          "cpu_seconds_per_gib": 1.0351152693333334,
+          "peak_pss_mib": 10.73828125,
+          "peak_anonymous_mib": 2.6171875,
+          "peer_first_payload_ms": [
+            7.3675000021466985,
+            5.212926000240259,
+            8.407647997955792
+          ],
+          "max_peer_first_payload_ms": 8.407647997955792
+        }
+      ]
+    },
+    {
+      "shape": 5,
+      "fixture_bytes": 33554432,
+      "peers": 3,
+      "window": 64,
+      "pattern": "random",
+      "cache_policy": "drop-file-pages",
+      "files": 5,
+      "offered_aggregate_mib_s": 24.0,
+      "upload_limit_bytes_s": 0,
+      "nominal_target_mib_s": 24.0,
+      "rows": [
+        {
+          "name": "previous-selected",
+          "binary_sha256": "3c2795978e401c878a8e507b80bf86c6c86c6a7a066b29ebcb37adb2f5eddbbd",
+          "environment": {
+            "TNG_SEED_MMAP": "0",
+            "TNG_STORAGE_ANON_LARGE_FRAMES": "0"
+          },
+          "verified": true,
+          "bytes": 100663296,
+          "payload_goodput_mib_s": 23.948261105019515,
+          "cpu_seconds_per_gib": 3.5852749226666667,
+          "peak_pss_mib": 13.783203125,
+          "peak_anonymous_mib": 6.36328125,
+          "peer_first_payload_ms": [
+            4.483281998545863,
+            5.189174000406638,
+            4.699050994531717
+          ],
+          "max_peer_first_payload_ms": 5.189174000406638
+        },
+        {
+          "name": "rtorrent",
+          "binary_sha256": "8c27d0f49bfdb9c4b79dc29f9b8b13197dafd6dc55384237429e274d6758dedb",
+          "environment": {},
+          "verified": true,
+          "bytes": 100663296,
+          "payload_goodput_mib_s": 23.85954321154186,
+          "cpu_seconds_per_gib": 2.6628722666666667,
+          "peak_pss_mib": 10.1708984375,
+          "peak_anonymous_mib": 2.59375,
+          "peer_first_payload_ms": [
+            6.29196000227239,
+            25.35479800280882,
+            26.45851700071944
+          ],
+          "max_peer_first_payload_ms": 26.45851700071944
+        },
+        {
+          "name": "scoped-ordered-buffered",
+          "binary_sha256": "4f6fc030f19589be5cd6ba71d7f87cc347ac0ed5a33de3a95ef6c08921dfb6d8",
+          "environment": {
+            "TNG_SEED_MMAP": "0",
+            "TNG_STORAGE_ANON_LARGE_FRAMES": "1"
+          },
+          "verified": true,
+          "bytes": 100663296,
+          "payload_goodput_mib_s": 23.939994726399792,
+          "cpu_seconds_per_gib": 3.4125449813333333,
+          "peak_pss_mib": 12.4482421875,
+          "peak_anonymous_mib": 4.4453125,
+          "peer_first_payload_ms": [
+            8.284744006232359,
+            4.712208996352274,
+            4.809151003428269
+          ],
+          "max_peer_first_payload_ms": 8.284744006232359
+        },
+        {
+          "name": "scoped-ordered-mapped",
+          "binary_sha256": "4f6fc030f19589be5cd6ba71d7f87cc347ac0ed5a33de3a95ef6c08921dfb6d8",
+          "environment": {
+            "TNG_SEED_MMAP": "1",
+            "TNG_STORAGE_ANON_LARGE_FRAMES": "1"
+          },
+          "verified": true,
+          "bytes": 100663296,
+          "payload_goodput_mib_s": 23.85164599974391,
+          "cpu_seconds_per_gib": 4.8037871999999995,
+          "peak_pss_mib": 12.2646484375,
+          "peak_anonymous_mib": 4.34375,
+          "peer_first_payload_ms": [
+            12.861125003837515,
+            30.075770999246743,
+            30.48082799796248
+          ],
+          "max_peer_first_payload_ms": 30.48082799796248
+        }
+      ]
+    },
+    {
+      "shape": 6,
+      "fixture_bytes": 16777216,
+      "peers": 1,
+      "window": 32,
+      "pattern": "sequential",
+      "cache_policy": "warm",
+      "files": 1,
+      "offered_aggregate_mib_s": 8.0,
+      "upload_limit_bytes_s": 1048576,
+      "nominal_target_mib_s": 1.0,
+      "rows": [
+        {
+          "name": "rtorrent",
+          "binary_sha256": "8c27d0f49bfdb9c4b79dc29f9b8b13197dafd6dc55384237429e274d6758dedb",
+          "environment": {},
+          "verified": true,
+          "bytes": 16777216,
+          "payload_goodput_mib_s": 1.266483619630953,
+          "cpu_seconds_per_gib": 1.018890048,
+          "peak_pss_mib": 10.2099609375,
+          "peak_anonymous_mib": 2.5703125,
+          "peer_first_payload_ms": [
+            1.5377210002043284
+          ],
+          "max_peer_first_payload_ms": 1.5377210002043284
+        },
+        {
+          "name": "scoped-ordered-mapped",
+          "binary_sha256": "4f6fc030f19589be5cd6ba71d7f87cc347ac0ed5a33de3a95ef6c08921dfb6d8",
+          "environment": {
+            "TNG_SEED_MMAP": "1",
+            "TNG_STORAGE_ANON_LARGE_FRAMES": "1"
+          },
+          "verified": true,
+          "bytes": 16777216,
+          "payload_goodput_mib_s": 1.007229613907385,
+          "cpu_seconds_per_gib": 17.524790976,
+          "peak_pss_mib": 12.3818359375,
+          "peak_anonymous_mib": 3.4453125,
+          "peer_first_payload_ms": [
+            2.230550002423115
+          ],
+          "max_peer_first_payload_ms": 2.230550002423115
+        },
+        {
+          "name": "previous-selected",
+          "binary_sha256": "3c2795978e401c878a8e507b80bf86c6c86c6a7a066b29ebcb37adb2f5eddbbd",
+          "environment": {
+            "TNG_SEED_MMAP": "0",
+            "TNG_STORAGE_ANON_LARGE_FRAMES": "0"
+          },
+          "verified": true,
+          "bytes": 16777216,
+          "payload_goodput_mib_s": 1.0071794950948203,
+          "cpu_seconds_per_gib": 18.382597184,
+          "peak_pss_mib": 13.5576171875,
+          "peak_anonymous_mib": 5.46875,
+          "peer_first_payload_ms": [
+            1.3996839988976717
+          ],
+          "max_peer_first_payload_ms": 1.3996839988976717
+        },
+        {
+          "name": "scoped-ordered-buffered",
+          "binary_sha256": "4f6fc030f19589be5cd6ba71d7f87cc347ac0ed5a33de3a95ef6c08921dfb6d8",
+          "environment": {
+            "TNG_SEED_MMAP": "0",
+            "TNG_STORAGE_ANON_LARGE_FRAMES": "1"
+          },
+          "verified": true,
+          "bytes": 16777216,
+          "payload_goodput_mib_s": 1.0071736072367665,
+          "cpu_seconds_per_gib": 13.826000256,
+          "peak_pss_mib": 12.515625,
+          "peak_anonymous_mib": 3.65625,
+          "peer_first_payload_ms": [
+            3.2182420036406256
+          ],
+          "max_peer_first_payload_ms": 3.2182420036406256
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "One round per shape: descriptive service screen, not statistical CPU/PSS or latency qualification.",
+    "Rates are aggregate verified payload goodput; configured offer is per peer, upload cap is per daemon.",
+    "drop-file-pages is a cache hint, not proof of cold physical storage.",
+    "Peer first-payload samples do not certify latency tails or mixed-workload behavior."
+  ]
+}

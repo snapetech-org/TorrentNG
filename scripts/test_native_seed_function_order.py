@@ -47,12 +47,44 @@ class FunctionOrderTests(unittest.TestCase):
             return layout.generate(self.binary, self.build_path, self.profile,
                                    self.training_path, self.order, self.bolt)
 
-    def validate(self, build_manifest=None, symbols="0000 t hot\n0010 T warm"):
+    def validate(self, build_manifest=None, symbols="0000 t hot\n0010 T warm", features="default", optimization_level="s"):
         with patch.object(layout, "validate_profile", return_value={
                 "rustc": "compiler", "profile_sha256": "pgo"}), \
                 patch.object(layout, "source_digest", return_value="source"), \
                 patch.object(layout, "command", return_value=symbols):
-            return layout.validate(self.order, self.root, self.root / "pgo.profdata", build_manifest)
+            return layout.validate(self.order, self.root, self.root / "pgo.profdata", build_manifest, features, optimization_level)
+
+    def test_feature_sets_are_canonical_and_remain_bound_to_the_build(self):
+        self.build["features"] = "seed-mmap,default,full-compat,seed-mmap"
+        data = self.generate()
+        self.assertEqual(data["features"], "full-compat,seed-mmap")
+        self.validate(self.build_path, features="seed-mmap,full-compat")
+        with self.assertRaisesRegex(ValueError, "features"):
+            self.validate(features="default")
+
+    def test_optimization_level_binds_training_order_and_output_build(self):
+        self.build["optimization_level"] = "3"
+        with self.assertRaisesRegex(ValueError, "optimization_level"):
+            self.generate()  # legacy training means s, never 3
+        self.training["optimization_level"] = "3"
+        result = self.generate()
+        self.assertEqual(result["optimization_level"], "3")
+        with self.assertRaisesRegex(ValueError, "optimization_level"):
+            self.validate()
+        self.validate(self.build_path, optimization_level="3")
+        build = json.loads(self.build_path.read_text())
+        del build["optimization_level"]
+        self.build_path.write_text(json.dumps(build))
+        with self.assertRaisesRegex(ValueError, "optimization_level"):
+            self.validate(self.build_path, optimization_level="3")
+
+    def test_legacy_order_is_only_size_optimized(self):
+        result = self.generate()
+        del result["optimization_level"]
+        self.sidecar.write_text(json.dumps(result))
+        self.validate()
+        with self.assertRaisesRegex(ValueError, "optimization_level"):
+            self.validate(optimization_level="3")
 
     def test_generation_preserves_rank_and_binds_training_inputs(self):
         data = self.generate()
@@ -140,6 +172,8 @@ class FunctionOrderTests(unittest.TestCase):
             argv = list(map(str, argv))
             calls.append(argv)
             if argv[0] == "cargo":
+                self.assertEqual(kwargs["env"]["RUSTFLAGS"], "-Cprofile-use=" + str(
+                    target / ("torrentng-seed-" + sha256(unpacked) + ".profdata")) + " -Copt-level=3")
                 binary = target / "release/torrentngd"
                 binary.parent.mkdir(parents=True)
                 binary.write_bytes(b"built")
@@ -157,8 +191,9 @@ class FunctionOrderTests(unittest.TestCase):
             else:
                 raw = next(arg.split("=", 1)[1] for arg in argv if arg.startswith("-generate-function-order="))
                 Path(raw).write_text("hot/1\n")
-        def build_manifest(binary, repo, profile):
+        def build_manifest(binary, repo, profile, features="default", optimization_level="s"):
             return {**self.build, "binary": str(binary), "binary_sha256": sha256(binary),
+                    "features": features, "optimization_level": optimization_level,
                     "profile_sha256": sha256(profile)}
         with patch.dict(os.environ, {}, clear=True), \
                 patch.object(layout, "validate_profile", return_value={"profile_sha256": sha256(unpacked)}), \
@@ -169,7 +204,7 @@ class FunctionOrderTests(unittest.TestCase):
                 patch.object(layout, "command", side_effect=lambda *args:
                              "0000 t hot" if args[0] == "nm" else "BOLT version"):
             order = layout.train(source_profile, self.root, output, target, corpus,
-                                 self.bolt, merge_tool, "0-1")
+                                 self.bolt, merge_tool, "0-1", optimization_level="3")
         self.assertEqual(order.read_text(), "hot\n")
         probes = [call for call in calls if call[0] == sys.executable]
         self.assertEqual(len(probes), len(workloads))
@@ -177,6 +212,14 @@ class FunctionOrderTests(unittest.TestCase):
         sidecar = json.loads(Path(str(order) + ".manifest.json").read_text())
         self.assertEqual(sidecar["pgo_profile_sha256"], sha256(unpacked))
         self.assertEqual(sidecar["training_corpus"], workloads)
+        self.assertEqual(sidecar["optimization_level"], "3")
+
+    def test_explicit_opt_level_rejects_inherited_layout_overrides(self):
+        for overrides in ({"CARGO_PROFILE_RELEASE_OPT_LEVEL": "3"}, {"RUSTFLAGS": "-Copt-level=3"}, {"CARGO_ENCODED_RUSTFLAGS": ""}):
+            with self.subTest(overrides=overrides), patch.dict(os.environ, overrides, clear=True), patch.object(layout, "validate_profile", return_value={}), patch.object(layout, "source_provenance", return_value={"dirty": False}), patch.object(layout.subprocess, "run") as run:
+                with self.assertRaisesRegex(ValueError, "overrides"):
+                    layout.train(self.profile, self.root, self.root / "unused", None, self.root / "corpus", self.bolt, self.bolt, optimization_level="3")
+                run.assert_not_called()
 
     def test_build_script_keeps_default_path_and_resolves_order_before_chdir(self):
         # Exercise the real shell control flow with compiler/tool stubs. Real
@@ -186,7 +229,7 @@ class FunctionOrderTests(unittest.TestCase):
         stub = "#!" + sys.executable + "\n" + '''import json,os,sys
 from pathlib import Path
 name=Path(sys.argv[0]).name
-with open(os.environ['CALL_LOG'],'a') as f: f.write(json.dumps({'name':name,'args':sys.argv[1:]})+'\\n')
+with open(os.environ['CALL_LOG'],'a') as f: f.write(json.dumps({'name':name,'args':sys.argv[1:],'rustflags':os.environ.get('RUSTFLAGS')})+'\\n')
 if name=='cargo':
  p=Path(sys.argv[sys.argv.index('--target-dir')+1])/'release/torrentngd'
  p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(b'compiled')
@@ -198,6 +241,7 @@ if name=='cargo':
         (self.root / "source repo").mkdir()
         (self.root / "orders").mkdir()
         (self.root / "orders/seed order.txt").write_text("hot\n")
+        (self.root / "orders/seed order.txt.manifest.json").write_text("{}")
         profile = self.root / "pgo.profdata"
         profile.write_bytes(b"profile")
         log = self.root / "calls.jsonl"
@@ -207,21 +251,53 @@ if name=='cargo':
                            "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_RUSTC", "CARGO_BUILD_RUSTFLAGS"}}
         environment.update(PATH=str(bindir) + os.pathsep + os.environ["PATH"], CALL_LOG=str(log))
         script = Path(__file__).resolve().parent / "build_native_pgo_release.sh"
-        for optional in ([], ["orders/seed order.txt"]):
+        for optional in ([], ["orders/seed order.txt"], ["", "seed-mmap"],
+                         ["orders/seed order.txt", "seed-mmap"], ["", "seed-mmap", "3"],
+                         ["orders/seed order.txt", "seed-mmap", "3"]):
             log.write_text("")
             subprocess.run(["bash", str(script), "pgo.profdata", "target", "source repo", *optional],
                            cwd=self.root, env=environment, check=True, capture_output=True, text=True)
             calls = [json.loads(line) for line in log.read_text().splitlines()]
             cargo = next(call["args"] for call in calls if call["name"] == "cargo")
-            self.assertEqual(cargo[1], "rustc" if optional else "build")
-            if optional:
+            has_order = bool(optional and optional[0])
+            self.assertEqual(cargo[1], "rustc" if has_order else "build")
+            if len(optional) >= 2:
+                self.assertEqual(cargo[cargo.index("--features") + 1], "seed-mmap")
+                for call in calls:
+                    if call["name"] == "python3":
+                        args = call["args"]
+                        self.assertEqual(args[args.index("--features") + 1], "seed-mmap")
+            else:
+                self.assertNotIn("--features", cargo)
+            level = optional[2] if len(optional) == 3 else "s"
+            flags = next(call["rustflags"] for call in calls if call["name"] == "cargo")
+            self.assertEqual("-Copt-level=3" in flags, level == "3")
+            for call in calls:
+                if call["name"] == "python3":
+                    self.assertEqual(call["args"][call["args"].index("--opt-level") + 1], level)
+            if has_order:
                 absolute = str(self.root / "orders/seed order.txt")
-                self.assertIn("-Clink-arg=-Wl,--symbol-ordering-file=" + absolute, cargo)
+                staged = str(self.root / "target" / ("torrentng-seed-order-" +
+                             sha256(self.root / "orders/seed order.txt") + ".txt"))
+                self.assertIn("-Clink-arg=-Wl,--symbol-ordering-file=" + staged, cargo)
                 validations = [call["args"] for call in calls if call["name"] == "python3"
                                and "native_seed_function_order.py" in call["args"][0]]
                 self.assertEqual(len(validations), 2)
-                for args in validations:
-                    self.assertEqual(args[args.index("--order") + 1], absolute)
+                self.assertEqual([args[args.index("--order") + 1] for args in validations],
+                                 [absolute, staged])
+        old_flags = next(call["rustflags"] for call in calls if call["name"] == "cargo")
+        old_order = next(arg for arg in cargo if "--symbol-ordering-file=" in arg)
+        profile.write_bytes(b"retrained profile at the same input path")
+        (self.root / "orders/seed order.txt").write_text("warm\nhot\n")
+        log.write_text("")
+        subprocess.run(["bash", str(script), "pgo.profdata", "target", "source repo",
+                        "orders/seed order.txt", "seed-mmap", "3"],
+                       cwd=self.root, env=environment, check=True, capture_output=True, text=True)
+        calls = [json.loads(line) for line in log.read_text().splitlines()]
+        compiled = next(call for call in calls if call["name"] == "cargo")
+        self.assertNotEqual(old_flags, compiled["rustflags"])
+        self.assertNotIn(old_order, compiled["args"])
+        self.assertIn(sha256(profile), compiled["rustflags"])
         log.write_text("")
         result = subprocess.run(["bash", str(script), "pgo.profdata", "target", "source repo"],
                                 cwd=self.root, env={**environment, "CARGO_ENCODED_RUSTFLAGS": ""},
@@ -229,6 +305,15 @@ if name=='cargo':
         self.assertEqual(result.returncode, 2)
         self.assertIn("unset RUSTFLAGS and CARGO_ENCODED_RUSTFLAGS", result.stderr)
         self.assertEqual(log.read_text(), "")
+        for extra, override, message in [
+            (["", "default", "2"], {}, "OPT_LEVEL must be s or 3"),
+            (["", "default", "3"], {"CARGO_PROFILE_RELEASE_OPT_LEVEL": "3"}, "unset CARGO_PROFILE"),
+            (["", "default", "3"], {"RUSTFLAGS": "-Copt-level=3"}, "unset RUSTFLAGS"),
+        ]:
+            result = subprocess.run(["bash", str(script), "pgo.profdata", "target", "source repo", *extra], cwd=self.root, env={**environment, **override}, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn(message, result.stderr)
+            self.assertEqual(log.read_text(), "")
 
 
 if __name__ == "__main__":

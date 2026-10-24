@@ -1,0 +1,31 @@
+[
+  {
+    "binary": "base-mmap-pgo",
+    "binary_sha256": "0fcebda9966ef46884c4cb1f19306557b1d5b59d537ff9c3f77a5fbe1fafa948",
+    "source_commit": "c0cc191681bb73147d3aec6655cdb2cf17b73232",
+    "source_digest": "462a2f321fc23191dbc49af2aeb70a124f7a5e88b14277e71a5b869d112d35c0",
+    "source_files_verified": 258,
+    "function_order_sha256": null,
+    "profile_sha256": "ff1502f125bdc432f01e9783923e48b816f7d60f1f7f1c62f5bdbe00a761d585"
+  },
+  {
+    "binary": "refined-3-ordered",
+    "binary_sha256": "3c2795978e401c878a8e507b80bf86c6c86c6a7a066b29ebcb37adb2f5eddbbd",
+    "source_commit": "9c33b240e9ca9932607428c2b2e938edf5a635ec",
+    "source_digest": "af30abf66be0d12a805c826349ff8016be15aae2cf3dd4b61e6e0a7a1757c532",
+    "source_files_verified": 258,
+    "function_order_sha256": "300ee533448a3009c4161909649fd815530272b611403f5a0f21b2b93f29fdd0",
+    "profile_sha256": "3aff78fda17e3cd3b1c64897bf9d7ae47031188091fe5a51dfca69fd0aa6c8e6",
+    "order_source_profile_binding_verified": true
+  },
+  {
+    "binary": "scoped-3-ordered",
+    "binary_sha256": "4f6fc030f19589be5cd6ba71d7f87cc347ac0ed5a33de3a95ef6c08921dfb6d8",
+    "source_commit": "589b97a42938b0884f241d76711e2d7e5e8d75ff",
+    "source_digest": "347b31f6d7db9ae52931bdb349aca27289a22f868aa215d2f6227141bd10d7bf",
+    "source_files_verified": 260,
+    "function_order_sha256": "eb86a6c364f3e7e55fcd73fb397062fee37a66a6e9a45924541cdff78b3204ac",
+    "profile_sha256": "64253846872def473a80a8267c02a22231249c4039448bb75ae3188455a195c9",
+    "order_source_profile_binding_verified": true
+  }
+]

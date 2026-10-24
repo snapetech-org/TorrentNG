@@ -390,6 +390,7 @@ pub(super) struct EngineSubsystems {
 
 pub(super) struct EngineStatsCache {
     pub(super) generated_at: Instant,
+    pub(super) collected_since: Option<Instant>,
     pub(super) stats: EngineStats,
     /// The refresh is detached from the actor. Keep its start time so a
     /// dropped completion cannot permanently suppress future refreshes.

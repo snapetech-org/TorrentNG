@@ -1,0 +1,159 @@
+{
+  "diagnostic_only": true,
+  "status": "complete",
+  "cells": {
+    "legacy-buffered": {
+      "rows": [
+        {
+          "round": 1,
+          "cpu_seconds_per_gib": 4.079083392,
+          "peak_pss_mib": 18.505859375,
+          "peak_anonymous_mib": 5.5234375,
+          "setup_recheck_cpu_seconds": 0.039264231,
+          "post_recheck_anonymous_mib": 5.29296875,
+          "verified": true
+        },
+        {
+          "round": 2,
+          "cpu_seconds_per_gib": 4.449114272,
+          "peak_pss_mib": 18.73828125,
+          "peak_anonymous_mib": 5.484375,
+          "setup_recheck_cpu_seconds": 0.056643793,
+          "post_recheck_anonymous_mib": 5.3046875,
+          "verified": true
+        },
+        {
+          "round": 3,
+          "cpu_seconds_per_gib": 3.90235472,
+          "peak_pss_mib": 18.9140625,
+          "peak_anonymous_mib": 5.5,
+          "setup_recheck_cpu_seconds": 0.04548228,
+          "post_recheck_anonymous_mib": 5.3359375,
+          "verified": true
+        }
+      ],
+      "medians": {
+        "cpu_seconds_per_gib": 4.079083392,
+        "peak_pss_mib": 18.73828125,
+        "peak_anonymous_mib": 5.5,
+        "setup_recheck_cpu_seconds": 0.04548228,
+        "post_recheck_anonymous_mib": 5.3046875
+      }
+    },
+    "scoped-buffered": {
+      "rows": [
+        {
+          "round": 1,
+          "cpu_seconds_per_gib": 4.167773792,
+          "peak_pss_mib": 17.68359375,
+          "peak_anonymous_mib": 4.328125,
+          "setup_recheck_cpu_seconds": 0.043114096,
+          "post_recheck_anonymous_mib": 3.3359375,
+          "verified": true
+        },
+        {
+          "round": 2,
+          "cpu_seconds_per_gib": 4.800062528,
+          "peak_pss_mib": 18.359375,
+          "peak_anonymous_mib": 4.8203125,
+          "setup_recheck_cpu_seconds": 0.040470565,
+          "post_recheck_anonymous_mib": 3.33203125,
+          "verified": true
+        },
+        {
+          "round": 3,
+          "cpu_seconds_per_gib": 3.993933312,
+          "peak_pss_mib": 18.703125,
+          "peak_anonymous_mib": 5.328125,
+          "setup_recheck_cpu_seconds": 0.041838154,
+          "post_recheck_anonymous_mib": 3.33203125,
+          "verified": true
+        }
+      ],
+      "medians": {
+        "cpu_seconds_per_gib": 4.167773792,
+        "peak_pss_mib": 18.359375,
+        "peak_anonymous_mib": 4.8203125,
+        "setup_recheck_cpu_seconds": 0.041838154,
+        "post_recheck_anonymous_mib": 3.33203125
+      }
+    },
+    "legacy-mapped": {
+      "rows": [
+        {
+          "round": 1,
+          "cpu_seconds_per_gib": 4.53990048,
+          "peak_pss_mib": 19.1611328125,
+          "peak_anonymous_mib": 5.5078125,
+          "setup_recheck_cpu_seconds": 0.04675497,
+          "post_recheck_anonymous_mib": 5.3359375,
+          "verified": true
+        },
+        {
+          "round": 2,
+          "cpu_seconds_per_gib": 5.799574688,
+          "peak_pss_mib": 19.16796875,
+          "peak_anonymous_mib": 5.5,
+          "setup_recheck_cpu_seconds": 0.045689088,
+          "post_recheck_anonymous_mib": 5.3359375,
+          "verified": true
+        },
+        {
+          "round": 3,
+          "cpu_seconds_per_gib": 3.82340736,
+          "peak_pss_mib": 19.46484375,
+          "peak_anonymous_mib": 5.5,
+          "setup_recheck_cpu_seconds": 0.044503911,
+          "post_recheck_anonymous_mib": 5.33984375,
+          "verified": true
+        }
+      ],
+      "medians": {
+        "cpu_seconds_per_gib": 4.53990048,
+        "peak_pss_mib": 19.16796875,
+        "peak_anonymous_mib": 5.5,
+        "setup_recheck_cpu_seconds": 0.045689088,
+        "post_recheck_anonymous_mib": 5.3359375
+      }
+    },
+    "scoped-mapped": {
+      "rows": [
+        {
+          "round": 1,
+          "cpu_seconds_per_gib": 4.183793504,
+          "peak_pss_mib": 17.36328125,
+          "peak_anonymous_mib": 3.47265625,
+          "setup_recheck_cpu_seconds": 0.044821782,
+          "post_recheck_anonymous_mib": 3.30078125,
+          "verified": true
+        },
+        {
+          "round": 2,
+          "cpu_seconds_per_gib": 4.501279328,
+          "peak_pss_mib": 17.35546875,
+          "peak_anonymous_mib": 3.5,
+          "setup_recheck_cpu_seconds": 0.049100366,
+          "post_recheck_anonymous_mib": 3.33203125,
+          "verified": true
+        },
+        {
+          "round": 3,
+          "cpu_seconds_per_gib": 4.700428768,
+          "peak_pss_mib": 17.2109375,
+          "peak_anonymous_mib": 3.51171875,
+          "setup_recheck_cpu_seconds": 0.045891072,
+          "post_recheck_anonymous_mib": 3.3359375,
+          "verified": true
+        }
+      ],
+      "medians": {
+        "cpu_seconds_per_gib": 4.501279328,
+        "peak_pss_mib": 17.35546875,
+        "peak_anonymous_mib": 3.5,
+        "setup_recheck_cpu_seconds": 0.045891072,
+        "post_recheck_anonymous_mib": 3.33203125
+      }
+    }
+  },
+  "decision": "promote bounded opt-in implementation to fresh source-matched PGO/layout selection; not default or parity proof"
+}

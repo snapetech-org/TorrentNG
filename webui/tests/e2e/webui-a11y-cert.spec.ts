@@ -391,7 +391,7 @@ test('transient dialogs keep focus contained and have no serious automated acces
     }))).toEqual([])
   }
 
-  const addButton = page.getByRole('button', { name: 'Add torrent' }).first()
+  const addButton = page.getByRole('toolbar', { name: 'Torrent actions' }).getByRole('button', { name: 'Add', exact: true })
   await addButton.click()
   const addDialog = page.getByRole('dialog', { name: 'Add torrent' })
   await expect(addDialog).toBeVisible()
@@ -403,7 +403,7 @@ test('transient dialogs keep focus contained and have no serious automated acces
   await expect(addDialog).toHaveCount(0)
   await expect(addButton).toBeFocused()
 
-  const helpButton = page.getByRole('button', { name: 'Keyboard shortcuts and docs' }).first()
+  const helpButton = page.getByRole('toolbar', { name: 'Torrent actions' }).getByRole('button', { name: 'Help', exact: true })
   await helpButton.click()
   const helpDialog = page.getByRole('dialog', { name: 'Help' })
   await expect(helpDialog).toBeVisible()

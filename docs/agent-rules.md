@@ -7,7 +7,7 @@ These rules apply to every implementation task in this workspace.
 1. Do not invent protocol behavior. Read the BEP or local spec file first.
 2. Do not add dependencies without updating `docs/dependencies.md`.
 3. Do not use unsafe Rust unless the crate-level README contains a written justification and tests.
-4. Do not use mmap for torrent payload data in v1.
+4. Torrent payloads use buffered I/O by default. The existing opt-in `seed-mmap` experiment may expose bounded, worker-prefaulted mappings only to socket syscalls, with descriptor/generation ownership, pathname validation, memory admission and buffered fallback as specified in `docs/seed-efficiency-pipeline.md`. Do not create Rust references into externally mutable payload mappings or perform population on async runtime threads. Any extension must retain the documented external-replacement/truncation and resource-pressure tests.
 5. Do not expose any mutating API without authentication.
 6. Do not implement delete/move operations without dry-run mode first.
 7. Do not implement a "torrent complete" transition unless all pieces are verified.
