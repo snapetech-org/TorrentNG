@@ -116,7 +116,7 @@ api_tokens_file = "{token}"
                 req = urllib.request.Request(f'http://127.0.0.1:{port}{route}',
                     data=b'' if method == 'POST' else None, method=method,
                     headers={'Authorization': f'Bearer {probe.TOKEN}'})
-                with urllib.request.urlopen(req, timeout=timeout) as response:
+                with urllib.request.urlopen(req, timeout=timeout) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- loopback daemon port with fixed scheme
                     if observation is not None:
                         observation['status'] = response.status
                     data = response.read().decode()
