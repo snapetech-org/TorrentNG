@@ -312,8 +312,7 @@ class WorkflowSecurityTests(unittest.TestCase):
 
     def test_release_tags_are_validated_before_release_jobs(self) -> None:
         release = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
-        self.assertNotIn("\n  push:", release)
-        self.assertIn("workflow_dispatch:", release)
+        self.assertIn('      - "v*"', release)
         self.assertIn("validate-release-tag:", release)
         self.assertIn("REQUESTED_TAG: ${{ inputs.tag || github.ref_name }}", release)
         self.assertIn("git merge-base --is-ancestor", release)
