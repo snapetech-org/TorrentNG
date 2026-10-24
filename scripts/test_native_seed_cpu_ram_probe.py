@@ -301,6 +301,41 @@ class ProbeTests(unittest.TestCase):
             self.assertNotIn("metrics_error", result)
             self.assertEqual(result["smaps_totals_bytes"]["Pss"], 0)
 
+    def test_metrics_barrier_rejects_initial_and_old_snapshots(self):
+        now = [0.0]
+        responses = iter(((0, 0), (1, 500), (2, 1)))
+        def fetch(timeout):
+            generation, age = next(responses)
+            return (f"torrentng_stats_snapshot_generation {generation}\n"
+                    f"torrentng_stats_snapshot_age_milliseconds {age}\n")
+        _, result = probe.collect_fresh_metrics(fetch, clock=lambda: now[0],
+            wait=lambda seconds: now.__setitem__(0, now[0] + seconds))
+        self.assertEqual(result["status"], "fresh")
+        self.assertEqual(result["attempts"], 3)
+
+    def test_metrics_barrier_does_not_count_request_delay_as_freshness(self):
+        now = [0.0]
+        def fetch(timeout):
+            now[0] += timeout
+            return ("torrentng_stats_snapshot_generation 1\n"
+                    "torrentng_stats_snapshot_age_milliseconds 1\n")
+        _, result = probe.collect_fresh_metrics(fetch, timeout=0.1, clock=lambda: now[0])
+        self.assertEqual(result["status"], "timeout")
+
+    def test_metrics_barrier_marks_legacy_counters_unfenced(self):
+        _, result = probe.collect_fresh_metrics(lambda timeout: "other_metric 5\n")
+        self.assertEqual(result["status"], "unsupported")
+
+    def test_metrics_barrier_times_out_invalid_or_stuck_snapshots(self):
+        for generation, age in ((0, 0), (1, 99999), (1, "nan"), (1, "bad")):
+            now = [0.0]
+            _, result = probe.collect_fresh_metrics(lambda timeout:
+                f"torrentng_stats_snapshot_generation {generation}\n"
+                f"torrentng_stats_snapshot_age_milliseconds {age}\n",
+                timeout=0.1, clock=lambda: now[0],
+                wait=lambda seconds: now.__setitem__(0, now[0] + seconds))
+            self.assertEqual(result["status"], "timeout")
+
     def test_payload_cleanup_removes_only_generated_copies_inside_run(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "run-01-client"

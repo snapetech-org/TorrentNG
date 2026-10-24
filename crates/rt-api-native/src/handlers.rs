@@ -7257,6 +7257,20 @@ fn render_metrics_with_health(
     let mut out = String::new();
     metric(
         &mut out,
+        "torrentng_stats_snapshot_generation",
+        "gauge",
+        "Completed engine snapshot generation (0 means initial partial projection)",
+        stats.snapshot_generation,
+    );
+    metric(
+        &mut out,
+        "torrentng_stats_snapshot_age_milliseconds",
+        "gauge",
+        "Age since engine snapshot collection started, rounded up; initial projection uses u64::MAX",
+        stats.snapshot_age_ms,
+    );
+    metric(
+        &mut out,
         "torrentng_engine_alive",
         "gauge",
         "TorrentNG client actor liveness (1=alive, 0=unavailable)",
@@ -8757,26 +8771,30 @@ fn render_metrics_with_health(
             "Leased descriptor slots for cached files, open attempts, or I/O in the global storage runtime cache",
             storage.handles_active() as u64,
         );
+    }
+    // MountScheduler uses the frame pool without constructing StorageRuntime.
+    // Observe the pool directly, without initializing either storage owner.
+    if let Some(storage) = rt_storage::try_global_frame_pool() {
         metric(
             &mut out,
             "torrentng_storage_frame_bytes_in_use",
             "gauge",
             "Frame-pool bytes currently checked out by storage I/O",
-            storage.frame_in_use_bytes(),
+            storage.in_use_bytes(),
         );
         metric(
             &mut out,
             "torrentng_storage_frame_bytes_retained",
             "gauge",
             "Frame-pool bytes retained in idle buffers for reuse",
-            storage.frame_retained_bytes(),
+            storage.retained_bytes(),
         );
         metric(
             &mut out,
             "torrentng_storage_frame_bytes_cap",
             "gauge",
             "Frame-pool byte cap for storage I/O",
-            storage.frame_cap_bytes(),
+            storage.cap_bytes(),
         );
     }
     let utp = rt_utp::stats_snapshot();
@@ -10937,6 +10955,7 @@ mod tests {
         if std::env::var_os(CHILD_ENV).is_some() {
             assert!(StorageRuntime::initialized().is_none());
             assert!(rt_storage::fd_limit::try_process_descriptor_budget_stats().is_none());
+            assert!(rt_storage::try_global_frame_pool().is_none());
 
             let rendered = render_metrics(&rt_engine::EngineStats::default());
 
@@ -10945,6 +10964,21 @@ mod tests {
             assert!(rendered.contains("torrentng_storage_descriptor_budget_initialized 0"));
             assert!(StorageRuntime::initialized().is_none());
             assert!(rt_storage::fd_limit::try_process_descriptor_budget_stats().is_none());
+            assert!(rt_storage::try_global_frame_pool().is_none());
+
+            // A live scheduler can initialize only the shared frame pool.
+            // Its diagnostics must still be visible without a global runtime.
+            let pool = rt_storage::global_frame_pool();
+            let rendered = render_metrics(&rt_engine::EngineStats::default());
+            assert!(rendered.contains(&format!(
+                "torrentng_storage_frame_bytes_retained {}",
+                pool.retained_bytes()
+            )));
+            assert!(rendered.contains(&format!(
+                "torrentng_storage_frame_bytes_cap {}",
+                pool.cap_bytes()
+            )));
+            assert!(StorageRuntime::initialized().is_none());
             return;
         }
 

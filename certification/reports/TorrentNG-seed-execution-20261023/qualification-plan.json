@@ -1,0 +1,131 @@
+{
+  "format": "torrentng-seed-execution-plan-v1",
+  "declared_utc": "2026-10-23T23:43:00Z",
+  "source": "9c33b240e9ca9932607428c2b2e938edf5a635ec",
+  "controls": {
+    "old_pgo": "c0cc191681bb73147d3aec6655cdb2cf17b73232",
+    "rtorrent": "0.16.25 / binary 8c27d0f49bfdb9c4b79dc29f9b8b13197dafd6dc55384237429e274d6758dedb"
+  },
+  "exploratory_screen": {
+    "repeats": 3,
+    "size_mib": 32,
+    "rate_mib_s": 4,
+    "request_window": 16,
+    "peers": 1,
+    "cache": "warm",
+    "warmup_s": 2,
+    "cooldown_s": 2,
+    "factors": [
+      "optimization s/3",
+      "function order off/on",
+      "mapped backing off/on"
+    ],
+    "claim": "screen only; no qualification from this data",
+    "additional_reference": "candidate normal build with default features (direct cost reference, not an isolated PGO comparison)",
+    "order_seed": 240236
+  },
+  "fresh_qualification": {
+    "repeats": 10,
+    "size_mib": 64,
+    "rate_mib_s": 4,
+    "request_window": 16,
+    "peers": 1,
+    "cache": "warm",
+    "warmup_s": 5,
+    "cooldown_s": 5,
+    "clients": [
+      "selected candidate from screen",
+      "old source PGO buffered",
+      "pinned rTorrent"
+    ],
+    "selection": "seek joint CPU/PSS reduction; report every screen cell, and choose before collecting fresh qualification",
+    "co_primary": [
+      "CPU-s/GiB",
+      "active peak PSS"
+    ],
+    "interval": "paired median ratios; 10,000 deterministic bootstrap draws; Bonferroni joint95%",
+    "non_regression_tolerance": 0.02,
+    "parity_claim": "Both co-primary paired interval upper bounds must be <=1.02 to establish scoped noninferiority within the declared2%tolerance. Absence of a statistically established gap is insufficient. Goodput, correctness and latency remain separate checks."
+  },
+  "service_followup": [
+    "random requests",
+    "multiple peers",
+    "unaligned multiple files",
+    "low rate and window1",
+    "cold-file hints",
+    "upload-rate limit"
+  ],
+  "limits": [
+    "shared host; unavailable CPU PSI",
+    "no compilation during scored runs",
+    "all transfers SHA256 verified",
+    "selection uses separate exploratory data",
+    "this workload is not every deployment or every rTorrent build"
+  ],
+  "scope_refinement": {
+    "declared_utc": "2026-10-24T00:45:50.026394+00:00",
+    "source": "589b97a42938b0884f241d76711e2d7e5e8d75ff",
+    "source_digest": "347b31f6d7db9ae52931bdb349aca27289a22f868aa215d2f6227141bd10d7bf",
+    "runtime_setting": "TNG_STORAGE_ANON_LARGE_FRAMES=1",
+    "optimized_screen": {
+      "repeats": 3,
+      "size_mib": 32,
+      "rate_mib_s": 4,
+      "window": 16,
+      "order_seed": 240239,
+      "cells": [
+        "previous selected source9c ordered opt3 buffered",
+        "new source opt3 PGO buffered/mapped",
+        "new source opt3 ordered PGO buffered/mapped",
+        "pinned rTorrent"
+      ],
+      "selection": "Prefer a joint win versus previous selected source; among eligible new cells minimize the larger of paired CPU and PSS median ratios versus rTorrent. If tradeoffs or uncertainty remain, report them; no screen qualifies parity."
+    },
+    "fresh_qualification": {
+      "repeats": 10,
+      "size_mib": 64,
+      "rate_mib_s": 4,
+      "window": 16,
+      "peers": 1,
+      "warmup": 5,
+      "cooldown": 5,
+      "order_seed": 240240,
+      "clients": [
+        "baseline c0 PGO buffered",
+        "previous source9c ordered opt3 buffered",
+        "selected new source",
+        "secondary mapped frontier; no post hoc primary replacement",
+        "pinned rTorrent"
+      ],
+      "co_primary": [
+        "CPU-s/GiB",
+        "active peak PSS"
+      ],
+      "interval": "10000 bootstrap paired median ratios; Bonferroni joint95%;2%non-regression tolerance",
+      "secondary": [
+        "peak anonymous memory",
+        "setup/recheck CPU (includes API readiness and diagnostic work)",
+        "verified goodput",
+        "first-payload latency"
+      ]
+    },
+    "held_out": "All7checked-invalidation shapes;1round each across previous source, primary buffered, secondary mapped, rTorrent. Correctness/service screen; not broad qualification.",
+    "secondary_frontier_added_before_qualification": {
+      "declared_utc": "2026-10-24T01:07:32.077975+00:00",
+      "primary": "scoped-ordered-buffered",
+      "secondary": "scoped-ordered-mapped",
+      "rule": "Primary follows predeclared minimax of paired CPU/PSS ratios to rTorrent among new joint improvements versus previous selection. Secondary retains lower-PSS frontier; it cannot replace the preselected primary based on qualifying results.",
+      "primary_binary_sha256": "4f6fc030f19589be5cd6ba71d7f87cc347ac0ed5a33de3a95ef6c08921dfb6d8",
+      "source_commit": "589b97a42938b0884f241d76711e2d7e5e8d75ff",
+      "source_digest": "347b31f6d7db9ae52931bdb349aca27289a22f868aa215d2f6227141bd10d7bf",
+      "build_features": "seed-mmap",
+      "opt_level": "3",
+      "profile_sha256": "64253846872def473a80a8267c02a22231249c4039448bb75ae3188455a195c9",
+      "fresh_qualification_not_started": true
+    }
+  },
+  "criterion_clarification": {
+    "utc": "2026-10-24T01:23:45.644492+00:00",
+    "note": "Text clarified to match the already-declared paired_analysis implementation and2%threshold; no statistical threshold, primary selection, workload or data was changed."
+  }
+}

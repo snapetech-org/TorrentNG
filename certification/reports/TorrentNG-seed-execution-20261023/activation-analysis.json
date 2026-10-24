@@ -1,0 +1,229 @@
+{
+  "format": "torrentng-activation-diagnostic-v1",
+  "status": "complete",
+  "diagnostic_only": true,
+  "same_binary_sha256": "3b541b8017631af9dc0c900c39e0c45922557163e1c8c1439a3a546563059d07",
+  "cells": {
+    "legacy": {
+      "rows": [
+        {
+          "round": 1,
+          "cpu_seconds_per_gib": 3.980292928,
+          "peak_pss_mib": 19.1103515625,
+          "peak_anonymous_mib": 5.4921875,
+          "setup_recheck_cpu_seconds": 0.031437622,
+          "api_cpu_seconds_10000_requests": 0.230882148,
+          "api_p50_us": 62.472,
+          "api_p95_us": 116.612,
+          "activated_anonymous_mib": 2.92578125,
+          "post_recheck_anonymous_mib": 5.3515625,
+          "verified": true
+        },
+        {
+          "round": 2,
+          "cpu_seconds_per_gib": 4.116427008,
+          "peak_pss_mib": 19.45703125,
+          "peak_anonymous_mib": 6.046875,
+          "setup_recheck_cpu_seconds": 0.031013978,
+          "api_cpu_seconds_10000_requests": 0.284495774,
+          "api_p50_us": 67.591,
+          "api_p95_us": 138.918,
+          "activated_anonymous_mib": 2.91796875,
+          "post_recheck_anonymous_mib": 5.34375,
+          "verified": true
+        },
+        {
+          "round": 3,
+          "cpu_seconds_per_gib": 3.936089856,
+          "peak_pss_mib": 18.5908203125,
+          "peak_anonymous_mib": 5.4453125,
+          "setup_recheck_cpu_seconds": 0.036113722,
+          "api_cpu_seconds_10000_requests": 0.269723253,
+          "api_p50_us": 68.923,
+          "api_p95_us": 136.513,
+          "activated_anonymous_mib": 2.92578125,
+          "post_recheck_anonymous_mib": 5.34765625,
+          "verified": true
+        }
+      ],
+      "medians": {
+        "cpu_seconds_per_gib": 3.980292928,
+        "peak_pss_mib": 19.1103515625,
+        "peak_anonymous_mib": 5.4921875,
+        "setup_recheck_cpu_seconds": 0.031437622,
+        "api_cpu_seconds_10000_requests": 0.269723253,
+        "api_p50_us": 67.591,
+        "api_p95_us": 136.513,
+        "activated_anonymous_mib": 2.92578125,
+        "post_recheck_anonymous_mib": 5.34765625
+      }
+    },
+    "graph": {
+      "rows": [
+        {
+          "round": 1,
+          "cpu_seconds_per_gib": 4.777074816,
+          "peak_pss_mib": 19.1689453125,
+          "peak_anonymous_mib": 5.50390625,
+          "setup_recheck_cpu_seconds": 0.041679746,
+          "api_cpu_seconds_10000_requests": 0.292240605,
+          "api_p50_us": 73.36,
+          "api_p95_us": 148.354,
+          "activated_anonymous_mib": 2.4609375,
+          "post_recheck_anonymous_mib": 4.85546875,
+          "verified": true
+        },
+        {
+          "round": 2,
+          "cpu_seconds_per_gib": 4.380501376,
+          "peak_pss_mib": 18.4228515625,
+          "peak_anonymous_mib": 4.9921875,
+          "setup_recheck_cpu_seconds": 0.031110388,
+          "api_cpu_seconds_10000_requests": 0.334887236,
+          "api_p50_us": 72.077,
+          "api_p95_us": 148.47,
+          "activated_anonymous_mib": 2.453125,
+          "post_recheck_anonymous_mib": 4.8828125,
+          "verified": true
+        },
+        {
+          "round": 3,
+          "cpu_seconds_per_gib": 5.240608256,
+          "peak_pss_mib": 18.5634765625,
+          "peak_anonymous_mib": 5.05078125,
+          "setup_recheck_cpu_seconds": 0.031458221,
+          "api_cpu_seconds_10000_requests": 0.274684041,
+          "api_p50_us": 62.902,
+          "api_p95_us": 144.341,
+          "activated_anonymous_mib": 2.4609375,
+          "post_recheck_anonymous_mib": 4.890625,
+          "verified": true
+        }
+      ],
+      "medians": {
+        "cpu_seconds_per_gib": 4.777074816,
+        "peak_pss_mib": 18.5634765625,
+        "peak_anonymous_mib": 5.05078125,
+        "setup_recheck_cpu_seconds": 0.031458221,
+        "api_cpu_seconds_10000_requests": 0.292240605,
+        "api_p50_us": 72.077,
+        "api_p95_us": 148.354,
+        "activated_anonymous_mib": 2.4609375,
+        "post_recheck_anonymous_mib": 4.8828125
+      }
+    },
+    "anonymous": {
+      "rows": [
+        {
+          "round": 1,
+          "cpu_seconds_per_gib": 3.973265344,
+          "peak_pss_mib": 18.7158203125,
+          "peak_anonymous_mib": 5.28515625,
+          "setup_recheck_cpu_seconds": 0.035973933,
+          "api_cpu_seconds_10000_requests": 0.251919522,
+          "api_p50_us": 68.742,
+          "api_p95_us": 105.005,
+          "activated_anonymous_mib": 2.9140625,
+          "post_recheck_anonymous_mib": 3.33984375,
+          "verified": true
+        },
+        {
+          "round": 2,
+          "cpu_seconds_per_gib": 4.126044992,
+          "peak_pss_mib": 17.5205078125,
+          "peak_anonymous_mib": 4.31640625,
+          "setup_recheck_cpu_seconds": 0.038804472,
+          "api_cpu_seconds_10000_requests": 0.306036321,
+          "api_p50_us": 64.465,
+          "api_p95_us": 142.932,
+          "activated_anonymous_mib": 2.921875,
+          "post_recheck_anonymous_mib": 3.33984375,
+          "verified": true
+        },
+        {
+          "round": 3,
+          "cpu_seconds_per_gib": 4.230465792,
+          "peak_pss_mib": 18.5556640625,
+          "peak_anonymous_mib": 4.7734375,
+          "setup_recheck_cpu_seconds": 0.033421892,
+          "api_cpu_seconds_10000_requests": 0.26467917,
+          "api_p50_us": 63.668,
+          "api_p95_us": 136.3,
+          "activated_anonymous_mib": 2.9140625,
+          "post_recheck_anonymous_mib": 3.3359375,
+          "verified": true
+        }
+      ],
+      "medians": {
+        "cpu_seconds_per_gib": 4.126044992,
+        "peak_pss_mib": 18.5556640625,
+        "peak_anonymous_mib": 4.7734375,
+        "setup_recheck_cpu_seconds": 0.035973933,
+        "api_cpu_seconds_10000_requests": 0.26467917,
+        "api_p50_us": 64.465,
+        "api_p95_us": 136.3,
+        "activated_anonymous_mib": 2.9140625,
+        "post_recheck_anonymous_mib": 3.33984375
+      }
+    },
+    "combined": {
+      "rows": [
+        {
+          "round": 1,
+          "cpu_seconds_per_gib": 5.085667072,
+          "peak_pss_mib": 18.0595703125,
+          "peak_anonymous_mib": 4.3359375,
+          "setup_recheck_cpu_seconds": 0.036282767,
+          "api_cpu_seconds_10000_requests": 0.315866426,
+          "api_p50_us": 67.99,
+          "api_p95_us": 153.105,
+          "activated_anonymous_mib": 2.43359375,
+          "post_recheck_anonymous_mib": 2.859375,
+          "verified": true
+        },
+        {
+          "round": 2,
+          "cpu_seconds_per_gib": 4.0924896,
+          "peak_pss_mib": 17.8603515625,
+          "peak_anonymous_mib": 4.3125,
+          "setup_recheck_cpu_seconds": 0.035222174,
+          "api_cpu_seconds_10000_requests": 0.230349175,
+          "api_p50_us": 61.451,
+          "api_p95_us": 102.712,
+          "activated_anonymous_mib": 2.453125,
+          "post_recheck_anonymous_mib": 2.87890625,
+          "verified": true
+        },
+        {
+          "round": 3,
+          "cpu_seconds_per_gib": 4.665734336,
+          "peak_pss_mib": 17.2861328125,
+          "peak_anonymous_mib": 3.7890625,
+          "setup_recheck_cpu_seconds": 0.041420143,
+          "api_cpu_seconds_10000_requests": 0.272066292,
+          "api_p50_us": 63.144,
+          "api_p95_us": 129.992,
+          "activated_anonymous_mib": 2.44921875,
+          "post_recheck_anonymous_mib": 2.8671875,
+          "verified": true
+        }
+      ],
+      "medians": {
+        "cpu_seconds_per_gib": 4.665734336,
+        "peak_pss_mib": 17.8603515625,
+        "peak_anonymous_mib": 4.3125,
+        "setup_recheck_cpu_seconds": 0.036282767,
+        "api_cpu_seconds_10000_requests": 0.272066292,
+        "api_p50_us": 63.144,
+        "api_p95_us": 129.992,
+        "activated_anonymous_mib": 2.44921875,
+        "post_recheck_anonymous_mib": 2.8671875
+      }
+    }
+  },
+  "decision": {
+    "shared_router": "not selected: no established joint transfer win and additional API dispatch; API/early route-label tradeoff",
+    "anonymous_frames_per_chunk": "refine before selection: post-recheck RAM saving, repeated allocation adds setup/recheck CPU",
+    "qualification": "not permitted from diagnostic runs or dirty-source manifest"
+  }
+}

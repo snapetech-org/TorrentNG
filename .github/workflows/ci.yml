@@ -112,7 +112,9 @@ jobs:
           RUSTUP_TOOLCHAIN: stable
         run: cargo test --locked -p torrentngd --bin torrentngd --features full-compat
 
-      - name: Test optional mapped seed backing
+      - name: Test optional mapped seed backing and verification scratch
+        env:
+          TNG_STORAGE_ANON_LARGE_FRAMES: "1"
         run: cargo test --locked -p rt-storage -p rt-engine --features seed-mmap --lib
 
       - name: Lint TorrentNG client workspace

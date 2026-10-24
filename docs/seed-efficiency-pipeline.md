@@ -21,6 +21,15 @@ return to downloading. Releasing actual seed allocations does not let a recheck
 silently bypass admission. Existing tracker, super-seed, BEP 6, metadata, padding,
 hybrid, uTP, verification, and durability paths remain in the product.
 
+The follow-up future-state refactor removes redundant async forwarding and
+captures connection inputs directly. Upload-read completion coordinates are
+projected after the awaited read, while the original request specifications
+retain ownership throughout cancellation and error handling. With Rust 1.97.0
+on x86_64, compiler layout diagnostics show incoming/outgoing connection futures
+shrinking by 1,872 bytes and reusable upload-read futures by 744 bytes per
+allocated slot. These object sizes are not whole-process RAM measurements.
+No new protocol fork, task, queue, or per-batch allocation is introduced.
+
 ## Mapping ownership and fallback
 
 Build with `cargo build --release --locked -p torrentngd --features seed-mmap` and
@@ -35,12 +44,13 @@ batches pin their window; pressure can reclaim only idle windows. Cache entries
 do not retain descriptor leases. A live batch does. Window charges round up to
 whole pages even for tiny files; at most eight cache entries are retained.
 
-Linux `mmap`, `madvise`, `mlock`, `sendmsg`, and `munmap` are isolated in the storage
+Linux `mmap`, `mlock`, `sendmsg`, and `munmap` are isolated in the storage
 module, with range checks and ownership comments at every unsafe boundary. This
 follows the repository's existing narrow native-syscall boundary; it is not a
 general allowance for unsafe application memory access. Requested pages must be
-resident and locked before the peer can send them. Unsupported kernels, denied
-memory-lock admission, exhausted budgets, unsupported backends, uTP, hybrid, and
+resident and locked before the peer can send them. Ordinary `mlock` populates
+and locks pages in one operation; no separate `MADV_POPULATE_READ` walk is needed.
+Denied memory-lock admission, exhausted budgets, unsupported backends, uTP, hybrid, and
 cross-file requests use the buffered path. External truncation becomes a syscall
 error/short write, rather than a Rust load from an invalid mapping. File mutation
 still cannot make an entire transfer an atomic content snapshot; checksum
@@ -80,6 +90,14 @@ outside the tool and keep leechers on other cores. These snapshots reveal noise;
 they do not make a shared host isolated. Detailed profiler runs are separate from
 scored runs. Use the existing transfer-rebuild and API-load harnesses for mixed
 download/recheck/API and many-torrent qualification.
+
+Diagnostic metrics now carry snapshot generation and age measured from
+collection start. The probe waits for a snapshot whose collection began after
+the diagnostic boundary, outside scored windows. Old binaries are explicitly
+marked `unsupported`; a timeout is not treated as fresh data. Frame-pool gauges
+observe the shared pool even when only MountScheduler is initialized, without
+creating the older global storage runtime. Archived single-scrape counter
+snapshots may describe an earlier phase; OS CPU/PSS scores are independent.
 
 ```sh
 python3 scripts/seed_efficiency_tools.py analyze \
@@ -191,11 +209,24 @@ profile with their manifests, avoiding unnecessary retraining during analysis.
 
 The fourth build argument is optional. Without it the PGO build path is unchanged.
 With it, the build checks order contents, source digest, compiler, PGO profile and
-default feature identity before linking, and records the order in the output
+selected feature identity before linking, and records the order in the output
 manifest. Changed inputs require retraining. No application release setting,
 worker count, allocator or storage policy is changed by this option. Every output
 artifact needs independent paired CPU/PSS validation and functional coverage;
 the helper does not declare a performance pass.
+
+Pass `--features seed-mmap` to both training commands and `seed-mmap` as the fifth
+build argument (an empty fourth argument selects no function order). Training
+then exercises mapped activation and buffered fallback in separate processes
+using the same feature-enabled executable. Additional workload environment
+settings in the corpus are preserved. Default-feature profiles are rejected for
+feature-enabled builds, and vice versa.
+
+The build helper and layout trainer stage profiles under content-hashed paths;
+the helper also stages linker-order files by content hash. Cargo fingerprints
+compiler arguments, so replacing profile/order contents at one unchanged path
+must not silently reuse an older optimized artifact. Keep frozen measured
+executables and their manifests separate from reusable target directories.
 
 Unset `CARGO_ENCODED_RUSTFLAGS` even when its value is empty. Cargo gives it
 [precedence over `RUSTFLAGS`](https://doc.rust-lang.org/cargo/reference/config.html#buildrustflags),
@@ -207,6 +238,31 @@ storage lifecycle and diagnostics implement their prerequisites. They deliberate
 retain worker-side path validation and the two-worker default until operation
 counts justify more policy. Arena-one, one-worker, opt-z, and blended PGO profiles
 were rejected tradeoffs in the review and are not promoted by this implementation.
+
+## Explicit compiler optimization experiments
+
+Release defaults remain `opt-level = "s"`. PGO training/validation and function-order
+training/validation accept `--opt-level s|3`, defaulting to `s`. The release helper
+accepts the same selection as its optional sixth argument:
+
+```sh
+python3 scripts/native_seed_pgo.py train --repo /path/to/frozen-source --output /path/to/pgo-opt3 --features seed-mmap --opt-level 3
+python3 scripts/native_seed_function_order.py train --repo /path/to/frozen-source --pgo-profile /path/to/pgo-opt3/seed.profdata --output /path/to/layout-opt3 --features seed-mmap --opt-level 3
+scripts/build_native_pgo_release.sh /path/to/pgo-opt3/seed.profdata /path/to/target /path/to/frozen-source /path/to/layout-opt3/function-order.txt seed-mmap 3
+```
+
+Only `3` adds `-Copt-level=3`; `s` retains the workspace flags unchanged. Compiler
+and inherited Cargo profile overrides remain rejected, even when they agree with
+the requested level. PGO, BOLT input/training, function-order and build manifests
+record `optimization_level`; validation rejects mixed levels. An absent legacy
+field means `s`, never `3`. Separate training is required for each level. Changing
+levels changes Cargo's compiler flags, while content-hashed profile/order paths
+continue to invalidate stale inputs in reused target directories.
+
+This enables a controlled combination of opt-level 3, PGO and function ordering;
+it does not establish that layout offsets opt-level 3's earlier memory regression.
+Qualify CPU and PSS together with matched source, features, workloads and build
+provenance, including API activation and held-out transfer shapes.
 
 ## Historical evidence corrections
 

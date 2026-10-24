@@ -9,6 +9,11 @@ Adding a dependency requires:
 
 ## Current dependencies
 
+The WebUI lockfile uses Zod 4.6.7 (MIT), an existing transitive development
+dependency of eslint-plugin-react-hooks. This refresh resolves
+[GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5);
+it adds no application dependency.
+
 | Crate | Version | Rationale |
 |-------|---------|-----------|
 | tokio | 1 | async runtime |

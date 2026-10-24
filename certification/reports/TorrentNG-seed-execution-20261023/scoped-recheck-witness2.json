@@ -1,0 +1,650 @@
+{
+  "status": "PASS",
+  "scope": "functional lifecycle witness; no performance claim",
+  "binary": "/workspace/scratch/ca998092d7e5/seed-execution-binaries/scoped-verification-diagnostic",
+  "binary_sha256": "a9466f51ade8e40f2be7a4d483fb7d85a80dce89c462abbffc97c764a1778b4b",
+  "fixture_bytes": 134217728,
+  "cancel_attempts": [
+    {
+      "job_id": "recheck-f45dd180c8b4ac5db95030e8445b3ec94edf8481-1792803484-2",
+      "observed_partial": {
+        "job": {
+          "job_id": "recheck-f45dd180c8b4ac5db95030e8445b3ec94edf8481-1792803484-2",
+          "kind": "recheck_torrent",
+          "state": "running",
+          "dry_run": 0,
+          "affected_torrents": "[\"f45dd180c8b4ac5db95030e8445b3ec94edf8481\"]",
+          "total": 128,
+          "done": 65,
+          "checkpoint": 65,
+          "file_index": 0,
+          "piece_index": 65,
+          "byte_offset": 68157440,
+          "verified_bytes": 68157440,
+          "invalid_pieces": "[]",
+          "error": null,
+          "created_at": 1792803484,
+          "started_at": 1792803484,
+          "updated_at": 1792803484,
+          "finished_at": null
+        },
+        "torrent": {
+          "hash": "f45dd180c8b4ac5db95030e8445b3ec94edf8481",
+          "name": "payload.bin",
+          "state": "checkingDL",
+          "size": 134217728,
+          "total_size": 134217728,
+          "downloaded": 0,
+          "downloaded_session": 0,
+          "uploaded": 0,
+          "uploaded_session": 0,
+          "ratio": 0.0,
+          "save_path": "/tmp/tng-scoped-recheck-wbb4kkrq/fixture/",
+          "content_path": "/tmp/tng-scoped-recheck-wbb4kkrq/fixture/payload.bin",
+          "root_path": "/tmp/tng-scoped-recheck-wbb4kkrq/fixture/payload.bin",
+          "category": "",
+          "tags": "",
+          "added_on": 1792803480,
+          "completion_on": 1792803480,
+          "last_activity": 1792803480,
+          "seen_complete": 1792803480,
+          "time_active": 0,
+          "seeding_time": 0,
+          "num_leechs": 0,
+          "num_seeds": 0,
+          "dlspeed": 0,
+          "upspeed": 0,
+          "dl_limit": -1,
+          "up_limit": -1,
+          "eta": -1,
+          "progress": 0.0,
+          "priority": 0,
+          "amount_left": 134217728,
+          "auto_tmm": false,
+          "seq_dl": false,
+          "f_l_piece_prio": false,
+          "force_start": false,
+          "super_seeding": false,
+          "ratio_limit": -1.0,
+          "seeding_time_limit": -1,
+          "tracker": "",
+          "trackers_count": 0,
+          "magnet_uri": "magnet:?xt=urn:btih:f45dd180c8b4ac5db95030e8445b3ec94edf8481",
+          "infohash_v1": "f45dd180c8b4ac5db95030e8445b3ec94edf8481",
+          "infohash_v2": ""
+        }
+      },
+      "terminal": {
+        "job_id": "recheck-f45dd180c8b4ac5db95030e8445b3ec94edf8481-1792803484-2",
+        "kind": "recheck_torrent",
+        "state": "cancelled",
+        "dry_run": 0,
+        "affected_torrents": "[\"f45dd180c8b4ac5db95030e8445b3ec94edf8481\"]",
+        "total": 128,
+        "done": 72,
+        "checkpoint": 72,
+        "file_index": 0,
+        "piece_index": 72,
+        "byte_offset": 75497472,
+        "verified_bytes": 75497472,
+        "invalid_pieces": "[]",
+        "error": null,
+        "created_at": 1792803484,
+        "started_at": 1792803484,
+        "updated_at": 1792803484,
+        "finished_at": 1792803484
+      },
+      "settled_frames": [
+        {
+          "freshness": {
+            "status": "fresh",
+            "attempts": 6,
+            "elapsed_seconds": 0.2571401769964723,
+            "generation": 8.0
+          },
+          "metrics": {
+            "torrentng_stats_snapshot_generation": 8.0,
+            "torrentng_stats_snapshot_age_milliseconds": 52.0,
+            "torrentng_storage_prepared_slot_allocations_total": 1.0,
+            "torrentng_storage_prepared_slot_reuses_total": 327.0,
+            "torrentng_storage_prepared_active_jobs": 0.0,
+            "torrentng_storage_prepared_queue_wait_ns_total": 2944736.0,
+            "torrentng_storage_prepared_run_ns_total": 229340683.0,
+            "torrentng_storage_mapped_upload_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_entries": 0.0,
+            "torrentng_storage_peer_read_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_budget_bytes": 16777216.0,
+            "torrentng_storage_peer_read_cache_hits_total": 0.0,
+            "torrentng_storage_peer_read_cache_misses_total": 0.0,
+            "torrentng_storage_peer_read_cache_evictions_total": 0.0,
+            "torrentng_storage_frame_bytes_in_use": 0.0,
+            "torrentng_storage_frame_bytes_retained": 0.0,
+            "torrentng_storage_frame_bytes_cap": 134217728.0,
+            "storage_scheduler_selected_backends": [
+              "pread"
+            ]
+          }
+        },
+        {
+          "freshness": {
+            "status": "fresh",
+            "attempts": 9,
+            "elapsed_seconds": 0.4126343210009509,
+            "generation": 9.0
+          },
+          "metrics": {
+            "torrentng_stats_snapshot_generation": 9.0,
+            "torrentng_stats_snapshot_age_milliseconds": 52.0,
+            "torrentng_storage_prepared_slot_allocations_total": 1.0,
+            "torrentng_storage_prepared_slot_reuses_total": 327.0,
+            "torrentng_storage_prepared_active_jobs": 0.0,
+            "torrentng_storage_prepared_queue_wait_ns_total": 2944736.0,
+            "torrentng_storage_prepared_run_ns_total": 229340683.0,
+            "torrentng_storage_mapped_upload_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_entries": 0.0,
+            "torrentng_storage_peer_read_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_budget_bytes": 16777216.0,
+            "torrentng_storage_peer_read_cache_hits_total": 0.0,
+            "torrentng_storage_peer_read_cache_misses_total": 0.0,
+            "torrentng_storage_peer_read_cache_evictions_total": 0.0,
+            "torrentng_storage_frame_bytes_in_use": 0.0,
+            "torrentng_storage_frame_bytes_retained": 0.0,
+            "torrentng_storage_frame_bytes_cap": 134217728.0,
+            "storage_scheduler_selected_backends": [
+              "pread"
+            ]
+          }
+        },
+        {
+          "freshness": {
+            "status": "fresh",
+            "attempts": 9,
+            "elapsed_seconds": 0.41191569499642355,
+            "generation": 10.0
+          },
+          "metrics": {
+            "torrentng_stats_snapshot_generation": 10.0,
+            "torrentng_stats_snapshot_age_milliseconds": 52.0,
+            "torrentng_storage_prepared_slot_allocations_total": 1.0,
+            "torrentng_storage_prepared_slot_reuses_total": 327.0,
+            "torrentng_storage_prepared_active_jobs": 0.0,
+            "torrentng_storage_prepared_queue_wait_ns_total": 2944736.0,
+            "torrentng_storage_prepared_run_ns_total": 229340683.0,
+            "torrentng_storage_mapped_upload_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_entries": 0.0,
+            "torrentng_storage_peer_read_cache_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+            "torrentng_storage_peer_read_cache_global_budget_bytes": 16777216.0,
+            "torrentng_storage_peer_read_cache_hits_total": 0.0,
+            "torrentng_storage_peer_read_cache_misses_total": 0.0,
+            "torrentng_storage_peer_read_cache_evictions_total": 0.0,
+            "torrentng_storage_frame_bytes_in_use": 0.0,
+            "torrentng_storage_frame_bytes_retained": 0.0,
+            "torrentng_storage_frame_bytes_cap": 134217728.0,
+            "storage_scheduler_selected_backends": [
+              "pread"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "phase": "complete",
+  "job_observations": [
+    {
+      "monotonic": 40154.677313454,
+      "phase": "explicit-completion",
+      "rows": []
+    },
+    {
+      "monotonic": 40154.679311738,
+      "phase": "explicit-completion:discover-job",
+      "rows": [
+        {
+          "job_id": "recheck-f45dd180c8b4ac5db95030e8445b3ec94edf8481-1792803482-1",
+          "state": "running",
+          "total": 128,
+          "done": 0,
+          "verified_bytes": 0,
+          "finished_at": null
+        }
+      ]
+    },
+    {
+      "monotonic": 40154.738924159,
+      "phase": "explicit-completion:wait-terminal",
+      "rows": [
+        {
+          "job_id": "recheck-f45dd180c8b4ac5db95030e8445b3ec94edf8481-1792803482-1",
+          "state": "running",
+          "total": 128,
+          "done": 65,
+          "verified_bytes": 68157440,
+          "finished_at": null
+        }
+      ]
+    },
+    {
+      "monotonic": 40154.791900793,
+      "phase": "explicit-completion:wait-terminal",
+      "rows": [
+        {
+          "job_id": "recheck-f45dd180c8b4ac5db95030e8445b3ec94edf8481-1792803482-1",
+          "state": "completed",
+          "total": 128,
+          "done": 128,
+          "verified_bytes": 134217728,
+          "finished_at": 1792803482
+        }
+      ]
+    },
+    {
+      "monotonic": 40156.230258966,
+      "phase": "cancel-attempt-1:discover-job",
+      "rows": [
+        {
+          "job_id": "recheck-f45dd180c8b4ac5db95030e8445b3ec94edf8481-1792803482-1",
+          "state": "completed",
+          "total": 128,
+          "done": 128,
+          "verified_bytes": 134217728,
+          "finished_at": 1792803482
+        },
+        {
+          "job_id": "recheck-f45dd180c8b4ac5db95030e8445b3ec94edf8481-1792803484-2",
+          "state": "running",
+          "total": 128,
+          "done": 0,
+          "verified_bytes": 0,
+          "finished_at": null
+        }
+      ]
+    },
+    {
+      "monotonic": 40156.475236402,
+      "phase": "cancel-attempt-1:observe-partial",
+      "rows": [
+        {
+          "job_id": "recheck-f45dd180c8b4ac5db95030e8445b3ec94edf8481-1792803482-1",
+          "state": "completed",
+          "total": 128,
+          "done": 128,
+          "verified_bytes": 134217728,
+          "finished_at": 1792803482
+        },
+        {
+          "job_id": "recheck-f45dd180c8b4ac5db95030e8445b3ec94edf8481-1792803484-2",
+          "state": "running",
+          "total": 128,
+          "done": 65,
+          "verified_bytes": 68157440,
+          "finished_at": null
+        }
+      ]
+    },
+    {
+      "monotonic": 40156.478936202,
+      "phase": "cancel-attempt-1:wait-terminal",
+      "rows": [
+        {
+          "job_id": "recheck-f45dd180c8b4ac5db95030e8445b3ec94edf8481-1792803482-1",
+          "state": "completed",
+          "total": 128,
+          "done": 128,
+          "verified_bytes": 134217728,
+          "finished_at": 1792803482
+        },
+        {
+          "job_id": "recheck-f45dd180c8b4ac5db95030e8445b3ec94edf8481-1792803484-2",
+          "state": "cancelling",
+          "total": 128,
+          "done": 65,
+          "verified_bytes": 68157440,
+          "finished_at": null
+        }
+      ]
+    },
+    {
+      "monotonic": 40156.481268977,
+      "phase": "cancel-attempt-1:wait-terminal",
+      "rows": [
+        {
+          "job_id": "recheck-f45dd180c8b4ac5db95030e8445b3ec94edf8481-1792803482-1",
+          "state": "completed",
+          "total": 128,
+          "done": 128,
+          "verified_bytes": 134217728,
+          "finished_at": 1792803482
+        },
+        {
+          "job_id": "recheck-f45dd180c8b4ac5db95030e8445b3ec94edf8481-1792803484-2",
+          "state": "cancelled",
+          "total": 128,
+          "done": 72,
+          "verified_bytes": 75497472,
+          "finished_at": 1792803484
+        }
+      ]
+    }
+  ],
+  "mutation_requests": [
+    {
+      "route": "/api/v1/torrents/f45dd180c8b4ac5db95030e8445b3ec94edf8481/recheck",
+      "started_monotonic": 40154.677317249,
+      "status": 204
+    },
+    {
+      "route": "/api/v1/torrents/f45dd180c8b4ac5db95030e8445b3ec94edf8481/recheck",
+      "started_monotonic": 40156.228574267,
+      "status": 204
+    },
+    {
+      "route": "/api/v1/jobs/recheck-f45dd180c8b4ac5db95030e8445b3ec94edf8481-1792803484-2/cancel",
+      "started_monotonic": 40156.477961422,
+      "status": 204
+    }
+  ],
+  "expected_job_kind": "recheck_torrent",
+  "fixture_sha256": "22b0fc55ad28cfc71a659e3cf484ca5a5907210b0d2cfb361a70c981494bcda9",
+  "removed_inherited_controls": {
+    "names": [],
+    "safe_values": {}
+  },
+  "generated_config": "[daemon]\napi_bind = \"127.0.0.1:35853\"\nsession_dir = \"/tmp/tng-scoped-recheck-wbb4kkrq/session\"\nlog_level = \"warn\"\n[db]\npath = \"/tmp/tng-scoped-recheck-wbb4kkrq/state.db\"\n[network]\nlisten_port = 52141\nmax_peers = 8\n[storage]\ndownload_dir = \"/tmp/tng-scoped-recheck-wbb4kkrq/fixture\"\n[dht]\nenabled = false\n[auth]\napi_tokens_file = \"/tmp/tng-scoped-recheck-wbb4kkrq/api-token\"\n",
+  "after_initial_add": [
+    {
+      "freshness": {
+        "status": "fresh",
+        "attempts": 12,
+        "elapsed_seconds": 0.5657628770059091,
+        "generation": 2.0
+      },
+      "metrics": {
+        "torrentng_stats_snapshot_generation": 2.0,
+        "torrentng_stats_snapshot_age_milliseconds": 52.0,
+        "torrentng_storage_prepared_slot_allocations_total": 1.0,
+        "torrentng_storage_prepared_slot_reuses_total": 127.0,
+        "torrentng_storage_prepared_active_jobs": 0.0,
+        "torrentng_storage_prepared_queue_wait_ns_total": 1488715.0,
+        "torrentng_storage_prepared_run_ns_total": 19564482.0,
+        "torrentng_storage_mapped_upload_cache_bytes": 0.0,
+        "torrentng_storage_peer_read_cache_entries": 0.0,
+        "torrentng_storage_peer_read_cache_bytes": 0.0,
+        "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+        "torrentng_storage_peer_read_cache_global_budget_bytes": 16777216.0,
+        "torrentng_storage_peer_read_cache_hits_total": 0.0,
+        "torrentng_storage_peer_read_cache_misses_total": 0.0,
+        "torrentng_storage_peer_read_cache_evictions_total": 0.0,
+        "torrentng_storage_frame_bytes_in_use": 0.0,
+        "torrentng_storage_frame_bytes_retained": 0.0,
+        "torrentng_storage_frame_bytes_cap": 134217728.0,
+        "storage_scheduler_selected_backends": [
+          "pread"
+        ]
+      }
+    },
+    {
+      "freshness": {
+        "status": "fresh",
+        "attempts": 9,
+        "elapsed_seconds": 0.41279206999752205,
+        "generation": 3.0
+      },
+      "metrics": {
+        "torrentng_stats_snapshot_generation": 3.0,
+        "torrentng_stats_snapshot_age_milliseconds": 52.0,
+        "torrentng_storage_prepared_slot_allocations_total": 1.0,
+        "torrentng_storage_prepared_slot_reuses_total": 127.0,
+        "torrentng_storage_prepared_active_jobs": 0.0,
+        "torrentng_storage_prepared_queue_wait_ns_total": 1488715.0,
+        "torrentng_storage_prepared_run_ns_total": 19564482.0,
+        "torrentng_storage_mapped_upload_cache_bytes": 0.0,
+        "torrentng_storage_peer_read_cache_entries": 0.0,
+        "torrentng_storage_peer_read_cache_bytes": 0.0,
+        "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+        "torrentng_storage_peer_read_cache_global_budget_bytes": 16777216.0,
+        "torrentng_storage_peer_read_cache_hits_total": 0.0,
+        "torrentng_storage_peer_read_cache_misses_total": 0.0,
+        "torrentng_storage_peer_read_cache_evictions_total": 0.0,
+        "torrentng_storage_frame_bytes_in_use": 0.0,
+        "torrentng_storage_frame_bytes_retained": 0.0,
+        "torrentng_storage_frame_bytes_cap": 134217728.0,
+        "storage_scheduler_selected_backends": [
+          "pread"
+        ]
+      }
+    },
+    {
+      "freshness": {
+        "status": "fresh",
+        "attempts": 9,
+        "elapsed_seconds": 0.4125100029996247,
+        "generation": 4.0
+      },
+      "metrics": {
+        "torrentng_stats_snapshot_generation": 4.0,
+        "torrentng_stats_snapshot_age_milliseconds": 52.0,
+        "torrentng_storage_prepared_slot_allocations_total": 1.0,
+        "torrentng_storage_prepared_slot_reuses_total": 127.0,
+        "torrentng_storage_prepared_active_jobs": 0.0,
+        "torrentng_storage_prepared_queue_wait_ns_total": 1488715.0,
+        "torrentng_storage_prepared_run_ns_total": 19564482.0,
+        "torrentng_storage_mapped_upload_cache_bytes": 0.0,
+        "torrentng_storage_peer_read_cache_entries": 0.0,
+        "torrentng_storage_peer_read_cache_bytes": 0.0,
+        "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+        "torrentng_storage_peer_read_cache_global_budget_bytes": 16777216.0,
+        "torrentng_storage_peer_read_cache_hits_total": 0.0,
+        "torrentng_storage_peer_read_cache_misses_total": 0.0,
+        "torrentng_storage_peer_read_cache_evictions_total": 0.0,
+        "torrentng_storage_frame_bytes_in_use": 0.0,
+        "torrentng_storage_frame_bytes_retained": 0.0,
+        "torrentng_storage_frame_bytes_cap": 134217728.0,
+        "storage_scheduler_selected_backends": [
+          "pread"
+        ]
+      }
+    }
+  ],
+  "last_database_jobs": [
+    {
+      "job_id": "recheck-f45dd180c8b4ac5db95030e8445b3ec94edf8481-1792803482-1",
+      "kind": "recheck_torrent",
+      "state": "completed",
+      "dry_run": 0,
+      "affected_torrents": "[\"f45dd180c8b4ac5db95030e8445b3ec94edf8481\"]",
+      "total": 128,
+      "done": 128,
+      "checkpoint": 128,
+      "file_index": 0,
+      "piece_index": 128,
+      "byte_offset": 134217728,
+      "verified_bytes": 134217728,
+      "invalid_pieces": "[]",
+      "error": null,
+      "created_at": 1792803482,
+      "started_at": 1792803482,
+      "updated_at": 1792803482,
+      "finished_at": 1792803482
+    },
+    {
+      "job_id": "recheck-f45dd180c8b4ac5db95030e8445b3ec94edf8481-1792803484-2",
+      "kind": "recheck_torrent",
+      "state": "cancelled",
+      "dry_run": 0,
+      "affected_torrents": "[\"f45dd180c8b4ac5db95030e8445b3ec94edf8481\"]",
+      "total": 128,
+      "done": 72,
+      "checkpoint": 72,
+      "file_index": 0,
+      "piece_index": 72,
+      "byte_offset": 75497472,
+      "verified_bytes": 75497472,
+      "invalid_pieces": "[]",
+      "error": null,
+      "created_at": 1792803484,
+      "started_at": 1792803484,
+      "updated_at": 1792803484,
+      "finished_at": 1792803484
+    }
+  ],
+  "last_selected_jobs": [
+    {
+      "job_id": "recheck-f45dd180c8b4ac5db95030e8445b3ec94edf8481-1792803482-1",
+      "kind": "recheck_torrent",
+      "state": "completed",
+      "dry_run": 0,
+      "affected_torrents": "[\"f45dd180c8b4ac5db95030e8445b3ec94edf8481\"]",
+      "total": 128,
+      "done": 128,
+      "checkpoint": 128,
+      "file_index": 0,
+      "piece_index": 128,
+      "byte_offset": 134217728,
+      "verified_bytes": 134217728,
+      "invalid_pieces": "[]",
+      "error": null,
+      "created_at": 1792803482,
+      "started_at": 1792803482,
+      "updated_at": 1792803482,
+      "finished_at": 1792803482
+    },
+    {
+      "job_id": "recheck-f45dd180c8b4ac5db95030e8445b3ec94edf8481-1792803484-2",
+      "kind": "recheck_torrent",
+      "state": "cancelled",
+      "dry_run": 0,
+      "affected_torrents": "[\"f45dd180c8b4ac5db95030e8445b3ec94edf8481\"]",
+      "total": 128,
+      "done": 72,
+      "checkpoint": 72,
+      "file_index": 0,
+      "piece_index": 72,
+      "byte_offset": 75497472,
+      "verified_bytes": 75497472,
+      "invalid_pieces": "[]",
+      "error": null,
+      "created_at": 1792803484,
+      "started_at": 1792803484,
+      "updated_at": 1792803484,
+      "finished_at": 1792803484
+    }
+  ],
+  "completed_recheck": {
+    "job_id": "recheck-f45dd180c8b4ac5db95030e8445b3ec94edf8481-1792803482-1",
+    "kind": "recheck_torrent",
+    "state": "completed",
+    "dry_run": 0,
+    "affected_torrents": "[\"f45dd180c8b4ac5db95030e8445b3ec94edf8481\"]",
+    "total": 128,
+    "done": 128,
+    "checkpoint": 128,
+    "file_index": 0,
+    "piece_index": 128,
+    "byte_offset": 134217728,
+    "verified_bytes": 134217728,
+    "invalid_pieces": "[]",
+    "error": null,
+    "created_at": 1792803482,
+    "started_at": 1792803482,
+    "updated_at": 1792803482,
+    "finished_at": 1792803482
+  },
+  "after_completion": [
+    {
+      "freshness": {
+        "status": "fresh",
+        "attempts": 9,
+        "elapsed_seconds": 0.4116525700010243,
+        "generation": 5.0
+      },
+      "metrics": {
+        "torrentng_stats_snapshot_generation": 5.0,
+        "torrentng_stats_snapshot_age_milliseconds": 52.0,
+        "torrentng_storage_prepared_slot_allocations_total": 1.0,
+        "torrentng_storage_prepared_slot_reuses_total": 255.0,
+        "torrentng_storage_prepared_active_jobs": 0.0,
+        "torrentng_storage_prepared_queue_wait_ns_total": 2247855.0,
+        "torrentng_storage_prepared_run_ns_total": 39288718.0,
+        "torrentng_storage_mapped_upload_cache_bytes": 0.0,
+        "torrentng_storage_peer_read_cache_entries": 0.0,
+        "torrentng_storage_peer_read_cache_bytes": 0.0,
+        "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+        "torrentng_storage_peer_read_cache_global_budget_bytes": 16777216.0,
+        "torrentng_storage_peer_read_cache_hits_total": 0.0,
+        "torrentng_storage_peer_read_cache_misses_total": 0.0,
+        "torrentng_storage_peer_read_cache_evictions_total": 0.0,
+        "torrentng_storage_frame_bytes_in_use": 0.0,
+        "torrentng_storage_frame_bytes_retained": 0.0,
+        "torrentng_storage_frame_bytes_cap": 134217728.0,
+        "storage_scheduler_selected_backends": [
+          "pread"
+        ]
+      }
+    },
+    {
+      "freshness": {
+        "status": "fresh",
+        "attempts": 9,
+        "elapsed_seconds": 0.41117614399991,
+        "generation": 6.0
+      },
+      "metrics": {
+        "torrentng_stats_snapshot_generation": 6.0,
+        "torrentng_stats_snapshot_age_milliseconds": 52.0,
+        "torrentng_storage_prepared_slot_allocations_total": 1.0,
+        "torrentng_storage_prepared_slot_reuses_total": 255.0,
+        "torrentng_storage_prepared_active_jobs": 0.0,
+        "torrentng_storage_prepared_queue_wait_ns_total": 2247855.0,
+        "torrentng_storage_prepared_run_ns_total": 39288718.0,
+        "torrentng_storage_mapped_upload_cache_bytes": 0.0,
+        "torrentng_storage_peer_read_cache_entries": 0.0,
+        "torrentng_storage_peer_read_cache_bytes": 0.0,
+        "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+        "torrentng_storage_peer_read_cache_global_budget_bytes": 16777216.0,
+        "torrentng_storage_peer_read_cache_hits_total": 0.0,
+        "torrentng_storage_peer_read_cache_misses_total": 0.0,
+        "torrentng_storage_peer_read_cache_evictions_total": 0.0,
+        "torrentng_storage_frame_bytes_in_use": 0.0,
+        "torrentng_storage_frame_bytes_retained": 0.0,
+        "torrentng_storage_frame_bytes_cap": 134217728.0,
+        "storage_scheduler_selected_backends": [
+          "pread"
+        ]
+      }
+    },
+    {
+      "freshness": {
+        "status": "fresh",
+        "attempts": 9,
+        "elapsed_seconds": 0.4125593599965214,
+        "generation": 7.0
+      },
+      "metrics": {
+        "torrentng_stats_snapshot_generation": 7.0,
+        "torrentng_stats_snapshot_age_milliseconds": 52.0,
+        "torrentng_storage_prepared_slot_allocations_total": 1.0,
+        "torrentng_storage_prepared_slot_reuses_total": 255.0,
+        "torrentng_storage_prepared_active_jobs": 0.0,
+        "torrentng_storage_prepared_queue_wait_ns_total": 2247855.0,
+        "torrentng_storage_prepared_run_ns_total": 39288718.0,
+        "torrentng_storage_mapped_upload_cache_bytes": 0.0,
+        "torrentng_storage_peer_read_cache_entries": 0.0,
+        "torrentng_storage_peer_read_cache_bytes": 0.0,
+        "torrentng_storage_peer_read_cache_global_backing_bytes": 0.0,
+        "torrentng_storage_peer_read_cache_global_budget_bytes": 16777216.0,
+        "torrentng_storage_peer_read_cache_hits_total": 0.0,
+        "torrentng_storage_peer_read_cache_misses_total": 0.0,
+        "torrentng_storage_peer_read_cache_evictions_total": 0.0,
+        "torrentng_storage_frame_bytes_in_use": 0.0,
+        "torrentng_storage_frame_bytes_retained": 0.0,
+        "torrentng_storage_frame_bytes_cap": 134217728.0,
+        "storage_scheduler_selected_backends": [
+          "pread"
+        ]
+      }
+    }
+  ]
+}

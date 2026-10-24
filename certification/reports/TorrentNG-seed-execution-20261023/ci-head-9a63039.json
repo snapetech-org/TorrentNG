@@ -1,0 +1,74 @@
+{
+  "workflow_runs": [
+    {
+      "id": 40042890150,
+      "name": "Windows Smoke",
+      "status": "completed",
+      "conclusion": "success",
+      "run_number": 339,
+      "jobs_url": "https://api.github.com/repos/snapetech-org/TorrentNG/actions/runs/40042890150/jobs",
+      "logs_url": "https://api.github.com/repos/snapetech-org/TorrentNG/actions/runs/40042890150/logs",
+      "workflow_id": 278075011
+    },
+    {
+      "id": 40042890207,
+      "name": "Release-note validation",
+      "status": "completed",
+      "conclusion": "success",
+      "run_number": 901,
+      "jobs_url": "https://api.github.com/repos/snapetech-org/TorrentNG/actions/runs/40042890207/jobs",
+      "logs_url": "https://api.github.com/repos/snapetech-org/TorrentNG/actions/runs/40042890207/logs",
+      "workflow_id": 367299007
+    },
+    {
+      "id": 40042890324,
+      "name": "Semgrep Community Edition",
+      "status": "completed",
+      "conclusion": "success",
+      "run_number": 256,
+      "jobs_url": "https://api.github.com/repos/snapetech-org/TorrentNG/actions/runs/40042890324/jobs",
+      "logs_url": "https://api.github.com/repos/snapetech-org/TorrentNG/actions/runs/40042890324/logs",
+      "workflow_id": 390126021
+    },
+    {
+      "id": 40042890261,
+      "name": "Trivy filesystem scan",
+      "status": "completed",
+      "conclusion": "success",
+      "run_number": 256,
+      "jobs_url": "https://api.github.com/repos/snapetech-org/TorrentNG/actions/runs/40042890261/jobs",
+      "logs_url": "https://api.github.com/repos/snapetech-org/TorrentNG/actions/runs/40042890261/logs",
+      "workflow_id": 390126023
+    },
+    {
+      "id": 40042890320,
+      "name": "CI",
+      "status": "completed",
+      "conclusion": "success",
+      "run_number": 1020,
+      "jobs_url": "https://api.github.com/repos/snapetech-org/TorrentNG/actions/runs/40042890320/jobs",
+      "logs_url": "https://api.github.com/repos/snapetech-org/TorrentNG/actions/runs/40042890320/logs",
+      "workflow_id": 277566295
+    },
+    {
+      "id": 40042890198,
+      "name": "TorrentNG fork PR validation",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_number": 94,
+      "jobs_url": "https://api.github.com/repos/snapetech-org/TorrentNG/actions/runs/40042890198/jobs",
+      "logs_url": "https://api.github.com/repos/snapetech-org/TorrentNG/actions/runs/40042890198/logs",
+      "workflow_id": 387850289
+    },
+    {
+      "id": 40042890204,
+      "name": "CodeQL",
+      "status": "completed",
+      "conclusion": "success",
+      "run_number": 345,
+      "jobs_url": "https://api.github.com/repos/snapetech-org/TorrentNG/actions/runs/40042890204/jobs",
+      "logs_url": "https://api.github.com/repos/snapetech-org/TorrentNG/actions/runs/40042890204/logs",
+      "workflow_id": 277566297
+    }
+  ]
+}

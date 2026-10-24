@@ -231,8 +231,29 @@ fn encode_hex(bytes: &[u8]) -> String {
 }
 
 /// Shared application state threaded through axum handlers.
+/// Cheap shared API state. Replacing a configuration field on a clone keeps
+/// that replacement local; existing Arc-backed mutable stores remain shared.
 #[derive(Clone)]
-pub struct AppState {
+pub struct AppState(Arc<AppStateInner>);
+
+impl std::ops::Deref for AppState {
+    type Target = AppStateInner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for AppState {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        Arc::make_mut(&mut self.0)
+    }
+}
+
+/// Fields exposed through `AppState`; construct state with its constructors.
+/// Copy-on-write clones configuration and retains the shared store handles.
+#[derive(Clone)]
+pub struct AppStateInner {
     pub registry: Arc<RwLock<SessionRegistry>>,
     pub engine: Option<EngineHandle>,
     pub api_tokens: Arc<Vec<String>>,
@@ -283,7 +304,7 @@ impl AppState {
             username: "torrentng".to_owned(),
             password: uuid::Uuid::new_v4().simple().to_string(),
         };
-        AppState {
+        Self(Arc::new(AppStateInner {
             registry,
             engine,
             api_tokens: Arc::new(api_tokens),
@@ -308,7 +329,7 @@ impl AppState {
             json_store_write: Arc::new(Mutex::new(())),
             torrent_snapshot_cache: Arc::new(RwLock::new(VecDeque::new())),
             torrent_snapshot_refresh: Arc::new(Mutex::new(())),
-        }
+        }))
     }
 
     pub fn with_registry(registry: Arc<RwLock<SessionRegistry>>) -> Self {
@@ -1218,6 +1239,67 @@ impl Default for AppState {
 mod tests {
     use super::*;
     use rt_session::TorrentEntry;
+
+    #[tokio::test]
+    async fn state_clones_are_compact_and_configuration_is_copy_on_write() {
+        let original = AppState::new();
+        let mut changed = original.clone();
+        assert_eq!(
+            std::mem::size_of::<AppState>(),
+            std::mem::size_of::<Arc<AppStateInner>>()
+        );
+        assert!(Arc::ptr_eq(&original.0, &changed.0));
+        changed.metrics_include_torrent_ids = !original.metrics_include_torrent_ids;
+        changed.configure_auth_credentials(
+            AuthCredentials {
+                username: "changed".into(),
+                password: "changed-password".into(),
+            },
+            AuthCredentials {
+                username: "configured".into(),
+                password: "configured-password".into(),
+            },
+            PathBuf::from("changed-auth.json"),
+            true,
+            Some("changed-token".into()),
+        );
+        assert!(!Arc::ptr_eq(&original.0, &changed.0));
+        assert_ne!(
+            original.metrics_include_torrent_ids,
+            changed.metrics_include_torrent_ids
+        );
+        assert_eq!(original.configured_auth_credentials.username, "torrentng");
+        assert_eq!(original.auth_settings_path, None);
+        assert_eq!(original.local_webui_session_token, None);
+        assert!(!original.public_bind);
+        assert_eq!(original.auth_credentials.read().await.username, "torrentng");
+        assert_eq!(changed.auth_credentials.read().await.username, "changed");
+        assert!(Arc::ptr_eq(&original.registry, &changed.registry));
+        assert!(Arc::ptr_eq(&original.categories, &changed.categories));
+        assert!(Arc::ptr_eq(&original.idempotency, &changed.idempotency));
+        assert!(Arc::ptr_eq(
+            &original.torrent_snapshot_cache,
+            &changed.torrent_snapshot_cache
+        ));
+        assert!(Arc::ptr_eq(
+            &original.login_attempt_limiter.state,
+            &changed.login_attempt_limiter.state
+        ));
+        changed
+            .categories
+            .write()
+            .await
+            .insert("shared".into(), "/data".into());
+        assert_eq!(
+            original
+                .categories
+                .read()
+                .await
+                .get("shared")
+                .map(String::as_str),
+            Some("/data")
+        );
+    }
 
     #[test]
     fn snapshot_hash_keys_compact_canonical_hashes_and_preserve_other_text() {

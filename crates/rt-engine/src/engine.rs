@@ -4484,7 +4484,10 @@ impl Engine {
                         return true;
                     }
                     cache.generated_at = Instant::now();
+                    cache.collected_since = Some(started_at);
+                    let generation = cache.stats.snapshot_generation.saturating_add(1);
                     cache.stats = *stats;
+                    cache.stats.snapshot_generation = generation;
                     cache.refresh_started_at = None;
                 }
             }
@@ -21811,6 +21814,7 @@ mod tests {
             .unwrap();
         engine.services.stats_cache = Some(subsystems::EngineStatsCache {
             generated_at: Instant::now(),
+            collected_since: None,
             stats: EngineStats {
                 torrents_total: 11,
                 ..Default::default()
@@ -21831,6 +21835,8 @@ mod tests {
         );
         let cache = engine.services.stats_cache.as_ref().unwrap();
         assert_eq!(cache.stats.torrents_total, 11);
+        assert_eq!(cache.stats.snapshot_generation, 0);
+        assert_eq!(cache.collected_since, None);
         assert_eq!(cache.refresh_started_at, Some(current_started_at));
 
         assert!(
@@ -21864,6 +21870,8 @@ mod tests {
         );
         let cache = engine.services.stats_cache.as_ref().unwrap();
         assert_eq!(cache.stats.torrents_total, 42);
+        assert_eq!(cache.stats.snapshot_generation, 1);
+        assert_eq!(cache.collected_since, Some(current_started_at));
         assert_eq!(cache.refresh_started_at, None);
     }
 

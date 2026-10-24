@@ -1,0 +1,29 @@
+BOLT-INFO: shared object or position-independent executable detected
+BOLT-INFO: Target architecture: x86_64
+BOLT-INFO: BOLT version: <unknown>
+BOLT-INFO: first alloc address is 0x0
+BOLT-INFO: creating new program header table at address 0x1400000, offset 0x1400000
+BOLT-INFO: enabling relocation mode
+BOLT-INFO: enabling lite mode
+BOLT-WARNING: sizes differ for function ring_core_0_17_14__aes_hw_set_encrypt_key_base/1. FDE : 388; symbol table : 493. Using max size.
+BOLT-WARNING: FDE [0x12817c0, 0x12817dd) conflicts with function ring_core_0_17_14__aes_hw_set_encrypt_key_base/1(*2)
+BOLT-WARNING: FDE [0x12817e0, 0x12817fd) conflicts with function ring_core_0_17_14__aes_hw_set_encrypt_key_base/1(*2)
+BOLT-WARNING: FDE [0x1281800, 0x128181d) conflicts with function ring_core_0_17_14__aes_hw_set_encrypt_key_base/1(*2)
+BOLT-INFO: pre-processing profile using branch profile reader
+BOLT-INFO: forcing -jump-tables=move as PIC jump table was detected in function _RNvMs3_NtNtCsgczF5crJ4sT_3std2io5errorNtB5_5Error4kind.llvm.282849153959214330/1(*2)
+BOLT-WARNING: 1 collisions detected while hashing binary objects. Use -v=1 to see the list.
+BOLT-INFO: 3705 out of 25422 functions in the binary (14.6%) have non-empty execution profile
+BOLT-INFO: 31 functions with profile could not be optimized
+BOLT-INFO: profile for 1 objects was ignored
+BOLT-INFO: among the hottest 1000 functions top 5% function CFG discontinuity is 0.00%
+BOLT-INFO: 98481 instructions were shortened
+BOLT-INFO: removed 639 empty blocks
+BOLT-INFO: merged 7 duplicate CFG edges
+BOLT-INFO: basic block reordering modified layout of 2327 functions (62.81% of profiled, 9.14% of total)
+BOLT-INFO: 175 Functions were reordered by LoopInversionPass
+BOLT-INFO: dumped function order to /tmp/torrentng-order-i6n54vsp/raw-order.txt
+BOLT-INFO: SCTC: patched 89 tail calls (85 forward) tail calls (4 backward) from a total of 89 while removing 2 double jumps and removing 68 basic blocks totalling 340 bytes of code. CTCs total execution count is 713556 and the number of times CTCs are taken is 342910
+BOLT-INFO: padding code to 0x1c00000 to accommodate hot text
+BOLT-INFO: patched build-id (flipped last bit)
+BOLT-INFO: setting __hot_start to 0x1600000
+BOLT-INFO: setting __hot_end to 0x1ab15ef

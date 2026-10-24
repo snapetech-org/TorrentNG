@@ -838,7 +838,7 @@ pub async fn app_set_preferences(State(state): State<AppState>, body: String) ->
 }
 
 pub async fn app_shutdown(State(state): State<AppState>) -> impl IntoResponse {
-    if let Some(shutdown) = state.shutdown {
+    if let Some(shutdown) = &state.shutdown {
         // `notify_one` retains the permit if the daemon's graceful-shutdown
         // future has not reached its select yet, so an early HTTP request
         // cannot be lost in a startup race.

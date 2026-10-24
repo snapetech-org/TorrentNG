@@ -97,6 +97,7 @@ class QualificationTests(unittest.TestCase):
             def fake_run(argv, **kwargs):
                 if argv[0] == "cargo":
                     self.assertEqual(kwargs["cwd"], source)
+                    self.assertTrue(kwargs["env"]["RUSTFLAGS"].endswith(" -Copt-level=3"))
                     binary = output / "instrumented/release/torrentngd"
                     binary.parent.mkdir(parents=True)
                     binary.write_bytes(b"instrumented daemon")
@@ -107,7 +108,7 @@ class QualificationTests(unittest.TestCase):
                     (output / "raw/daemon-test.profraw").write_bytes(b"raw")
 
             argv = ["native_seed_pgo.py", "train", "--repo", str(source),
-                    "--output", str(output), "--corpus", str(corpus)]
+                    "--output", str(output), "--corpus", str(corpus), "--opt-level", "3"]
             with patch.object(sys, "argv", argv), patch.dict(os.environ, {}, clear=True), \
                     patch.object(pgo, "run", side_effect=fake_run), \
                     patch.object(pgo, "source_digest", return_value="source") as digest, \
@@ -117,6 +118,7 @@ class QualificationTests(unittest.TestCase):
                 pgo.main()
                 self.assertTrue(all(call.args == (source,) for call in digest.call_args_list))
                 self.assertEqual(manifest.call_args.args[1], source)
+                self.assertEqual(manifest.call_args.kwargs["optimization_level"], "3")
             self.assertEqual(list(source.iterdir()), [], "the source checkout stays untouched")
             self.assertTrue((output / "seed.profdata.manifest.json").is_file())
 
@@ -125,7 +127,50 @@ class QualificationTests(unittest.TestCase):
         argv = ["native_seed_pgo.py", "validate", "--repo", str(source), "--profile", "seed.profdata"]
         with patch.object(sys, "argv", argv), patch.object(pgo, "validate_profile") as validate:
             pgo.main()
-        validate.assert_called_once_with(Path("seed.profdata"), source)
+            validate.assert_called_once_with(Path("seed.profdata"), source, "default", "s")
+
+    def test_optimization_flags_and_legacy_profile_identity(self):
+        self.assertEqual(pgo.optimization_flags("s"), "")
+        self.assertEqual(pgo.optimization_flags("3"), " -Copt-level=3")
+        for invalid in ("2", "z", 3, None, "3 -Ctarget-cpu=native"):
+            with self.assertRaises(ValueError): pgo.optimization_flags(invalid)
+        with tempfile.TemporaryDirectory() as directory:
+            profile = Path(directory) / "seed.profdata"
+            profile.write_bytes(b"profile")
+            sidecar = Path(str(profile) + ".manifest.json")
+            data = {"source_digest": "source", "rustc": "compiler", "profile_sha256": tools.sha256(profile)}
+            sidecar.write_text(json.dumps(data))
+            with patch.object(pgo, "source_digest", return_value="source"), patch.object(pgo, "command", return_value="compiler"):
+                pgo.validate_profile(profile)
+                with self.assertRaisesRegex(ValueError, "optimization_level"):
+                    pgo.validate_profile(profile, optimization_level="3")
+                data["optimization_level"] = "3"
+                sidecar.write_text(json.dumps(data))
+                pgo.validate_profile(profile, optimization_level="3")
+                with self.assertRaisesRegex(ValueError, "optimization_level"):
+                    pgo.validate_profile(profile)
+
+    def test_explicit_opt_level_does_not_allow_inherited_training_overrides(self):
+        for overrides in ({"CARGO_PROFILE_RELEASE_OPT_LEVEL": "3"}, {"RUSTFLAGS": "-Copt-level=3"}, {"CARGO_ENCODED_RUSTFLAGS": ""}):
+            with self.subTest(overrides=overrides), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                corpus = root / "corpus.json"
+                corpus.write_text('{"training": []}')
+                argv = ["native_seed_pgo.py", "train", "--output", str(root / "output"), "--corpus", str(corpus), "--opt-level", "3"]
+                with patch.object(sys, "argv", argv), patch.dict(os.environ, overrides, clear=True), patch.object(pgo, "source_digest", return_value="source"), patch.object(pgo, "run") as run:
+                    with self.assertRaises(SystemExit): pgo.main()
+                    run.assert_not_called()
+
+    def test_mapped_training_exercises_activation_and_buffered_fallback(self):
+        workloads = [{"mib": 16, "peers": 1, "environment": {"TNG_SEED_DRIVER": "1"}}]
+        self.assertEqual(pgo.training_workloads({"training": workloads}, "default"), workloads)
+        variants = pgo.training_workloads({"training": workloads}, "seed-mmap")
+        self.assertEqual([w["environment"]["TNG_SEED_MMAP"] for w in variants], ["0", "1"])
+        self.assertTrue(all(w["environment"]["TNG_SEED_DRIVER"] == "1" for w in variants))
+        self.assertEqual(pgo.feature_identity("seed-mmap,full-compat,default,seed-mmap"),
+                         "full-compat,seed-mmap")
+        for bad in ("", "seed-mmap --release", "x/y", ",seed-mmap"):
+            with self.assertRaises(ValueError): pgo.feature_identity(bad)
 
     def test_paired_ratios_not_ratio_of_unrelated_medians(self):
         result = tools.paired_analysis(experiment([1, 100, 101], [2, 50, 202]),
@@ -190,6 +235,8 @@ class QualificationTests(unittest.TestCase):
             Path(str(profile) + ".manifest.json").write_text(json.dumps(metadata))
             with patch.object(pgo, "source_digest", return_value="source"), patch.object(pgo, "command", return_value="compiler"):
                 pgo.validate_profile(profile)
+                with self.assertRaisesRegex(ValueError, "features"):
+                    pgo.validate_profile(profile, features="seed-mmap")
                 compressed = Path(str(profile) + ".gz")
                 with gzip.open(compressed, "wb") as stream: stream.write(profile.read_bytes())
                 Path(str(compressed) + ".manifest.json").write_text(json.dumps(metadata))
