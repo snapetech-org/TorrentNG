@@ -66,7 +66,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.pr_sha != '' && inputs.pr_sha || (github.event.pull_request.head.sha || github.sha) }}
+          ref: ${{ inputs.pr_sha != '' && inputs.pr_sha || github.sha }}
           persist-credentials: false
 
       - name: Cache Cargo package downloads
@@ -152,7 +152,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.pr_sha != '' && inputs.pr_sha || (github.event.pull_request.head.sha || github.sha) }}
+          ref: ${{ inputs.pr_sha != '' && inputs.pr_sha || github.sha }}
           persist-credentials: false
 
       - name: Install Rust
@@ -195,7 +195,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.pr_sha != '' && inputs.pr_sha || (github.event.pull_request.head.sha || github.sha) }}
+          ref: ${{ inputs.pr_sha != '' && inputs.pr_sha || github.sha }}
           persist-credentials: false
 
       - name: Cache Cargo package downloads
@@ -289,7 +289,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.pr_sha != '' && inputs.pr_sha || (github.event.pull_request.head.sha || github.sha) }}
+          ref: ${{ inputs.pr_sha != '' && inputs.pr_sha || github.sha }}
           persist-credentials: false
 
       - name: Cache Cargo package downloads
@@ -349,7 +349,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.pr_sha != '' && inputs.pr_sha || (github.event.pull_request.head.sha || github.sha) }}
+          ref: ${{ inputs.pr_sha != '' && inputs.pr_sha || github.sha }}
           persist-credentials: false
 
       - name: Cache Cargo package downloads
@@ -405,7 +405,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.pr_sha != '' && inputs.pr_sha || (github.event.pull_request.head.sha || github.sha) }}
+          ref: ${{ inputs.pr_sha != '' && inputs.pr_sha || github.sha }}
           persist-credentials: false
 
       - name: Cache Cargo package downloads
@@ -523,7 +523,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.pr_sha != '' && inputs.pr_sha || (github.event.pull_request.head.sha || github.sha) }}
+          ref: ${{ inputs.pr_sha != '' && inputs.pr_sha || github.sha }}
           persist-credentials: false
 
       - name: Cache Cargo package downloads
@@ -580,7 +580,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.pr_sha != '' && inputs.pr_sha || (github.event.pull_request.head.sha || github.sha) }}
+          ref: ${{ inputs.pr_sha != '' && inputs.pr_sha || github.sha }}
           persist-credentials: false
 
       - name: Cache Cargo package downloads
@@ -642,7 +642,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.pr_sha != '' && inputs.pr_sha || (github.event.pull_request.head.sha || github.sha) }}
+          ref: ${{ inputs.pr_sha != '' && inputs.pr_sha || github.sha }}
           persist-credentials: false
 
       - name: Setup Node
@@ -709,7 +709,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.pr_sha != '' && inputs.pr_sha || (github.event.pull_request.head.sha || github.sha) }}
+          ref: ${{ inputs.pr_sha != '' && inputs.pr_sha || github.sha }}
           persist-credentials: false
 
       - name: Cache Cargo package downloads
@@ -762,7 +762,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.pr_sha != '' && inputs.pr_sha || (github.event.pull_request.head.sha || github.sha) }}
+          ref: ${{ inputs.pr_sha != '' && inputs.pr_sha || github.sha }}
           persist-credentials: false
 
       - name: Cache Cargo package downloads
