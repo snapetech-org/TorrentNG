@@ -392,6 +392,45 @@ class CgroupCounterTests(unittest.TestCase):
             benchmark.describe_torrentng_storage_backend({"metrics": metrics}),
         )
 
+    def test_storage_backend_metrics_capture_upload_worker_path_costs(self) -> None:
+        metrics = benchmark.parse_torrentng_storage_backend_metrics(
+            'torrentng_storage_scheduler_backend_selected{backend="pread",scheduler_group="42"} 1\n'
+            'torrentng_storage_read_ops_by_class_total{class="peer_read"} 120\n'
+            'torrentng_storage_bytes_read_by_class_total{class="peer_read"} 1966080\n'
+            'torrentng_storage_backend_read_ops_by_class_total{class="peer_read"} 40\n'
+            'torrentng_storage_backend_bytes_read_by_class_total{class="peer_read"} 1966080\n'
+            'torrentng_storage_prepared_slot_allocations_total 2\n'
+            'torrentng_storage_prepared_slot_reuses_total 38\n'
+            'torrentng_storage_prepared_queue_wait_ns_total 5000000\n'
+            'torrentng_storage_prepared_run_ns_total 125000000\n'
+            'torrentng_storage_peer_read_cache_hits_total 80\n'
+            'torrentng_storage_peer_read_cache_misses_total 40\n'
+            'torrentng_storage_peer_read_elevator_batches_total 4\n'
+            'torrentng_storage_peer_read_elevator_coalesced_requests_total 9\n'
+        )
+
+        self.assertEqual(metrics["io_classes"]["peer_read"], {
+            "read_ops": 120,
+            "bytes_read": 1966080,
+            "backend_read_ops": 40,
+            "backend_bytes_read": 1966080,
+        })
+        self.assertEqual(metrics["prepared_slot_allocations"], 2)
+        self.assertEqual(metrics["prepared_slot_reuses"], 38)
+        self.assertEqual(metrics["prepared_queue_wait_ns"], 5000000)
+        self.assertEqual(metrics["prepared_run_ns"], 125000000)
+        self.assertEqual(metrics["peer_read_cache_hits"], 80)
+        self.assertEqual(metrics["peer_read_cache_misses"], 40)
+        self.assertEqual(metrics["peer_read_elevator_batches"], 4)
+        self.assertEqual(metrics["peer_read_elevator_coalesced_requests"], 9)
+        description = benchmark.describe_torrentng_storage_backend({"metrics": metrics})
+        self.assertIn("peer-read ops=120 logical/40 backend", description)
+        self.assertIn("peer-read backend avg=48.0 KiB/op", description)
+        self.assertIn("peer-read cache=80 hits/40 misses", description)
+        self.assertIn("prepared jobs=2 allocated/38 reused", description)
+        self.assertIn("prepared wait/run=5.0/125.0 ms", description)
+        self.assertIn("peer-read elevator batches=4", description)
+
     def test_post_transfer_storage_backend_scrape_runs_only_for_torrentng(self) -> None:
         instance = object.__new__(benchmark.Benchmark)
         instance._torrentng_request = mock.Mock(return_value=(

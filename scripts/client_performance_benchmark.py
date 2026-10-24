@@ -337,6 +337,22 @@ def parse_torrentng_storage_backend_metrics(text):
     integer_metrics = {
         "torrentng_storage_backend_max_batch_len": "max_batch_len",
         "torrentng_storage_backend_fixed_buffer_bytes": "fixed_buffer_bytes",
+        "torrentng_storage_prepared_slot_allocations_total": "prepared_slot_allocations",
+        "torrentng_storage_prepared_slot_reuses_total": "prepared_slot_reuses",
+        "torrentng_storage_prepared_queue_wait_ns_total": "prepared_queue_wait_ns",
+        "torrentng_storage_prepared_run_ns_total": "prepared_run_ns",
+        "torrentng_storage_peer_read_cache_hits_total": "peer_read_cache_hits",
+        "torrentng_storage_peer_read_cache_misses_total": "peer_read_cache_misses",
+        "torrentng_storage_peer_read_elevator_batches_total": "peer_read_elevator_batches",
+        "torrentng_storage_peer_read_elevator_coalesced_requests_total": (
+            "peer_read_elevator_coalesced_requests"
+        ),
+    }
+    class_counter_metrics = {
+        "torrentng_storage_read_ops_by_class_total": "read_ops",
+        "torrentng_storage_bytes_read_by_class_total": "bytes_read",
+        "torrentng_storage_backend_read_ops_by_class_total": "backend_read_ops",
+        "torrentng_storage_backend_bytes_read_by_class_total": "backend_bytes_read",
     }
     observation = {}
     scheduler_backends = {}
@@ -358,6 +374,13 @@ def parse_torrentng_storage_backend_metrics(text):
         elif metric_name in integer_metrics:
             observation[integer_metrics[metric_name]] = int(value)
             seen = True
+        elif metric_name in class_counter_metrics and separator and labels.endswith("}"):
+            io_class = re.search(r'(?:^|,)class="([^\"]+)"', labels[:-1])
+            if io_class:
+                per_class = observation.setdefault("io_classes", {})
+                row = per_class.setdefault(io_class.group(1), {})
+                row[class_counter_metrics[metric_name]] = int(value)
+                seen = True
         elif metric_name == "torrentng_storage_scheduler_groups":
             observation["scheduler_groups"] = int(value)
             seen = True
@@ -468,6 +491,7 @@ def describe_torrentng_storage_backend(observation):
             details.append(f"worker copy={yes_no(metrics['fixed_buffer_worker_copy'])}")
         if "frame_pool_slots_supported" in metrics:
             details.append(f"frame-pool slots={yes_no(metrics['frame_pool_slots_supported'])}")
+        details.extend(_describe_torrentng_upload_storage_metrics(metrics))
         return ", ".join(details)
 
     if metrics.get("backend_source") == "storage_runtime":
@@ -503,7 +527,56 @@ def describe_torrentng_storage_backend(observation):
         details.append(f"worker copy={yes_no(metrics['fixed_buffer_worker_copy'])}")
     if "frame_pool_slots_supported" in metrics:
         details.append(f"frame-pool slots={yes_no(metrics['frame_pool_slots_supported'])}")
+    details.extend(_describe_torrentng_upload_storage_metrics(metrics))
     return ", ".join(details)
+
+
+def _describe_torrentng_upload_storage_metrics(metrics):
+    """Summarize counters that bound upload storage work for the run."""
+    details = []
+    peer = metrics.get("io_classes", {}).get("peer_read", {})
+    if peer:
+        logical = peer.get("read_ops")
+        backend = peer.get("backend_read_ops")
+        backend_bytes = peer.get("backend_bytes_read")
+        if logical is not None or backend is not None:
+            details.append(
+                "peer-read ops="
+                f"{logical if logical is not None else 'n/a'} logical/"
+                f"{backend if backend is not None else 'n/a'} backend"
+            )
+        if backend is not None and backend_bytes is not None and backend:
+            details.append(
+                f"peer-read backend avg={backend_bytes / backend / 1024:.1f} KiB/op"
+            )
+    if "peer_read_cache_hits" in metrics or "peer_read_cache_misses" in metrics:
+        details.append(
+            "peer-read cache="
+            f"{metrics.get('peer_read_cache_hits', 0)} hits/"
+            f"{metrics.get('peer_read_cache_misses', 0)} misses"
+        )
+    if "prepared_slot_allocations" in metrics or "prepared_slot_reuses" in metrics:
+        details.append(
+            "prepared jobs="
+            f"{metrics.get('prepared_slot_allocations', 0)} allocated/"
+            f"{metrics.get('prepared_slot_reuses', 0)} reused"
+        )
+    if "prepared_queue_wait_ns" in metrics or "prepared_run_ns" in metrics:
+        details.append(
+            "prepared wait/run="
+            f"{metrics.get('prepared_queue_wait_ns', 0) / 1_000_000:.1f}/"
+            f"{metrics.get('prepared_run_ns', 0) / 1_000_000:.1f} ms"
+        )
+    if metrics.get("peer_read_elevator_batches"):
+        details.append(
+            f"peer-read elevator batches={metrics['peer_read_elevator_batches']}"
+        )
+    if metrics.get("peer_read_elevator_coalesced_requests"):
+        details.append(
+            "peer-read elevator coalesced requests="
+            f"{metrics['peer_read_elevator_coalesced_requests']}"
+        )
+    return details
 
 
 def parse_proc_net_dev(text):
