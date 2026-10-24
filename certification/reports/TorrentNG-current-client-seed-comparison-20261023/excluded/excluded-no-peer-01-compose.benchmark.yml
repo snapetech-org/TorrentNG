@@ -1,0 +1,22 @@
+services:
+  torrentngd:
+    healthcheck:
+      disable: true
+  qbittorrent:
+    healthcheck:
+      disable: true
+  transmission:
+    healthcheck:
+      disable: true
+  deluge:
+    healthcheck:
+      disable: true
+  rtorrent:
+    healthcheck:
+      disable: true
+  seed_leecher:
+    healthcheck:
+      disable: true
+networks:
+  interop:
+    internal: true

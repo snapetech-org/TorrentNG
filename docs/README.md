@@ -105,10 +105,23 @@ Supported features vary by client; the compatibility guides list the limits.
 
 ## Performance And Test Evidence
 
-- [Client performance benchmark](CLIENT_PERFORMANCE_BENCHMARK.md) - how to
-  compare real Debian ISO downloads and controlled seeding across TorrentNG,
-  qBittorrent, Transmission, Deluge, and rTorrent, including storage options
-  and KPI definitions.
+- [Performance research index](research/README.md) - current and best measured
+  results, exact candidate configurations, trade-offs, reverts, reviews, and
+  historical evidence.
+- [Current five-client comparison](research/current-client-comparison.md) -
+  three randomized local-seed rounds against qBittorrent, Transmission,
+  Deluge, and rTorrent with source provenance and caveats.
+- [Full comparison report and raw evidence](../certification/reports/TorrentNG-current-client-comparison-20261024/README.md) -
+  all 15 verified transfers, per-round CPU and memory profiles, host pressure,
+  logs, image pins, and reproduction configuration.
+- [Client performance benchmark](CLIENT_PERFORMANCE_BENCHMARK.md) - run
+  controlled local-seed, controlled-download, public-download, and idle
+  comparisons and interpret their CPU and memory categories.
+- [Historical benchmark detail archive](research/client-performance-benchmark-archive.md) -
+  preserved earlier results and experiments.
+- [Backend performance claims audit](BACKEND_PERFORMANCE_BENCHMARKS.md) and
+  [performance scale-claims audit](PERFORMANCE_SCALE_CLAIMS_AUDIT.md) - claims,
+  evidence boundaries, and outstanding measurement gaps.
 - [Dated client performance results](../certification/reports/client-performance-benchmark-20261013.md) -
   public Debian ISO download and controlled seeding measurements, limits,
   image versions, and combined raw CSV samples.
