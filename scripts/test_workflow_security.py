@@ -206,14 +206,10 @@ class WorkflowSecurityTests(unittest.TestCase):
                 for expression in routed:
                     self.assertIn('"group":"ng-shared-main-jit"', expression)
                     if workflow_path.name == "release.yml":
-                        self.assertIn(
-                            "contains(fromJSON('[\"push\",\"workflow_dispatch\",\"schedule\",\"release\",\"repository_dispatch\"]'), github.event_name)",
-                            expression,
-                        )
-                        self.assertIn(
-                            "github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v'))",
-                            expression,
-                        )
+                        self.assertIn("github.event_name == 'push'", expression)
+                        self.assertIn("github.ref_type == 'tag'", expression)
+                        self.assertIn("startsWith(github.ref_name, 'v')", expression)
+                        self.assertNotIn("workflow_dispatch", expression)
                         self.assertRegex(
                             expression,
                             r"\|\| (?:'ubuntu-latest'|'ubuntu-24\.04'|matrix\.os)",
@@ -314,7 +310,9 @@ class WorkflowSecurityTests(unittest.TestCase):
         release = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
         self.assertIn('      - "v*"', release)
         self.assertIn("validate-release-tag:", release)
-        self.assertIn("REQUESTED_TAG: ${{ inputs.tag || github.ref_name }}", release)
+        self.assertIn('      - "v*"', release)
+        self.assertNotIn("workflow_dispatch:", release.split("permissions:", 1)[0])
+        self.assertIn("REQUESTED_TAG: ${{ github.ref_name }}", release)
         self.assertIn("git merge-base --is-ancestor", release)
         self.assertIn("needs: validate-release-tag", release)
 

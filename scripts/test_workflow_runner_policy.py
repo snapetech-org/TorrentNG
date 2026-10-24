@@ -10,6 +10,13 @@ PROTECTED_TRANSFER_WORKFLOW = "transfer-rebuild.yml"
 
 
 class WorkflowRunnerPolicyTests(unittest.TestCase):
+    def test_release_build_starts_only_from_version_tag_pushes(self) -> None:
+        source = (WORKFLOW_DIR / "release.yml").read_text(encoding="utf-8")
+        self.assertRegex(source, r"(?m)^  push:$")
+        self.assertIn('      - "v*"', source)
+        self.assertNotRegex(source, r"(?m)^  workflow_dispatch:")
+        self.assertNotIn("inputs.tag", source)
+
     def test_codeql_installs_node_before_javascript_typescript_analysis(self) -> None:
         source = (WORKFLOW_DIR / "codeql.yml").read_text(encoding="utf-8")
         setup_match = re.search(
@@ -94,14 +101,10 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                     self.assertIn('"ng-shared-main-torrentng"', expression)
                     self.assertIn('"ng-main-run-{0}"', expression)
                     if workflow.name == "release.yml":
-                        self.assertIn(
-                            "contains(fromJSON('[\"push\",\"workflow_dispatch\",\"schedule\",\"release\",\"repository_dispatch\"]'), github.event_name)",
-                            expression,
-                        )
-                        self.assertIn(
-                            "github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v'))",
-                            expression,
-                        )
+                        self.assertIn("github.event_name == 'push'", expression)
+                        self.assertIn("github.ref_type == 'tag'", expression)
+                        self.assertIn("startsWith(github.ref_name, 'v')", expression)
+                        self.assertNotIn("workflow_dispatch", expression)
                     else:
                         self.assertIn("github.event_name == 'push'", expression)
                         self.assertIn("github.event_name == 'workflow_dispatch'", expression)

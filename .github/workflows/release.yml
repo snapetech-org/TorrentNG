@@ -5,12 +5,6 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Existing release tag to build"
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -18,7 +12,7 @@ permissions:
 jobs:
   validate-release-tag:
     name: Validate release tag
-    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (contains(fromJSON('["push","workflow_dispatch","schedule","release","repository_dispatch"]'), github.event_name) && (github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')))) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}"]}}', github.run_id)) || 'ubuntu-latest' }}
+    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-validate-release-tag"]}}', github.run_id)) || 'ubuntu-latest' }}
     permissions:
       contents: read
     outputs:
@@ -37,14 +31,10 @@ jobs:
       - name: Validate tag and provenance
         id: tag
         env:
-          REQUESTED_TAG: ${{ inputs.tag || github.ref_name }}
+          REQUESTED_TAG: ${{ github.ref_name }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$GITHUB_REF" != "refs/heads/main" ]]; then
-            echo "Manual releases must be dispatched from the default main branch." >&2
-            exit 1
-          fi
           tag="$REQUESTED_TAG"
           if [[ ! "$tag" =~ ^v[A-Za-z0-9][A-Za-z0-9._-]*$ && ! "$tag" =~ ^main-[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
             [[ "$tag" == *..* ]] || ! git check-ref-format "refs/tags/$tag"; then
@@ -62,7 +52,7 @@ jobs:
   release-notes:
     name: Assemble release notes
     needs: validate-release-tag
-    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (contains(fromJSON('["push","workflow_dispatch","schedule","release","repository_dispatch"]'), github.event_name) && (github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')))) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}"]}}', github.run_id)) || 'ubuntu-latest' }}
+    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-release-notes"]}}', github.run_id)) || 'ubuntu-latest' }}
     permissions:
       contents: read
     outputs:
@@ -121,7 +111,7 @@ jobs:
   native-quality:
     name: TorrentNG client and compatible-client service quality gate
     needs: validate-release-tag
-    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (contains(fromJSON('["push","workflow_dispatch","schedule","release","repository_dispatch"]'), github.event_name) && (github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')))) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}"]}}', github.run_id)) || 'ubuntu-latest' }}
+    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-native-quality"]}}', github.run_id)) || 'ubuntu-latest' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -170,7 +160,7 @@ jobs:
   msrv-check:
     name: Main workspace MSRV gate
     needs: [validate-release-tag, native-quality]
-    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (contains(fromJSON('["push","workflow_dispatch","schedule","release","repository_dispatch"]'), github.event_name) && (github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')))) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}"]}}', github.run_id)) || 'ubuntu-latest' }}
+    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-msrv-check"]}}', github.run_id)) || 'ubuntu-latest' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -200,7 +190,7 @@ jobs:
   msrv-check-sidecar:
     name: Compatible-client service MSRV gate
     needs: [validate-release-tag, native-quality]
-    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (contains(fromJSON('["push","workflow_dispatch","schedule","release","repository_dispatch"]'), github.event_name) && (github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')))) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}"]}}', github.run_id)) || 'ubuntu-latest' }}
+    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-msrv-check-sidecar"]}}', github.run_id)) || 'ubuntu-latest' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -230,7 +220,7 @@ jobs:
   security-audit:
     name: Release dependency security gate
     needs: [validate-release-tag, native-quality]
-    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (contains(fromJSON('["push","workflow_dispatch","schedule","release","repository_dispatch"]'), github.event_name) && (github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')))) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}"]}}', github.run_id)) || 'ubuntu-latest' }}
+    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-security-audit"]}}', github.run_id)) || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -282,7 +272,7 @@ jobs:
   native-release-smoke:
     name: Native release-binary smoke
     needs: [validate-release-tag, native-quality, msrv-check, msrv-check-sidecar, security-audit]
-    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (contains(fromJSON('["push","workflow_dispatch","schedule","release","repository_dispatch"]'), github.event_name) && (github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')))) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}"]}}', github.run_id)) || 'ubuntu-latest' }}
+    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-native-release-smoke"]}}', github.run_id)) || 'ubuntu-latest' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -356,7 +346,7 @@ jobs:
             suffix: windows-x86_64
             binary: torrentngd.exe
             archive: zip
-    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && contains(fromJSON('["ubuntu-latest","ubuntu-24.04"]'), matrix.os) && (contains(fromJSON('["push","workflow_dispatch","schedule","release","repository_dispatch"]'), github.event_name) && (github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')))) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}"]}}', github.run_id)) || matrix.os }}
+    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && contains(fromJSON('["ubuntu-latest","ubuntu-24.04"]'), matrix.os) && (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-native-binaries"]}}', github.run_id, strategy.job-index)) || matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -467,7 +457,7 @@ jobs:
             kind: windows
             desktop_bin: torrentng-desktop.exe
             engine_bin: torrentngd-windows-x86_64.exe
-    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && contains(fromJSON('["ubuntu-latest","ubuntu-24.04"]'), matrix.os) && (contains(fromJSON('["push","workflow_dispatch","schedule","release","repository_dispatch"]'), github.event_name) && (github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')))) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}"]}}', github.run_id)) || matrix.os }}
+    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && contains(fromJSON('["ubuntu-latest","ubuntu-24.04"]'), matrix.os) && (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-{1}-desktop-bundles"]}}', github.run_id, strategy.job-index)) || matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -531,7 +521,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (contains(fromJSON('["push","workflow_dispatch","schedule","release","repository_dispatch"]'), github.event_name) && (github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')))) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}"]}}', github.run_id)) || 'ubuntu-latest' }}
+    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-linux-release-assets"]}}', github.run_id)) || 'ubuntu-latest' }}
     steps:
       - name: Route temporary files to runner temp
         shell: bash
@@ -804,7 +794,7 @@ jobs:
 
   publish:
     name: Publish release
-    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (contains(fromJSON('["push","workflow_dispatch","schedule","release","repository_dispatch"]'), github.event_name) && (github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')))) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}"]}}', github.run_id)) || 'ubuntu-latest' }}
+    runs-on: ${{ (vars.NG_HOSTED_FIRST != 'true' || vars.NG_FORCE_JIT == 'true' || github.run_attempt > 1) && (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) && fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-torrentng","ng-main-run-{0}","gha-{0}-publish"]}}', github.run_id)) || 'ubuntu-latest' }}
     needs:
       - validate-release-tag
       - release-notes
