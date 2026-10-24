@@ -38,6 +38,13 @@ different categories and should remain separate.
   Their gains and regressions remain in the
   [experiment ledger](performance-history.md) and
   [detailed benchmark archive](client-performance-benchmark-archive.md).
+- A Linux `preadv2(RWF_NOWAIT)` seed-read candidate cut instructions by about
+  35%/GiB in one 1 GiB comparison and one 4 GiB screen, with lower measured
+  CPU and anonymous memory. It remains opt-in: each setting ran once, the 4 GiB
+  host load differed, TorrentNG's thread set changed during perf captures, and
+  syscall totals remain unmeasured. TorrentNG still used about 2× rTorrent's
+  whole-window CPU and more memory in the 4 GiB screen. See the
+  [experiment, tradeoffs, configs, and raw evidence](../../certification/reports/TorrentNG-nowait-seed-screen-20261024/README.md).
 
 ## Methods and reviews
 
@@ -48,6 +55,7 @@ different categories and should remain separate.
 - [Performance scale-claims audit](../PERFORMANCE_SCALE_CLAIMS_AUDIT.md)
 - [Refactoring performance notes](../REFACTORING_PERFORMANCE.md)
 - [Astra architecture review](../reviews/2026-10-23-astra-architecture-review.md)
+- [Storage-read feedback assessment and proposed diagnostic sequence](../reviews/2026-10-23-storage-read-feedback-assessment.md)
 - [PR #233: measured native-engine work](https://github.com/snapetech-org/TorrentNG/pull/233)
 - [PR #235: comparison harness and results](https://github.com/snapetech-org/TorrentNG/pull/235)
 

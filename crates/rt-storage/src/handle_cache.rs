@@ -277,6 +277,19 @@ impl HandleCache {
             .map(LeasedFileHandle::new)
     }
 
+    /// Borrow an existing cached descriptor without opening on a miss. The
+    /// normal identity revalidation still runs before the lease is returned.
+    pub(crate) fn try_get_cached_normalized_lease(
+        &self,
+        path: &Path,
+        write: bool,
+    ) -> io::Result<Option<LeasedFileHandle>> {
+        let access = if write { Access::Write } else { Access::Read };
+        Ok(self
+            .touch_for_access(path, access)
+            .map(LeasedFileHandle::new))
+    }
+
     /// Open a leased operation descriptor through the shared catalog without
     /// retaining a cache entry on a miss. Checkpoint syncs use this path so a
     /// one-off dirty-file sync does not fill the warm-read cache.

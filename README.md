@@ -101,6 +101,7 @@ preserve its details. PGO and mapped backing remain opt-in.
 - [Current comparison summary](docs/research/current-client-comparison.md) ·
   [full report and 15 verified runs](certification/reports/TorrentNG-current-client-comparison-20261024/README.md)
 - [Exact comparison configuration and reproduction notes](certification/reports/TorrentNG-current-client-comparison-20261024/run-config.md)
+- [Linux NOWAIT seed-read experiment](certification/reports/TorrentNG-nowait-seed-screen-20261024/README.md) — promising one-pass CPU/RAM reductions; remains opt-in and still above rTorrent.
 - [Performance research index](docs/research/README.md) — best measured
   configurations, exact configs, discussion, gains, losses, and reverts
 - [Historical performance ledger](docs/research/performance-history.md)

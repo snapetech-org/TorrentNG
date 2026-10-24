@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 import tempfile
 import unittest
+import urllib.parse
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
@@ -83,17 +85,34 @@ class CgroupCounterTests(unittest.TestCase):
 
         instance.api_url = mock.Mock(side_effect=api_url)
         instance.service_id = mock.Mock(return_value="container-id")
-        instance.http = mock.Mock(
-            return_value=nullcontext(SimpleNamespace(read=lambda: b"qBittorrent 5.2"))
-        )
-        instance._qbit_json = mock.Mock()
+        def http(_client, path, **_kwargs):
+            if path == "/api/v2/app/version":
+                return nullcontext(SimpleNamespace(read=lambda: b"qBittorrent 5.2"))
+            return SimpleNamespace(close=mock.Mock())
+
+        instance.http = mock.Mock(side_effect=http)
+        instance.qbittorrent_rate_readbacks = {}
+        instance._qbit_json = mock.Mock(return_value={
+            "dl_limit": benchmark.qbittorrent_rate_limit_bps(
+                benchmark.SEED_LEECHER_RATE_BPS,
+            ),
+            "up_limit": benchmark.qbittorrent_rate_limit_bps(benchmark.RATE_BPS),
+            "limit_lan_peers": True,
+        })
         instance._add_torrent = mock.Mock()
+        call_order = []
+        instance._add_torrent.side_effect = lambda *_args, **_kwargs: call_order.append("add")
+        before_add_torrent = mock.Mock(side_effect=lambda: call_order.append("counter"))
 
         with mock.patch.object(benchmark, "run_command", return_value=("image", 0)):
-            instance._start_seed_leecher(Path("/unused.torrent"), "torrentngd")
+            instance._start_seed_leecher(
+                Path("/unused.torrent"), "torrentngd",
+                before_add_torrent=before_add_torrent,
+            )
 
         self.assertTrue(started["value"])
         instance.api_url.assert_called_once_with("seed_leecher")
+        self.assertEqual(call_order, ["counter", "add"])
 
     def test_benchmark_build_uses_a_bounded_persistent_buildkit_builder(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -201,18 +220,73 @@ class CgroupCounterTests(unittest.TestCase):
             instance.buildx_builder, benchmark.PERSISTENT_BUILDX_BUILDER,
         )
 
+    def test_missing_benchmark_image_is_already_cleaned_up(self) -> None:
+        self.assertTrue(benchmark.docker_image_removal_succeeded(
+            "Error response from daemon: No such image: torrentng/test:cancelled", 1,
+        ))
+
+    def test_image_removal_daemon_error_is_not_hidden(self) -> None:
+        self.assertFalse(benchmark.docker_image_removal_succeeded(
+            "Error response from daemon: conflict: image is in use", 1,
+        ))
+
     def test_transfer_compose_override_disables_healthchecks_symmetrically(self) -> None:
         rendered = benchmark.render_benchmark_compose_override({
             "TOKIO_WORKER_THREADS": "2",
+            "TNG_STORAGE_PEER_READ_NOWAIT": "1",
         })
 
         for client in benchmark.CLIENTS:
             with self.subTest(client=client):
                 self.assertIn(f"  {client}:\n", rendered)
         self.assertIn('      TOKIO_WORKER_THREADS: "2"', rendered)
+        self.assertIn('      TNG_STORAGE_PEER_READ_NOWAIT: "1"', rendered)
         self.assertIn("  seed_leecher:\n", rendered)
         self.assertEqual(rendered.count("    healthcheck:"), len(benchmark.CLIENTS) + 1)
         self.assertNotIn("networks:\n", rendered)
+
+    def test_benchmark_compose_override_pins_clients_and_leecher_separately(self) -> None:
+        available = sorted(benchmark.os.sched_getaffinity(0))
+        if len(available) < 4:
+            self.skipTest("four allowed CPUs are required to exercise separate pin sets")
+        client_cpus = ",".join(str(cpu) for cpu in available[:2])
+        leecher_cpus = ",".join(str(cpu) for cpu in available[2:4])
+
+        rendered = benchmark.render_benchmark_compose_override(
+            {},
+            client_cpuset=client_cpus,
+            seed_leecher_cpuset=leecher_cpus,
+        )
+
+        self.assertIn(f'  torrentngd:\n    cpuset: "{client_cpus}"', rendered)
+        self.assertIn(f'  seed_leecher:\n    cpuset: "{leecher_cpus}"', rendered)
+        self.assertEqual(
+            benchmark.parse_cpu_set(client_cpus, "client"),
+            frozenset(available[:2]),
+        )
+        with self.assertRaisesRegex(RuntimeError, "duplicate CPUs"):
+            benchmark.parse_cpu_set(f"{available[0]},{available[0]}", "client")
+
+    def test_benchmark_compose_override_can_pin_alternate_qbittorrent_registries(self) -> None:
+        qbittorrent_image = "ghcr.io/linuxserver/qbittorrent@sha256:" + "a" * 64
+        seed_leecher_image = "ghcr.io/linuxserver/qbittorrent@sha256:" + "b" * 64
+
+        rendered = benchmark.render_benchmark_compose_override(
+            {},
+            qbittorrent_image=qbittorrent_image,
+            seed_leecher_image=seed_leecher_image,
+        )
+
+        self.assertIn(
+            f'  qbittorrent:\n    image: "{qbittorrent_image}"', rendered,
+        )
+        self.assertIn(
+            f'  seed_leecher:\n    image: "{seed_leecher_image}"', rendered,
+        )
+        transmission_service = (
+            rendered.split("  transmission:", 1)[1].split("  deluge:", 1)[0]
+        )
+        self.assertNotIn("    image:", transmission_service)
 
     def test_controlled_seed_compose_network_has_no_external_route(self) -> None:
         rendered = benchmark.render_benchmark_compose_override(
@@ -392,17 +466,71 @@ class CgroupCounterTests(unittest.TestCase):
             benchmark.describe_torrentng_storage_backend({"metrics": metrics}),
         )
 
+    def test_storage_backend_metrics_capture_upload_worker_path_costs(self) -> None:
+        metrics = benchmark.parse_torrentng_storage_backend_metrics(
+            'torrentng_storage_scheduler_backend_selected{backend="pread",scheduler_group="42"} 1\n'
+            'torrentng_storage_read_ops_by_class_total{class="peer_read"} 120\n'
+            'torrentng_storage_bytes_read_by_class_total{class="peer_read"} 1966080\n'
+            'torrentng_storage_backend_read_ops_by_class_total{class="peer_read"} 40\n'
+            'torrentng_storage_backend_bytes_read_by_class_total{class="peer_read"} 1966080\n'
+            'torrentng_storage_prepared_slot_allocations_total 2\n'
+            'torrentng_storage_prepared_slot_reuses_total 38\n'
+            'torrentng_storage_prepared_queue_wait_ns_total 5000000\n'
+            'torrentng_storage_prepared_run_ns_total 125000000\n'
+            'torrentng_storage_peer_read_cache_hits_total 80\n'
+            'torrentng_storage_peer_read_cache_misses_total 40\n'
+            'torrentng_storage_peer_read_nowait_hits_total 31\n'
+            'torrentng_storage_peer_read_nowait_fallbacks_total 9\n'
+            'torrentng_storage_peer_read_elevator_batches_total 4\n'
+            'torrentng_storage_peer_read_elevator_coalesced_requests_total 9\n'
+        )
+
+        self.assertEqual(metrics["io_classes"]["peer_read"], {
+            "read_ops": 120,
+            "bytes_read": 1966080,
+            "backend_read_ops": 40,
+            "backend_bytes_read": 1966080,
+        })
+        self.assertEqual(metrics["prepared_slot_allocations"], 2)
+        self.assertEqual(metrics["prepared_slot_reuses"], 38)
+        self.assertEqual(metrics["prepared_queue_wait_ns"], 5000000)
+        self.assertEqual(metrics["prepared_run_ns"], 125000000)
+        self.assertEqual(metrics["peer_read_cache_hits"], 80)
+        self.assertEqual(metrics["peer_read_cache_misses"], 40)
+        self.assertEqual(metrics["peer_read_nowait_hits"], 31)
+        self.assertEqual(metrics["peer_read_nowait_fallbacks"], 9)
+        self.assertEqual(metrics["peer_read_elevator_batches"], 4)
+        self.assertEqual(metrics["peer_read_elevator_coalesced_requests"], 9)
+        description = benchmark.describe_torrentng_storage_backend({"metrics": metrics})
+        self.assertIn("peer-read ops=120 logical/40 backend", description)
+        self.assertIn("peer-read backend avg=48.0 KiB/op", description)
+        self.assertIn("peer-read cache=80 hits/40 misses", description)
+        self.assertIn("peer-read NOWAIT=31 inline/9 fallbacks", description)
+        self.assertIn("prepared jobs=2 allocated/38 reused", description)
+        self.assertIn("prepared wait/run=5.0/125.0 ms", description)
+        self.assertIn("peer-read elevator batches=4", description)
+
     def test_post_transfer_storage_backend_scrape_runs_only_for_torrentng(self) -> None:
         instance = object.__new__(benchmark.Benchmark)
-        instance._torrentng_request = mock.Mock(return_value=(
+        instance._torrentng_request = mock.Mock(side_effect=(
             b'torrentng_storage_runtime_initialized 0\n'
+            b'torrentng_stats_snapshot_generation 1\n'
+            b'torrentng_stats_snapshot_age_milliseconds 50\n'
             b'torrentng_storage_scheduler_groups 1\n'
             b'torrentng_storage_scheduler_backend_selected{backend="pread",scheduler_group="42"} 1\n'
             b'torrentng_storage_scheduler_backend_fixed_buffers_supported{backend="pread",scheduler_group="42"} 0\n'
-            b'torrentng_storage_scheduler_backend_registered_files_supported{backend="pread",scheduler_group="42"} 0\n'
+            b'torrentng_storage_scheduler_backend_registered_files_supported{backend="pread",scheduler_group="42"} 0\n',
+            b'torrentng_storage_runtime_initialized 0\n'
+            b'torrentng_stats_snapshot_generation 2\n'
+            b'torrentng_stats_snapshot_age_milliseconds 25\n'
+            b'torrentng_storage_scheduler_groups 1\n'
+            b'torrentng_storage_scheduler_backend_selected{backend="pread",scheduler_group="42"} 1\n'
+            b'torrentng_storage_scheduler_backend_fixed_buffers_supported{backend="pread",scheduler_group="42"} 0\n'
+            b'torrentng_storage_scheduler_backend_registered_files_supported{backend="pread",scheduler_group="42"} 0\n',
         ))
 
-        observation = instance._capture_storage_backend_observation("torrentngd")
+        with mock.patch.object(benchmark.time, "sleep"):
+            observation = instance._capture_storage_backend_observation("torrentngd")
 
         self.assertEqual(
             observation["phase"],
@@ -410,11 +538,40 @@ class CgroupCounterTests(unittest.TestCase):
         )
         self.assertEqual(observation["metrics"]["selected_backend"], "pread")
         self.assertEqual(observation["metrics"]["backend_source"], "live_scheduler")
-        instance._torrentng_request.assert_called_once_with("/metrics")
+        self.assertTrue(observation["stats_snapshot_refreshed"])
+        self.assertEqual(observation["scrape_attempts"], 2)
+        self.assertEqual(instance._torrentng_request.call_count, 2)
+        instance._torrentng_request.assert_called_with("/metrics")
 
         instance._torrentng_request.reset_mock()
         self.assertIsNone(instance._capture_storage_backend_observation("qbittorrent"))
         instance._torrentng_request.assert_not_called()
+
+    def test_storage_backend_observation_waits_for_a_fresh_stats_snapshot(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        stale = (
+            b'torrentng_stats_snapshot_generation 0\n'
+            b'torrentng_stats_snapshot_age_milliseconds 18446744073709551615\n'
+            b'torrentng_storage_read_ops_by_class_total{class="peer_read"} 0\n'
+        )
+        fresh = (
+            b'torrentng_stats_snapshot_generation 1\n'
+            b'torrentng_stats_snapshot_age_milliseconds 25\n'
+            b'torrentng_storage_read_ops_by_class_total{class="peer_read"} 120\n'
+            b'torrentng_storage_scheduler_backend_selected{backend="pread",scheduler_group="42"} 1\n'
+        )
+        instance._torrentng_request = mock.Mock(side_effect=(stale, fresh))
+
+        with mock.patch.object(benchmark.time, "sleep") as sleep:
+            observation = instance._capture_storage_backend_observation("torrentngd")
+
+        self.assertTrue(observation["stats_snapshot_refreshed"])
+        self.assertEqual(observation["scrape_attempts"], 2)
+        self.assertEqual(
+            observation["metrics"]["io_classes"]["peer_read"]["read_ops"],
+            120,
+        )
+        self.assertEqual(sleep.call_count, 1)
 
     def test_storage_backend_is_captured_before_pausing_torrentng(self) -> None:
         instance = object.__new__(benchmark.Benchmark)
@@ -1024,6 +1181,102 @@ class TrackerScrapeTests(unittest.TestCase):
         instance._qbit_json.assert_not_called()
         sleep.assert_called_once_with(2)
 
+    def test_tracker_wait_accepts_fast_transfer_completed_before_first_poll(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance._tracker_scrape_counts = mock.Mock(return_value={
+            "complete": 2, "incomplete": 0,
+        })
+        instance._seed_leecher_status = mock.Mock(return_value={
+            "progress": 1.0, "total": 4 * 1024**3,
+        })
+
+        with mock.patch.object(benchmark.time, "sleep") as sleep:
+            already_complete = instance._wait_seed_leecher_tracker(
+                self.info_hash, "172.23.0.2",
+            )
+
+        self.assertTrue(already_complete)
+        instance._seed_leecher_status.assert_called_once_with(self.info_hash)
+        sleep.assert_not_called()
+
+    def test_tracker_wait_continues_when_completed_peer_count_is_stale(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance._tracker_scrape_counts = mock.Mock(return_value={
+            "complete": 2, "incomplete": 0,
+        })
+        instance._seed_leecher_status = mock.Mock(return_value={
+            "progress": 0.25, "total": 4 * 1024**3,
+        })
+
+        ready_as_complete = instance._wait_seed_leecher_tracker(
+            self.info_hash, "172.23.0.2",
+        )
+
+        self.assertFalse(ready_as_complete)
+        instance._seed_leecher_status.assert_called_once_with(self.info_hash)
+
+    def test_tracker_wait_does_not_treat_seed_only_count_as_completed_leecher(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance._tracker_scrape_counts = mock.Mock(return_value={
+            "complete": 1, "incomplete": 0,
+        })
+        instance._seed_leecher_status = mock.Mock()
+
+        with mock.patch.object(
+            benchmark.time, "monotonic", side_effect=[0.0, 100.0],
+        ), mock.patch.object(benchmark.time, "sleep"):
+            with self.assertRaisesRegex(TimeoutError, "did not report both"):
+                instance._wait_seed_leecher_tracker(self.info_hash, "172.23.0.2")
+
+        instance._seed_leecher_status.assert_not_called()
+
+    def test_seed_test_hash_verifies_transfer_completed_before_tracker_poll(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = root / "fixture.bin"
+            payload.write_bytes(b"fully downloaded before first status poll")
+            leecher_dir = root / "leecher" / "torrentngd"
+            leecher_dir.mkdir(parents=True)
+            (leecher_dir / payload.name).write_bytes(payload.read_bytes())
+            checksum = hashlib.sha256(payload.read_bytes()).hexdigest()
+
+            instance = object.__new__(benchmark.Benchmark)
+            instance.workdir = root
+            instance.counter_mode = "off"
+            instance.seed_cache_eviction = {}
+            instance.partial_seed_rows = {}
+            instance.partial_seed_elapsed = {}
+            instance.partial_seed_setup = {}
+            instance._add_torrent = mock.Mock()
+            instance._status = mock.Mock(return_value={"progress": 1.0})
+            instance._env = mock.Mock()
+            instance._wait_seed_leecher_tracker = mock.Mock(return_value=True)
+            instance._reannounce = mock.Mock()
+            instance._seed_leecher_status = mock.Mock(return_value={
+                "progress": 1.0, "total": payload.stat().st_size,
+                "down": 0, "up": 0, "peers": 0,
+            })
+            instance._sample = mock.Mock(return_value=("sample",))
+            instance.compose = mock.Mock(return_value=("", 0))
+
+            def start_leecher(_torrent, _client, *, before_add_torrent):
+                before_add_torrent()
+
+            instance._start_seed_leecher = mock.Mock(side_effect=start_leecher)
+
+            with mock.patch.object(benchmark, "evict_file_cache", return_value=True):
+                elapsed, rows, actual = instance._seed_test(
+                    "torrentngd", payload, root / "fixture.torrent", "hash",
+                    payload.stat().st_size, checksum, "172.23.0.2",
+                )
+
+            self.assertGreaterEqual(elapsed, 0)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(actual, checksum)
+            instance._wait_seed_leecher_tracker.assert_called_once_with(
+                "hash", "172.23.0.2",
+            )
+
 
 class BenchmarkPathTests(unittest.TestCase):
     def test_linux_rtorrent_scgi_path_limit_fails_before_client_startup(self) -> None:
@@ -1154,11 +1407,44 @@ class ControlledDownloadTests(unittest.TestCase):
         preferences = benchmark.seed_leecher_preferences(4 * 1024 * 1024)
 
         self.assertEqual(preferences["up_limit"], 4 * 1024 * 1024)
-        self.assertEqual(preferences["dl_limit"], benchmark.SEED_LEECHER_RATE_BPS)
+        self.assertEqual(
+            preferences["dl_limit"],
+            benchmark.qbittorrent_rate_limit_bps(benchmark.SEED_LEECHER_RATE_BPS),
+        )
+        self.assertTrue(preferences["limit_lan_peers"])
         self.assertFalse(preferences["dht"])
         self.assertFalse(preferences["pex"])
+        with self.assertRaisesRegex(ValueError, "whole-KiB multiple in B/s"):
+            benchmark.qbittorrent_rate_limit_bps(4097)
         with self.assertRaisesRegex(ValueError, "must be positive"):
             benchmark.seed_leecher_preferences(0)
+
+        with mock.patch.object(benchmark, "SEED_LEECHER_RATE_BPS", -1):
+            unlimited = benchmark.seed_leecher_preferences(4 * 1024 * 1024)
+        self.assertEqual(unlimited["dl_limit"], 0)
+
+    def test_qbittorrent_rate_preferences_use_bytes_and_read_back_lan_limits(self) -> None:
+        instance = object.__new__(benchmark.Benchmark)
+        instance.qbittorrent_rate_readbacks = {}
+        instance.http = mock.Mock(return_value=SimpleNamespace(close=mock.Mock()))
+        expected = {
+            "dl_limit": benchmark.RATE_BPS,
+            "up_limit": benchmark.RATE_BPS,
+            "limit_lan_peers": True,
+        }
+        instance._qbit_json = mock.Mock(return_value=expected)
+
+        instance._configure("qbittorrent")
+
+        values = json.loads(
+            urllib.parse.parse_qs(
+                instance.http.call_args.kwargs["data"].decode(),
+            )["json"][0]
+        )
+        self.assertEqual(values["dl_limit"], benchmark.RATE_BPS)
+        self.assertEqual(values["up_limit"], benchmark.RATE_BPS)
+        self.assertTrue(values["limit_lan_peers"])
+        self.assertEqual(instance.qbittorrent_rate_readbacks["qbittorrent"], expected)
 
 
 class SeedFixtureTests(unittest.TestCase):
@@ -1332,19 +1618,34 @@ class SeedFixtureTests(unittest.TestCase):
     def test_rtorrent_status_queries_the_main_view_with_multicall2_target(self) -> None:
         instance = object.__new__(benchmark.Benchmark)
         instance._scgi = mock.Mock(return_value=[
-            ["abc123", "fixture.iso", 1, 100, 50, 12, 3, 2],
+            ["abc123", "fixture.iso", 1, 0, 100, 50, 12, 3, 2],
         ])
 
         status = instance._status("rtorrent", "abc123", "fixture.iso")
 
         self.assertEqual(status, {
-            "progress": 0.5, "down": 12, "up": 3, "peers": 2, "total": 100,
+            "progress": 0.5, "complete": True, "hashing": False,
+            "down": 12, "up": 3, "peers": 2, "total": 100,
         })
         instance._scgi.assert_called_once_with(
             "d.multicall2", "", "main", "d.hash=", "d.name=", "d.complete=",
-            "d.size_bytes=", "d.completed_bytes=", "d.down.rate=", "d.up.rate=",
-            "d.peers_connected=",
+            "d.hashing=", "d.size_bytes=", "d.completed_bytes=", "d.down.rate=",
+            "d.up.rate=", "d.peers_connected=",
         )
+
+    def test_rtorrent_seed_readiness_waits_for_hashing_to_finish(self) -> None:
+        self.assertFalse(benchmark.seed_status_ready("rtorrent", {
+            "progress": 1.0, "complete": True, "hashing": True,
+        }))
+        self.assertTrue(benchmark.seed_status_ready("rtorrent", {
+            "progress": 1.0, "complete": True, "hashing": False,
+        }))
+        self.assertFalse(benchmark.seed_status_ready("rtorrent", {
+            "progress": 1.0, "complete": False, "hashing": False,
+        }))
+        self.assertTrue(benchmark.seed_status_ready("torrentngd", {
+            "progress": 1.0,
+        }))
 
     def test_rtorrent_global_settings_include_the_empty_rpc_target(self) -> None:
         instance = object.__new__(benchmark.Benchmark)

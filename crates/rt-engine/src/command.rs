@@ -418,6 +418,8 @@ pub struct EngineStats {
     pub storage_peer_read_cache_hits: u64,
     pub storage_peer_read_cache_misses: u64,
     pub storage_peer_read_cache_evictions: u64,
+    pub storage_peer_read_nowait_hits: u64,
+    pub storage_peer_read_nowait_fallbacks: u64,
     pub storage_peer_read_elevator_enabled: u64,
     pub storage_peer_read_elevator_queue_depth: u64,
     pub storage_peer_read_elevator_queued: u64,
@@ -958,6 +960,12 @@ impl EngineStats {
         self.storage_peer_read_cache_evictions = self
             .storage_peer_read_cache_evictions
             .saturating_add(storage.peer_read_cache_evictions);
+        self.storage_peer_read_nowait_hits = self
+            .storage_peer_read_nowait_hits
+            .saturating_add(storage.peer_read_nowait_hits);
+        self.storage_peer_read_nowait_fallbacks = self
+            .storage_peer_read_nowait_fallbacks
+            .saturating_add(storage.peer_read_nowait_fallbacks);
         self.storage_peer_read_elevator_enabled = self
             .storage_peer_read_elevator_enabled
             .saturating_add(if storage.peer_read_elevator_enabled {
@@ -1932,6 +1940,8 @@ mod tests {
             peer_read_cache_hits: 12,
             peer_read_cache_misses: 13,
             peer_read_cache_evictions: 29,
+            peer_read_nowait_hits: 32,
+            peer_read_nowait_fallbacks: 33,
             peer_read_elevator_enabled: true,
             peer_read_elevator_queue_depth: 14,
             peer_read_elevator_queued: 15,
@@ -2065,6 +2075,8 @@ mod tests {
             16 * 1024 * 1024
         );
         assert_eq!(stats.storage_peer_read_cache_hits, 12);
+        assert_eq!(stats.storage_peer_read_nowait_hits, 32);
+        assert_eq!(stats.storage_peer_read_nowait_fallbacks, 33);
         assert_eq!(stats.storage_peer_read_cache_evictions, 29);
         assert_eq!(stats.storage_peer_read_elevator_enabled, 1);
         assert_eq!(stats.storage_peer_read_elevator_queue_depth, 14);

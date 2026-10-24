@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "source_commit": "b27fcd9337a22bc231b74d0640083f4a823a9091",
+  "source_tree": "cfd1a43b00b75f0bf6f75f30aa0ffc33562a014d",
+  "source_fingerprint_sha256": "2c90a33ad485658a0a1fd4f533671ddd31f60919554080e3f5521890597b7d03",
+  "host": "kspld0",
+  "mode": "perf",
+  "perf_event_paranoid": "2",
+  "client_cpuset": "18-19",
+  "seed_leecher_cpuset": "20-21",
+  "diagnostic_only": true,
+  "completion_detection_uncertainty_seconds": 2.0,
+  "measurement_window": "collector attaches after the leecher container is ready and immediately before the torrent is added, then stops at the completed-byte observation; counts include announce/startup overhead and are normalized by the full payload size only after the complete leecher file passes its pinned SHA-256 check",
+  "strace_note": null,
+  "measurements": [
+    {
+      "instructions": 595281660,
+      "cycles": 379609714,
+      "perf_context_switches": 2088,
+      "cpu_migrations": 166,
+      "mode": "perf",
+      "root_pid": 2082617,
+      "attached_process_ids": [
+        2082617
+      ],
+      "collector_exit_code": -2,
+      "collector_stderr": null,
+      "collector_output": "# started on Sat Oct 24 15:28:19 2026\n\n595281660,,instructions:u,1876150364,100.00,,\n379609714,,cycles:u,1876150364,100.00,,\n2088,,context-switches,1876150364,100.00,,\n166,,cpu-migrations,1876150364,100.00,,",
+      "collector_elapsed_seconds": 71.290610424,
+      "voluntary_context_switches": 1961,
+      "involuntary_context_switches": 127,
+      "stable_process_tree": true,
+      "process_ids_start": [
+        2082617
+      ],
+      "process_ids_stop": [
+        2082617
+      ],
+      "thread_ids_start": [
+        2082617,
+        2082751,
+        2082752,
+        2082753,
+        2082754,
+        2082755,
+        2082756,
+        2082757
+      ],
+      "thread_ids_stop": [
+        2082617,
+        2082751,
+        2082752,
+        2082753,
+        2082754,
+        2082755,
+        2082756,
+        2082757
+      ],
+      "client": "rtorrent",
+      "transfer_sha256_verified": true,
+      "counter_window_payload_bytes": 4294967296,
+      "perf_context_switches_per_verified_gib": 522.0,
+      "cycles_per_verified_gib": 94902428.5,
+      "instructions_per_verified_gib": 148820415.0,
+      "syscalls_per_verified_gib": null,
+      "involuntary_context_switches_per_verified_gib": 31.75,
+      "voluntary_context_switches_per_verified_gib": 490.25,
+      "cpu_migrations_per_verified_gib": 41.5,
+      "errors_per_verified_gib": null,
+      "verified_bytes": 4294967296
+    }
+  ]
+}

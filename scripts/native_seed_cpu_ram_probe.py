@@ -572,9 +572,8 @@ def collect_diagnostics(api_port, root_pid, directory, label):
     try:
         request = urllib.request.Request(f"http://127.0.0.1:{api_port}/metrics",
             headers={"Authorization": f"Bearer {TOKEN}"})
-        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- URL host is a generated loopback API port and the route and scheme are fixed.
         def fetch(timeout):
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- loopback API port with fixed scheme and route
                 return response.read().decode("utf-8", errors="replace")
         metrics_text, freshness = collect_fresh_metrics(fetch)
         metrics_path.write_text(metrics_text)
