@@ -921,6 +921,7 @@ class Benchmark:
         self.diagnostics = env_enabled("TNG_CLIENT_BENCH_DIAGNOSTICS")
         self.skip_build = env_enabled("TNG_CLIENT_BENCH_SKIP_BUILD")
         self.keep_built_image = env_enabled("TNG_CLIENT_BENCH_KEEP_IMAGE")
+        self.image_built = False
         self.build_cpus = (
             optional_positive_int("TNG_CLIENT_BENCH_BUILD_CPUS")
             or default_build_cpu_count()
@@ -4381,6 +4382,7 @@ class Benchmark:
         try:
             self.compose("build", "--builder", builder, "torrentngd", timeout=3600)
             self._assert_image_labels(self.image)
+            self.image_built = True
         except Exception:
             self.build_cache_status = self._remove_task_buildx_builder()
             raise
@@ -4913,7 +4915,10 @@ class Benchmark:
                          check=False, quiet=True, timeout=180)
             self.cleanup_status = "isolated Compose project, containers, and named volumes removed"
             if self.keep_built_image and not self.skip_build:
-                self.cleanup_status += f"; benchmark image retained for reuse: {self.image}"
+                if self.image_built:
+                    self.cleanup_status += f"; benchmark image retained for reuse: {self.image}"
+                else:
+                    self.cleanup_status += "; no completed benchmark image was available to retain"
             elif self.prebuilt_image != self.image:
                 image_output, image_code = run_command(
                     ["docker", "image", "rm", self.image], env=self.env,
