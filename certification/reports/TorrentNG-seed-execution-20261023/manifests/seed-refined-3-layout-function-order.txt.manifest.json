@@ -1,0 +1,102 @@
+{
+  "format": "torrentng-function-order-v1",
+  "order_sha256": "300ee533448a3009c4161909649fd815530272b611403f5a0f21b2b93f29fdd0",
+  "source_digest": "af30abf66be0d12a805c826349ff8016be15aae2cf3dd4b61e6e0a7a1757c532",
+  "source_commit": "9c33b240e9ca9932607428c2b2e938edf5a635ec",
+  "source_tree": "66bdd801b9f418ebac63b0d8c93a01d604c794fc",
+  "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)\nbinary: rustc\ncommit-hash: 2d8144b7880597b6e6d3dfd63a9a9efae3f533d3\ncommit-date: 2026-07-07\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.0\nLLVM version: 22.1.6",
+  "features": "seed-mmap",
+  "pgo_profile_sha256": "3aff78fda17e3cd3b1c64897bf9d7ae47031188091fe5a51dfca69fd0aa6c8e6",
+  "optimization_level": "3",
+  "input_binary_sha256": "1a4c5525834a8a88503fe3a75ce0757f1c6c3dc1a0833713ad7e7226d332fcea",
+  "bolt_profile_sha256": "cd14bb76b632d04304788109b3806cba9c5df1ebbf2868b76e69821086cf153d",
+  "bolt_tool_sha256": "60f37b8900ed693ce17856f742c8159dfa0460dc990087bf6448c91e6386b1cb",
+  "bolt_version": "Ubuntu LLVM version 20.1.2\n  Optimized build.\nBOLT revision <unknown>\n\n  Registered Targets:\n    aarch64     - AArch64 (little endian)\n    aarch64_32  - AArch64 (little endian ILP32)\n    aarch64_be  - AArch64 (big endian)\n    amdgcn      - AMD GCN GPUs\n    arm         - ARM\n    arm64       - ARM64 (little endian)\n    arm64_32    - ARM64 (little endian ILP32)\n    armeb       - ARM (big endian)\n    avr         - Atmel AVR Microcontroller\n    bpf         - BPF (host endian)\n    bpfeb       - BPF (big endian)\n    bpfel       - BPF (little endian)\n    hexagon     - Hexagon\n    lanai       - Lanai\n    loongarch32 - 32-bit LoongArch\n    loongarch64 - 64-bit LoongArch\n    m68k        - Motorola 68000 family\n    mips        - MIPS (32-bit big endian)\n    mips64      - MIPS (64-bit big endian)\n    mips64el    - MIPS (64-bit little endian)\n    mipsel      - MIPS (32-bit little endian)\n    msp430      - MSP430 [experimental]\n    nvptx       - NVIDIA PTX 32-bit\n    nvptx64     - NVIDIA PTX 64-bit\n    ppc32       - PowerPC 32\n    ppc32le     - PowerPC 32 LE\n    ppc64       - PowerPC 64\n    ppc64le     - PowerPC 64 LE\n    r600        - AMD GPUs HD2XXX-HD6XXX\n    riscv32     - 32-bit RISC-V\n    riscv64     - 64-bit RISC-V\n    sparc       - Sparc\n    sparcel     - Sparc LE\n    sparcv9     - Sparc V9\n    spirv       - SPIR-V Logical\n    spirv32     - SPIR-V 32-bit\n    spirv64     - SPIR-V 64-bit\n    systemz     - SystemZ\n    thumb       - Thumb\n    thumbeb     - Thumb (big endian)\n    ve          - VE\n    wasm32      - WebAssembly 32-bit\n    wasm64      - WebAssembly 64-bit\n    x86         - 32-bit X86: Pentium-Pro and above\n    x86-64      - 64-bit X86: EM64T and AMD64\n    xcore       - XCore\n    xtensa      - Xtensa 32",
+  "training_corpus": [
+    {
+      "mib": 64,
+      "mib_per_second": 4,
+      "peers": 1,
+      "window": 32,
+      "pattern": "sequential",
+      "environment": {
+        "TNG_SEED_MMAP": "0"
+      }
+    },
+    {
+      "mib": 64,
+      "mib_per_second": 4,
+      "peers": 1,
+      "window": 32,
+      "pattern": "sequential",
+      "environment": {
+        "TNG_SEED_MMAP": "1"
+      }
+    },
+    {
+      "mib": 32,
+      "mib_per_second": 4,
+      "peers": 3,
+      "window": 16,
+      "pattern": "sequential",
+      "environment": {
+        "TNG_SEED_MMAP": "0"
+      }
+    },
+    {
+      "mib": 32,
+      "mib_per_second": 4,
+      "peers": 3,
+      "window": 16,
+      "pattern": "sequential",
+      "environment": {
+        "TNG_SEED_MMAP": "1"
+      }
+    },
+    {
+      "mib": 64,
+      "mib_per_second": 64,
+      "peers": 1,
+      "window": 8,
+      "pattern": "random",
+      "environment": {
+        "TNG_SEED_MMAP": "0"
+      }
+    },
+    {
+      "mib": 64,
+      "mib_per_second": 64,
+      "peers": 1,
+      "window": 8,
+      "pattern": "random",
+      "environment": {
+        "TNG_SEED_MMAP": "1"
+      }
+    },
+    {
+      "mib": 16,
+      "mib_per_second": 8,
+      "peers": 1,
+      "window": 8,
+      "pattern": "sequential",
+      "files": 3,
+      "environment": {
+        "TNG_SEED_MMAP": "0"
+      }
+    },
+    {
+      "mib": 16,
+      "mib_per_second": 8,
+      "peers": 1,
+      "window": 8,
+      "pattern": "sequential",
+      "files": 3,
+      "environment": {
+        "TNG_SEED_MMAP": "1"
+      }
+    }
+  ],
+  "function_count": 3735,
+  "planner_log_sha256": "afde4977f25064b29ab12bddcd21c0bc2967fb82ed55d578659e1641484eeb99",
+  "claim_scope": "experimental layout input; no performance qualification is implied"
+}

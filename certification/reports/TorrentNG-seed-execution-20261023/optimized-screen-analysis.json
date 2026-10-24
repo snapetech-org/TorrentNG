@@ -1,0 +1,120 @@
+{
+  "screen_only": true,
+  "cells": {
+    "scoped-ordered-mapped": {
+      "cpu_seconds_per_gib": 3.285549376,
+      "peak_pss_mib": 11.1083984375,
+      "peak_anonymous_mib": 3.43359375,
+      "comparisons": {
+        "previous-selected": {
+          "cpu": 0.9750625226907313,
+          "pss": 0.8772996570003119,
+          "worst_resource_ratio": 0.9750625226907313
+        },
+        "rtorrent": {
+          "cpu": 1.3515385985296955,
+          "pss": 1.051936135070655,
+          "worst_resource_ratio": 1.3515385985296955
+        }
+      }
+    },
+    "scoped-pgo-mapped": {
+      "cpu_seconds_per_gib": 3.567033984,
+      "peak_pss_mib": 14.8984375,
+      "peak_anonymous_mib": 3.43359375,
+      "comparisons": {
+        "previous-selected": {
+          "cpu": 1.1113255000868,
+          "pss": 1.1892734642968505,
+          "worst_resource_ratio": 1.1892734642968505
+        },
+        "rtorrent": {
+          "cpu": 1.4673296791273536,
+          "pss": 1.4155348837209303,
+          "worst_resource_ratio": 1.4673296791273536
+        }
+      }
+    },
+    "scoped-ordered-buffered": {
+      "cpu_seconds_per_gib": 3.252316576,
+      "peak_pss_mib": 11.63671875,
+      "peak_anonymous_mib": 4.2734375,
+      "comparisons": {
+        "previous-selected": {
+          "cpu": 0.9718716509151737,
+          "pss": 0.9232927970065482,
+          "worst_resource_ratio": 0.9718716509151737
+        },
+        "rtorrent": {
+          "cpu": 1.3112559013981224,
+          "pss": 1.1030527289546717,
+          "worst_resource_ratio": 1.3112559013981224
+        }
+      }
+    },
+    "scoped-pgo-buffered": {
+      "cpu_seconds_per_gib": 3.271832608,
+      "peak_pss_mib": 15.9423828125,
+      "peak_anonymous_mib": 4.75390625,
+      "comparisons": {
+        "previous-selected": {
+          "cpu": 0.9769534893501611,
+          "pss": 1.2557692307692307,
+          "worst_resource_ratio": 1.2557692307692307
+        },
+        "rtorrent": {
+          "cpu": 1.34589608968947,
+          "pss": 1.5186046511627906,
+          "worst_resource_ratio": 1.5186046511627906
+        }
+      }
+    },
+    "rtorrent": {
+      "cpu_seconds_per_gib": 2.430969696,
+      "peak_pss_mib": 10.556640625,
+      "peak_anonymous_mib": 2.578125,
+      "comparisons": {
+        "previous-selected": {
+          "cpu": 0.7057804102487482,
+          "pss": 0.8426878702837542,
+          "worst_resource_ratio": 0.8426878702837542
+        },
+        "rtorrent": {
+          "cpu": 1.0,
+          "pss": 1.0,
+          "worst_resource_ratio": 1.0
+        }
+      }
+    },
+    "previous-selected": {
+      "cpu_seconds_per_gib": 3.395017024,
+      "peak_pss_mib": 12.52734375,
+      "peak_anonymous_mib": 5.453125,
+      "comparisons": {
+        "previous-selected": {
+          "cpu": 1.0,
+          "pss": 1.0,
+          "worst_resource_ratio": 1.0
+        },
+        "rtorrent": {
+          "cpu": 1.4168712895382798,
+          "pss": 1.1866790009250694,
+          "worst_resource_ratio": 1.4168712895382798
+        }
+      }
+    }
+  },
+  "selection": {
+    "declared_utc": "2026-10-24T01:07:32.077975+00:00",
+    "primary": "scoped-ordered-buffered",
+    "secondary": "scoped-ordered-mapped",
+    "rule": "Primary follows predeclared minimax of paired CPU/PSS ratios to rTorrent among new joint improvements versus previous selection. Secondary retains lower-PSS frontier; it cannot replace the preselected primary based on qualifying results.",
+    "primary_binary_sha256": "4f6fc030f19589be5cd6ba71d7f87cc347ac0ed5a33de3a95ef6c08921dfb6d8",
+    "source_commit": "589b97a42938b0884f241d76711e2d7e5e8d75ff",
+    "source_digest": "347b31f6d7db9ae52931bdb349aca27289a22f868aa215d2f6227141bd10d7bf",
+    "build_features": "seed-mmap",
+    "opt_level": "3",
+    "profile_sha256": "64253846872def473a80a8267c02a22231249c4039448bb75ae3188455a195c9",
+    "fresh_qualification_not_started": true
+  }
+}

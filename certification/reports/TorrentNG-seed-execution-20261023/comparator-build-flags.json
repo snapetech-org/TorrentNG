@@ -1,0 +1,23 @@
+{
+  "rtorrent": {
+    "source": "/workspace/scratch/ca998092d7e5/comparator-rtorrent-build/src/Makefile",
+    "sha256": "5c3295aab79cef06938cacaccdc9be968bcb6a09ba5228e8398f2b76783b4dc6",
+    "compiler_fields": [
+      "CPPFLAGS = ",
+      "CXX = g++ -std=c++20",
+      "CXXFLAGS = -g -O2 -DNDEBUG -Wall -I/usr/include  -pthread -D_DEFAULT_SOURCE -D_XOPEN_SOURCE=600   -I/workspace/scratch/ca998092d7e5/rtorrent-prefix/include -I/usr/include/x86_64-linux-gnu ",
+      "LDFLAGS = -Wl,-rpath,/workspace/scratch/ca998092d7e5/rtorrent-prefix/lib"
+    ]
+  },
+  "libtorrent": {
+    "source": "/workspace/scratch/ca998092d7e5/comparator-libtorrent-build/src/Makefile",
+    "sha256": "9ac29e268c84a5048d05d49b10b070b6484757bfec4d71913a68dbd53d85aaa8",
+    "compiler_fields": [
+      "CPPFLAGS = ",
+      "CXX = g++ -std=c++20",
+      "CXXFLAGS = -I/usr/include/x86_64-linux-gnu   -pthread  -g -O2 -DNDEBUG -Wall -fvisibility=hidden ",
+      "LDFLAGS = "
+    ]
+  },
+  "note": "Supplemental extraction from retained Autotools build files. The frozen binary manifest has an empty shell CXXFLAGS field; actual generated Makefile flags are recorded here. Binary and linked-library hashes remain unchanged."
+}

@@ -1,0 +1,100 @@
+{
+  "training": [
+    {
+      "mib": 64,
+      "mib_per_second": 4,
+      "peers": 1,
+      "window": 32,
+      "pattern": "sequential",
+      "environment": {
+        "TNG_STORAGE_ANON_LARGE_FRAMES": "1"
+      }
+    },
+    {
+      "mib": 32,
+      "mib_per_second": 4,
+      "peers": 3,
+      "window": 16,
+      "pattern": "sequential",
+      "environment": {
+        "TNG_STORAGE_ANON_LARGE_FRAMES": "1"
+      }
+    },
+    {
+      "mib": 64,
+      "mib_per_second": 64,
+      "peers": 1,
+      "window": 8,
+      "pattern": "random",
+      "environment": {
+        "TNG_STORAGE_ANON_LARGE_FRAMES": "1"
+      }
+    },
+    {
+      "mib": 16,
+      "mib_per_second": 8,
+      "peers": 1,
+      "window": 8,
+      "pattern": "sequential",
+      "files": 3,
+      "environment": {
+        "TNG_STORAGE_ANON_LARGE_FRAMES": "1"
+      }
+    }
+  ],
+  "validation": [
+    {
+      "mib": 128,
+      "mib_per_second": 4,
+      "peers": 1,
+      "window": 16,
+      "pattern": "sequential"
+    },
+    {
+      "mib": 128,
+      "mib_per_second": 4,
+      "peers": 4,
+      "window": 64,
+      "pattern": "sequential"
+    },
+    {
+      "mib": 128,
+      "mib_per_second": 64,
+      "peers": 1,
+      "window": 64,
+      "pattern": "random"
+    },
+    {
+      "mib": 32,
+      "mib_per_second": 1,
+      "peers": 1,
+      "window": 1,
+      "pattern": "sequential"
+    },
+    {
+      "mib": 128,
+      "mib_per_second": 16,
+      "peers": 3,
+      "window": 32,
+      "pattern": "sequential",
+      "cache": "drop-file-pages"
+    },
+    {
+      "mib": 32,
+      "mib_per_second": 8,
+      "peers": 3,
+      "window": 64,
+      "pattern": "random",
+      "files": 5,
+      "cache": "drop-file-pages"
+    },
+    {
+      "mib": 16,
+      "mib_per_second": 8,
+      "peers": 1,
+      "window": 32,
+      "pattern": "sequential",
+      "upload_limit": 1048576
+    }
+  ]
+}
