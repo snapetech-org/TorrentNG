@@ -10,6 +10,7 @@ no hosted account.
 ## Table of contents
 
 - [What it is](#what-it-is)
+- [Swarm Switch](#swarm-switch)
 - [Choose what to install](#choose-what-to-install)
 - [Start the server](#start-the-server)
 - [Project and performance status](#project-and-performance-status)
@@ -27,9 +28,20 @@ With the TorrentNG Engine, TorrentNG manages transfers, storage, and saved
 state. See the [local MCP integration guide](docs/integrations/snapetech-mcp.md)
 for local assistant access.
 
-The Engine supports [Swarm Switch](docs/SWARM_SWITCH.md) in the WebUI: compare
-public and private swarm observations, use a compatible public counterpart with
-the same files, and restore the retained private torrent after verification.
+### Swarm Switch
+
+The native Engine's [Swarm Switch](docs/SWARM_SWITCH.md) helps recover a slow
+private download or keep a torrent available after its private tracker retires
+it. Compare private tracker reports with a public candidate's DHT peers and
+seeds, then switch only when that exact candidate proves it has the same
+content. TorrentNG keeps the original private torrent parked so you can restore
+it after a fresh file check.
+
+The public candidate has its own infohash and makes its metadata and your peer
+address public. A comparison is a bounded snapshot, not a swarm census, and a
+compatible public candidate may not exist. Deleting the retained private copy
+leaves the public torrent independent; a torrent added as public has no private
+copy to restore. Swarm Switch is available in the WebUI with the native Engine.
 
 ## Choose what to install
 

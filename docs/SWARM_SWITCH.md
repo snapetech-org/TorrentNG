@@ -14,9 +14,10 @@ the WebUI detail panel and Properties → Swarm.
 3. Select **Use public swarm**. TorrentNG parks the private torrent, creates a
    linked public torrent at the same location, and checks the existing data.
    The public identity downloads missing pieces or seeds complete data.
-4. Refresh **Compare swarms**, then select **Restore private swarm** from either linked torrent. TorrentNG stops
-   public transfers, removes the public session metadata, verifies the files
-   against the retained original, then resumes private downloading/seeding.
+4. Refresh **Compare swarms**, then select **Restore private swarm** from either
+   linked torrent. TorrentNG stops public transfers, removes the public session
+   metadata, verifies the files against the retained original, then resumes
+   private downloading/seeding.
 5. Alternatively, **Delete retained private copy** keeps the public torrent and
    payload files but permanently removes this session's restore action.
 
@@ -31,6 +32,28 @@ public entry, or moving/renaming shared files requires restoring first.
 A torrent that was originally added as public has no private copy and no restore
 action. TorrentNG does not invent a private identity, tracker URL, passkey, ratio,
 or download history. Re-adding an original `.torrent` is a separate user action.
+
+## Choosing from the comparison
+
+| Your goal | What to look for | What the result means |
+| --- | --- | --- |
+| Finish a slow private download | A public candidate with reachable peers or observed seeds | The public session can request missing pieces only after TorrentNG proves the candidate matches the existing payload. |
+| Keep seeding after a tracker retires the torrent | A compatible public candidate and the retained private entry | Leave the private entry in place. It stays parked and can be restored after a fresh file check. |
+| Decide whether a candidate is worth trying | Compare tracker reports, discovered peers, estimates, sample reachability and timestamps | These are observations at one point in time. A count of zero or an unknown result does not prove that no matching peers exist. |
+| Find a public counterpart when generated candidates have no activity | Supply the exact public `.torrent` from a known release | Swarm Switch compares that infohash. It does not search by title or locate unrelated releases. |
+
+Generated candidates only alter the private/source fields of the existing
+metainfo, so they can find peers only when another client uses that exact
+resulting infohash. Public trackers or releases may package the same bytes under
+a different name, file order, piece length, padding, or other info fields. A
+different v1 piece size cannot safely share a partial download through this
+workflow. See [Identity and compatibility](#identity-and-compatibility) for the
+matching rules and the safe alternative.
+
+Treat **Use public swarm** as a public-sharing decision. It activates a distinct
+public infohash and exposes the candidate's info metadata and your peer address.
+Restoring private participation does not retract information already shared.
+The original private hash is not announced to DHT during comparison or recovery.
 
 ## Identity and compatibility
 
@@ -114,7 +137,9 @@ Hybrid comparisons use the v1 discovery hash, matching the engine’s DHT regist
 Pure v2 uses its truncated SHA-256 discovery key while retaining the full v2 session identity.
 
 A comparison does not require globally enabling DHT; activation does. The UI
-requires refreshing a comparison older than one minute before switching in either direction. Interrupted transitions can always be restored without a comparison.
+requires refreshing a comparison older than one minute before switching in
+either direction. Interrupted transitions can always be restored without a
+comparison.
 
 ## Lifecycle and persistence contract
 
